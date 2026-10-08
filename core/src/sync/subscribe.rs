@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -6,10 +6,12 @@ use serde_json::{json, Map, Value};
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
-use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
+use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, FileOp, OperationTransition, WriteOrigin};
+use crate::db::{read_outbox, Prior};
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::pacing::Debounce;
 use crate::store::PlanCommitError;
+use crate::syncstate::operation_keys;
 use crate::transport::{
     EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFault,
     SubscriptionRetry, TransportError, RETRY_BACKOFF,
@@ -134,10 +136,12 @@ impl Feed {
         let spec = db.spec(model)?;
         let (mut count, mut created) = (0, false);
         let mut announced: Vec<RowId> = Vec::new();
+        let mut held_files: Vec<String> = Vec::new();
         let generation = db.generation();
         let committed = db.shared.store.commit_with(generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
+            let mut destroyed: BTreeSet<(String, String)> = BTreeSet::new();
             for item in items {
                 let key = (model.to_string(), item.id.as_str().to_string());
                 let deleted = self.def.deleted_by.as_ref().and_then(|field| item.node.get(field)).is_some_and(is_truthy);
@@ -147,6 +151,7 @@ impl Feed {
                 if deleted || self.def.effect == EventEffect::Destroy {
                     let own = RowRef::new(ModelKey::new(model), item.id);
                     for target in db.destroy_targets(reader, &own, WriteOrigin::Event)? {
+                        destroyed.insert((target.model.to_string(), target.id.to_string()));
                         operations.insert((target.model.to_string(), target.id.to_string()), EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Server });
                     }
                 } else {
@@ -170,6 +175,20 @@ impl Feed {
             }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
             envelope.entity_ops = operations.into_values().chain(touches).collect();
+            if !destroyed.is_empty() {
+                for entry in read_outbox(reader)? {
+                    let keys = operation_keys(&entry.operation.action_key, &entry.operation.row_ids, entry.operation.temp_id.as_ref());
+                    if !keys.iter().any(|key| destroyed.contains(key)) {
+                        continue;
+                    }
+                    envelope.operation_transitions.push(OperationTransition::Remove { seq: entry.operation.id.0, expected: None });
+                    for file in Prior::of(&entry).map(|prior| prior.held_files()).unwrap_or_default() {
+                        let Ok(row_id) = RowId::new(&file.row_id) else { continue };
+                        envelope.file_ops.push(FileOp::Remove { model: ModelKey::new(&file.model), row_id, field: file.field });
+                        held_files.push(file.id);
+                    }
+                }
+            }
             Ok::<_, SyncError>(Some(envelope))
         });
         match committed {
@@ -177,6 +196,7 @@ impl Feed {
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
         }
+        db.shared.files.discard(&held_files);
         for id in &announced {
             db.set_ephemeral(model, id, self.def.set.clone())?;
         }
