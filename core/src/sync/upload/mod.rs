@@ -80,13 +80,30 @@ impl Inner {
         locked(&self.uploads).active.get(&seq).is_some_and(|active| active.run == run)
     }
 
-    fn finish_run(&self, seq: i64, run: u64) {
-        let mut runs = locked(&self.uploads);
-        if runs.active.get(&seq).is_some_and(|active| active.run == run) {
-            if let Some(active) = runs.active.remove(&seq) {
-                active.done.send_replace(true);
+    fn finish_run(self: &Arc<Self>, seq: i64, run: u64) {
+        {
+            let mut runs = locked(&self.uploads);
+            if runs.active.get(&seq).is_some_and(|active| active.run == run) {
+                if let Some(active) = runs.active.remove(&seq) {
+                    active.done.send_replace(true);
+                }
             }
         }
+        let retried = self.db.outbox().ok().into_iter().flatten().any(|entry| {
+            entry.operation.id.0 == seq && entry.operation.upload.is_some() && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation)
+        });
+        if retried {
+            self.spawn_run(seq, Mode::Transfer);
+        }
+    }
+
+    fn spawn_run(self: &Arc<Self>, seq: i64, mode: Mode) {
+        let Some((run, token, permits)) = self.register(seq) else { return };
+        let inner = self.clone();
+        locked(&self.uploads).tasks.spawn(async move {
+            run::drive(inner.clone(), seq, run, token, permits, mode).await;
+            inner.finish_run(seq, run);
+        });
     }
 
     fn register(&self, seq: i64) -> Option<(u64, CancelToken, Arc<Semaphore>)> {
@@ -105,7 +122,7 @@ impl Inner {
 impl Sync {
     pub async fn upload(&self, model: &str, id: &RowId, input: UploadInput) -> Result<i64, SyncError> {
         let seq = self.inner.begin_upload(model, id, &input, UploadState::queued())?;
-        self.spawn_run(seq, Mode::Transfer);
+        self.inner.spawn_run(seq, Mode::Transfer);
         Ok(seq)
     }
 
@@ -140,22 +157,13 @@ impl Sync {
             let seq = entry.operation.id.0;
             match entry.operation.status {
                 OperationStatus::Pending if !entry.operation.transport_started && !self.inner.is_waiting(&entry.operation) => {
-                    self.spawn_run(seq, Mode::Transfer)
+                    self.inner.spawn_run(seq, Mode::Transfer)
                 }
-                OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() => self.spawn_run(seq, Mode::Orphan),
+                OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() => self.inner.spawn_run(seq, Mode::Orphan),
                 _ => {}
             }
         }
         Ok(())
-    }
-
-    fn spawn_run(&self, seq: i64, mode: Mode) {
-        let Some((run, token, permits)) = self.inner.register(seq) else { return };
-        let inner = self.inner.clone();
-        locked(&self.inner.uploads).tasks.spawn(async move {
-            run::drive(inner.clone(), seq, run, token, permits, mode).await;
-            inner.finish_run(seq, run);
-        });
     }
 
     async fn run_inline(&self, seq: i64, mode: Mode) {

@@ -286,6 +286,11 @@ impl Runner {
             let _ = self.save(|state| state.stage = UploadStage::Abort);
             self.abort_remote().await;
         }
+        if self.snapshot().upload_id.is_some() {
+            let failure = OperationFailure::new(FailureKind::Network, "the upload was cancelled but its remote parts are not aborted yet");
+            let _ = self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure }));
+            return;
+        }
         let _ = self.commit(|envelope| {
             envelope.operation_transitions.push(OperationTransition::Close { seq: self.seq, status: OperationStatus::RolledBack, once: false })
         });

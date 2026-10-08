@@ -546,3 +546,35 @@ async fn inv_op_10_parallel_uploads_for_one_record_leave_exactly_one_open() {
         assert_eq!(accepted, 1, "round {round}");
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn inv_op_09_a_retry_that_lands_while_the_old_run_is_ending_still_starts_the_upload() {
+    let rig = upload_rig(small());
+    single_replies(&rig);
+    let source = file(b"abcdef");
+    let seq = rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+    let (run, _, _) = rig.sync.inner.register(seq).unwrap();
+    rig.sync.start_uploads().unwrap();
+    rig.sync.inner.finish_run(seq, run);
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn inv_op_09_a_cancel_whose_abort_fails_keeps_the_upload_id_until_the_abort_goes_through() {
+    let rig = upload_rig(small());
+    rig.transport.enqueue("InitMultipart", init());
+    rig.transport.enqueue("PresignParts", presign(&[(1, "https://s3/p1"), (2, "https://s3/p2"), (3, "https://s3/p3")]));
+    rig.transport.enqueue("AbortMultipart", Reply::fail(TransportError::Network("down".into())));
+    rig.transport.enqueue("AbortMultipart", abort());
+    for url in ["https://s3/p1", "https://s3/p2", "https://s3/p3"] {
+        rig.transport.enqueue_put(url, PutReply::etag("e").after(Duration::from_secs(60)));
+    }
+    let source = file(TWELVE);
+    rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    rig.sync.cancel_upload("moments", &rid("m1")).await.unwrap();
+    rig.sync.flush().await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("AbortMultipart"), 2);
+}
