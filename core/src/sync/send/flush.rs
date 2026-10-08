@@ -150,7 +150,8 @@ impl Inner {
         let Some(operation) = locked(&self.operations).get(&mutation).cloned() else {
             return Ok(SendResult::Skipped(SkipReason::UnknownOperation(mutation)));
         };
-        let variables = mutation_variables(declaration, &entry.input, entry.operation.temp_id.as_ref());
+        let is_id = |field: &str| spec.field(field).is_some_and(|field| matches!(field.kind, crate::schema::FieldKind::Scalar { kind: crate::value::ScalarKind::Id }));
+        let variables = mutation_variables(declaration, &entry.input, entry.operation.temp_id.as_ref(), &is_id);
         let sending = Sending { entry, model, action, generation: self.db.generation(), base_revision: self.db.revision_seq()? };
         if !self.start(&sending)? {
             return Ok(SendResult::Discarded);

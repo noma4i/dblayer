@@ -85,6 +85,8 @@ update  with: UpdateMoment
 destroy with: DeleteMoment
 ```
 
+Fields of the kind `id` that hold a whole number are sent as JSON numbers. A GraphQL `ID` accepts a number and so does an `Int`, while a string only fits an `ID`.
+
 Servers that take one input object and answer with a payload (the Relay mutation style) use `wrap:` and `root:`:
 
 ```ruby
