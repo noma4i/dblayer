@@ -258,6 +258,11 @@ class GraphQLHttpTransport(
 ) {
     data class Reply(val status: Int, val body: ByteArray)
 
+    companion object {
+        fun make(url: String, inputs: TransportInputs, client: OkHttpClient, signer: RequestSigner, clock: ServerClock) =
+            GraphQLHttpTransport(url, client, signer, clock, inputs.appVersion, inputs.appBuild, inputs.deviceUuid, inputs.token)
+    }
+
     suspend fun send(operationName: String, documentHash: String, document: String?, variablesJson: ByteArray): Reply {
         val identity = TransportIdentity.resolve(operationName, token, deviceUuid)
         val nowSeconds = clock.nowMillis() / 1000.0
