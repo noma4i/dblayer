@@ -120,7 +120,8 @@ impl Inner {
         for column in &declared.by_columns {
             let kind = match spec.field(column).map(|field| &field.kind) {
                 Some(crate::schema::FieldKind::Scalar { kind }) => *kind,
-                _ => return Err(SyncError::Params(format!("{column} is not a scalar field"))),
+                Some(crate::schema::FieldKind::Enum { .. }) => ScalarKind::Str,
+                _ => return Err(SyncError::Params(format!("{column} is not a scalar or enum field"))),
             };
             let value = params.get(column).ok_or_else(|| SyncError::Params(format!("missing param {column}")))?;
             scope_params.insert(column.clone(), value.clone());

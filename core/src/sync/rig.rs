@@ -38,6 +38,7 @@ pub fn moments_spec() -> ModelSpec {
             FieldSpec::scalar("userId", ScalarKind::Id).nullable().indexed(),
             FieldSpec::scalar("text", ScalarKind::Str).optional(),
             FieldSpec::scalar("likedByMe", ScalarKind::Bool).optional(),
+            FieldSpec::enumeration("mood", &["calm", "wild"]).optional().indexed(),
         ],
     );
     spec.associations.push(AssociationSpec::new("author", AssociationKind::BelongsTo, "users", "userId"));
@@ -49,6 +50,8 @@ pub fn moments_spec() -> ModelSpec {
     history.remote = Some(remote("MomentsHistory", backward, "5.minutes"));
     let mut by_user = RelationSpec::new("by_user", &["userId"]);
     by_user.remote = Some(remote("MomentsByUser", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
+    let mut by_mood = RelationSpec::new("by_mood", &["mood"]);
+    by_mood.remote = Some(remote("MomentsByMood", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
     let mut search = RelationSpec::new("search", &[]);
     search.text_params = vec!["query".to_string()];
     search.remote = Some(remote("MomentsSearch", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
@@ -63,7 +66,7 @@ pub fn moments_spec() -> ModelSpec {
         UpdatesSpec { subscription: "MomentRemoved".to_string(), deleted_by: None, set: Map::new(), removes: true, debounce: None },
     ];
     pulse.remote = Some(pulse_remote);
-    spec.relations.extend([feed, history, by_user, search, empty_aware, pulse, RelationSpec::global("recent")]);
+    spec.relations.extend([feed, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
     spec.actions = vec![
         bound("create", RootShape::Upsert, "CreateMoment"),
         bound("update", RootShape::Upsert, "UpdateMoment"),
@@ -140,6 +143,7 @@ pub fn register_operations(sync: &Sync) {
         ("MomentsHistory", "history"),
         ("MomentsByUser", "moments"),
         ("MomentsSearch", "moments"),
+        ("MomentsByMood", "moments"),
         ("MomentsPulse", "feed"),
         ("CurrentUser", "me"),
         ("MomentEvents", "momentEvent"),

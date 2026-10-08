@@ -344,3 +344,14 @@ async fn text_param_keys_its_own_window_without_a_column() {
     assert_eq!(member_ids(&rig, "moments", "search", &dogs), ["b"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"query": "cats"}));
 }
+
+#[tokio::test(start_paused = true)]
+async fn enum_column_groups_a_relation_and_fills_rows() {
+    let rig = rig();
+    let calm = params(json!({"mood": "calm"}));
+    rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
+    rig.sync.load("moments", "by_mood", &calm, LoadOptions::default()).await.unwrap();
+    assert_eq!(member_ids(&rig, "moments", "by_mood", &calm), ["a"]);
+    let row = rig.db.find("moments", &crate::identity::RowId::new("a").unwrap()).unwrap().unwrap();
+    assert_eq!(row.text("mood"), Some("calm"));
+}
