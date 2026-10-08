@@ -41,6 +41,29 @@ pub(crate) struct Sending<'a> {
     pub base_revision: i64,
 }
 
+struct InFlight<'a> {
+    inner: &'a Inner,
+    seq: i64,
+    generation: Generation,
+    settled: bool,
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        let failure = OperationFailure::new(FailureKind::Network, "the send was cancelled before an answer was settled");
+        let seq = self.seq;
+        let generation = self.generation;
+        let _ = self.inner.commit(generation, |_| {
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
+            envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure });
+            Ok(Some(envelope))
+        });
+    }
+}
+
 fn row_of(entry: &OutboxOperation) -> Option<RowRef> {
     let (model, _) = Operation::split_action_key(&entry.operation.action_key)?;
     Some(RowRef::new(ModelKey::new(&model), entry.operation.row_ids.first()?.clone()))
@@ -121,8 +144,11 @@ impl Inner {
             return Ok(SendResult::Discarded);
         }
         let request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+        let in_flight = InFlight { inner: self, seq: entry.operation.id.0, generation: sending.generation, settled: false };
         let delivery = self.deliver(request).await;
         let settled = self.settle_delivery(&sending, &operation, delivery, declaration.on_failure == OnFailure::Keep).await;
+        let mut in_flight = in_flight;
+        in_flight.settled = true;
         if let Err(error) = &settled {
             let failure = OperationFailure::new(FailureKind::Unrecognized, error.to_string());
             self.park_operation(&sending, failure, false, false, true)?;
