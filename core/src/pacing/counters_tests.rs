@@ -6,7 +6,6 @@ fn new_counters_have_zero_values() {
         causal_admission_drops: 0,
         tombstone_write_drops: 0,
         non_resident_touch_drops: 0,
-        counter_op_drops: 0,
         stale_version_drops: 0,
         observation_ticks: 0,
         transport_calls: 0,

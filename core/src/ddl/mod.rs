@@ -1,0 +1,391 @@
+use std::collections::BTreeMap;
+
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
+
+use crate::schema::{FieldKind, FieldSpec, ModelSpec, Sort};
+use crate::value::ScalarKind;
+
+pub const FORMAT_VERSION: i64 = 1;
+pub const RECORD_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 1;
+
+pub const FORMAT_VERSION_KEY: &str = "format_version";
+pub const RECORD_VERSION_KEY: &str = "record_version";
+pub const DATA_VERSION_KEY: &str = "data_version";
+pub const REVISION_SEQ_KEY: &str = "revision_seq";
+pub const RESET_INTENT_KEY: &str = "reset_intent";
+
+pub const SERVICE_COLUMNS: [&str; 6] = ["id", "revision", "born_rev", "field_rev", "record_version", "payload"];
+
+const FINGERPRINT_PREFIX: &str = "fingerprint:";
+const CACHE_TABLES: [&str; 3] = ["scope_member", "tombstone", "query_window"];
+
+const CORE_STATEMENTS: [&str; 15] = [
+    "CREATE TABLE manifest (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+) STRICT",
+    "CREATE TABLE scope_member (
+  model TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  order_key TEXT NOT NULL,
+  PRIMARY KEY (model, scope_key, row_id)
+) STRICT",
+    "CREATE UNIQUE INDEX scope_walk ON scope_member (model, scope_key, order_key, row_id)",
+    "CREATE UNIQUE INDEX scope_order_unique ON scope_member (model, scope_key, order_key)",
+    "CREATE INDEX scope_member_row ON scope_member (model, row_id)",
+    "CREATE TABLE tombstone (
+  model TEXT NOT NULL,
+  id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  deleted_at INTEGER NOT NULL,
+  PRIMARY KEY (model, id)
+) STRICT, WITHOUT ROWID",
+    "CREATE INDEX tombstone_age ON tombstone (deleted_at)",
+    "CREATE TABLE query_window (
+  key TEXT PRIMARY KEY NOT NULL,
+  cursor TEXT,
+  has_next INTEGER NOT NULL,
+  ids BLOB NOT NULL,
+  issued INTEGER NOT NULL,
+  applied INTEGER NOT NULL,
+  generation INTEGER NOT NULL,
+  count INTEGER NOT NULL,
+  landed_at INTEGER NOT NULL,
+  invalidated INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1))
+) STRICT",
+    "CREATE TABLE op (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  action_key TEXT NOT NULL,
+  action_mode TEXT NOT NULL CHECK (action_mode IN ('request', 'durable')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'failed', 'delivery_unknown', 'committed', 'rolledback')),
+  row_ids BLOB NOT NULL,
+  temp_id TEXT,
+  input BLOB NOT NULL,
+  transport_started INTEGER NOT NULL DEFAULT 0,
+  base_revision INTEGER,
+  created_at INTEGER NOT NULL,
+  dedupe_key TEXT,
+  rollback BLOB
+) STRICT",
+    "CREATE INDEX op_open ON op (action_key, status)",
+    "CREATE INDEX op_temp ON op (temp_id)",
+    "CREATE UNIQUE INDEX op_open_dedupe ON op (action_key, dedupe_key)
+  WHERE dedupe_key IS NOT NULL AND status IN ('pending', 'delivery_unknown')",
+    "CREATE TABLE op_once (
+  namespace TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  PRIMARY KEY (namespace, dedupe_key)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE quarantine (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  model TEXT,
+  payload BLOB NOT NULL,
+  reason TEXT NOT NULL
+) STRICT",
+    "CREATE INDEX quarantine_reason ON quarantine (reason, seq)",
+];
+
+#[derive(Debug, thiserror::Error)]
+pub enum DdlError {
+    #[error("sqlite: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("database schema version {found} is newer than this build")]
+    SchemaVersionAhead { found: i64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnType {
+    Text,
+    Integer,
+    Real,
+}
+
+impl ColumnType {
+    pub fn as_sql(self) -> &'static str {
+        match self {
+            ColumnType::Text => "TEXT",
+            ColumnType::Integer => "INTEGER",
+            ColumnType::Real => "REAL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaVerdict {
+    Fresh,
+    Compatible,
+    Stale,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManifestVerdict {
+    Fresh,
+    Compatible,
+    CacheOnly { models: Vec<String> },
+    Incompatible,
+}
+
+pub fn column_name(field: &str) -> String {
+    let mut name = String::with_capacity(field.len() + 4);
+    for character in field.chars() {
+        if character.is_uppercase() {
+            if !name.is_empty() {
+                name.push('_');
+            }
+            name.extend(character.to_lowercase());
+        } else {
+            name.push(character);
+        }
+    }
+    name
+}
+
+pub fn table_name(model: &str) -> String {
+    format!("row_{}", model.replace('-', "_"))
+}
+
+pub fn column_type(kind: &FieldKind) -> Option<ColumnType> {
+    match kind {
+        FieldKind::Scalar { kind: ScalarKind::Str | ScalarKind::Id | ScalarKind::Date } | FieldKind::Enum { .. } => {
+            Some(ColumnType::Text)
+        }
+        FieldKind::Scalar { kind: ScalarKind::Int | ScalarKind::Bool } => Some(ColumnType::Integer),
+        FieldKind::Scalar { kind: ScalarKind::Num } => Some(ColumnType::Real),
+        FieldKind::Raw | FieldKind::Object | FieldKind::Array | FieldKind::List { .. } => None,
+    }
+}
+
+fn promoted_columns(model: &ModelSpec) -> impl Iterator<Item = (String, ColumnType)> + '_ {
+    model
+        .fields
+        .iter()
+        .filter(|field| field.indexed)
+        .filter_map(|field| column_type(&field.kind).map(|column| (column_name(&field.name), column)))
+}
+
+pub fn create_table_statement(model: &ModelSpec) -> String {
+    let mut definitions = vec![
+        "id TEXT PRIMARY KEY NOT NULL".to_string(),
+        "revision INTEGER NOT NULL".to_string(),
+        "born_rev INTEGER NOT NULL".to_string(),
+        "field_rev BLOB NOT NULL".to_string(),
+        "record_version INTEGER NOT NULL".to_string(),
+        "payload BLOB NOT NULL".to_string(),
+    ];
+    definitions.extend(promoted_columns(model).map(|(name, column)| format!("{name} {}", column.as_sql())));
+    format!(
+        "CREATE TABLE IF NOT EXISTS {} (\n  {}\n) STRICT",
+        table_name(model.key.as_str()),
+        definitions.join(",\n  ")
+    )
+}
+
+pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
+    let table = table_name(model.key.as_str());
+    let singles = promoted_columns(model)
+        .map(|(name, _)| format!("CREATE INDEX IF NOT EXISTS {table}_{name} ON {table} ({name})"));
+    let composites = model.composite_indexes.iter().map(|fields| {
+        let names: Vec<String> = fields.iter().map(|field| column_name(field)).collect();
+        format!("CREATE INDEX IF NOT EXISTS {table}_{} ON {table} ({})", names.join("_"), names.join(", "))
+    });
+    singles.chain(composites).collect()
+}
+
+pub fn model_statements(model: &ModelSpec) -> Vec<String> {
+    let mut statements = vec![create_table_statement(model)];
+    statements.extend(create_index_statements(model));
+    statements
+}
+
+pub fn models_statements(models: &[ModelSpec]) -> Vec<String> {
+    models.iter().flat_map(model_statements).collect()
+}
+
+pub fn table_names(models: &[ModelSpec]) -> Vec<String> {
+    models.iter().map(|model| table_name(model.key.as_str())).collect()
+}
+
+pub fn drop_table_statement(model: &str) -> String {
+    format!("DROP TABLE IF EXISTS {}", table_name(model))
+}
+
+pub fn stale_version_delete(model: &str) -> String {
+    format!("DELETE FROM {} WHERE record_version <> {RECORD_VERSION}", table_name(model))
+}
+
+pub fn expired_temp_rows_delete(model: &str, protected_count: usize) -> String {
+    let protected = if protected_count == 0 {
+        String::new()
+    } else {
+        format!(" AND id NOT IN ({})", vec!["?"; protected_count].join(", "))
+    };
+    format!("DELETE FROM {} WHERE id LIKE 'temp-%' AND created_at < ?{protected}", table_name(model))
+}
+
+pub fn prepare_connection(connection: &Connection) -> Result<(), DdlError> {
+    connection.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
+    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    connection.pragma_update(None, "foreign_keys", "OFF")?;
+    Ok(())
+}
+
+pub fn migrate_core(connection: &Connection) -> Result<(), DdlError> {
+    let version: i64 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
+    match version {
+        SCHEMA_VERSION => Ok(()),
+        0 => {
+            let transaction = connection.unchecked_transaction()?;
+            for statement in CORE_STATEMENTS {
+                transaction.execute_batch(statement)?;
+            }
+            transaction.execute_batch(&format!("pragma user_version = {SCHEMA_VERSION}"))?;
+            Ok(transaction.commit()?)
+        }
+        found => Err(DdlError::SchemaVersionAhead { found }),
+    }
+}
+
+pub fn create_model_tables(connection: &Connection, models: &[ModelSpec]) -> Result<(), DdlError> {
+    let transaction = connection.unchecked_transaction()?;
+    for statement in models_statements(models) {
+        transaction.execute_batch(&statement)?;
+    }
+    Ok(transaction.commit()?)
+}
+
+#[derive(Serialize)]
+struct RelationFingerprint<'a> {
+    name: &'a str,
+    by_columns: Vec<&'a str>,
+    is_global: bool,
+    sort: &'a Sort,
+}
+
+#[derive(Serialize)]
+struct ModelFingerprint<'a> {
+    fields: Vec<&'a FieldSpec>,
+    relations: Vec<RelationFingerprint<'a>>,
+    composite_indexes: Vec<&'a Vec<String>>,
+}
+
+pub fn fingerprint(model: &ModelSpec) -> String {
+    let mut fields: Vec<&FieldSpec> = model.fields.iter().collect();
+    fields.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut relations: Vec<RelationFingerprint> = model
+        .relations
+        .iter()
+        .map(|relation| {
+            let mut by_columns: Vec<&str> = relation.by_columns.iter().map(String::as_str).collect();
+            by_columns.sort_unstable();
+            RelationFingerprint { name: &relation.name, by_columns, is_global: relation.is_global, sort: &relation.sort }
+        })
+        .collect();
+    relations.sort_by(|left, right| left.name.cmp(right.name));
+    let mut composite_indexes: Vec<&Vec<String>> = model.composite_indexes.iter().collect();
+    composite_indexes.sort();
+    serde_json::to_string(&ModelFingerprint { fields, relations, composite_indexes }).expect("fingerprint serializes")
+}
+
+pub fn schema_verdicts(
+    stored: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) -> BTreeMap<String, SchemaVerdict> {
+    let models = stored.keys().chain(current.keys());
+    models
+        .map(|model| {
+            let verdict = match (stored.get(model), current.get(model)) {
+                (None, _) => SchemaVerdict::Fresh,
+                (Some(_), None) => SchemaVerdict::Stale,
+                (Some(before), Some(after)) if before == after => SchemaVerdict::Compatible,
+                (Some(_), Some(_)) => SchemaVerdict::Stale,
+            };
+            (model.clone(), verdict)
+        })
+        .collect()
+}
+
+pub fn models_needing_reset(verdicts: &BTreeMap<String, SchemaVerdict>) -> Vec<String> {
+    verdicts.iter().filter(|(_, verdict)| **verdict == SchemaVerdict::Stale).map(|(model, _)| model.clone()).collect()
+}
+
+pub fn fingerprint_key(model: &str) -> String {
+    format!("{FINGERPRINT_PREFIX}{model}")
+}
+
+pub fn manifest_read(connection: &Connection, key: &str) -> Result<Option<String>, DdlError> {
+    Ok(connection.query_row("SELECT value FROM manifest WHERE key = ?1", [key], |row| row.get(0)).optional()?)
+}
+
+pub fn manifest_write(connection: &Connection, key: &str, value: &str) -> Result<(), DdlError> {
+    connection.execute(
+        "INSERT INTO manifest (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+pub fn manifest_stamp(
+    connection: &Connection,
+    data_version: Option<&str>,
+    fingerprints: &BTreeMap<String, String>,
+) -> Result<(), DdlError> {
+    manifest_write(connection, FORMAT_VERSION_KEY, &FORMAT_VERSION.to_string())?;
+    manifest_write(connection, RECORD_VERSION_KEY, &RECORD_VERSION.to_string())?;
+    manifest_write(connection, DATA_VERSION_KEY, data_version.unwrap_or(""))?;
+    for (model, fingerprint) in fingerprints {
+        manifest_write(connection, &fingerprint_key(model), fingerprint)?;
+    }
+    Ok(())
+}
+
+fn cache_is_empty(connection: &Connection) -> Result<bool, DdlError> {
+    for table in CACHE_TABLES {
+        let used: bool = connection.query_row(&format!("SELECT EXISTS (SELECT 1 FROM {table})"), [], |row| row.get(0))?;
+        if used {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+pub fn manifest_verify(
+    connection: &Connection,
+    data_version: Option<&str>,
+    fingerprints: &BTreeMap<String, String>,
+) -> Result<ManifestVerdict, DdlError> {
+    let mut statement = connection.prepare("SELECT key, value FROM manifest")?;
+    let values: BTreeMap<String, String> =
+        statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
+
+    if values.is_empty() && cache_is_empty(connection)? {
+        return Ok(ManifestVerdict::Fresh);
+    }
+    if values.get(FORMAT_VERSION_KEY).map(String::as_str) != Some(FORMAT_VERSION.to_string().as_str()) {
+        return Ok(ManifestVerdict::Incompatible);
+    }
+    let stored_data_version = values.get(DATA_VERSION_KEY).map_or("", String::as_str);
+    if stored_data_version != data_version.unwrap_or("") {
+        return Ok(ManifestVerdict::Incompatible);
+    }
+
+    let stored: BTreeMap<&str, &str> = values
+        .iter()
+        .filter_map(|(key, value)| key.strip_prefix(FINGERPRINT_PREFIX).map(|model| (model, value.as_str())))
+        .collect();
+    let mut mismatched: Vec<String> = stored
+        .iter()
+        .filter(|(model, fingerprint)| fingerprints.get(**model).is_none_or(|current| current != **fingerprint))
+        .map(|(model, _)| model.to_string())
+        .collect();
+    mismatched.sort();
+    if mismatched.is_empty() {
+        return Ok(ManifestVerdict::Compatible);
+    }
+    Ok(ManifestVerdict::CacheOnly { models: mismatched })
+}
+
+#[cfg(test)]
+mod ddl_tests;

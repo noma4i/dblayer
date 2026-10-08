@@ -3,7 +3,6 @@ pub struct Counters {
     pub causal_admission_drops: usize,
     pub tombstone_write_drops: usize,
     pub non_resident_touch_drops: usize,
-    pub counter_op_drops: usize,
     pub stale_version_drops: usize,
     pub observation_ticks: usize,
     pub transport_calls: usize,
