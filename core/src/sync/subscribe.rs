@@ -8,7 +8,7 @@ use tokio::time::Instant;
 
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, FileOp, OperationTransition, WriteOrigin};
 use crate::db::{read_outbox, Prior};
-use crate::identity::{ModelKey, RowId, RowRef};
+use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::pacing::Debounce;
 use crate::store::PlanCommitError;
 use crate::syncstate::operation_keys;
@@ -101,6 +101,7 @@ struct Pending {
     bucket: String,
     id: RowId,
     node: Map<String, Value>,
+    generation: Generation,
 }
 
 struct Feed {
@@ -114,14 +115,16 @@ impl Feed {
     fn parse(&self, response: &Response) -> Option<Pending> {
         let node = root_value(response.data.as_ref()?, &self.root_path)?.as_object()?;
         let id = read_id(node.get("id")?)?;
-        Some(Pending { bucket: self.def.event.bucket_key(id.as_str()), id, node: node.clone() })
+        Some(Pending { bucket: self.def.event.bucket_key(id.as_str()), id, node: node.clone(), generation: self.inner.db.generation() })
     }
 
-    async fn apply(&self, items: Vec<Pending>) {
+    async fn apply(&self, mut items: Vec<Pending>) {
+        let current = self.inner.db.generation();
+        items.retain(|item| item.generation == current);
         if items.is_empty() {
             return;
         }
-        match self.try_apply(items) {
+        match self.try_apply(items, current) {
             Ok(true) => {
                 let _ = self.inner.invalidate_model(&self.def.model).await;
             }
@@ -130,14 +133,13 @@ impl Feed {
         }
     }
 
-    fn try_apply(&self, items: Vec<Pending>) -> Result<bool, SyncError> {
+    fn try_apply(&self, items: Vec<Pending>, generation: Generation) -> Result<bool, SyncError> {
         let db = &self.inner.db;
         let model = self.def.model.as_str();
         let spec = db.spec(model)?;
         let (mut count, mut created) = (0, false);
         let mut announced: Vec<RowId> = Vec::new();
         let mut held_files: Vec<String> = Vec::new();
-        let generation = db.generation();
         let committed = db.shared.store.commit_with(generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
