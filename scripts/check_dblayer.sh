@@ -15,8 +15,8 @@ swift test --package-path "$root/swift"
 (cd -- "$root/swift" && xcodebuild build -scheme DBlayer -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath "$root/target/dd-swift" -quiet)
 
-echo "== android: libs for 4 ABI, kotlin bindings, gradle unit tests"
-bash "$root/scripts/build_android.sh"
-"$gradle" -p "$root/android" testDebugUnitTest --console=plain
+echo "== kotlin: libs for 4 Android ABI, bindings, gradle unit tests"
+bash "$root/scripts/build_kotlin.sh"
+"$gradle" -p "$root/kotlin" testDebugUnitTest --console=plain
 
 echo "check_dblayer: ok"

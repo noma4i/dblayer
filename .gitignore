@@ -6,8 +6,8 @@
 swift/DBlayerFFI.xcframework/
 swift/Sources/DBlayer/dblayer.swift
 swift/.build/
-android/src/main/jniLibs/
-android/src/main/kotlin/dev/dblayer/dblayer.kt
-android/.gradle/
-android/build/
-android/local.properties
+kotlin/src/main/jniLibs/
+kotlin/src/main/kotlin/dev/dblayer/dblayer.kt
+kotlin/.gradle/
+kotlin/build/
+kotlin/local.properties

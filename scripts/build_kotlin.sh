@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$HOME"/Library/Android/sdk/ndk/* | sort -V | tail -1)}"
-module="$root/android"
+module="$root/kotlin"
 
 cargo build --manifest-path "$root/core/Cargo.toml" --features cli
 rm -rf "$module/src/main/kotlin/dev/dblayer/dblayer.kt"
