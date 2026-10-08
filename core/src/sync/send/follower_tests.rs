@@ -96,11 +96,15 @@ async fn a_refused_destroy_still_shows_the_row_again() {
 async fn a_load_after_the_create_landed_does_not_bring_back_a_row_whose_destroy_is_still_queued() {
     let rig = rig();
     let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
-    rig.db.update("moments", &local.id, params(json!({"text": "edited"}))).unwrap();
-    rig.db.destroy("moments", &local.id).unwrap();
-    rig.transport.enqueue("CreateMoment", created("m77", "hello"));
+    rig.transport.enqueue("CreateMoment", created("m77", "hello").after(std::time::Duration::from_secs(5)));
     rig.transport.enqueue("UpdateMoment", Reply::fail(crate::transport::TransportError::Network("down".to_string())));
-    rig.sync.flush().await.unwrap();
+    let queue_behind_the_create = async {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        rig.db.update("moments", &local.id, params(json!({"text": "edited"}))).unwrap();
+        rig.db.destroy("moments", &local.id).unwrap();
+    };
+    let (flushed, ()) = tokio::join!(rig.sync.flush(), queue_behind_the_create);
+    flushed.unwrap();
     assert!(!rig.db.outbox().unwrap().is_empty());
     assert_eq!(text_of(&rig, "moments", "m77"), None);
     rig.transport.enqueue("MomentsFeed", feed_with("m77", "edited"));
@@ -112,11 +116,15 @@ async fn a_load_after_the_create_landed_does_not_bring_back_a_row_whose_destroy_
 async fn the_real_row_that_landed_before_the_create_response_goes_away_with_the_queued_destroy() {
     let rig = rig();
     let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
-    rig.db.destroy("moments", &local.id).unwrap();
-    put(&rig, "moments", moment("m77", "hello"));
-    rig.transport.enqueue("CreateMoment", created("m77", "hello"));
+    rig.transport.enqueue("CreateMoment", created("m77", "hello").after(std::time::Duration::from_secs(5)));
     rig.transport.enqueue("DeleteMoment", deleted("m77"));
-    rig.sync.flush().await.unwrap();
+    let destroy_then_land = async {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        rig.db.destroy("moments", &local.id).unwrap();
+        put(&rig, "moments", moment("m77", "hello"));
+    };
+    let (flushed, ()) = tokio::join!(rig.sync.flush(), destroy_then_land);
+    flushed.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(text_of(&rig, "moments", "m77"), None);
 }
@@ -125,10 +133,14 @@ async fn the_real_row_that_landed_before_the_create_response_goes_away_with_the_
 async fn a_refused_destroy_of_a_row_that_was_created_meanwhile_brings_back_the_real_row_not_the_temp_one() {
     let rig = rig();
     let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
-    rig.db.destroy("moments", &local.id).unwrap();
-    rig.transport.enqueue("CreateMoment", created("m77", "hello"));
+    rig.transport.enqueue("CreateMoment", created("m77", "hello").after(std::time::Duration::from_secs(5)));
     rig.transport.enqueue("DeleteMoment", Reply::graphql_error("no", "FORBIDDEN"));
-    rig.sync.flush().await.unwrap();
+    let destroy = async {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        rig.db.destroy("moments", &local.id).unwrap();
+    };
+    let (flushed, ()) = tokio::join!(rig.sync.flush(), destroy);
+    flushed.unwrap();
     assert_eq!(rig.db.find("moments", &local.id).unwrap(), None);
     assert_eq!(text_of(&rig, "moments", "m77"), Some("hello".to_string()));
     assert_eq!(rig.db.sync_info("moments", &crate::identity::RowId::new("m77").unwrap()).unwrap().state, crate::syncstate::SyncState::Failed);

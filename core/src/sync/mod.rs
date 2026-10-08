@@ -146,6 +146,8 @@ mod extract_tests;
 #[cfg(test)]
 mod freshness_tests;
 #[cfg(test)]
+mod invariants;
+#[cfg(test)]
 mod land_tests;
 #[cfg(test)]
 mod load_more_tests;

@@ -7,12 +7,13 @@ use crate::commit::{
     CommitEnvelope, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition, WriteOrigin,
 };
 use crate::ddl::table_name;
+use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::operation::Operation;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, RootShape};
 use crate::store::{PlanCommitError, Reader, StoreError};
-use crate::syncstate::read_sync;
+use crate::syncstate::{operation_keys, read_sync};
 use crate::value::read_id;
 use crate::write::{
     cascade_destroys, cascade_envelope, cascades, touches_parent, WritePlan,
@@ -96,6 +97,19 @@ pub(super) fn plan_fault(error: PlanCommitError<DbError>) -> DbError {
         PlanCommitError::Plan(error) => error,
         PlanCommitError::Store(error) => error.into(),
     }
+}
+
+fn unsent_operations(reader: &Reader<'_>, id: &RowId, destroyed: &[RowRef]) -> Result<Option<Vec<OutboxOperation>>, StoreError> {
+    if !id.is_temp() {
+        return Ok(None);
+    }
+    let doomed: HashSet<(String, String)> = destroyed.iter().map(|target| (target.model.to_string(), target.id.to_string())).collect();
+    let touching: Vec<OutboxOperation> = read_outbox(reader)?
+        .into_iter()
+        .filter(|entry| operation_keys(&entry.operation.action_key, &entry.operation.row_ids, entry.operation.temp_id.as_ref()).iter().any(|key| doomed.contains(key)))
+        .collect();
+    let unsent = |entry: &OutboxOperation| entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started;
+    Ok((!touching.is_empty() && touching.iter().all(unsent)).then_some(touching))
 }
 
 fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool, DbError> {
@@ -185,6 +199,7 @@ impl Db {
         let generation = self.generation();
         let created_at = self.shared.store.lock().now_ms();
         let mut destroyed: Vec<RowRef> = Vec::new();
+        let mut discarded: Vec<String> = Vec::new();
         self.shared
             .store
             .commit_with(generation, |reader| {
@@ -192,6 +207,14 @@ impl Db {
                     return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() });
                 }
                 destroyed = self.destroy_targets(reader, &own, WriteOrigin::Optimistic)?;
+                if let Some(unsent) = unsent_operations(reader, id, &destroyed)? {
+                    let mut envelope = cascade_envelope(&destroyed, DestroyReason::Expired, WriteOrigin::Optimistic, generation);
+                    envelope.operation_transitions.extend(unsent.iter().map(|entry| OperationTransition::Remove { seq: entry.operation.id.0, expected: None }));
+                    for target in &destroyed {
+                        discarded.extend(references_of_row(reader.connection(), target.model.as_str(), target.id.as_str())?.into_iter().map(|file| file.id));
+                    }
+                    return Ok(Some(envelope));
+                }
                 let mut rows = Vec::new();
                 for target in &destroyed {
                     rows.extend(PriorRow::destroyed(reader, target.model.as_str(), target.id.as_str())?);
@@ -208,6 +231,7 @@ impl Db {
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
+        self.shared.files.discard(&discarded);
         Ok(destroyed)
     }
 

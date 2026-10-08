@@ -126,7 +126,7 @@ async fn replacing_a_temp_parent_id_rewrites_the_rows_held_by_a_queued_destroy()
     let rig = notes_rig();
     replaced_parent(&rig);
     let parent = rig.db.create("moments", params(json!({"text": "parent"}))).unwrap();
-    let child = rig.db.create("notes", params(json!({"momentId": parent.id.as_str()}))).unwrap();
+    let child = rig.db.create("notes", params(json!({"id": "n1", "momentId": parent.id.as_str()}))).unwrap();
     rig.db.destroy("notes", &child.id).unwrap();
     rig.sync.flush().await.unwrap();
     let held = rig.db.outbox().unwrap().into_iter().find(|entry| entry.operation.action_key == "notes:destroy").unwrap();
