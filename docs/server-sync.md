@@ -43,6 +43,40 @@ Moment.feed.refresh()            // pull to refresh, replaces in one commit
 - A response older than the data already stored never overwrites it.
 - `max_pages` limits how many pages one load takes.
 
+## Refresh merges, it does not replace
+
+`refresh()` works on one list with its parameters. Only that list changes: other lists keep their content, and nothing is deleted just to be written again.
+
+```swift
+try await Moment.feed.refresh()
+try await Moment.byUser(userId: 5).refresh()      // only user 5's list
+```
+
+```kotlin
+Moment.feed.refresh()
+Moment.byUser(userId = 5).refresh()               // only user 5's list
+```
+
+What a refresh does, in one commit:
+
+- Rows from the response are merged field by field. Rows that did not change keep their revision and are not reported as updated.
+- Records that the server has not confirmed yet (a message being sent, a failed one waiting for retry) stay in the list where they are.
+- For a paged list the response is the first page. The last row of the response is looked up in the old list. If it is found, the new first page is followed by the old rows that came after it, so a long list that the user scrolled does not jump. If it is not found, the old tail is dropped and `loadMore()` loads the next pages again.
+- Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`deleted_by`, a null node, a delete event), or when the relation says `on_absent :destroy`.
+- A failed request changes nothing.
+
+```ruby
+remote :by_user do
+  query MomentsByUser
+  fresh_for 5.minutes
+  on_absent :destroy   # rows missing from a complete response are deleted, unconfirmed ones stay
+end
+```
+
+Use `on_absent :destroy` when the same data is also read with a query on the table (`Moment.where(Moment.userId == id)`), so that rows deleted on the server disappear there too.
+
+`refresh(replace: true)` replaces the whole list with the response (unconfirmed records still stay). It is meant for small lists where the server is the only authority.
+
 ## Mutations
 
 ```ruby
