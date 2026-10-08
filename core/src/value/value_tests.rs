@@ -265,6 +265,15 @@ fn fractional_rejects_inverted_bounds() {
 }
 
 #[test]
+fn null_relation_value_is_its_own_scope() {
+    let kinds = BTreeMap::from([("vibeId".to_string(), ScalarKind::Id)]);
+    let none = relation_scope_key_from_values("moment", "feed", &object(json!({"vibeId": null})), &kinds).unwrap();
+    let some = relation_scope_key_from_values("moment", "feed", &object(json!({"vibeId": "1"})), &kinds).unwrap();
+    assert_ne!(none, some);
+    assert_eq!(none, relation_scope_key_from_values("moment", "feed", &object(json!({"vibeId": null})), &kinds).unwrap());
+}
+
+#[test]
 fn relation_values_normalize_to_equal_params_and_keys() {
     let kinds = BTreeMap::from([("chatId".to_string(), ScalarKind::Id)]);
     let from_string = normalize_relation_params(&object(json!({"chatId": "1"})), &kinds).unwrap();

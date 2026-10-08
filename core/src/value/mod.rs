@@ -326,6 +326,9 @@ pub fn fractional_between(lower: Option<&str>, upper: Option<&str>) -> Result<St
     }
 }
 
+/// Scope-key text of a relation parameter that was passed as null (for example the unfiltered feed).
+const NULL_PARAM: &str = "\u{0}null";
+
 pub fn normalize_relation_params(
     values: &Map<String, Value>,
     kinds: &BTreeMap<String, ScalarKind>,
@@ -333,6 +336,10 @@ pub fn normalize_relation_params(
     let mut result = BTreeMap::new();
     for (name, value) in values {
         let kind = kinds.get(name).ok_or_else(|| RelationParamsError::UnknownField(name.clone()))?;
+        if value.is_null() {
+            result.insert(name.clone(), NULL_PARAM.to_string());
+            continue;
+        }
         let value = Some(value);
         let text = match kind {
             ScalarKind::Id => require(value, name, read_id)?.as_str().to_string(),
