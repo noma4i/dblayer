@@ -15,7 +15,9 @@ fn build_one(body: &str) -> ModelSpec {
 }
 
 fn fields_of(lines: &str) -> Vec<dblayer::schema::FieldSpec> {
-    parse_models(&format!("model Sample do\n  schema do\n{lines}\n  end\nend\n")).unwrap().remove(0).fields
+    let mut fields = parse_models(&format!("model Sample do\n  schema do\n{lines}\n  end\nend\n")).unwrap().remove(0).fields;
+    fields.retain(|field| field.name != "id");
+    fields
 }
 
 #[test]
@@ -195,7 +197,7 @@ fn ephemeral_block_builds_ephemeral_specs_beside_stored_fields() {
     )
     .unwrap()
     .remove(0);
-    assert_eq!(model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(), vec!["name"]);
+    assert_eq!(model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(), vec!["name", "id"]);
     let typing = model.ephemeral_field("typing").unwrap();
     assert_eq!((typing.field.default.clone(), typing.reset_after.clone()), (Some(json!(false)), Some("5.seconds".to_string())));
     let mood = model.ephemeral_field("mood").unwrap();

@@ -82,3 +82,6 @@ fn parse_sources(sources: &[&str]) -> Result<Vec<ModelSpec>, Vec<(usize, ParseEr
 
 #[cfg(test)]
 mod lib_tests;
+
+#[cfg(test)]
+mod roundtrip_tests;

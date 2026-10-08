@@ -47,6 +47,9 @@ fn build_model(node: &ModelNode) -> ModelSpec {
             _ => {}
         }
     }
+    if model.field("id").is_none() {
+        model.fields.push(FieldSpec::scalar("id", ScalarKind::Id));
+    }
     model
 }
 
