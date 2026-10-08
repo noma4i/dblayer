@@ -3,7 +3,7 @@ use serde_json::json;
 use super::super::rig::*;
 use super::super::SyncConfig;
 use super::fixtures::*;
-use super::references_fixtures::*;
+use super::spec_fixtures::*;
 use crate::db::Db;
 use crate::transport::MockTransport;
 

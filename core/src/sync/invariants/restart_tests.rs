@@ -1,35 +1,14 @@
 use serde_json::json;
 
 use super::super::rig::*;
-use super::super::SyncConfig;
 use super::fixtures::*;
+use super::spec_fixtures::*;
 use crate::commit::{CommitEnvelope, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
-use crate::db::Db;
 use crate::identity::ModelKey;
-use crate::schema::{AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec};
 use crate::syncstate::SyncState;
-use crate::transport::{MockTransport, Reply};
-use crate::value::ScalarKind;
+use crate::transport::Reply;
 
 const LARGE: usize = 300 * 1024;
-
-fn media_specs() -> Vec<ModelSpec> {
-    let mut moments = moments_spec();
-    moments.fields.push(FieldSpec::file("media").optional());
-    let mut vibes = ModelSpec::new(
-        "vibes",
-        vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("momentId", ScalarKind::Id).indexed(), FieldSpec::file("media").optional()],
-    );
-    vibes.associations.push(AssociationSpec::new("moment", AssociationKind::BelongsTo, "moments", "momentId"));
-    let mut owned = AssociationSpec::new("vibes", AssociationKind::HasMany, "vibes", "momentId");
-    owned.dependent = Some(Dependent::Destroy);
-    moments.associations.push(owned);
-    vec![users_spec(), moments, vibes]
-}
-
-fn open_rig(path: &std::path::Path) -> Rig {
-    rig_on(Db::open(path, media_specs(), None).unwrap(), MockTransport::new(), SyncConfig::default())
-}
 
 fn feed_scope(rig: &Rig) -> ScopeRef {
     let spec = rig.db.spec("moments").unwrap();

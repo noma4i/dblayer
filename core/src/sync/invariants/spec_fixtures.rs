@@ -1,8 +1,10 @@
 use serde_json::json;
 
 use super::super::rig::*;
+use super::super::SyncConfig;
 use crate::db::Db;
-use crate::schema::{ActionDeclaration, AssociationKind, AssociationSpec, EphemeralSpec, FieldSpec, ModelSpec, RootShape};
+use crate::transport::MockTransport;
+use crate::schema::{ActionDeclaration, AssociationKind, AssociationSpec, Dependent, EphemeralSpec, FieldSpec, ModelSpec, RootShape};
 use crate::value::ScalarKind;
 
 pub fn specs_with_references() -> Vec<ModelSpec> {
@@ -53,4 +55,22 @@ pub fn mentions(db: &Db, needle: &str) -> Vec<String> {
         }
     }
     found
+}
+
+pub fn media_specs() -> Vec<ModelSpec> {
+    let mut moments = moments_spec();
+    moments.fields.push(FieldSpec::file("media").optional());
+    let mut vibes = ModelSpec::new(
+        "vibes",
+        vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("momentId", ScalarKind::Id).indexed(), FieldSpec::file("media").optional()],
+    );
+    vibes.associations.push(AssociationSpec::new("moment", AssociationKind::BelongsTo, "moments", "momentId"));
+    let mut owned = AssociationSpec::new("vibes", AssociationKind::HasMany, "vibes", "momentId");
+    owned.dependent = Some(Dependent::Destroy);
+    moments.associations.push(owned);
+    vec![users_spec(), moments, vibes]
+}
+
+pub fn open_rig(path: &std::path::Path) -> Rig {
+    rig_on(Db::open(path, media_specs(), None).unwrap(), MockTransport::new(), SyncConfig::default())
 }
