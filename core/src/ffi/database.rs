@@ -7,6 +7,7 @@ use crate::identity::RowId;
 use crate::pacing::SystemClock;
 use crate::query::{Query, Where};
 use crate::schema::ModelSpec;
+use crate::value::relation_param_text;
 use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
 use super::live::LiveHandles;
 use super::transport::ForeignTransport;
@@ -188,7 +189,7 @@ impl Database {
             let spec = self.db.spec(query.model.as_str())?;
             let relation = spec.relations.iter().find(|relation| relation.name == name).ok_or_else(|| DbError::Invalid { detail: format!("unknown relation {name}") })?;
             if relation.remote.is_some() {
-                let strings = params.iter().map(|(key, value)| (key.clone(), value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()))).collect();
+                let strings = params.iter().map(|(key, value)| (key.clone(), relation_param_text(value))).collect();
                 query.scope = Some(relation.scope_key(query.model.as_str(), &strings).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
                 Ok(Some((name.to_string(), params)))
             } else { Ok(None) }

@@ -235,6 +235,17 @@ async fn list_load_replaces_membership_completely() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn null_param_loads_its_own_list_and_sends_null() {
+    let rig = rig();
+    let unowned = params(json!({"userId": null}));
+    rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [moment("a", "a")]})));
+    let outcome = rig.sync.load("moments", "by_user", &unowned, LoadOptions::default()).await.unwrap();
+    assert_eq!(outcome.status, LoadStatus::Loaded);
+    assert_eq!(member_ids(&rig, "moments", "by_user", &unowned), ["a"]);
+    assert_eq!(rig.transport.calls()[0].variables, json!({"userId": null}));
+}
+
+#[tokio::test(start_paused = true)]
 async fn single_load_lands_one_row() {
     let rig = rig();
     rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));

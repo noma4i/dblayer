@@ -11,8 +11,14 @@ private class ChangeListener(private val body: (LiveChange) -> Unit) : QueryList
     override fun changed(change: LiveChange) = body(change)
 }
 
+private val decodeLog = java.util.logging.Logger.getLogger("DBlayer")
+
 internal fun <Model> LiveChange.decode(serializer: KSerializer<Model>): List<Model> =
-    rows.mapNotNull { runCatching { dbJson.decodeFromString(serializer, it) }.getOrNull() }
+    rows.mapNotNull { row ->
+        runCatching { dbJson.decodeFromString(serializer, row) }
+            .onFailure { decodeLog.severe("Row of ${serializer.descriptor.serialName} failed to decode: $it") }
+            .getOrNull()
+    }
 
 class LiveSource<Value>(
     val initial: Value,

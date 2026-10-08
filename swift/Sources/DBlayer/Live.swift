@@ -1,6 +1,9 @@
 import Foundation
 import Observation
+import os
 import SwiftUI
+
+private let decodeLog = Logger(subsystem: "DBlayer", category: "decode")
 
 final class ChangeListener: QueryListener, @unchecked Sendable {
   let body: @Sendable (LiveChange) -> Void
@@ -11,7 +14,14 @@ final class ChangeListener: QueryListener, @unchecked Sendable {
 extension LiveChange {
   func decodeRows<Model: DBModel>() -> [Model] {
     let decoder = JSONDecoder()
-    return rows.compactMap { try? decoder.decode(Model.self, from: Data($0.utf8)) }
+    return rows.compactMap { row in
+      do {
+        return try decoder.decode(Model.self, from: Data(row.utf8))
+      } catch {
+        decodeLog.error("Row of \(Model.modelName, privacy: .public) failed to decode: \(String(describing: error), privacy: .public)")
+        return nil
+      }
+    }
   }
 }
 

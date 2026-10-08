@@ -199,7 +199,7 @@ pub async fn settle() {
 pub fn member_ids(rig: &Rig, model: &str, relation: &str, params: &Map<String, Value>) -> Vec<String> {
     let spec = rig.db.spec(model).unwrap();
     let relation = spec.relations.iter().find(|candidate| candidate.name == relation).unwrap();
-    let strings = params.iter().map(|(name, value)| (name.clone(), value.as_str().unwrap().to_string())).collect();
+    let strings = params.iter().map(|(name, value)| (name.clone(), crate::value::relation_param_text(value))).collect();
     let key = relation.scope_key(model, &strings).unwrap();
     rig.db.shared.store.scope_members(model, key.as_str()).unwrap().into_iter().map(|(id, _)| id).collect()
 }

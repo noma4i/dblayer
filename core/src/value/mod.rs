@@ -329,6 +329,14 @@ pub fn fractional_between(lower: Option<&str>, upper: Option<&str>) -> Result<St
 /// Scope-key text of a relation parameter that was passed as null (for example the unfiltered feed).
 const NULL_PARAM: &str = "\u{0}null";
 
+pub fn relation_param_text(value: &Value) -> String {
+    match value {
+        Value::Null => NULL_PARAM.to_string(),
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
 pub fn normalize_relation_params(
     values: &Map<String, Value>,
     kinds: &BTreeMap<String, ScalarKind>,
