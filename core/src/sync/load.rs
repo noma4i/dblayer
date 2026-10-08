@@ -64,6 +64,7 @@ pub(crate) struct Resolved {
     pub scope: ScopeRef,
     pub window_key: String,
     pub params: Map<String, Value>,
+    pub(crate) scope_values: Map<String, Value>,
 }
 
 impl Resolved {
@@ -133,7 +134,7 @@ impl Inner {
         };
         let window_key = window_key(scope_key.as_str(), direction);
         let scope = ScopeRef::new(ModelKey::new(model), scope_key);
-        Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone() })
+        Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values: scope_params })
     }
 
     fn next_issued(&self) -> i64 {
@@ -210,7 +211,8 @@ impl Inner {
             Ok(fetched) => fetched,
             Err(error) => return Self::failed(error, force, has_window),
         };
-        let normalized = normalize_nodes(&self.db, &resolved.model, &extracted.nodes)?;
+        let stamped = stamp_scope_values(extracted.nodes, &resolved.scope_values);
+        let normalized = normalize_nodes(&self.db, &resolved.model, &stamped)?;
         let dropped = normalized.dropped;
         let is_first_page = cursor.is_none();
         let plans_as_first = is_first_page && (resolved.is_connection() || resolved.remote.coverage() == Coverage::Complete);
@@ -299,4 +301,13 @@ impl Sync {
         let resolved = self.inner.resolve(model, relation, params)?;
         self.inner.load_more(&resolved).await
     }
+}
+
+fn stamp_scope_values(mut nodes: Vec<Map<String, Value>>, values: &Map<String, Value>) -> Vec<Map<String, Value>> {
+    for node in &mut nodes {
+        for (column, value) in values {
+            node.entry(column.clone()).or_insert_with(|| value.clone());
+        }
+    }
+    nodes
 }

@@ -320,3 +320,13 @@ async fn forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery()
     let all = seen.lock().unwrap().clone();
     assert_eq!(all, vec![(vec!["m1".to_string(), "m2".to_string()], 0), (vec!["m2".to_string(), "m3".to_string()], 1)]);
 }
+
+#[tokio::test(start_paused = true)]
+async fn rows_without_the_scope_column_get_the_param() {
+    let rig = rig();
+    let mine = params(json!({"userId": "u1"}));
+    rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
+    rig.sync.load("moments", "by_user", &mine, LoadOptions::default()).await.unwrap();
+    let row = rig.db.find("moments", &crate::identity::RowId::new("a").unwrap()).unwrap().unwrap();
+    assert_eq!(row.text("userId"), Some("u1"));
+}
