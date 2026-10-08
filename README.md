@@ -8,6 +8,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 
 - **Always live.** Every read of a model returns a live result: the current value plus a stream of changes. There is no separate "observe" call to remember.
 - **Local first.** Data lives in SQLite. Reads never wait for the network, and writes are applied locally at once.
+- **Sync state on every record.** Each record knows if the server has seen it: `synced`, `pending`, `sending` or `failed`, plus `isLocal` for records that still have a temporary id. Build spinners, retry buttons and unsent banners on it, and query by it.
 - **Offline writes.** Create, update and destroy are applied optimistically and queued. The queue survives restarts, is sent in order, rolled back on a final failure and replaces temporary ids with server ids.
 - **GraphQL without glue code.** Register your operations and point models at them. Responses of queries, mutations and subscription events are normalized into rows by one set of rules. Refetching after mutations, reconnects and app resume is automatic.
 - **No flicker.** One change is one commit. Observers see cascades, replacements and id swaps as a single transition, in order. Pull-to-refresh replaces data in one commit with no empty state in between.
@@ -22,6 +23,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - [Describing models](docs/models.md)
 - [Live data and queries](docs/live-data.md)
 - [Writing data](docs/writing-data.md)
+- [Sync state of a record](docs/sync-state.md)
 - [Server sync](docs/server-sync.md)
 - [Files](docs/files.md)
 - [Threading and performance](docs/threading.md)
@@ -107,7 +109,7 @@ See [docs/live-data.md](docs/live-data.md) for UIKit, view models, single record
 | `kotlin/` | Android library module with the bindings |
 | `docs/` | Developer documentation |
 | `scripts/` | Build and check scripts |
-| `legacy/` | The previous Swift implementation, kept as a reference until the port is complete |
+| `legacy/` | The previous Swift implementation (GRDB), kept as a reference |
 
 ## Build and test
 

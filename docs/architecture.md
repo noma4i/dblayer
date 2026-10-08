@@ -35,6 +35,7 @@ Data crosses between the core and the platform as JSON strings. The platform dec
 
 - **One way to change data.** Every change is a commit: one SQLite transaction, one revision. Caches, the queue and files change only inside commits.
 - **Live reads.** Observers depend on models, lists and rows. A commit wakes only observers whose dependencies it touched.
+- **Sync state is stored.** The state of every unconfirmed record lives in a small table written by the same commit that changes the queue, so it is cheap to read and to query.
 - **Local first.** Reads come from SQLite. The network only fills it.
 - **One mechanism per question.** Duplicate mechanisms and duplicate names are treated as defects and checked by `scripts/check_zoo.sh`.
 

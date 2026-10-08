@@ -29,6 +29,8 @@ moment.destroy()
 
 `update` keeps fields you did not mention. A patch that changes nothing creates no commit and no queue entry.
 
+Every record carries its sync state (`pending`, `sending`, `synced`, `failed`), so you can show that a new moment is still being sent. See [sync state](sync-state.md).
+
 ## Temporary ids
 
 A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows that point at the temporary id are updated in the same commit.
@@ -37,7 +39,7 @@ A created row has a temporary id until the server answers. When the response arr
 
 - Network errors are retried with a growing delay.
 - If the connection breaks after sending started, the operation is marked `delivery_unknown` and resolved on the next attempt.
-- A final server refusal rolls the local change back with a commit and reports the error. Observers see the reverse transition.
+- A final server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for `retry()` or `discard()` ([sync state](sync-state.md)).
 - Operations that cannot be understood are moved to quarantine instead of being lost.
 - The queue lives in the database, so pending writes survive restarts and are sent after the app reopens.
 

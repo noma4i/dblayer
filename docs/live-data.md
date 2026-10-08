@@ -9,6 +9,7 @@ Every read of a model is live. A read gives you the current value and a stream o
 | `revision` | Commit revision the state reflects. It only grows for one observer |
 | `rows` | Full current result |
 | `diff.inserted`, `removed`, `updated`, `moved` | Row identities that changed |
+| `rows[i].sync` | Sync state of every row, see [sync state](sync-state.md) |
 | `diff.replaced` | Pairs `(old id, new id)`, for example a temporary id replaced by the server id, so a UI can keep the same element |
 
 The first delivery contains every row as `inserted`.
