@@ -5,6 +5,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
 use crate::ddl::{fingerprint, manifest_read, manifest_stamp, manifest_write, RESET_INTENT_KEY};
+use crate::files::{clear_all, clear_model};
 use crate::identity::ScopeKey;
 
 use super::location::{reset_marker, remove_database_files};
@@ -132,6 +133,7 @@ pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str
         connection.execute_batch(&format!("DELETE FROM {table}"))?;
     }
     connection.execute("DELETE FROM scope_member WHERE model = ?1", params![model])?;
+    clear_model(connection, model)?;
     connection.execute("DELETE FROM tombstone WHERE model = ?1", params![model])?;
     connection.execute(
         "DELETE FROM query_window WHERE key LIKE ?1 ESCAPE '\\'",
@@ -149,6 +151,7 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
         }
     }
     connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window;")?;
+    clear_all(connection)?;
     Ok(())
 }
 

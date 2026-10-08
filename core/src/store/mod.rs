@@ -14,6 +14,7 @@ mod apply;
 mod boot;
 mod diagnostics;
 mod error;
+mod file_ops;
 mod intake;
 mod location;
 mod maintenance;
@@ -198,6 +199,8 @@ mod apply_tests;
 mod boot_tests;
 #[cfg(test)]
 mod diagnostics_tests;
+#[cfg(test)]
+mod file_ops_tests;
 #[cfg(test)]
 mod intake_tests;
 #[cfg(test)]

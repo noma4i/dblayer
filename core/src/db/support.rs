@@ -12,10 +12,15 @@ use crate::value::ScalarKind;
 use super::{Db, Row};
 
 pub fn users_spec() -> ModelSpec {
-    let mut spec = ModelSpec::new("users", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str).optional()]);
+    let mut spec = ModelSpec::new(
+        "users",
+        vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str).optional(), FieldSpec::array("friendIds").optional()],
+    );
     let mut moments = AssociationSpec::new("moments", AssociationKind::HasMany, "moments", "userId");
     moments.dependent = Some(Dependent::Destroy);
-    spec.associations.push(moments);
+    let latest = AssociationSpec::new("latest", AssociationKind::HasOne, "moments", "userId");
+    let friends = AssociationSpec::new("friends", AssociationKind::References, "users", "friendIds");
+    spec.associations.extend([moments, latest, friends]);
     spec
 }
 
@@ -27,6 +32,8 @@ pub fn moments_spec() -> ModelSpec {
             FieldSpec::scalar("userId", ScalarKind::Id).nullable().indexed(),
             FieldSpec::scalar("text", ScalarKind::Str).optional().indexed(),
             FieldSpec::scalar("createdAt", ScalarKind::Date).optional().indexed(),
+            FieldSpec::file("media").optional(),
+            FieldSpec::file("cover").optional(),
         ],
     );
     let mut author = AssociationSpec::new("author", AssociationKind::BelongsTo, "users", "userId");
@@ -40,7 +47,7 @@ pub fn moments_spec() -> ModelSpec {
 pub fn vibes_spec() -> ModelSpec {
     ModelSpec::new(
         "vibes",
-        vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("momentId", ScalarKind::Id).indexed(), FieldSpec::scalar("kind", ScalarKind::Str).optional()],
+        vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("momentId", ScalarKind::Id).indexed(), FieldSpec::scalar("kind", ScalarKind::Str).optional(), FieldSpec::file("media").optional()],
     )
 }
 

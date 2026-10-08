@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::files::remove_beside;
+
 use super::StoreError;
 
 pub const DIRECTORY_NAME: &str = "DBlayer";
@@ -58,5 +60,5 @@ pub(crate) fn remove_database_files(path: &Path) -> Result<(), StoreError> {
             Err(error) => return Err(error.into()),
         }
     }
-    Ok(())
+    Ok(remove_beside(path)?)
 }

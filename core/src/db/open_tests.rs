@@ -79,3 +79,45 @@ fn concurrent_creates_all_land() {
     assert_eq!(db.count(&crate::query::Query::new("moments")).unwrap(), 100);
     assert_eq!(db.outbox().unwrap().len(), 100);
 }
+
+fn reopened_after(setup: impl FnOnce(&Db)) -> (tempfile::TempDir, Db) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    {
+        let db = Db::open(&path, all_specs(), None).unwrap();
+        setup(&db);
+    }
+    let db = Db::open(&path, all_specs(), None).unwrap();
+    (directory, db)
+}
+
+fn quarantined(db: &Db, reason: &str) -> i64 {
+    db.shared.store.lock().connection.query_row("SELECT COUNT(*) FROM quarantine WHERE reason = ?1", [reason], |row| row.get(0)).unwrap()
+}
+
+#[test]
+fn fsck_rebuilds_a_missing_temp_row_from_its_create_operation_on_open() {
+    let mut temp_id = None;
+    let (_directory, db) = reopened_after(|db| {
+        let created = db.create("moments", obj(json!({"userId": "u1", "text": "lost"}))).unwrap();
+        db.execute_for_test("DELETE FROM row_moments");
+        temp_id = Some(created.id.clone());
+    });
+    let rebuilt = db.find("moments", &temp_id.unwrap()).unwrap().unwrap();
+    assert_eq!(rebuilt.text("text"), Some("lost"));
+    assert_eq!(db.outbox().unwrap().len(), 1);
+}
+
+#[test]
+fn fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_others() {
+    let mut kept_id = None;
+    let (_directory, db) = reopened_after(|db| {
+        put(db, "moments", json!({"id": "temp-orphan", "text": "orphan"}));
+        put(db, "moments", json!({"id": "m1", "text": "server row"}));
+        kept_id = Some(db.create("moments", obj(json!({"userId": "u1", "text": "queued"}))).unwrap().id.clone());
+    });
+    assert!(db.find("moments", &rid("temp-orphan")).unwrap().is_none());
+    assert!(db.find("moments", &rid("m1")).unwrap().is_some());
+    assert!(db.find("moments", &kept_id.unwrap()).unwrap().is_some());
+    assert_eq!(quarantined(&db, "orphan-temp-row"), 1);
+}

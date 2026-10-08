@@ -3,8 +3,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::ddl::table_name;
+use crate::files::FileDirectories;
 use crate::identity::{Generation, RowId};
-use crate::operation::{apply_fsck, fsck_plan, open_operations, OutboxQueue};
+use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
+use crate::identity::ModelKey;
+use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, OutboxQueue};
 use crate::pacing::Clock;
 use crate::schema::{validate_models, ModelSpec};
 use crate::store::{Reader, Store, StoreError};
@@ -33,6 +36,8 @@ pub(crate) struct Shared {
     pub cache: Mutex<RowCache>,
     pub observers: Mutex<Observers>,
     pub counters: Counters,
+    pub files: FileDirectories,
+    pub files_gate: Mutex<()>,
 }
 
 pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -92,6 +97,8 @@ impl Db {
             cache: Mutex::new(RowCache::new(config.cache_rows)),
             observers: Mutex::new(Observers::default()),
             counters: Counters::default(),
+            files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
+            files_gate: Mutex::new(()),
         };
         Ok(Db { shared: Arc::new(shared) })
     }
@@ -132,22 +139,33 @@ impl Db {
 }
 
 fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreError> {
-    let inner = store.lock();
-    let operations = open_operations(&inner.connection)?;
-    let known: HashSet<String> = models.iter().map(|spec| spec.key.as_str().to_string()).collect();
-    let queue = OutboxQueue::new(operations.clone());
-    let mut temp_rows: HashSet<RowId> = HashSet::new();
-    let mut open_row_ids: HashSet<RowId> = HashSet::new();
-    for spec in models {
-        let sql = format!("SELECT id FROM {} WHERE id LIKE 'temp-%'", table_name(spec.key.as_str()));
-        let mut statement = inner.connection.prepare(&sql)?;
-        let ids = statement.query_map([], |row| row.get::<_, String>(0))?;
-        for id in ids {
-            temp_rows.extend(RowId::new(&id?).ok());
+    let rebuilt = {
+        let inner = store.lock();
+        let operations = open_operations(&inner.connection)?;
+        let known: HashSet<String> = models.iter().map(|spec| spec.key.as_str().to_string()).collect();
+        let queue = OutboxQueue::new(operations.clone());
+        let mut temp_rows: HashSet<RowId> = HashSet::new();
+        let mut open_row_ids: HashSet<RowId> = HashSet::new();
+        let mut tables: Vec<(String, String)> = Vec::new();
+        for spec in models {
+            let table = table_name(spec.key.as_str());
+            let mut statement = inner.connection.prepare(&format!("SELECT id FROM {table} WHERE id LIKE 'temp-%'"))?;
+            let ids = statement.query_map([], |row| row.get::<_, String>(0))?;
+            for id in ids {
+                temp_rows.extend(RowId::new(&id?).ok());
+            }
+            open_row_ids.extend(queue.open_row_ids(&spec.key));
+            tables.push((spec.key.as_str().to_string(), table));
         }
-        open_row_ids.extend(queue.open_row_ids(&spec.key));
+        let plan = fsck_plan(&operations, &known, &temp_rows, &temp_rows, &open_row_ids);
+        apply_fsck(&inner.connection, &plan, &tables)?;
+        rebuilt_rows(&inner.connection, &plan, &operations, &known)?
+    };
+    if rebuilt.is_empty() {
+        return Ok(());
     }
-    let plan = fsck_plan(&operations, &known, &temp_rows, &temp_rows, &open_row_ids);
-    apply_fsck(&inner.connection, &plan)?;
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, store.generation());
+    envelope.entity_ops = rebuilt.into_iter().map(|row| EntityOp::Upsert { model: ModelKey::new(&row.model), id: row.id, row: row.row }).collect();
+    store.commit(envelope)?;
     Ok(())
 }

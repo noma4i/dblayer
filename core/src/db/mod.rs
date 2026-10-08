@@ -1,9 +1,11 @@
 mod cache;
 mod diagnostics;
 mod error;
+mod files;
 mod land;
 mod local_write;
 mod lookup;
+mod maintain;
 mod observe;
 mod open;
 mod related;
@@ -21,6 +23,8 @@ pub use row::{Record, Row};
 mod support;
 #[cfg(test)]
 mod cache_tests;
+#[cfg(test)]
+mod files_tests;
 #[cfg(test)]
 mod land_tests;
 #[cfg(test)]

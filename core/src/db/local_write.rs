@@ -7,6 +7,7 @@ use crate::commit::{
     CommitEnvelope, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition, WriteOrigin,
 };
 use crate::ddl::table_name;
+use crate::files::ids_of_rows;
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::operation::Operation;
 use crate::query::{Query, Where};
@@ -60,7 +61,7 @@ struct Queued {
     rollback: Option<Value>,
 }
 
-fn plan_fault(error: PlanCommitError<DbError>) -> DbError {
+pub(super) fn plan_fault(error: PlanCommitError<DbError>) -> DbError {
     match error {
         PlanCommitError::Plan(error) => error,
         PlanCommitError::Store(error) => error.into(),
@@ -132,6 +133,7 @@ impl Db {
         let generation = self.generation();
         let created_at = self.shared.store.lock().now_ms();
         let mut destroyed: Vec<RowRef> = Vec::new();
+        let mut file_ids: Vec<String> = Vec::new();
         let result = self
             .shared
             .store
@@ -147,6 +149,8 @@ impl Db {
                 } else {
                     vec![own.clone()]
                 };
+                let pairs: Vec<(String, String)> = destroyed.iter().map(|target| (target.model.to_string(), target.id.to_string())).collect();
+                file_ids = ids_of_rows(reader.connection(), &pairs)?;
                 let mut rows = Vec::new();
                 for target in &destroyed {
                     if let Some(data) = reader.point(target.model.as_str(), target.id.as_str())? {
@@ -165,6 +169,7 @@ impl Db {
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
+        self.shared.files.discard(&file_ids);
         self.publish(&result);
         Ok(destroyed)
     }

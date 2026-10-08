@@ -13,6 +13,8 @@ pub mod store;
 pub mod query;
 pub mod read;
 pub mod db;
+pub mod files;
+pub mod sync;
 
 use std::sync::{Arc, Mutex};
 

@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::identity::RowId;
 use crate::query::{Query, Where};
@@ -31,9 +31,25 @@ impl Db {
         self.find(association.target.as_str(), &parent)
     }
 
+    fn children_query(association: &AssociationSpec, id: &RowId) -> Query {
+        Query::new(association.target.as_str()).filtered(Where::equal(&association.foreign_key, json!(id.as_str())))
+    }
+
     pub fn has_many_query(&self, model: &str, id: &RowId, name: &str) -> Result<Query, DbError> {
         let association = self.association(model, name, AssociationKind::HasMany)?;
-        Ok(Query::new(association.target.as_str()).filtered(Where::equal(&association.foreign_key, json!(id.as_str()))))
+        Ok(Self::children_query(association, id))
+    }
+
+    pub fn has_one(&self, model: &str, row: &Row, name: &str) -> Result<Option<Row>, DbError> {
+        let association = self.association(model, name, AssociationKind::HasOne)?;
+        self.first(&Self::children_query(association, &row.id))
+    }
+
+    pub fn references(&self, model: &str, row: &Row, name: &str) -> Result<Vec<Row>, DbError> {
+        let association = self.association(model, name, AssociationKind::References)?;
+        let field = if association.foreign_key.is_empty() { &association.name } else { &association.foreign_key };
+        let ids: Vec<RowId> = row.get(field).and_then(Value::as_array).into_iter().flatten().filter_map(crate::value::read_id).collect();
+        self.find_many(association.target.as_str(), &ids)
     }
 
     pub fn has_many(&self, model: &str, row: &Row, name: &str) -> Result<Vec<Row>, DbError> {

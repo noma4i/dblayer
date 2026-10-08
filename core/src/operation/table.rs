@@ -1,9 +1,11 @@
 use std::collections::HashSet;
 
 use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::{Map, Value};
 
 use super::fsck::FsckAction;
 use super::once::OnceRequest;
+use super::quarantine::{quarantine_add, QuarantineReason};
 use super::status::{mode_text, parse_mode, Operation, OperationId, OperationStatus};
 use crate::identity::RowId;
 
@@ -109,15 +111,68 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
     Ok(operations)
 }
 
-pub fn apply_fsck(connection: &Connection, actions: &[FsckAction]) -> rusqlite::Result<usize> {
+pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], row_tables: &[(String, String)]) -> rusqlite::Result<usize> {
+    let transaction = connection.unchecked_transaction()?;
     let mut applied = 0;
     for action in actions {
-        if let FsckAction::SetStatus(id, status) = action {
-            set_status(connection, id.0, *status)?;
-            applied += 1;
+        match action {
+            FsckAction::SetStatus(id, status) => {
+                set_status(&transaction, id.0, *status)?;
+                applied += 1;
+            }
+            FsckAction::QuarantineOrphan(id) => {
+                if quarantine_row(&transaction, id, row_tables)? {
+                    applied += 1;
+                }
+            }
+            FsckAction::RebuildTempRow(_) | FsckAction::Keep(_) => {}
         }
     }
+    transaction.commit()?;
     Ok(applied)
+}
+
+fn quarantine_row(connection: &Connection, id: &RowId, row_tables: &[(String, String)]) -> rusqlite::Result<bool> {
+    for (model, table) in row_tables {
+        let payload: Option<Vec<u8>> =
+            connection.query_row(&format!("SELECT payload FROM {table} WHERE id = ?"), [id.as_str()], |row| row.get(0)).optional()?;
+        let Some(payload) = payload else { continue };
+        quarantine_add(connection, model, &payload, QuarantineReason::OrphanTempRow)?;
+        connection.execute(&format!("DELETE FROM {table} WHERE id = ?"), [id.as_str()])?;
+        connection.execute("DELETE FROM scope_member WHERE model = ? AND row_id = ?", params![model, id.as_str()])?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RebuiltRow {
+    pub model: String,
+    pub id: RowId,
+    pub row: Map<String, Value>,
+}
+
+pub fn rebuilt_rows(
+    connection: &Connection,
+    actions: &[FsckAction],
+    operations: &[Operation],
+    known_models: &HashSet<String>,
+) -> rusqlite::Result<Vec<RebuiltRow>> {
+    let mut rows = Vec::new();
+    for action in actions {
+        let FsckAction::RebuildTempRow(sequence) = action else { continue };
+        let Some(operation) = operations.iter().find(|operation| operation.id == *sequence) else { continue };
+        let Some((model, _)) = Operation::split_action_key(&operation.action_key).filter(|(model, _)| known_models.contains(model)) else {
+            continue;
+        };
+        let Some(temp) = &operation.temp_id else { continue };
+        let Some(input) = operation_input(connection, sequence.0)? else { continue };
+        let Ok(Value::Object(row)) = serde_json::from_slice::<Value>(&input) else { continue };
+        if row.get("id").and_then(Value::as_str) == Some(temp.as_str()) {
+            rows.push(RebuiltRow { model, id: temp.clone(), row });
+        }
+    }
+    Ok(rows)
 }
 
 pub fn record_once(connection: &Connection, request: &OnceRequest) -> rusqlite::Result<()> {

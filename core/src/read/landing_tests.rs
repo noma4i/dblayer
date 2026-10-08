@@ -131,3 +131,12 @@ fn foreign_scope_is_rejected() {
     let foreign = ScopeRef::new(ModelKey::new("other"), ScopeKey::compose(&["other", "items"]));
     assert_eq!(plan_landing(&foreign, &person(), &[], &[row("x")], true), Err(LandingError::ScopeModelMismatch));
 }
+
+#[test]
+fn detaches_come_before_inserts_and_moves() {
+    let current = [member("a", "k1"), member("b", "k2")];
+    let plan = land("order", &current, &[row("b"), row("c")], true);
+    let first_detach = plan.scope_ops.iter().position(|operation| matches!(operation, ScopeOp::Detach { .. })).unwrap();
+    let first_other = plan.scope_ops.iter().position(|operation| !matches!(operation, ScopeOp::Detach { .. })).unwrap();
+    assert!(first_detach < first_other);
+}

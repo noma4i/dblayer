@@ -1,5 +1,8 @@
 use super::*;
-use crate::ddl::migrate_core;
+use crate::ddl::{create_model_tables, migrate_core};
+use crate::schema::{FieldSpec, ModelSpec};
+use crate::value::ScalarKind;
+use std::collections::HashSet;
 use crate::identity::RowId;
 use crate::schema::ActionMode;
 use rusqlite::Connection;
@@ -79,12 +82,12 @@ fn input_is_stored_and_read_back() {
 #[test]
 fn apply_fsck_counts_only_status_actions() {
     let connection = database();
-    assert_eq!(apply_fsck(&connection, &[]).unwrap(), 0);
+    assert_eq!(apply_fsck(&connection, &[], &[]).unwrap(), 0);
     let seq = append_operation(&connection, &operation("row-1", OperationStatus::Pending), b"{}").unwrap();
     let skipped = [FsckAction::Keep(OperationId(seq)), FsckAction::QuarantineOrphan(RowId::new("orphan-1").unwrap())];
-    assert_eq!(apply_fsck(&connection, &skipped).unwrap(), 0);
+    assert_eq!(apply_fsck(&connection, &skipped, &[]).unwrap(), 0);
     assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Pending);
-    assert_eq!(apply_fsck(&connection, &[FsckAction::SetStatus(OperationId(seq), OperationStatus::Failed)]).unwrap(), 1);
+    assert_eq!(apply_fsck(&connection, &[FsckAction::SetStatus(OperationId(seq), OperationStatus::Failed)], &[]).unwrap(), 1);
     assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Failed);
 }
 
@@ -119,4 +122,77 @@ fn op_columns_match_spec_and_nullability() {
     assert_eq!(names, OP_COLUMNS);
     let nullable: Vec<&str> = columns.iter().filter(|c| c.1).map(|c| c.0.as_str()).collect();
     assert_eq!(nullable, ["temp_id", "base_revision", "dedupe_key", "rollback"]);
+}
+
+fn with_messages_table() -> Connection {
+    let connection = database();
+    let messages = ModelSpec::new("messages", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+    create_model_tables(&connection, &[messages]).unwrap();
+    connection
+}
+
+fn insert_message(connection: &Connection, id: &str) {
+    connection
+        .execute(
+            "INSERT INTO row_messages (id, revision, born_rev, field_rev, record_version, payload) VALUES (?1, 1, 1, x'7b7d', 1, ?2)",
+            rusqlite::params![id, format!("{{\"id\":\"{id}\"}}").into_bytes()],
+        )
+        .unwrap();
+    connection.execute("INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES ('messages', 'list', ?1, ?1)", [id]).unwrap();
+}
+
+fn tables() -> Vec<(String, String)> {
+    vec![("messages".to_string(), "row_messages".to_string())]
+}
+
+#[test]
+fn apply_fsck_quarantines_and_removes_orphan_temp_rows() {
+    let connection = with_messages_table();
+    insert_message(&connection, "temp-orphan");
+    insert_message(&connection, "temp-kept");
+    let actions = [FsckAction::QuarantineOrphan(RowId::new("temp-orphan").unwrap()), FsckAction::QuarantineOrphan(RowId::new("temp-unknown").unwrap())];
+    assert_eq!(apply_fsck(&connection, &actions, &tables()).unwrap(), 1);
+    let left: Vec<String> = connection.prepare("SELECT id FROM row_messages").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    assert_eq!(left, vec!["temp-kept"]);
+    let members: i64 = connection.query_row("SELECT COUNT(*) FROM scope_member WHERE row_id = 'temp-orphan'", [], |r| r.get(0)).unwrap();
+    assert_eq!(members, 0);
+    let entry: (String, String, Vec<u8>) = connection.query_row("SELECT reason, model, payload FROM quarantine", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+    assert_eq!((entry.0.as_str(), entry.1.as_str(), entry.2), ("orphan-temp-row", "messages", b"{\"id\":\"temp-orphan\"}".to_vec()));
+}
+
+fn create_operation(connection: &Connection, temp: &str, input: &[u8]) -> OperationId {
+    let mut operation = Operation::new("messages:create", ActionMode::Durable, vec![RowId::new(temp).unwrap()], 0, 1);
+    operation.temp_id = Some(RowId::new(temp).unwrap());
+    let seq = append_operation(connection, &operation, input).unwrap();
+    OperationId(seq)
+}
+
+fn known() -> HashSet<String> {
+    ["messages".to_string()].into()
+}
+
+#[test]
+fn rebuilt_rows_come_from_the_input_of_the_create_operation() {
+    let connection = with_messages_table();
+    let id = create_operation(&connection, "temp-1", b"{\"id\":\"temp-1\",\"body\":\"hi\"}");
+    let operations = open_operations(&connection).unwrap();
+    let rows = rebuilt_rows(&connection, &[FsckAction::RebuildTempRow(id)], &operations, &known()).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].model.as_str(), rows[0].id.as_str()), ("messages", "temp-1"));
+    assert_eq!(rows[0].row["body"], "hi");
+}
+
+#[test]
+fn rebuilt_rows_skip_inputs_that_do_not_describe_the_temp_row() {
+    let connection = with_messages_table();
+    let wrong_id = create_operation(&connection, "temp-1", b"{\"id\":\"temp-2\"}");
+    let not_object = create_operation(&connection, "temp-3", b"[1]");
+    let broken = create_operation(&connection, "temp-4", b"nope");
+    let operations = open_operations(&connection).unwrap();
+    let actions: Vec<FsckAction> = [wrong_id, not_object, broken, OperationId(99)].into_iter().map(FsckAction::RebuildTempRow).collect();
+    assert!(rebuilt_rows(&connection, &actions, &operations, &known()).unwrap().is_empty());
+    let unknown = HashSet::new();
+    let id = create_operation(&connection, "temp-5", b"{\"id\":\"temp-5\"}");
+    let operations = open_operations(&connection).unwrap();
+    assert!(rebuilt_rows(&connection, &[FsckAction::RebuildTempRow(id)], &operations, &unknown).unwrap().is_empty());
 }

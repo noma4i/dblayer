@@ -1,0 +1,167 @@
+use super::error::SyncError;
+use super::subscribe::{EventEffect, SubscriptionDef};
+use super::support::*;
+use crate::query::Query;
+use crate::transport::{EventSpec, Response, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind};
+use serde_json::json;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+fn rig_with_subscription() -> Rig {
+    let rig = rig();
+    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+    rig
+}
+
+fn next(node: serde_json::Value) -> SubscriptionEvent {
+    SubscriptionEvent::Next(Response::data(json!({"momentChanged": node})))
+}
+
+fn upsert_def() -> SubscriptionDef {
+    SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "moments", EventEffect::Upsert)
+}
+
+fn failed(kind: SubscriptionFailureKind) -> SubscriptionEvent {
+    SubscriptionEvent::Failed(SubscriptionFailure::new(kind, "boom"))
+}
+
+#[tokio::test(start_paused = true)]
+async fn upsert_event_changes_the_row_and_fires_the_observer() {
+    let rig = rig_with_subscription();
+    put(&rig, "moments", json!({"id": "m1", "text": "before", "userId": null}));
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    let sink = seen.clone();
+    let _observer = rig
+        .db
+        .observe(Query::new("moments"), move |rows| {
+            sink.lock().unwrap().push(rows.iter().filter_map(|row| row.text("text")).collect::<Vec<_>>().join(","));
+        })
+        .unwrap();
+    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "after"})));
+    settle().await;
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("after".to_string()));
+    assert_eq!(*seen.lock().unwrap(), ["before", "after"]);
+    assert_eq!(subscription.status().applied, 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn upsert_event_lands_nested_author() {
+    let rig = rig_with_subscription();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "author": {"id": "u7", "name": "Zed"}})));
+    settle().await;
+    let user = rig.db.find("users", &crate::identity::RowId::new("u7").unwrap()).unwrap().unwrap();
+    assert_eq!(user.text("name"), Some("Zed"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn patch_event_merges_fields_and_skips_unknown_rows() {
+    let rig = rig_with_subscription();
+    put(&rig, "moments", json!({"id": "m1", "text": "keep", "userId": "u1"}));
+    let def = SubscriptionDef::new(EventSpec::new("moment_patched"), "MomentChanged", "moments", EventEffect::Patch);
+    let _subscription = rig.sync.subscribe(def).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "patched"})));
+    rig.transport.emit("MomentChanged", next(json!({"id": "ghost", "text": "x"})));
+    settle().await;
+    let row = rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap();
+    assert_eq!((row.text("text"), row.text("userId")), (Some("patched"), Some("u1")));
+    assert_eq!(text_of(&rig, "moments", "ghost"), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn destroy_event_removes_the_row() {
+    let rig = rig_with_subscription();
+    put(&rig, "moments", json!({"id": "m1", "text": "bye", "userId": null}));
+    let def = SubscriptionDef::new(EventSpec::new("moment_gone"), "MomentChanged", "moments", EventEffect::Destroy);
+    let _subscription = rig.sync.subscribe(def).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1"})));
+    settle().await;
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_the_subscription_cancels_the_transport() {
+    let rig = rig_with_subscription();
+    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    settle().await;
+    drop(subscription);
+    settle().await;
+    assert_eq!(rig.transport.cancellations("MomentChanged"), 1);
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "late"})));
+    settle().await;
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropped_connection_is_reopened_after_a_delay() {
+    let rig = rig_with_subscription();
+    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.disconnect("MomentChanged");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(rig.transport.call_count("MomentChanged"), 2);
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "again"})));
+    settle().await;
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("again".to_string()));
+    assert_eq!(subscription.status().connects, 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn repeated_transport_failures_report_degraded_once_then_ready_recovers() {
+    let rig = rig_with_subscription();
+    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    for _ in 0..4 {
+        rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
+        tokio::time::sleep(Duration::from_secs(40)).await;
+    }
+    assert_eq!(rig.transport.call_count("MomentChanged"), 5);
+    assert!(subscription.status().degraded);
+    assert!(!subscription.status().stopped);
+    rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
+    settle().await;
+    assert!(!subscription.status().degraded);
+}
+
+#[tokio::test(start_paused = true)]
+async fn graphql_failure_stops_the_subscription() {
+    let rig = rig_with_subscription();
+    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Graphql));
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    assert!(subscription.status().stopped);
+    assert!(subscription.status().degraded);
+    assert_eq!(rig.transport.call_count("MomentChanged"), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn debounced_events_land_once_per_row_after_the_interval() {
+    let rig = rig_with_subscription();
+    put(&rig, "moments", json!({"id": "m1", "text": "start", "userId": null}));
+    let _observer = rig.db.observe(Query::new("moments"), |_| {}).unwrap();
+    let event = EventSpec::new("moment_changed").debounced(Duration::from_millis(500)).merged_by_row();
+    let def = SubscriptionDef::new(event, "MomentChanged", "moments", EventEffect::Upsert);
+    let _subscription = rig.sync.subscribe(def).await.unwrap();
+    for text in ["one", "two", "three"] {
+        rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": text})));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("start".to_string()));
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("three".to_string()));
+    assert_eq!(rig.db.diagnostics().observer_calls, 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn event_spec_with_a_fault_is_rejected() {
+    let rig = rig_with_subscription();
+    let event = EventSpec::new("moment_changed").debounced(Duration::from_millis(500));
+    let def = SubscriptionDef::new(event, "MomentChanged", "moments", EventEffect::Upsert);
+    assert!(matches!(rig.sync.subscribe(def).await, Err(SyncError::Event(_))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn unknown_operation_is_rejected() {
+    let rig = rig();
+    let result = rig.sync.subscribe(upsert_def()).await;
+    assert!(matches!(result, Err(SyncError::UnknownOperation(_))));
+}

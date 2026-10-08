@@ -471,3 +471,14 @@ fn repeated_stamp_does_not_add_manifest_rows() {
 
     assert_eq!(count(&connection), first);
 }
+
+#[test]
+fn core_migration_creates_the_file_table_with_a_unique_pair_index() {
+    let connection = core_connection();
+    assert!(names(&connection, "table").contains("file"));
+    assert!(names(&connection, "index").contains("file_pair"));
+    let insert = "insert into file (id, model, row_id, field, name, mime, size, sha256, location, data, created_at) values (?1, 'moments', 'm1', 'media', 'a.png', 'image/png', 3, 'x', ?2, x'010203', 1)";
+    connection.execute(insert, ["f1", "inline"]).unwrap();
+    assert!(connection.execute(insert, ["f2", "inline"]).is_err());
+    assert!(connection.execute(insert, ["f3", "elsewhere"]).is_err());
+}

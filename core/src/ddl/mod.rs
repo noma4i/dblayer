@@ -21,7 +21,7 @@ pub const SERVICE_COLUMNS: [&str; 6] = ["id", "revision", "born_rev", "field_rev
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
 const CACHE_TABLES: [&str; 3] = ["scope_member", "tombstone", "query_window"];
 
-const CORE_STATEMENTS: [&str; 15] = [
+const CORE_STATEMENTS: [&str; 17] = [
     "CREATE TABLE manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -86,6 +86,20 @@ const CORE_STATEMENTS: [&str; 15] = [
   reason TEXT NOT NULL
 ) STRICT",
     "CREATE INDEX quarantine_reason ON quarantine (reason, seq)",
+    "CREATE TABLE file (
+  id TEXT PRIMARY KEY NOT NULL,
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  location TEXT NOT NULL CHECK (location IN ('inline', 'disk')),
+  data BLOB,
+  created_at INTEGER NOT NULL
+) STRICT",
+    "CREATE UNIQUE INDEX file_pair ON file (model, row_id, field)",
 ];
 
 #[derive(Debug, thiserror::Error)]

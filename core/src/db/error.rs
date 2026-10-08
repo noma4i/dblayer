@@ -22,6 +22,8 @@ pub enum DbError {
     UnknownAssociation { model: String, name: String },
     #[error("association {name} of {model} has another kind")]
     WrongAssociation { model: String, name: String },
+    #[error("field {field} of {model} is not a file field")]
+    NotFileField { model: String, field: String },
     #[error("row {id} of {model} does not exist")]
     NotFound { model: String, id: String },
     #[error("origin {0:?} cannot be landed")]

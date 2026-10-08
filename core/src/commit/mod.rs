@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
+use crate::files::FileRecord;
 use crate::identity::{Generation, ModelKey, RowId, RowRef, ScopeKey};
 use crate::schema::ActionMode;
 use crate::value::duplicates;
@@ -50,6 +51,12 @@ impl EntityOp {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileOp {
+    Put(FileRecord),
+    Remove { model: ModelKey, row_id: RowId, field: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -149,6 +156,7 @@ pub struct CommitEnvelope {
     pub tx_id: Uuid,
     pub entity_ops: Vec<EntityOp>,
     pub scope_ops: Vec<ScopeOp>,
+    pub file_ops: Vec<FileOp>,
     pub operation_transitions: Vec<OperationTransition>,
     pub origin: WriteOrigin,
     pub generation: Generation,
@@ -175,6 +183,7 @@ impl CommitEnvelope {
             tx_id: Uuid::new_v4(),
             entity_ops: Vec::new(),
             scope_ops: Vec::new(),
+            file_ops: Vec::new(),
             operation_transitions: Vec::new(),
             origin,
             generation,
@@ -182,7 +191,7 @@ impl CommitEnvelope {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.operation_transitions.is_empty()
+        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty()
     }
 
     pub fn touched_rows(&self) -> Vec<RowRef> {

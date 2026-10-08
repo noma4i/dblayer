@@ -98,5 +98,5 @@ fn scope_operations(scope: &ScopeRef, change: &MembershipChange, order_keys: &BT
         .iter()
         .filter_map(|id| RowId::new(id).ok())
         .map(|row| ScopeOp::Detach { scope: scope.clone(), row });
-    inserted.chain(moved).chain(removed).collect()
+    removed.chain(inserted).chain(moved).collect()
 }

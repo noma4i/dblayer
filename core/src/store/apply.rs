@@ -11,6 +11,7 @@ use crate::ddl::{manifest_write, RECORD_VERSION, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
 use crate::schema::ActionMode;
 
+use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, encode_row, hydrate, placeholders, Reader, CHUNK};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
 use super::{Inner, ModelInfo, Store, StoreError};
@@ -192,6 +193,7 @@ pub(crate) fn apply_envelope(
     let revision = reader.revision_seq()? + 1;
     let mut wrote = false;
     let mut tombstoned = false;
+    let mut files_changed = false;
     let mut changes = RowChanges::default();
     let mut destroyed: Vec<Destroyed> = Vec::new();
     let mut result = CommitResult::noop(envelope.tx_id);
@@ -221,6 +223,7 @@ pub(crate) fn apply_envelope(
                 if removed > 0 {
                     changes.push(model, id.as_str(), RowChangeKind::Destroyed, BTreeSet::new());
                 }
+                files_changed |= release_files(connection, model, id, reason)?;
                 destroyed.push(Destroyed { model: model.clone(), id: id.as_str().to_string(), reason: reason.clone() });
             }
         }
@@ -243,6 +246,9 @@ pub(crate) fn apply_envelope(
         }
     }
     wrote |= !changes.changes.is_empty() || tombstoned;
+
+    files_changed |= apply_file_ops(connection, &envelope.file_ops)?;
+    wrote |= files_changed;
 
     wrote |= apply_scope_ops(connection, &envelope.scope_ops, &mut result.scopes)?;
     wrote |= apply_transitions(connection, &envelope.operation_transitions, &mut result)?;
