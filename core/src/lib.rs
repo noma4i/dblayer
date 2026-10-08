@@ -12,6 +12,7 @@ pub mod commit;
 pub mod store;
 pub mod query;
 pub mod read;
+pub mod db;
 
 use std::sync::{Arc, Mutex};
 

@@ -99,6 +99,7 @@ pub enum FieldKind {
     Object,
     Array,
     List { element: ScalarKind },
+    File,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -140,6 +141,10 @@ impl FieldSpec {
 
     pub fn object(name: &str) -> Self {
         Self::with_kind(name, FieldKind::Object)
+    }
+
+    pub fn file(name: &str) -> Self {
+        Self::with_kind(name, FieldKind::File)
     }
 
     pub fn array(name: &str) -> Self {
@@ -189,11 +194,16 @@ impl FieldSpec {
             FieldKind::Raw => read_raw(value),
             FieldKind::Object => value.is_object().then(|| value.clone()),
             FieldKind::Array => value.is_array().then(|| value.clone()),
+            FieldKind::File => is_file_descriptor(value).then(|| value.clone()),
             FieldKind::List { element } => {
                 read_array(value, |item| read_scalar(item, *element)).map(Value::Array)
             }
         }
     }
+}
+
+fn is_file_descriptor(value: &Value) -> bool {
+    value.as_object().is_some_and(|object| object.get("id").is_some_and(Value::is_string) && object.get("size").is_some_and(Value::is_u64))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,10 +320,12 @@ pub enum RemoteFault {
     SingleHasPaging,
     ConnectionWithoutPageInfo,
     MaxPagesNotPositive,
+    MissingOperation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteSpec {
+    pub operation: String,
     pub shape: RemoteShape,
     pub stale_time: String,
     #[serde(default)]
@@ -335,6 +347,9 @@ impl RemoteSpec {
     }
 
     pub fn fault(&self) -> Option<RemoteFault> {
+        if self.operation.is_empty() {
+            return Some(RemoteFault::MissingOperation);
+        }
         match &self.shape {
             RemoteShape::Single if self.selects_page_info => Some(RemoteFault::SingleHasPaging),
             RemoteShape::Connection { .. } if !self.selects_page_info => Some(RemoteFault::ConnectionWithoutPageInfo),

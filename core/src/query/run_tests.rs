@@ -245,3 +245,12 @@ fn scope_read_plan_walks_the_scope_index_without_sorting() {
     assert!(details.iter().any(|detail| detail.contains("scope_walk")), "{details:?}");
     assert!(details.iter().all(|detail| !detail.contains("TEMP B-TREE")), "{details:?}");
 }
+
+#[test]
+fn fetch_keys_returns_ids_and_revisions_in_row_order() {
+    let connection = seeded();
+    connection.execute("UPDATE row_people SET revision = 7 WHERE id = 'p2'", []).unwrap();
+    let query = Query::new("people").filtered(Where::equal("status", json!("active"))).ordered(vec![Order::new("createdAt", SortDirection::Desc)]);
+    let statement = compile_keys(&query, &people()).unwrap();
+    assert_eq!(fetch_keys(&connection, &statement).unwrap(), vec![("p2".to_string(), 7), ("p1".to_string(), 1)]);
+}

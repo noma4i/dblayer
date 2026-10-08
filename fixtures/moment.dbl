@@ -1,0 +1,23 @@
+model Moment do
+  schema do
+    string :uuid,      index: true
+    id     :userId,    null: true, index: true
+    string :text,      null: true
+    object :media,     default: {}
+    date   :createdAt, index: true
+
+    index :userId, :createdAt
+  end
+
+  belongs_to :author, model: User, key: :userId, touch: true
+  has_many   :vibes,  model: Vibe, key: :momentId, dependent: :destroy
+
+  scope :recent,  order: { createdAt: :desc }
+  scope :by_user, params: [:userId], where: { userId: :userId }, order: { createdAt: :desc }
+
+  remote :feed do
+    query MomentsFeed
+    paginate 20
+    fresh_for 5.minutes
+  end
+end

@@ -1,0 +1,10 @@
+model Chat do
+  schema do
+    string :title
+    date   :lastMessageAt, null: true, index: true
+  end
+
+  has_many :messages, model: Message, key: :chatId, dependent: :destroy
+
+  scope :recent, order: { lastMessageAt: :desc }
+end

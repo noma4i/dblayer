@@ -154,7 +154,7 @@ pub fn column_type(kind: &FieldKind) -> Option<ColumnType> {
         }
         FieldKind::Scalar { kind: ScalarKind::Int | ScalarKind::Bool } => Some(ColumnType::Integer),
         FieldKind::Scalar { kind: ScalarKind::Num } => Some(ColumnType::Real),
-        FieldKind::Raw | FieldKind::Object | FieldKind::Array | FieldKind::List { .. } => None,
+        FieldKind::Raw | FieldKind::Object | FieldKind::Array | FieldKind::List { .. } | FieldKind::File => None,
     }
 }
 

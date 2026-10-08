@@ -107,6 +107,7 @@ impl Query {
 }
 
 const ROW_COLUMNS: &str = "r.id, r.record_version, r.payload";
+const KEY_COLUMNS: &str = "r.id, r.revision";
 
 fn check_model(query: &Query, model: &ModelSpec) -> Result<(), QueryError> {
     if query.model == model.key {
@@ -157,14 +158,22 @@ fn window_clause(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
     sql
 }
 
-pub fn compile(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
+fn compile_columns(query: &Query, model: &ModelSpec, columns: &str) -> Result<CompiledStatement, QueryError> {
     check_model(query, model)?;
     let mut bindings = Vec::new();
     let filter = filter_clause(query, model, &mut bindings)?;
     let order = order_clause(query, model)?;
     let window = window_clause(query, &mut bindings);
-    let sql = format!("SELECT {ROW_COLUMNS} FROM {} AS r{filter}{order}{window}", table_name(query.model.as_str()));
+    let sql = format!("SELECT {columns} FROM {} AS r{filter}{order}{window}", table_name(query.model.as_str()));
     Ok(CompiledStatement { sql, bindings })
+}
+
+pub fn compile(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
+    compile_columns(query, model, ROW_COLUMNS)
+}
+
+pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
+    compile_columns(query, model, KEY_COLUMNS)
 }
 
 pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {

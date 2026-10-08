@@ -4,10 +4,10 @@ mod sort;
 mod statement;
 
 pub use filter::{CompareOp, Where};
-pub use run::{fetch_count, fetch_rows, RowsRead};
+pub use run::{fetch_count, fetch_keys, fetch_rows, RowsRead};
 pub use sort::{directions, order_key, order_values};
 pub use statement::{
-    compile, compile_count, scope_count_statement, scope_statement, CompiledStatement, Order, Query, QueryError,
+    compile, compile_count, compile_keys, scope_count_statement, scope_statement, CompiledStatement, Order, Query, QueryError,
 };
 
 #[cfg(test)]

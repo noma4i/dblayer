@@ -2,7 +2,7 @@ use super::*;
 use crate::schema::{Coverage, PageDirection, RemoteShape, RemoteSpec};
 
 fn remote(shape: RemoteShape) -> RemoteSpec {
-    RemoteSpec { shape, stale_time: "catalog".into(), empty_stale_time: None, selects_page_info: false }
+    RemoteSpec { shape, operation: "Catalog".into(), stale_time: "catalog".into(), empty_stale_time: None, selects_page_info: false }
 }
 
 fn ids(items: &[&str]) -> Vec<String> {

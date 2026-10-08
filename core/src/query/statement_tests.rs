@@ -168,3 +168,16 @@ fn query_round_trips_through_json() {
     assert_eq!(serde_json::from_str::<Query>(&serde_json::to_string(&parsed).unwrap()).unwrap(), parsed);
     assert_eq!(serde_json::from_str::<Query>(r#"{"model":"people"}"#).unwrap(), query());
 }
+
+#[test]
+fn key_statement_reads_id_and_revision_with_the_same_clauses() {
+    let query = query()
+        .filtered(Where::equal("status", json!("active")))
+        .ordered(vec![Order::new("createdAt", SortDirection::Desc)])
+        .limited(25)
+        .offset_by(50);
+    let keys = compile_keys(&query, &people()).unwrap();
+    let rows = compile(&query, &people()).unwrap();
+    assert_eq!(keys.sql, rows.sql.replacen("r.id, r.record_version, r.payload", "r.id, r.revision", 1));
+    assert_eq!(keys.bindings, rows.bindings);
+}

@@ -1,0 +1,7 @@
+model User do
+  schema do
+    string :name
+    file   :avatar,   null: true
+    date   :birthday, null: true
+  end
+end

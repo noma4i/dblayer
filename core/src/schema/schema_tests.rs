@@ -16,6 +16,7 @@ fn model(fields: Vec<FieldSpec>) -> ModelSpec {
 fn paged_remote(selects_page_info: bool) -> RemoteSpec {
     RemoteSpec {
         shape: RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None },
+        operation: "PagedOperation".into(),
         stale_time: "paged_session".into(),
         empty_stale_time: None,
         selects_page_info,
@@ -25,6 +26,7 @@ fn paged_remote(selects_page_info: bool) -> RemoteSpec {
 fn complete_remote() -> RemoteSpec {
     RemoteSpec {
         shape: RemoteShape::List { coverage: Coverage::Complete },
+        operation: "CatalogOperation".into(),
         stale_time: "catalog".into(),
         empty_stale_time: Some("empty_retry".into()),
         selects_page_info: false,
@@ -486,4 +488,27 @@ fn model_spec_round_trips_through_json() {
     }))
     .unwrap();
     assert_eq!(minimal, ModelSpec::new("m", vec![FieldSpec::raw("id")]));
+}
+
+#[test]
+fn file_field_decodes_only_a_descriptor_and_cannot_be_indexed() {
+    let field = FieldSpec::file("avatar");
+    let descriptor = json!({"id": "f1", "name": "a.png", "mime": "image/png", "size": 12, "sha256": "ab"});
+
+    assert_eq!(field.decode(&descriptor), Some(descriptor.clone()));
+    assert_eq!(field.decode(&json!({"id": "f1"})), None);
+    assert_eq!(field.decode(&json!("f1")), None);
+    assert_eq!(field.decode(&json!({"id": 1, "size": 12})), None);
+    assert!(column_type(&field.kind).is_none());
+    assert_eq!(
+        model(vec![id_field(), FieldSpec::file("avatar").indexed()]).validate(&[]),
+        Err(DeclarationError::IndexedFieldNotScalar("avatar".into()))
+    );
+}
+
+#[test]
+fn remote_without_operation_is_a_fault() {
+    let nameless = RemoteSpec { operation: String::new(), ..complete_remote() };
+    assert_eq!(nameless.fault(), Some(RemoteFault::MissingOperation));
+    assert_eq!(complete_remote().fault(), None);
 }

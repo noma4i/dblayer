@@ -100,6 +100,10 @@ impl<'a> Reader<'a> {
         Self { connection, models }
     }
 
+    pub(crate) fn connection(&self) -> &'a Connection {
+        self.connection
+    }
+
     fn model(&self, key: &str) -> Result<&'a ModelInfo, StoreError> {
         self.models.get(key).ok_or_else(|| StoreError::UnknownModel(key.to_string()))
     }

@@ -1,0 +1,7 @@
+model Vibe do
+  schema do
+    id   :momentId, index: true
+    id   :userId,   index: true
+    enum :kind,     values: [:like, :love, :laugh]
+  end
+end
