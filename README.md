@@ -15,6 +15,19 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - **Does not block.** Public calls are asynchronous and cheap. Reads do not wait for writes, and observers are called from library threads, never from the main thread.
 - **One core, two platforms.** All logic is Rust. Swift and Kotlin contain no business logic.
 
+
+## Documentation
+
+- [Getting started](docs/getting-started.md)
+- [Describing models](docs/models.md)
+- [Live data and queries](docs/live-data.md)
+- [Writing data](docs/writing-data.md)
+- [Server sync](docs/server-sync.md)
+- [Files](docs/files.md)
+- [Threading and performance](docs/threading.md)
+- [Testing](docs/testing.md)
+- [Architecture](docs/architecture.md)
+
 ## How a model looks
 
 Models are described in `.dbl` files with a Rails-like syntax:
@@ -51,11 +64,13 @@ The generator turns these files into typed Swift and Kotlin models and a model s
 
 ## What using it looks like
 
-The generated bindings give you a live property. Declare the query, use the rows, the screen updates itself:
+The generated bindings give you a live property. Declare the query, use the rows, the screen updates itself. Writes are one line and need no reload code.
+
+### Swift
 
 ```swift
 struct FeedView: View {
-  @Live(Moment.where(Moment.userId == me.id).order(Moment.createdAt.desc).limit(20))
+  @Live(Moment.where(Moment.userId == me.id).order(Moment.createdAt.desc()).limit(20))
   var moments
 
   var body: some View {
@@ -63,7 +78,11 @@ struct FeedView: View {
       .refreshable { try? await Moment.feed.refresh() }
   }
 }
+
+let moment = try await Moment.create(text: "hello")   // optimistic, queued, synced
 ```
+
+### Kotlin
 
 ```kotlin
 @Composable
@@ -71,15 +90,7 @@ fun FeedScreen(me: User) {
   val moments by Moment.where(Moment.userId eq me.id).order(Moment.createdAt.desc()).limit(20).collectAsLive()
   LazyColumn { items(moments) { MomentRow(it) } }
 }
-```
 
-Writes are one line and need no reload code:
-
-```swift
-let moment = try await Moment.create(text: "hello")   // optimistic, queued, synced
-```
-
-```kotlin
 val moment = Moment.create(text = "hello")            // optimistic, queued, synced
 ```
 
@@ -109,15 +120,3 @@ cargo test                         # Rust core and generator only
 ```
 
 More in [docs/getting-started.md](docs/getting-started.md).
-
-## Documentation
-
-- [Getting started](docs/getting-started.md)
-- [Describing models](docs/models.md)
-- [Live data and queries](docs/live-data.md)
-- [Writing data](docs/writing-data.md)
-- [Server sync](docs/server-sync.md)
-- [Files](docs/files.md)
-- [Threading and performance](docs/threading.md)
-- [Testing](docs/testing.md)
-- [Architecture](docs/architecture.md)
