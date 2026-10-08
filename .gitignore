@@ -11,3 +11,5 @@ kotlin/src/main/kotlin/dev/dblayer/dblayer.kt
 kotlin/.gradle/
 kotlin/build/
 kotlin/local.properties
+!docs/
+!docs/*.md

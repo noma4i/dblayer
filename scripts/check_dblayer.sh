@@ -19,4 +19,10 @@ echo "== kotlin: libs for 4 Android ABI, bindings, gradle unit tests"
 bash "$root/scripts/build_kotlin.sh"
 "$gradle" -p "$root/kotlin" testDebugUnitTest --console=plain
 
+echo "== zoo: one mechanism per question"
+bash "$root/scripts/check_zoo.sh"
+
+echo "== docs: paths, links, wording"
+bash "$root/scripts/check_docs.sh"
+
 echo "check_dblayer: ok"
