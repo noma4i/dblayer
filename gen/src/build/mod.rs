@@ -205,14 +205,16 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         empty_stale_time: fresh.and_then(|fresh| option(fresh, "empty")).and_then(|pair| text_of(&pair.value.item)),
         page_size,
         variables: line("variables").map(variables_of).unwrap_or_default(),
-        updates: line("updates").map(|updates| UpdatesSpec {
+        updates: lines.iter().filter(|candidate| candidate.word == "updates").map(|updates| UpdatesSpec {
             subscription: first_name(updates),
             deleted_by: option(updates, "deleted_by").and_then(|pair| text_of(&pair.value.item)),
             set: match option(updates, "set").map(|pair| &pair.value.item) {
                 Some(Value::Hash(pairs)) => pairs.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
                 _ => Map::new(),
             },
-        }),
+            removes: flag(updates, "removes"),
+            debounce: option(updates, "debounce").and_then(|pair| text_of(&pair.value.item)),
+        }).collect(),
     };
     let mut relation = RelationSpec::global(&first_name(call));
     relation.remote = Some(remote);

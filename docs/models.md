@@ -166,12 +166,12 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 | `fresh_for 5.minutes, empty: 30.seconds` | shorter freshness for an empty response | same |
 | `max_pages 5` | page limit per load | none |
 | `variables statusFilter: :status, includeGifts: false` | name the GraphQL variables: a symbol takes the value of a relation param, any other value is sent as written | every param under its own name |
-| `updates Subscription, deleted_by: :field` | keep the relation current with a subscription | none |
+| `updates Subscription, deleted_by: :field` | keep the relation current with a subscription. Write the line again for each subscription. `removes: true` makes every event delete its row, `debounce: 300.milliseconds` merges bursts | none |
 | `on_absent :detach` or `:destroy` | what happens to rows missing from a refreshed response | `:detach` |
 
 An operation name is a constant like `MomentsFeed`, or a string like `"feed"` when the GraphQL name starts with a lowercase letter.
 
-Durations are written `30.seconds`, `5.minutes`, `2.hours`, `1.day`. Mutations and the `updates` line are described in [server sync](server-sync.md).
+Durations are written `300.milliseconds`, `30.seconds`, `5.minutes`, `2.hours`, `1.day`. Mutations and the `updates` line are described in [server sync](server-sync.md).
 
 ## Validation
 

@@ -167,7 +167,6 @@ fn action_block_rules() {
 fn updates_line_rules() {
     assert_eq!(failure_in("  remote :feed do\n    query Q\n    updates :x\n  end"), (9, "`updates` needs an operation name like `MomentsFeed` or \"feed\"".to_string()));
     assert_eq!(failure_in("  remote :feed do\n    query Q\n    updates E, deleted_by: 1\n  end"), (9, "`deleted_by` must be a symbol like `:name`".to_string()));
-    assert_eq!(failure_in("  remote :feed do\n    query Q\n    updates E\n    updates F\n  end"), (10, "`updates` is declared twice".to_string()));
     assert_eq!(failure_in("  live :events do\n    subscription E\n  end"), (7, "unknown word `live`".to_string()));
 }
 

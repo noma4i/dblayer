@@ -93,3 +93,19 @@ async fn event_with_the_deleted_by_field_set_removes_the_row() {
     settle().await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_relation_with_two_subscriptions_starts_both_and_a_removing_one_deletes_the_row() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    let watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
+    settle().await;
+    assert_eq!(rig.transport.call_count("MomentEvents"), 1);
+    assert_eq!(rig.transport.call_count("MomentRemoved"), 1);
+    rig.transport.emit("MomentRemoved", SubscriptionEvent::Next(Response::data(json!({"momentRemoved": {"id": "m1"}}))));
+    settle().await;
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+    drop(watch);
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert_eq!(rig.transport.cancellations("MomentRemoved"), 1);
+}

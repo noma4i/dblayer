@@ -113,11 +113,11 @@ fn updates_set_must_name_ephemeral_fields() {
             stale_time: "5.minutes".into(),
             empty_stale_time: None,
             selects_page_info: false,
-            updates: Some(UpdatesSpec { subscription: "UserTyping".into(), deleted_by: None, set: Map::new() }),
+            updates: vec![UpdatesSpec { subscription: "UserTyping".into(), deleted_by: None, set: Map::new(), removes: false, debounce: None }],
             page_size: None,
             variables: Default::default(),
         };
-        remote.updates.as_mut().unwrap().set.insert(field.into(), json!(true));
+        remote.updates[0].set.insert(field.into(), json!(true));
         let mut relation = RelationSpec::global("current");
         relation.remote = Some(remote);
         ModelSpec { relations: vec![relation], ..with_ephemeral(typing()) }

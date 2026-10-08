@@ -79,6 +79,8 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("max_pages", remote("    paginate 20"), remote("    paginate 20\n    max_pages 3")),
         ("updates", remote(""), remote("    updates Changed")),
         ("updates.deleted_by", remote("    updates Changed"), remote("    updates Changed, deleted_by: :gone")),
+        ("updates.removes", remote("    updates Changed"), remote("    updates Changed, removes: true")),
+        ("updates.debounce", remote("    updates Changed"), remote("    updates Changed, debounce: 300.milliseconds")),
         ("updates.set", remote("    updates Changed"), remote("    updates Changed, set: { a: \"x\" }")),
         ("action.mutation", action(""), action("").replace("mutation Like", "mutation Dislike")),
         ("action.input", action(""), action("    input momentId: :id")),

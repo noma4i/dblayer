@@ -21,13 +21,13 @@ pub struct ResumeReport {
 pub struct Watch {
     inner: Arc<Inner>,
     id: u64,
-    live: Option<String>,
+    live: Vec<String>,
 }
 
 impl Drop for Watch {
     fn drop(&mut self) {
         locked(&self.inner.watches).remove(&self.id);
-        if let Some(key) = &self.live {
+        for key in &self.live {
             self.inner.release_live(key);
         }
     }

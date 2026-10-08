@@ -3,6 +3,8 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 
+use crate::pacing::parse_duration;
+use crate::schema::UpdatesSpec;
 use crate::transport::EventSpec;
 
 use super::subscribe::{EventEffect, EventSubscription, SubscriptionDef};
@@ -25,9 +27,13 @@ impl Drop for Live {
 }
 
 impl Inner {
-    pub(crate) fn acquire_live(self: &std::sync::Arc<Self>, model: &str, relation: &str) -> Option<String> {
-        let spec = self.db.spec(model).ok()?;
-        let updates = spec.relations.iter().find(|candidate| candidate.name == relation)?.remote.as_ref()?.updates.clone()?;
+    pub(crate) fn acquire_live(self: &std::sync::Arc<Self>, model: &str, relation: &str) -> Vec<String> {
+        let Ok(spec) = self.db.spec(model) else { return Vec::new() };
+        let updates = spec.relations.iter().find(|candidate| candidate.name == relation).and_then(|found| found.remote.as_ref()).map(|remote| remote.updates.clone()).unwrap_or_default();
+        updates.into_iter().map(|updates| self.acquire_one(model, updates)).collect()
+    }
+
+    fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec) -> String {
         let key = format!("{model}|{}", updates.subscription);
         let mut lives = locked(&self.lives);
         let live = lives.entry(key.clone()).or_default();
@@ -36,14 +42,19 @@ impl Inner {
             closing.abort();
         }
         if live.subscription.is_some() || live.starting.is_some() {
-            return Some(key);
+            return key;
         }
-        let Ok(runtime) = Handle::try_current() else { return Some(key) };
+        let Ok(runtime) = Handle::try_current() else { return key };
         let inner = self.clone();
         let model = model.to_string();
         let slot = key.clone();
         let task = runtime.spawn(async move {
-            let mut def = SubscriptionDef::new(EventSpec::new(updates.subscription.as_str()), &updates.subscription, &model, EventEffect::Upsert);
+            let mut event = EventSpec::new(updates.subscription.as_str());
+            if let Some(interval) = updates.debounce.as_deref().and_then(parse_duration) {
+                event = event.debounced(interval);
+            }
+            let effect = if updates.removes { EventEffect::Destroy } else { EventEffect::Upsert };
+            let mut def = SubscriptionDef::new(event, &updates.subscription, &model, effect);
             def.deleted_by = updates.deleted_by;
             def.set = updates.set;
             let started = Sync { inner: inner.clone() }.subscribe(def).await;
@@ -53,7 +64,7 @@ impl Inner {
             live.subscription = started.ok();
         });
         live.starting = Some(task.abort_handle());
-        Some(key)
+        key
     }
 
     pub(crate) fn release_live(self: &std::sync::Arc<Self>, key: &str) {

@@ -174,8 +174,8 @@ fn action_block_collects_mutation_input_optimistic_and_refetch() {
 fn remote_updates_line_builds_updates_spec() {
     let model = build_one("  remote :feed do\n    query Feed\n    updates SampleEvents, deleted_by: :destroyed\n  end\n  remote :plain do\n    query Plain\n    updates PlainEvents\n  end");
     let updates = |index: usize| model.relations[index].remote.as_ref().unwrap().updates.clone();
-    assert_eq!(updates(0), Some(UpdatesSpec { subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), set: Default::default() }));
-    assert_eq!(updates(1), Some(UpdatesSpec { subscription: "PlainEvents".into(), deleted_by: None, set: Default::default() }));
+    assert_eq!(updates(0), vec![UpdatesSpec { subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), set: Default::default(), removes: false, debounce: None }]);
+    assert_eq!(updates(1), vec![UpdatesSpec { subscription: "PlainEvents".into(), deleted_by: None, set: Default::default(), removes: false, debounce: None }]);
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn updates_set_builds_ephemeral_values() {
     )
     .unwrap()
     .remove(0);
-    let updates = model.relations[0].remote.as_ref().unwrap().updates.clone().unwrap();
+    let updates = model.relations[0].remote.as_ref().unwrap().updates[0].clone();
     assert_eq!(updates.set.get("typing"), Some(&json!(true)));
 }
 
@@ -245,4 +245,13 @@ fn variables_line_renames_params_and_fixes_constants() {
     assert_eq!(variables["statusFilter"], VariableSource::Param { name: "status".to_string() });
     assert_eq!(variables["includeGifts"], VariableSource::Constant { value: json!(false) });
     assert_eq!(variables["mediaKinds"], VariableSource::Constant { value: json!(["image", "video"]) });
+}
+
+#[test]
+fn a_relation_can_follow_several_subscriptions() {
+    let model = build_one("  remote :list do\n    query \"chats\"\n    updates \"chatCreated\"\n    updates \"chatUpdated\", debounce: 300.milliseconds\n    updates \"chatDeleted\", removes: true\n  end");
+    let updates = &model.relations[0].remote.as_ref().unwrap().updates;
+    assert_eq!(updates.iter().map(|update| update.subscription.as_str()).collect::<Vec<_>>(), ["chatCreated", "chatUpdated", "chatDeleted"]);
+    assert_eq!(updates[1].debounce.as_deref(), Some("300.milliseconds"));
+    assert!(updates[2].removes && !updates[0].removes);
 }

@@ -114,7 +114,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Remote, "variables") => free(),
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
         (Context::Remote, "updates") => {
-            plain(Shape::Const, vec![key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false)])
+            plain(Shape::Const, vec![key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
         }
         (Context::Model, "scope") => plain(
             Shape::Name,
@@ -427,7 +427,7 @@ fn check_remote(remote: &Call, report: &mut impl FnMut(usize, usize, String)) {
     }
     let mut seen = HashSet::new();
     for call in &lines {
-        if !seen.insert(call.word.as_str()) {
+        if call.word != "updates" && !seen.insert(call.word.as_str()) {
             report(call.line, call.column, format!("`{}` is declared twice", call.word));
         }
     }

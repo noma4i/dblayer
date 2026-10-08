@@ -409,6 +409,10 @@ pub struct UpdatesSpec {
     pub deleted_by: Option<String>,
     #[serde(default)]
     pub set: Map<String, Value>,
+    #[serde(default)]
+    pub removes: bool,
+    #[serde(default)]
+    pub debounce: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -421,7 +425,7 @@ pub struct RemoteSpec {
     #[serde(default)]
     pub selects_page_info: bool,
     #[serde(default)]
-    pub updates: Option<UpdatesSpec>,
+    pub updates: Vec<UpdatesSpec>,
     #[serde(default)]
     pub page_size: Option<u32>,
     #[serde(default)]
@@ -539,7 +543,7 @@ impl RelationSpec {
                 return Err(DeclarationError::UnknownSortColumn { relation: relation(), column: field.column.clone() });
             }
         }
-        let set = self.remote.iter().filter_map(|remote| remote.updates.as_ref()).flat_map(|updates| updates.set.keys());
+        let set = self.remote.iter().flat_map(|remote| remote.updates.iter()).flat_map(|updates| updates.set.keys());
         for field in set {
             let Some(spec) = model.ephemeral_field(field) else {
                 return Err(DeclarationError::UnknownSetField { relation: relation(), field: field.clone() });
