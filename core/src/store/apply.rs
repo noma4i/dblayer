@@ -306,6 +306,7 @@ pub(crate) fn apply_envelope(
         }
     }
 
+    stamp_confirmed_fields(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
     wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
     for (model, id) in recompute_sync(connection, &synced_keys)? {
@@ -453,6 +454,33 @@ fn op_keys_of(connection: &Connection, seq: i64) -> Result<Vec<SyncKey>, StoreEr
     let row_ids: Vec<crate::identity::RowId> = serde_json::from_slice(&row_ids)?;
     let temp_id = temp_id.and_then(|text| crate::identity::RowId::new(&text).ok());
     Ok(operation_keys(&action_key, &row_ids, temp_id.as_ref()))
+}
+
+fn stamp_confirmed_fields(
+    connection: &Connection,
+    models: &BTreeMap<String, ModelInfo>,
+    transitions: &[OperationTransition],
+    revision: i64,
+) -> Result<(), StoreError> {
+    for transition in transitions {
+        let OperationTransition::Close { seq, status: OperationStatus::Committed, .. } = transition else { continue };
+        let rollback: Option<Vec<u8>> = connection.query_row("SELECT rollback FROM op WHERE seq = ?1", params![seq], |row| row.get(0)).optional()?.flatten();
+        let Some(snapshot) = rollback.and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()) else { continue };
+        for item in snapshot.get("rows").and_then(Value::as_array).into_iter().flatten() {
+            let (Some("edited"), Some(model), Some(id), Some(owned)) =
+                (item.get("kind").and_then(Value::as_str), item.get("model").and_then(Value::as_str), item.get("id").and_then(Value::as_str), item.get("owned").and_then(Value::as_object))
+            else {
+                continue;
+            };
+            let Some(info) = models.get(model) else { continue };
+            let stored: Option<Vec<u8>> =
+                connection.query_row(&format!("SELECT field_rev FROM {} WHERE id = ?1", info.table), params![id], |row| row.get(0)).optional()?;
+            let Some(mut field_rev) = stored.and_then(|bytes| serde_json::from_slice::<BTreeMap<String, i64>>(&bytes).ok()) else { continue };
+            field_rev.iter_mut().filter(|(field, _)| owned.contains_key(*field)).for_each(|(_, stamp)| *stamp = revision);
+            connection.execute(&format!("UPDATE {} SET field_rev = ?1 WHERE id = ?2", info.table), params![json_bytes(&field_rev)?, id])?;
+        }
+    }
+    Ok(())
 }
 
 fn apply_transitions(

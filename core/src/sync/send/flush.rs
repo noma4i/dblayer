@@ -254,7 +254,7 @@ impl Inner {
                 let outbox = read_outbox(reader)?;
                 let mut drops = 0;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
-                envelope.entity_ops = response_ops(reader, sending.base_revision, &sending.model, &normalized, &mut drops)?;
+                envelope.entity_ops = response_ops(reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
                 if let (Some(temp), Some(real)) = (&temp, &real) {
                     let own = entry.operation.id.0;
                     let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);

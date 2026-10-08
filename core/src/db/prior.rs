@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use crate::store::{Reader, StoreError};
 use crate::value::read_id;
 use crate::write::restore_patch;
 
-use super::local_write::OutboxOperation;
+use super::local_write::{read_outbox, OutboxOperation};
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub(crate) struct Prior {
@@ -86,6 +86,18 @@ impl PriorRow {
 impl Prior {
     pub fn of(entry: &OutboxOperation) -> Option<Prior> {
         serde_json::from_value(entry.rollback.clone()?).ok()
+    }
+
+    pub fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>) -> Result<HashMap<(String, String), HashSet<String>>, StoreError> {
+        let mut owned: HashMap<(String, String), HashSet<String>> = HashMap::new();
+        for entry in read_outbox(reader)?.iter().filter(|entry| Some(entry.operation.id.0) != closing) {
+            for row in Prior::of(entry).into_iter().flat_map(|prior| prior.rows) {
+                if let PriorRow::Edited { model, id, owned: fields, .. } = row {
+                    owned.entry((model, id)).or_default().extend(fields.into_keys());
+                }
+            }
+        }
+        Ok(owned)
     }
 
     pub fn to_value(&self) -> Value {

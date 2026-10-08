@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, EntityOp, EnvelopeFault, ScopeRef, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
-use crate::db::ReplaceRequest;
+use crate::db::{Prior, ReplaceRequest};
 use crate::schema::Coverage;
 use crate::read::{plan_landing, StoredMember};
 use crate::store::{admit_upsert, PageInfo, PlanCommitError, Reader, StoreError, UpsertAdmission, WindowRecord};
@@ -35,15 +35,24 @@ pub(crate) enum Landed {
     Discarded(DiscardReason),
 }
 
-pub(crate) fn admit(reader: &Reader<'_>, base: i64, model: &str, rows: &[Map<String, Value>], drops: &mut usize) -> Result<Vec<Map<String, Value>>, StoreError> {
+pub(crate) fn admit(reader: &Reader<'_>, base: i64, closing: Option<i64>, model: &str, rows: &[Map<String, Value>], drops: &mut usize) -> Result<Vec<Map<String, Value>>, StoreError> {
+    let unconfirmed = Prior::unconfirmed_fields(reader, closing)?;
     let mut admitted = Vec::with_capacity(rows.len());
     for row in rows {
         let Some(id) = row.get("id").and_then(read_id) else { continue };
         let stored = reader.stored_row(model, id.as_str())?;
         let tombstone = reader.tombstone_seq(model, id.as_str())?;
         match admit_upsert(Some(base), stored.as_ref(), tombstone, row.clone()) {
-            UpsertAdmission::Row { row, dropped_fields } => {
-                *drops += usize::from(!dropped_fields.is_empty());
+            UpsertAdmission::Row { mut row, dropped_fields } => {
+                let mut dropped = !dropped_fields.is_empty();
+                for field in unconfirmed.get(&(model.to_string(), id.to_string())).into_iter().flatten() {
+                    dropped |= row.contains_key(field);
+                    match stored.as_ref().and_then(|stored| stored.row.as_ref()).and_then(|stored| stored.get(field)) {
+                        Some(value) => row.insert(field.clone(), value.clone()),
+                        None => row.remove(field),
+                    };
+                }
+                *drops += usize::from(dropped);
                 admitted.push(row);
             }
             UpsertAdmission::DropExistence => *drops += 1,
@@ -75,7 +84,7 @@ impl Inner {
         let mut drops = 0;
         let mut admitted_roots = 0;
         let committed = store.commit_with(generation, |reader| {
-            let roots = admit(reader, attempt.base_revision, &model, &normalized.roots, &mut drops)?;
+            let roots = admit(reader, attempt.base_revision, None, &model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
             let plan = if plans_as_first {
                 let request = ReplaceRequest::new(scope.clone(), coverage);
@@ -94,7 +103,7 @@ impl Inner {
             }).collect();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, generation);
             for (related_model, row) in &normalized.related {
-                for row in admit(reader, attempt.base_revision, related_model.as_str(), std::slice::from_ref(row), &mut drops)? {
+                for row in admit(reader, attempt.base_revision, None, related_model.as_str(), std::slice::from_ref(row), &mut drops)? {
                     let Some(id) = row.get("id").and_then(read_id) else { continue };
                     if !planned.contains(&(related_model.clone(), id.clone())) {
                         envelope.entity_ops.push(EntityOp::Upsert { model: related_model.clone(), id, row });

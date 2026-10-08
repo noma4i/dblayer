@@ -42,3 +42,26 @@ fn later_attempt_replaces_an_earlier_one() {
     assert_eq!(rig.sync.inner.land(landing(&rig, 200, &["m1", "m2"])).unwrap(), Landed::Applied { rows: 2 });
     assert_eq!(text_of(&rig, "moments", "m1"), Some("issued 200".to_string()));
 }
+
+#[tokio::test(start_paused = true)]
+async fn inv_merge_03_a_response_read_before_the_server_got_the_edit_does_not_undo_a_confirmed_edit() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    let id = crate::identity::RowId::new("m1").unwrap();
+    rig.db.update("moments", &id, params(serde_json::json!({"text": "mine"}))).unwrap();
+    let stale = landing(&rig, 100, &["m1"]);
+    rig.transport.enqueue("UpdateMoment", crate::transport::Reply::data(serde_json::json!({"updateMoment": {"id": "m1", "text": "mine", "userId": null}})));
+    rig.sync.flush().await.unwrap();
+    rig.sync.inner.land(stale).unwrap();
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("mine".to_string()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn inv_merge_03_a_response_does_not_undo_an_edit_that_is_still_unconfirmed() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    let id = crate::identity::RowId::new("m1").unwrap();
+    rig.db.update("moments", &id, params(serde_json::json!({"text": "mine"}))).unwrap();
+    rig.sync.inner.land(landing(&rig, 100, &["m1"])).unwrap();
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("mine".to_string()));
+}
