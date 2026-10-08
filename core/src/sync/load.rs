@@ -181,7 +181,9 @@ impl Inner {
         match verdict {
             Ok(sender) => {
                 let mut guard = FlightGuard { inner: self, key: flight_key, sender };
+                self.begin_load(&resolved.window_key);
                 let result = self.execute(resolved, cursor, force).await;
+                self.end_load(&resolved.window_key, &result);
                 guard.release(result.clone());
                 result
             }

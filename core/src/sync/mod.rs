@@ -8,6 +8,9 @@ mod load;
 mod normalize;
 mod online;
 mod registry;
+mod state;
+#[cfg(test)]
+mod state_tests;
 #[cfg(test)]
 mod registry_tests;
 mod resume;
@@ -20,6 +23,7 @@ pub use error::SyncError;
 pub use invalidate::ReconnectReport;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
+pub use state::{LoadError, LoadPhase, RelationState};
 pub use resume::{ResumeReport, Watch};
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
 pub use subscribe::{EventEffect, EventSubscription, SubscriptionDef, SubscriptionStatus};
@@ -82,6 +86,7 @@ pub(crate) struct Inner {
     pub watches: Mutex<HashMap<u64, WatchEntry>>,
     pub next_watch: AtomicI64,
     pub lives: Mutex<HashMap<String, live::Live>>,
+    pub states: Mutex<state::States>,
     pub outbox_gate: tokio::sync::Mutex<()>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub connectivity: Connectivity,
@@ -120,6 +125,7 @@ impl Sync {
             watches: Mutex::new(HashMap::new()),
             next_watch: AtomicI64::new(0),
             lives: Mutex::new(HashMap::new()),
+            states: Mutex::new(HashMap::new()),
             outbox_gate: tokio::sync::Mutex::new(()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             connectivity: Connectivity::new(),
