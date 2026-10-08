@@ -1,5 +1,5 @@
 import Testing
-@testable import DBlayerCore
+@testable import DBlayer
 
 struct BridgeProbeTests {
   @Test

@@ -6,13 +6,13 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum DbError {
-    #[error("sqlite: {message}")]
-    Sqlite { message: String },
+    #[error("sqlite: {detail}")]
+    Sqlite { detail: String },
 }
 
 impl From<rusqlite::Error> for DbError {
     fn from(error: rusqlite::Error) -> Self {
-        DbError::Sqlite { message: error.to_string() }
+        DbError::Sqlite { detail: error.to_string() }
     }
 }
 

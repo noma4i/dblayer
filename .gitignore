@@ -3,6 +3,11 @@
 *.xcodeproj
 /target/
 .DS_Store
-swift-bridge/DBlayerFFI.xcframework/
-swift-bridge/Sources/
-swift-bridge/.build/
+swift/DBlayerFFI.xcframework/
+swift/Sources/DBlayer/dblayer.swift
+swift/.build/
+android/src/main/jniLibs/
+android/src/main/kotlin/dev/dblayer/dblayer.kt
+android/.gradle/
+android/build/
+android/local.properties

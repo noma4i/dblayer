@@ -3,24 +3,24 @@
 import PackageDescription
 
 let package = Package(
-  name: "DBlayerCore",
+  name: "DBlayer",
   platforms: [
     .iOS(.v17),
     .macOS(.v14)
   ],
   products: [
-    .library(name: "DBlayerCore", targets: ["DBlayerCore"])
+    .library(name: "DBlayer", targets: ["DBlayer"])
   ],
   targets: [
     .binaryTarget(name: "dblayerFFI", path: "DBlayerFFI.xcframework"),
     .target(
-      name: "DBlayerCore",
+      name: "DBlayer",
       dependencies: ["dblayerFFI"],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
     .testTarget(
-      name: "DBlayerCoreTests",
-      dependencies: ["DBlayerCore"]
+      name: "DBlayerTests",
+      dependencies: ["DBlayer"]
     )
   ]
 )
