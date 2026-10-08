@@ -12,6 +12,7 @@ use crate::operation::Operation;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, RootShape};
 use crate::store::{PlanCommitError, Reader, StoreError};
+use crate::syncstate::read_sync;
 use crate::value::read_id;
 use crate::write::{
     cascade_destroys, cascade_envelope, cascades, touches_parent, WritePlan,
@@ -122,11 +123,10 @@ impl Db {
             rollback: None,
         };
         self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
-            let prior = match reader.point(model, id.as_str())? {
-                None => PriorRow::Created { model: model.to_string(), id: id.to_string() },
-                Some(current) => PriorRow::edited(reader, model, id.as_str(), &current, &data)?,
-            };
-            queued.rollback = Some(Prior { rows: vec![prior] }.to_value());
+            if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
+                return Err(DbError::AlreadyExists { model: model.to_string(), id: id.to_string() });
+            }
+            queued.rollback = Some(Prior { rows: vec![PriorRow::Created { model: model.to_string(), id: id.to_string() }] }.to_value());
             plan.upsert(key.clone(), vec![data.clone()]);
             Ok(Some(self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?))
         })?;

@@ -32,6 +32,8 @@ pub enum DbError {
     NotFound { model: String, id: String },
     #[error("origin {0:?} cannot be landed")]
     OriginNotLandable(WriteOrigin),
+    #[error("row {id} of {model} already exists")]
+    AlreadyExists { model: String, id: String },
     #[error("operation {0} is not in the outbox")]
     UnknownOperation(i64),
     #[error(transparent)]

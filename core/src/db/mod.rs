@@ -36,6 +36,8 @@ pub use watch::{Change, CountChange, Related};
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
+mod invariants;
+#[cfg(test)]
 mod ephemeral_tests;
 #[cfg(test)]
 mod cache_tests;
