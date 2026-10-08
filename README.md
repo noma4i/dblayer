@@ -109,7 +109,6 @@ See [docs/live-data.md](docs/live-data.md) for UIKit, view models, single record
 | `kotlin/` | Android library module with the bindings |
 | `docs/` | Developer documentation |
 | `scripts/` | Build and check scripts |
-| `legacy/` | The previous Swift implementation (GRDB), kept as a reference |
 
 ## Build and test
 

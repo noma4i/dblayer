@@ -16,7 +16,7 @@ banned_words = [
     "wrapper", "provider", "manager", "service", "handler", "helper", "util", "engine",
 ]
 status_words = ["in development", "work in progress", "planned", "coming soon", "not finished", "todo", "status:"]
-path_roots = ("core/", "gen/", "fixtures/", "swift/", "kotlin/", "scripts/", "docs/", "legacy/")
+path_roots = ("core/", "gen/", "fixtures/", "swift/", "kotlin/", "scripts/", "docs/")
 
 for document in documents:
     text = document.read_text()
