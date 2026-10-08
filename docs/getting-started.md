@@ -5,7 +5,7 @@
 | Tool | Why |
 | ---- | --- |
 | Xcode (iOS 17+, macOS 14+) | Swift package and iOS simulator build |
-| Homebrew `rustup` with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `aarch64-apple-darwin`, `aarch64-linux-android`, `x86_64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android` | Rust core for every platform |
+| Homebrew `rustup` with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`, `aarch64-apple-darwin`, `aarch64-linux-android`, `x86_64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android` | Rust core for every platform |
 | `cargo-ndk` and Android NDK | Android libraries |
 | JDK 17 and Gradle 9 | Kotlin module |
 
@@ -28,7 +28,7 @@ Single steps:
 | Command | Does |
 | ------- | ---- |
 | `cargo test` | Rust core and generator tests |
-| `bash scripts/build_ios.sh` | Builds `swift/DBlayerFFI.xcframework` and generates the Swift bindings |
+| `bash scripts/build_ios.sh` | Builds `swift/DBlayerFFI.xcframework` (the simulator slice holds arm64 and x86_64) and generates the Swift bindings |
 | `bash scripts/build_kotlin.sh` | Builds `libdblayer.so` for 4 ABIs and generates the Kotlin bindings |
 | `bash scripts/check_zoo.sh` | Finds duplicate mechanisms and names (see [architecture](architecture.md)) |
 | `bash scripts/check_docs.sh` | Checks that paths mentioned in README and docs exist |
