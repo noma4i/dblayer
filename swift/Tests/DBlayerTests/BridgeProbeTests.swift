@@ -36,6 +36,29 @@ struct BridgeProbeTests {
 
   @MainActor
   @Test
+  func aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", failure: .Network(detail: "offline"))
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+    let list = LiveList(Moment.feed)
+
+    do {
+      try await list.refresh()
+      Issue.record("the failed load did not throw")
+    } catch is DbError {
+    } catch {
+      Issue.record("the failed load surfaced as \(error), not as a database error")
+    }
+    for _ in 0 ..< 200 where list.state.phase != .failed { try await Task.sleep(for: .milliseconds(10)) }
+
+    #expect(list.state.phase == .failed)
+    #expect(list.state.errorKind != nil)
+    list.stop()
+  }
+
+  @MainActor
+  @Test
   func liveListLoadsTheRelationAndReportsItsState() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}"#)

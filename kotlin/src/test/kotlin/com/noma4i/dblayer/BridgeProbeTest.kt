@@ -42,6 +42,20 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() = runBlocking {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", DbException.Network("offline"))
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+
+        val thrown = runCatching { Moment.feed.refresh() }.exceptionOrNull()
+
+        assertEquals(true, thrown is DbException)
+        val state = withTimeout(5000) { Moment.feed.state.flow.first { it.phase == LoadPhase.Failed } }
+        assertEquals(true, state.errorKind != null)
+    }
+
+    @Test
     fun liveListLoadsTheRelationAndReportsItsState() = runBlocking {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}""")

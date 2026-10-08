@@ -18,6 +18,10 @@ pub(super) fn executor() -> &'static Runtime {
     EXECUTOR.get_or_init(|| tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("database executor"))
 }
 
+async fn on_executor<T: Send + 'static>(work: impl std::future::Future<Output = Result<T, crate::sync::SyncError>> + Send + 'static) -> Result<T, DbError> {
+    executor().spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(DbError::from)
+}
+
 #[derive(uniffi::Record)]
 pub struct Config { pub path: Option<String>, pub data_version: Option<String>, pub cache_rows: u32 }
 
@@ -122,11 +126,15 @@ impl Database {
         Ok(())
     }
     pub async fn refresh(&self, model: String, relation: String, params_json: String) -> Result<(), DbError> {
-        self.sync()?.refresh(&model, &relation, &serde_json::from_str(&params_json)?).await?;
+        let sync = self.sync()?.clone();
+        let params = serde_json::from_str(&params_json)?;
+        on_executor(async move { sync.refresh(&model, &relation, &params).await }).await?;
         Ok(())
     }
     pub async fn load_more(&self, model: String, relation: String, params_json: String) -> Result<bool, DbError> {
-        Ok(self.sync()?.load_more(&model, &relation, &serde_json::from_str(&params_json)?).await?.has_next)
+        let sync = self.sync()?.clone();
+        let params = serde_json::from_str(&params_json)?;
+        Ok(on_executor(async move { sync.load_more(&model, &relation, &params).await }).await?.has_next)
     }
     pub fn listen(&self) -> Result<(), DbError> {
         let _entered = executor().enter();
@@ -138,30 +146,54 @@ impl Database {
         self.sync()?.unlisten();
         Ok(())
     }
-    pub async fn flush(&self) -> Result<(), DbError> { self.sync()?.flush().await?; Ok(()) }
-    pub async fn retry(&self, model: String, row_id: String) -> Result<(), DbError> { self.sync()?.retry(&model, &id(&row_id)?).await?; Ok(()) }
-    pub async fn retry_all(&self) -> Result<(), DbError> { self.sync()?.retry_all().await?; Ok(()) }
+    pub async fn flush(&self) -> Result<(), DbError> {
+        let sync = self.sync()?.clone();
+        on_executor(async move { sync.flush().await }).await?;
+        Ok(())
+    }
+    pub async fn retry(&self, model: String, row_id: String) -> Result<(), DbError> {
+        let sync = self.sync()?.clone();
+        let row = id(&row_id)?;
+        on_executor(async move { sync.retry(&model, &row).await }).await?;
+        Ok(())
+    }
+    pub async fn retry_all(&self) -> Result<(), DbError> {
+        let sync = self.sync()?.clone();
+        on_executor(async move { sync.retry_all().await }).await?;
+        Ok(())
+    }
     pub fn discard(&self, model: String, row_id: String) -> Result<(), DbError> { self.db.discard(&model, &id(&row_id)?)?; Ok(()) }
-    pub async fn resume(&self) -> Result<(), DbError> { self.sync()?.resume().await?; Ok(()) }
+    pub async fn resume(&self) -> Result<(), DbError> {
+        let sync = self.sync()?.clone();
+        on_executor(async move { sync.resume().await }).await?;
+        Ok(())
+    }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync()?.clone() })) }
     pub async fn upload(&self, model: String, row_id: String, input_json: String) -> Result<(), DbError> {
-        self.sync()?.upload(&model, &id(&row_id)?, serde_json::from_str(&input_json)?).await?;
+        let sync = self.sync()?.clone();
+        let row = id(&row_id)?;
+        let input = serde_json::from_str(&input_json)?;
+        on_executor(async move { sync.upload(&model, &row, input).await }).await?;
         Ok(())
     }
     pub async fn confirmed(&self, model: String, row_id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        let real = executor().spawn(async move { sync.confirmed(&model, &row).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })??;
+        let real = on_executor(async move { sync.confirmed(&model, &row).await }).await?;
         Ok(real.to_string())
     }
     pub async fn settled(&self, model: String, row_id: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        executor().spawn(async move { sync.settled(&model, &row).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })??;
+        on_executor(async move { sync.settled(&model, &row).await }).await?;
         Ok(())
     }
-    pub async fn cancel_upload(&self, model: String, row_id: String) -> Result<bool, DbError> { Ok(self.sync()?.cancel_upload(&model, &id(&row_id)?).await?) }
+    pub async fn cancel_upload(&self, model: String, row_id: String) -> Result<bool, DbError> {
+        let sync = self.sync()?.clone();
+        let row = id(&row_id)?;
+        on_executor(async move { sync.cancel_upload(&model, &row).await }).await
+    }
     pub fn maintain(&self) -> Result<(), DbError> { self.db.maintain(&[])?; Ok(()) }
     pub fn logout(&self) -> Result<(), DbError> { self.db.reset_all()?; Ok(()) }
     pub fn cache_stats(&self) -> String {
