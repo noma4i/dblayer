@@ -3,3 +3,6 @@
 *.xcodeproj
 /target/
 .DS_Store
+swift-bridge/DBlayerFFI.xcframework/
+swift-bridge/Sources/
+swift-bridge/.build/
