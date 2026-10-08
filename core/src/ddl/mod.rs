@@ -291,6 +291,7 @@ pub fn create_model_tables(connection: &Connection, models: &[ModelSpec]) -> Res
 struct RelationFingerprint<'a> {
     name: &'a str,
     by_columns: Vec<&'a str>,
+    text_params: Vec<&'a str>,
     is_global: bool,
     sort: &'a Sort,
 }
@@ -311,7 +312,9 @@ pub fn fingerprint(model: &ModelSpec) -> String {
         .map(|relation| {
             let mut by_columns: Vec<&str> = relation.by_columns.iter().map(String::as_str).collect();
             by_columns.sort_unstable();
-            RelationFingerprint { name: &relation.name, by_columns, is_global: relation.is_global, sort: &relation.sort }
+            let mut text_params: Vec<&str> = relation.text_params.iter().map(String::as_str).collect();
+            text_params.sort_unstable();
+            RelationFingerprint { name: &relation.name, by_columns, text_params, is_global: relation.is_global, sort: &relation.sort }
         })
         .collect();
     relations.sort_by(|left, right| left.name.cmp(right.name));

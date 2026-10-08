@@ -330,3 +330,17 @@ async fn rows_without_the_scope_column_get_the_param() {
     let row = rig.db.find("moments", &crate::identity::RowId::new("a").unwrap()).unwrap().unwrap();
     assert_eq!(row.text("userId"), Some("u1"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn text_param_keys_its_own_window_without_a_column() {
+    let rig = rig();
+    let cats = params(json!({"query": "cats"}));
+    let dogs = params(json!({"query": "dogs"}));
+    rig.transport.enqueue("MomentsSearch", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
+    rig.transport.enqueue("MomentsSearch", Reply::data(json!({"moments": [{"id": "b", "text": "b"}]})));
+    rig.sync.load("moments", "search", &cats, LoadOptions::default()).await.unwrap();
+    rig.sync.load("moments", "search", &dogs, LoadOptions::default()).await.unwrap();
+    assert_eq!(member_ids(&rig, "moments", "search", &cats), ["a"]);
+    assert_eq!(member_ids(&rig, "moments", "search", &dogs), ["b"]);
+    assert_eq!(rig.transport.calls()[0].variables, json!({"query": "cats"}));
+}

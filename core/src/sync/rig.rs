@@ -49,6 +49,9 @@ pub fn moments_spec() -> ModelSpec {
     history.remote = Some(remote("MomentsHistory", backward, "5.minutes"));
     let mut by_user = RelationSpec::new("by_user", &["userId"]);
     by_user.remote = Some(remote("MomentsByUser", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
+    let mut search = RelationSpec::new("search", &[]);
+    search.text_params = vec!["query".to_string()];
+    search.remote = Some(remote("MomentsSearch", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
     let mut empty_aware = RelationSpec::global("empty_aware");
     let mut spec_remote = remote("MomentsByUser", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
     spec_remote.empty_stale_time = Some("10.seconds".to_string());
@@ -60,7 +63,7 @@ pub fn moments_spec() -> ModelSpec {
         UpdatesSpec { subscription: "MomentRemoved".to_string(), deleted_by: None, set: Map::new(), removes: true, debounce: None },
     ];
     pulse.remote = Some(pulse_remote);
-    spec.relations.extend([feed, history, by_user, empty_aware, pulse, RelationSpec::global("recent")]);
+    spec.relations.extend([feed, history, by_user, search, empty_aware, pulse, RelationSpec::global("recent")]);
     spec.actions = vec![
         bound("create", RootShape::Upsert, "CreateMoment"),
         bound("update", RootShape::Upsert, "UpdateMoment"),
@@ -119,6 +122,7 @@ pub fn register_operations(sync: &Sync) {
         ("MomentsFeed", "feed"),
         ("MomentsHistory", "history"),
         ("MomentsByUser", "moments"),
+        ("MomentsSearch", "moments"),
         ("MomentsPulse", "feed"),
         ("CurrentUser", "me"),
         ("MomentEvents", "momentEvent"),

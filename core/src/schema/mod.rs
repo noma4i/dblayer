@@ -62,6 +62,8 @@ pub enum DeclarationError {
     EmptyByColumns(String),
     #[error("relation {relation} groups by unknown column {column}")]
     UnknownByColumn { relation: String, column: String },
+    #[error("relation {relation} lists {param} as a text param but the model has a field with that name")]
+    TextParamIsField { relation: String, param: String },
     #[error("relation {relation} groups by unindexed column {column}")]
     IndexMissing { relation: String, column: String },
     #[error("relation {relation} sorts by unknown column {column}")]
@@ -478,6 +480,8 @@ pub struct RelationSpec {
     pub name: String,
     pub by_columns: Vec<String>,
     #[serde(default)]
+    pub text_params: Vec<String>,
+    #[serde(default)]
     pub remote: Option<RemoteSpec>,
     #[serde(default)]
     pub is_global: bool,
@@ -490,6 +494,7 @@ impl RelationSpec {
         Self {
             name: name.to_string(),
             by_columns: by_columns.iter().map(|column| column.to_string()).collect(),
+            text_params: Vec::new(),
             remote: None,
             is_global: false,
             sort: Sort::ServerOrder,
@@ -519,13 +524,16 @@ impl RelationSpec {
         if is_reserved_name(&self.name) {
             return Err(DeclarationError::ReservedRelationName(self.name.clone()));
         }
-        if self.by_columns.is_empty() && !self.is_global {
+        if self.by_columns.is_empty() && self.text_params.is_empty() && !self.is_global {
             return Err(DeclarationError::EmptyByColumns(self.name.clone()));
         }
         if let Some(fault) = self.remote.as_ref().and_then(RemoteSpec::fault) {
             return Err(DeclarationError::Remote { relation: self.name.clone(), fault });
         }
         let relation = || self.name.clone();
+        if let Some(param) = self.text_params.iter().find(|param| model.field(param).is_some()) {
+            return Err(DeclarationError::TextParamIsField { relation: relation(), param: param.clone() });
+        }
         for column in &self.by_columns {
             if model.ephemeral_field(column).is_some() {
                 return Err(DeclarationError::EphemeralInRelation { relation: relation(), field: column.clone() });

@@ -63,12 +63,12 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
         out.push_str("    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }\n    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }\n");
         for relation in &model.relations {
             let method = name(&relation.name);
-            if relation.by_columns.is_empty() { writeln!(out, "    public static var {method}: Query<Self> {{").unwrap(); }
+            if relation.by_columns.is_empty() && relation.text_params.is_empty() { writeln!(out, "    public static var {method}: Query<Self> {{").unwrap(); }
             else {
-                let params = relation.by_columns.iter().map(|key| format!("_ {key}: {}", model.field(key).map(|field| field_type(field, true)).unwrap_or("String".into()))).collect::<Vec<_>>().join(", ");
+                let params = relation.by_columns.iter().map(|key| format!("_ {key}: {}", model.field(key).map(|field| field_type(field, true)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| format!("_ {key}: String"))).collect::<Vec<_>>().join(", ");
                 writeln!(out, "    public static func {method}({params}) -> Query<Self> {{").unwrap();
             }
-            let params = relation.by_columns.iter().map(|key| format!("\"{key}\": JSONValue.encode({key})")).collect::<Vec<_>>().join(", ");
+            let params = relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("\"{key}\": JSONValue.encode({key})")).collect::<Vec<_>>().join(", ");
             writeln!(out, "        var query = Query<Self>(relation: \"{}\", params: [{}])", relation.name, if params.is_empty() { ":" } else { &params }).unwrap();
             if relation.remote.is_none() {
                 for key in &relation.by_columns { writeln!(out, "        query = query.where(Condition.equal(\"{key}\", JSONValue.encode({key})))").unwrap(); }
@@ -127,11 +127,11 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
         writeln!(out, "        fun find(id: String) = Query(\"{class}\", serializer()).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", serializer()).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", serializer(), ids)").unwrap();
         for relation in &model.relations {
             let method = name(&relation.name);
-            let params = relation.by_columns.iter().map(|key| format!("{key}: {}", model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).collect::<Vec<_>>().join(", ");
+            let params = relation.by_columns.iter().map(|key| format!("{key}: {}", model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| format!("{key}: String"))).collect::<Vec<_>>().join(", ");
             if params.is_empty() { writeln!(out, "        val {method}: Query<{class}> get() {{").unwrap(); }
             else { writeln!(out, "        fun {method}({params}): Query<{class}> {{").unwrap(); }
             let params = relation.by_columns.iter().map(|key| format!("\"{key}\" to jsonValue({key})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "            var query = Query(\"{class}\", serializer(), relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().map(|key| format!("put(\"{key}\", jsonValue({key}))")).collect::<Vec<_>>().join("; ")).unwrap();
+            writeln!(out, "            var query = Query(\"{class}\", serializer(), relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("put(\"{key}\", jsonValue({key}))")).collect::<Vec<_>>().join("; ")).unwrap();
             let _ = params;
             if relation.remote.is_none() {
                 for key in &relation.by_columns { writeln!(out, "            query = query.where(Condition.equal(\"{key}\", jsonValue({key})))").unwrap(); }

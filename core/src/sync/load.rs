@@ -126,6 +126,12 @@ impl Inner {
             scope_params.insert(column.clone(), value.clone());
             kinds.insert(column.clone(), kind as ScalarKind);
         }
+        let mut scope_values = scope_params.clone();
+        for param in &declared.text_params {
+            let value = params.get(param).ok_or_else(|| SyncError::Params(format!("missing param {param}")))?;
+            scope_params.insert(param.clone(), value.clone());
+            kinds.insert(param.clone(), ScalarKind::Str);
+        }
         let normalized = normalize_relation_params(&scope_params, &kinds).map_err(|error| SyncError::Params(error.to_string()))?;
         let scope_key = relation_scope_key(model, relation, &normalized).map_err(|error| SyncError::Params(error.to_string()))?;
         let direction = match remote.shape {
@@ -134,7 +140,7 @@ impl Inner {
         };
         let window_key = window_key(scope_key.as_str(), direction);
         let scope = ScopeRef::new(ModelKey::new(model), scope_key);
-        Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values: scope_params })
+        Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values })
     }
 
     fn next_issued(&self) -> i64 {

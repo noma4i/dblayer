@@ -157,6 +157,8 @@ When a response row has no value for a column the relation groups by, the param 
 
 `remote :name do ... end` connects a relation to the server. A relation that depends on columns names them: `remote :by_user, params: [:userId] do ... end` loads and lists the rows whose `userId` equals the param. `order: { createdAt: :desc }` sorts the rows locally, otherwise the server order is kept.
 
+`text: [:query]` declares params that are not columns, such as a search string. They are sent as variables, always strings, and each value gets its own window: `remote :search, text: [:query] do ... end` generates `Model.search("cats")`.
+
 | Line | Meaning | Default |
 | ---- | ------- | ------- |
 | `query Operation` | GraphQL operation name (required) | none |
