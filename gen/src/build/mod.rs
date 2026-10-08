@@ -223,6 +223,9 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
     };
     let mut relation = RelationSpec::new(&first_name(call), &columns.iter().map(String::as_str).collect::<Vec<_>>());
     relation.is_global = columns.is_empty();
+    if let Some(Value::Hash(pairs)) = option(call, "order").map(|pair| &pair.value.item) {
+        relation.sort = Sort::Fields(pairs.iter().map(sort_field).collect());
+    }
     relation.remote = Some(remote);
     relation
 }

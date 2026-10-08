@@ -271,3 +271,9 @@ fn a_relation_can_take_the_id_as_its_param() {
     assert!(!model.field("id").unwrap().indexed);
     assert!(dblayer::schema::validate_models(&[model], &[]).is_empty());
 }
+
+#[test]
+fn a_remote_relation_can_order_its_rows_locally() {
+    let model = build_one("  remote :recent, order: { createdAt: :desc } do\n    query \"recent\"\n  end");
+    assert_eq!(model.relations[0].sort, Sort::Fields(vec![dblayer::schema::SortField { column: "createdAt".to_string(), direction: SortDirection::Desc }]));
+}
