@@ -213,7 +213,7 @@ fn ephemeral_names_are_unique_across_the_schema_and_the_block_stays_in_schema() 
 
 #[test]
 fn ephemeral_fields_are_not_allowed_in_indexes_scopes_or_inputs() {
-    let indexed = "model Sample do\n  schema do\n    string :name, index: true\n    ephemeral do\n      bool :typing, default: false\n    end\n    index :name, :typing\n  end\nend\n";
+    let indexed = "model Sample do\n  schema do\n    string :name, index: true\n    ephemeral do\n      bool :typing, default: false, reset_after: 5.seconds\n    end\n    index :name, :typing\n  end\nend\n";
     assert_eq!(failure(indexed), (1, "model Sample: ephemeral field typing cannot be indexed".to_string()));
     let scoped = "model Sample do\n  schema do\n    string :name, index: true\n    ephemeral do\n      bool :typing, default: false\n    end\n  end\n  scope :typists, params: [:typing], where: { typing: :typing }\nend\n";
     assert_eq!(failure(scoped), (1, "model Sample: relation typists uses ephemeral field typing".to_string()));
@@ -244,9 +244,11 @@ fn memory_model_line_checks_storage_and_expire_after() {
 #[test]
 fn updates_set_is_a_hash_of_ephemeral_values() {
     let model = |set: &str| {
-        format!("model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false\n    end\n  end\n  remote :one do\n    query One\n    updates Typing, set: {set}\n  end\nend\n")
+        format!("model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false, reset_after: 5.seconds\n    end\n  end\n  remote :one do\n    query One\n    updates Typing, set: {set}\n  end\nend\n")
     };
     assert!(parse_models(&model("{ typing: true }")).is_ok());
     assert_eq!(failure(&model(":typing")), (10, "`set` must be a hash like `{ field: :param }`".to_string()));
+    let unbounded = model("{ typing: true }").replace(", reset_after: 5.seconds", "");
+    assert_eq!(failure(&unbounded), (1, "model Sample: relation one sets typing, which has no reset_after".to_string()));
     assert_eq!(failure(&model("{ name: true }")), (1, "model Sample: relation one sets name, which is not an ephemeral field".to_string()));
 }

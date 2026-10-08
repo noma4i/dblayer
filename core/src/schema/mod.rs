@@ -106,6 +106,8 @@ pub enum DeclarationError {
     ExpireNeedsMemory,
     #[error("relation {relation} sets {field}, which is not an ephemeral field")]
     UnknownSetField { relation: String, field: String },
+    #[error("relation {relation} sets {field}, which has no reset_after")]
+    SetWithoutReset { relation: String, field: String },
 }
 
 pub type DroppedRow = (usize, SchemaError);
@@ -484,8 +486,11 @@ impl RelationSpec {
         }
         let set = self.remote.iter().filter_map(|remote| remote.updates.as_ref()).flat_map(|updates| updates.set.keys());
         for field in set {
-            if model.ephemeral_field(field).is_none() {
+            let Some(spec) = model.ephemeral_field(field) else {
                 return Err(DeclarationError::UnknownSetField { relation: relation(), field: field.clone() });
+            };
+            if spec.reset_after.is_none() {
+                return Err(DeclarationError::SetWithoutReset { relation: relation(), field: field.clone() });
             }
         }
         Ok(())

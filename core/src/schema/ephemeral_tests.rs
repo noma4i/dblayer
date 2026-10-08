@@ -121,6 +121,9 @@ fn updates_set_must_name_ephemeral_fields() {
         ModelSpec { relations: vec![relation], ..with_ephemeral(typing()) }
     };
     assert_eq!(relation("typing").validate(&[]), Ok(()));
+    let mut unbounded = relation("typing");
+    unbounded.ephemeral[0].reset_after = None;
+    assert_eq!(unbounded.validate(&[]), Err(DeclarationError::SetWithoutReset { relation: "current".into(), field: "typing".into() }));
     assert_eq!(
         relation("name").validate(&[]),
         Err(DeclarationError::UnknownSetField { relation: "current".into(), field: "name".into() })

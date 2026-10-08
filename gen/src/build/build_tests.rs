@@ -225,7 +225,7 @@ fn model_line_options_build_storage_and_expiry() {
 #[test]
 fn updates_set_builds_ephemeral_values() {
     let model = parse_models(
-        "model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false\n    end\n  end\n  remote :one do\n    query One\n    updates Typing, set: { typing: true }\n  end\nend\n",
+        "model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false, reset_after: 5.seconds\n    end\n  end\n  remote :one do\n    query One\n    updates Typing, set: { typing: true }\n  end\nend\n",
     )
     .unwrap()
     .remove(0);
