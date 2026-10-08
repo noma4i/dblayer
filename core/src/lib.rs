@@ -1,5 +1,7 @@
 uniffi::setup_scaffolding!();
 
+pub mod identity;
+
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection, OptionalExtension};
