@@ -124,7 +124,7 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
         }
         writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val upload: UploadInfo? = null\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object {{").unwrap();
         for field in model.fields.iter().filter(|field| field.name != "id") { writeln!(out, "        val {} = Column<{class}, {}>(\"{}\")", field.name, field_type(field, false), field.name).unwrap(); }
-        writeln!(out, "        fun find(id: String) = Query(\"{class}\", serializer()).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", serializer()).where(condition)").unwrap();
+        writeln!(out, "        fun find(id: String) = Query(\"{class}\", serializer()).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", serializer()).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", serializer(), ids)").unwrap();
         for relation in &model.relations {
             let method = name(&relation.name);
             let params = relation.by_columns.iter().map(|key| format!("{key}: {}", model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).collect::<Vec<_>>().join(", ");

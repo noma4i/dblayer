@@ -18,6 +18,7 @@ data class Chat(
         val lastMessageAt = Column<Chat, String?>("lastMessageAt")
         fun find(id: String) = Query("Chat", serializer()).find(id)
         fun where(condition: Condition) = Query("Chat", serializer()).where(condition)
+        fun ids(ids: List<String>) = idsQuery("Chat", serializer(), ids)
         val recent: Query<Chat> get() {
             var query = Query("Chat", serializer(), relation = "recent", params = buildJsonObject {  })
             query = query.order(Order("lastMessageAt", "desc"))
@@ -59,6 +60,7 @@ data class Message(
         val createdAt = Column<Message, String>("createdAt")
         fun find(id: String) = Query("Message", serializer()).find(id)
         fun where(condition: Condition) = Query("Message", serializer()).where(condition)
+        fun ids(ids: List<String>) = idsQuery("Message", serializer(), ids)
         fun byChat(chatId: String): Query<Message> {
             var query = Query("Message", serializer(), relation = "by_chat", params = buildJsonObject { put("chatId", jsonValue(chatId)) })
             query = query.where(Condition.equal("chatId", jsonValue(chatId)))
@@ -113,6 +115,7 @@ data class Moment(
         val createdAt = Column<Moment, String>("createdAt")
         fun find(id: String) = Query("Moment", serializer()).find(id)
         fun where(condition: Condition) = Query("Moment", serializer()).where(condition)
+        fun ids(ids: List<String>) = idsQuery("Moment", serializer(), ids)
         val recent: Query<Moment> get() {
             var query = Query("Moment", serializer(), relation = "recent", params = buildJsonObject {  })
             query = query.order(Order("createdAt", "desc"))
@@ -170,6 +173,7 @@ data class Presence(
         val room = Column<Presence, String>("room")
         fun find(id: String) = Query("Presence", serializer()).find(id)
         fun where(condition: Condition) = Query("Presence", serializer()).where(condition)
+        fun ids(ids: List<String>) = idsQuery("Presence", serializer(), ids)
         fun forUser(userId: String): Query<Presence> {
             var query = Query("Presence", serializer(), relation = "for_user", params = buildJsonObject { put("userId", jsonValue(userId)) })
             query = query.where(Condition.equal("userId", jsonValue(userId)))
@@ -215,6 +219,7 @@ data class User(
         val birthday = Column<User, String?>("birthday")
         fun find(id: String) = Query("User", serializer()).find(id)
         fun where(condition: Condition) = Query("User", serializer()).where(condition)
+        fun ids(ids: List<String>) = idsQuery("User", serializer(), ids)
         val profile: Query<User> get() {
             var query = Query("User", serializer(), relation = "profile", params = buildJsonObject {  })
             return query
@@ -260,6 +265,7 @@ data class Vibe(
         val kind = Column<Vibe, String>("kind")
         fun find(id: String) = Query("Vibe", serializer()).find(id)
         fun where(condition: Condition) = Query("Vibe", serializer()).where(condition)
+        fun ids(ids: List<String>) = idsQuery("Vibe", serializer(), ids)
         suspend fun create(momentId: String, userId: String, kind: String): Vibe {
             val values = buildJsonObject {
                 put("momentId", jsonValue(momentId))

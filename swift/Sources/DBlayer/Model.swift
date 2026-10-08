@@ -15,6 +15,8 @@ extension DBModel {
   public var canRetry: Bool { needsAttention }
   public var errorMessage: String? { sync.error?.message }
 
+  public static func ids(_ ids: [String]) -> Query<Self> { Query<Self>().where(.inList("id", ids.map(JSONValue.string))) }
+
   public static func create(values: [String: JSONValue]) async throws -> Self {
     try decode(try DB.database.create(model: modelName, valuesJson: JSONValue.object(values).text))
   }

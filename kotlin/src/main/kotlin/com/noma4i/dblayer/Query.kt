@@ -95,3 +95,6 @@ class Query<Model : DBModel>(
     suspend fun refresh() = DBlayer.database.refresh(modelName, relation.orEmpty(), params.toString())
     suspend fun loadMore(): Boolean = DBlayer.database.loadMore(modelName, relation.orEmpty(), params.toString())
 }
+
+fun <Model : DBModel> idsQuery(modelName: String, serializer: KSerializer<Model>, ids: List<String>): Query<Model> =
+    Query(modelName, serializer).where(Condition.inList("id", ids.map { JsonPrimitive(it) }))
