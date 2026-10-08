@@ -73,4 +73,41 @@ public struct Query<Model: DBModel>: Sendable {
 
   public func refresh() async throws { try await DB.database.refresh(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
   @discardableResult public func loadMore() async throws -> Bool { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
+
+  public var state: LiveSource<LoadState> {
+    let model = Model.modelName, relation = relation ?? "", params = JSONValue.object(params).text
+    return LiveSource(initial: LoadState()) { emit in
+      let subscription = try DB.database.liveState(model: model, relation: relation, paramsJson: params, listener: StateObserver { emit(LoadState($0)) })
+      return { subscription.cancel() }
+    }
+  }
+}
+
+final class StateObserver: StateListener, @unchecked Sendable {
+  let body: @Sendable (RelationStateChange) -> Void
+  init(_ body: @escaping @Sendable (RelationStateChange) -> Void) { self.body = body }
+  func changed(state: RelationStateChange) { body(state) }
+}
+
+public struct LoadState: Sendable, Equatable {
+  public enum Phase: String, Sendable { case idle, loading, failed }
+
+  public var phase: Phase = .idle
+  public var hasMore = false
+  public var errorKind: String?
+  public var error: String?
+  public var loadedAt: Int64?
+
+  public init() {}
+
+  init(_ change: RelationStateChange) {
+    phase = Phase(rawValue: change.phase) ?? .idle
+    hasMore = change.hasMore
+    errorKind = change.errorKind
+    error = change.error
+    loadedAt = change.loadedAt
+  }
+
+  public var isLoading: Bool { phase == .loading }
+  public var failed: Bool { phase == .failed }
 }

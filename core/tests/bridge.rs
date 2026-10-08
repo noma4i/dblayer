@@ -32,3 +32,25 @@ async fn bridge_writes_reach_live_rows_and_files() {
     let gone = db.live_find("Moment".into(), id, Arc::new(Listener)).unwrap();
     assert!(gone.current().await.rows.is_empty());
 }
+
+struct States(std::sync::Mutex<Vec<String>>);
+impl dblayer::ffi::StateListener for States {
+    fn changed(&self, state: dblayer::ffi::RelationStateChange) { self.0.lock().unwrap().push(state.phase); }
+}
+
+#[tokio::test]
+async fn bridge_state_needs_a_sync_to_report_on() {
+    use dblayer::schema::{Coverage, RelationSpec, RemoteShape, RemoteSpec};
+    let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+    let mut feed = RelationSpec::global("feed");
+    feed.remote = Some(RemoteSpec {
+        operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: "5.minutes".into(),
+        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(),
+    });
+    model.relations.push(feed);
+    let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 },
+        serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>).unwrap();
+    let listener = Arc::new(States(Default::default()));
+    let result = db.live_state("Moment".into(), "feed".into(), "{}".into(), listener.clone());
+    assert!(result.is_err(), "without a transport there is no sync to report on");
+}

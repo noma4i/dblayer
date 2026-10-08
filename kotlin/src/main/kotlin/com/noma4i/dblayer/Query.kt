@@ -90,6 +90,8 @@ class Query<Model : DBModel>(
     fun find(id: String): LiveSource<Model?> =
         LiveSource<Model?>(null, { listener -> DBlayer.database.liveFind(modelName, id, listener) }) { change -> change.decode(serializer).firstOrNull() }
 
+    val state: LiveSource<LoadState> get() = stateSource(modelName, relation.orEmpty(), params.toString())
+
     suspend fun refresh() = DBlayer.database.refresh(modelName, relation.orEmpty(), params.toString())
     suspend fun loadMore(): Boolean = DBlayer.database.loadMore(modelName, relation.orEmpty(), params.toString())
 }

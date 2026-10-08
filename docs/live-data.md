@@ -76,18 +76,29 @@ struct ProfileView: View {
 }
 ```
 
-The projected value `$moments` gives the loading state (`idle`, `loading`, `failed`) and the last diff:
+**Loading state.** A remote relation reports `idle`, `loading` or `failed`, whether another page exists and when it last loaded:
 
 ```swift
-if $moments.state.isLoading { ProgressView() }
+for await state in Moment.feed.state.stream { if state.isLoading { showSpinner() } }
 ```
 
 ```kotlin
-val state by Moment.recent.collectState()
-if (state.isLoading) CircularProgressIndicator()
+Moment.feed.state.flow.collect { state -> if (state.isLoading) showSpinner() }
 ```
 
-**View models.** `Live` also works in `@Observable` classes and any other code: `let moments = Live(Moment.recent)` exposes `rows`, `state` and `diff`.
+**View models.** `LiveList` keeps the rows and the state of a query and moves the relation:
+
+```swift
+let feed = LiveList(Moment.feed)      // feed.rows, feed.state are observable
+try await feed.refresh()
+try await feed.loadMore()
+```
+
+```kotlin
+val feed = LiveList(Moment.feed, viewModelScope)   // feed.rows, feed.state are StateFlow
+feed.refresh()
+feed.loadMore()
+```
 
 **UIKit and Android views.** Apply the diff to a diffable data source or a collection view. The diff already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:
 

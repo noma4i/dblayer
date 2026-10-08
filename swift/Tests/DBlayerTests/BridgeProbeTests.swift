@@ -29,5 +29,24 @@ struct BridgeProbeTests {
     var changes = Moment.feed.live.stream.makeAsyncIterator()
     #expect(await changes.next()?.first?.uuid == "a")
     #expect(transport.calls.first?.operationName == "MomentsFeed")
+    var states = Moment.feed.state.stream.makeAsyncIterator()
+    let state = await states.next()
+    #expect(state?.phase == .idle && state?.hasMore == false && state?.loadedAt != nil)
+  }
+
+  @MainActor
+  @Test
+  func liveListLoadsTheRelationAndReportsItsState() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+
+    let list = LiveList(Moment.feed)
+    for _ in 0 ..< 200 where list.rows.isEmpty || list.state.loadedAt == nil { try await Task.sleep(for: .milliseconds(10)) }
+
+    #expect(list.rows.first?.uuid == "a")
+    #expect(list.state.hasMore && list.state.phase == .idle)
+    list.stop()
   }
 }

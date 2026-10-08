@@ -35,5 +35,25 @@ class BridgeProbeTest {
 
         assertEquals("a", withTimeout(5000) { Moment.feed.live.flow.first { it.isNotEmpty() } }.first().uuid)
         assertEquals("MomentsFeed", transport.calls.first().operationName)
+        val state = withTimeout(5000) { Moment.feed.state.flow.first() }
+        assertEquals(LoadPhase.Idle, state.phase)
+        assertEquals(false, state.hasMore)
+        assertEquals(true, state.loadedAt != null)
+    }
+
+    @Test
+    fun liveListLoadsTheRelationAndReportsItsState() = runBlocking {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}""")
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+
+        val list = LiveList(Moment.feed, this)
+        withTimeout(5000) { list.rows.first { it.isNotEmpty() } }
+        val state = withTimeout(5000) { list.state.first { it.loadedAt != null } }
+        assertEquals("a", list.rows.value.first().uuid)
+        assertEquals(true, state.hasMore)
+        assertEquals(LoadPhase.Idle, state.phase)
+        list.stop()
     }
 }

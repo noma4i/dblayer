@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import SwiftUI
 
 final class ChangeListener: QueryListener, @unchecked Sendable {
@@ -16,18 +17,23 @@ extension LiveChange {
 
 public struct LiveSource<Value: Sendable>: Sendable {
   public let initial: Value
-  let attach: @Sendable (QueryListener) throws -> LiveSubscription
-  let map: @Sendable (LiveChange) -> Value
+  let subscribe: @Sendable (@escaping @Sendable (Value) -> Void) throws -> @Sendable () -> Void
+
+  init(initial: Value, subscribe: @escaping @Sendable (@escaping @Sendable (Value) -> Void) throws -> @Sendable () -> Void) {
+    self.initial = initial; self.subscribe = subscribe
+  }
 
   init(initial: Value, attach: @escaping @Sendable (QueryListener) throws -> LiveSubscription, map: @escaping @Sendable (LiveChange) -> Value) {
-    self.initial = initial; self.attach = attach; self.map = map
+    self.init(initial: initial) { emit in
+      let subscription = try attach(ChangeListener { emit(map($0)) })
+      return { subscription.cancel() }
+    }
   }
 
   public var stream: AsyncStream<Value> {
     AsyncStream { continuation in
-      let map = map
-      let subscription = try? attach(ChangeListener { continuation.yield(map($0)) })
-      continuation.onTermination = { _ in subscription?.cancel() }
+      let cancel = try? subscribe { continuation.yield($0) }
+      continuation.onTermination = { _ in cancel?() }
     }
   }
 
@@ -74,4 +80,38 @@ public struct LiveView<Value: Sendable, Content: View>: View {
     self.init(query.live, content: content)
   }
   public var body: some View { content(value) }
+}
+
+/// A live query for view models: the rows, the load state of the relation, and the calls that move them.
+@MainActor
+@Observable
+public final class LiveList<Model: DBModel> {
+  public private(set) var rows: [Model] = []
+  public private(set) var state = LoadState()
+  @ObservationIgnored private let query: Query<Model>
+  @ObservationIgnored private var tasks: [Task<Void, Never>] = []
+
+  public init(_ query: Query<Model>) {
+    self.query = query
+    tasks = [
+      Task { [weak self] in
+        for await next in query.live.stream { self?.rows = next }
+      },
+      Task { [weak self] in
+        for await next in query.state.stream { self?.state = next }
+      }
+    ]
+  }
+
+  public func refresh() async throws { try await query.refresh() }
+
+  @discardableResult
+  public func loadMore() async throws -> Bool { try await query.loadMore() }
+
+  public func stop() {
+    tasks.forEach { $0.cancel() }
+    tasks = []
+  }
+
+  isolated deinit { stop() }
 }
