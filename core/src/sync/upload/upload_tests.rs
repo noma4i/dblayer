@@ -521,3 +521,28 @@ async fn an_orphaned_multipart_of_a_failed_upload_is_aborted_on_start() {
     assert_eq!(stored_state(&rig).upload_id, None);
     assert_eq!(upload_of(&rig, "m1").unwrap().status, UploadStatus::Failed);
 }
+
+#[tokio::test]
+async fn inv_op_10_parallel_uploads_for_one_record_leave_exactly_one_open() {
+    let rig = upload_rig(small());
+    for round in 0..30 {
+        let id = rid(&format!("r{round}"));
+        put(&rig, "moments", moment(id.as_str(), "x"));
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let accepted = (0..8)
+            .map(|_| {
+                let (inner, id, barrier) = (rig.sync.inner.clone(), id.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    let input = UploadInput::new("/nonexistent/file.bin", steps());
+                    barrier.wait();
+                    inner.begin_upload("moments", &id, &input, UploadState::queued()).is_ok()
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(|accepted| *accepted)
+            .count();
+        assert_eq!(accepted, 1, "round {round}");
+    }
+}

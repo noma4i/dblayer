@@ -9,7 +9,7 @@ use tokio::sync::{watch, Semaphore};
 use tokio::task::JoinSet;
 
 use crate::commit::{CommitEnvelope, OperationRecord, OperationStatus, OperationTransition, WriteOrigin};
-use crate::db::OutboxOperation;
+use crate::db::{read_outbox, OutboxOperation};
 use crate::identity::RowId;
 use crate::operation::Operation;
 use crate::transport::CancelToken;
@@ -50,9 +50,6 @@ fn upload_entry(entries: Vec<OutboxOperation>, model: &str, id: &RowId) -> Optio
 impl Inner {
     pub(crate) fn begin_upload(&self, model: &str, id: &RowId, input: &UploadInput, state: UploadState) -> Result<i64, SyncError> {
         self.db.spec(model)?;
-        if upload_entry(self.db.outbox()?, model, id).is_some() {
-            return Err(SyncError::Params(format!("{model} {id} already has an upload")));
-        }
         let record = OperationRecord {
             seq: None,
             action_key: Operation::action_key(model, "upload"),
@@ -63,14 +60,17 @@ impl Inner {
             transport_started: false,
             base_revision: Some(self.db.revision_seq()?),
             created_at: self.now_ms(),
-            dedupe_key: None,
+            dedupe_key: Some(format!("{model}:{id}:upload")),
             rollback: None,
             upload: Some(state),
         };
         let generation = self.db.generation();
-        let committed = self.commit(generation, |_| {
+        let committed = self.commit(generation, |reader| {
+            if upload_entry(read_outbox(reader)?, model, id).is_some() {
+                return Err(SyncError::Params(format!("{model} {id} already has an upload")));
+            }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-            envelope.operation_transitions.push(OperationTransition::Begin(record));
+            envelope.operation_transitions.push(OperationTransition::Begin(record.clone()));
             Ok(Some(envelope))
         })?;
         committed.and_then(|result| result.operations.into_iter().next()).ok_or(SyncError::Cancelled)
