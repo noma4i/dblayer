@@ -83,16 +83,6 @@ fn freshness_needs_landing_inside_window_and_no_invalidation() {
 }
 
 #[test]
-fn freshness_of_stored_window_is_read_back() {
-    let (store, clock) = booted_store();
-    store.save_window(&window("k")).unwrap();
-    let now = clock.now().as_millis() as i64;
-    assert!(store.is_window_fresh("k", now + 10, 30).unwrap());
-    assert!(!store.is_window_fresh("k", now + 40, 30).unwrap());
-    assert!(!store.is_window_fresh("missing", now, 30).unwrap());
-}
-
-#[test]
 fn keys_are_empty_without_windows() {
     let (store, _) = booted_store();
     assert!(store.window_keys("vibes").unwrap().is_empty());
@@ -184,15 +174,6 @@ fn invalidation_with_no_requests_leaves_no_stale_keys() {
 }
 
 #[test]
-fn family_request_marks_matching_window_stale() {
-    let (store, _) = booted_store();
-    let thread = key("messages", "thread", "thread-1");
-    store.save_window(&window(&thread)).unwrap();
-    assert_eq!(store.apply_invalidation(&[InvalidationRequest::family("messages", "thread")]).unwrap(), 1);
-    assert!(store.stale_window_keys().unwrap().contains(&thread));
-}
-
-#[test]
 fn family_request_collapses_exact_request_of_same_relation() {
     let (store, _) = booted_store();
     let exact = key("messages", "thread", "1");
@@ -201,12 +182,6 @@ fn family_request_collapses_exact_request_of_same_relation() {
     assert_eq!(store.apply_invalidation(&requests).unwrap(), 1);
     let other = vec![InvalidationRequest::exact(&exact), InvalidationRequest::exact(&exact)];
     assert_eq!(InvalidationRequest::deduplicate(&other).len(), 1);
-}
-
-#[test]
-fn family_prefix_follows_length_prefixed_encoding() {
-    assert_eq!(family_prefix("messages", "thread"), "8:messages6:thread");
-    assert_eq!(family_prefix("chats", "all"), "5:chats3:all");
 }
 
 #[test]

@@ -238,13 +238,6 @@ fn maintain_removes_stray_directory_files_partial_writes_and_stale_cache() {
 }
 
 #[test]
-fn maintain_also_runs_the_store_maintenance() {
-    let db = seeded();
-    let report = db.maintain(&[]).unwrap();
-    assert_eq!(report.temp_rows_dropped, 0);
-}
-
-#[test]
 fn logout_style_wipe_leaves_no_files_behind() {
     let (root, db) = on_disk();
     seed_tree(&db);

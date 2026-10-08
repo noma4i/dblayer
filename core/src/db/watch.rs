@@ -16,6 +16,7 @@ use super::open::Shared;
 use super::row::Row;
 
 pub type Related = BTreeMap<String, BTreeMap<RowId, Vec<Row>>>;
+type ParentStamps = HashMap<RowId, Vec<(RowRef, i64, u64)>>;
 
 #[derive(Debug, Clone)]
 pub struct Change {
@@ -183,9 +184,9 @@ impl Shared {
         spec: &ModelSpec,
         include: &[String],
         rows: &[Row],
-    ) -> Result<(Related, HashMap<RowId, Vec<(RowRef, i64, u64)>>), DbError> {
+    ) -> Result<(Related, ParentStamps), DbError> {
         let mut related = Related::new();
-        let mut stamps: HashMap<RowId, Vec<(RowRef, i64, u64)>> = HashMap::new();
+        let mut stamps = ParentStamps::new();
         for name in include {
             let association = association(spec, name)?;
             let target = association.target.as_str();

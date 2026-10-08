@@ -35,8 +35,3 @@ fn local_state_is_ready_and_with_phase_keeps_other_fields() {
         .with_phase(LoadingPhase::Error);
     assert_eq!(changed, LoadingState { phase: LoadingPhase::Error, has_data: true, is_offline: true, retry_attempt: 2 });
 }
-
-#[test]
-fn default_phase_is_idle() {
-    assert_eq!(LoadingState::default().phase, LoadingPhase::Idle);
-}

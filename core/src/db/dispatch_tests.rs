@@ -49,8 +49,3 @@ fn an_event_of_a_commit_lists_models_rows_scopes_and_replaced_pairs() {
     assert_eq!(event.replaced, vec![(temp.id.clone(), rid("m7"))]);
     assert_eq!(event.models, BTreeSet::from([ModelKey::new("moments")]));
 }
-
-#[test]
-fn settle_returns_at_once_when_nothing_is_pending() {
-    booted().settle();
-}

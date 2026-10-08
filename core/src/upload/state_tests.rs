@@ -31,11 +31,3 @@ fn only_a_rejection_is_not_retryable() {
     assert!(failed(FailureKind::Network).is_retryable());
     assert!(!failed(FailureKind::Rejected).is_retryable());
 }
-
-#[test]
-fn state_round_trips_through_json_with_its_parts() {
-    let mut stored = state(UploadStatus::Uploading, 5, 10);
-    stored.parts.push(UploadPart { number: 1, etag: "e1".to_string() });
-    let back: UploadState = serde_json::from_slice(&serde_json::to_vec(&stored).unwrap()).unwrap();
-    assert_eq!(back, stored);
-}

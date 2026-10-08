@@ -293,7 +293,6 @@ pub struct CommitResult {
     pub operations: BTreeSet<i64>,
     pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
-    pub affected_key_statements: u32,
 }
 
 impl CommitResult {
@@ -306,7 +305,6 @@ impl CommitResult {
             operations: BTreeSet::new(),
             replaced: Vec::new(),
             unknown_operation_acks: 0,
-            affected_key_statements: 0,
         }
     }
 

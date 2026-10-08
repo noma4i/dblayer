@@ -235,10 +235,6 @@ impl Store {
             .optional()?)
     }
 
-    pub fn is_window_fresh(&self, key: &str, now: i64, window: i64) -> Result<bool, StoreError> {
-        Ok(self.window_freshness(key)?.is_some_and(|freshness| freshness.is_fresh(now, window)))
-    }
-
     pub fn drop_window(&self, key: &str) -> Result<(), StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;

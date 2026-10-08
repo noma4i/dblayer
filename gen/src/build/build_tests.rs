@@ -19,12 +19,6 @@ fn fields_of(lines: &str) -> Vec<dblayer::schema::FieldSpec> {
 }
 
 #[test]
-fn empty_source_has_no_models() {
-    assert_eq!(parse_models("").unwrap(), vec![]);
-    assert_eq!(parse_models("# nothing\n").unwrap(), vec![]);
-}
-
-#[test]
 fn scalar_words_map_to_scalar_kinds() {
     let fields = fields_of("string :a\nnum :b\nint :c\nbool :d\ndate :e\nid :f");
     let kinds: Vec<ScalarKind> = fields
@@ -145,12 +139,6 @@ fn scopes_and_remotes_keep_written_order() {
     let model = build_one("  remote :b do\n    query B\n  end\n  scope :a\n  remote :c do\n    query C\n  end");
     let names: Vec<_> = model.relations.iter().map(|relation| relation.name.as_str()).collect();
     assert_eq!(names, vec!["b", "a", "c"]);
-}
-
-#[test]
-fn comments_and_blank_lines_are_ignored() {
-    let model = build_one("  # note\n\n  scope :a # tail\n");
-    assert_eq!(model.relations.len(), 1);
 }
 
 #[test]

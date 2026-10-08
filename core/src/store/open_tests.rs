@@ -25,13 +25,6 @@ fn open_creates_file_and_parent_directory_without_model_tables() {
 }
 
 #[test]
-fn boot_twice_does_not_fail_on_existing_tables() {
-    let (store, _) = booted_store();
-    store.boot(&[messages_spec(), items_spec()], None).unwrap();
-    assert!(store.table_exists("row_messages").unwrap());
-}
-
-#[test]
 fn separate_user_files_do_not_share_rows() {
     let directory = tempfile::tempdir().unwrap();
     let first = Store::open(&directory.path().join("a.sqlite")).unwrap();

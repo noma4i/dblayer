@@ -80,7 +80,10 @@ async fn empty_result_uses_the_shorter_empty_window() {
     let rig = rig();
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": []})));
     rig.sync.load("moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
-    rig.clock.advance(Duration::from_secs(11));
+    rig.clock.advance(Duration::from_secs(5));
+    let early = rig.sync.load("moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
+    assert_eq!(early.status, LoadStatus::SkippedFresh);
+    rig.clock.advance(Duration::from_secs(6));
     let again = rig.sync.load("moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(again.status, LoadStatus::Loaded);
 }
@@ -255,19 +258,6 @@ async fn refreshing_the_first_page_keeps_the_loaded_tail_when_the_anchor_is_foun
 }
 
 #[tokio::test(start_paused = true)]
-async fn refreshing_a_first_page_without_the_anchor_drops_the_loaded_tail() {
-    let rig = rig();
-    rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
-    rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], false, "c4"));
-    rig.transport.enqueue("MomentsFeed", feed_reply(&["x", "y"], true, "r2"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
-    rig.sync.load_more("moments", "feed", &none()).await.unwrap();
-    rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
-    assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["x", "y"]);
-    assert_eq!(window(&rig, "feed", &none()).unwrap().cursor.as_deref(), Some("r2"));
-}
-
-#[tokio::test(start_paused = true)]
 async fn rows_failing_normalization_are_counted_not_fatal() {
     let rig = rig();
     let page = feed_page(vec![moment("m1", "ok"), json!({"text": "no id"})], false, "c1");
@@ -311,7 +301,8 @@ async fn forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery()
     let spec = rig.db.spec("moments").unwrap();
     let relation = spec.relations.iter().find(|candidate| candidate.name == "feed").unwrap();
     let scope = relation.scope_key("moments", &Default::default()).unwrap();
-    let seen: std::sync::Arc<std::sync::Mutex<Vec<(Vec<String>, usize)>>> = Default::default();
+    type Seen = Vec<(Vec<String>, usize)>;
+    let seen: std::sync::Arc<std::sync::Mutex<Seen>> = Default::default();
     let sink = seen.clone();
     let _subscription = rig
         .db

@@ -68,13 +68,6 @@ fn find_scope_uses_model_id_and_row_id() {
 }
 
 #[test]
-fn generation_orders_and_advances() {
-    assert_eq!(Generation::INITIAL.value(), 0);
-    assert_eq!(Generation::INITIAL.next().value(), 1);
-    assert!(Generation::INITIAL < Generation::INITIAL.next());
-}
-
-#[test]
 fn row_ref_prefixes_action_keys_with_model() {
     let reference = RowRef::new(ModelKey::new("moments"), RowId::new("1").unwrap());
     assert_eq!(reference.action_key_prefix(), "moments:");

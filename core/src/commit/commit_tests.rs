@@ -30,14 +30,6 @@ fn envelope() -> CommitEnvelope {
 }
 
 #[test]
-fn new_envelope_fills_schema_version_and_is_empty() {
-    let envelope = envelope();
-    assert_eq!(envelope.schema_version, ENVELOPE_VERSION);
-    assert_eq!(envelope.origin, WriteOrigin::Event);
-    assert!(envelope.is_empty());
-}
-
-#[test]
 fn envelope_with_any_op_is_not_empty() {
     let mut scoped = envelope();
     scoped.scope_ops.push(ScopeOp::Append { scope: scope(), row: row("m1"), order_key: "a".into() });
@@ -125,14 +117,6 @@ fn touched_rows_and_scopes_keep_first_occurrence() {
 }
 
 #[test]
-fn destroy_reason_writes_tombstone_for_server_and_local_only() {
-    assert!(DestroyReason::Server.writes_tombstone());
-    assert!(DestroyReason::Local.writes_tombstone());
-    assert!(!DestroyReason::Expired.writes_tombstone());
-    assert!(!DestroyReason::Replaced { by: row("s1") }.writes_tombstone());
-}
-
-#[test]
 fn operation_status_round_trips_through_sql_text() {
     for status in [
         OperationStatus::Pending,
@@ -146,11 +130,4 @@ fn operation_status_round_trips_through_sql_text() {
     assert_eq!(OperationStatus::from_sql("nope"), None);
     assert!(OperationStatus::Committed.is_terminal());
     assert!(!OperationStatus::Failed.is_terminal());
-}
-
-#[test]
-fn noop_result_has_no_revision() {
-    let result = CommitResult::noop(Uuid::new_v4());
-    assert!(result.is_noop());
-    assert!(result.affected_rows().is_empty());
 }

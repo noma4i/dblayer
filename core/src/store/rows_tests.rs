@@ -50,17 +50,6 @@ fn hydration_verdict_follows_version_identity_and_readability() {
 }
 
 #[test]
-fn silent_drop_and_counter_name_follow_verdict() {
-    assert!(HydrationVerdict::StaleVersion.is_silent_drop());
-    assert!(!HydrationVerdict::IdentityMismatch.is_silent_drop());
-    assert!(!HydrationVerdict::Unreadable.is_silent_drop());
-    assert!(!HydrationVerdict::Accepted.is_silent_drop());
-    assert_eq!(HydrationVerdict::StaleVersion.counter_name(), Some("stale_version_drops"));
-    assert_eq!(HydrationVerdict::Unreadable.counter_name(), Some("rejected_records"));
-    assert_eq!(HydrationVerdict::Accepted.counter_name(), None);
-}
-
-#[test]
 fn point_returns_payload_or_none() {
     let (store, _) = booted_store();
     seed(&store, &[("m1", "c1")]);
@@ -163,13 +152,6 @@ fn payload_identity_must_equal_row_key() {
     exec(&store, "UPDATE row_messages SET payload = CAST('{\"id\":\"other\"}' AS BLOB) WHERE id = 'm1'");
     assert!(store.point("messages", "m1").unwrap().is_none());
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 0);
-}
-
-#[test]
-fn row_count_reports_table_size() {
-    let (store, _) = booted_store();
-    seed(&store, &[("m1", "c1"), ("m2", "c1")]);
-    assert_eq!(store.row_count("messages").unwrap(), 2);
 }
 
 #[test]

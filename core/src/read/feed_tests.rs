@@ -15,7 +15,7 @@ fn distance_matches_geography() {
 }
 
 #[test]
-fn missing_baseline_and_large_move_move_the_feed_while_small_move_keeps_it() {
+fn missing_baseline_and_large_move_move_the_feed_while_small_move_keeps_it_and_the_far_move_names_the_feed_family() {
     let baseline = at(55.75, 37.62);
     let small = at(55.7501, 37.62);
     let large = at(55.76, 37.62);
@@ -25,23 +25,14 @@ fn missing_baseline_and_large_move_move_the_feed_while_small_move_keeps_it() {
     assert_eq!(feed_next_baseline(Some(baseline), small), baseline);
     assert!(moves_feed(Some(baseline), large));
     assert_eq!(feed_next_baseline(Some(baseline), large), large);
-}
 
-#[test]
-fn threshold_is_inclusive() {
-    let baseline = at(0.0, 0.0);
+    let origin = at(0.0, 0.0);
     let exact = at(0.0, 500.0 / 111_194.926_644_558_73);
-    assert!(baseline.distance_meters(exact) >= MOVE_THRESHOLD_METERS - 0.001);
-    assert!(moves_feed(Some(baseline), at(0.0, 0.01)));
-    assert!(!moves_feed(Some(baseline), at(0.0, 0.0005)));
-}
+    assert!(origin.distance_meters(exact) >= MOVE_THRESHOLD_METERS - 0.001, "threshold distance");
+    assert!(moves_feed(Some(origin), at(0.0, 0.01)));
+    assert!(!moves_feed(Some(origin), at(0.0, 0.0005)));
 
-#[test]
-fn invalidation_names_the_feed_family_only_after_a_far_move() {
-    let baseline = at(0.0, 0.0);
-    let close = at(0.0, 0.0005);
-    let far = at(0.0, 0.01);
-    assert!(feed_invalidation(Some(baseline), close).is_empty());
-    assert_eq!(feed_invalidation(Some(baseline), far), vec![InvalidationRequest::family(FEED_MODEL, FEED_RELATION)]);
-    assert_eq!(feed_invalidation(None, close), vec![InvalidationRequest::family("moments", "feed")]);
+    assert!(feed_invalidation(Some(origin), at(0.0, 0.0005)).is_empty(), "close move");
+    assert_eq!(feed_invalidation(Some(origin), at(0.0, 0.01)), vec![InvalidationRequest::family(FEED_MODEL, FEED_RELATION)], "far move");
+    assert_eq!(feed_invalidation(None, at(0.0, 0.0005)), vec![InvalidationRequest::family("moments", "feed")], "no baseline");
 }

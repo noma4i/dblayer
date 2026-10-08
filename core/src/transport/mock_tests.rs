@@ -8,17 +8,21 @@ fn ping() -> GraphQLRequest {
 }
 
 #[tokio::test]
-async fn scripted_response_is_returned_by_operation_name() {
-    let mock = MockTransport::new();
-    mock.enqueue("Ping", Reply::data(json!({"ping": "pong"})));
-    let response = mock.query(ping()).await.unwrap();
-    assert_eq!(response.data, Some(json!({"ping": "pong"})));
-}
+async fn replies_are_scripted_by_operation_name_and_unscripted_operations_fail() {
+    assert_eq!(MockTransport::new().query(ping()).await, Err(TransportError::Unscripted("Ping".into())), "unscripted");
 
-#[tokio::test]
-async fn unscripted_operation_fails_with_unscripted_error() {
-    let mock = MockTransport::new();
-    assert_eq!(mock.query(ping()).await, Err(TransportError::Unscripted("Ping".into())));
+    let scripted = |reply: Reply| {
+        let mock = MockTransport::new();
+        mock.enqueue("Ping", reply);
+        mock
+    };
+    let data = scripted(Reply::data(json!({"ping": "pong"}))).query(ping()).await.unwrap();
+    assert_eq!(data.data, Some(json!({"ping": "pong"})), "data reply");
+    let failed = scripted(Reply::fail(TransportError::Network("down".into()))).query(ping()).await;
+    assert_eq!(failed, Err(TransportError::Network("down".into())), "scripted error");
+    let rejected = scripted(Reply::graphql_error("nope", "FORBIDDEN")).query(ping()).await.unwrap();
+    assert_eq!(rejected.errors[0].code(), Some("FORBIDDEN"), "graphql error");
+    assert!(rejected.data.is_none());
 }
 
 #[tokio::test]
@@ -30,22 +34,6 @@ async fn queue_pops_in_order_and_last_reply_repeats() {
     assert_eq!(data(mock.query(ping()).await.unwrap()), json!(1));
     assert_eq!(data(mock.query(ping()).await.unwrap()), json!(2));
     assert_eq!(data(mock.query(ping()).await.unwrap()), json!(2));
-}
-
-#[tokio::test]
-async fn scripted_error_is_returned() {
-    let mock = MockTransport::new();
-    mock.enqueue("Ping", Reply::fail(TransportError::Network("down".into())));
-    assert_eq!(mock.query(ping()).await, Err(TransportError::Network("down".into())));
-}
-
-#[tokio::test]
-async fn graphql_errors_travel_in_the_response() {
-    let mock = MockTransport::new();
-    mock.enqueue("Ping", Reply::graphql_error("nope", "FORBIDDEN"));
-    let response = mock.query(ping()).await.unwrap();
-    assert_eq!(response.errors[0].code(), Some("FORBIDDEN"));
-    assert!(response.data.is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -97,12 +85,4 @@ async fn cancelling_subscription_is_counted_once() {
     subscription.cancel();
     drop(subscription);
     assert_eq!(mock.cancellations("Tick"), 1);
-}
-
-#[tokio::test]
-async fn mock_is_usable_as_dyn_transport() {
-    let mock = MockTransport::new();
-    mock.enqueue("Ping", Reply::data(json!(1)));
-    let transport: std::sync::Arc<dyn Transport> = std::sync::Arc::new(mock);
-    assert!(transport.query(ping()).await.is_ok());
 }

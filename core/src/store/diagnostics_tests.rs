@@ -3,8 +3,10 @@ use crate::identity::ModelKey;
 use std::collections::BTreeMap;
 
 #[test]
-fn tags_contain_only_source_for_minimal_context() {
+fn tags_contain_only_source_for_minimal_context_and_skip_empty_key_and_event() {
     assert_eq!(sync_tags(&SyncContext::new("landing")), BTreeMap::from([("db.source".to_string(), "landing".to_string())]));
+    let empty = SyncContext { key: Some(String::new()), event: Some(String::new()), ..SyncContext::new("landing") };
+    assert_eq!(sync_tags(&empty).len(), 1);
 }
 
 #[test]
@@ -20,12 +22,6 @@ fn tags_include_model_key_and_event() {
     assert_eq!(tags["db.model"], "chats");
     assert_eq!(tags["db.key"], "chats:1");
     assert_eq!(tags["db.event"], "insert");
-}
-
-#[test]
-fn tags_skip_empty_key_and_event() {
-    let context = SyncContext { key: Some(String::new()), event: Some(String::new()), ..SyncContext::new("landing") };
-    assert_eq!(sync_tags(&context).len(), 1);
 }
 
 #[test]

@@ -31,16 +31,15 @@ pub use admission::{
     PatchAdmission, RevisionVerdict, RowRevision, UpsertAdmission,
 };
 pub use apply::PlanCommitError;
-pub use boot::{boot_steps, BootConditions, BootReport, BootStep};
+pub use boot::BootReport;
 pub use diagnostics::{sync_tags, SyncContext, SyncFault};
 pub use error::StoreError;
 pub use intake::{accepted_rows, row_intake, tombstone_drop_count, IntakeOutcome, IntakeReason, RowPatch};
 pub use location::StoreLocation;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
-pub use membership::{MembershipChange, MembershipPlan, ScopeRecord};
-pub use reset::{ResetMode, ResetPlan, ResetStep};
+pub use membership::{MembershipChange, MembershipPlan};
 pub use rows::{HydrationVerdict, Reader, ScopeRowsResult, StoredRow};
-pub use tombstones::{SeamDrops, TombstoneFilter, TombstoneRetention, WriteSeam};
+pub use tombstones::TombstoneRetention;
 pub use windows::{
     family_prefix, window_key, InvalidationRequest, InvalidationScope, PageInfo, Pagination, QueryWindow,
     WindowFreshness, WindowRecord,

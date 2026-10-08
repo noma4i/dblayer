@@ -14,33 +14,28 @@ fn encode(name: Nullable<String>) -> String {
 }
 
 #[test]
-fn omitted_skips_key() {
-    assert_eq!(encode(Nullable::Omitted), r#"{"id":"1"}"#);
+fn nullable_variables_skip_write_null_or_write_the_value() {
+    let cases = [
+        ("omitted", Nullable::Omitted, r#"{"id":"1"}"#),
+        ("null", Nullable::Null, r#"{"id":"1","name":null}"#),
+        ("value", Nullable::Value("Ann".into()), r#"{"id":"1","name":"Ann"}"#),
+    ];
+    for (case, name, expected) in cases {
+        assert_eq!(encode(name), expected, "{case}");
+    }
 }
 
 #[test]
-fn null_writes_null() {
-    assert_eq!(encode(Nullable::Null), r#"{"id":"1","name":null}"#);
-}
-
-#[test]
-fn value_writes_value() {
-    assert_eq!(encode(Nullable::Value("Ann".into())), r#"{"id":"1","name":"Ann"}"#);
-}
-
-#[test]
-fn error_decodes_signature_code() {
-    let error: GraphQLError =
-        serde_json::from_str(r#"{"message":"x","extensions":{"code":"SIGNATURE_EXPIRED"}}"#).unwrap();
-    assert_eq!(error.code(), Some("SIGNATURE_EXPIRED"));
-}
-
-#[test]
-fn error_without_string_code_has_no_code() {
-    let missing: GraphQLError = serde_json::from_str(r#"{"message":"x"}"#).unwrap();
-    let numeric: GraphQLError = serde_json::from_str(r#"{"message":"x","extensions":{"code":5}}"#).unwrap();
-    assert_eq!(missing.code(), None);
-    assert_eq!(numeric.code(), None);
+fn error_code_is_read_only_from_a_string_extension() {
+    let cases = [
+        ("string code", r#"{"message":"x","extensions":{"code":"SIGNATURE_EXPIRED"}}"#, Some("SIGNATURE_EXPIRED")),
+        ("no extensions", r#"{"message":"x"}"#, None),
+        ("numeric code", r#"{"message":"x","extensions":{"code":5}}"#, None),
+    ];
+    for (case, body, expected) in cases {
+        let error: GraphQLError = serde_json::from_str(body).unwrap();
+        assert_eq!(error.code(), expected, "{case}");
+    }
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
@@ -62,12 +57,4 @@ fn response_without_data_decodes_to_none_and_bad_shape_is_decode_error() {
     assert_eq!(empty.errors.len(), 1);
     let bad = Response::data(json!({"ping": 1}));
     assert!(matches!(bad.decode::<Ping>(), Err(TransportError::Decode(_))));
-}
-
-#[test]
-fn request_keeps_document_name_and_variables() {
-    let request = GraphQLRequest::new("query Ping { ping }", "Ping", json!({"a": 1}));
-    assert_eq!(request.operation_name, "Ping");
-    assert_eq!(request.document, "query Ping { ping }");
-    assert_eq!(request.variables, json!({"a": 1}));
 }

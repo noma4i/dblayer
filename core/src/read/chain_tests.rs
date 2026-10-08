@@ -16,15 +16,7 @@ fn verdict_follows_members_and_live_rows() {
     assert_eq!(ChainVerdict::of(&chain, &set(&["a", "b"]), &set(&["a"])), ChainVerdict::LostRows);
     assert_eq!(ChainVerdict::of(&chain, &set(&["a"]), &set(&["a", "b"])), ChainVerdict::LostMembership);
     assert_eq!(ChainVerdict::of(&[], &set(&[]), &set(&[])), ChainVerdict::Empty);
-}
-
-#[test]
-fn lost_rows_win_over_lost_membership() {
-    assert_eq!(ChainVerdict::of(&ids(&["a", "b"]), &set(&["a"]), &set(&["a"])), ChainVerdict::LostRows);
-}
-
-#[test]
-fn only_intact_is_not_stale() {
+    assert_eq!(ChainVerdict::of(&ids(&["a", "b"]), &set(&["a"]), &set(&["a"])), ChainVerdict::LostRows, "lost rows win over lost membership");
     assert!(!ChainVerdict::Intact.is_stale());
     assert!(ChainVerdict::LostRows.is_stale());
     assert!(ChainVerdict::LostMembership.is_stale());

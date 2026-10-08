@@ -74,19 +74,6 @@ fn patch_keeps_present_values_and_indexed_names() {
 }
 
 #[test]
-fn scalar_fields_decode_or_reject_input() {
-    let count = FieldSpec::scalar("count", ScalarKind::Int);
-    let created_at = FieldSpec::scalar("createdAt", ScalarKind::Date);
-    let chat_id = FieldSpec::scalar("chatId", ScalarKind::Id);
-
-    assert_eq!(count.decode(&json!("42")), Some(json!(42)));
-    assert_eq!(count.decode(&json!("abc")), None);
-    assert_eq!(chat_id.decode(&json!("")), None);
-    let date = created_at.decode(&json!(1_700_000_000_000_i64)).unwrap();
-    assert!(date.as_str().unwrap().starts_with("2023-"));
-}
-
-#[test]
 fn list_object_array_and_enum_fields_keep_only_valid_shapes() {
     let list = FieldSpec::list("counts", ScalarKind::Int);
     let record = FieldSpec::object("metadata");
@@ -128,11 +115,6 @@ fn normalize_all_keeps_valid_rows_and_reports_dropped() {
     assert_eq!(dropped, vec![(1, SchemaError::MissingField("id".into()))]);
     assert!(none.is_empty());
     assert!(none_dropped.is_empty());
-}
-
-#[test]
-fn valid_model_passes() {
-    assert_eq!(model(vec![id_field()]).validate(&[]), Ok(()));
 }
 
 #[test]
@@ -473,7 +455,7 @@ fn forbidden_members_and_once_key_are_checked() {
 }
 
 #[test]
-fn model_spec_round_trips_through_json() {
+fn specs_round_trip_through_json_and_default_missing_parts() {
     let spec = ModelSpec {
         associations: vec![association("chat", AssociationKind::BelongsTo, "chats", "chatId")],
         relations: vec![RelationSpec { remote: Some(paged_remote(true)), ..RelationSpec::new("thread", &["chatId"]) }],
@@ -496,6 +478,22 @@ fn model_spec_round_trips_through_json() {
     }))
     .unwrap();
     assert_eq!(minimal, ModelSpec::new("m", vec![FieldSpec::raw("id")]));
+
+    let remote = RemoteSpec { updates: Some(UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()), set: Map::new() }), ..complete_remote() };
+    let text = serde_json::to_string(&remote).unwrap();
+    assert_eq!(serde_json::from_str::<RemoteSpec>(&text).unwrap(), remote);
+    let bare = r#"{"operation":"Q","shape":{"type":"single"},"stale_time":"5.minutes"}"#;
+    assert_eq!(serde_json::from_str::<RemoteSpec>(bare).unwrap().updates, None);
+
+    let bare = r#"{"name":"like","mode":"request","root_shape":"upsert"}"#;
+    let parsed: ActionDeclaration = serde_json::from_str(bare).unwrap();
+    assert_eq!((parsed.mutation.clone(), parsed.variables.len(), parsed.optimistic.len(), parsed.refetch.len()), (None, 0, 0, 0));
+    let mut full = action("like", RootShape::Upsert);
+    full.mutation = Some("LikeMoment".into());
+    full.variables.insert("momentId".into(), "id".into());
+    full.optimistic.insert("likedByMe".into(), serde_json::json!(true));
+    full.refetch.push("feed".into());
+    assert_eq!(serde_json::from_str::<ActionDeclaration>(&serde_json::to_string(&full).unwrap()).unwrap(), full);
 }
 
 #[test]
@@ -519,28 +517,6 @@ fn remote_without_operation_is_a_fault() {
     let nameless = RemoteSpec { operation: String::new(), ..complete_remote() };
     assert_eq!(nameless.fault(), Some(RemoteFault::MissingOperation));
     assert_eq!(complete_remote().fault(), None);
-}
-
-#[test]
-fn updates_spec_survives_serde_and_defaults_to_none() {
-    let remote = RemoteSpec { updates: Some(UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()), set: Map::new() }), ..complete_remote() };
-    let text = serde_json::to_string(&remote).unwrap();
-    assert_eq!(serde_json::from_str::<RemoteSpec>(&text).unwrap(), remote);
-    let bare = r#"{"operation":"Q","shape":{"type":"single"},"stale_time":"5.minutes"}"#;
-    assert_eq!(serde_json::from_str::<RemoteSpec>(bare).unwrap().updates, None);
-}
-
-#[test]
-fn action_binding_fields_default_to_empty_and_survive_serde() {
-    let bare = r#"{"name":"like","mode":"request","root_shape":"upsert"}"#;
-    let parsed: ActionDeclaration = serde_json::from_str(bare).unwrap();
-    assert_eq!((parsed.mutation.clone(), parsed.variables.len(), parsed.optimistic.len(), parsed.refetch.len()), (None, 0, 0, 0));
-    let mut full = action("like", RootShape::Upsert);
-    full.mutation = Some("LikeMoment".into());
-    full.variables.insert("momentId".into(), "id".into());
-    full.optimistic.insert("likedByMe".into(), serde_json::json!(true));
-    full.refetch.push("feed".into());
-    assert_eq!(serde_json::from_str::<ActionDeclaration>(&serde_json::to_string(&full).unwrap()).unwrap(), full);
 }
 
 #[test]

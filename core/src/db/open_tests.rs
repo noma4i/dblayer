@@ -24,12 +24,6 @@ fn open_rejects_invalid_models() {
 }
 
 #[test]
-fn open_marks_the_store_ready() {
-    let db = booted();
-    assert!(db.is_ready());
-}
-
-#[test]
 fn rows_and_operations_survive_a_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");

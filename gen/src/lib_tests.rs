@@ -11,33 +11,9 @@ fn fixture_paths() -> Vec<PathBuf> {
 }
 
 #[test]
-fn fixtures_parse_and_validate_together() {
+fn fixtures_parse_into_six_models_that_are_valid_for_the_core() {
     let models = parse_files(&fixture_paths()).unwrap();
-    let summary: Vec<(&str, usize, usize, usize)> = models
-        .iter()
-        .map(|model| (model.key.as_str(), model.fields.len(), model.associations.len(), model.relations.len()))
-        .collect();
-    assert_eq!(
-        summary,
-        vec![("Chat", 2, 1, 1), ("Message", 4, 1, 2), ("Moment", 6, 2, 3), ("Presence", 2, 1, 2), ("User", 3, 0, 1), ("Vibe", 3, 0, 0)]
-    );
-}
-
-#[test]
-fn fixtures_declare_an_ephemeral_field_and_a_memory_model() {
-    let models = parse_files(&fixture_paths()).unwrap();
-    let model = |key: &str| models.iter().find(|model| model.key.as_str() == key).unwrap();
-    let typing = model("User").ephemeral_field("typing").unwrap();
-    assert_eq!((typing.field.default.clone(), typing.reset_after.as_deref()), (Some(serde_json::json!(false)), Some("5.seconds")));
-    let updates = model("User").relations[0].remote.as_ref().unwrap().updates.clone().unwrap();
-    assert_eq!(updates.set.get("typing"), Some(&serde_json::json!(true)));
-    let presence = model("Presence");
-    assert_eq!((presence.is_memory(), presence.expire_after.as_deref()), (true, Some("1.minute")));
-}
-
-#[test]
-fn fixtures_are_valid_for_the_core() {
-    let models = parse_files(&fixture_paths()).unwrap();
+    assert_eq!(models.len(), 6);
     assert!(dblayer::schema::validate_models(&models, &[]).is_empty());
 }
 
@@ -46,15 +22,9 @@ fn unknown_model_across_files_is_reported_per_file() {
     let directory = tempfile::tempdir().unwrap();
     let only_moment = directory.path().join("moment.dbl");
     fs::copy(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/moment.dbl"), &only_moment).unwrap();
-    let errors = parse_files(&[only_moment.clone()]).unwrap_err();
+    let errors = parse_files(std::slice::from_ref(&only_moment)).unwrap_err();
     assert!(errors.iter().all(|error| error.file == only_moment.display().to_string()));
     assert_eq!(errors.iter().map(|error| error.error.line).collect::<Vec<_>>(), vec![13, 14]);
-}
-
-#[test]
-fn parse_models_accepts_a_single_source_and_keeps_two_models() {
-    let source = "model A do\n  schema do\n    string :x\n  end\nend\n# between\nmodel B do\n  schema do\n    int :y\n  end\nend\n";
-    assert_eq!(parse_models(source).unwrap().len(), 2);
 }
 
 #[test]

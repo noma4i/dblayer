@@ -41,20 +41,28 @@ fn has_many_count_is_a_count_query() {
 }
 
 #[test]
-fn association_of_the_wrong_kind_fails() {
+fn a_method_of_the_wrong_association_kind_or_an_unknown_association_fails() {
     let db = booted();
     seed_tree(&db);
     let moment = db.find("moments", &rid("m1")).unwrap().unwrap();
-    assert!(matches!(db.has_many("moments", &moment, "author"), Err(DbError::WrongAssociation { .. })));
-    assert!(matches!(db.belongs_to("moments", &moment, "vibes"), Err(DbError::WrongAssociation { .. })));
-}
-
-#[test]
-fn unknown_association_fails() {
-    let db = booted();
-    seed_tree(&db);
-    let moment = db.find("moments", &rid("m1")).unwrap().unwrap();
-    assert!(matches!(db.has_many("moments", &moment, "ghosts"), Err(DbError::UnknownAssociation { .. })));
+    let ann = db.find("users", &rid("u1")).unwrap().unwrap();
+    let wrong = [
+        ("has_many on a belongs_to", db.has_many("moments", &moment, "author").err()),
+        ("belongs_to on a has_many", db.belongs_to("moments", &moment, "vibes").err()),
+        ("has_one on a has_many", db.has_one("users", &ann, "moments").err()),
+        ("references on a has_many or has_one", db.references("users", &ann, "latest").err()),
+        ("has_many on a references", db.has_many("users", &ann, "latest").err()),
+    ];
+    for (case, error) in wrong {
+        assert!(matches!(error, Some(DbError::WrongAssociation { .. })), "{case}: {error:?}");
+    }
+    let unknown = [
+        ("has_many ghost", db.has_many("moments", &moment, "ghosts").err()),
+        ("has_one ghost", db.has_one("users", &ann, "ghost").err()),
+    ];
+    for (case, error) in unknown {
+        assert!(matches!(error, Some(DbError::UnknownAssociation { .. })), "{case}: {error:?}");
+    }
 }
 
 #[test]
@@ -110,15 +118,4 @@ fn references_without_the_array_are_empty() {
     put(&db, "users", json!({"id": "u4", "friendIds": []}));
     let empty = db.find("users", &rid("u4")).unwrap().unwrap();
     assert!(db.references("users", &empty, "friends").unwrap().is_empty());
-}
-
-#[test]
-fn has_one_and_references_reject_other_association_kinds() {
-    let db = booted();
-    seed_tree(&db);
-    let ann = db.find("users", &rid("u1")).unwrap().unwrap();
-    assert!(matches!(db.has_one("users", &ann, "moments"), Err(DbError::WrongAssociation { .. })));
-    assert!(matches!(db.references("users", &ann, "latest"), Err(DbError::WrongAssociation { .. })));
-    assert!(matches!(db.has_many("users", &ann, "latest"), Err(DbError::WrongAssociation { .. })));
-    assert!(matches!(db.has_one("users", &ann, "ghost"), Err(DbError::UnknownAssociation { .. })));
 }

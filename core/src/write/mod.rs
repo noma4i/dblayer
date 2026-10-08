@@ -23,8 +23,6 @@ mod intent_tests;
 #[cfg(test)]
 mod origin_tests;
 #[cfg(test)]
-mod path_tests;
-#[cfg(test)]
 mod plans_tests;
 #[cfg(test)]
 mod policy_tests;

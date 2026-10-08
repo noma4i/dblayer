@@ -65,13 +65,17 @@ fn query_reparses_only_the_row_that_changed() {
 }
 
 #[test]
-fn find_sees_a_row_changed_after_it_was_cached() {
+fn find_sees_a_row_changed_after_it_was_cached_by_a_landing_and_by_a_local_update() {
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     assert_eq!(db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("Ann"));
     put(&db, "users", json!({"id": "u1", "name": "Anna"}));
     assert_eq!(db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("Anna"));
     assert_eq!(db.counters().cache_evictions, 1);
+    let created = db.create("moments", obj(json!({"userId": "u1", "text": "a"}))).unwrap();
+    db.find("moments", &created.id).unwrap();
+    db.update("moments", &created.id, obj(json!({"text": "b"}))).unwrap();
+    assert_eq!(db.find("moments", &created.id).unwrap().unwrap().text("text"), Some("b"));
 }
 
 #[test]

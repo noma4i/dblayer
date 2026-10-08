@@ -134,7 +134,8 @@ async fn observers_and_reads_see_the_upload_state_and_bytes_while_it_runs() {
     let rig = upload_rig(small());
     single_replies(&rig);
     rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(4)));
-    let seen: Arc<Mutex<Vec<Option<(UploadStatus, UploadStage, u64)>>>> = Arc::default();
+    type Seen = Vec<Option<(UploadStatus, UploadStage, u64)>>;
+    let seen: Arc<Mutex<Seen>> = Arc::default();
     let sink = seen.clone();
     let _observer = rig
         .db

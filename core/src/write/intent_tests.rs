@@ -176,7 +176,7 @@ fn affected_keys_filter_subscriptions_and_tick_count_is_one_per_envelope() {
     assert_eq!(affected_row_keys(&rows, &subscribed), ["m1"]);
     assert!(affected_row_keys(&rows, &none).is_empty());
     let scope_key = scope.key.as_str().to_string();
-    assert_eq!(affected_scope_keys(&scoped, &[scope_key.clone()].into()), [scope_key.clone()]);
+    assert_eq!(affected_scope_keys(&scoped, &[scope_key.clone()].into()), std::slice::from_ref(&scope_key));
     assert!(affected_scope_keys(&scoped, &["other".to_string()].into()).is_empty());
     assert_eq!(tick_count(&rows, generation, &subscribed, &none), 1);
     assert_eq!(tick_count(&rows, generation, &none, &none), 0);

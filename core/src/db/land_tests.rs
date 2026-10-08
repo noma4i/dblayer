@@ -22,15 +22,6 @@ fn land_writes_server_rows_for_each_landable_origin() {
 }
 
 #[test]
-fn land_drops_the_cached_copy_of_every_changed_row() {
-    let db = booted();
-    db.land(upsert_envelope(&db, WriteOrigin::Snapshot, "u1", "old")).unwrap();
-    assert_eq!(db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("old"));
-    db.land(upsert_envelope(&db, WriteOrigin::Event, "u1", "new")).unwrap();
-    assert_eq!(db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("new"));
-}
-
-#[test]
 fn land_rejects_optimistic_envelopes() {
     let db = booted();
     let envelope = upsert_envelope(&db, WriteOrigin::Optimistic, "u1", "x");

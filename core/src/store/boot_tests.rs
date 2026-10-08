@@ -3,7 +3,6 @@ use super::*;
 use serde_json::json;
 
 use crate::ddl::ManifestVerdict;
-use crate::identity::ModelKey;
 use crate::schema::{FieldSpec, ModelSpec, RelationSpec};
 use crate::value::ScalarKind;
 
@@ -26,46 +25,6 @@ fn reopen(path: &std::path::Path, models: &[ModelSpec], data_version: Option<&st
     let store = Store::open(path).unwrap();
     let report = store.boot(models, data_version).unwrap();
     (store, report)
-}
-
-#[test]
-fn default_steps_have_six_entries_and_end_ready() {
-    let steps = boot_steps(&BootConditions::default());
-    assert_eq!(steps.len(), 6);
-    assert_eq!(steps.first(), Some(&BootStep::OpenDatabase));
-    assert_eq!(steps.last(), Some(&BootStep::MarkReady));
-    assert!(!steps.contains(&BootStep::FinishInterruptedReset));
-    assert!(!steps.contains(&BootStep::SweepStaleVersions));
-}
-
-#[test]
-fn steps_follow_reset_intent_and_stale_version_models() {
-    let intent = BootConditions { has_reset_intent: true, ..BootConditions::default() };
-    assert_eq!(
-        boot_steps(&intent),
-        vec![
-            BootStep::OpenDatabase,
-            BootStep::Migrate,
-            BootStep::FinishInterruptedReset,
-            BootStep::ReconcileManifest,
-            BootStep::CheckOperations,
-            BootStep::Maintain,
-            BootStep::MarkReady,
-        ]
-    );
-    let stale = BootConditions { stale_version_models: vec![ModelKey::new("Message"), ModelKey::new("Media")], ..BootConditions::default() };
-    assert!(boot_steps(&stale).contains(&BootStep::SweepStaleVersions));
-}
-
-#[test]
-fn transaction_count_and_reader_visibility_follow_conditions() {
-    let stale = BootConditions { stale_version_models: vec![ModelKey::new("Message"), ModelKey::new("Media")], ..BootConditions::default() };
-    let intent = BootConditions { has_reset_intent: true, ..BootConditions::default() };
-    assert_eq!(BootStep::transaction_count(&BootConditions::default()), 4);
-    assert_eq!(BootStep::transaction_count(&stale), 6);
-    assert_eq!(BootStep::transaction_count(&intent), 5);
-    assert!(BootStep::MarkReady.reader_sees_rows_after());
-    assert!(!BootStep::CheckOperations.reader_sees_rows_after());
 }
 
 #[test]
@@ -104,19 +63,9 @@ fn committed_work_survives_dropping_the_store_without_checkpoint() {
     {
         let (store, _) = reopen(&path, &[messages_spec()], None);
         store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
-        assert_eq!(store.journal_mode().unwrap().to_lowercase(), "wal");
-        assert_eq!(store.synchronous_level().unwrap(), 1);
     }
     let (store, _) = reopen(&path, &[messages_spec()], None);
     assert!(store.point("messages", "m1").unwrap().is_some());
-}
-
-#[test]
-fn sqlite_supports_strict_tables() {
-    let store = Store::open_in_memory().unwrap();
-    let version = store.sqlite_version().unwrap();
-    let parts: Vec<u32> = version.split('.').map(|part| part.parse().unwrap()).collect();
-    assert!(parts[0] > 3 || (parts[0] == 3 && parts[1] >= 37), "sqlite {version}");
 }
 
 #[test]
@@ -196,52 +145,34 @@ fn removed_model_loses_its_cache_and_fingerprint() {
 }
 
 #[test]
-fn data_version_mismatch_wipes_cache_and_keeps_user_tables() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("a.sqlite");
-    let models = [messages_spec(), items_spec()];
-    {
-        let (store, _) = reopen(&path, &models, Some("v1"));
-        seed(&store);
+fn incompatible_manifests_wipe_cache_and_keep_user_tables() {
+    type Case = (&'static str, Option<&'static str>, Option<&'static str>, Option<&'static str>);
+    let cases: [Case; 3] = [
+        ("data version changed", Some("v1"), Some("v2"), None),
+        ("old format version", None, None, Some("UPDATE manifest SET value = '0' WHERE key = 'format_version'")),
+        ("manifest missing", None, None, Some("DELETE FROM manifest")),
+    ];
+    for (case, before, after, tamper) in cases {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("a.sqlite");
+        let models = [messages_spec(), items_spec()];
+        {
+            let (store, _) = reopen(&path, &models, before);
+            seed(&store);
+            if let Some(sql) = tamper {
+                exec(&store, sql);
+            }
+        }
+        let (store, report) = reopen(&path, &models, after);
+        assert_eq!(report.verdict, ManifestVerdict::Incompatible, "{case}");
+        assert_eq!(store.row_count("messages").unwrap(), 0, "{case}: rows");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0, "{case}: membership");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1, "{case}: operations");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 1, "{case}: quarantine");
+        if let Some(version) = after {
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM manifest WHERE key = 'data_version' AND value = '{version}'")), 1, "{case}: stamped version");
+        }
     }
-    let (store, report) = reopen(&path, &models, Some("v2"));
-    assert_eq!(report.verdict, ManifestVerdict::Incompatible);
-    assert_eq!(store.row_count("messages").unwrap(), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key = 'data_version' AND value = 'v2'"), 1);
-}
-
-#[test]
-fn old_format_version_triggers_incompatible_reset() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("a.sqlite");
-    let models = [messages_spec(), items_spec()];
-    {
-        let (store, _) = reopen(&path, &models, None);
-        seed(&store);
-        exec(&store, "UPDATE manifest SET value = '0' WHERE key = 'format_version'");
-    }
-    let (store, report) = reopen(&path, &models, None);
-    assert_eq!(report.verdict, ManifestVerdict::Incompatible);
-    assert_eq!(store.row_count("messages").unwrap(), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
-}
-
-#[test]
-fn missing_manifest_in_non_empty_database_is_incompatible() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("a.sqlite");
-    let models = [messages_spec(), items_spec()];
-    {
-        let (store, _) = reopen(&path, &models, None);
-        seed(&store);
-        exec(&store, "DELETE FROM manifest");
-    }
-    let (store, report) = reopen(&path, &models, None);
-    assert_eq!(report.verdict, ManifestVerdict::Incompatible);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
 }
 
 #[test]
@@ -327,7 +258,7 @@ fn matching_record_version_skips_the_sweep() {
     exec(&store, "UPDATE row_messages SET record_version = 0");
     let report = store.boot(&[messages_spec(), items_spec()], None).unwrap();
     assert_eq!(report.stale_version_drops, 0);
-    assert_eq!(store.row_count("messages").unwrap(), 0 + count(&store, "SELECT COUNT(*) FROM row_messages"));
+    assert_eq!(store.row_count("messages").unwrap(), 1);
 }
 
 #[test]

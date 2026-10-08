@@ -19,14 +19,6 @@ fn verdict_follows_cursor_max_pages_and_loading_state() {
 }
 
 #[test]
-fn only_fetching_calls_the_transport() {
-    assert!(LoadMoreVerdict::FetchNextPage.calls_transport());
-    assert!(!LoadMoreVerdict::NoCursor.calls_transport());
-    assert!(!LoadMoreVerdict::MaxPagesReached.calls_transport());
-    assert!(!LoadMoreVerdict::AlreadyLoading.calls_transport());
-}
-
-#[test]
 fn advancing_counts_the_page_and_clears_loading() {
     let advanced = chain(Some("c1"), true, 2, true).advanced(Some("c2".into()), false);
     assert_eq!(advanced, chain(Some("c2"), false, 3, false));

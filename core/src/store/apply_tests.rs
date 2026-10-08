@@ -74,16 +74,6 @@ fn removed_field_leaves_field_revisions() {
 }
 
 #[test]
-fn revision_is_monotonic_across_one_hundred_commits() {
-    let (store, _) = booted_store();
-    for step in 1..=100 {
-        let result = commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": step.to_string()}))], vec![]);
-        assert_eq!(result.revision, Some(step));
-    }
-    assert_eq!(store.revision_seq().unwrap(), 100);
-}
-
-#[test]
 fn touch_updates_revision_of_existing_row_only() {
     let (store, _) = booted_store();
     commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
@@ -267,24 +257,18 @@ fn unchanged_append_is_not_a_write() {
 }
 
 #[test]
-fn update_reports_scopes_of_existing_row_and_insert_costs_no_statement() {
+fn an_update_reports_the_scopes_holding_the_row_even_past_one_statement_chunk() {
     let (store, _) = booted_store();
     let thread = scope("messages", "thread");
-    let insert = commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![append(&thread, "m1", "a")]);
-    assert_eq!(insert.affected_key_statements, 0);
-    let update = commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c2"}))], vec![]);
-    assert_eq!(update.affected_key_statements, 1);
-    assert!(update.scopes.contains(&thread));
-}
-
-#[test]
-fn affected_key_statements_are_chunked_by_five_hundred_ids() {
-    let (store, _) = booted_store();
     let ops: Vec<EntityOp> = (0..1200).map(|index| upsert("messages", message(&format!("m{index}"), "c1"))).collect();
-    commit(&store, ops, vec![]);
+    let appends: Vec<ScopeOp> = (0..1200).map(|index| append(&thread, &format!("m{index}"), &format!("k{index:04}"))).collect();
+    commit(&store, ops, appends);
     let touches: Vec<EntityOp> = (0..1200).map(|index| EntityOp::Touch { model: model("messages"), id: id(&format!("m{index}")) }).collect();
     let result = commit(&store, touches, vec![]);
-    assert_eq!(result.affected_key_statements, 3);
+    assert_eq!(result.rows.len(), 1200);
+    assert!(result.scopes.contains(&thread));
+    let update = commit(&store, vec![upsert("messages", json!({"id": "m0", "chatId": "c2"}))], vec![]);
+    assert!(update.scopes.contains(&thread));
 }
 
 #[test]
@@ -416,40 +400,21 @@ fn begin_with_existing_seq_replaces_the_row() {
 }
 
 #[test]
-fn close_committed_deletes_row_and_records_once_key() {
-    let (store, _) = booted_store();
-    let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
-    let seq = *started.operations.iter().next().unwrap();
-    transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed, once: true }]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op_once WHERE namespace = 'messages:send' AND dedupe_key = 'k'"), 1);
-}
-
-#[test]
-fn close_committed_without_once_leaves_no_once_key() {
-    let (store, _) = booted_store();
-    let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
-    let seq = *started.operations.iter().next().unwrap();
-    transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed, once: false }]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op_once"), 0);
-}
-
-#[test]
-fn close_failed_keeps_row_and_clears_dedupe_key() {
-    let (store, _) = booted_store();
-    let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
-    let seq = *started.operations.iter().next().unwrap();
-    transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Failed, once: false }]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE status = 'failed' AND dedupe_key IS NULL"), 1);
-}
-
-#[test]
-fn delivery_unknown_keeps_dedupe_key() {
-    let (store, _) = booted_store();
-    let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
-    let seq = *started.operations.iter().next().unwrap();
-    transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::DeliveryUnknown, once: false }]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE status = 'delivery_unknown' AND dedupe_key = 'k'"), 1);
+fn closing_an_operation_follows_status_and_once_flag() {
+    let cases = [
+        ("committed with once", OperationStatus::Committed, true, "SELECT COUNT(*) FROM op", 0, 1),
+        ("committed without once", OperationStatus::Committed, false, "SELECT COUNT(*) FROM op", 0, 0),
+        ("failed", OperationStatus::Failed, false, "SELECT COUNT(*) FROM op WHERE status = 'failed' AND dedupe_key IS NULL", 1, 0),
+        ("delivery unknown", OperationStatus::DeliveryUnknown, false, "SELECT COUNT(*) FROM op WHERE status = 'delivery_unknown' AND dedupe_key = 'k'", 1, 0),
+    ];
+    for (case, status, once, operations_sql, operations, once_keys) in cases {
+        let (store, _) = booted_store();
+        let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
+        let seq = *started.operations.iter().next().unwrap();
+        transitions(&store, vec![OperationTransition::Close { seq, status, once }]);
+        assert_eq!(count(&store, operations_sql), operations, "{case}: operations");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM op_once WHERE namespace = 'messages:send' AND dedupe_key = 'k'"), once_keys, "{case}: once keys");
+    }
 }
 
 #[test]

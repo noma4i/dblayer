@@ -1,8 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use rusqlite::{params, Connection};
 
-use crate::commit::{DestroyReason, EntityOp};
 use crate::identity::RowRef;
 
 use super::{Store, StoreError};
@@ -110,69 +109,6 @@ pub(crate) fn prune_tombstones(
         )?;
     }
     Ok(removed)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TombstoneFilter {
-    pub kept: Vec<RowRef>,
-    pub dropped: Vec<RowRef>,
-}
-
-impl TombstoneFilter {
-    pub fn is_empty(&self) -> bool {
-        self.kept.is_empty()
-    }
-
-    pub fn filter(rows: &[RowRef], tombstones: &HashSet<RowRef>) -> Self {
-        let (dropped, kept): (Vec<RowRef>, Vec<RowRef>) =
-            rows.iter().cloned().partition(|row| tombstones.contains(row));
-        Self { kept, dropped }
-    }
-
-    pub fn replace_plan(target: &RowRef, temporary: &RowRef, tombstones: &HashSet<RowRef>) -> Vec<EntityOp> {
-        let destroy =
-            EntityOp::Destroy { model: temporary.model.clone(), id: temporary.id.clone(), reason: DestroyReason::Local };
-        if tombstones.contains(target) {
-            return vec![destroy];
-        }
-        vec![destroy, EntityOp::Touch { model: target.model.clone(), id: target.id.clone() }]
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum WriteSeam {
-    ModelPrepare,
-    ScopeLanding,
-    ReplaceSuccessor,
-}
-
-impl WriteSeam {
-    pub const ALL: [WriteSeam; 3] = [WriteSeam::ModelPrepare, WriteSeam::ScopeLanding, WriteSeam::ReplaceSuccessor];
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct SeamDrops {
-    counts: BTreeMap<WriteSeam, usize>,
-}
-
-impl SeamDrops {
-    pub fn record(&mut self, seam: WriteSeam, rows: usize) {
-        if rows >= 1 {
-            *self.counts.entry(seam).or_default() += rows;
-        }
-    }
-
-    pub fn total(&self) -> usize {
-        self.counts.values().sum()
-    }
-
-    pub fn count(&self, seam: WriteSeam) -> usize {
-        self.counts.get(&seam).copied().unwrap_or(0)
-    }
-
-    pub fn seams_hit(&self) -> Vec<WriteSeam> {
-        WriteSeam::ALL.into_iter().filter(|seam| self.count(*seam) > 0).collect()
-    }
 }
 
 impl Store {

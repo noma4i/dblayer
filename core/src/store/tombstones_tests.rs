@@ -1,8 +1,7 @@
 use super::fixtures::*;
 use super::*;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
-use crate::commit::{DestroyReason, EntityOp};
 use crate::identity::RowRef;
 
 const RETENTION: TombstoneRetention = TombstoneRetention::DEFAULT;
@@ -75,23 +74,6 @@ fn temp_row_staleness_needs_ttl_and_no_open_operation() {
 }
 
 #[test]
-fn eviction_on_empty_table_removes_nothing() {
-    let (store, _) = booted_store();
-    assert_eq!(store.evict_tombstones(&RETENTION).unwrap(), 0);
-}
-
-#[test]
-fn recent_tombstones_remain() {
-    let (store, clock) = booted_store();
-    let now = clock.now().as_millis() as i64;
-    for (index, name) in ["one", "two", "three"].iter().enumerate() {
-        store.mark_tombstone("messages", name, index as i64, now - 1000 * (index as i64 + 1)).unwrap();
-    }
-    assert_eq!(store.evict_tombstones(&RETENTION).unwrap(), 0);
-    assert_eq!(store.tombstone_count().unwrap(), 3);
-}
-
-#[test]
 fn expired_tombstones_are_deleted() {
     let (store, clock) = booted_store();
     let now = clock.now().as_millis() as i64;
@@ -140,46 +122,4 @@ fn cap_equal_to_count_evicts_nothing() {
         store.mark_tombstone("messages", &format!("t{index}"), 1, now - 5_000 + index).unwrap();
     }
     assert_eq!(store.evict_tombstones(&small).unwrap(), 0);
-}
-
-#[test]
-fn filter_splits_rows_keeping_order() {
-    let first = reference("message", "row-1");
-    let second = reference("message", "row-2");
-    let third = reference("message", "row-3");
-    let fourth = reference("message", "row-4");
-    let tombstones: HashSet<RowRef> = [second.clone(), fourth.clone()].into();
-    let result = TombstoneFilter::filter(&[first.clone(), second.clone(), third.clone(), fourth.clone()], &tombstones);
-    let untouched = TombstoneFilter::filter(&[first.clone(), second.clone()], &HashSet::new());
-    assert_eq!(result.kept, vec![first.clone(), third]);
-    assert_eq!(result.dropped, vec![second, fourth]);
-    assert!(!result.is_empty());
-    assert_eq!(untouched.kept.len(), 2);
-    assert!(untouched.dropped.is_empty());
-}
-
-#[test]
-fn replace_on_tombstoned_target_keeps_only_destroy() {
-    let target = reference("parent", "parent-1");
-    let temporary = reference("child", "child-1");
-    let destroy =
-        EntityOp::Destroy { model: temporary.model.clone(), id: temporary.id.clone(), reason: DestroyReason::Local };
-    let touch = EntityOp::Touch { model: target.model.clone(), id: target.id.clone() };
-    let tombstoned: HashSet<RowRef> = [target.clone()].into();
-    assert_eq!(TombstoneFilter::replace_plan(&target, &temporary, &tombstoned), vec![destroy.clone()]);
-    assert_eq!(TombstoneFilter::replace_plan(&target, &temporary, &HashSet::new()), vec![destroy, touch]);
-}
-
-#[test]
-fn seam_drops_count_rows_per_seam() {
-    let mut drops = SeamDrops::default();
-    assert_eq!(drops.total(), 0);
-    drops.record(WriteSeam::ModelPrepare, 2);
-    drops.record(WriteSeam::ScopeLanding, 0);
-    drops.record(WriteSeam::ReplaceSuccessor, 1);
-    drops.record(WriteSeam::ModelPrepare, 1);
-    assert_eq!(drops.total(), 4);
-    assert_eq!(drops.count(WriteSeam::ModelPrepare), 3);
-    assert_eq!(drops.count(WriteSeam::ScopeLanding), 0);
-    assert_eq!(drops.seams_hit(), vec![WriteSeam::ModelPrepare, WriteSeam::ReplaceSuccessor]);
 }

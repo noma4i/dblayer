@@ -36,16 +36,6 @@ impl Store {
         Ok(inner.connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?)
     }
 
-    pub fn synchronous_level(&self) -> Result<i64, StoreError> {
-        let inner = self.lock();
-        Ok(inner.connection.query_row("PRAGMA synchronous", [], |row| row.get(0))?)
-    }
-
-    pub fn sqlite_version(&self) -> Result<String, StoreError> {
-        let inner = self.lock();
-        Ok(inner.connection.query_row("SELECT sqlite_version()", [], |row| row.get(0))?)
-    }
-
     pub fn table_exists(&self, name: &str) -> Result<bool, StoreError> {
         let inner = self.lock();
         let found: Option<i64> = rusqlite::OptionalExtension::optional(inner.connection.query_row(

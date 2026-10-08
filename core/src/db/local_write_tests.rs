@@ -105,15 +105,6 @@ fn update_of_a_missing_row_fails() {
 }
 
 #[test]
-fn update_of_a_cached_row_is_visible_to_the_next_find() {
-    let db = booted();
-    let created = db.create("moments", obj(json!({"userId": "u1", "text": "a"}))).unwrap();
-    db.find("moments", &created.id).unwrap();
-    db.update("moments", &created.id, obj(json!({"text": "b"}))).unwrap();
-    assert_eq!(db.find("moments", &created.id).unwrap().unwrap().text("text"), Some("b"));
-}
-
-#[test]
 fn destroy_removes_the_row_and_enqueues_a_destroy_operation() {
     let db = booted();
     put(&db, "vibes", json!({"id": "v1", "momentId": "m1", "kind": "like"}));

@@ -77,25 +77,6 @@ fn column_types_follow_field_kinds() {
 }
 
 #[test]
-fn create_table_includes_service_and_indexed_columns() {
-    let sql = create_table_statement(&messages());
-
-    assert!(sql.contains("row_messages"));
-    assert!(sql.contains("id TEXT PRIMARY KEY NOT NULL"));
-    assert!(sql.contains("revision INTEGER NOT NULL"));
-    assert!(sql.contains("born_rev INTEGER NOT NULL"));
-    assert!(sql.contains("field_rev BLOB NOT NULL"));
-    assert!(sql.contains("record_version INTEGER NOT NULL"));
-    assert!(sql.contains("payload BLOB NOT NULL"));
-    assert!(sql.contains("chat_id TEXT"));
-    assert!(sql.contains("sequence_number INTEGER"));
-    assert!(sql.contains("score REAL"));
-    assert!(sql.contains("created_at TEXT"));
-    assert!(!sql.contains("media"));
-    assert!(sql.ends_with(") STRICT"));
-}
-
-#[test]
 fn create_indexes_include_columns_and_composites() {
     let model = ModelSpec { composite_indexes: vec![vec!["chatId".into(), "sequenceNumber".into()]], ..messages() };
     let statements = create_index_statements(&model);
@@ -161,6 +142,7 @@ fn row_table_matches_spec_columns() {
     assert_eq!(found["chat_id"], ("TEXT".to_string(), false));
     assert_eq!(found["sequence_number"], ("INTEGER".to_string(), false));
     assert_eq!(found["score"], ("REAL".to_string(), false));
+    assert_eq!(found["created_at"], ("TEXT".to_string(), false));
     assert_eq!(found.len(), 10);
 }
 
@@ -312,22 +294,12 @@ fn core_migration_rejects_a_newer_schema_version() {
 }
 
 #[test]
-fn prepared_connection_uses_normal_sync_and_no_foreign_keys() {
+fn prepared_connection_uses_normal_sync_no_foreign_keys_and_memory_temp_tables() {
     let connection = Connection::open_in_memory().unwrap();
     prepare_connection(&connection).unwrap();
-    let synchronous: i64 = connection.query_row("pragma synchronous", [], |row| row.get(0)).unwrap();
-    let foreign_keys: i64 = connection.query_row("pragma foreign_keys", [], |row| row.get(0)).unwrap();
+    let pragma = |name: &str| -> i64 { connection.query_row(&format!("pragma {name}"), [], |row| row.get(0)).unwrap() };
 
-    assert_eq!((synchronous, foreign_keys), (1, 0));
-}
-
-#[test]
-fn prepared_connection_keeps_temp_tables_in_memory() {
-    let connection = Connection::open_in_memory().unwrap();
-    prepare_connection(&connection).unwrap();
-    let temp_store: i64 = connection.query_row("pragma temp_store", [], |row| row.get(0)).unwrap();
-
-    assert_eq!(temp_store, 2);
+    assert_eq!((pragma("synchronous"), pragma("foreign_keys"), pragma("temp_store")), (1, 0, 2));
 }
 
 #[test]

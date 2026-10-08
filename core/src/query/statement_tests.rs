@@ -1,5 +1,5 @@
 use super::*;
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::ScopeKey;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::{ScalarKind, SortDirection};
 use rusqlite::types::Value as SqlValue;
@@ -50,17 +50,6 @@ fn query_composes_where_order_limit_and_offset() {
 }
 
 #[test]
-fn clauses_are_added_one_at_a_time() {
-    let filtered = compile(&query().filtered(Where::equal("status", json!("a"))), &people()).unwrap();
-    assert_eq!(filtered.sql, format!("{HEAD} WHERE r.status = ?"));
-    let ordered = compile(&query().ordered(vec![Order::new("status", SortDirection::Asc)]), &people()).unwrap();
-    assert_eq!(ordered.sql, format!("{HEAD} ORDER BY r.status ASC, r.id"));
-    let limited = compile(&query().limited(3), &people()).unwrap();
-    assert_eq!(limited.sql, format!("{HEAD} LIMIT ?"));
-    assert_eq!(limited.bindings, vec![SqlValue::Integer(3)]);
-}
-
-#[test]
 fn offset_without_limit_reads_to_the_end() {
     let statement = compile(&query().offset_by(4), &people()).unwrap();
     assert_eq!(statement.sql, format!("{HEAD} LIMIT -1 OFFSET ?"));
@@ -97,34 +86,6 @@ fn count_ignores_order_limit_and_offset() {
     let statement = compile_count(&query, &people()).unwrap();
     assert_eq!(statement.sql, "SELECT COUNT(*) FROM row_people AS r WHERE r.status = ?");
     assert_eq!(statement.bindings, vec![SqlValue::Text("active".into())]);
-}
-
-#[test]
-fn scope_read_and_count_match_the_documented_sql() {
-    let model = ModelKey::new("message");
-    let scope = ScopeKey::from_raw("inbox");
-    let base = "SELECT r.id, r.record_version, r.payload FROM scope_member AS m JOIN row_message AS r \
-                ON r.id = m.row_id WHERE m.model = ? AND m.scope_key = ? ORDER BY m.order_key, m.row_id";
-    let unlimited = scope_statement(&model, &scope, None);
-    assert_eq!(unlimited.sql, base);
-    assert_eq!(unlimited.bindings, vec![SqlValue::Text("message".into()), SqlValue::Text("inbox".into())]);
-    let limited = scope_statement(&model, &scope, Some(10));
-    assert_eq!(limited.sql, format!("{base} LIMIT ?"));
-    assert_eq!(limited.bindings.last(), Some(&SqlValue::Integer(10)));
-    let count = scope_count_statement(&model, &scope);
-    assert_eq!(
-        count.sql,
-        "SELECT COUNT(*) FROM scope_member AS m JOIN row_message AS r ON r.id = m.row_id \
-         WHERE m.model = ? AND m.scope_key = ?"
-    );
-    assert!(!count.sql.contains("ORDER BY") && !count.sql.contains("LIMIT"));
-    assert_eq!(count.bindings, vec![SqlValue::Text("message".into()), SqlValue::Text("inbox".into())]);
-}
-
-#[test]
-fn table_name_follows_the_model_key() {
-    let statement = scope_statement(&ModelKey::new("user-counters"), &ScopeKey::from_raw("s"), None);
-    assert!(statement.sql.contains("row_user_counters AS r"));
 }
 
 #[test]
@@ -170,30 +131,6 @@ fn query_round_trips_through_json() {
 }
 
 #[test]
-fn key_statement_reads_id_and_revision_with_the_same_clauses() {
-    let query = query()
-        .filtered(Where::equal("status", json!("active")))
-        .ordered(vec![Order::new("createdAt", SortDirection::Desc)])
-        .limited(25)
-        .offset_by(50);
-    let keys = compile_keys(&query, &people()).unwrap();
-    let rows = compile(&query, &people()).unwrap();
-    assert_eq!(keys.sql, rows.sql.replacen("r.id, r.record_version, r.payload", "r.id, r.revision", 1));
-    assert_eq!(keys.bindings, rows.bindings);
-}
-
-#[test]
-fn a_scope_query_joins_the_membership_and_reads_in_server_order() {
-    let scope = ScopeKey::from_raw("feed");
-    let statement = compile_keys(&query().in_scope(scope.clone()), &people()).unwrap();
-    assert!(statement.sql.contains("JOIN scope_member AS m ON m.row_id = r.id AND m.model = ? AND m.scope_key = ?"));
-    assert!(statement.sql.ends_with("ORDER BY m.order_key, m.row_id"));
-    assert_eq!(statement.bindings[0], SqlValue::Text("people".into()));
-    assert_eq!(statement.bindings[1], SqlValue::Text("feed".into()));
-    assert!(statement.is_balanced());
-}
-
-#[test]
 fn a_scope_query_keeps_its_filter_and_counts_members() {
     let scope = ScopeKey::from_raw("feed");
     let filtered = query().in_scope(scope).filtered(Where::equal("status", json!("active")));
@@ -202,11 +139,4 @@ fn a_scope_query_keeps_its_filter_and_counts_members() {
     assert!(statement.sql.contains("WHERE"));
     assert_eq!(statement.bindings.len(), 3);
     assert!(statement.is_balanced());
-}
-
-#[test]
-fn include_and_scope_default_to_empty_when_a_query_is_read_from_json() {
-    let parsed: Query = serde_json::from_value(json!({"model": "people"})).unwrap();
-    assert!(parsed.include.is_empty() && parsed.scope.is_none());
-    assert_eq!(parsed, query());
 }

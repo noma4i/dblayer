@@ -33,11 +33,14 @@ fn unknown_key() {
         failure_in("  belongs_to :o, model: Sample, key: :ownerId, bogus: 1"),
         (7, "unknown key `bogus` for `belongs_to`".to_string())
     );
-}
-
-#[test]
-fn file_field_cannot_be_indexed() {
-    assert_eq!(field_failure("file :avatar, index: true"), (3, "unknown key `index` for `file`".to_string()));
+    assert_eq!(field_failure("file :avatar, index: true"), (3, "unknown key `index` for `file`".to_string()), "file field cannot be indexed");
+    for on_failure in [":keep", ":rollback"] {
+        assert_eq!(
+            failure_in(&format!("  destroy with: A, on_failure: {on_failure}")),
+            (7, "unknown key `on_failure` for `destroy`".to_string()),
+            "destroy takes no on_failure {on_failure}"
+        );
+    }
 }
 
 #[test]
@@ -182,13 +185,6 @@ fn on_failure_accepts_keep_and_rollback_only() {
     assert_eq!(failure_in("  action :x do\n    mutation M\n    on_failure :keep\n    on_failure :keep\n  end"), (10, "`on_failure` is declared twice".to_string()));
     let valid = "model Sample do\n  schema do\n    string :name\n  end\n  create with: A, on_failure: :keep\n  action :x do\n    mutation M\n    on_failure :rollback\n  end\nend\n";
     assert!(parse_models(valid).is_ok());
-}
-
-#[test]
-fn destroy_takes_no_on_failure() {
-    let message = "unknown key `on_failure` for `destroy`".to_string();
-    assert_eq!(failure_in("  destroy with: A, on_failure: :keep"), (7, message.clone()));
-    assert_eq!(failure_in("  destroy with: A, on_failure: :rollback"), (7, message));
 }
 
 fn ephemeral_failure(lines: &str) -> (usize, String) {

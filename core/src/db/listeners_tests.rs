@@ -1,4 +1,3 @@
-use super::diff::Diff;
 use super::listeners::Mailbox;
 use super::watch::{Body, RowsBody, Version};
 use crate::identity::RowId;
@@ -30,9 +29,4 @@ fn a_mailbox_asks_for_a_new_run_only_when_it_is_not_scheduled() {
     assert!(!mailbox.push(version(2), &[]));
     mailbox.finish();
     assert!(mailbox.push(version(3), &[]));
-}
-
-#[test]
-fn an_empty_diff_is_empty() {
-    assert!(Diff::default().is_empty());
 }

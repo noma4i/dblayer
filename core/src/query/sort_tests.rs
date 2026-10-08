@@ -48,19 +48,12 @@ fn booleans_sort_as_numbers() {
 }
 
 #[test]
-fn keys_follow_the_field_order() {
-    let sort = Sort::Fields(vec![SortField { column: "createdAt".into(), direction: SortDirection::Asc }]);
+fn keys_follow_the_field_order_per_direction() {
     let id = RowId::new("1").unwrap();
-    let first = order_key(&sort, &row(json!({"createdAt": 1})), &id).unwrap();
-    let second = order_key(&sort, &row(json!({"createdAt": 2})), &id).unwrap();
-    assert!(first < second);
-}
-
-#[test]
-fn descending_keys_reverse_the_order() {
-    let sort = Sort::Fields(vec![SortField { column: "createdAt".into(), direction: SortDirection::Desc }]);
-    let id = RowId::new("1").unwrap();
-    let first = order_key(&sort, &row(json!({"createdAt": 1})), &id).unwrap();
-    let second = order_key(&sort, &row(json!({"createdAt": 2})), &id).unwrap();
-    assert!(first > second);
+    for (direction, ascending) in [(SortDirection::Asc, true), (SortDirection::Desc, false)] {
+        let sort = Sort::Fields(vec![SortField { column: "createdAt".into(), direction }]);
+        let first = order_key(&sort, &row(json!({"createdAt": 1})), &id).unwrap();
+        let second = order_key(&sort, &row(json!({"createdAt": 2})), &id).unwrap();
+        assert_eq!(first < second, ascending, "{direction:?}");
+    }
 }

@@ -10,20 +10,16 @@ fn failure(text: &str) -> Option<OperationFailure> {
 }
 
 #[test]
-fn no_open_operations_means_no_info() {
-    assert_eq!(fold_entries(&[]), None);
-}
-
-#[test]
-fn pending_operation_keeps_its_action_and_creation_time() {
-    let info = fold_entries(&[entry("create", OperationStatus::Pending, false, 7)]).unwrap();
-    assert_eq!((info.state, info.actions, info.attempts, info.since, info.error), (SyncState::Pending, vec!["create".to_string()], 0, 7, None));
-}
-
-#[test]
-fn started_pending_operation_is_sending() {
-    let info = fold_entries(&[SyncEntry { attempts: 1, ..entry("update", OperationStatus::Pending, true, 9) }]).unwrap();
-    assert_eq!((info.state, info.attempts, info.since), (SyncState::Sending, 1, 9));
+fn a_single_open_operation_gives_its_state_action_attempts_and_creation_time() {
+    assert_eq!(fold_entries(&[]), None, "no open operations");
+    let pending = fold_entries(&[entry("create", OperationStatus::Pending, false, 7)]).unwrap();
+    assert_eq!(
+        (pending.state, pending.actions, pending.attempts, pending.since, pending.error),
+        (SyncState::Pending, vec!["create".to_string()], 0, 7, None),
+        "pending"
+    );
+    let sending = fold_entries(&[SyncEntry { attempts: 1, ..entry("update", OperationStatus::Pending, true, 9) }]).unwrap();
+    assert_eq!((sending.state, sending.attempts, sending.since), (SyncState::Sending, 1, 9), "started pending");
 }
 
 #[test]
@@ -53,5 +49,4 @@ fn state_names_round_trip_through_sql() {
         assert_eq!(SyncState::from_sql(state.as_sql()), Some(state));
     }
     assert_eq!(SyncState::from_sql("bogus"), None);
-    assert_eq!(SyncInfo::default().state, SyncState::Synced);
 }

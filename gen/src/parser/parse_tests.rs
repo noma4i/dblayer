@@ -67,47 +67,26 @@ fn bare_and_empty_literals() {
 }
 
 #[test]
-fn top_level_word_other_than_model_fails() {
-    let error = parse_source("\nstring :name\n").unwrap_err();
-    assert_eq!((error.line, error.message.as_str()), (2, "expected `model`, found `string`"));
-}
-
-#[test]
-fn model_without_name_or_block_fails() {
-    let error = parse_source("model do\nend").unwrap_err();
-    assert_eq!((error.line, error.message.as_str()), (1, "model needs a constant name, for example `model User do`"));
-    let error = parse_source("model User\n").unwrap_err();
-    assert_eq!((error.line, error.message.as_str()), (1, "model User needs a `do ... end` block"));
-}
-
-#[test]
-fn unclosed_block_points_at_opener() {
-    let error = parse_source("model User do\n  schema do\n    string :a\nend\n").unwrap_err();
-    assert_eq!((error.line, error.message.as_str()), (1, "`model` block is not closed with `end`"));
-}
-
-#[test]
-fn stray_end_at_top_level_fails() {
-    let error = parse_source("model A do\nend\nend").unwrap_err();
-    assert_eq!((error.line, error.message.as_str()), (3, "expected `model`, found `end`"));
-}
-
-#[test]
-fn trailing_comma_at_end_of_file_fails() {
-    let error = parse_source("model A do\n  index :a,").unwrap_err();
-    assert_eq!(error.message, "unexpected end of file");
-}
-
-#[test]
-fn unexpected_token_in_arguments_fails() {
-    let error = parse_source("model A do\n  index :a :b\nend").unwrap_err();
-    assert_eq!((error.line, error.message.as_str()), (2, "unexpected `:b`"));
-}
-
-#[test]
-fn unclosed_array_fails() {
-    let error = parse_source("model A do\n  scope :a, params: [:x\nend").unwrap_err();
-    assert_eq!(error.line, 3);
+fn malformed_sources_fail_with_a_line_and_a_message() {
+    let cases: [(&str, &str, Option<usize>, Option<&str>); 8] = [
+        ("top level word other than model", "\nstring :name\n", Some(2), Some("expected `model`, found `string`")),
+        ("model without name", "model do\nend", Some(1), Some("model needs a constant name, for example `model User do`")),
+        ("model without block", "model User\n", Some(1), Some("model User needs a `do ... end` block")),
+        ("unclosed block", "model User do\n  schema do\n    string :a\nend\n", Some(1), Some("`model` block is not closed with `end`")),
+        ("stray end", "model A do\nend\nend", Some(3), Some("expected `model`, found `end`")),
+        ("trailing comma", "model A do\n  index :a,", None, Some("unexpected end of file")),
+        ("unexpected token", "model A do\n  index :a :b\nend", Some(2), Some("unexpected `:b`")),
+        ("unclosed array", "model A do\n  scope :a, params: [:x\nend", Some(3), None),
+    ];
+    for (case, source, line, message) in cases {
+        let error = parse_source(source).unwrap_err();
+        if let Some(line) = line {
+            assert_eq!(error.line, line, "{case}: line");
+        }
+        if let Some(message) = message {
+            assert_eq!(error.message, message, "{case}: message");
+        }
+    }
 }
 
 #[test]

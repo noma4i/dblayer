@@ -120,21 +120,19 @@ fn hash_inside_string_is_text() {
 }
 
 #[test]
-fn unterminated_string_reports_line() {
-    let error = lex("a\nb \"oops").unwrap_err();
-    assert_eq!((error.line, error.message.as_str()), (2, "unterminated string"));
-}
-
-#[test]
-fn unknown_character_reports_position() {
-    let error = lex("a @").unwrap_err();
-    assert_eq!((error.line, error.column, error.message.as_str()), (1, 3, "unexpected character `@`"));
-}
-
-#[test]
-fn unknown_duration_unit_reports_position() {
-    let error = lex("fresh_for 5.parsecs").unwrap_err();
-    assert_eq!((error.line, error.message.as_str()), (1, "unknown duration unit `parsecs`"));
+fn lexical_errors_report_line_column_and_message() {
+    let cases = [
+        ("unterminated string", "a\nb \"oops", 2, None, "unterminated string"),
+        ("unknown character", "a @", 1, Some(3), "unexpected character `@`"),
+        ("unknown duration unit", "fresh_for 5.parsecs", 1, None, "unknown duration unit `parsecs`"),
+    ];
+    for (case, source, line, column, message) in cases {
+        let error = lex(source).unwrap_err();
+        assert_eq!((error.line, error.message.as_str()), (line, message), "{case}");
+        if let Some(column) = column {
+            assert_eq!(error.column, column, "{case}: column");
+        }
+    }
 }
 
 #[test]

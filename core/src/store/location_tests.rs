@@ -26,9 +26,3 @@ fn prepare_directory_creates_subdirectory_and_can_run_twice() {
     assert!(first.is_dir());
     assert_eq!(first, location.directory());
 }
-
-#[test]
-fn two_users_get_two_files() {
-    let location = StoreLocation::new(Path::new("/base"));
-    assert_ne!(location.database_path("a").unwrap(), location.database_path("b").unwrap());
-}

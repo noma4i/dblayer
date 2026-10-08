@@ -246,7 +246,7 @@ pub(crate) fn apply_envelope(
         wrote = true;
     }
 
-    result.affected_key_statements = collect_scopes(connection, &changes.changes, &destroyed, &mut result.scopes)?;
+    collect_scopes(connection, &changes.changes, &destroyed, &mut result.scopes)?;
     for item in &destroyed {
         let removed = match &item.reason {
             DestroyReason::Replaced { by } => connection.execute(
@@ -288,7 +288,7 @@ fn collect_scopes(
     changes: &[RowChange],
     destroyed: &[Destroyed],
     scopes: &mut BTreeSet<ScopeRef>,
-) -> Result<u32, StoreError> {
+) -> Result<(), StoreError> {
     let mut by_model: BTreeMap<&ModelKey, BTreeSet<&str>> = BTreeMap::new();
     for change in changes {
         if change.kind != RowChangeKind::Inserted {
@@ -298,7 +298,6 @@ fn collect_scopes(
     for item in destroyed {
         by_model.entry(&item.model).or_default().insert(item.id.as_str());
     }
-    let mut statements = 0;
     for (model, ids) in by_model {
         let ids: Vec<&str> = ids.into_iter().collect();
         for chunk in ids.chunks(CHUNK) {
@@ -312,10 +311,9 @@ fn collect_scopes(
             for key in keys {
                 scopes.insert(ScopeRef::new(model.clone(), crate::identity::ScopeKey::from_raw(&key?)));
             }
-            statements += 1;
         }
     }
-    Ok(statements)
+    Ok(())
 }
 
 fn apply_scope_ops(

@@ -20,10 +20,10 @@ fn cascade_destroys_children_then_resident_parent_once_each() {
     let children = vec![first.clone(), second.clone(), third.clone()];
     assert_eq!(cascade_destroys(&parent, &children, true), [first.clone(), second.clone(), third, parent.clone()]);
     assert_eq!(cascade_destroy_count(&parent, &children, true), 4);
-    assert!(cascade_destroys(&parent, &[first.clone()], false).is_empty());
-    assert_eq!(cascade_destroy_count(&parent, &[first.clone()], false), 0);
+    assert!(cascade_destroys(&parent, std::slice::from_ref(&first), false).is_empty());
+    assert_eq!(cascade_destroy_count(&parent, std::slice::from_ref(&first), false), 0);
     assert_eq!(cascade_destroys(&parent, &[first.clone(), second.clone(), first.clone()], true), [first, second, parent.clone()]);
-    assert_eq!(cascade_destroys(&parent, &[parent.clone()], true), [parent]);
+    assert_eq!(cascade_destroys(&parent, std::slice::from_ref(&parent), true), [parent]);
 }
 
 #[test]

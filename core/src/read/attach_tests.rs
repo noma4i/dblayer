@@ -33,10 +33,3 @@ fn refresh_always_fetches_stale_and_invalidated_requests_need_readers() {
     assert!(AttachFetch::requests_without_reader(1, true));
     assert!(!AttachFetch::requests_without_reader(1, false));
 }
-
-#[test]
-fn attach_and_detach_results_are_distinct() {
-    assert_ne!(AttachResult::StartedObservation, AttachResult::JoinedObservation);
-    assert_ne!(DetachResult::KeptObservation, DetachResult::StoppedObservation);
-    assert_ne!(DetachResult::StoppedObservation, DetachResult::UnknownObservation);
-}

@@ -6,7 +6,6 @@ use crate::ddl::{
     create_model_tables, fingerprint_key, manifest_read, manifest_stamp, manifest_verify, stale_version_delete,
     table_name, ManifestVerdict, RECORD_VERSION, RECORD_VERSION_KEY,
 };
-use crate::identity::ModelKey;
 use crate::schema::ModelSpec;
 
 use super::reset::{
@@ -14,55 +13,6 @@ use super::reset::{
 };
 use super::tombstones::{prune_tombstones, TombstoneRetention};
 use super::{ModelInfo, Store, StoreError};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BootStep {
-    OpenDatabase,
-    Migrate,
-    FinishInterruptedReset,
-    ReconcileManifest,
-    SweepStaleVersions,
-    CheckOperations,
-    Maintain,
-    MarkReady,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct BootConditions {
-    pub has_reset_intent: bool,
-    pub manifest_mismatch: bool,
-    pub stale_version_models: Vec<ModelKey>,
-}
-
-pub fn boot_steps(conditions: &BootConditions) -> Vec<BootStep> {
-    let mut steps = vec![BootStep::OpenDatabase, BootStep::Migrate];
-    if conditions.has_reset_intent {
-        steps.push(BootStep::FinishInterruptedReset);
-    }
-    steps.push(BootStep::ReconcileManifest);
-    if !conditions.stale_version_models.is_empty() {
-        steps.push(BootStep::SweepStaleVersions);
-    }
-    steps.extend([BootStep::CheckOperations, BootStep::Maintain, BootStep::MarkReady]);
-    steps
-}
-
-impl BootStep {
-    pub fn transaction_count(conditions: &BootConditions) -> usize {
-        boot_steps(conditions)
-            .into_iter()
-            .map(|step| match step {
-                BootStep::OpenDatabase | BootStep::MarkReady => 0,
-                BootStep::SweepStaleVersions => conditions.stale_version_models.len(),
-                _ => 1,
-            })
-            .sum()
-    }
-
-    pub fn reader_sees_rows_after(self) -> bool {
-        self == BootStep::MarkReady
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootReport {

@@ -53,58 +53,6 @@ fn cache_counts(store: &Store) -> Vec<i64> {
 }
 
 #[test]
-fn modes_define_intent_user_tables_and_blast_radius() {
-    let cache = ResetMode::CacheOnly { models: vec!["zeta".into(), "alpha".into()] };
-    assert_eq!(ResetPlan::intent_value(&cache), "cache_only");
-    assert_eq!(ResetPlan::intent_value(&ResetMode::Incompatible), "incompatible");
-    assert_eq!(ResetPlan::intent_value(&ResetMode::Logout), "logout");
-    assert!(ResetPlan::keeps_user_tables(&cache));
-    assert!(ResetPlan::keeps_user_tables(&ResetMode::Incompatible));
-    assert!(!ResetPlan::keeps_user_tables(&ResetMode::Logout));
-    assert_eq!(ResetPlan::blast_radius(&cache), vec!["alpha", "zeta"]);
-    assert!(ResetPlan::blast_radius(&ResetMode::Incompatible).is_empty());
-    assert!(ResetPlan::blast_radius(&ResetMode::Logout).is_empty());
-}
-
-#[test]
-fn steps_per_mode_touch_only_what_the_mode_owns() {
-    let cache = ResetMode::CacheOnly { models: vec!["zeta".into(), "alpha".into()] };
-    let steps = ResetPlan::steps(&cache);
-    assert_eq!(steps.len(), 10);
-    assert_eq!(steps[0], ResetStep::WriteIntent("cache_only"));
-    assert_eq!(steps[1], ResetStep::DeleteRows { model: "alpha".into() });
-    assert_eq!(steps[5], ResetStep::DeleteRows { model: "zeta".into() });
-    assert_eq!(steps[9], ResetStep::ClearIntent);
-    assert_eq!(
-        ResetPlan::steps(&ResetMode::Incompatible),
-        vec![
-            ResetStep::WriteIntent("incompatible"),
-            ResetStep::DeleteScopeMembers { model: None },
-            ResetStep::DeleteTombstones { model: None },
-            ResetStep::DeleteQueryWindows { model: None },
-            ResetStep::WriteManifest,
-            ResetStep::ClearIntent,
-        ]
-    );
-    assert_eq!(
-        ResetPlan::steps(&ResetMode::Logout),
-        vec![ResetStep::WriteIntent("logout"), ResetStep::DeleteDatabaseFile, ResetStep::ClearIntent]
-    );
-}
-
-#[test]
-fn resume_skips_completed_steps() {
-    let mode = ResetMode::Incompatible;
-    let steps = ResetPlan::steps(&mode);
-    assert_eq!(ResetPlan::resume_steps(&mode, -1), steps);
-    assert_eq!(
-        ResetPlan::resume_steps(&mode, 3),
-        vec![ResetStep::DeleteQueryWindows { model: None }, ResetStep::WriteManifest, ResetStep::ClearIntent]
-    );
-    assert!(ResetPlan::resume_steps(&mode, steps.len() as i64 + 1).is_empty());
-}
-
-#[test]
 fn cache_only_clears_one_model_keeps_operations_and_clears_intent() {
     let (store, _) = booted_store();
     seed_two_models(&store);
@@ -198,17 +146,12 @@ fn open_completes_interrupted_logout() {
 }
 
 #[test]
-fn logout_of_in_memory_store_is_a_noop() {
-    let (store, _) = booted_store();
-    store.logout().unwrap();
-}
-
-#[test]
 fn resets_advance_the_revision_and_tell_the_hook() {
     use std::sync::{Arc, Mutex};
     let (store, _) = booted_store();
     store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
-    let seen: Arc<Mutex<Vec<(i64, Option<Vec<String>>)>>> = Arc::default();
+    type Seen = Vec<(i64, Option<Vec<String>>)>;
+    let seen: Arc<Mutex<Seen>> = Arc::default();
     let sink = seen.clone();
     store.set_hook(Box::new(move |event| {
         if let StoreEvent::Reset { revision, models } = event {
