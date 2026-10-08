@@ -98,7 +98,11 @@ impl Database {
         let sync = self.sync()?;
         for def in defs {
             let text = |key: &str| def[key].as_str().map(str::to_string).ok_or_else(|| DbError::Invalid { detail: format!("operation needs {key}") });
-            let mut operation = OperationDef::new(&text("name")?, &text("document")?, &text("rootPath")?);
+            let (name, document) = (text("name")?, text("document")?);
+            let mut operation = match def["rootPath"].as_str() {
+                Some(root) => OperationDef::new(&name, &document, root),
+                None => OperationDef::from_document(&name, &document).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has no root field") })?,
+            };
             if let Some(size) = def["pageSize"].as_u64() { operation = operation.paged(u32::try_from(size).map_err(|error| DbError::Invalid { detail: error.to_string() })?); }
             sync.register(operation);
         }

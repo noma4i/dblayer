@@ -8,6 +8,8 @@ mod load;
 mod normalize;
 mod online;
 mod registry;
+#[cfg(test)]
+mod registry_tests;
 mod resume;
 mod send;
 mod subscribe;
