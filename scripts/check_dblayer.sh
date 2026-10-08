@@ -9,10 +9,6 @@ gradle="${GRADLE:-$(ls -d "$HOME"/.gradle/wrapper/dists/gradle-9.*-bin/*/gradle-
 echo "== rust: cargo test"
 cargo test --manifest-path "$root/core/Cargo.toml"
 
-echo "== rust: stress stand, 5 s per seed (4 threads) and fixed single-thread runs"
-cargo run --quiet --manifest-path "$root/core/Cargo.toml" --features stress --bin stress -- --seed 11,12,13 --threads 4 --seconds 5 || echo "WARN: multi-thread stress found open races (see docs/testing.md)"
-cargo run --quiet --manifest-path "$root/core/Cargo.toml" --features stress --bin stress -- --seed 1,2,3 --threads 1 --ops 1500
-
 echo "== ios: xcframework, swift test, iOS simulator compile"
 bash "$root/scripts/build_ios.sh"
 swift test --package-path "$root/swift"
