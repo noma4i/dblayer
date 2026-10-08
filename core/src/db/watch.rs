@@ -183,9 +183,9 @@ impl Shared {
         spec: &ModelSpec,
         include: &[String],
         rows: &[Row],
-    ) -> Result<(Related, HashMap<RowId, Vec<(RowRef, i64)>>), DbError> {
+    ) -> Result<(Related, HashMap<RowId, Vec<(RowRef, i64, u64)>>), DbError> {
         let mut related = Related::new();
-        let mut stamps: HashMap<RowId, Vec<(RowRef, i64)>> = HashMap::new();
+        let mut stamps: HashMap<RowId, Vec<(RowRef, i64, u64)>> = HashMap::new();
         for name in include {
             let association = association(spec, name)?;
             let target = association.target.as_str();
@@ -232,7 +232,7 @@ impl Shared {
                     continue;
                 }
                 let stamp = stamps.entry(parent.clone()).or_default();
-                stamp.extend(found.iter().map(|row| (RowRef::new(association.target.clone(), row.id.clone()), row.revision)));
+                stamp.extend(found.iter().map(|row| (RowRef::new(association.target.clone(), row.id.clone()), row.revision, row.ephemeral)));
                 slot.insert(parent, found);
             }
         }

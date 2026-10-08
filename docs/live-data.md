@@ -28,6 +28,18 @@ val user by User.find(userId).collectAsLive()
 // user.typing turns true on a write and false again after reset_after
 ```
 
+A change of an ephemeral value on an included row reaches the observer of the parent too. When `User.typing` of a chat author changes, an observer of chats that includes `author` gets the chat in `diff.updated`, with the new value in `related`.
+
+```swift
+@Live var chat: Chat?
+// chat.author.typing changes -> the chat row is in diff.updated
+```
+
+```kotlin
+val chat by Chat.find(chatId).collectAsLive()
+// chat.author.typing changes -> the chat row is in diff.updated
+```
+
 ## Guarantees
 
 - One commit is one visible transition: a parent with its cascade-deleted children, a replaced list and an id swap appear together.

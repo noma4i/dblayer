@@ -7,7 +7,7 @@ use crate::syncstate::SyncStamp;
 pub struct Stamp {
     pub revision: i64,
     pub sync: SyncStamp,
-    pub related: Vec<(RowRef, i64)>,
+    pub related: Vec<(RowRef, i64, u64)>,
     pub ephemeral: u64,
 }
 

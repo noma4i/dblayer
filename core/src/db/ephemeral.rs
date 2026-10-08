@@ -222,9 +222,6 @@ impl Shared {
 impl Db {
     pub fn set_ephemeral(&self, model: &str, id: &RowId, values: Map<String, Value>) -> Result<(), DbError> {
         let spec = self.shared.spec(model)?;
-        if self.find(model, id)?.is_none() {
-            return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() });
-        }
         let changed = self.shared.ephemeral.lock().write(spec, id.as_str(), &values)?;
         self.shared.ephemeral.nudge();
         match changed {

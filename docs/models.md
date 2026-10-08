@@ -84,8 +84,9 @@ end
 - A write restarts the timer. When the time is up the value returns to `default`.
 - A write and a reset reach observers as a normal change with the row in `diff.updated`. Neither creates a database revision.
 - Deleting a row removes its values. Writing the value a field already holds delivers nothing.
+- A write for a row that is not stored yet is kept and shows when the row arrives. The timer starts at the write, so a value for a row that never arrives lapses by `reset_after`.
 - `where`, `order`, `index` and `scope` cannot use an ephemeral field, because those run in SQL. `dblayer-gen` reports it with file and line.
-- `updates Subscription, set: { typing: true }` writes the listed values to the row named by each subscription event.
+- `updates Subscription, set: { typing: true }` writes the listed values to the row named by each subscription event, after the event is applied. A deleting event writes nothing.
 
 Write from code:
 

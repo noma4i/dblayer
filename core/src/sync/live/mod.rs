@@ -45,6 +45,7 @@ impl Inner {
         let task = runtime.spawn(async move {
             let mut def = SubscriptionDef::new(EventSpec::new(updates.subscription.as_str()), &updates.subscription, &model, EventEffect::Upsert);
             def.deleted_by = updates.deleted_by;
+            def.set = updates.set;
             let started = Sync { inner: inner.clone() }.subscribe(def).await;
             let mut lives = locked(&inner.lives);
             let Some(live) = lives.get_mut(&slot) else { return };

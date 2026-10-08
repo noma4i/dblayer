@@ -7,7 +7,7 @@ use crate::db::Db;
 use crate::pacing::ManualClock;
 use crate::schema::{
     ActionDeclaration, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, OnFailure, PageDirection, RelationSpec,
-    RemoteShape, RemoteSpec, RootShape, UpdatesSpec,
+    RemoteShape, RemoteSpec, RootShape, UpdatesSpec, EphemeralSpec,
 };
 use crate::transport::MockTransport;
 use crate::value::ScalarKind;
@@ -23,6 +23,7 @@ fn remote(operation: &str, shape: RemoteShape, stale: &str) -> RemoteSpec {
 
 pub fn users_spec() -> ModelSpec {
     let mut spec = ModelSpec::new("users", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str).optional()]);
+    spec.ephemeral.push(EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false))).resetting_after("5.seconds"));
     let mut current = RelationSpec::global("current");
     current.remote = Some(remote("CurrentUser", RemoteShape::Single, "5.minutes"));
     spec.relations.push(current);

@@ -169,3 +169,28 @@ async fn unknown_operation_is_rejected() {
     let result = rig.sync.subscribe(upsert_def()).await;
     assert!(matches!(result, Err(SyncError::UnknownOperation(_))));
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_event_sets_the_declared_ephemeral_values_on_its_row() {
+    let rig = rig_with_subscription();
+    put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
+    let def = SubscriptionDef::new(EventSpec::new("typing"), "MomentChanged", "users", EventEffect::Patch).setting(params(json!({"typing": true})));
+    let _subscription = rig.sync.subscribe(def).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "Ann"})));
+    settle().await;
+    let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
+    assert_eq!(user.get("typing"), Some(&json!(true)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_destroying_event_sets_nothing() {
+    let rig = rig_with_subscription();
+    put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
+    let def = SubscriptionDef::new(EventSpec::new("typing"), "MomentChanged", "users", EventEffect::Destroy).setting(params(json!({"typing": true})));
+    let _subscription = rig.sync.subscribe(def).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "u1"})));
+    settle().await;
+    put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
+    let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
+    assert_eq!(user.get("typing"), Some(&json!(false)));
+}

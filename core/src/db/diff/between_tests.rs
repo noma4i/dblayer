@@ -69,8 +69,8 @@ fn a_changed_and_moved_row_is_in_both_lists() {
 #[test]
 fn a_changed_related_row_marks_the_parent_updated() {
     let author = RowRef::new(ModelKey::new("users"), id("u1"));
-    let old = vec![Entry { id: id("m1"), stamp: Stamp { revision: 1, related: vec![(author.clone(), 5)], ..Stamp::default() } }];
-    let new = vec![Entry { id: id("m1"), stamp: Stamp { revision: 1, related: vec![(author, 6)], ..Stamp::default() } }];
+    let old = vec![Entry { id: id("m1"), stamp: Stamp { revision: 1, related: vec![(author.clone(), 5, 0)], ..Stamp::default() } }];
+    let new = vec![Entry { id: id("m1"), stamp: Stamp { revision: 1, related: vec![(author, 6, 0)], ..Stamp::default() } }];
     assert_eq!(Diff::between(&old, &new, &[]).updated, ids(&["m1"]));
 }
 

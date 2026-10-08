@@ -4,7 +4,7 @@ use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, 
 use crate::identity::{ModelKey, ScopeKey};
 use crate::pacing::ManualClock;
 use crate::query::{Query, Where};
-use crate::schema::{EphemeralSpec, FieldSpec, ModelSpec, Storage};
+use crate::schema::{AssociationKind, AssociationSpec, EphemeralSpec, FieldSpec, ModelSpec, Storage};
 use crate::value::ScalarKind;
 use serde_json::json;
 use std::sync::Arc;
@@ -173,7 +173,6 @@ fn bad_writes_are_rejected() {
     assert!(matches!(set("people", "p1", json!({"name": "Bob"})), Err(DbError::NotEphemeralField { .. })));
     assert!(matches!(set("people", "p1", json!({"typing": "yes"})), Err(DbError::InvalidEphemeralValue { .. })));
     assert!(matches!(set("people", "p1", json!({"typing": null})), Err(DbError::InvalidEphemeralValue { .. })));
-    assert!(matches!(set("people", "nobody", json!({"typing": true})), Err(DbError::NotFound { .. })));
     assert!(matches!(set("ghosts", "p1", json!({})), Err(DbError::UnknownModel(_))));
 }
 
@@ -248,4 +247,43 @@ fn the_background_timer_resets_a_value_by_itself() {
     let seen = changes(&log);
     assert_eq!(seen.len(), 3);
     assert_eq!(seen[2].rows[0].get("typing"), Some(&json!(false)));
+}
+
+#[test]
+fn a_value_for_a_missing_row_waits_for_the_row_and_still_resets_by_the_clock() {
+    let (db, clock) = rig();
+    db.set_ephemeral("people", &rid("late"), obj(json!({"typing": true}))).unwrap();
+    clock.advance(seconds(2));
+    put(&db, "people", json!({"id": "late", "name": "Bob"}));
+    assert_eq!(db.find("people", &rid("late")).unwrap().unwrap().get("typing"), Some(&json!(true)));
+    clock.advance(seconds(4));
+    db.expire_ephemeral().unwrap();
+    assert_eq!(db.find("people", &rid("late")).unwrap().unwrap().get("typing"), Some(&json!(false)));
+}
+
+#[test]
+fn a_value_for_a_row_that_never_arrives_lapses_by_the_clock() {
+    let (db, clock) = rig();
+    db.set_ephemeral("people", &rid("ghost"), obj(json!({"typing": true}))).unwrap();
+    clock.advance(seconds(6));
+    db.expire_ephemeral().unwrap();
+    put(&db, "people", json!({"id": "ghost", "name": "Bob"}));
+    assert_eq!(db.find("people", &rid("ghost")).unwrap().unwrap().get("typing"), Some(&json!(false)));
+}
+
+#[test]
+fn an_ephemeral_change_of_an_included_row_updates_the_parent_observer() {
+    let mut notes = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("personId", ScalarKind::Id).indexed()]);
+    notes.associations.push(AssociationSpec::new("author", AssociationKind::BelongsTo, "people", "personId"));
+    let db = Db::open_in_memory(vec![people_spec(), notes], None).unwrap();
+    put(&db, "people", json!({"id": "p1", "name": "Ann"}));
+    put(&db, "notes", json!({"id": "n1", "personId": "p1"}));
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query { include: vec!["author".into()], ..Query::new("notes") }, callback).unwrap();
+    db.settle();
+    typing(&db, true);
+    let seen = changes(&log);
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[1].diff.updated, vec![rid("n1")]);
+    assert_eq!(seen[1].related["author"][&rid("n1")][0].get("typing"), Some(&json!(true)));
 }

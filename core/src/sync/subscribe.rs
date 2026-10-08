@@ -35,11 +35,16 @@ pub struct SubscriptionDef {
     pub effect: EventEffect,
     pub variables: Value,
     pub deleted_by: Option<String>,
+    pub set: Map<String, Value>,
 }
 
 impl SubscriptionDef {
     pub fn new(event: EventSpec, operation: &str, model: &str, effect: EventEffect) -> Self {
-        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None }
+        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None, set: Map::new() }
+    }
+
+    pub fn setting(self, set: Map<String, Value>) -> Self {
+        Self { set, ..self }
     }
 
     pub fn deleting_when(self, field: &str) -> Self {
@@ -123,9 +128,13 @@ impl Feed {
         let model = self.def.model.as_str();
         let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
         let mut count = 0;
+        let mut announced: Vec<RowId> = Vec::new();
         for item in items {
             let key = (model.to_string(), item.id.as_str().to_string());
             let deleted = self.def.deleted_by.as_ref().and_then(|field| item.node.get(field)).is_some_and(is_truthy);
+            if !deleted && self.def.effect != EventEffect::Destroy && !self.def.set.is_empty() {
+                announced.push(item.id.clone());
+            }
             match self.def.effect {
                 _ if deleted => {
                     let operation = EntityOp::Destroy { model: ModelKey::new(model), id: item.id, reason: DestroyReason::Server };
@@ -156,6 +165,9 @@ impl Feed {
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.entity_ops = operations.into_values().collect();
         db.land(envelope)?;
+        for id in &announced {
+            db.set_ephemeral(model, id, self.def.set.clone())?;
+        }
         locked(&self.status).applied += count;
         Ok(())
     }
