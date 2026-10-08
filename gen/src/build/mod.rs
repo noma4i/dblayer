@@ -248,6 +248,7 @@ fn build_standard_action(call: &Call) -> ActionDeclaration {
     action.on_failure = on_failure_of(&symbol_of(call, "on_failure"));
     action.ignore_response = option(call, "response").and_then(|pair| text_of(&pair.value.item)).as_deref() == Some("ignore");
     action.refetch = list_of(call, "refetch");
+    action.local = list_of(call, "local");
     action.wrap = option(call, "wrap").and_then(|pair| text_of(&pair.value.item));
     action.root = option(call, "root").and_then(|pair| text_of(&pair.value.item));
     if let Some(Value::Hash(pairs)) = option(call, "input").map(|pair| &pair.value.item) {

@@ -118,11 +118,11 @@ model Chat do
     int    :unreadCount
     date   :createdAt
   end
-  create with: ChatGroupCreate, input: { name: :name }
+  create with: ChatGroupCreate, input: { name: :name }, local: [:unreadCount]
 end
 "#).unwrap();
     let swift = emit_swift(&models);
     let kotlin = emit_kotlin(&models);
-    assert!(swift.contains("public static func create(name: String? = nil) async throws -> Self"));
-    assert!(kotlin.contains("suspend fun create(name: String? = null): Chat"));
+    assert!(swift.contains("public static func create(name: String? = nil, unreadCount: Int) async throws -> Self"));
+    assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long): Chat"));
 }

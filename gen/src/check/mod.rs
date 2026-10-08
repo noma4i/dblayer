@@ -102,7 +102,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Model, "create" | "update") => {
             plain(
                 Shape::Nothing,
-                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false), key("response", Want::Symbol, false), key("refetch", Want::Symbols, false)],
+                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false), key("response", Want::Symbol, false), key("refetch", Want::Symbols, false), key("local", Want::Symbols, false)],
             )
         }
         (Context::Model, "destroy") => {

@@ -14,7 +14,7 @@ moment.update(text = "hello world")
 moment.destroy()
 ```
 
-`create` takes the fields that the `create` line maps in `input:`, or every field when there is no `input:`. Fields the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
+`create` takes the fields that the `create` line maps in `input:`, or every field when there is no `input:`. Add `local: [:userId]` to the `create` line for fields you set locally but do not send (the author of a message, for example). Fields the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
 ## What a write does
 
