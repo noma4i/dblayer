@@ -10,11 +10,25 @@ use crate::parser::{Call, ModelNode, Node, Pair, Value};
 const DEFAULT_FRESHNESS: &str = "5.minutes";
 
 pub fn build(nodes: &[ModelNode]) -> Vec<ModelSpec> {
-    nodes.iter().map(build_model).collect()
+    let mut models: Vec<_> = nodes.iter().map(build_model).collect();
+    let indexes: Vec<_> = models.iter().flat_map(|model| model.associations.iter().map(move |association| {
+        let owner = if association.kind == AssociationKind::BelongsTo { model.key.to_string() } else { association.target.to_string() };
+        (owner, association.foreign_key.clone())
+    })).collect();
+    for model in &mut models {
+        for field in &mut model.fields {
+            if indexes.iter().any(|(owner, key)| owner == model.key.as_str() && key == &field.name)
+                || model.relations.iter().any(|relation| relation.by_columns.contains(&field.name)
+                    || matches!(&relation.sort, Sort::Fields(fields) if fields.iter().any(|sort| sort.column == field.name))) {
+                field.indexed = true;
+            }
+        }
+    }
+    models
 }
 
 fn build_model(node: &ModelNode) -> ModelSpec {
-    let mut model = ModelSpec::new(&node.name, Vec::new());
+    let mut model = ModelSpec::new(&node.name, vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     if let Some(Value::Symbol(storage)) = node.options.iter().find(|pair| pair.key == "storage").map(|pair| &pair.value.item) {
         model.storage = if storage == "memory" { Storage::Memory } else { Storage::Disk };
     }
@@ -22,14 +36,14 @@ fn build_model(node: &ModelNode) -> ModelSpec {
     for call in &node.body {
         match call.word.as_str() {
             "schema" => build_schema(call, &mut model),
-            "belongs_to" => model.associations.push(build_association(call, AssociationKind::BelongsTo)),
-            "has_many" => model.associations.push(build_association(call, AssociationKind::HasMany)),
-            "has_one" => model.associations.push(build_association(call, AssociationKind::HasOne)),
-            "references" => model.associations.push(build_association(call, AssociationKind::References)),
+            "belongs_to" => model.associations.push(build_association(call, AssociationKind::BelongsTo, &node.name)),
+            "has_many" => model.associations.push(build_association(call, AssociationKind::HasMany, &node.name)),
+            "has_one" => model.associations.push(build_association(call, AssociationKind::HasOne, &node.name)),
+            "references" => model.associations.push(build_association(call, AssociationKind::References, &node.name)),
             "scope" => model.relations.push(build_scope(call)),
-            "remote" => model.relations.push(build_remote(call)),
+            "remote" => model.relations.push(build_remote(call, &node.name)),
             "create" | "update" | "destroy" => model.actions.push(build_standard_action(call)),
-            "action" => model.actions.push(build_action(call)),
+            "action" => model.actions.push(build_action(call, &node.name)),
             _ => {}
         }
     }
@@ -41,7 +55,11 @@ fn build_schema(schema: &Call, model: &mut ModelSpec) {
         match call.word.as_str() {
             "index" => model.composite_indexes.push(call.args.iter().filter_map(|arg| text_of(&arg.item)).collect()),
             "ephemeral" => model.ephemeral.extend(call.block.iter().flatten().map(build_ephemeral)),
-            _ => model.fields.push(build_field(call)),
+            _ => {
+                let field = build_field(call);
+                if field.name == "id" { model.fields.retain(|field| field.name != "id"); }
+                model.fields.push(field);
+            }
         }
     }
 }
@@ -91,8 +109,27 @@ fn scalar_kind(name: &str) -> ScalarKind {
     }
 }
 
-fn build_association(call: &Call, kind: AssociationKind) -> AssociationSpec {
-    let mut association = AssociationSpec::new(&first_name(call), kind, &symbol_of(call, "model"), &symbol_of(call, "key"));
+pub(crate) fn camel(name: &str) -> String {
+    name.split('_').filter(|part| !part.is_empty()).map(|part| {
+        let mut chars = part.chars();
+        chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
+    }).collect()
+}
+
+fn lower(name: &str) -> String {
+    let mut chars = name.chars();
+    chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()
+}
+
+fn build_association(call: &Call, kind: AssociationKind, owner: &str) -> AssociationSpec {
+    let name = first_name(call);
+    let target = option(call, "model").and_then(|pair| text_of(&pair.value.item)).unwrap_or_else(|| camel(name.strip_suffix('s').unwrap_or(&name)));
+    let key = option(call, "key").and_then(|pair| text_of(&pair.value.item)).unwrap_or_else(|| match kind {
+        AssociationKind::BelongsTo => format!("{name}Id"),
+        AssociationKind::References => name.clone(),
+        _ => format!("{}Id", lower(owner)),
+    });
+    let mut association = AssociationSpec::new(&name, kind, &target, &key);
     association.touches_parent = flag(call, "touch");
     association.dependent = option(call, "dependent").map(|_| Dependent::Destroy);
     association
@@ -116,7 +153,7 @@ fn sort_field(pair: &Pair) -> SortField {
     SortField { column: pair.key.clone(), direction: if descending { SortDirection::Desc } else { SortDirection::Asc } }
 }
 
-fn build_remote(call: &Call) -> RelationSpec {
+fn build_remote(call: &Call, owner: &str) -> RelationSpec {
     let lines = call.block.as_deref().unwrap_or_default();
     let line = |word: &str| lines.iter().find(|candidate| candidate.word == word);
     let shape = match (line("paginate"), line("list")) {
@@ -133,7 +170,7 @@ fn build_remote(call: &Call) -> RelationSpec {
     };
     let fresh = line("fresh_for");
     let remote = RemoteSpec {
-        operation: line("query").and_then(|query| query.args.first()).and_then(|arg| text_of(&arg.item)).unwrap_or_default(),
+        operation: line("query").and_then(|query| query.args.first()).and_then(|arg| text_of(&arg.item)).unwrap_or_else(|| format!("{owner}s{}", camel(&first_name(call)))),
         selects_page_info: matches!(shape, RemoteShape::Connection { .. }),
         shape,
         stale_time: fresh.and_then(|fresh| fresh.args.first()).and_then(|arg| text_of(&arg.item)).unwrap_or(DEFAULT_FRESHNESS.to_string()),
@@ -168,8 +205,12 @@ fn build_standard_action(call: &Call) -> ActionDeclaration {
     action
 }
 
-fn build_action(call: &Call) -> ActionDeclaration {
+fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
     let mut action = ActionDeclaration::new(&first_name(call), RootShape::Upsert);
+    action.mutation = option(call, "mutation").and_then(|pair| text_of(&pair.value.item));
+    if let Some(Value::Hash(pairs)) = option(call, "optimistic").map(|pair| &pair.value.item) {
+        action.optimistic = pairs.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect();
+    }
     for line in call.block.iter().flatten() {
         match line.word.as_str() {
             "mutation" => action.mutation = Some(first_name(line)),
@@ -180,6 +221,7 @@ fn build_action(call: &Call) -> ActionDeclaration {
             _ => {}
         }
     }
+    if action.variables.is_empty() { action.variables.insert(format!("{}Id", lower(owner)), "id".into()); }
     action
 }
 

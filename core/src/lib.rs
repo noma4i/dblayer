@@ -17,8 +17,4 @@ pub mod db;
 pub mod files;
 pub mod sync;
 pub mod upload;
-
-#[uniffi::export]
-pub fn version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
-}
+pub mod ffi;

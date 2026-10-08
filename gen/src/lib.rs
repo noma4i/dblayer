@@ -2,6 +2,8 @@ mod build;
 mod check;
 mod lexer;
 mod parser;
+mod emit;
+pub use emit::{emit_swift, emit_kotlin};
 
 use std::fmt;
 use std::fs;

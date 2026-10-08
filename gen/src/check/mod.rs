@@ -95,7 +95,8 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
     let free = || Some(Word { shape: Shape::Nothing, keys: vec![], block: false, free_keys: true });
     match (context, word) {
         (Context::Model, "schema") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
-        (Context::Model, "remote" | "action") => Some(Word { shape: Shape::Name, keys: vec![], block: true, free_keys: false }),
+        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![], block: true, free_keys: false }),
+        (Context::Model, "action") => Some(Word { shape: Shape::Name, keys: vec![key("mutation", Want::Operation, false), key("optimistic", Want::Hash, false)], block: true, free_keys: false }),
         (Context::Model, "create" | "update") => {
             plain(
                 Shape::Nothing,
@@ -118,14 +119,14 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         ),
         (Context::Model, "belongs_to") => plain(
             Shape::Name,
-            vec![key("model", Want::Const, true), key("key", Want::Symbol, true), key("touch", Want::Bool, false)],
+            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("touch", Want::Bool, false)],
         ),
         (Context::Model, "has_many" | "has_one") => plain(
             Shape::Name,
-            vec![key("model", Want::Const, true), key("key", Want::Symbol, true), key("dependent", Want::Symbol, false)],
+            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("dependent", Want::Symbol, false)],
         ),
         (Context::Model, "references") => {
-            plain(Shape::Name, vec![key("model", Want::Const, true), key("key", Want::Symbol, false)])
+            plain(Shape::Name, vec![key("model", Want::Const, false), key("key", Want::Symbol, false)])
         }
         (Context::Schema, "index") => plain(Shape::Names, vec![]),
         (Context::Schema, "ephemeral") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
@@ -408,9 +409,6 @@ fn check_remote(remote: &Call, report: &mut impl FnMut(usize, usize, String)) {
         check_call(call, Context::Remote, report);
     }
     let has = |word: &str| lines.iter().any(|call| call.word == word);
-    if !has("query") {
-        report(remote.line, remote.column, "`remote` needs a `query` line".to_string());
-    }
     if has("paginate") && has("list") {
         report(remote.line, remote.column, "`paginate` and `list` cannot be used together".to_string());
     }
@@ -432,6 +430,7 @@ fn check_call(call: &Call, context: Context, report: &mut impl FnMut(usize, usiz
     };
     check_shape(call, word.shape, report);
     match (&call.block, word.block) {
+        (None, true) if call.word == "action" && call.options.iter().any(|pair| pair.key == "mutation") => {}
         (None, true) => report(call.line, call.column, format!("`{}` needs a `do ... end` block", call.word)),
         (Some(_), false) => report(call.line, call.column, format!("`{}` takes no block", call.word)),
         _ => {}
