@@ -1,4 +1,4 @@
-package dev.dblayer
+package com.noma4i.dblayer
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

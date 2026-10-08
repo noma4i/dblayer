@@ -7,7 +7,7 @@ swift/DBlayerFFI.xcframework/
 swift/Sources/DBlayer/dblayer.swift
 swift/.build/
 kotlin/src/main/jniLibs/
-kotlin/src/main/kotlin/dev/dblayer/dblayer.kt
+kotlin/src/main/kotlin/com/noma4i/dblayer/dblayer.kt
 kotlin/.gradle/
 kotlin/build/
 kotlin/local.properties

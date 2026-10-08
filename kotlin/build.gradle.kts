@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-  namespace = "dev.dblayer"
+  namespace = "com.noma4i.dblayer"
   compileSdk = 36
 
   defaultConfig {

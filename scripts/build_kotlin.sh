@@ -7,7 +7,7 @@ export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$HOME"/Library/Android/sdk
 module="$root/kotlin"
 
 cargo build --manifest-path "$root/core/Cargo.toml" --features cli
-rm -rf "$module/src/main/kotlin/dev/dblayer/dblayer.kt"
+rm -rf "$module/src/main/kotlin/com/noma4i/dblayer/dblayer.kt"
 (cd -- "$root/core" && "$root/target/debug/uniffi-bindgen" generate \
   --library "$root/target/debug/libdblayer.dylib" --language kotlin --no-format \
   --out-dir "$module/src/main/kotlin")
