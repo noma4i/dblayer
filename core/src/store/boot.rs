@@ -6,10 +6,11 @@ use crate::ddl::{
     create_model_tables, fingerprint_key, manifest_read, manifest_stamp, manifest_verify, stale_version_delete,
     table_name, ManifestVerdict, RECORD_VERSION, RECORD_VERSION_KEY,
 };
+use crate::operation::QuarantineReason;
 use crate::schema::ModelSpec;
 
 use super::reset::{
-    clear_intent, current_fingerprints, finish_interrupted_reset, wipe_all_cache, wipe_model_cache, write_intent,
+    clear_intent, current_fingerprints, finish_interrupted_reset, retire_operations, wipe_all_cache, wipe_model_cache, write_intent,
 };
 use super::tombstones::{prune_tombstones, TombstoneRetention};
 use super::{ModelInfo, Store, StoreError};
@@ -60,6 +61,7 @@ impl Store {
                         transaction.execute("DELETE FROM manifest WHERE key = ?1", params![fingerprint_key(model)])?;
                     }
                 }
+                retire_operations(&transaction, Some(mismatched), Some(QuarantineReason::SchemaChanged))?;
                 transaction.commit()?;
                 create_model_tables(&inner.connection, models)?;
                 let transaction = inner.connection.unchecked_transaction()?;
@@ -71,6 +73,7 @@ impl Store {
                 write_intent(&inner.connection, "incompatible", &[], now)?;
                 let transaction = inner.connection.unchecked_transaction()?;
                 wipe_all_cache(&transaction, true)?;
+                retire_operations(&transaction, None, Some(QuarantineReason::SchemaChanged))?;
                 transaction.execute("DELETE FROM manifest WHERE key LIKE 'fingerprint:%'", [])?;
                 transaction.commit()?;
                 create_model_tables(&inner.connection, models)?;

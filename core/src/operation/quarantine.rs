@@ -13,10 +13,11 @@ pub enum QuarantineReason {
     NormalizeRejected,
     ReplaceNormalizeRejected,
     IdentityMismatch,
+    SchemaChanged,
 }
 
 impl QuarantineReason {
-    pub const ALL: [QuarantineReason; 7] = [
+    pub const ALL: [QuarantineReason; 8] = [
         QuarantineReason::PlanRowRejected,
         QuarantineReason::OrphanTempRow,
         QuarantineReason::DecodeFailed,
@@ -24,6 +25,7 @@ impl QuarantineReason {
         QuarantineReason::NormalizeRejected,
         QuarantineReason::ReplaceNormalizeRejected,
         QuarantineReason::IdentityMismatch,
+        QuarantineReason::SchemaChanged,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -35,6 +37,7 @@ impl QuarantineReason {
             QuarantineReason::NormalizeRejected => "normalize-rejected",
             QuarantineReason::ReplaceNormalizeRejected => "replace-normalize-rejected",
             QuarantineReason::IdentityMismatch => "identity-mismatch",
+            QuarantineReason::SchemaChanged => "schema-changed",
         }
     }
 

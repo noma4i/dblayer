@@ -7,6 +7,8 @@ mod discard_tests;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
+mod reset_tests;
+#[cfg(test)]
 mod rollback_tests;
 #[cfg(test)]
 mod write_tests;

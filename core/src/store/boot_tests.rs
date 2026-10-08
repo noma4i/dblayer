@@ -69,7 +69,7 @@ fn committed_work_survives_dropping_the_store_without_checkpoint() {
 }
 
 #[test]
-fn fingerprint_change_clears_only_that_model_and_keeps_operations() {
+fn fingerprint_change_clears_only_that_model_and_quarantines_its_operations() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
@@ -92,7 +92,8 @@ fn fingerprint_change_clears_only_that_model_and_keeps_operations() {
     assert_eq!(store.row_count("items").unwrap(), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member WHERE model = 'messages'"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member WHERE model = 'items'"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine WHERE reason = 'schema-changed' AND model = 'messages'"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);
     store.commit(envelope(&store, vec![upsert("messages", message("m2", "c1"))], vec![])).unwrap();
 }
@@ -145,7 +146,7 @@ fn removed_model_loses_its_cache_and_fingerprint() {
 }
 
 #[test]
-fn incompatible_manifests_wipe_cache_and_keep_user_tables() {
+fn incompatible_manifests_wipe_cache_and_quarantine_operations() {
     type Case = (&'static str, Option<&'static str>, Option<&'static str>, Option<&'static str>);
     let cases: [Case; 3] = [
         ("data version changed", Some("v1"), Some("v2"), None),
@@ -167,8 +168,9 @@ fn incompatible_manifests_wipe_cache_and_keep_user_tables() {
         assert_eq!(report.verdict, ManifestVerdict::Incompatible, "{case}");
         assert_eq!(store.row_count("messages").unwrap(), 0, "{case}: rows");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0, "{case}: membership");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1, "{case}: operations");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 1, "{case}: quarantine");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0, "{case}: operations");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 2, "{case}: quarantine");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine WHERE reason = 'schema-changed'"), 1, "{case}: retired operation");
         if let Some(version) = after {
             assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM manifest WHERE key = 'data_version' AND value = '{version}'")), 1, "{case}: stamped version");
         }
