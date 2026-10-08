@@ -25,4 +25,7 @@ bash "$root/scripts/check_zoo.sh"
 echo "== docs: paths, links, wording"
 bash "$root/scripts/check_docs.sh"
 
+echo "== invariants: traceability report (not strict)"
+bash "$root/scripts/check_invariants.sh"
+
 echo "check_dblayer: ok"

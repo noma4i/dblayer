@@ -74,7 +74,7 @@ sync.cancelUpload(moment)
 | multipart (threshold or larger) | `init` returns `key` and `uploadId`, `presign` returns one url per part, parts go out by PUT, `complete` receives the part numbers with their ETags and returns `signedId` and `blobId`, `abort` runs when the upload fails |
 | content mutation | runs once with the original variables plus `signedId` and `blobId` |
 
-The file is read in ranges and never loaded whole. The checksum is base64 MD5, the MIME type comes from the file extension unless you pass one.
+The file is read in ranges: a single upload in one range up to the 10 MB threshold, a multipart upload in parts of 5 MB. The checksum is base64 MD5, the MIME type comes from the file extension unless you pass one.
 
 | Setting | Default |
 | ------- | ------- |
