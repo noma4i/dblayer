@@ -10,6 +10,12 @@ transport.enqueue("MomentsFeed", reply: feedJSON)
 let db = try Database.open(config: .inMemory, models: models, transport: transport)
 ```
 
+```kotlin
+val transport = MockTransport()
+transport.enqueue("MomentsFeed", reply = feedJson)
+val db = Database.open(config = Config.inMemory, models = models, transport = transport)
+```
+
 Use a manual clock to test freshness and retries without sleeping.
 
 Typical scenarios to cover:

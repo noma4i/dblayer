@@ -22,6 +22,10 @@ for document in documents:
     text = document.read_text()
     name = document.relative_to(root)
     lowered = text.lower()
+    swift_blocks = len(re.findall(r"^```swift", text, re.M))
+    kotlin_blocks = len(re.findall(r"^```kotlin", text, re.M))
+    if swift_blocks != kotlin_blocks:
+        problems.append(f"{name}: {swift_blocks} swift examples but {kotlin_blocks} kotlin examples, they come in pairs")
     for word in banned_words:
         if re.search(rf"\b{word}\b", lowered):
             problems.append(f"{name}: banned word '{word}'")

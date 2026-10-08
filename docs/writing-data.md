@@ -8,6 +8,12 @@ try await moment.update(text: "hello world")
 try await moment.destroy()
 ```
 
+```kotlin
+val moment = Moment.create(text = "hello", media = null)
+moment.update(text = "hello world")
+moment.destroy()
+```
+
 ## What a write does
 
 1. Plans the change: the row, cascades for `dependent: :destroy`, parent touches for `touch: true`.

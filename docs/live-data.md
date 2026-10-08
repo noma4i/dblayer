@@ -22,11 +22,96 @@ The first delivery contains every row as `inserted`.
 - Dropping the subscription stops delivery at once.
 - Listeners are called from library threads. Hop to your main thread yourself.
 
+## In your UI
+
+You rarely iterate changes by hand. Declare the data where you use it.
+
+**SwiftUI.** `@Live` holds the current rows and refreshes the view on every change. Rows, single records and counts use the same attribute:
+
+```swift
+struct ProfileView: View {
+  let userId: RowId
+  @Live var moments: [Moment]
+  @Live var user: User?
+
+  init(userId: RowId) {
+    self.userId = userId
+    _moments = Live(Moment.where(Moment.userId == userId).order(Moment.createdAt.desc()))
+    _user    = Live(User.find(userId))
+  }
+
+  var body: some View {
+    List(moments) { MomentRow(moment: $0) }
+      .navigationTitle(user?.name ?? "")
+  }
+}
+```
+
+The projected value `$moments` gives the loading state (`idle`, `loading`, `failed`) and the last diff:
+
+```swift
+if $moments.state.isLoading { ProgressView() }
+```
+
+```kotlin
+val state by Moment.recent.collectState()
+if (state.isLoading) CircularProgressIndicator()
+```
+
+**View models.** `Live` also works in `@Observable` classes and any other code: `let moments = Live(Moment.recent)` exposes `rows`, `state` and `diff`.
+
+**UIKit and Android views.** Apply the diff to a diffable data source or a collection view. The diff already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:
+
+```swift
+let feed = Live(Moment.recent)
+feed.onChange { change in dataSource.apply(change.snapshot()) }
+```
+
+```kotlin
+Moment.recent.onChange { change -> change.dispatchTo(adapter) }   // RecyclerView ListAdapter
+```
+
+**Jetpack Compose.** `collectAsLive()` returns Compose state that follows the live result. Rows, single records and counts work the same way:
+
+```kotlin
+@Composable
+fun ProfileScreen(userId: RowId) {
+  val moments by Moment.where(Moment.userId eq userId).order(Moment.createdAt.desc()).collectAsLive()
+  val user by User.find(userId).collectAsLive()
+
+  Column {
+    Text(user?.name.orEmpty())
+    LazyColumn { items(moments) { MomentRow(it) } }
+  }
+}
+```
+
+**ViewModels and plain Kotlin.** A live query is a `Flow<Change>` with a `rows` shortcut: `Moment.recent.rows` is `Flow<List<Moment>>`, and `.stateIn(scope)` gives a `StateFlow`.
+
+**Low level.** Without a UI framework, iterate the stream:
+
+```swift
+for await change in Moment.recent { handle(change.rows) }
+```
+
+```kotlin
+Moment.recent.collect { change -> handle(change.rows) }
+```
+
 ## Queries
 
 ```swift
 Moment.find(id)
-Moment.where(Moment.userId == id).order(Moment.createdAt.desc).limit(20)
+Moment.where(Moment.userId == id).order(Moment.createdAt.desc()).limit(20)
+Moment.recent                       // a named scope
+moment.author                       // belongs_to
+moment.vibes                        // has_many
+moment.vibes.count                  // counted by SQLite, no cache field
+```
+
+```kotlin
+Moment.find(id)
+Moment.where(Moment.userId eq id).order(Moment.createdAt.desc()).limit(20)
 Moment.recent                       // a named scope
 moment.author                       // belongs_to
 moment.vibes                        // has_many

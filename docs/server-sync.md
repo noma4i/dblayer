@@ -31,6 +31,12 @@ try await Moment.feed.loadMore() // next page
 try await Moment.feed.refresh()  // pull to refresh, replaces in one commit
 ```
 
+```kotlin
+Moment.feed                      // live; loads if stale, nothing to call
+Moment.feed.loadMore()           // next page
+Moment.feed.refresh()            // pull to refresh, replaces in one commit
+```
+
 - Fresh data is not requested again. `fresh_for` sets how long data counts as fresh.
 - Identical parallel loads become one request.
 - Network and server errors are retried within a budget; fatal errors are returned.

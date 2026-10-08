@@ -51,17 +51,39 @@ The generator turns these files into typed Swift and Kotlin models and a model s
 
 ## What using it looks like
 
-The generated bindings give you this API:
+The generated bindings give you a live property. Declare the query, use the rows, the screen updates itself:
 
 ```swift
-let recent = Moment.where(Moment.userId == me.id).order(Moment.createdAt.desc).limit(20)
-for await change in recent {          // value now, then every change
-  render(change.rows, diff: change.diff)
-}
+struct FeedView: View {
+  @Live(Moment.where(Moment.userId == me.id).order(Moment.createdAt.desc).limit(20))
+  var moments
 
-let moment = try await Moment.create(text: "hello")   // optimistic, queued, synced
-try await Moment.feed.refresh()                       // pull to refresh
+  var body: some View {
+    List(moments) { MomentRow(moment: $0) }
+      .refreshable { try? await Moment.feed.refresh() }
+  }
+}
 ```
+
+```kotlin
+@Composable
+fun FeedScreen(me: User) {
+  val moments by Moment.where(Moment.userId eq me.id).order(Moment.createdAt.desc()).limit(20).collectAsLive()
+  LazyColumn { items(moments) { MomentRow(it) } }
+}
+```
+
+Writes are one line and need no reload code:
+
+```swift
+let moment = try await Moment.create(text: "hello")   // optimistic, queued, synced
+```
+
+```kotlin
+val moment = Moment.create(text = "hello")            // optimistic, queued, synced
+```
+
+See [docs/live-data.md](docs/live-data.md) for UIKit, view models, single records, loading state and diffs.
 
 ## Repository layout
 
