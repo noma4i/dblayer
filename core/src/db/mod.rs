@@ -26,7 +26,7 @@ pub use observe::ObserverHandle;
 pub use open::{Db, DbConfig};
 pub use replace::{OnAbsent, ReplaceRequest};
 pub use row::{Record, Row};
-pub(crate) use roll_back::follows;
+pub(crate) use roll_back::{follows, restore_destroyed};
 pub use watch::{Change, CountChange, Related};
 
 #[cfg(test)]

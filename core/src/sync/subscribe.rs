@@ -229,12 +229,17 @@ impl Feed {
         loop {
             let mut connection = match opened.take() {
                 Some(connection) => connection,
+                None if !self.inner.connectivity.is_online() => {
+                    self.inner.connectivity.online().await;
+                    continue;
+                }
                 None => match self.inner.transport.subscribe(request.clone()).await {
                     Ok(connection) => {
                         locked(&self.status).connects += 1;
                         self.inner.reload_watched(&self.def.model, None, false).await;
                         connection
                     }
+                    Err(_) if !self.inner.connectivity.is_online() => continue,
                     Err(_) => {
                         let Some(delay) = self.register_failure(&mut retry, SubscriptionFault::Transient) else { return };
                         tokio::time::sleep(delay).await;
@@ -244,6 +249,9 @@ impl Feed {
             };
             let fault = self.pump(&mut connection, &mut retry).await.map_or(SubscriptionFault::Transient, SubscriptionFailureKind::fault);
             drop(connection);
+            if !self.inner.connectivity.is_online() {
+                continue;
+            }
             let Some(delay) = self.register_failure(&mut retry, fault) else { return };
             tokio::time::sleep(delay).await;
         }

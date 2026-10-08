@@ -139,7 +139,9 @@ impl Sync {
             let Some(state) = &entry.operation.upload else { continue };
             let seq = entry.operation.id.0;
             match entry.operation.status {
-                OperationStatus::Pending if !entry.operation.transport_started => self.spawn_run(seq, Mode::Transfer),
+                OperationStatus::Pending if !entry.operation.transport_started && !self.inner.is_waiting(&entry.operation) => {
+                    self.spawn_run(seq, Mode::Transfer)
+                }
                 OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() => self.spawn_run(seq, Mode::Orphan),
                 _ => {}
             }

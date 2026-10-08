@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::commit::{CommitEnvelope, CommitResult, EnvelopeFault, OperationStatus, OperationTransition, WriteOrigin};
 use crate::db::OutboxOperation;
 use crate::identity::{Generation, ModelKey, RowRef};
-use crate::db::{follows, DbError};
+use crate::db::{follows, restore_destroyed, DbError};
 use crate::operation::{
     quarantine_add, ready, transport_verdict, Operation, OutboxEntry as GateEntry, OutboxQueue, QuarantineReason, TransportVerdict,
 };
@@ -106,7 +106,7 @@ impl Inner {
         if !self.connectivity.is_online() {
             return Some(SkipReason::Offline);
         }
-        self.retry_due(operation).filter(|due| *due > self.clock.now()).map(|_| SkipReason::Waiting)
+        self.is_waiting(operation).then_some(SkipReason::Waiting)
     }
 
     async fn send(&self, entry: &OutboxOperation) -> Result<SendResult, SyncError> {
@@ -144,9 +144,13 @@ impl Inner {
     }
 
     async fn refuse(&self, sending: &Sending<'_>, failure: OperationFailure, keep: bool) -> Result<SendResult, SyncError> {
-        if keep {
+        if keep || sending.action == "destroy" {
             let message = failure.message.clone();
-            return self.fail(sending, OperationStatus::Failed, failure, SendResult::Rejected(message));
+            let result = self.fail(sending, OperationStatus::Failed, failure, SendResult::Rejected(message))?;
+            if sending.action == "destroy" && result != SendResult::Discarded {
+                self.invalidate_model(&sending.model).await?;
+            }
+            return Ok(result);
         }
         self.roll_back(sending, failure.message).await
     }
@@ -245,6 +249,9 @@ impl Inner {
         let seq = sending.entry.operation.id.0;
         let committed = self.commit(sending.generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
+            if status == OperationStatus::Failed && sending.action == "destroy" {
+                envelope.entity_ops = restore_destroyed(sending.entry);
+            }
             envelope.operation_transitions.push(OperationTransition::Fail { seq, status, failure });
             Ok(Some(envelope))
         })?;
@@ -256,9 +263,6 @@ impl Inner {
             Ok(_) => {}
             Err(DbError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(SendResult::Discarded),
             Err(error) => return Err(error.into()),
-        }
-        if sending.action == "destroy" {
-            self.invalidate_model(&sending.model).await?;
         }
         Ok(SendResult::Rejected(message))
     }

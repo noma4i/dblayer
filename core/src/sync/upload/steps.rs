@@ -142,7 +142,7 @@ impl Runner {
         }
     }
 
-    async fn await_online(&self) -> Result<(), Stop> {
+    pub(super) async fn await_online(&self) -> Result<(), Stop> {
         if self.inner.connectivity.is_online() {
             return Ok(());
         }

@@ -109,6 +109,23 @@ async fn dropped_connection_is_reopened_after_a_delay() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn offline_subscription_waits_without_spending_attempts_and_reconnects_online() {
+    let rig = rig_with_subscription();
+    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.sync.set_online(false);
+    for _ in 0..4 {
+        rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
+        tokio::time::sleep(Duration::from_secs(40)).await;
+    }
+    assert_eq!(rig.transport.call_count("MomentChanged"), 1);
+    assert!(!subscription.status().degraded);
+    rig.sync.set_online(true);
+    settle().await;
+    assert_eq!(rig.transport.call_count("MomentChanged"), 2);
+    assert_eq!(subscription.status().connects, 2);
+}
+
+#[tokio::test(start_paused = true)]
 async fn repeated_transport_failures_report_degraded_once_then_ready_recovers() {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();

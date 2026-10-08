@@ -71,7 +71,7 @@ async fn rejected_update_restores_the_row_and_reports_the_error() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn rejected_create_removes_the_temp_row_and_rejected_destroy_restores_the_row() {
+async fn rejected_create_removes_the_temp_row_and_rejected_destroy_restores_the_row_as_failed() {
     let rig = rig();
     let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
     put(&rig, "moments", moment("m2", "keep"));
@@ -83,6 +83,37 @@ async fn rejected_create_removes_the_temp_row_and_rejected_destroy_restores_the_
     assert_eq!(report.rejections(), ["bad", "gone"]);
     assert_eq!(rig.db.find("moments", &local.id).unwrap(), None);
     assert_eq!(text_of(&rig, "moments", "m2"), Some("keep".to_string()));
+    assert_eq!(statuses(&rig), [OperationStatus::Failed]);
+    let failed = info(&rig, "m2");
+    assert_eq!((failed.state, failed.actions, failed.error.map(|error| error.message)), (SyncState::Failed, vec!["destroy".to_string()], Some("gone".to_string())));
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_of_a_failed_destroy_hides_the_record_again_and_deletes_it() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "keep"));
+    rig.db.destroy("moments", &rid("m1")).unwrap();
+    rig.transport.enqueue("DeleteMoment", Reply::graphql_error("gone", "FORBIDDEN"));
+    rig.transport.enqueue("DeleteMoment", Reply::data(json!({"deleteMoment": {"id": "m1"}})));
+    rig.sync.flush().await.unwrap();
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("keep".to_string()));
+    assert_eq!(rig.db.retry("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+    assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn discard_of_a_failed_destroy_keeps_the_record_and_clears_the_error() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "keep"));
+    rig.db.destroy("moments", &rid("m1")).unwrap();
+    rig.transport.enqueue("DeleteMoment", Reply::graphql_error("gone", "FORBIDDEN"));
+    rig.sync.flush().await.unwrap();
+    assert_eq!(rig.db.discard("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("keep".to_string()));
+    assert!(info(&rig, "m1").is_synced());
     assert!(rig.db.outbox().unwrap().is_empty());
 }
 

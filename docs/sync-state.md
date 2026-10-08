@@ -122,7 +122,7 @@ action :like do
 end
 ```
 
-`destroy` has no `on_failure`: the record is hidden at once, and if the destroy fails for good (a refusal or 40 unreached attempts) the record comes back and the error is reported. Declaring `on_failure` on `destroy` is an error.
+`destroy` has no `on_failure`: the record is hidden at once, and if the destroy fails for good (a refusal or 40 unreached attempts) the record comes back with `state = failed` and the error, attempts and time in `sync`. `retry()` hides the record again and sends the destroy. `discard()` keeps the record and drops the destroy. Declaring `on_failure` on `destroy` is an error.
 
 A record in `failed` or `deliveryUnknown` has two gestures:
 

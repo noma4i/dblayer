@@ -211,6 +211,7 @@ impl Runner {
         if self.token.is_cancelled() {
             return Err(Stop::Cancelled);
         }
+        self.await_online().await?;
         state.phase = UploadStatus::Sending;
         state.stage = UploadStage::Mutation;
         *locked(&self.state) = state.clone();
@@ -235,7 +236,6 @@ impl Runner {
             base_revision: self.inner.db.revision_seq().unwrap_or_default(),
         };
         let delivery = match tokio::time::timeout(self.inner.config.upload.step_timeout, self.inner.deliver(request)).await {
-            Ok(Delivery::Unreached(failure)) => Delivery::Unknown(failure),
             Ok(delivery) => delivery,
             Err(_) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, "the mutation timed out")),
         };

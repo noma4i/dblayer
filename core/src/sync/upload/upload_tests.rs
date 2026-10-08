@@ -334,7 +334,7 @@ async fn urls_older_than_the_presign_ttl_are_requested_again_for_unfinished_part
 async fn an_unanswered_mutation_is_delivery_unknown_never_repeated_and_retry_skips_the_upload() {
     let rig = upload_rig(small());
     rig.transport.enqueue("CreateBlob", blob());
-    rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Network("lost".into())));
+    rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Interrupted("reset".into())));
     rig.transport.enqueue("CreateMoment", created("m9"));
     let source = file(b"abcdef");
     rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
@@ -349,6 +349,43 @@ async fn an_unanswered_mutation_is_delivery_unknown_never_repeated_and_retry_ski
     rig.sync.retry("moments", &rid("m1")).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!((rig.transport.call_count("CreateBlob"), rig.transport.put_calls().len(), rig.transport.call_count("CreateMoment")), (1, 1, 2));
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unreached_mutation_waits_pending_and_is_sent_again_without_a_new_transfer() {
+    let rig = upload_rig(small());
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Network("no connection".into())));
+    rig.transport.enqueue("CreateMoment", created("m9"));
+    let source = file(b"abcdef");
+    rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
+    rig.sync.wait_uploads().await;
+    let waiting = rig.db.sync_info("moments", &rid("m1")).unwrap();
+    assert_eq!((waiting.state, waiting.attempts), (crate::syncstate::SyncState::Pending, 1));
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1);
+    rig.clock.advance(Duration::from_secs(2));
+    rig.sync.flush().await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!((rig.transport.call_count("CreateBlob"), rig.transport.put_calls().len(), rig.transport.call_count("CreateMoment")), (1, 1, 2));
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_mutation_waits_offline_without_a_call_and_goes_out_when_online() {
+    let rig = upload_rig(small());
+    single_replies(&rig);
+    rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(8)));
+    let source = file(b"abcdef");
+    rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    rig.sync.set_online(false);
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    assert_eq!(rig.transport.call_count("CreateMoment"), 0);
+    assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().attempts, 0);
+    rig.sync.set_online(true);
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     assert!(rig.db.outbox().unwrap().is_empty());
 }
 

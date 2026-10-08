@@ -103,7 +103,7 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 ### Rules
 
 - Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts. A `403` on a part asks for a new url for that part only. Urls older than the presign lifetime are requested again for unfinished parts.
-- The content mutation runs exactly once. If its answer is not observed the upload becomes `deliveryUnknown`. A rejected mutation becomes `failed`. Neither repeats on its own.
+- The content mutation follows the same rules as other mutations ([writing data](writing-data.md)). Offline it waits for `setOnline(true)`. If it could not reach the server, the upload stays pending and the mutation is sent again with a growing pause, up to 40 attempts, without a new transfer. If the transfer started and no answer is observed, the upload becomes `deliveryUnknown` and is never sent again by itself. A rejected mutation, or 40 unreached attempts, becomes `failed`.
 - The pair `signedId` and `blobId` is stored before the mutation. `retry()` after a failed or unknown mutation skips the transfer and sends the mutation again.
 - A failed multipart upload calls `abort` and clears its parts. After a restart a stored multipart continues from its finished parts, and an upload that failed with an unfinished `abort` is aborted again.
 - `retry()` and `discard()` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.

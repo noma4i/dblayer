@@ -98,7 +98,7 @@ end
 
 - Events are normalized like responses. `deleted_by:` names the field that marks a deleted row.
 - The subscription starts when the first reader connects, is shared by all readers and closes some time after the last reader leaves (30 seconds by default).
-- After a dropped connection the library reconnects with a delay and refetches the relation, because events may have been missed.
+- After a dropped connection the library reconnects with a growing delay and refetches the relation, because events may have been missed. Offline (`setOnline(false)`) it does not reconnect and spends no attempts. `setOnline(true)` reconnects at once.
 - Bursts of events are merged into one commit.
 
 ## Automatic refetching

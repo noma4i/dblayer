@@ -123,14 +123,15 @@ async fn forty_unreached_attempts_leave_a_kept_update_failed() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn forty_unreached_attempts_bring_a_destroyed_record_back() {
-    let rig = keeping_rig();
+async fn forty_unreached_attempts_bring_a_destroyed_record_back_as_failed() {
+    let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.destroy("moments", &rid("m1")).unwrap();
     assert_eq!(rig.db.find("moments", &rid("m1")).unwrap(), None);
     exhaust(&rig, "DeleteMoment").await;
-    assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(text_of(&rig, "moments", "m1"), Some("old".to_string()));
+    let failed = info(&rig, "m1");
+    assert_eq!((failed.state, failed.attempts, failed.error.map(|error| error.kind)), (SyncState::Failed, 40, Some(FailureKind::Network)));
 }
 
 #[tokio::test(start_paused = true)]

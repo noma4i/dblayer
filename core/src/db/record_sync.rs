@@ -4,11 +4,16 @@ use crate::syncstate::{operation_keys, read_sync, SyncInfo};
 use crate::upload::UploadInfo;
 
 use super::error::DbError;
+use super::roll_back::hide_destroyed;
 use super::local_write::{plan_fault, OutboxOperation};
 use super::open::Db;
 
 fn is_stuck(entry: &OutboxOperation) -> bool {
     matches!(entry.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown)
+}
+
+fn is_failed_destroy(entry: &OutboxOperation) -> bool {
+    entry.operation.status == OperationStatus::Failed && entry.operation.action_key.ends_with(":destroy")
 }
 
 impl Db {
@@ -23,15 +28,15 @@ impl Db {
 
     pub fn retry(&self, model: &str, id: &RowId) -> Result<usize, DbError> {
         let stuck = self.stuck_operations(model, id)?;
-        self.retry_operations(&stuck)
+        self.retry_operations(stuck)
     }
 
     pub fn retry_all(&self) -> Result<usize, DbError> {
-        let stuck: Vec<i64> = self.outbox()?.iter().filter(|entry| is_stuck(entry)).map(|entry| entry.operation.id.0).collect();
-        self.retry_operations(&stuck)
+        let stuck: Vec<OutboxOperation> = self.outbox()?.into_iter().filter(is_stuck).collect();
+        self.retry_operations(stuck)
     }
 
-    fn retry_operations(&self, stuck: &[i64]) -> Result<usize, DbError> {
+    fn retry_operations(&self, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
         if stuck.is_empty() {
             return Ok(0);
         }
@@ -40,7 +45,8 @@ impl Db {
             .store
             .commit_with(generation, |_| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-                envelope.operation_transitions.extend(stuck.iter().map(|seq| OperationTransition::Retry { seq: *seq }));
+                envelope.entity_ops = stuck.iter().filter(|entry| is_failed_destroy(entry)).flat_map(hide_destroyed).collect();
+                envelope.operation_transitions.extend(stuck.iter().map(|entry| OperationTransition::Retry { seq: entry.operation.id.0 }));
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
@@ -49,14 +55,14 @@ impl Db {
 
     pub fn discard(&self, model: &str, id: &RowId) -> Result<usize, DbError> {
         let mut discarded = 0;
-        while let Some(seq) = self.stuck_operations(model, id)?.first() {
-            self.roll_back(*seq)?;
+        while let Some(entry) = self.stuck_operations(model, id)?.first() {
+            self.roll_back(entry.operation.id.0)?;
             discarded += 1;
         }
         Ok(discarded)
     }
 
-    fn stuck_operations(&self, model: &str, id: &RowId) -> Result<Vec<i64>, DbError> {
+    fn stuck_operations(&self, model: &str, id: &RowId) -> Result<Vec<OutboxOperation>, DbError> {
         self.shared.spec(model)?;
         let wanted = (model.to_string(), id.to_string());
         Ok(self
@@ -64,7 +70,6 @@ impl Db {
             .into_iter()
             .filter(is_stuck)
             .filter(|entry| operation_keys(&entry.operation.action_key, &entry.operation.row_ids, entry.operation.temp_id.as_ref()).contains(&wanted))
-            .map(|entry| entry.operation.id.0)
             .collect())
     }
 }

@@ -16,7 +16,7 @@ pub(crate) fn rollback_ops(reader: &Reader<'_>, model: &str, action: &str, entry
     }
     let Some(snapshot) = &entry.rollback else { return Ok(Vec::new()) };
     if action == "destroy" {
-        return Ok(destroyed_rows(snapshot));
+        return Ok(if entry.operation.status == OperationStatus::Failed { Vec::new() } else { restore_destroyed(entry) });
     }
     let (Some(fields), Some(id)) = (snapshot.as_object(), entry.operation.row_ids.first()) else { return Ok(Vec::new()) };
     let Some(current) = reader.point(model, id.as_str())? else { return Ok(Vec::new()) };
@@ -28,16 +28,23 @@ pub(crate) fn rollback_ops(reader: &Reader<'_>, model: &str, action: &str, entry
     Ok(vec![EntityOp::Upsert { model: ModelKey::new(model), id: id.clone(), row: restored }])
 }
 
-fn destroyed_rows(snapshot: &Value) -> Vec<EntityOp> {
-    let rows = snapshot.get("rows").and_then(Value::as_array).cloned().unwrap_or_default();
+fn destroyed_rows(entry: &OutboxOperation) -> Vec<(ModelKey, RowId, &Map<String, Value>)> {
+    let Some(rows) = entry.rollback.as_ref().and_then(|snapshot| snapshot.get("rows")).and_then(Value::as_array) else { return Vec::new() };
     rows.iter()
         .filter_map(|item| {
             let model = item.get("model")?.as_str()?;
             let row: &Map<String, Value> = item.get("row")?.as_object()?;
-            let id = read_id(row.get("id")?)?;
-            Some(EntityOp::Upsert { model: ModelKey::new(model), id, row: row.clone() })
+            Some((ModelKey::new(model), read_id(row.get("id")?)?, row))
         })
         .collect()
+}
+
+pub(crate) fn restore_destroyed(entry: &OutboxOperation) -> Vec<EntityOp> {
+    destroyed_rows(entry).into_iter().map(|(model, id, row)| EntityOp::Upsert { model, id, row: row.clone() }).collect()
+}
+
+pub(crate) fn hide_destroyed(entry: &OutboxOperation) -> Vec<EntityOp> {
+    destroyed_rows(entry).into_iter().map(|(model, id, _)| EntityOp::Destroy { model, id, reason: DestroyReason::Local }).collect()
 }
 
 pub(crate) fn follows(entry: &OutboxOperation, temp: &RowId, own: i64) -> bool {
