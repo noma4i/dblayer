@@ -11,7 +11,7 @@ use crate::files::ids_of_rows;
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::operation::Operation;
 use crate::query::{Query, Where};
-use crate::schema::{ActionMode, AssociationKind, Dependent, ModelSpec, RootShape};
+use crate::schema::{AssociationKind, Dependent, ModelSpec, RootShape};
 use crate::store::{PlanCommitError, Reader};
 use crate::value::read_id;
 use crate::write::{
@@ -23,7 +23,7 @@ use super::open::Db;
 use super::row::Row;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct OutboxEntry {
+pub struct OutboxOperation {
     pub operation: Operation,
     pub input: Value,
     pub rollback: Option<Value>,
@@ -43,13 +43,6 @@ impl Action {
             Action::Update => "update",
             Action::Destroy => "destroy",
             Action::Named(name) => name,
-        }
-    }
-
-    fn default_mode(&self) -> ActionMode {
-        match self {
-            Action::Create | Action::Update => ActionMode::Durable,
-            Action::Destroy | Action::Named(_) => ActionMode::Request,
         }
     }
 }
@@ -193,7 +186,7 @@ impl Db {
         Ok(destroyed)
     }
 
-    pub fn outbox(&self) -> Result<Vec<OutboxEntry>, DbError> {
+    pub fn outbox(&self) -> Result<Vec<OutboxOperation>, DbError> {
         self.shared.read(|reader| {
             let operations = crate::operation::open_operations(reader.connection())?;
             let mut statement = reader.connection().prepare("SELECT input, rollback FROM op WHERE seq = ?1")?;
@@ -201,7 +194,7 @@ impl Db {
             for operation in operations {
                 let (input, rollback): (Vec<u8>, Option<Vec<u8>>) =
                     statement.query_row([operation.id.0], |row| Ok((row.get(0)?, row.get(1)?)))?;
-                entries.push(OutboxEntry {
+                entries.push(OutboxOperation {
                     operation,
                     input: serde_json::from_slice(&input).map_err(crate::store::StoreError::from)?,
                     rollback: rollback
@@ -249,12 +242,9 @@ impl Db {
     }
 
     fn begin(&self, reader: &Reader<'_>, spec: &ModelSpec, queued: &Queued, created_at: i64) -> Result<OperationTransition, DbError> {
-        let name = queued.action.name();
-        let mode = spec.actions.iter().find(|declaration| declaration.name == name).map_or(queued.action.default_mode(), |declaration| declaration.mode);
         Ok(OperationTransition::Begin(OperationRecord {
             seq: None,
-            action_key: Operation::action_key(spec.key.as_str(), name),
-            action_mode: mode,
+            action_key: Operation::action_key(spec.key.as_str(), queued.action.name()),
             status: OperationStatus::Pending,
             row_ids: vec![queued.row_id.clone()],
             temp_id: queued.temp_id.clone(),
@@ -264,6 +254,7 @@ impl Db {
             created_at,
             dedupe_key: None,
             rollback: queued.rollback.clone(),
+            upload: None,
         }))
     }
 

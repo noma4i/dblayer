@@ -1,0 +1,251 @@
+use super::fixtures::*;
+use super::*;
+use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
+use crate::identity::{ModelKey, ScopeKey};
+use crate::pacing::ManualClock;
+use crate::query::{Query, Where};
+use crate::schema::{EphemeralSpec, FieldSpec, ModelSpec, Storage};
+use crate::value::ScalarKind;
+use serde_json::json;
+use std::sync::Arc;
+use std::time::Duration;
+
+const START: u64 = 1_000_000;
+
+fn people_spec() -> ModelSpec {
+    ModelSpec {
+        ephemeral: vec![
+            EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false))).resetting_after("5.seconds"),
+            EphemeralSpec::new(FieldSpec::scalar("mood", ScalarKind::Str).nullable()),
+        ],
+        ..ModelSpec::new("people", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str).optional().indexed()])
+    }
+}
+
+fn presence_spec() -> ModelSpec {
+    ModelSpec {
+        storage: Storage::Memory,
+        expire_after: Some("30.seconds".into()),
+        ..ModelSpec::new("presence", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("room", ScalarKind::Str).optional().indexed()])
+    }
+}
+
+fn rig() -> (Db, Arc<ManualClock>) {
+    let db = Db::open_in_memory(vec![people_spec(), presence_spec()], None).unwrap();
+    let clock = Arc::new(ManualClock::new(Duration::from_millis(START)));
+    db.set_clock(clock.clone());
+    put(&db, "people", json!({"id": "p1", "name": "Ann"}));
+    (db, clock)
+}
+
+fn typing(db: &Db, value: bool) {
+    db.set_ephemeral("people", &rid("p1"), obj(json!({"typing": value}))).unwrap();
+    db.settle();
+}
+
+fn value_of(db: &Db, field: &str) -> serde_json::Value {
+    db.find("people", &rid("p1")).unwrap().unwrap().get(field).cloned().unwrap()
+}
+
+fn seconds(count: u64) -> Duration {
+    Duration::from_secs(count)
+}
+
+#[test]
+fn rows_read_with_defaults_and_written_values_but_store_nothing() {
+    let (db, _) = rig();
+    assert_eq!((value_of(&db, "typing"), value_of(&db, "mood")), (json!(false), json!(null)));
+    typing(&db, true);
+    db.set_ephemeral("people", &rid("p1"), obj(json!({"mood": "happy"}))).unwrap();
+    let found = db.find("people", &rid("p1")).unwrap().unwrap();
+    assert_eq!((found.get("typing"), found.get("mood")), (Some(&json!(true)), Some(&json!("happy"))));
+    assert_eq!(db.query(&Query::new("people")).unwrap()[0].get("typing"), Some(&json!(true)));
+    assert_eq!(db.find_many("people", &[rid("p1")]).unwrap()[0].get("typing"), Some(&json!(true)));
+    let stored: String = db.shared.store.lock().connection.query_row("SELECT CAST(payload AS TEXT) FROM row_people", [], |row| row.get(0)).unwrap();
+    assert!(!stored.contains("typing") && !stored.contains("mood"));
+}
+
+#[test]
+fn a_write_reaches_observers_as_an_updated_row_without_a_database_revision() {
+    let (db, _) = rig();
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("people"), callback).unwrap();
+    db.settle();
+    let before = db.revision_seq().unwrap();
+    typing(&db, true);
+    let seen = changes(&log);
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[1].diff.updated, vec![rid("p1")]);
+    assert_eq!(seen[1].rows[0].get("typing"), Some(&json!(true)));
+    assert_eq!(db.revision_seq().unwrap(), before);
+}
+
+#[test]
+fn row_observers_and_scope_observers_hear_the_write() {
+    let (db, _) = rig();
+    let scope = ScopeRef::new(ModelKey::new("people"), ScopeKey::compose(&["people", "room", "1"]));
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid("p1"), order_key: "a".into() });
+    db.land(envelope).unwrap();
+    db.settle();
+    let (row_log, row_callback) = recorder();
+    let (scope_log, scope_callback) = recorder();
+    let _row = db.observe_row("people", &rid("p1"), row_callback).unwrap();
+    let _scoped = db.observe(Query { scope: Some(scope.key.clone()), ..Query::new("people") }, scope_callback).unwrap();
+    db.settle();
+    typing(&db, true);
+    assert_eq!(changes(&row_log).len(), 2);
+    assert_eq!(changes(&scope_log).len(), 2);
+}
+
+#[test]
+fn the_value_returns_to_default_by_the_clock_and_observers_see_the_reset() {
+    let (db, clock) = rig();
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("people"), callback).unwrap();
+    db.settle();
+    typing(&db, true);
+    let before = db.revision_seq().unwrap();
+    clock.advance(seconds(4));
+    assert_eq!(db.expire_ephemeral().unwrap(), 0);
+    assert_eq!(value_of(&db, "typing"), json!(true));
+    clock.advance(seconds(2));
+    db.expire_ephemeral().unwrap();
+    assert_eq!(value_of(&db, "typing"), json!(false));
+    db.settle();
+    let seen = changes(&log);
+    assert_eq!(seen.len(), 3);
+    assert_eq!((seen[2].diff.updated.clone(), seen[2].rows[0].get("typing").cloned()), (vec![rid("p1")], Some(json!(false))));
+    assert_eq!(db.revision_seq().unwrap(), before);
+}
+
+#[test]
+fn a_write_restarts_the_timer() {
+    let (db, clock) = rig();
+    typing(&db, true);
+    clock.advance(seconds(3));
+    db.set_ephemeral("people", &rid("p1"), obj(json!({"typing": true}))).unwrap();
+    clock.advance(seconds(3));
+    assert_eq!(db.expire_ephemeral().unwrap(), 0);
+    assert_eq!(value_of(&db, "typing"), json!(true));
+    clock.advance(seconds(3));
+    db.expire_ephemeral().unwrap();
+    assert_eq!(value_of(&db, "typing"), json!(false));
+}
+
+#[test]
+fn writing_the_same_value_stays_silent() {
+    let (db, _) = rig();
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("people"), callback).unwrap();
+    db.settle();
+    typing(&db, true);
+    typing(&db, true);
+    typing(&db, false);
+    typing(&db, false);
+    assert_eq!(changes(&log).len(), 3);
+}
+
+#[test]
+fn destroying_a_row_removes_its_values() {
+    let (db, _) = rig();
+    typing(&db, true);
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("people"), id: rid("p1"), reason: DestroyReason::Server });
+    db.land(envelope).unwrap();
+    put(&db, "people", json!({"id": "p1", "name": "Ann"}));
+    assert_eq!(value_of(&db, "typing"), json!(false));
+}
+
+#[test]
+fn reset_forgets_every_value() {
+    let (db, _) = rig();
+    typing(&db, true);
+    db.reset_all().unwrap();
+    put(&db, "people", json!({"id": "p1", "name": "Ann"}));
+    assert_eq!(value_of(&db, "typing"), json!(false));
+}
+
+#[test]
+fn bad_writes_are_rejected() {
+    let (db, _) = rig();
+    let set = |model: &str, id: &str, values: serde_json::Value| db.set_ephemeral(model, &rid(id), obj(values));
+    assert!(matches!(set("people", "p1", json!({"name": "Bob"})), Err(DbError::NotEphemeralField { .. })));
+    assert!(matches!(set("people", "p1", json!({"typing": "yes"})), Err(DbError::InvalidEphemeralValue { .. })));
+    assert!(matches!(set("people", "p1", json!({"typing": null})), Err(DbError::InvalidEphemeralValue { .. })));
+    assert!(matches!(set("people", "nobody", json!({"typing": true})), Err(DbError::NotFound { .. })));
+    assert!(matches!(set("ghosts", "p1", json!({})), Err(DbError::UnknownModel(_))));
+}
+
+#[test]
+fn ephemeral_fields_cannot_be_queried() {
+    let (db, _) = rig();
+    let query = Query::new("people").filtered(Where::equal("typing", json!(true)));
+    assert!(matches!(db.query(&query), Err(DbError::Query(crate::query::QueryError::EphemeralField(_)))));
+}
+
+#[test]
+fn memory_models_read_and_observe_like_stored_ones_and_expire_by_the_clock() {
+    let (db, clock) = rig();
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("presence"), callback).unwrap();
+    db.settle();
+    put(&db, "presence", json!({"id": "r1", "room": "lobby"}));
+    assert_eq!(db.find("presence", &rid("r1")).unwrap().unwrap().text("room"), Some("lobby"));
+    clock.advance(seconds(31));
+    db.expire_ephemeral().unwrap();
+    db.settle();
+    assert!(db.find("presence", &rid("r1")).unwrap().is_none());
+    let seen = changes(&log);
+    assert_eq!((seen.len(), seen.last().unwrap().diff.removed.clone()), (3, vec![rid("r1")]));
+}
+
+#[test]
+fn a_rewrite_keeps_a_memory_row_alive() {
+    let (db, clock) = rig();
+    put(&db, "presence", json!({"id": "r1", "room": "lobby"}));
+    clock.advance(seconds(20));
+    put(&db, "presence", json!({"id": "r1", "room": "garden"}));
+    clock.advance(seconds(20));
+    assert_eq!(db.expire_ephemeral().unwrap(), 0);
+    clock.advance(seconds(11));
+    db.expire_ephemeral().unwrap();
+    assert!(db.find("presence", &rid("r1")).unwrap().is_none());
+}
+
+#[test]
+fn values_and_memory_rows_do_not_survive_a_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    {
+        let db = Db::open(&path, vec![people_spec(), presence_spec()], None).unwrap();
+        put(&db, "people", json!({"id": "p1", "name": "Ann"}));
+        put(&db, "presence", json!({"id": "r1", "room": "lobby"}));
+        typing(&db, true);
+    }
+    let db = Db::open(&path, vec![people_spec(), presence_spec()], None).unwrap();
+    assert_eq!(value_of(&db, "typing"), json!(false));
+    assert!(db.find("presence", &rid("r1")).unwrap().is_none());
+}
+
+#[test]
+fn the_background_timer_resets_a_value_by_itself() {
+    let db = Db::open_in_memory(vec![ModelSpec {
+        ephemeral: vec![EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false))).resetting_after("1.seconds")],
+        ..ModelSpec::new("people", vec![FieldSpec::scalar("id", ScalarKind::Id)])
+    }], None)
+    .unwrap();
+    put(&db, "people", json!({"id": "p1"}));
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("people"), callback).unwrap();
+    db.settle();
+    db.set_ephemeral("people", &rid("p1"), obj(json!({"typing": true}))).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while changes(&log).len() < 3 && std::time::Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    db.settle();
+    let seen = changes(&log);
+    assert_eq!(seen.len(), 3);
+    assert_eq!(seen[2].rows[0].get("typing"), Some(&json!(false)));
+}

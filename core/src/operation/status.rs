@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::identity::RowId;
-use crate::schema::ActionMode;
+use crate::syncstate::OperationFailure;
+use crate::upload::UploadState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OperationId(pub i64);
@@ -20,22 +21,10 @@ pub fn is_open(status: OperationStatus) -> bool {
     !removes_row(status)
 }
 
-pub fn mode_text(mode: ActionMode) -> &'static str {
-    match mode {
-        ActionMode::Request => "request",
-        ActionMode::Durable => "durable",
-    }
-}
-
-pub fn parse_mode(text: &str) -> Option<ActionMode> {
-    [ActionMode::Request, ActionMode::Durable].into_iter().find(|mode| mode_text(*mode) == text)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Operation {
     pub id: OperationId,
     pub action_key: String,
-    pub mode: ActionMode,
     pub status: OperationStatus,
     pub row_ids: Vec<RowId>,
     pub temp_id: Option<RowId>,
@@ -43,14 +32,17 @@ pub struct Operation {
     pub base_revision: i64,
     pub created_at: i64,
     pub dedupe_key: Option<String>,
+    pub attempts: u32,
+    pub error: Option<OperationFailure>,
+    pub since: i64,
+    pub upload: Option<UploadState>,
 }
 
 impl Operation {
-    pub fn new(action_key: &str, mode: ActionMode, row_ids: Vec<RowId>, base_revision: i64, created_at: i64) -> Self {
+    pub fn new(action_key: &str, row_ids: Vec<RowId>, base_revision: i64, created_at: i64) -> Self {
         Self {
             id: OperationId(0),
             action_key: action_key.to_string(),
-            mode,
             status: OperationStatus::Pending,
             row_ids,
             temp_id: None,
@@ -58,6 +50,10 @@ impl Operation {
             base_revision,
             created_at,
             dedupe_key: None,
+            attempts: 0,
+            error: None,
+            since: created_at,
+            upload: None,
         }
     }
 
@@ -83,7 +79,6 @@ pub fn removes_row(status: OperationStatus) -> bool {
 pub fn recovered_status(transport_started: bool, status: OperationStatus) -> OperationStatus {
     match status {
         OperationStatus::Pending if transport_started => OperationStatus::DeliveryUnknown,
-        OperationStatus::Pending => OperationStatus::Failed,
         other => other,
     }
 }

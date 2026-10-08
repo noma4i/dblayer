@@ -10,6 +10,7 @@ mod registry;
 mod resume;
 mod send;
 mod subscribe;
+mod upload;
 mod variables;
 
 pub use error::SyncError;
@@ -30,7 +31,8 @@ use tokio::sync::watch;
 
 use crate::db::Db;
 use crate::pacing::{Clock, Counters, FetchCoalescing, FreshnessTable, ResumeDrain};
-use crate::transport::Transport;
+use crate::transport::{Connectivity, Transport};
+use crate::upload::UploadConfig;
 
 pub const LIVE_LINGER: Duration = Duration::from_secs(30);
 
@@ -39,11 +41,12 @@ pub struct SyncConfig {
     pub freshness: FreshnessTable,
     pub resume: ResumeDrain,
     pub live_linger: Duration,
+    pub upload: UploadConfig,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
-        Self { freshness: FreshnessTable::default(), resume: ResumeDrain::default(), live_linger: LIVE_LINGER }
+        Self { freshness: FreshnessTable::default(), resume: ResumeDrain::default(), live_linger: LIVE_LINGER, upload: UploadConfig::default() }
     }
 }
 
@@ -76,6 +79,8 @@ pub(crate) struct Inner {
     pub next_watch: AtomicI64,
     pub lives: Mutex<HashMap<String, live::Live>>,
     pub outbox_gate: tokio::sync::Mutex<()>,
+    pub uploads: Mutex<upload::UploadRuns>,
+    pub connectivity: Connectivity,
 }
 
 impl Inner {
@@ -96,6 +101,7 @@ pub struct Sync {
 impl Sync {
     pub fn new(db: Db, transport: Arc<dyn Transport>, clock: Arc<dyn Clock>, config: SyncConfig) -> Self {
         db.set_clock(clock.clone());
+        let max_files = config.upload.max_files;
         let inner = Inner {
             db,
             transport,
@@ -110,6 +116,8 @@ impl Sync {
             next_watch: AtomicI64::new(0),
             lives: Mutex::new(HashMap::new()),
             outbox_gate: tokio::sync::Mutex::new(()),
+            uploads: Mutex::new(upload::UploadRuns::new(max_files)),
+            connectivity: Connectivity::new(),
         };
         Self { inner: Arc::new(inner) }
     }
@@ -124,7 +132,7 @@ impl Sync {
 }
 
 #[cfg(test)]
-mod support;
+mod rig;
 
 #[cfg(test)]
 mod extract_tests;

@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use crate::db::Db;
 use crate::pacing::ManualClock;
 use crate::schema::{
-    ActionDeclaration, ActionMode, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec,
+    ActionDeclaration, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, OnFailure, PageDirection, RelationSpec,
     RemoteShape, RemoteSpec, RootShape, UpdatesSpec,
 };
 use crate::transport::MockTransport;
@@ -54,20 +54,20 @@ pub fn moments_spec() -> ModelSpec {
     empty_aware.remote = Some(spec_remote);
     let mut pulse = RelationSpec::global("pulse");
     let mut pulse_remote = remote("MomentsPulse", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2) }, "5.minutes");
-    pulse_remote.updates = Some(UpdatesSpec { subscription: "MomentEvents".to_string(), deleted_by: Some("destroyed".to_string()) });
+    pulse_remote.updates = Some(UpdatesSpec { subscription: "MomentEvents".to_string(), deleted_by: Some("destroyed".to_string()), set: Map::new() });
     pulse.remote = Some(pulse_remote);
     spec.relations.extend([feed, history, by_user, empty_aware, pulse, RelationSpec::global("recent")]);
     spec.actions = vec![
-        bound("create", ActionMode::Durable, RootShape::Upsert, "CreateMoment"),
-        bound("update", ActionMode::Durable, RootShape::Upsert, "UpdateMoment"),
-        bound("destroy", ActionMode::Request, RootShape::Destroy, "DeleteMoment"),
+        bound("create", RootShape::Upsert, "CreateMoment"),
+        bound("update", RootShape::Upsert, "UpdateMoment"),
+        bound("destroy", RootShape::Destroy, "DeleteMoment"),
         like_action(),
     ];
     spec
 }
 
-fn bound(name: &str, mode: ActionMode, shape: RootShape, mutation: &str) -> ActionDeclaration {
-    let mut action = ActionDeclaration::new(name, mode, shape);
+fn bound(name: &str, shape: RootShape, mutation: &str) -> ActionDeclaration {
+    let mut action = ActionDeclaration::new(name, shape);
     action.mutation = Some(mutation.to_string());
     action.has_optimistic = name == "create";
     action.has_temp_row_retention = name == "create";
@@ -78,7 +78,7 @@ fn bound(name: &str, mode: ActionMode, shape: RootShape, mutation: &str) -> Acti
 }
 
 fn like_action() -> ActionDeclaration {
-    let mut action = bound("like", ActionMode::Request, RootShape::Upsert, "LikeMoment");
+    let mut action = bound("like", RootShape::Upsert, "LikeMoment");
     action.variables.insert("momentId".to_string(), "id".to_string());
     action.optimistic.insert("likedByMe".to_string(), json!(true));
     action.refetch.push("history".to_string());
@@ -91,6 +91,12 @@ pub fn vibes_spec() -> ModelSpec {
 
 pub fn specs() -> Vec<ModelSpec> {
     vec![users_spec(), moments_spec(), vibes_spec()]
+}
+
+pub fn keeping_specs() -> Vec<ModelSpec> {
+    let mut moments = moments_spec();
+    moments.actions.iter_mut().for_each(|action| action.on_failure = OnFailure::Keep);
+    vec![users_spec(), moments, vibes_spec()]
 }
 
 pub struct Rig {
@@ -119,6 +125,10 @@ pub fn register_operations(sync: &Sync) {
     ] {
         sync.register(OperationDef::new(name, &format!("operation {name} {{ x }}"), root).paged(2));
     }
+}
+
+pub fn keeping_rig() -> Rig {
+    rig_on(Db::open_in_memory(keeping_specs(), None).unwrap(), MockTransport::new(), SyncConfig::default())
 }
 
 pub fn rig_with(config: SyncConfig) -> Rig {

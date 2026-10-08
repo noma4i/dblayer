@@ -1,5 +1,5 @@
 use super::dispatch::{Dispatch, Event, MAX_PENDING};
-use super::support::*;
+use super::fixtures::*;
 use crate::commit::CommitResult;
 use crate::identity::{ModelKey, RowRef};
 use std::collections::BTreeSet;

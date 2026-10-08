@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use crate::query::Query;
 use serde_json::json;

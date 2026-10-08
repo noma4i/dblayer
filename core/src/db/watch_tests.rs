@@ -1,5 +1,5 @@
 use super::dispatch::Event;
-use super::support::*;
+use super::fixtures::*;
 use super::watch::Subject;
 use crate::commit::ScopeRef;
 use crate::identity::{ModelKey, RowRef, ScopeKey};

@@ -1,6 +1,5 @@
 use super::*;
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::schema::ActionMode;
 use OperationStatus::*;
 
 fn id(value: &str) -> RowId {
@@ -8,7 +7,7 @@ fn id(value: &str) -> RowId {
 }
 
 fn operation(seq: i64, model: &str, status: OperationStatus, rows: &[&str], temp: Option<&str>, started: bool) -> Operation {
-    let mut operation = Operation::new(&Operation::action_key(model, "send"), ActionMode::Request, rows.iter().map(|r| id(r)).collect(), 0, seq);
+    let mut operation = Operation::new(&Operation::action_key(model, "send"), rows.iter().map(|r| id(r)).collect(), 0, seq);
     operation.id = OperationId(seq);
     operation.status = status;
     operation.temp_id = temp.map(id);

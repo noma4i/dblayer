@@ -1,17 +1,20 @@
 use rusqlite::types::Value as SqlValue;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::ddl::table_name;
 use crate::identity::{ModelKey, ScopeKey};
 use crate::schema::ModelSpec;
 use crate::value::SortDirection;
 
-use super::filter::{column_sql, Where};
+use super::filter::{column_sql, Where, SYNC_FIELD};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum QueryError {
     #[error("unknown field {0}")]
     UnknownField(String),
+    #[error("field {0} is ephemeral and cannot be filtered or ordered")]
+    EphemeralField(String),
     #[error("value of field {0} is not a scalar")]
     UnsupportedValue(String),
     #[error("query targets model {query} but the spec is for {model}")]
@@ -76,6 +79,18 @@ impl Query {
         Self { model: ModelKey::new(model), r#where: None, order: Vec::new(), limit: None, offset: None, include: Vec::new(), scope: None }
     }
 
+    pub fn unsynced(model: &str) -> Self {
+        Self::new(model).filtered(Where::not_equal(SYNC_FIELD, Value::from("synced")))
+    }
+
+    pub fn failed(model: &str) -> Self {
+        Self::new(model).filtered(Where::equal(SYNC_FIELD, Value::from("failed")))
+    }
+
+    pub fn pending(model: &str) -> Self {
+        Self::new(model).filtered(Where::equal(SYNC_FIELD, Value::from("pending")))
+    }
+
     pub fn filtered(self, clause: Where) -> Self {
         Self { r#where: Some(clause), ..self }
     }
@@ -105,7 +120,7 @@ impl Query {
         let ordered = self.order.iter().map(|order| order.field.clone());
         let mut found: Vec<String> = Vec::new();
         for field in filtered.chain(ordered) {
-            let promoted = field == "id" || model.is_indexed(&field);
+            let promoted = field == "id" || field == SYNC_FIELD || model.is_indexed(&field);
             if !promoted && !found.contains(&field) {
                 found.push(field);
             }
@@ -139,6 +154,16 @@ fn join_clause(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
     let Some(scope) = &query.scope else { return String::new() };
     bindings.extend(scope_bindings(&query.model, scope));
     " JOIN scope_member AS m ON m.row_id = r.id AND m.model = ? AND m.scope_key = ?".to_string()
+}
+
+fn sync_join(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
+    let filtered = query.r#where.iter().flat_map(Where::fields);
+    let ordered = query.order.iter().map(|order| order.field.clone());
+    if !filtered.chain(ordered).any(|field| field == SYNC_FIELD) {
+        return String::new();
+    }
+    bindings.push(SqlValue::Text(query.model.as_str().to_string()));
+    " LEFT JOIN row_sync AS s ON s.row_id = r.id AND s.model = ?".to_string()
 }
 
 fn order_clause(query: &Query, model: &ModelSpec) -> Result<String, QueryError> {
@@ -179,7 +204,7 @@ fn window_clause(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
 fn compile_columns(query: &Query, model: &ModelSpec, columns: &str) -> Result<CompiledStatement, QueryError> {
     check_model(query, model)?;
     let mut bindings = Vec::new();
-    let join = join_clause(query, &mut bindings);
+    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings);
     let filter = filter_clause(query, model, &mut bindings)?;
     let order = order_clause(query, model)?;
     let window = window_clause(query, &mut bindings);
@@ -198,7 +223,7 @@ pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatemen
 pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
     check_model(query, model)?;
     let mut bindings = Vec::new();
-    let join = join_clause(query, &mut bindings);
+    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings);
     let filter = filter_clause(query, model, &mut bindings)?;
     let sql = format!("SELECT COUNT(*) FROM {} AS r{join}{filter}", table_name(query.model.as_str()));
     Ok(CompiledStatement { sql, bindings })

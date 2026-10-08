@@ -3,17 +3,29 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 
 use crate::identity::RowId;
+use crate::syncstate::SyncInfo;
+use crate::upload::UploadInfo;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
     pub id: RowId,
     pub revision: i64,
     pub data: Map<String, Value>,
+    pub sync: SyncInfo,
+    pub ephemeral: u64,
 }
 
 pub type Row = Arc<Record>;
 
 impl Record {
+    pub fn upload(&self) -> Option<&UploadInfo> {
+        self.sync.upload.as_ref()
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.id.is_temp()
+    }
+
     pub fn get(&self, field: &str) -> Option<&Value> {
         self.data.get(field)
     }

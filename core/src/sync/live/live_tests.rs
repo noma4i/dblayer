@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde_json::{json, Map};
 
 use super::super::load::LoadOptions;
-use super::super::support::*;
+use super::super::rig::*;
 use crate::transport::SubscriptionEvent;
 use crate::transport::Response;
 

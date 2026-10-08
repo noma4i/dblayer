@@ -6,7 +6,8 @@ use uuid::Uuid;
 
 use crate::files::FileRecord;
 use crate::identity::{Generation, ModelKey, RowId, RowRef, ScopeKey};
-use crate::schema::ActionMode;
+use crate::syncstate::OperationFailure;
+use crate::upload::UploadState;
 use crate::value::duplicates;
 
 pub const ENVELOPE_VERSION: u32 = 1;
@@ -131,7 +132,6 @@ impl OperationStatus {
 pub struct OperationRecord {
     pub seq: Option<i64>,
     pub action_key: String,
-    pub action_mode: ActionMode,
     pub status: OperationStatus,
     pub row_ids: Vec<RowId>,
     pub temp_id: Option<RowId>,
@@ -141,12 +141,17 @@ pub struct OperationRecord {
     pub created_at: i64,
     pub dedupe_key: Option<String>,
     pub rollback: Option<Value>,
+    pub upload: Option<UploadState>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OperationTransition {
     Begin(OperationRecord),
     Close { seq: i64, status: OperationStatus, once: bool },
+    Start { seq: i64 },
+    Fail { seq: i64, status: OperationStatus, failure: OperationFailure },
+    Retry { seq: i64 },
+    Progress { seq: i64, state: UploadState },
     Remove { seq: i64, expected: Option<OperationStatus> },
 }
 
@@ -268,6 +273,7 @@ pub enum RowChangeKind {
     Updated,
     Touched,
     Destroyed,
+    Synced,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

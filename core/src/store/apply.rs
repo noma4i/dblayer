@@ -9,7 +9,7 @@ use crate::commit::{
 };
 use crate::ddl::{manifest_write, RECORD_VERSION, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
-use crate::schema::ActionMode;
+use crate::syncstate::{operation_keys, recompute_sync, SyncKey};
 
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, encode_row, hydrate, placeholders, Reader, CHUNK};
@@ -236,6 +236,16 @@ pub(crate) fn apply_envelope(
         }
     }
 
+    let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
+    wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
+    for (model, id) in recompute_sync(connection, &synced_keys)? {
+        let touched = changes.changes.iter().any(|change| change.row.model.as_str() == model && change.row.id.as_str() == id);
+        if !touched {
+            changes.push(&ModelKey::new(&model), &id, RowChangeKind::Synced, BTreeSet::new());
+        }
+        wrote = true;
+    }
+
     result.affected_key_statements = collect_scopes(connection, &changes.changes, &destroyed, &mut result.scopes)?;
     for item in &destroyed {
         let removed = match &item.reason {
@@ -258,7 +268,6 @@ pub(crate) fn apply_envelope(
     wrote |= files_changed;
 
     wrote |= apply_scope_ops(connection, &envelope.scope_ops, &mut result.scopes)?;
-    wrote |= apply_transitions(connection, &envelope.operation_transitions, &mut result)?;
 
     if wrote {
         manifest_write(connection, REVISION_SEQ_KEY, &revision.to_string())?;
@@ -361,16 +370,32 @@ fn apply_scope_ops(
     Ok(wrote)
 }
 
+fn op_keys_of(connection: &Connection, seq: i64) -> Result<Vec<SyncKey>, StoreError> {
+    let found: Option<(String, Vec<u8>, Option<String>)> = connection
+        .query_row("SELECT action_key, row_ids, temp_id FROM op WHERE seq = ?1", params![seq], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .optional()?;
+    let Some((action_key, row_ids, temp_id)) = found else { return Ok(Vec::new()) };
+    let row_ids: Vec<crate::identity::RowId> = serde_json::from_slice(&row_ids)?;
+    let temp_id = temp_id.and_then(|text| crate::identity::RowId::new(&text).ok());
+    Ok(operation_keys(&action_key, &row_ids, temp_id.as_ref()))
+}
+
 fn apply_transitions(
     connection: &Connection,
     transitions: &[OperationTransition],
+    now_ms: i64,
+    synced: &mut BTreeSet<SyncKey>,
     result: &mut CommitResult,
 ) -> Result<bool, StoreError> {
     let mut wrote = false;
     for transition in transitions {
         match transition {
             OperationTransition::Begin(record) => {
+                if let Some(seq) = record.seq {
+                    synced.extend(op_keys_of(connection, seq)?);
+                }
                 let seq = begin_operation(connection, record)?;
+                synced.extend(operation_keys(&record.action_key, &record.row_ids, record.temp_id.as_ref()));
                 result.operations.insert(seq);
                 wrote = true;
             }
@@ -384,6 +409,7 @@ fn apply_transitions(
                     result.unknown_operation_acks += 1;
                     continue;
                 };
+                synced.extend(op_keys_of(connection, *seq)?);
                 if status.is_terminal() {
                     if let (true, OperationStatus::Committed, Some(key)) = (*once, status, dedupe_key) {
                         connection.execute(
@@ -392,18 +418,61 @@ fn apply_transitions(
                         )?;
                     }
                     connection.execute("DELETE FROM op WHERE seq = ?1", params![seq])?;
-                } else if *status == OperationStatus::Failed {
-                    connection.execute(
-                        "UPDATE op SET status = ?1, dedupe_key = NULL WHERE seq = ?2",
-                        params![status.as_sql(), seq],
-                    )?;
                 } else {
-                    connection.execute("UPDATE op SET status = ?1 WHERE seq = ?2", params![status.as_sql(), seq])?;
+                    set_open_status(connection, *seq, *status, None, now_ms)?;
+                }
+                result.operations.insert(*seq);
+                wrote = true;
+            }
+            OperationTransition::Fail { seq, status, failure } => {
+                synced.extend(op_keys_of(connection, *seq)?);
+                let error = json_bytes(failure)?;
+                if set_open_status(connection, *seq, *status, Some(error), now_ms)? == 0 {
+                    result.unknown_operation_acks += 1;
+                    continue;
+                }
+                result.operations.insert(*seq);
+                wrote = true;
+            }
+            OperationTransition::Start { seq } => {
+                synced.extend(op_keys_of(connection, *seq)?);
+                let started = connection.execute(
+                    "UPDATE op SET transport_started = 1, attempts = attempts + 1, since = ?2 WHERE seq = ?1 AND status = 'pending' AND transport_started = 0",
+                    params![seq, now_ms],
+                )?;
+                if started == 0 {
+                    result.unknown_operation_acks += 1;
+                    continue;
+                }
+                result.operations.insert(*seq);
+                wrote = true;
+            }
+            OperationTransition::Progress { seq, state } => {
+                synced.extend(op_keys_of(connection, *seq)?);
+                let saved = connection.execute("UPDATE op SET upload = ?2 WHERE seq = ?1", params![seq, json_bytes(state)?])?;
+                if saved == 0 {
+                    result.unknown_operation_acks += 1;
+                    continue;
+                }
+                result.operations.insert(*seq);
+                wrote = true;
+            }
+            OperationTransition::Retry { seq } => {
+                synced.extend(op_keys_of(connection, *seq)?);
+                let retried = connection.execute(
+                    "UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error = NULL, since = ?2 \
+                     WHERE seq = ?1 AND status IN ('failed', 'delivery_unknown')",
+                    params![seq, now_ms],
+                )?;
+                if retried == 0 {
+                    result.unknown_operation_acks += 1;
+                    continue;
                 }
                 result.operations.insert(*seq);
                 wrote = true;
             }
             OperationTransition::Remove { seq, expected } => {
+                synced.extend(op_keys_of(connection, *seq)?);
                 let removed = match expected {
                     Some(status) => connection
                         .execute("DELETE FROM op WHERE seq = ?1 AND status = ?2", params![seq, status.as_sql()])?,
@@ -421,25 +490,28 @@ fn apply_transitions(
     Ok(wrote)
 }
 
+fn set_open_status(connection: &Connection, seq: i64, status: OperationStatus, error: Option<Vec<u8>>, now_ms: i64) -> Result<usize, StoreError> {
+    let dedupe = if status == OperationStatus::Failed { ", dedupe_key = NULL" } else { "" };
+    Ok(connection.execute(
+        &format!("UPDATE op SET status = ?1, error = ?2, since = ?3{dedupe} WHERE seq = ?4"),
+        params![status.as_sql(), error, now_ms, seq],
+    )?)
+}
+
 fn begin_operation(connection: &Connection, record: &OperationRecord) -> Result<i64, StoreError> {
-    let mode = match record.action_mode {
-        ActionMode::Request => "request",
-        ActionMode::Durable => "durable",
-    };
     let row_ids: Vec<&str> = record.row_ids.iter().map(|id| id.as_str()).collect();
     let dedupe_key = if record.status == OperationStatus::Failed { None } else { record.dedupe_key.clone() };
     let rollback = record.rollback.as_ref().map(json_bytes).transpose()?;
     connection.execute(
-        "INSERT INTO op (seq, action_key, action_mode, status, row_ids, temp_id, input, transport_started, \
-         base_revision, created_at, dedupe_key, rollback) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
-         ON CONFLICT (seq) DO UPDATE SET action_key = excluded.action_key, action_mode = excluded.action_mode, \
+        "INSERT INTO op (seq, action_key, status, row_ids, temp_id, input, transport_started, \
+         base_revision, created_at, dedupe_key, rollback, since, upload) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?9, ?12) \
+         ON CONFLICT (seq) DO UPDATE SET action_key = excluded.action_key, \
          status = excluded.status, row_ids = excluded.row_ids, temp_id = excluded.temp_id, input = excluded.input, \
          transport_started = excluded.transport_started, base_revision = excluded.base_revision, \
          created_at = excluded.created_at, dedupe_key = excluded.dedupe_key, rollback = excluded.rollback",
         params![
             record.seq,
             record.action_key,
-            mode,
             record.status.as_sql(),
             json_bytes(&row_ids)?,
             record.temp_id.as_ref().map(|id| id.as_str().to_string()),
@@ -449,6 +521,7 @@ fn begin_operation(connection: &Connection, record: &OperationRecord) -> Result<
             record.created_at,
             dedupe_key,
             rollback,
+            record.upload.as_ref().map(json_bytes).transpose()?,
         ],
     )?;
     Ok(record.seq.unwrap_or_else(|| connection.last_insert_rowid()))

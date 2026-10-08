@@ -1,22 +1,20 @@
 use super::*;
 use crate::operation::{OperationId, OperationStatus};
-use crate::schema::ActionMode;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-fn candidate(seq: i64, values: &[(&Path, Value)], created_at: i64, status: OperationStatus, started: bool, mode: ActionMode) -> CorrelationCandidate {
+fn candidate(seq: i64, values: &[(&Path, Value)], created_at: i64, status: OperationStatus, started: bool) -> CorrelationCandidate {
     CorrelationCandidate {
         operation: OperationId(seq),
         values: values.iter().map(|(p, v)| ((*p).clone(), v.clone())).collect(),
         created_at,
         status,
         transport_started: started,
-        mode,
     }
 }
 
 fn unknown(seq: i64, values: &[(&Path, Value)], created_at: i64) -> CorrelationCandidate {
-    candidate(seq, values, created_at, OperationStatus::DeliveryUnknown, true, ActionMode::Request)
+    candidate(seq, values, created_at, OperationStatus::DeliveryUnknown, true)
 }
 
 fn response(values: &[(&Path, Value)]) -> BTreeMap<Path, Value> {
@@ -26,15 +24,15 @@ fn response(values: &[(&Path, Value)]) -> BTreeMap<Path, Value> {
 #[test]
 fn eligible_keeps_open_operations() {
     let kept = vec![
-        candidate(1, &[], 100, OperationStatus::Pending, false, ActionMode::Request),
-        candidate(2, &[], 100, OperationStatus::DeliveryUnknown, false, ActionMode::Request),
+        candidate(1, &[], 100, OperationStatus::Pending, true),
+        candidate(2, &[], 100, OperationStatus::DeliveryUnknown, true),
     ];
     let mut all = kept.clone();
-    all.push(candidate(3, &[], 100, OperationStatus::Committed, false, ActionMode::Request));
-    all.push(candidate(4, &[], 100, OperationStatus::Failed, false, ActionMode::Request));
-    all.push(candidate(5, &[], 100, OperationStatus::Pending, false, ActionMode::Durable));
+    all.push(candidate(3, &[], 100, OperationStatus::Committed, false));
+    all.push(candidate(4, &[], 100, OperationStatus::Failed, false));
+    all.push(candidate(5, &[], 100, OperationStatus::Pending, false));
+    all.push(candidate(7, &[], 100, OperationStatus::DeliveryUnknown, false));
     assert_eq!(eligible(&all), kept);
-    assert_eq!(eligible(&[candidate(6, &[], 100, OperationStatus::Pending, true, ActionMode::Durable)]).len(), 1);
 }
 
 #[test]
@@ -75,7 +73,7 @@ fn several_matches_give_ambiguous_and_only_single_replaces_temporary() {
     let kind = Path::new("kind");
     let message = json!("message");
     let first = unknown(1, &[(&kind, message.clone())], 100);
-    let second = candidate(2, &[(&kind, message.clone())], 100, OperationStatus::Pending, false, ActionMode::Request);
+    let second = candidate(2, &[(&kind, message.clone())], 100, OperationStatus::Pending, true);
     let verdict = resolve_correlation(&CorrelationRule::new(vec![kind.clone()], None), &[first, second], &response(&[(&kind, message)]), 100);
     assert_eq!(verdict, CorrelationVerdict::Ambiguous(vec![OperationId(1), OperationId(2)]));
     assert_eq!(replaces_temporary(&CorrelationVerdict::Single(OperationId(1))), Some(OperationId(1)));

@@ -16,13 +16,14 @@ transport.enqueue("MomentsFeed", reply = feedJson)
 val db = Database.open(config = Config.inMemory, models = models, transport = transport)
 ```
 
-Use a manual clock to test freshness and retries without sleeping.
+Use a manual clock to test freshness and load retries without sleeping.
 
 Typical scenarios to cover:
 
 - first page, next page, refresh
 - fresh data is not requested again, parallel loads become one request
-- network failure is retried, fatal failure is reported
+- a failed load is retried, a fatal failure is reported
+- a mutation that gets no answer becomes `deliveryUnknown` and is sent again only by `retry()`
 - optimistic create is replaced by the server row, refusal rolls it back
 - a subscription event changes a row and your live result updates
 - a dropped subscription reconnects and the relation is refetched

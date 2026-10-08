@@ -409,8 +409,8 @@ fn relation_names_must_be_unique_and_not_collide() {
     assert_eq!(clean.validate(&["find"]), Ok(()));
 }
 
-fn action(name: &str, mode: ActionMode, root_shape: RootShape) -> ActionDeclaration {
-    ActionDeclaration::new(name, mode, root_shape)
+fn action(name: &str, root_shape: RootShape) -> ActionDeclaration {
+    ActionDeclaration::new(name, root_shape)
 }
 
 fn with_actions(actions: Vec<ActionDeclaration>) -> ModelSpec {
@@ -419,22 +419,18 @@ fn with_actions(actions: Vec<ActionDeclaration>) -> ModelSpec {
 
 #[test]
 fn action_rules_reject_invalid_combinations() {
-    let collision = action("send", ActionMode::Durable, RootShape::Upsert);
-    let durable_destroy = action("remove", ActionMode::Durable, RootShape::Destroy);
-    let durable_upsert = action("save", ActionMode::Durable, RootShape::Upsert);
-    let optimistic = ActionDeclaration { has_optimistic: true, ..action("create", ActionMode::Request, RootShape::Upsert) };
+    let collision = action("send", RootShape::Upsert);
+    let optimistic = ActionDeclaration { has_optimistic: true, ..action("create", RootShape::Upsert) };
     let retained = ActionDeclaration { has_temp_row_retention: true, ..optimistic.clone() };
     let cascade = ActionDeclaration {
         has_optimistic: true,
         has_cascade_dependents: true,
-        ..action("remove", ActionMode::Request, RootShape::Destroy)
+        ..action("remove", RootShape::Destroy)
     };
     let no_cascade = ActionDeclaration { has_cascade_dependents: false, ..cascade.clone() };
-    let valid = action("save", ActionMode::Request, RootShape::Upsert);
+    let valid = action("save", RootShape::Upsert);
 
     assert_eq!(with_actions(vec![collision]).validate(&["send"]), Err(DeclarationError::ActionNameCollision("send".into())));
-    assert_eq!(with_actions(vec![durable_destroy]).validate(&[]), Err(DeclarationError::DurableRootNotInsert("remove".into())));
-    assert_eq!(with_actions(vec![durable_upsert]).validate(&[]), Ok(()));
     assert_eq!(with_actions(vec![optimistic]).validate(&[]), Err(DeclarationError::MissingTempRowRetention("create".into())));
     assert_eq!(with_actions(vec![retained]).validate(&[]), Ok(()));
     assert_eq!(with_actions(vec![cascade]).validate(&[]), Err(DeclarationError::OptimisticDestroyWithCascade("remove".into())));
@@ -450,12 +446,12 @@ fn action_rules_reject_invalid_combinations() {
 fn forbidden_members_and_once_key_are_checked() {
     let with_member = |member: &str| ActionDeclaration {
         members: vec![member.to_string()],
-        ..action("save", ActionMode::Request, RootShape::Upsert)
+        ..action("save", RootShape::Upsert)
     };
     let once = |dedupe_key: Option<&str>| ActionDeclaration {
         has_once: true,
         dedupe_key: dedupe_key.map(String::from),
-        ..action("save", ActionMode::Request, RootShape::Upsert)
+        ..action("save", RootShape::Upsert)
     };
 
     assert_eq!(with_actions(vec![with_member("after")]).validate(&[]), Err(DeclarationError::ForbiddenMember("after".into())));
@@ -472,7 +468,7 @@ fn model_spec_round_trips_through_json() {
         associations: vec![association("chat", AssociationKind::BelongsTo, "chats", "chatId")],
         relations: vec![RelationSpec { remote: Some(paged_remote(true)), ..RelationSpec::new("thread", &["chatId"]) }],
         composite_indexes: vec![vec!["chatId".into(), "sequenceNumber".into()]],
-        actions: vec![action("send", ActionMode::Durable, RootShape::Upsert)],
+        actions: vec![action("send", RootShape::Upsert)],
         ..model(vec![
             FieldSpec::scalar("chatId", ScalarKind::Id).indexed(),
             FieldSpec::scalar("sequenceNumber", ScalarKind::Int).nullable().indexed(),
@@ -517,7 +513,7 @@ fn remote_without_operation_is_a_fault() {
 
 #[test]
 fn updates_spec_survives_serde_and_defaults_to_none() {
-    let remote = RemoteSpec { updates: Some(UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()) }), ..complete_remote() };
+    let remote = RemoteSpec { updates: Some(UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()), set: Map::new() }), ..complete_remote() };
     let text = serde_json::to_string(&remote).unwrap();
     assert_eq!(serde_json::from_str::<RemoteSpec>(&text).unwrap(), remote);
     let bare = r#"{"operation":"Q","shape":{"type":"single"},"stale_time":"5.minutes"}"#;
@@ -529,7 +525,7 @@ fn action_binding_fields_default_to_empty_and_survive_serde() {
     let bare = r#"{"name":"like","mode":"request","root_shape":"upsert"}"#;
     let parsed: ActionDeclaration = serde_json::from_str(bare).unwrap();
     assert_eq!((parsed.mutation.clone(), parsed.variables.len(), parsed.optimistic.len(), parsed.refetch.len()), (None, 0, 0, 0));
-    let mut full = action("like", ActionMode::Request, RootShape::Upsert);
+    let mut full = action("like", RootShape::Upsert);
     full.mutation = Some("LikeMoment".into());
     full.variables.insert("momentId".into(), "id".into());
     full.optimistic.insert("likedByMe".into(), serde_json::json!(true));
@@ -542,7 +538,7 @@ fn action_refetch_must_name_a_remote_relation_and_optimistic_a_field() {
     let mut remote_relation = RelationSpec::global("feed");
     remote_relation.remote = Some(complete_remote());
     let host = |refetch: &str, optimistic: &str| {
-        let mut declared = action("like", ActionMode::Request, RootShape::Upsert);
+        let mut declared = action("like", RootShape::Upsert);
         declared.refetch.push(refetch.into());
         declared.optimistic.insert(optimistic.into(), serde_json::json!(true));
         ModelSpec { actions: vec![declared], relations: vec![remote_relation.clone()], ..model(vec![id_field()]) }

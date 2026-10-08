@@ -21,7 +21,7 @@ pub const SERVICE_COLUMNS: [&str; 6] = ["id", "revision", "born_rev", "field_rev
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
 const CACHE_TABLES: [&str; 3] = ["scope_member", "tombstone", "query_window"];
 
-const CORE_STATEMENTS: [&str; 17] = [
+const CORE_STATEMENTS: [&str; 18] = [
     "CREATE TABLE manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -59,7 +59,6 @@ const CORE_STATEMENTS: [&str; 17] = [
     "CREATE TABLE op (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   action_key TEXT NOT NULL,
-  action_mode TEXT NOT NULL CHECK (action_mode IN ('request', 'durable')),
   status TEXT NOT NULL CHECK (status IN ('pending', 'failed', 'delivery_unknown', 'committed', 'rolledback')),
   row_ids BLOB NOT NULL,
   temp_id TEXT,
@@ -68,8 +67,24 @@ const CORE_STATEMENTS: [&str; 17] = [
   base_revision INTEGER,
   created_at INTEGER NOT NULL,
   dedupe_key TEXT,
-  rollback BLOB
+  rollback BLOB,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error BLOB,
+  since INTEGER NOT NULL,
+  upload BLOB
 ) STRICT",
+    "CREATE TABLE row_sync (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'failed', 'delivery_unknown')),
+  actions BLOB NOT NULL,
+  dirty_fields BLOB NOT NULL,
+  error BLOB,
+  attempts INTEGER NOT NULL,
+  since INTEGER NOT NULL,
+  upload BLOB,
+  PRIMARY KEY (model, row_id)
+) STRICT, WITHOUT ROWID",
     "CREATE INDEX op_open ON op (action_key, status)",
     "CREATE INDEX op_temp ON op (temp_id)",
     "CREATE UNIQUE INDEX op_open_dedupe ON op (action_key, dedupe_key)
@@ -190,8 +205,9 @@ pub fn create_table_statement(model: &ModelSpec) -> String {
         "payload BLOB NOT NULL".to_string(),
     ];
     definitions.extend(promoted_columns(model).map(|(name, column)| format!("{name} {}", column.as_sql())));
+    let kind = if model.is_memory() { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
     format!(
-        "CREATE TABLE IF NOT EXISTS {} (\n  {}\n) STRICT",
+        "{kind} IF NOT EXISTS {} (\n  {}\n) STRICT",
         table_name(model.key.as_str()),
         definitions.join(",\n  ")
     )
@@ -243,6 +259,7 @@ pub fn prepare_connection(connection: &Connection) -> Result<(), DdlError> {
     connection.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.pragma_update(None, "foreign_keys", "OFF")?;
+    connection.pragma_update(None, "temp_store", "MEMORY")?;
     Ok(())
 }
 

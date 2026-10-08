@@ -28,6 +28,7 @@ fn held<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct Event {
     pub revision: i64,
+    pub epoch: u64,
     pub models: BTreeSet<ModelKey>,
     pub scopes: BTreeSet<ScopeRef>,
     pub rows: BTreeSet<RowRef>,
@@ -59,6 +60,7 @@ impl Event {
 
     pub(crate) fn merge(mut self, later: Event) -> Event {
         self.revision = self.revision.max(later.revision);
+        self.epoch = self.epoch.max(later.epoch);
         self.models.extend(later.models);
         self.scopes.extend(later.scopes);
         self.rows.extend(later.rows);

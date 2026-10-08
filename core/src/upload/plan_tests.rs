@@ -1,0 +1,35 @@
+use serde_json::json;
+
+use super::*;
+
+#[test]
+fn threshold_splits_single_from_multipart() {
+    assert_eq!(scenario_for(9, 10), UploadScenario::Single);
+    assert_eq!(scenario_for(10, 10), UploadScenario::Multipart);
+}
+
+#[test]
+fn parts_cover_the_file_exactly_with_a_short_tail() {
+    assert_eq!(part_count(12, 5), 3);
+    assert_eq!(part_count(10, 5), 2);
+    assert_eq!(part_count(0, 5), 1);
+    let ranges: Vec<(u64, u64)> = (1..=3).map(|number| part_range(12, 5, number)).collect();
+    assert_eq!(ranges, [(0, 5), (5, 5), (10, 2)]);
+    assert_eq!(ranges.iter().map(|(_, length)| length).sum::<u64>(), 12);
+}
+
+#[test]
+fn mime_follows_the_extension_and_falls_back() {
+    assert_eq!(mime_of("clip.MP4"), "video/mp4");
+    assert_eq!(mime_of("a.jpeg"), "image/jpeg");
+    assert_eq!(mime_of("noext"), "application/octet-stream");
+}
+
+#[test]
+fn headers_parse_from_a_map_or_a_list() {
+    let map = json!({"Content-Type": "video/mp4", "n": 1});
+    assert_eq!(parse_headers(Some(&map)), [("Content-Type".to_string(), "video/mp4".to_string())]);
+    let list = json!([{"name": "x-a", "value": "1"}, {"key": "x-b", "value": "2"}, {"name": "bad"}]);
+    assert_eq!(parse_headers(Some(&list)), [("x-a".to_string(), "1".to_string()), ("x-b".to_string(), "2".to_string())]);
+    assert!(parse_headers(None).is_empty());
+}

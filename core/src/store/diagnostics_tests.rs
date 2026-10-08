@@ -43,7 +43,7 @@ fn tags_from_details_do_not_override_existing_keys() {
 
 #[test]
 fn error_context_carries_event_and_reason() {
-    let error = SyncError::TrackFailed("offline".into());
+    let error = SyncFault::TrackFailed("offline".into());
     let context = error.context("realtime", Some(ModelKey::new("chats")), None);
     assert_eq!(context.source, "realtime");
     assert_eq!(context.event.as_deref(), Some("track"));
@@ -54,8 +54,8 @@ fn error_context_carries_event_and_reason() {
 
 #[test]
 fn error_details_cover_counts_and_unit_variants() {
-    assert_eq!(SyncError::SubscriptionDegraded { attempts: 4 }.details().unwrap()["attempts"], "4");
-    assert_eq!(SyncError::UserResetDiscard { open_ops: 2 }.details().unwrap()["openOps"], "2");
-    assert!(SyncError::SubscriptionPayloadMismatch.details().is_none());
-    assert_eq!(SyncError::RejectedRecord("x".into()).event_name(), "rejectedRecord");
+    assert_eq!(SyncFault::SubscriptionDegraded { attempts: 4 }.details().unwrap()["attempts"], "4");
+    assert_eq!(SyncFault::UserResetDiscard { open_ops: 2 }.details().unwrap()["openOps"], "2");
+    assert!(SyncFault::SubscriptionPayloadMismatch.details().is_none());
+    assert_eq!(SyncFault::RejectedRecord("x".into()).event_name(), "rejectedRecord");
 }

@@ -4,7 +4,6 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
 use crate::identity::{Generation, ModelKey, RowId};
-use crate::operation::QuarantineReason;
 use crate::value::read_id;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,11 +11,11 @@ pub enum WriteIntent {
     Upsert { model: ModelKey, rows: Vec<Map<String, Value>> },
     Update { model: ModelKey, id: RowId, patch: Map<String, Value> },
     Destroy { model: ModelKey, ids: Vec<RowId> },
-    Invalidate(InvalidationRequest),
+    Invalidate(RelationInvalidation),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvalidationRequest {
+pub struct RelationInvalidation {
     pub model: ModelKey,
     pub relation_name: String,
 }
@@ -50,7 +49,7 @@ impl WritePlan {
     }
 
     pub fn invalidate(&mut self, model: ModelKey, relation_name: &str) {
-        self.intents.push(WriteIntent::Invalidate(InvalidationRequest { model, relation_name: relation_name.to_string() }));
+        self.intents.push(WriteIntent::Invalidate(RelationInvalidation { model, relation_name: relation_name.to_string() }));
     }
 
     pub fn is_empty(&self) -> bool {
@@ -70,7 +69,7 @@ impl WritePlan {
         models.filter(|model| seen.insert((*model).clone())).cloned().collect()
     }
 
-    pub fn invalidations(&self) -> Vec<InvalidationRequest> {
+    pub fn invalidations(&self) -> Vec<RelationInvalidation> {
         self.intents
             .iter()
             .filter_map(|intent| match intent {
@@ -234,22 +233,4 @@ pub fn affected_scope_keys(envelope: &CommitEnvelope, subscribed_scopes: &HashSe
 pub fn tick_count(envelope: &CommitEnvelope, current: Generation, subscribed_rows: &HashSet<String>, subscribed_scopes: &HashSet<String>) -> usize {
     let affected = !affected_row_keys(envelope, subscribed_rows).is_empty() || !affected_scope_keys(envelope, subscribed_scopes).is_empty();
     usize::from(publishes(envelope, current, false) && affected)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WriteSeam {
-    ModelPrepare,
-    ScopeLanding,
-    ReplaceSuccessor,
-}
-
-impl WriteSeam {
-    pub const ALL: [WriteSeam; 3] = [WriteSeam::ModelPrepare, WriteSeam::ScopeLanding, WriteSeam::ReplaceSuccessor];
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum IntakeOutcome {
-    Accepted(Map<String, Value>),
-    Quarantined(QuarantineReason),
-    DroppedByTombstone,
 }

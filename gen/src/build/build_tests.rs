@@ -1,6 +1,6 @@
 use dblayer::schema::{
-    ActionMode, AssociationKind, Coverage, Dependent, FieldKind, ModelSpec, PageDirection, RemoteShape, RootShape, Sort,
-    UpdatesSpec,
+    AssociationKind, Coverage, Dependent, FieldKind, ModelSpec, OnFailure, PageDirection, RemoteShape, RootShape, Sort,
+    Storage, UpdatesSpec,
 };
 use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::json;
@@ -159,12 +159,12 @@ fn standard_actions_bind_mutations_and_input() {
     let names: Vec<_> = model.actions.iter().map(|action| action.name.as_str()).collect();
     assert_eq!(names, vec!["create", "update", "destroy"]);
     let create = &model.actions[0];
-    assert_eq!((create.mutation.as_deref(), create.mode, create.root_shape), (Some("CreateSample"), ActionMode::Durable, RootShape::Upsert));
+    assert_eq!((create.mutation.as_deref(), create.root_shape), (Some("CreateSample"), RootShape::Upsert));
     assert!(create.has_optimistic && create.has_temp_row_retention);
     assert_eq!(create.variables.get("text").map(String::as_str), Some("createdAt"));
     assert_eq!(model.actions[1].variables.len(), 0);
     let destroy = &model.actions[2];
-    assert_eq!((destroy.mutation.as_deref(), destroy.mode, destroy.root_shape), (Some("DeleteSample"), ActionMode::Request, RootShape::Destroy));
+    assert_eq!((destroy.mutation.as_deref(), destroy.root_shape), (Some("DeleteSample"), RootShape::Destroy));
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn action_block_collects_mutation_input_optimistic_and_refetch() {
     let model = build_one("  remote :feed do\n    query Feed\n  end\n  action :like do\n    mutation LikeSample\n    input sampleId: :id\n    optimistic createdAt: \"liked\", ownerId: nil\n    refetch :feed\n  end");
     let action = &model.actions[0];
     assert_eq!(action.name, "like");
-    assert_eq!((action.mode, action.root_shape, action.has_optimistic), (ActionMode::Request, RootShape::Upsert, false));
+    assert_eq!((action.root_shape, action.has_optimistic), (RootShape::Upsert, false));
     assert_eq!(action.mutation.as_deref(), Some("LikeSample"));
     assert_eq!(action.variables.get("sampleId").map(String::as_str), Some("id"));
     assert_eq!(action.optimistic.get("createdAt"), Some(&json!("liked")));
@@ -184,6 +184,51 @@ fn action_block_collects_mutation_input_optimistic_and_refetch() {
 fn remote_updates_line_builds_updates_spec() {
     let model = build_one("  remote :feed do\n    query Feed\n    updates SampleEvents, deleted_by: :destroyed\n  end\n  remote :plain do\n    query Plain\n    updates PlainEvents\n  end");
     let updates = |index: usize| model.relations[index].remote.as_ref().unwrap().updates.clone();
-    assert_eq!(updates(0), Some(UpdatesSpec { subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()) }));
-    assert_eq!(updates(1), Some(UpdatesSpec { subscription: "PlainEvents".into(), deleted_by: None }));
+    assert_eq!(updates(0), Some(UpdatesSpec { subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), set: Default::default() }));
+    assert_eq!(updates(1), Some(UpdatesSpec { subscription: "PlainEvents".into(), deleted_by: None, set: Default::default() }));
+}
+
+#[test]
+fn on_failure_defaults_to_rollback_and_reads_keep_from_standard_and_block_actions() {
+    let model = build_one(
+        "  create with: CreateSample, on_failure: :keep\n  update with: UpdateSample\n  destroy with: DeleteSample, on_failure: :rollback\n  action :like do\n    mutation LikeSample\n    on_failure :keep\n  end\n  action :poke do\n    mutation PokeSample\n  end",
+    );
+    let policies: Vec<(&str, OnFailure)> = model.actions.iter().map(|action| (action.name.as_str(), action.on_failure)).collect();
+    assert_eq!(
+        policies,
+        [("create", OnFailure::Keep), ("update", OnFailure::Rollback), ("destroy", OnFailure::Rollback), ("like", OnFailure::Keep), ("poke", OnFailure::Rollback)]
+    );
+}
+
+#[test]
+fn ephemeral_block_builds_ephemeral_specs_beside_stored_fields() {
+    let model = parse_models(
+        "model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false, reset_after: 5.seconds\n      string :mood, null: true\n    end\n  end\nend\n",
+    )
+    .unwrap()
+    .remove(0);
+    assert_eq!(model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(), vec!["name"]);
+    let typing = model.ephemeral_field("typing").unwrap();
+    assert_eq!((typing.field.default.clone(), typing.reset_after.clone()), (Some(json!(false)), Some("5.seconds".to_string())));
+    let mood = model.ephemeral_field("mood").unwrap();
+    assert_eq!((mood.field.nullable, mood.reset_after.clone()), (true, None));
+}
+
+#[test]
+fn model_line_options_build_storage_and_expiry() {
+    let memory = parse_models("model Presence, storage: :memory, expire_after: 30.seconds do\n  schema do\n    string :room\n  end\nend\n").unwrap().remove(0);
+    assert_eq!((memory.storage, memory.expire_after.as_deref()), (Storage::Memory, Some("30.seconds")));
+    let plain = parse_models("model Presence do\n  schema do\n    string :room\n  end\nend\n").unwrap().remove(0);
+    assert_eq!((plain.storage, plain.expire_after), (Storage::Disk, None));
+}
+
+#[test]
+fn updates_set_builds_ephemeral_values() {
+    let model = parse_models(
+        "model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false\n    end\n  end\n  remote :one do\n    query One\n    updates Typing, set: { typing: true }\n  end\nend\n",
+    )
+    .unwrap()
+    .remove(0);
+    let updates = model.relations[0].remote.as_ref().unwrap().updates.clone().unwrap();
+    assert_eq!(updates.set.get("typing"), Some(&json!(true)));
 }

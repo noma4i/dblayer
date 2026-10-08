@@ -126,8 +126,10 @@ pub(crate) fn clear_intent(connection: &Connection) -> Result<(), StoreError> {
 }
 
 pub(crate) fn row_tables(connection: &Connection) -> Result<Vec<String>, StoreError> {
-    let mut statement =
-        connection.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'row\\_%' ESCAPE '\\'")?;
+    let mut statement = connection.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'row\\_%' ESCAPE '\\'
+         UNION ALL SELECT name FROM sqlite_temp_master WHERE type = 'table' AND name LIKE 'row\\_%' ESCAPE '\\'",
+    )?;
     let names = statement.query_map([], |row| row.get(0))?;
     Ok(names.collect::<Result<_, _>>()?)
 }
@@ -162,7 +164,7 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
 }
 
 pub(crate) fn current_fingerprints(inner: &Inner) -> BTreeMap<String, String> {
-    inner.models.iter().map(|(key, info)| (key.clone(), fingerprint(&info.spec))).collect()
+    inner.models.iter().filter(|(_, info)| !info.spec.is_memory()).map(|(key, info)| (key.clone(), fingerprint(&info.spec))).collect()
 }
 
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {

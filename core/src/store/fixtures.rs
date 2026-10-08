@@ -33,7 +33,7 @@ pub fn items_spec() -> ModelSpec {
 pub fn booted_store() -> (Store, Arc<ManualClock>) {
     let store = Store::open_in_memory().unwrap();
     let clock = Arc::new(ManualClock::new(Duration::from_millis(1_000_000)));
-    store.set_clock(clock.clone());
+    store.lock().clock = clock.clone();
     store.boot(&[messages_spec(), items_spec()], None).unwrap();
     store.mark_ready();
     (store, clock)

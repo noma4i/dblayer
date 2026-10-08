@@ -1,5 +1,6 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
+use crate::pacing::Counters;
 use crate::query::{Order, Query, Where};
 use crate::value::SortDirection;
 use serde_json::json;
@@ -11,10 +12,10 @@ fn find_returns_the_stored_row_and_the_second_find_hits_the_cache() {
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let first = db.find("users", &rid("u1")).unwrap().unwrap();
     assert_eq!(first.text("name"), Some("Ann"));
-    assert_eq!(db.cache_stats(), CacheStats { hits: 0, misses: 1, evictions: 0 });
+    assert_eq!(db.counters(), Counters { cache_hits: 0, cache_misses: 1, cache_evictions: 0, ..Counters::default() });
     let second = db.find("users", &rid("u1")).unwrap().unwrap();
     assert!(Arc::ptr_eq(&first, &second));
-    assert_eq!(db.cache_stats(), CacheStats { hits: 1, misses: 1, evictions: 0 });
+    assert_eq!(db.counters(), Counters { cache_hits: 1, cache_misses: 1, cache_evictions: 0, ..Counters::default() });
 }
 
 #[test]
@@ -44,9 +45,9 @@ fn query_parses_each_row_once_while_unchanged() {
     seed_tree(&db);
     let query = Query::new("vibes").ordered(vec![Order::new("id", SortDirection::Asc)]);
     let first = db.query(&query).unwrap();
-    assert_eq!(db.cache_stats().misses, 2);
+    assert_eq!(db.counters().cache_misses, 2);
     let second = db.query(&query).unwrap();
-    assert_eq!(db.cache_stats(), CacheStats { hits: 2, misses: 2, evictions: 0 });
+    assert_eq!(db.counters(), Counters { cache_hits: 2, cache_misses: 2, cache_evictions: 0, ..Counters::default() });
     assert!(first.iter().zip(&second).all(|(a, b)| Arc::ptr_eq(a, b)));
 }
 
@@ -59,8 +60,8 @@ fn query_reparses_only_the_row_that_changed() {
     put(&db, "vibes", json!({"id": "v1", "momentId": "m1", "kind": "love"}));
     let rows = db.query(&query).unwrap();
     assert_eq!(rows[0].text("kind"), Some("love"));
-    assert_eq!(db.cache_stats().misses, 3);
-    assert_eq!(db.cache_stats().hits, 1);
+    assert_eq!(db.counters().cache_misses, 3);
+    assert_eq!(db.counters().cache_hits, 1);
 }
 
 #[test]
@@ -70,7 +71,7 @@ fn find_sees_a_row_changed_after_it_was_cached() {
     assert_eq!(db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("Ann"));
     put(&db, "users", json!({"id": "u1", "name": "Anna"}));
     assert_eq!(db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("Anna"));
-    assert_eq!(db.cache_stats().evictions, 1);
+    assert_eq!(db.counters().cache_evictions, 1);
 }
 
 #[test]
@@ -101,7 +102,7 @@ fn exists_reads_no_payload() {
     let db = booted();
     seed_tree(&db);
     assert!(db.exists(&Query::new("moments")).unwrap());
-    assert_eq!(db.cache_stats().misses, 0);
+    assert_eq!(db.counters().cache_misses, 0);
 }
 
 #[test]
@@ -110,5 +111,5 @@ fn cache_is_bounded_by_the_configured_row_limit() {
     seed_tree(&db);
     db.query(&Query::new("vibes")).unwrap();
     db.query(&Query::new("moments")).unwrap();
-    assert!(db.cache_stats().evictions >= 2);
+    assert!(db.counters().cache_evictions >= 2);
 }

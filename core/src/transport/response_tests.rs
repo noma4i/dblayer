@@ -1,15 +1,13 @@
 use super::*;
 
 #[test]
-fn data_responses_commit_or_fail_with_retry_only_for_errors() {
+fn data_responses_commit_and_responses_with_errors_fail() {
     let data_only = ResponseShape::of(true, 0, false);
     let with_errors = ResponseShape::of(true, 1, false);
     assert_eq!(data_only, ResponseShape::DataOnly);
     assert_eq!(data_only.outcome(), ResponseOutcome::Commit);
-    assert!(!data_only.outcome().allows_retry());
     assert_eq!(with_errors, ResponseShape::DataWithErrors);
     assert_eq!(with_errors.outcome(), ResponseOutcome::MarkFailed);
-    assert!(with_errors.outcome().allows_retry());
 }
 
 #[test]
@@ -25,7 +23,6 @@ fn errors_only_empty_and_thrown_never_commit() {
     assert_eq!(thrown_with_data, ResponseShape::Thrown);
     assert_eq!(thrown_without_data, ResponseShape::Thrown);
     assert_eq!(thrown_with_data.outcome(), ResponseOutcome::MarkDeliveryUnknown);
-    assert!(!ResponseOutcome::MarkDeliveryUnknown.allows_retry());
 }
 
 #[test]

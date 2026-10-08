@@ -1,6 +1,6 @@
 use dblayer::schema::{
-    ActionDeclaration, ActionMode, AssociationKind, AssociationSpec, Coverage, Dependent, FieldSpec, ModelSpec,
-    PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, UpdatesSpec,
+    ActionDeclaration, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
+    OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
 };
 use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::{Map, Number, Value as Json};
@@ -15,6 +15,10 @@ pub fn build(nodes: &[ModelNode]) -> Vec<ModelSpec> {
 
 fn build_model(node: &ModelNode) -> ModelSpec {
     let mut model = ModelSpec::new(&node.name, Vec::new());
+    if let Some(Value::Symbol(storage)) = node.options.iter().find(|pair| pair.key == "storage").map(|pair| &pair.value.item) {
+        model.storage = if storage == "memory" { Storage::Memory } else { Storage::Disk };
+    }
+    model.expire_after = node.options.iter().find(|pair| pair.key == "expire_after").and_then(|pair| text_of(&pair.value.item));
     for call in &node.body {
         match call.word.as_str() {
             "schema" => build_schema(call, &mut model),
@@ -34,10 +38,10 @@ fn build_model(node: &ModelNode) -> ModelSpec {
 
 fn build_schema(schema: &Call, model: &mut ModelSpec) {
     for call in schema.block.iter().flatten() {
-        if call.word == "index" {
-            model.composite_indexes.push(call.args.iter().filter_map(|arg| text_of(&arg.item)).collect());
-        } else {
-            model.fields.push(build_field(call));
+        match call.word.as_str() {
+            "index" => model.composite_indexes.push(call.args.iter().filter_map(|arg| text_of(&arg.item)).collect()),
+            "ephemeral" => model.ephemeral.extend(call.block.iter().flatten().map(build_ephemeral)),
+            _ => model.fields.push(build_field(call)),
         }
     }
 }
@@ -67,6 +71,13 @@ fn build_field(call: &Call) -> FieldSpec {
     field.id_from_parent = option(call, "id_from").and_then(|pair| text_of(&pair.value.item));
     field.default = option(call, "default").map(|pair| json_of(&pair.value.item));
     field
+}
+
+fn build_ephemeral(call: &Call) -> EphemeralSpec {
+    EphemeralSpec {
+        field: build_field(call),
+        reset_after: option(call, "reset_after").and_then(|pair| text_of(&pair.value.item)),
+    }
 }
 
 fn scalar_kind(name: &str) -> ScalarKind {
@@ -130,6 +141,10 @@ fn build_remote(call: &Call) -> RelationSpec {
         updates: line("updates").map(|updates| UpdatesSpec {
             subscription: first_name(updates),
             deleted_by: option(updates, "deleted_by").and_then(|pair| text_of(&pair.value.item)),
+            set: match option(updates, "set").map(|pair| &pair.value.item) {
+                Some(Value::Hash(pairs)) => pairs.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
+                _ => Map::new(),
+            },
         }),
     };
     let mut relation = RelationSpec::global(&first_name(call));
@@ -139,13 +154,14 @@ fn build_remote(call: &Call) -> RelationSpec {
 
 fn build_standard_action(call: &Call) -> ActionDeclaration {
     let mut action = match call.word.as_str() {
-        "create" => ActionDeclaration::new("create", ActionMode::Durable, RootShape::Upsert),
-        "update" => ActionDeclaration::new("update", ActionMode::Durable, RootShape::Upsert),
-        _ => ActionDeclaration::new("destroy", ActionMode::Request, RootShape::Destroy),
+        "create" => ActionDeclaration::new("create", RootShape::Upsert),
+        "update" => ActionDeclaration::new("update", RootShape::Upsert),
+        _ => ActionDeclaration::new("destroy", RootShape::Destroy),
     };
     action.has_optimistic = call.word == "create";
     action.has_temp_row_retention = call.word == "create";
     action.mutation = Some(symbol_of(call, "with"));
+    action.on_failure = on_failure_of(&symbol_of(call, "on_failure"));
     if let Some(Value::Hash(pairs)) = option(call, "input").map(|pair| &pair.value.item) {
         action.variables = pairs.iter().filter_map(variable_binding).collect();
     }
@@ -153,17 +169,26 @@ fn build_standard_action(call: &Call) -> ActionDeclaration {
 }
 
 fn build_action(call: &Call) -> ActionDeclaration {
-    let mut action = ActionDeclaration::new(&first_name(call), ActionMode::Request, RootShape::Upsert);
+    let mut action = ActionDeclaration::new(&first_name(call), RootShape::Upsert);
     for line in call.block.iter().flatten() {
         match line.word.as_str() {
             "mutation" => action.mutation = Some(first_name(line)),
             "input" => action.variables = line.options.iter().filter_map(variable_binding).collect(),
             "optimistic" => action.optimistic = line.options.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
+            "on_failure" => action.on_failure = on_failure_of(&first_name(line)),
             "refetch" => action.refetch = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
             _ => {}
         }
     }
     action
+}
+
+fn on_failure_of(policy: &str) -> OnFailure {
+    if policy == "keep" {
+        OnFailure::Keep
+    } else {
+        OnFailure::Rollback
+    }
 }
 
 fn variable_binding(pair: &Pair) -> Option<(String, String)> {

@@ -4,9 +4,10 @@ use crate::commit::OperationStatus;
 use crate::identity::RowId;
 use crate::operation::{quarantine_counts, QuarantineReason};
 use crate::query::Query;
+use crate::syncstate::{FailureKind, OperationFailure, SyncState};
 use crate::transport::{Reply, TransportError};
 
-use super::super::support::*;
+use super::super::rig::*;
 use super::{SendResult, SkipReason};
 
 use std::sync::{Arc, Mutex};
@@ -86,31 +87,43 @@ async fn rejected_create_removes_the_temp_row_and_rejected_destroy_restores_the_
 }
 
 #[tokio::test(start_paused = true)]
-async fn network_error_is_retried_within_the_budget() {
+async fn network_error_is_not_retried_and_leaves_delivery_unknown() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Network("offline".into())));
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
     let report = rig.sync.flush().await.unwrap();
-    assert_eq!(report.committed(), 1);
-    assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
+    assert_eq!(report.operations[0].result, SendResult::DeliveryUnknown);
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
+    assert_eq!(statuses(&rig), [OperationStatus::DeliveryUnknown]);
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("new".to_string()));
+    assert_eq!(rig.sync.flush().await.unwrap().committed(), 0);
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
 }
 
 #[tokio::test(start_paused = true)]
-async fn exhausted_network_budget_leaves_the_operation_pending_for_the_next_flush() {
+async fn server_error_status_is_not_retried_and_leaves_delivery_unknown() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
-    rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Network("offline".into())));
+    rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Http { status: 503, body: "busy".into() }));
     let report = rig.sync.flush().await.unwrap();
-    assert_eq!(report.operations[0].result, SendResult::Deferred);
-    assert_eq!(rig.transport.call_count("UpdateMoment"), 4);
-    let entry = rig.db.outbox().unwrap().remove(0);
-    assert_eq!((entry.operation.status, entry.operation.transport_started), (OperationStatus::Pending, false));
-    assert_eq!(text_of(&rig, "moments", "m1"), Some("new".to_string()));
-    rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
+    assert_eq!(report.operations[0].result, SendResult::DeliveryUnknown);
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
+    assert_eq!(statuses(&rig), [OperationStatus::DeliveryUnknown]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn retriable_graphql_code_is_a_refusal_and_is_not_retried() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("busy", "INTERNAL_SERVER_ERROR"));
+    let report = rig.sync.flush().await.unwrap();
+    assert_eq!(report.rejections(), ["busy"]);
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("old".to_string()));
 }
 
 #[tokio::test(start_paused = true)]
@@ -187,17 +200,16 @@ async fn unusable_create_response_is_quarantined_and_the_operation_stays_open() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn operations_survive_a_restart_and_leave_on_the_next_flush() {
+async fn unsent_operations_survive_a_restart_and_leave_on_the_next_flush() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("app.db");
     {
         let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), Default::default());
         rig.db.create("moments", params(json!({"text": "offline"}))).unwrap();
-        rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Network("offline".into())));
-        assert_eq!(rig.sync.flush().await.unwrap().operations[0].result, SendResult::Deferred);
     }
     let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), Default::default());
     assert_eq!(rig.db.outbox().unwrap().len(), 1);
+    assert_eq!(rig.db.outbox().unwrap()[0].operation.status, OperationStatus::Pending);
     rig.transport.enqueue("CreateMoment", created("m5", "offline"));
     assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
     assert_eq!(text_of(&rig, "moments", "m5"), Some("offline".to_string()));
@@ -215,4 +227,175 @@ async fn custom_action_sends_mapped_variables_and_rolls_its_patch_back_on_refusa
     assert_eq!(report.rejections(), ["nope"]);
     let row = rig.db.find("moments", &rid("m1")).unwrap().unwrap();
     assert_ne!(row.data.get("likedByMe"), Some(&json!(true)));
+}
+
+fn info(rig: &Rig, id: &str) -> crate::syncstate::SyncInfo {
+    rig.db.sync_info("moments", &rid(id)).unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn record_is_sending_while_the_request_is_in_flight_and_synced_after_the_answer() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    assert_eq!(info(&rig, "m1").state, SyncState::Pending);
+    rig.transport.enqueue("UpdateMoment", updated("m1", "new").after(std::time::Duration::from_secs(5)));
+    let flight = tokio::spawn({
+        let sync = rig.sync.clone();
+        async move { sync.flush().await }
+    });
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let sending = info(&rig, "m1");
+    assert_eq!((sending.state, sending.attempts), (SyncState::Sending, 1));
+    assert_eq!(flight.await.unwrap().unwrap().committed(), 1);
+    assert_eq!(info(&rig, "m1"), crate::syncstate::SyncInfo::default());
+}
+
+#[tokio::test(start_paused = true)]
+async fn network_error_records_the_kind_and_attempt_and_retry_sends_the_same_operation_again() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Network("offline".into())));
+    rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
+    rig.sync.flush().await.unwrap();
+    let unknown = info(&rig, "m1");
+    assert_eq!((unknown.state, unknown.attempts), (SyncState::DeliveryUnknown, 1));
+    assert_eq!(unknown.error.map(|error| error.kind), Some(FailureKind::Network));
+    assert_eq!(rig.sync.retry("moments", &rid("m1")).await.unwrap().committed(), 1);
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
+    assert!(info(&rig, "m1").is_synced());
+}
+
+#[tokio::test(start_paused = true)]
+async fn kept_update_stays_failed_with_the_error_and_blocks_only_its_own_record() {
+    let rig = keeping_rig();
+    put(&rig, "moments", moment("m1", "old"));
+    put(&rig, "moments", moment("m2", "other"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.db.update("moments", &rid("m2"), params(json!({"text": "next"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
+    rig.transport.enqueue("UpdateMoment", updated("m2", "next"));
+    let report = rig.sync.flush().await.unwrap();
+    assert_eq!(report.rejections(), ["not allowed"]);
+    let failed = info(&rig, "m1");
+    assert_eq!((failed.state, failed.attempts, failed.error), (SyncState::Failed, 1, Some(OperationFailure::new(FailureKind::Rejected, "not allowed"))));
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("new".to_string()));
+    assert!(info(&rig, "m2").is_synced());
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "newer"}))).unwrap();
+    let again = rig.sync.flush().await.unwrap();
+    assert_eq!(again.operations[0].result, SendResult::Skipped(SkipReason::BlockedByHead));
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
+    assert_eq!(statuses(&rig), [OperationStatus::Failed, OperationStatus::Pending]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_of_a_kept_failure_resets_attempts_and_confirms_on_success() {
+    let rig = keeping_rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
+    rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
+    rig.sync.flush().await.unwrap();
+    assert_eq!(info(&rig, "m1").state, SyncState::Failed);
+    assert_eq!(rig.db.retry("moments", &rid("m1")).unwrap(), 1);
+    let pending = info(&rig, "m1");
+    assert_eq!((pending.state, pending.attempts, pending.error), (SyncState::Pending, 0, None));
+    assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
+    assert!(info(&rig, "m1").is_synced());
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn discard_of_a_kept_failure_restores_the_old_values() {
+    let rig = keeping_rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
+    rig.sync.flush().await.unwrap();
+    assert_eq!(rig.db.discard("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("old".to_string()));
+    assert!(info(&rig, "m1").is_synced());
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn kept_create_stays_in_lists_as_failed_and_retry_swaps_the_temp_id() {
+    let rig = keeping_rig();
+    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    rig.transport.enqueue("CreateMoment", Reply::graphql_error("bad", "BAD_USER_INPUT"));
+    rig.transport.enqueue("CreateMoment", created("m77", "hello"));
+    rig.sync.flush().await.unwrap();
+    let failed = rig.db.query(&crate::query::Query::failed("moments")).unwrap();
+    assert_eq!(failed.iter().map(|row| row.id.clone()).collect::<Vec<_>>(), std::slice::from_ref(&local.id));
+    assert!(failed[0].is_local());
+    assert_eq!(rig.sync.retry("moments", &local.id).await.unwrap().committed(), 1);
+    assert_eq!(text_of(&rig, "moments", "m77"), Some("hello".to_string()));
+    assert!(rig.db.query(&crate::query::Query::unsynced("moments")).unwrap().is_empty());
+    assert_eq!(info(&rig, local.id.as_str()), crate::syncstate::SyncInfo::default());
+}
+
+#[tokio::test(start_paused = true)]
+async fn follower_of_a_temp_row_moves_its_sync_state_to_the_real_id() {
+    let rig = rig();
+    let local = rig.db.create("moments", params(json!({"text": "draft"}))).unwrap();
+    rig.db.update("moments", &local.id, params(json!({"text": "edited"}))).unwrap();
+    rig.transport.enqueue("CreateMoment", created("m9", "draft").after(std::time::Duration::ZERO));
+    rig.transport.enqueue("UpdateMoment", updated("m9", "edited").after(std::time::Duration::from_secs(5)));
+    let flight = tokio::spawn({
+        let sync = rig.sync.clone();
+        async move { sync.flush().await }
+    });
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    assert_eq!(info(&rig, local.id.as_str()), crate::syncstate::SyncInfo::default());
+    let moved = info(&rig, "m9");
+    assert_eq!((moved.state, moved.actions), (SyncState::Sending, vec!["update".to_string()]));
+    flight.await.unwrap().unwrap();
+    assert!(info(&rig, "m9").is_synced());
+}
+
+#[tokio::test(start_paused = true)]
+async fn kinds_follow_the_failure_class() {
+    for (id, reply, state, kind) in [
+        ("m1", Reply::fail(TransportError::Http { status: 502, body: "bad gateway".into() }), SyncState::DeliveryUnknown, FailureKind::Server),
+        ("m2", Reply::graphql_error("busy", "SERVICE_UNAVAILABLE"), SyncState::Failed, FailureKind::Server),
+        ("m3", Reply::fail(TransportError::Http { status: 400, body: "bad".into() }), SyncState::Failed, FailureKind::Rejected),
+        ("m4", Reply::fail(TransportError::Decode("junk".into())), SyncState::DeliveryUnknown, FailureKind::Unrecognized),
+        ("m5", Reply::fail(TransportError::Interrupted("reset".into())), SyncState::DeliveryUnknown, FailureKind::Network),
+    ] {
+        let rig = keeping_rig();
+        put(&rig, "moments", moment(id, "old"));
+        rig.db.update("moments", &rid(id), params(json!({"text": "new"}))).unwrap();
+        rig.transport.enqueue("UpdateMoment", reply);
+        rig.sync.flush().await.unwrap();
+        let seen = info(&rig, id);
+        assert_eq!((seen.state, seen.error.map(|error| error.kind)), (state, Some(kind)), "{id}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn unusable_create_response_marks_the_record_unrecognized() {
+    let rig = rig();
+    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"bogus": true}})));
+    rig.sync.flush().await.unwrap();
+    let seen = info(&rig, local.id.as_str());
+    assert_eq!((seen.state, seen.error.map(|error| error.kind)), (SyncState::DeliveryUnknown, Some(FailureKind::Unrecognized)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn custom_action_queued_before_a_restart_is_kept_and_sent_afterwards() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.db");
+    {
+        let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), Default::default());
+        put(&rig, "moments", moment("m1", "t"));
+        rig.db.act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        rig.db.destroy("moments", &rid("m1")).unwrap();
+    }
+    let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), Default::default());
+    assert_eq!(statuses(&rig), [OperationStatus::Pending, OperationStatus::Pending]);
+    rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null}})));
+    rig.transport.enqueue("DeleteMoment", Reply::data(json!({"deleteMoment": {"id": "m1"}})));
+    assert_eq!(rig.sync.flush().await.unwrap().committed(), 2);
 }

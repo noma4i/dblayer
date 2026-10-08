@@ -172,3 +172,81 @@ fn updates_line_rules() {
     assert_eq!(failure_in("  remote :feed do\n    query Q\n    updates E\n    updates F\n  end"), (10, "`updates` is declared twice".to_string()));
     assert_eq!(failure_in("  live :events do\n    subscription E\n  end"), (7, "unknown word `live`".to_string()));
 }
+
+#[test]
+fn on_failure_accepts_keep_and_rollback_only() {
+    let message = "`on_failure` must be `:keep` or `:rollback`".to_string();
+    assert_eq!(failure_in("  create with: A, on_failure: :ghost"), (7, message.clone()));
+    assert_eq!(failure_in("  update with: A, on_failure: 1"), (7, message.clone()));
+    assert_eq!(failure_in("  destroy with: A, on_failure: :retry"), (7, message.clone()));
+    assert_eq!(failure_in("  action :x do\n    mutation M\n    on_failure :ghost\n  end"), (9, message.clone()));
+    assert_eq!(failure_in("  action :x do\n    mutation M\n    on_failure :keep\n    on_failure :keep\n  end"), (10, "`on_failure` is declared twice".to_string()));
+    let valid = "model Sample do\n  schema do\n    string :name\n  end\n  create with: A, on_failure: :keep\n  action :x do\n    mutation M\n    on_failure :rollback\n  end\nend\n";
+    assert!(parse_models(valid).is_ok());
+}
+
+fn ephemeral_failure(lines: &str) -> (usize, String) {
+    failure(&format!("model Sample do\n  schema do\n    string :name\n    ephemeral do\n{lines}\n    end\n  end\nend\n"))
+}
+
+#[test]
+fn ephemeral_fields_check_their_keys_and_values() {
+    assert!(parse_models("model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false, reset_after: 5.seconds\n      string :mood, null: true\n    end\n  end\nend\n").is_ok());
+    assert_eq!(ephemeral_failure("      bool :typing, reset_after: 5.seconds"), (5, "`reset_after` needs `default:`".to_string()));
+    assert_eq!(ephemeral_failure("      bool :typing"), (5, "ephemeral field `typing` needs `default:` or `null: true`".to_string()));
+    assert_eq!(ephemeral_failure("      bool :typing, default: false, index: true"), (5, "ephemeral field `typing` cannot be indexed".to_string()));
+    assert_eq!(ephemeral_failure("      file :photo, null: true"), (5, "ephemeral field `photo` cannot be a file".to_string()));
+    assert_eq!(ephemeral_failure("      bool :typing, default: false, reset_after: 5"), (5, "`reset_after` must be a duration like `5.minutes`".to_string()));
+    assert_eq!(ephemeral_failure("      bool :typing, default: false, optional: true"), (5, "unknown key `optional` for `bool`".to_string()));
+}
+
+#[test]
+fn ephemeral_names_are_unique_across_the_schema_and_the_block_stays_in_schema() {
+    assert_eq!(ephemeral_failure("      bool :name, default: false"), (5, "field `name` is declared twice".to_string()));
+    assert_eq!(ephemeral_failure("      bool :typing, default: false\n      bool :typing, default: true"), (6, "field `typing` is declared twice".to_string()));
+    assert_eq!(failure_in("  ephemeral do\n  end"), (7, "`ephemeral` must be inside a `schema` block".to_string()));
+    assert_eq!(
+        failure("model Sample do\n  schema do\n    string :name\n    ephemeral do\n      ephemeral do\n      end\n    end\n  end\nend\n"),
+        (5, "unknown word `ephemeral`".to_string())
+    );
+}
+
+#[test]
+fn ephemeral_fields_are_not_allowed_in_indexes_scopes_or_inputs() {
+    let indexed = "model Sample do\n  schema do\n    string :name, index: true\n    ephemeral do\n      bool :typing, default: false\n    end\n    index :name, :typing\n  end\nend\n";
+    assert_eq!(failure(indexed), (1, "model Sample: ephemeral field typing cannot be indexed".to_string()));
+    let scoped = "model Sample do\n  schema do\n    string :name, index: true\n    ephemeral do\n      bool :typing, default: false\n    end\n  end\n  scope :typists, params: [:typing], where: { typing: :typing }\nend\n";
+    assert_eq!(failure(scoped), (1, "model Sample: relation typists uses ephemeral field typing".to_string()));
+    let ordered = "model Sample do\n  schema do\n    string :name, index: true\n    ephemeral do\n      bool :typing, default: false\n    end\n  end\n  scope :by_typing, order: { typing: :desc }\nend\n";
+    assert_eq!(failure(ordered), (1, "model Sample: relation by_typing uses ephemeral field typing".to_string()));
+}
+
+#[test]
+fn memory_model_line_checks_storage_and_expire_after() {
+    assert!(parse_models("model Presence, storage: :memory, expire_after: 30.seconds do\n  schema do\n    string :room\n  end\nend\n").is_ok());
+    assert_eq!(failure("model P, storage: :cloud do\n  schema do\n    string :a\n  end\nend\n"), (1, "`storage` must be `:memory` or `:disk`".to_string()));
+    assert_eq!(failure("model P, expire_after: 30 do\n  schema do\n    string :a\n  end\nend\n"), (1, "`expire_after` must be a duration like `5.minutes`".to_string()));
+    assert_eq!(failure("model P, bogus: 1 do\n  schema do\n    string :a\n  end\nend\n"), (1, "unknown key `bogus` for `model`".to_string()));
+    assert_eq!(
+        failure("model P, expire_after: 30.seconds do\n  schema do\n    string :a\n  end\nend\n"),
+        (1, "model P: expire_after needs storage: :memory".to_string())
+    );
+    assert_eq!(
+        failure("model P, storage: :memory do\n  schema do\n    string :a\n    file :photo, null: true\n  end\nend\n"),
+        (1, "model P: memory model has file field photo".to_string())
+    );
+    assert_eq!(
+        failure("model P, storage: :memory do\n  schema do\n    string :a\n  end\n  create with: CreateP\nend\n"),
+        (1, "model P: memory model declares action create".to_string())
+    );
+}
+
+#[test]
+fn updates_set_is_a_hash_of_ephemeral_values() {
+    let model = |set: &str| {
+        format!("model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false\n    end\n  end\n  remote :one do\n    query One\n    updates Typing, set: {set}\n  end\nend\n")
+    };
+    assert!(parse_models(&model("{ typing: true }")).is_ok());
+    assert_eq!(failure(&model(":typing")), (10, "`set` must be a hash like `{ field: :param }`".to_string()));
+    assert_eq!(failure(&model("{ name: true }")), (1, "model Sample: relation one sets name, which is not an ephemeral field".to_string()));
+}

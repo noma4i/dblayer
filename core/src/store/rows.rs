@@ -230,6 +230,12 @@ impl<'a> Reader<'a> {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    pub fn scopes_of(&self, model: &str, row_id: &str) -> Result<Vec<String>, StoreError> {
+        let mut statement = self.connection.prepare_cached("SELECT scope_key FROM scope_member WHERE model = ?1 AND row_id = ?2")?;
+        let keys = statement.query_map(params![model, row_id], |row| row.get(0))?;
+        Ok(keys.collect::<Result<_, _>>()?)
+    }
+
     pub fn count_members(&self, model: &str, scope_key: &str) -> Result<i64, StoreError> {
         Ok(self.connection.query_row(
             "SELECT COUNT(*) FROM scope_member WHERE model = ?1 AND scope_key = ?2",

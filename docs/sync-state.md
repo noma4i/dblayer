@@ -6,11 +6,11 @@ Every record knows whether the server has seen it. The state is live like everyt
 
 | Property | Meaning |
 | -------- | ------- |
-| `sync.state` | `synced`, `pending`, `sending` or `failed` |
+| `sync.state` | `synced`, `pending`, `sending`, `failed` or `deliveryUnknown` |
 | `sync.actions` | actions waiting for the server, in order (`create`, `update`, `destroy`, custom actions) |
 | `sync.dirtyFields` | fields changed locally and not yet confirmed |
-| `sync.error` | the last error (kind and text) when the state is `failed` |
-| `sync.attempts` | how many times sending was tried |
+| `sync.error` | the last error (`kind` and `message`) when the state is `failed` or `deliveryUnknown` |
+| `sync.attempts` | how many times sending was tried since the last `retry()` |
 | `sync.since` | when the record entered this state |
 | `sync.isRefreshing` | the record is being reloaded from the server right now |
 | `isLocal` | the record has a temporary id and the server does not know it yet |
@@ -19,9 +19,12 @@ Every record knows whether the server has seen it. The state is live like everyt
 | State | When |
 | ----- | ---- |
 | `synced` | nothing is waiting for the server |
-| `pending` | a change is queued and sending has not started (including no network) |
-| `sending` | the change is on its way and no answer has arrived |
-| `failed` | the server refused the change, or the answer could not be understood, and the record is kept for you to decide |
+| `pending` | a change is queued and sending has not started |
+| `sending` | the request is on its way and no answer has arrived |
+| `failed` | the server refused the change and the record is kept for you to decide |
+| `deliveryUnknown` | the request was sent and no answer was seen: the connection broke, the server returned an error status, or the answer could not be understood |
+
+The error `kind` is `network`, `server`, `rejected` or `unrecognized`.
 
 ## Example: a moment that is still being sent
 
@@ -33,7 +36,7 @@ struct MomentRow: View {
     HStack {
       Text(moment.text)
       if moment.isLocal { ProgressView() }
-      if moment.sync.state == .failed {
+      if moment.sync.state == .failed || moment.sync.state == .deliveryUnknown {
         Button("Retry") { Task { await moment.retry() } }
       }
     }
@@ -47,7 +50,7 @@ fun MomentRow(moment: Moment) {
   Row {
     Text(moment.text)
     if (moment.isLocal) CircularProgressIndicator()
-    if (moment.sync.state == SyncState.Failed) {
+    if (moment.sync.state == SyncState.Failed || moment.sync.state == SyncState.DeliveryUnknown) {
       Button(onClick = { scope.launch { moment.retry() } }) { Text("Retry") }
     }
   }
@@ -72,7 +75,17 @@ Moment.unsynced        // everything not yet confirmed
 Moment.failed          // records waiting for a decision
 ```
 
-Use them for an "unsent" banner, a retry-all button or a badge with the number of pending changes.
+Use them for an "unsent" banner, a retry-all button or a badge with the number of pending changes. `sync` is a reserved name: a model cannot have a field called `sync`.
+
+## A mutation is sent once
+
+A mutation that has been handed to the transport is never sent again by itself. A network error, a server error status and an app restart all leave it as it is, because the server may already have applied it. Only you send it again, with `retry()`. Loads (queries) are different: they are retried within a budget, see [server sync](server-sync.md).
+
+| How the send ends | State | What happens to the record |
+| ----------------- | ----- | -------------------------- |
+| The server confirms | `synced` | the server row replaces the local one, a temporary id is swapped for the real one |
+| The server refuses (GraphQL errors, a 4xx status) | `failed` with `on_failure: :keep`, otherwise gone | with `:rollback` the change is rolled back in one commit and the error is reported |
+| No answer (network error, 5xx status, unreadable answer) | `deliveryUnknown` | the record stays as it is, whatever `on_failure` says, because the change may have reached the server |
 
 ## What happens when the server refuses
 
@@ -85,21 +98,26 @@ You choose per action, in the model file:
 
 ```ruby
 create with: CreateMessage, on_failure: :keep
+
+action :like do
+  mutation LikeMoment
+  on_failure :keep
+end
 ```
 
-A kept record has two gestures:
+A record in `failed` or `deliveryUnknown` has two gestures:
 
 ```swift
-await message.retry()     // back to pending, attempts reset
+await message.retry()     // back to pending, attempts reset, sent again
 await message.discard()   // roll back the local change and drop it from the queue
 ```
 
 ```kotlin
-message.retry()     // back to pending, attempts reset
+message.retry()     // back to pending, attempts reset, sent again
 message.discard()   // roll back the local change and drop it from the queue
 ```
 
-A failed record does not block other records in the queue.
+Later changes to the same record wait behind a `failed` or `deliveryUnknown` change and are sent after `retry()`. Other records are not blocked. `discard()` of a created record also drops the changes queued on it.
 
 ## Refreshing
 
@@ -111,6 +129,11 @@ Two kinds of refreshing exist:
 ## Guarantees
 
 - The state is part of every delivery: a state change without a data change still reaches observers, in order.
-- A record created offline stays `pending` across restarts and is sent when the network is back.
+- The state is written in the same commit that changes the queue, so a reader never sees a queued change without its state.
+- Every queued change is durable: a record created offline stays `pending` across restarts and is sent when the queue next runs, for example after a reconnect. A change that was `sending` when the app stopped is `deliveryUnknown` after the restart.
 - When the server answers, the temporary id is replaced by the real one in one commit and the state becomes `synced`. Observers see the swap as `replaced`.
 - Rows of other models that point at the temporary id are updated in the same commit.
+
+## Uploads
+
+A file upload is a pending operation of its record. While it runs, `record.sync.state` is `pending` or `sending`, and `record.upload` adds the stage, the sent bytes and the fraction. `retry()` and `discard()` work the same way. See [Files](files.md#uploads).

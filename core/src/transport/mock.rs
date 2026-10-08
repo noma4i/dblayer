@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc::{self, UnboundedSender};
 
 use super::error::TransportError;
+use super::put::{PutRequest, PutResponse};
 use super::request::{GraphQLError, GraphQLRequest, Response};
 use super::subscription::{Subscription, SubscriptionEvent, SubscriptionHandle};
 use super::Transport;
@@ -55,8 +56,46 @@ impl Reply {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedPut {
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PutReply {
+    delay: Duration,
+    result: Result<PutResponse, TransportError>,
+}
+
+impl PutReply {
+    pub fn etag(etag: &str) -> Self {
+        Self { delay: Duration::ZERO, result: Ok(PutResponse::with_etag(etag)) }
+    }
+
+    pub fn status(status: u16) -> Self {
+        Self::fail(TransportError::Http { status, body: String::new() })
+    }
+
+    pub fn fail(error: TransportError) -> Self {
+        Self { delay: Duration::ZERO, result: Err(error) }
+    }
+
+    pub fn after(mut self, delay: Duration) -> Self {
+        self.delay = delay;
+        self
+    }
+}
+
+const PUT_STEPS: u32 = 4;
+
 #[derive(Default)]
 struct MockState {
+    puts: HashMap<String, VecDeque<PutReply>>,
+    put_calls: Vec<RecordedPut>,
+    puts_running: usize,
+    puts_peak: usize,
     replies: HashMap<String, VecDeque<Reply>>,
     scripts: HashMap<String, Vec<SubscriptionEvent>>,
     senders: HashMap<String, Vec<UnboundedSender<SubscriptionEvent>>>,
@@ -92,6 +131,22 @@ impl MockTransport {
 
     pub fn disconnect(&self, operation_name: &str) {
         self.lock().senders.remove(operation_name);
+    }
+
+    pub fn enqueue_put(&self, url: &str, reply: PutReply) {
+        self.lock().puts.entry(url.to_string()).or_default().push_back(reply);
+    }
+
+    pub fn put_calls(&self) -> Vec<RecordedPut> {
+        self.lock().put_calls.clone()
+    }
+
+    pub fn put_count(&self, url: &str) -> usize {
+        self.lock().put_calls.iter().filter(|call| call.url == url).count()
+    }
+
+    pub fn parallel_puts_peak(&self) -> usize {
+        self.lock().puts_peak
     }
 
     pub fn calls(&self) -> Vec<RecordedCall> {
@@ -137,8 +192,45 @@ impl MockTransport {
     }
 }
 
+impl MockTransport {
+    async fn transfer(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
+        let length = request.body.len() as u64;
+        let reply = {
+            let mut state = self.lock();
+            state.put_calls.push(RecordedPut { url: request.url.clone(), headers: request.headers.clone(), body: request.body.clone() });
+            state.puts_running += 1;
+            state.puts_peak = state.puts_peak.max(state.puts_running);
+            match state.puts.get_mut(&request.url) {
+                Some(queue) if queue.len() > 1 => queue.pop_front(),
+                Some(queue) => queue.front().cloned(),
+                None => None,
+            }
+        };
+        let reply = reply.unwrap_or_else(|| PutReply::etag(&format!("etag:{}", request.url)));
+        let run = async {
+            for step in 1..=PUT_STEPS {
+                if !reply.delay.is_zero() {
+                    tokio::time::sleep(reply.delay / PUT_STEPS).await;
+                }
+                (request.sent)(length * u64::from(step) / u64::from(PUT_STEPS));
+            }
+            reply.result.clone()
+        };
+        let outcome = tokio::select! {
+            result = run => result,
+            () = request.cancel.cancelled() => Err(TransportError::Interrupted("cancelled".to_string())),
+        };
+        self.lock().puts_running -= 1;
+        outcome
+    }
+}
+
 #[async_trait]
 impl Transport for MockTransport {
+    async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
+        self.transfer(request).await
+    }
+
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.reply(CallKind::Query, request).await
     }

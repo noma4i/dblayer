@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 
 #[test]
 fn drop_scope_on_empty_scope_returns_zero() {

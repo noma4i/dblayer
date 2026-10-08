@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use crate::commit::OperationStatus;
 use crate::schema::{AssociationKind, AssociationSpec, DeclarationError};
@@ -10,7 +10,7 @@ fn assert_send_sync<T: Send + Sync>() {}
 #[test]
 fn db_and_subscription_are_send_and_sync() {
     assert_send_sync::<Db>();
-    assert_send_sync::<Subscription>();
+    assert_send_sync::<ObserverHandle>();
 }
 
 #[test]
@@ -45,21 +45,21 @@ fn rows_and_operations_survive_a_reopen() {
 }
 
 #[test]
-fn fsck_recovers_interrupted_request_operations_on_open() {
+fn fsck_keeps_unsent_operations_and_marks_started_ones_unknown_on_open() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
     {
         let db = Db::open(&path, all_specs(), None).unwrap();
         db.execute_for_test(
-            "INSERT INTO op (action_key, action_mode, status, row_ids, input, transport_started, created_at) VALUES \
-             ('users:rename', 'request', 'pending', x'5b5d', x'7b7d', 0, 1), \
-             ('users:rename', 'request', 'pending', x'5b5d', x'7b7d', 1, 2), \
-             ('users:create', 'durable', 'pending', x'5b5d', x'7b7d', 0, 3)",
+            "INSERT INTO op (action_key, status, row_ids, input, transport_started, created_at, since) VALUES \
+             ('users:rename', 'pending', x'5b5d', x'7b7d', 0, 1, 1), \
+             ('users:rename', 'pending', x'5b5d', x'7b7d', 1, 2, 2), \
+             ('users:create', 'pending', x'5b5d', x'7b7d', 0, 3, 3)",
         );
     }
     let db = Db::open(&path, all_specs(), None).unwrap();
     let statuses: Vec<OperationStatus> = db.outbox().unwrap().iter().map(|entry| entry.operation.status).collect();
-    assert_eq!(statuses, vec![OperationStatus::Failed, OperationStatus::DeliveryUnknown, OperationStatus::Pending]);
+    assert_eq!(statuses, vec![OperationStatus::Pending, OperationStatus::DeliveryUnknown, OperationStatus::Pending]);
 }
 
 #[test]

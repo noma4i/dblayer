@@ -4,7 +4,6 @@ use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 use std::collections::HashSet;
 use crate::identity::RowId;
-use crate::schema::ActionMode;
 use rusqlite::Connection;
 
 fn database() -> Connection {
@@ -14,7 +13,7 @@ fn database() -> Connection {
 }
 
 fn operation(row: &str, status: OperationStatus) -> Operation {
-    let mut operation = Operation::new("messages.send", ActionMode::Request, vec![RowId::new(row).unwrap()], 0, 1);
+    let mut operation = Operation::new("messages.send", vec![RowId::new(row).unwrap()], 0, 1);
     operation.status = status;
     operation
 }
@@ -34,8 +33,6 @@ fn append_stores_action_and_status_then_status_transport_and_delete_apply() {
     assert_eq!(stored(&connection, first), Some(("messages.send".into(), "pending".into(), 0)));
     set_status(&connection, first, OperationStatus::Committed).unwrap();
     assert_eq!(stored(&connection, first).unwrap().1, "committed");
-    mark_transport(&connection, second).unwrap();
-    assert_eq!(stored(&connection, second).unwrap().2, 1);
     delete_operation(&connection, second).unwrap();
     assert_eq!(stored(&connection, second), None);
 }
@@ -62,6 +59,7 @@ fn open_operations_restores_pending_operation_and_excludes_committed() {
     pending.temp_id = Some(RowId::new("3").unwrap());
     pending.dedupe_key = Some("k".into());
     pending.created_at = 9;
+    pending.since = 9;
     let seq = append_operation(&connection, &pending, b"{}").unwrap();
     let loaded = open_operations(&connection).unwrap();
     assert_eq!(loaded.len(), 1);
@@ -121,7 +119,7 @@ fn op_columns_match_spec_and_nullability() {
     let names: Vec<&str> = columns.iter().map(|c| c.0.as_str()).collect();
     assert_eq!(names, OP_COLUMNS);
     let nullable: Vec<&str> = columns.iter().filter(|c| c.1).map(|c| c.0.as_str()).collect();
-    assert_eq!(nullable, ["temp_id", "base_revision", "dedupe_key", "rollback"]);
+    assert_eq!(nullable, ["temp_id", "base_revision", "dedupe_key", "rollback", "error", "upload"]);
 }
 
 fn with_messages_table() -> Connection {
@@ -161,7 +159,7 @@ fn apply_fsck_quarantines_and_removes_orphan_temp_rows() {
 }
 
 fn create_operation(connection: &Connection, temp: &str, input: &[u8]) -> OperationId {
-    let mut operation = Operation::new("messages:create", ActionMode::Durable, vec![RowId::new(temp).unwrap()], 0, 1);
+    let mut operation = Operation::new("messages:create", vec![RowId::new(temp).unwrap()], 0, 1);
     operation.temp_id = Some(RowId::new(temp).unwrap());
     let seq = append_operation(connection, &operation, input).unwrap();
     OperationId(seq)

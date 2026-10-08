@@ -1,11 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::identity::{RowId, RowRef};
+use crate::syncstate::SyncStamp;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Stamp {
     pub revision: i64,
+    pub sync: SyncStamp,
     pub related: Vec<(RowRef, i64)>,
+    pub ephemeral: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

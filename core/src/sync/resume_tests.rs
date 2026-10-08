@@ -1,5 +1,5 @@
 use super::load::LoadOptions;
-use super::support::*;
+use super::rig::*;
 use super::SyncConfig;
 use crate::pacing::ResumeDrain;
 use serde_json::{json, Map};

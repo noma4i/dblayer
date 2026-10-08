@@ -5,21 +5,22 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::ddl::table_name;
 use crate::files::FileDirectories;
 use crate::identity::{Generation, RowId};
-use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
+use crate::commit::{CommitEnvelope, EntityOp, RowChangeKind, WriteOrigin};
 use crate::identity::ModelKey;
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, OutboxQueue};
-use crate::pacing::Clock;
+use crate::syncstate::rebuild_sync;
+use crate::pacing::{Clock, Counters};
 use crate::schema::{validate_models, ModelSpec};
 use crate::store::{Reader, Store, StoreError, StoreEvent};
 
-use super::cache::{CacheStats, RowCache};
-use super::diagnostics::{Counters, Diagnostics};
+use super::cache::RowCache;
 use super::dispatch::{Dispatch, Event};
+use super::ephemeral::Ephemerals;
 use super::error::DbError;
 use super::listeners::Executor;
-use super::observe::Observers;
+use super::observe::{ObserverCensus, Observers};
 
-const RESERVED_MEMBERS: [&str; 9] = ["id", "find", "where", "save", "count", "exists", "first", "observe", "order"];
+const RESERVED_MEMBERS: [&str; 12] = ["id", "find", "where", "save", "count", "exists", "first", "observe", "order", "sync", "retry", "discard"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DbConfig {
@@ -37,8 +38,9 @@ pub(crate) struct Shared {
     pub specs: BTreeMap<String, ModelSpec>,
     pub cache: Arc<Mutex<RowCache>>,
     pub observers: Mutex<Observers>,
-    pub counters: Arc<Counters>,
+    pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
+    pub ephemeral: Arc<Ephemerals>,
     pub executor: Arc<Executor>,
     pub files: FileDirectories,
     pub files_gate: Mutex<()>,
@@ -51,6 +53,7 @@ pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 impl Drop for Shared {
     fn drop(&mut self) {
         self.dispatch.close();
+        self.ephemeral.close();
         self.executor.close();
     }
 }
@@ -101,27 +104,31 @@ impl Db {
         store.boot(&models, data_version)?;
         recover_operations(&store, &models)?;
         store.mark_ready();
+        let ephemeral = Ephemerals::new(&models);
         let specs = models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect();
         let cache = Arc::new(Mutex::new(RowCache::new(config.cache_rows)));
         let dispatch = Arc::new(Dispatch::new());
-        store.set_hook(commit_hook(cache.clone(), dispatch.clone()));
+        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone()));
         let shared = Arc::new(Shared {
             store,
             specs,
             cache,
             observers: Mutex::new(Observers::default()),
-            counters: Arc::new(Counters::default()),
+            counters: Arc::new(Mutex::new(Counters::default())),
             executor: Executor::new(dispatch.busy.clone()),
             dispatch: dispatch.clone(),
+            ephemeral: ephemeral.clone(),
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
             files_gate: Mutex::new(()),
         });
         Dispatch::start(dispatch, Arc::downgrade(&shared));
+        Ephemerals::start(ephemeral, Arc::downgrade(&shared));
         Ok(Db { shared })
     }
 
     pub fn set_clock(&self, clock: Arc<dyn Clock>) {
-        self.shared.store.set_clock(clock);
+        self.shared.ephemeral.lock().clock = clock.clone();
+        self.shared.store.lock().clock = clock;
     }
 
     pub fn generation(&self) -> Generation {
@@ -140,22 +147,17 @@ impl Db {
         self.shared.spec(model)
     }
 
-    pub fn cache_stats(&self) -> CacheStats {
-        locked(&self.shared.cache).stats()
+    pub fn counters(&self) -> Counters {
+        self.shared.store.counters() + locked(&self.shared.counters).clone() + locked(&self.shared.cache).counters()
     }
 
-    pub fn diagnostics(&self) -> Diagnostics {
+    pub fn observer_census(&self) -> ObserverCensus {
         let observers = locked(&self.shared.observers);
-        Diagnostics {
-            observation_reads: self.shared.counters.observation_reads(),
-            observer_calls: self.shared.counters.observer_calls(),
-            observed_queries: observers.query_count(),
-            subscriptions: observers.subscription_count(),
-        }
+        ObserverCensus { observed_queries: observers.query_count(), subscriptions: observers.subscription_count() }
     }
 }
 
-fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>) -> crate::store::StoreHook {
+fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>) -> crate::store::StoreHook {
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             {
@@ -164,6 +166,18 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>) -> crate::s
                     cache.evict(change.row.model.as_str(), change.row.id.as_str());
                 }
             }
+            {
+                let mut values = ephemeral.lock();
+                for change in &result.rows {
+                    let (model, id) = (change.row.model.as_str(), change.row.id.as_str());
+                    if change.kind == RowChangeKind::Destroyed {
+                        values.forget(model, id);
+                    } else {
+                        values.track(model, id);
+                    }
+                }
+            }
+            ephemeral.nudge();
             dispatch.push(Event::of_commit(result));
         }
         StoreEvent::Reset { revision, models } => {
@@ -174,6 +188,7 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>) -> crate::s
                     None => cache.clear(),
                 }
             }
+            ephemeral.lock().clear(models.as_deref());
             dispatch.push(Event::of_reset(revision, models.as_deref()));
         }
     })
@@ -200,6 +215,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
         }
         let plan = fsck_plan(&operations, &known, &temp_rows, &temp_rows, &open_row_ids);
         apply_fsck(&inner.connection, &plan, &tables)?;
+        rebuild_sync(&inner.connection)?;
         rebuilt_rows(&inner.connection, &plan, &operations, &known)?
     };
     if rebuilt.is_empty() {

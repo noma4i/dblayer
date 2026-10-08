@@ -1,16 +1,14 @@
 use std::time::Duration;
 
 use super::error::TransportError;
+use crate::pacing::Backoff;
 
 const RETRIABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
-const MAX_DELAY_SECONDS: u64 = 30;
+
+pub const RETRY_BACKOFF: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
 
 pub fn retriable_codes() -> &'static [&'static str] {
     &RETRIABLE_CODES
-}
-
-pub fn retry_delay(attempt: u32) -> Duration {
-    Duration::from_secs(2u64.saturating_pow(attempt).min(MAX_DELAY_SECONDS))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +49,7 @@ impl RetryClass {
         }
     }
 
-    pub fn allows_retry(self, attempt: u32, is_mutation: bool) -> bool {
-        !is_mutation && attempt < self.budget()
+    pub fn allows_retry(self, attempt: u32) -> bool {
+        attempt < self.budget()
     }
 }

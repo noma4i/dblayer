@@ -1,10 +1,10 @@
 use super::variables::mutation_variables;
 use crate::identity::RowId;
-use crate::schema::{ActionDeclaration, ActionMode, RootShape};
+use crate::schema::{ActionDeclaration, RootShape};
 use serde_json::json;
 
 fn declaration(variables: &[(&str, &str)]) -> ActionDeclaration {
-    let mut declared = ActionDeclaration::new("like", ActionMode::Request, RootShape::Upsert);
+    let mut declared = ActionDeclaration::new("like", RootShape::Upsert);
     declared.variables = variables.iter().map(|(variable, field)| (variable.to_string(), field.to_string())).collect();
     declared
 }

@@ -37,9 +37,3 @@ impl ResponseShape {
         }
     }
 }
-
-impl ResponseOutcome {
-    pub fn allows_retry(self) -> bool {
-        self == ResponseOutcome::MarkFailed
-    }
-}

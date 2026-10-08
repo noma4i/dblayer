@@ -11,7 +11,6 @@ pub enum SendResult {
     Rejected(String),
     DeliveryUnknown,
     Quarantined,
-    Deferred,
     Skipped(SkipReason),
     Discarded,
 }

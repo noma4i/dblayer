@@ -1,7 +1,7 @@
 use super::land::{Landed, Landing};
 use super::load::DiscardReason;
 use super::normalize::Normalized;
-use super::support::*;
+use super::rig::*;
 use crate::commit::ScopeRef;
 use crate::identity::ModelKey;
 use crate::transport::FetchAttempt;

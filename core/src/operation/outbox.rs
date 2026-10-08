@@ -42,7 +42,7 @@ pub fn transport_verdict(entry: Option<&OutboxEntry>, has_in_flight: bool, head_
 }
 
 pub fn blocks_followers(entry: &OutboxEntry) -> bool {
-    recovered_status(entry.transport_started, entry.status) == OperationStatus::DeliveryUnknown
+    matches!(recovered_status(entry.transport_started, entry.status), OperationStatus::DeliveryUnknown | OperationStatus::Failed)
 }
 
 pub fn ready(entries: &[OutboxEntry]) -> Vec<i64> {

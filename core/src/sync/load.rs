@@ -9,7 +9,7 @@ use crate::pacing::{selected_policy, FetchVerdict};
 use crate::read::{LoadMoreVerdict, PageChain};
 use crate::schema::{Coverage, PageDirection, RemoteShape, RemoteSpec};
 use crate::store::window_key;
-use crate::transport::{retry_delay, FetchAttempt, FetchReport, GraphQLRequest, Response, ResponseOutcome, RetryClass};
+use crate::transport::{FetchAttempt, FetchReport, GraphQLRequest, Response, ResponseOutcome, RetryClass, RETRY_BACKOFF};
 use crate::value::{normalize_relation_params, relation_scope_key, ScalarKind};
 
 use super::error::SyncError;
@@ -247,10 +247,10 @@ impl Inner {
                 }
                 Err(error) => (RetryClass::of_error(&error), SyncError::Transport(error.to_string())),
             };
-            if !class.allows_retry(attempt, false) {
+            if !class.allows_retry(attempt) {
                 return Err(error);
             }
-            tokio::time::sleep(retry_delay(attempt)).await;
+            tokio::time::sleep(RETRY_BACKOFF.delay(attempt)).await;
             attempt += 1;
         }
     }

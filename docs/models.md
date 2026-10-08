@@ -52,6 +52,83 @@ Field options:
 
 `index :a, :b` inside `schema` declares a composite index over fields that are already indexed.
 
+## Ephemeral fields
+
+An `ephemeral do ... end` block inside `schema` declares values that live only in memory. They are never written to SQLite and do not survive a restart.
+
+```ruby
+model User do
+  schema do
+    string :name
+
+    ephemeral do
+      bool   :typing, default: false, reset_after: 5.seconds
+      string :mood,   null: true
+    end
+  end
+
+  remote :profile do
+    query UserProfile
+    updates UserTyping, set: { typing: true }
+  end
+end
+```
+
+| Option | Meaning |
+| ------ | ------- |
+| `default: value` | value before the first write and after a reset. Required unless `null: true` |
+| `null: true` | the default is null |
+| `reset_after: 5.seconds` | after this time without a write the value returns to `default`. Needs `default:` |
+
+- Reads see the values: `user.typing` is part of the row, and `select` returns it.
+- A write restarts the timer. When the time is up the value returns to `default`.
+- A write and a reset reach observers as a normal change with the row in `diff.updated`. Neither creates a database revision.
+- Deleting a row removes its values. Writing the value a field already holds delivers nothing.
+- `where`, `order`, `index` and `scope` cannot use an ephemeral field, because those run in SQL. `dblayer-gen` reports it with file and line.
+- `updates Subscription, set: { typing: true }` writes the listed values to the row named by each subscription event.
+
+Write from code:
+
+```swift
+try await user.set(typing: true)
+```
+
+```kotlin
+user.set(typing = true)
+```
+
+## Memory models
+
+`model Presence, storage: :memory` keeps the whole model in memory. Rows are read, observed and loaded through `remote` like any other model. They are not written to the database file and are empty after a restart.
+
+```ruby
+model Presence, storage: :memory, expire_after: 1.minute do
+  schema do
+    id     :userId, index: true
+    string :room
+  end
+
+  remote :online do
+    query PresenceOnline
+    list
+    fresh_for 30.seconds
+  end
+end
+```
+
+- `expire_after:` is optional. A row that has not changed for that time is deleted, and observers receive it in `diff.removed`.
+- A memory model has no `file` fields and no `create`, `update`, `destroy` or `action` lines, so it has no outbox.
+- Use it for search results, prices and other data that is fetched, shown and dropped.
+
+```swift
+@Live var online: [Presence]
+_online = Live(Presence.where(Presence.room == "lobby"))
+```
+
+```kotlin
+val online by Presence.where(Presence.room eq "lobby").collectAsLive()
+```
+
 ## Associations
 
 | Word | Options |

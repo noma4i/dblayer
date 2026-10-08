@@ -201,7 +201,7 @@ fn strict_row_table_rejects_wrong_column_type() {
 fn core_migration_creates_tables_and_indexes() {
     let connection = core_connection();
     let tables: BTreeSet<String> =
-        ["manifest", "scope_member", "tombstone", "query_window", "op", "op_once", "quarantine"].map(String::from).into();
+        ["manifest", "scope_member", "tombstone", "query_window", "op", "op_once", "quarantine", "row_sync"].map(String::from).into();
     let indexes: BTreeSet<String> = [
         "scope_walk",
         "scope_order_unique",
@@ -227,7 +227,7 @@ fn core_constraints_reject_duplicate_scope_order_and_unknown_op_status() {
     let duplicate = connection.execute(scope, ["2"]);
     let op = |status: &str| {
         connection.execute(
-            "insert into op (action_key, action_mode, status, row_ids, input, created_at) values ('Chat:send', 'request', ?1, x'00', x'00', 0)",
+            "insert into op (action_key, status, row_ids, input, created_at, since) values ('Chat:send', ?1, x'00', x'00', 0, 0)",
             [status],
         )
     };
@@ -242,7 +242,7 @@ fn open_dedupe_key_is_unique_only_while_open() {
     let connection = core_connection();
     let insert = |status: &str, dedupe: Option<&str>| {
         connection.execute(
-            "insert into op (action_key, action_mode, status, row_ids, input, created_at, dedupe_key) values ('Chat:send', 'durable', ?1, x'00', x'00', 0, ?2)",
+            "insert into op (action_key, status, row_ids, input, created_at, since, dedupe_key) values ('Chat:send', ?1, x'00', x'00', 0, 0, ?2)",
             rusqlite::params![status, dedupe],
         )
     };
@@ -265,7 +265,6 @@ fn core_table_columns_match_spec() {
     let expected_op = [
         "seq",
         "action_key",
-        "action_mode",
         "status",
         "row_ids",
         "temp_id",
@@ -275,6 +274,10 @@ fn core_table_columns_match_spec() {
         "created_at",
         "dedupe_key",
         "rollback",
+        "attempts",
+        "error",
+        "since",
+        "upload",
     ];
     assert_eq!(op_names, expected_op.into_iter().collect());
     assert!(!op["dedupe_key"].1 && !op["rollback"].1 && !op["temp_id"].1 && !op["base_revision"].1);
@@ -316,6 +319,39 @@ fn prepared_connection_uses_normal_sync_and_no_foreign_keys() {
     let foreign_keys: i64 = connection.query_row("pragma foreign_keys", [], |row| row.get(0)).unwrap();
 
     assert_eq!((synchronous, foreign_keys), (1, 0));
+}
+
+#[test]
+fn prepared_connection_keeps_temp_tables_in_memory() {
+    let connection = Connection::open_in_memory().unwrap();
+    prepare_connection(&connection).unwrap();
+    let temp_store: i64 = connection.query_row("pragma temp_store", [], |row| row.get(0)).unwrap();
+
+    assert_eq!(temp_store, 2);
+}
+
+#[test]
+fn memory_models_get_temp_tables_with_their_indexes() {
+    let model = ModelSpec { storage: crate::schema::Storage::Memory, ..messages() };
+    let connection = core_connection();
+    create_model_tables(&connection, &[model]).unwrap();
+    let temp: i64 = connection.query_row("select count(*) from sqlite_temp_master where name = 'row_messages'", [], |row| row.get(0)).unwrap();
+    let temp_indexes: i64 = connection.query_row("select count(*) from sqlite_temp_master where type = 'index' and tbl_name = 'row_messages'", [], |row| row.get(0)).unwrap();
+
+    assert_eq!(temp, 1);
+    assert!(temp_indexes >= 4);
+    assert!(!names(&connection, "table").contains("row_messages"));
+}
+
+#[test]
+fn ephemeral_fields_and_storage_do_not_change_the_fingerprint() {
+    let plain = fingerprint(&messages());
+    let with_ephemeral = ModelSpec {
+        ephemeral: vec![crate::schema::EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false)))],
+        ..messages()
+    };
+
+    assert_eq!(fingerprint(&with_ephemeral), plain);
 }
 
 #[test]

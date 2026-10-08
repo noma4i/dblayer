@@ -1,6 +1,5 @@
 use super::*;
 use crate::identity::RowId;
-use crate::schema::ActionMode;
 use serde_json::{json, Map, Value};
 
 fn fields(value: Value) -> Map<String, Value> {
@@ -27,9 +26,8 @@ fn round_trips_nested_values_and_rejects_empty_fields() {
 }
 
 #[test]
-fn make_builds_durable_pending_operation() {
-    let request = DurableRequest::make("message:create", &fields(json!({"body": "hello"})), None, 12).unwrap();
-    assert_eq!(request.operation.mode, ActionMode::Durable);
+fn make_builds_pending_operation() {
+    let request = EncodedOperation::make("message:create", &fields(json!({"body": "hello"})), None, 12).unwrap();
     assert_eq!(request.operation.status, OperationStatus::Pending);
     assert_eq!(request.operation.created_at, 12);
     assert_eq!(decode_input(&request.input).unwrap(), fields(json!({"body": "hello"})));
@@ -38,19 +36,19 @@ fn make_builds_durable_pending_operation() {
 #[test]
 fn temp_id_is_stored_in_operation_rows_and_field() {
     let temp = RowId::new("temp-1").unwrap();
-    let request = DurableRequest::make("message:create", &fields(json!({"body": "hello"})), Some(temp.clone()), 12).unwrap();
+    let request = EncodedOperation::make("message:create", &fields(json!({"body": "hello"})), Some(temp.clone()), 12).unwrap();
     assert_eq!(request.operation.row_ids, [temp.clone()]);
     assert_eq!(request.operation.temp_id, Some(temp));
 }
 
 #[test]
 fn empty_fields_propagate_input_fault() {
-    assert_eq!(DurableRequest::make("message:create", &Map::new(), None, 12).unwrap_err(), InputFault::EmptyInput);
+    assert_eq!(EncodedOperation::make("message:create", &Map::new(), None, 12).unwrap_err(), InputFault::EmptyInput);
 }
 
 #[test]
 fn resumable_statuses_are_pending_and_delivery_unknown() {
-    let mut request = DurableRequest::make("message:create", &fields(json!({"a": 1})), None, 12).unwrap();
+    let mut request = EncodedOperation::make("message:create", &fields(json!({"a": 1})), None, 12).unwrap();
     assert!(request.is_resumable());
     request.operation.status = OperationStatus::DeliveryUnknown;
     assert!(request.is_resumable());

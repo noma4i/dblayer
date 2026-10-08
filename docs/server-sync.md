@@ -39,7 +39,7 @@ Moment.feed.refresh()            // pull to refresh, replaces in one commit
 
 - Fresh data is not requested again. `fresh_for` sets how long data counts as fresh.
 - Identical parallel loads become one request.
-- Network and server errors are retried within a budget; fatal errors are returned.
+- Network and server errors of a load are retried within a budget; fatal errors are returned. Mutations are never retried by themselves, see [sync state](sync-state.md).
 - A response older than the data already stored never overwrites it.
 - `max_pages` limits how many pages one load takes.
 

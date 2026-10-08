@@ -35,7 +35,7 @@ pub fn sync_tags(context: &SyncContext) -> BTreeMap<String, String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SyncError {
+pub enum SyncFault {
     LandingFailed(String),
     InvalidationFailed(String),
     TrackFailed(String),
@@ -45,29 +45,29 @@ pub enum SyncError {
     RejectedRecord(String),
 }
 
-impl SyncError {
+impl SyncFault {
     pub fn event_name(&self) -> &'static str {
         match self {
-            SyncError::LandingFailed(_) => "landing",
-            SyncError::InvalidationFailed(_) => "invalidation",
-            SyncError::TrackFailed(_) => "track",
-            SyncError::SubscriptionPayloadMismatch => "subscriptionPayloadMismatch",
-            SyncError::SubscriptionDegraded { .. } => "subscriptionDegraded",
-            SyncError::UserResetDiscard { .. } => "userResetDiscard",
-            SyncError::RejectedRecord(_) => "rejectedRecord",
+            SyncFault::LandingFailed(_) => "landing",
+            SyncFault::InvalidationFailed(_) => "invalidation",
+            SyncFault::TrackFailed(_) => "track",
+            SyncFault::SubscriptionPayloadMismatch => "subscriptionPayloadMismatch",
+            SyncFault::SubscriptionDegraded { .. } => "subscriptionDegraded",
+            SyncFault::UserResetDiscard { .. } => "userResetDiscard",
+            SyncFault::RejectedRecord(_) => "rejectedRecord",
         }
     }
 
     pub fn details(&self) -> Option<BTreeMap<String, String>> {
         let single = |name: &str, value: String| Some(BTreeMap::from([(name.to_string(), value)]));
         match self {
-            SyncError::LandingFailed(reason)
-            | SyncError::InvalidationFailed(reason)
-            | SyncError::TrackFailed(reason)
-            | SyncError::RejectedRecord(reason) => single("reason", reason.clone()),
-            SyncError::SubscriptionDegraded { attempts } => single("attempts", attempts.to_string()),
-            SyncError::UserResetDiscard { open_ops } => single("openOps", open_ops.to_string()),
-            SyncError::SubscriptionPayloadMismatch => None,
+            SyncFault::LandingFailed(reason)
+            | SyncFault::InvalidationFailed(reason)
+            | SyncFault::TrackFailed(reason)
+            | SyncFault::RejectedRecord(reason) => single("reason", reason.clone()),
+            SyncFault::SubscriptionDegraded { attempts } => single("attempts", attempts.to_string()),
+            SyncFault::UserResetDiscard { open_ops } => single("openOps", open_ops.to_string()),
+            SyncFault::SubscriptionPayloadMismatch => None,
         }
     }
 

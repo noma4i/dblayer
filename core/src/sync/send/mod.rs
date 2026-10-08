@@ -3,14 +3,24 @@ mod report;
 mod settle;
 mod variables;
 
+pub(crate) use flush::{Delivery, Sending};
 pub use report::{FlushReport, SendResult, SentOperation, SkipReason};
+
+use crate::identity::RowId;
 
 use super::error::SyncError;
 use super::Sync;
 
 impl Sync {
     pub async fn flush(&self) -> Result<FlushReport, SyncError> {
-        self.inner.flush().await
+        let report = self.inner.flush().await?;
+        self.start_uploads()?;
+        Ok(report)
+    }
+
+    pub async fn retry(&self, model: &str, id: &RowId) -> Result<FlushReport, SyncError> {
+        self.inner.db.retry(model, id)?;
+        self.flush().await
     }
 }
 

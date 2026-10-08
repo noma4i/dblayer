@@ -131,6 +131,16 @@ impl Store {
             }
         }
 
+        let memory: Vec<(String, String)> =
+            inner.models.iter().filter(|(_, info)| info.spec.is_memory()).map(|(key, info)| (key.clone(), info.table.clone())).collect();
+        if !memory.is_empty() {
+            let transaction = inner.connection.unchecked_transaction()?;
+            for (model, table) in &memory {
+                wipe_model_cache(&transaction, model, table, false)?;
+            }
+            transaction.commit()?;
+        }
+
         let mut stale_version_drops = 0;
         let version_text = RECORD_VERSION.to_string();
         let sweeps = matches!(verdict, ManifestVerdict::Compatible | ManifestVerdict::CacheOnly { .. })

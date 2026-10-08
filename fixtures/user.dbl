@@ -3,5 +3,15 @@ model User do
     string :name
     file   :avatar,   null: true
     date   :birthday, null: true
+
+    ephemeral do
+      bool   :typing, default: false, reset_after: 5.seconds
+      string :mood,   null: true
+    end
+  end
+
+  remote :profile do
+    query UserProfile
+    updates UserTyping, set: { typing: true }
   end
 end

@@ -24,6 +24,10 @@ pub enum DbError {
     WrongAssociation { model: String, name: String },
     #[error("field {field} of {model} is not a file field")]
     NotFileField { model: String, field: String },
+    #[error("field {field} of {model} is not an ephemeral field")]
+    NotEphemeralField { model: String, field: String },
+    #[error("value for ephemeral field {field} of {model} is invalid")]
+    InvalidEphemeralValue { model: String, field: String },
     #[error("row {id} of {model} does not exist")]
     NotFound { model: String, id: String },
     #[error("origin {0:?} cannot be landed")]

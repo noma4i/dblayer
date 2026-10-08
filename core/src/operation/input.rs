@@ -2,7 +2,6 @@ use serde_json::{Map, Value};
 
 use super::status::{Operation, OperationStatus};
 use crate::identity::RowId;
-use crate::schema::ActionMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum InputFault {
@@ -31,15 +30,15 @@ pub fn input_round_trips(fields: &Map<String, Value>) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DurableRequest {
+pub struct EncodedOperation {
     pub operation: Operation,
     pub input: Vec<u8>,
 }
 
-impl DurableRequest {
+impl EncodedOperation {
     pub fn make(action_key: &str, fields: &Map<String, Value>, temp_id: Option<RowId>, created_at: i64) -> Result<Self, InputFault> {
         let input = encode_input(fields)?;
-        let mut operation = Operation::new(action_key, ActionMode::Durable, temp_id.iter().cloned().collect(), 0, created_at);
+        let mut operation = Operation::new(action_key, temp_id.iter().cloned().collect(), 0, created_at);
         operation.temp_id = temp_id;
         Ok(Self { operation, input })
     }

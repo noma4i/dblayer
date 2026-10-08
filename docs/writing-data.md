@@ -29,7 +29,7 @@ moment.destroy()
 
 `update` keeps fields you did not mention. A patch that changes nothing creates no commit and no queue entry.
 
-Every record carries its sync state (`pending`, `sending`, `synced`, `failed`), so you can show that a new moment is still being sent. See [sync state](sync-state.md).
+Every record carries its sync state (`pending`, `sending`, `synced`, `failed`, `deliveryUnknown`), so you can show that a new moment is still being sent. See [sync state](sync-state.md).
 
 ## Temporary ids
 
@@ -37,11 +37,22 @@ A created row has a temporary id until the server answers. When the response arr
 
 ## Failures
 
-- Network errors are retried with a growing delay.
-- If the connection breaks after sending started, the operation is marked `delivery_unknown` and resolved on the next attempt.
-- A final server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for `retry()` or `discard()` ([sync state](sync-state.md)).
-- Operations that cannot be understood are moved to quarantine instead of being lost.
-- The queue lives in the database, so pending writes survive restarts and are sent after the app reopens.
+- A mutation is sent once. It is never retried by itself, neither after a network error nor after a server error status.
+- If the connection breaks after sending started, or no readable answer arrives, the record is marked `deliveryUnknown` and waits for you.
+- A server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for you.
+- A `failed` or `deliveryUnknown` record is sent again only by `retry()`, or rolled back by `discard()` ([sync state](sync-state.md)).
+- Responses that cannot be understood are moved to quarantine instead of being lost.
+- The queue lives in the database and every queued write is durable, so pending writes survive restarts and are sent when the queue next runs. A write that was `sending` when the app stopped is `deliveryUnknown` after the restart.
+
+```swift
+try await message.retry()      // send the same change again
+try await message.discard()    // roll the change back and drop it
+```
+
+```kotlin
+message.retry()      // send the same change again
+message.discard()    // roll the change back and drop it
+```
 
 ## Custom actions
 

@@ -1,6 +1,6 @@
 use super::error::SyncError;
 use super::subscribe::{EventEffect, SubscriptionDef};
-use super::support::*;
+use super::rig::*;
 use crate::query::Query;
 use crate::transport::{EventSpec, Response, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind};
 use serde_json::json;
@@ -152,7 +152,7 @@ async fn debounced_events_land_once_per_row_after_the_interval() {
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("three".to_string()));
     rig.db.settle();
-    assert_eq!(rig.db.diagnostics().observer_calls, 2);
+    assert_eq!(rig.db.counters().observer_calls, 2);
 }
 
 #[tokio::test(start_paused = true)]

@@ -1,7 +1,7 @@
 use serde_json::{json, Map};
 
 use super::super::load::LoadOptions;
-use super::super::support::*;
+use super::super::rig::*;
 use crate::identity::RowId;
 use crate::transport::Reply;
 

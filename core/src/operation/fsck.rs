@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use super::status::{recovered_status, removes_row, Operation, OperationId, OperationStatus};
 use crate::identity::RowId;
-use crate::schema::ActionMode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FsckAction {
@@ -18,7 +17,7 @@ pub fn fsck_action(operation: &Operation, known_models: &HashSet<String>) -> Fsc
     if !known || operation.status != OperationStatus::Pending {
         return keep;
     }
-    if !operation.transport_started && operation.mode != ActionMode::Request {
+    if !operation.transport_started {
         return keep;
     }
     FsckAction::SetStatus(operation.id, recovered_status(operation.transport_started, operation.status))

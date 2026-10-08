@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use serde_json::json;
 
@@ -37,7 +37,7 @@ fn has_many_count_is_a_count_query() {
     seed_tree(&db);
     let moment = db.find("moments", &rid("m1")).unwrap().unwrap();
     assert_eq!(db.has_many_count("moments", &moment, "vibes").unwrap(), 2);
-    assert_eq!(db.cache_stats().misses, 1);
+    assert_eq!(db.counters().cache_misses, 1);
 }
 
 #[test]

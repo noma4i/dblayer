@@ -19,8 +19,20 @@ fn fixtures_parse_and_validate_together() {
         .collect();
     assert_eq!(
         summary,
-        vec![("Chat", 2, 1, 1), ("Message", 4, 1, 2), ("Moment", 6, 2, 3), ("User", 3, 0, 0), ("Vibe", 3, 0, 0)]
+        vec![("Chat", 2, 1, 1), ("Message", 4, 1, 2), ("Moment", 6, 2, 3), ("Presence", 2, 1, 2), ("User", 3, 0, 1), ("Vibe", 3, 0, 0)]
     );
+}
+
+#[test]
+fn fixtures_declare_an_ephemeral_field_and_a_memory_model() {
+    let models = parse_files(&fixture_paths()).unwrap();
+    let model = |key: &str| models.iter().find(|model| model.key.as_str() == key).unwrap();
+    let typing = model("User").ephemeral_field("typing").unwrap();
+    assert_eq!((typing.field.default.clone(), typing.reset_after.as_deref()), (Some(serde_json::json!(false)), Some("5.seconds")));
+    let updates = model("User").relations[0].remote.as_ref().unwrap().updates.clone().unwrap();
+    assert_eq!(updates.set.get("typing"), Some(&serde_json::json!(true)));
+    let presence = model("Presence");
+    assert_eq!((presence.is_memory(), presence.expire_after.as_deref()), (true, Some("1.minute")));
 }
 
 #[test]

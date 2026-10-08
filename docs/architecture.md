@@ -26,6 +26,7 @@ Data crosses between the core and the platform as JSON strings. The platform dec
 | `query` | Conditions, ordering and SQL compilation |
 | `read` | Landing plans for server data, page chains, loading state |
 | `write`, `operation` | Write plans, cascades, the durable outbox, quarantine |
+| `syncstate` | The stored sync state of every unconfirmed record, derived from the outbox |
 | `db` | The database object: reads, writes, cache, live results, files |
 | `files` | Attachment storage |
 | `sync` | Loading, pagination, mutations, subscriptions, refetching |

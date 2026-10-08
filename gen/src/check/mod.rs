@@ -11,12 +11,14 @@ type Found = (usize, ParseError);
 const SCALAR_WORDS: [&str; 6] = ["string", "num", "int", "bool", "date", "id"];
 const FIELD_WORDS: [&str; 12] =
     ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list", "file"];
+const EPHEMERAL_WORDS: [&str; 11] = ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list"];
 const ASSOCIATION_WORDS: [&str; 4] = ["belongs_to", "has_many", "has_one", "references"];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Context {
     Model,
     Schema,
+    Ephemeral,
     Remote,
     Action,
 }
@@ -41,6 +43,7 @@ enum Want {
     Symbols,
     Hash,
     Duration,
+    Policy,
     Any,
 }
 
@@ -80,6 +83,13 @@ fn field_keys(word: &str) -> Vec<Key> {
     keys
 }
 
+fn ephemeral_keys(word: &str) -> Vec<Key> {
+    let mut keys = field_keys(word);
+    keys.retain(|candidate| !matches!(candidate.name, "optional" | "id_from"));
+    keys.push(key("reset_after", Want::Duration, false));
+    keys
+}
+
 fn word_for(context: Context, word: &str) -> Option<Word> {
     let plain = |shape, keys| Some(Word { shape, keys, block: false, free_keys: false });
     let free = || Some(Word { shape: Shape::Nothing, keys: vec![], block: false, free_keys: true });
@@ -87,13 +97,21 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Model, "schema") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
         (Context::Model, "remote" | "action") => Some(Word { shape: Shape::Name, keys: vec![], block: true, free_keys: false }),
         (Context::Model, "create" | "update") => {
-            plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("input", Want::Hash, false)])
+            plain(
+                Shape::Nothing,
+                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false)],
+            )
         }
-        (Context::Model, "destroy") => plain(Shape::Nothing, vec![key("with", Want::Operation, true)]),
+        (Context::Model, "destroy") => {
+            plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("on_failure", Want::Policy, false)])
+        }
         (Context::Action, "mutation") => plain(Shape::Const, vec![]),
+        (Context::Action, "on_failure") => plain(Shape::Name, vec![]),
         (Context::Action, "input" | "optimistic") => free(),
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
-        (Context::Remote, "updates") => plain(Shape::Const, vec![key("deleted_by", Want::Symbol, false)]),
+        (Context::Remote, "updates") => {
+            plain(Shape::Const, vec![key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false)])
+        }
         (Context::Model, "scope") => plain(
             Shape::Name,
             vec![key("params", Want::Symbols, false), key("where", Want::Hash, false), key("order", Want::Hash, false)],
@@ -110,7 +128,9 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
             plain(Shape::Name, vec![key("model", Want::Const, true), key("key", Want::Symbol, false)])
         }
         (Context::Schema, "index") => plain(Shape::Names, vec![]),
+        (Context::Schema, "ephemeral") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
         (Context::Schema, field) if FIELD_WORDS.contains(&field) => plain(Shape::Name, field_keys(field)),
+        (Context::Ephemeral, field) if EPHEMERAL_WORDS.contains(&field) => plain(Shape::Name, ephemeral_keys(field)),
         (Context::Remote, "query") => plain(Shape::Const, vec![]),
         (Context::Remote, "paginate") => plain(Shape::Int, vec![key("backward", Want::Bool, false)]),
         (Context::Remote, "list") => plain(Shape::Nothing, vec![]),
@@ -155,6 +175,7 @@ fn at(file: usize, line: usize, column: usize, message: String) -> Found {
 fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
     let file = node.file;
     let mut report = |line: usize, column: usize, message: String| errors.push(at(file, line, column, message));
+    check_model_options(node, &mut report);
     let mut schemas = 0;
     let mut member_names = HashSet::new();
     let mut standard_words = HashSet::new();
@@ -173,6 +194,10 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
             if schemas > 1 {
                 report(call.line, call.column, "`schema` is declared twice".to_string());
             }
+        }
+        if call.word == "ephemeral" {
+            report(call.line, call.column, "`ephemeral` must be inside a `schema` block".to_string());
+            continue;
         }
         if call.word != "schema" && FIELD_WORDS.contains(&call.word.as_str()) || call.word == "index" {
             report(call.line, call.column, format!("field `{}` must be inside a `schema` block", call.word));
@@ -205,6 +230,19 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
     }
     for schema in node.body.iter().filter(|call| call.word == "schema") {
         check_schema(schema, &mut report);
+    }
+}
+
+fn check_model_options(node: &ModelNode, report: &mut impl FnMut(usize, usize, String)) {
+    for pair in &node.options {
+        match pair.key.as_str() {
+            "storage" if !matches!(&pair.value.item, Value::Symbol(name) if name == "memory" || name == "disk") => {
+                report(pair.value.line, pair.value.column, "`storage` must be `:memory` or `:disk`".to_string())
+            }
+            "storage" => {}
+            "expire_after" => check_value(pair, Want::Duration, report),
+            other => report(pair.line, pair.column, format!("unknown key `{other}` for `model`")),
+        }
     }
 }
 
@@ -254,6 +292,11 @@ fn check_action_line(call: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str
                 }
             }
         }
+        "on_failure" => {
+            if !symbol_name(call.args.first()).is_some_and(is_policy) {
+                report(call.line, call.column, "`on_failure` must be `:keep` or `:rollback`".to_string());
+            }
+        }
         "refetch" => {
             for name in call.args.iter().filter_map(|arg| symbol_name(Some(arg))).filter(|name| !remotes.contains(name)) {
                 report(call.line, call.column, format!("`refetch` names `{name}`, which is not a `remote`"));
@@ -274,6 +317,35 @@ fn check_schema(schema: &Call, report: &mut impl FnMut(usize, usize, String)) {
             if !names.insert(name.to_string()) {
                 report(call.line, call.column, format!("field `{name}` is declared twice"));
             }
+        }
+        if call.word == "list" {
+            check_list_element(call, report);
+        }
+    }
+    for ephemeral in schema.block.iter().flatten().filter(|call| call.word == "ephemeral") {
+        check_ephemeral(ephemeral, &mut names, report);
+    }
+}
+
+fn check_ephemeral(block: &Call, names: &mut HashSet<String>, report: &mut impl FnMut(usize, usize, String)) {
+    for call in block.block.iter().flatten() {
+        let name = symbol_name(call.args.first()).unwrap_or_default();
+        if call.word == "file" {
+            report(call.line, call.column, format!("ephemeral field `{name}` cannot be a file"));
+            continue;
+        }
+        check_call(call, Context::Ephemeral, report);
+        if !name.is_empty() && !names.insert(name.to_string()) {
+            report(call.line, call.column, format!("field `{name}` is declared twice"));
+        }
+        let has = |key: &str| call.options.iter().any(|pair| pair.key == key);
+        let nullable = call.options.iter().any(|pair| pair.key == "null" && pair.value.item == Value::Bool(true));
+        if has("index") {
+            report(call.line, call.column, format!("ephemeral field `{name}` cannot be indexed"));
+        } else if has("reset_after") && !has("default") {
+            report(call.line, call.column, "`reset_after` needs `default:`".to_string());
+        } else if !has("default") && !nullable && EPHEMERAL_WORDS.contains(&call.word.as_str()) {
+            report(call.line, call.column, format!("ephemeral field `{name}` needs `default:` or `null: true`"));
         }
         if call.word == "list" {
             check_list_element(call, report);
@@ -415,9 +487,14 @@ fn check_value(pair: &Pair, want: Want, report: &mut impl FnMut(usize, usize, St
         Want::Symbols if !is_symbol_list(value) => format!("`{key}` must be a list of symbols"),
         Want::Hash if !matches!(value, Value::Hash(_)) => format!("`{key}` must be a hash like `{{ field: :param }}`"),
         Want::Duration if !matches!(value, Value::Duration { .. }) => format!("`{key}` must be a duration like `5.minutes`"),
+        Want::Policy if !matches!(value, Value::Symbol(name) if is_policy(name)) => format!("`{key}` must be `:keep` or `:rollback`"),
         _ => return,
     };
     report(pair.value.line, pair.value.column, message);
+}
+
+fn is_policy(name: &str) -> bool {
+    matches!(name, "keep" | "rollback")
 }
 
 fn is_symbol_list(value: &Value) -> bool {

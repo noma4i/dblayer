@@ -6,13 +6,12 @@ use serde_json::{Map, Value};
 use super::fsck::FsckAction;
 use super::once::OnceRequest;
 use super::quarantine::{quarantine_add, QuarantineReason};
-use super::status::{mode_text, parse_mode, Operation, OperationId, OperationStatus};
+use super::status::{Operation, OperationId, OperationStatus};
 use crate::identity::RowId;
 
-pub const OP_COLUMNS: [&str; 12] = [
+pub const OP_COLUMNS: [&str; 15] = [
     "seq",
     "action_key",
-    "action_mode",
     "status",
     "row_ids",
     "temp_id",
@@ -22,6 +21,10 @@ pub const OP_COLUMNS: [&str; 12] = [
     "created_at",
     "dedupe_key",
     "rollback",
+    "attempts",
+    "error",
+    "since",
+    "upload",
 ];
 
 const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
@@ -29,11 +32,10 @@ const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
 pub fn append_operation(connection: &Connection, operation: &Operation, input: &[u8]) -> rusqlite::Result<i64> {
     let row_ids = serde_json::to_vec(&operation.row_ids).expect("row ids serialize");
     connection.execute(
-        "INSERT INTO op (action_key, action_mode, status, row_ids, temp_id, input, transport_started, base_revision, dedupe_key, rollback, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10)",
+        "INSERT INTO op (action_key, status, row_ids, temp_id, input, transport_started, base_revision, dedupe_key, rollback, created_at, since) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?9)",
         params![
             operation.action_key,
-            mode_text(operation.mode),
             operation.status.as_sql(),
             row_ids,
             operation.temp_id.as_ref().map(RowId::as_str),
@@ -49,16 +51,6 @@ pub fn append_operation(connection: &Connection, operation: &Operation, input: &
 
 pub fn set_status(connection: &Connection, sequence: i64, status: OperationStatus) -> rusqlite::Result<()> {
     connection.execute("UPDATE op SET status = ? WHERE seq = ?", params![status.as_sql(), sequence])?;
-    Ok(())
-}
-
-pub fn mark_transport(connection: &Connection, sequence: i64) -> rusqlite::Result<()> {
-    connection.execute("UPDATE op SET transport_started = 1 WHERE seq = ?", [sequence])?;
-    Ok(())
-}
-
-pub fn clear_transport(connection: &Connection, sequence: i64) -> rusqlite::Result<()> {
-    connection.execute("UPDATE op SET transport_started = 0 WHERE seq = ?", [sequence])?;
     Ok(())
 }
 
@@ -78,29 +70,33 @@ pub fn open_sequences(connection: &Connection, action_key: &str) -> rusqlite::Re
 
 pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operation>> {
     let sql = format!(
-        "SELECT seq, action_key, action_mode, status, row_ids, temp_id, transport_started, base_revision, created_at, dedupe_key \
+        "SELECT seq, action_key, status, row_ids, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error, since, upload \
          FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq"
     );
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], |row| {
-        let mode: String = row.get(2)?;
-        let status: String = row.get(3)?;
-        let row_ids: Vec<u8> = row.get(4)?;
-        let temp_id: Option<String> = row.get(5)?;
+        let status: String = row.get(2)?;
+        let row_ids: Vec<u8> = row.get(3)?;
+        let temp_id: Option<String> = row.get(4)?;
+        let error: Option<Vec<u8>> = row.get(10)?;
+        let upload: Option<Vec<u8>> = row.get(12)?;
         Ok((
             Operation {
                 id: OperationId(row.get(0)?),
                 action_key: row.get(1)?,
-                mode: parse_mode(&mode).unwrap_or(crate::schema::ActionMode::Request),
                 status: OperationStatus::from_sql(&status).unwrap_or(OperationStatus::Failed),
                 row_ids: Vec::new(),
                 temp_id: temp_id.as_deref().and_then(|text| RowId::new(text).ok()),
-                transport_started: row.get::<_, i64>(6)? != 0,
-                base_revision: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
-                created_at: row.get(8)?,
-                dedupe_key: row.get(9)?,
+                transport_started: row.get::<_, i64>(5)? != 0,
+                base_revision: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                created_at: row.get(7)?,
+                dedupe_key: row.get(8)?,
+                attempts: row.get(9)?,
+                error: error.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+                since: row.get(11)?,
+                upload: upload.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
             },
-            parse_mode(&mode).is_some() && OperationStatus::from_sql(&status).is_some(),
+            OperationStatus::from_sql(&status).is_some(),
             row_ids,
         ))
     })?;

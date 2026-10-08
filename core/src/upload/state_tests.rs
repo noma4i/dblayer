@@ -1,0 +1,41 @@
+use crate::commit::OperationStatus;
+use crate::syncstate::{FailureKind, OperationFailure};
+
+use super::*;
+
+fn state(phase: UploadStatus, sent: u64, total: u64) -> UploadState {
+    UploadState { phase, sent_bytes: sent, total_bytes: total, ..UploadState::queued() }
+}
+
+#[test]
+fn status_follows_the_operation_before_the_phase() {
+    let uploading = state(UploadStatus::Uploading, 5, 10);
+    let show = |status, started| UploadInfo::of(status, started, &uploading, None).status;
+    assert_eq!(show(OperationStatus::Pending, false), UploadStatus::Uploading);
+    assert_eq!(show(OperationStatus::Pending, true), UploadStatus::Sending);
+    assert_eq!(show(OperationStatus::Failed, false), UploadStatus::Failed);
+    assert_eq!(show(OperationStatus::DeliveryUnknown, true), UploadStatus::DeliveryUnknown);
+}
+
+#[test]
+fn fraction_is_bytes_over_total_and_zero_without_a_total() {
+    let info = |sent, total| UploadInfo::of(OperationStatus::Pending, false, &state(UploadStatus::Uploading, sent, total), None);
+    assert_eq!(info(5, 10).fraction(), 0.5);
+    assert_eq!(info(0, 0).fraction(), 0.0);
+    assert_eq!(info(20, 10).fraction(), 1.0);
+}
+
+#[test]
+fn only_a_rejection_is_not_retryable() {
+    let failed = |kind| UploadInfo::of(OperationStatus::Failed, false, &UploadState::queued(), Some(OperationFailure::new(kind, "x")));
+    assert!(failed(FailureKind::Network).is_retryable());
+    assert!(!failed(FailureKind::Rejected).is_retryable());
+}
+
+#[test]
+fn state_round_trips_through_json_with_its_parts() {
+    let mut stored = state(UploadStatus::Uploading, 5, 10);
+    stored.parts.push(UploadPart { number: 1, etag: "e1".to_string() });
+    let back: UploadState = serde_json::from_slice(&serde_json::to_vec(&stored).unwrap()).unwrap();
+    assert_eq!(back, stored);
+}

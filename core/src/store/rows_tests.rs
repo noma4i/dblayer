@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use rusqlite::types::Value as SqlValue;
 use serde_json::json;

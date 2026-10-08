@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 

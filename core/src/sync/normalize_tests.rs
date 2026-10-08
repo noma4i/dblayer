@@ -1,7 +1,7 @@
 use super::error::SyncError;
 use super::normalize::*;
 use serde_json::{Map, Value};
-use crate::sync::support::{rig, Rig};
+use crate::sync::rig::{rig, Rig};
 use serde_json::json;
 
 fn nodes(value: Value) -> Vec<Map<String, Value>> {

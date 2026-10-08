@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use crate::identity::RowId;
 use crate::query::{compile_count, compile_keys, fetch_count, fetch_keys, Query};
-use crate::store::Reader;
+use crate::store::{Reader, StoreError};
+use crate::syncstate::read_sync;
 
 use super::error::DbError;
 use super::open::{locked, Db, Shared};
@@ -14,11 +15,15 @@ pub(crate) type RowKey = (String, i64);
 impl Shared {
     pub(crate) fn load(&self, reader: &Reader<'_>, model: &str, ids: &[String]) -> Result<HashMap<String, Row>, DbError> {
         let stored = reader.stored_rows(model, ids)?;
+        let mut syncs = read_sync(reader.connection(), model, ids).map_err(StoreError::from)?;
+        let spec = self.spec(model)?;
+        let overlay = (!spec.ephemeral.is_empty()).then(|| self.ephemeral.lock());
         let mut cache = locked(&self.cache);
         let mut loaded = HashMap::with_capacity(stored.len());
         for (id, record) in stored {
-            let Some(data) = record.row else { continue };
-            let row: Row = Arc::new(Record { id: record.id, revision: record.revision, data });
+            let Some(mut data) = record.row else { continue };
+            let ephemeral = overlay.as_ref().map_or(0, |state| state.overlay(spec, &id, &mut data));
+            let row: Row = Arc::new(Record { id: record.id, revision: record.revision, data, sync: syncs.remove(&id).unwrap_or_default(), ephemeral });
             cache.put(model, row.clone());
             loaded.insert(id, row);
         }

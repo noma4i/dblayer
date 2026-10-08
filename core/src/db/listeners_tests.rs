@@ -5,7 +5,7 @@ use crate::identity::RowId;
 use std::sync::Arc;
 
 fn version(revision: i64) -> Arc<Version> {
-    Arc::new(Version { revision, body: Body::Rows(RowsBody { entries: Vec::new(), rows: Vec::new(), related: Default::default(), step: None }) })
+    Arc::new(Version { revision, epoch: 0, body: Body::Rows(RowsBody { entries: Vec::new(), rows: Vec::new(), related: Default::default(), step: None }) })
 }
 
 #[test]

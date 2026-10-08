@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use crate::commit::{CommitEnvelope, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{ModelKey, ScopeKey};
@@ -22,7 +22,7 @@ fn members(db: &Db, name: &str) -> Vec<String> {
     db.shared.store.scope_members("moments", name).unwrap().into_iter().map(|(id, _)| id).collect()
 }
 
-fn observe_scope(db: &Db, name: &str) -> (ChangeLog, Subscription) {
+fn observe_scope(db: &Db, name: &str) -> (ChangeLog, ObserverHandle) {
     let (log, callback) = recorder();
     let subscription = db.observe(Query::new("moments").in_scope(scope(name).key), callback).unwrap();
     db.settle();

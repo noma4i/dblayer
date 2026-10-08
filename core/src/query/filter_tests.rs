@@ -134,6 +134,15 @@ fn unknown_field_and_container_values_are_rejected() {
 }
 
 #[test]
+fn ephemeral_fields_cannot_be_filtered_or_ordered() {
+    let model = ModelSpec { ephemeral: vec![crate::schema::EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false)))], ..people() };
+    let rejected = Where::equal("typing", json!(true)).compile(&model, &mut Vec::new()).unwrap_err();
+    assert_eq!(rejected, QueryError::EphemeralField("typing".into()));
+    let ordered = crate::query::Query::new("people").ordered(vec![crate::query::Order::new("typing", crate::value::SortDirection::Asc)]);
+    assert_eq!(crate::query::compile_keys(&ordered, &model).unwrap_err(), QueryError::EphemeralField("typing".into()));
+}
+
+#[test]
 fn fields_walk_the_tree_and_null_safety_follows_lists() {
     let clause = Where::all_of(vec![
         Where::equal("first", json!(null)),

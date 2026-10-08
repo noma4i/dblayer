@@ -1,7 +1,7 @@
 mod cache;
-mod diagnostics;
 mod diff;
 mod dispatch;
+mod ephemeral;
 mod error;
 mod files;
 mod land;
@@ -13,24 +13,26 @@ mod observe;
 mod open;
 mod related;
 mod replace;
+mod record_sync;
 mod reset;
 mod roll_back;
 mod row;
 mod watch;
 
-pub use cache::CacheStats;
-pub use diagnostics::Diagnostics;
 pub use diff::Diff;
 pub use error::DbError;
-pub use local_write::OutboxEntry;
-pub use observe::Subscription;
+pub use local_write::OutboxOperation;
+pub use observe::ObserverHandle;
 pub use open::{Db, DbConfig};
 pub use replace::{OnAbsent, ReplaceRequest};
 pub use row::{Record, Row};
+pub(crate) use roll_back::follows;
 pub use watch::{Change, CountChange, Related};
 
 #[cfg(test)]
-mod support;
+mod fixtures;
+#[cfg(test)]
+mod ephemeral_tests;
 #[cfg(test)]
 mod cache_tests;
 #[cfg(test)]
@@ -51,6 +53,8 @@ mod observe_tests;
 mod open_tests;
 #[cfg(test)]
 mod reactivity_tests;
+#[cfg(test)]
+mod record_sync_tests;
 #[cfg(test)]
 mod related_tests;
 #[cfg(test)]

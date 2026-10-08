@@ -32,7 +32,7 @@ pub struct CountChange {
 }
 
 pub(crate) struct Step {
-    pub from: i64,
+    pub from: (i64, u64),
     pub diff: Diff,
 }
 
@@ -50,17 +50,22 @@ pub(crate) enum Body {
 
 pub(crate) struct Version {
     pub revision: i64,
+    pub epoch: u64,
     pub body: Body,
 }
 
 impl Version {
+    pub(crate) fn position(&self) -> (i64, u64) {
+        (self.revision, self.epoch)
+    }
+
     pub(crate) fn succeeding(self, previous: &Version, replaced: &[(RowId, RowId)]) -> Option<Version> {
         match (&previous.body, self.body) {
             (Body::Rows(old), Body::Rows(new)) => {
                 let diff = Diff::between(&old.entries, &new.entries, replaced);
-                (!diff.is_empty()).then(|| Version { revision: self.revision, body: Body::Rows(RowsBody { step: Some(Step { from: previous.revision, diff }), ..new }) })
+                (!diff.is_empty()).then(|| Version { revision: self.revision, epoch: self.epoch, body: Body::Rows(RowsBody { step: Some(Step { from: previous.position(), diff }), ..new }) })
             }
-            (Body::Count(old), Body::Count(new)) => (*old != new).then_some(Version { revision: self.revision, body: Body::Count(new) }),
+            (Body::Count(old), Body::Count(new)) => (*old != new).then_some(Version { revision: self.revision, epoch: self.epoch, body: Body::Count(new) }),
             _ => None,
         }
     }
@@ -139,6 +144,7 @@ impl Shared {
     }
 
     pub(crate) fn evaluate(&self, subject: &Subject) -> Result<Version, DbError> {
+        let epoch = self.ephemeral.lock().epoch;
         self.read(|reader| {
             let revision = reader.revision_seq()?;
             let body = match subject {
@@ -157,7 +163,7 @@ impl Shared {
                     Body::Count(fetch_count(reader.connection(), &statement)?)
                 }
             };
-            Ok(Version { revision, body })
+            Ok(Version { revision, epoch, body })
         })
     }
 
@@ -166,7 +172,7 @@ impl Shared {
         let (related, mut stamps) = self.related_rows(reader, spec, &query.include, &rows)?;
         let entries = rows
             .iter()
-            .map(|row| Entry { id: row.id.clone(), stamp: Stamp { revision: row.revision, related: stamps.remove(&row.id).unwrap_or_default() } })
+            .map(|row| Entry { id: row.id.clone(), stamp: Stamp { revision: row.revision, sync: row.sync.stamp(), ephemeral: row.ephemeral, related: stamps.remove(&row.id).unwrap_or_default() } })
             .collect();
         Ok(Body::Rows(RowsBody { entries, rows, related, step: None }))
     }

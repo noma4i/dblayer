@@ -109,3 +109,19 @@ fn unclosed_array_fails() {
     let error = parse_source("model A do\n  scope :a, params: [:x\nend").unwrap_err();
     assert_eq!(error.line, 3);
 }
+
+#[test]
+fn model_line_takes_options_before_the_block() {
+    let models = parse_source("model Presence, storage: :memory, expire_after: 30.seconds do\n  schema do\n    string :room\n  end\nend").unwrap();
+    let options: Vec<(&str, Value)> = models[0].options.iter().map(|pair| (pair.key.as_str(), pair.value.item.clone())).collect();
+    assert_eq!(options, vec![("storage", symbol("memory")), ("expire_after", Value::Duration { amount: 30, unit: "seconds".into() })]);
+    assert_eq!(models[0].name, "Presence");
+}
+
+#[test]
+fn nested_block_inside_schema_keeps_its_fields() {
+    let models = parse_source("model User do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false\n    end\n  end\nend").unwrap();
+    let schema = models[0].body[0].block.as_ref().unwrap();
+    let ephemeral = schema[1].block.as_ref().unwrap();
+    assert_eq!((schema[1].word.as_str(), ephemeral[0].word.as_str(), ephemeral[0].line), ("ephemeral", "bool", 5));
+}

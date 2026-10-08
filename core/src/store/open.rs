@@ -49,7 +49,7 @@ impl Store {
     pub fn table_exists(&self, name: &str) -> Result<bool, StoreError> {
         let inner = self.lock();
         let found: Option<i64> = rusqlite::OptionalExtension::optional(inner.connection.query_row(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            "SELECT 1 FROM (SELECT type, name FROM sqlite_master UNION ALL SELECT type, name FROM sqlite_temp_master) WHERE type = 'table' AND name = ?1",
             [name],
             |row| row.get(0),
         ))?;

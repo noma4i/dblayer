@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::ddl::{column_name, column_type, table_name, ColumnType, RECORD_VERSION};
 use crate::identity::Generation;
-use crate::pacing::{Clock, SystemClock};
+use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::ModelSpec;
 
 mod admission;
@@ -32,7 +32,7 @@ pub use admission::{
 };
 pub use apply::PlanCommitError;
 pub use boot::{boot_steps, BootConditions, BootReport, BootStep};
-pub use diagnostics::{sync_tags, SyncContext, SyncError};
+pub use diagnostics::{sync_tags, SyncContext, SyncFault};
 pub use error::StoreError;
 pub use intake::{accepted_rows, row_intake, tombstone_drop_count, IntakeOutcome, IntakeReason, RowPatch};
 pub use location::StoreLocation;
@@ -45,14 +45,6 @@ pub use windows::{
     family_prefix, window_key, InvalidationRequest, InvalidationScope, PageInfo, Pagination, QueryWindow,
     WindowFreshness, WindowRecord,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct StoreCounters {
-    pub stale_version_drops: usize,
-    pub rejected_records: usize,
-    pub membership_missing_entity: usize,
-    pub unknown_operation_acks: usize,
-}
 
 pub(crate) struct Promoted {
     pub field: String,
@@ -102,7 +94,7 @@ pub(crate) struct Inner {
     pub ready: bool,
     pub poison: Option<String>,
     pub data_version: Option<String>,
-    pub counters: StoreCounters,
+    pub counters: Counters,
 }
 
 impl Inner {
@@ -145,7 +137,7 @@ impl Store {
             ready: false,
             poison: None,
             data_version: None,
-            counters: StoreCounters::default(),
+            counters: Counters::default(),
         };
         Self { inner: Mutex::new(inner), path, hook: OnceLock::new() }
     }
@@ -180,12 +172,8 @@ impl Store {
         self.lock().ready = true;
     }
 
-    pub fn set_clock(&self, clock: Arc<dyn Clock>) {
-        self.lock().clock = clock;
-    }
-
-    pub fn counters(&self) -> StoreCounters {
-        self.lock().counters
+    pub fn counters(&self) -> Counters {
+        self.lock().counters.clone()
     }
 
     pub fn apply_failure(&self) -> Option<String> {
@@ -208,7 +196,7 @@ impl Store {
 }
 
 #[cfg(test)]
-mod support;
+mod fixtures;
 #[cfg(test)]
 mod admission_tests;
 #[cfg(test)]
@@ -227,6 +215,8 @@ mod location_tests;
 mod maintenance_tests;
 #[cfg(test)]
 mod membership_tests;
+#[cfg(test)]
+mod memory_tests;
 #[cfg(test)]
 mod open_tests;
 #[cfg(test)]

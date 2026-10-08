@@ -10,8 +10,8 @@ use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
 use crate::pacing::Debounce;
 use crate::transport::{
-    retry_delay, EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFault,
-    SubscriptionRetry,
+    EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFault,
+    SubscriptionRetry, RETRY_BACKOFF,
 };
 use crate::value::read_id;
 
@@ -205,7 +205,7 @@ impl Feed {
         let mut status = locked(&self.status);
         status.degraded |= outcome.reports_degraded;
         if fault == SubscriptionFault::Transient {
-            return Some(retry_delay(retry.attempts.saturating_sub(1)));
+            return Some(RETRY_BACKOFF.delay(retry.attempts.saturating_sub(1)));
         }
         status.stopped = true;
         None

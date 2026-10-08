@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{ModelKey, ScopeKey};
@@ -51,10 +51,10 @@ fn without_include_a_change_of_the_author_is_not_a_dependency() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
     db.settle();
-    let reads = db.diagnostics().observation_reads;
+    let reads = db.counters().observation_reads;
     put(&db, "users", json!({"id": "u1", "name": "Zed"}));
     assert_eq!(calls(&log), vec![2]);
-    assert_eq!(db.diagnostics().observation_reads, reads);
+    assert_eq!(db.counters().observation_reads, reads);
 }
 
 #[test]
@@ -94,11 +94,11 @@ fn a_scope_query_ignores_other_scopes_and_rows_outside_its_scope() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").in_scope(feed().key), callback).unwrap();
     db.settle();
-    let reads = db.diagnostics().observation_reads;
+    let reads = db.counters().observation_reads;
     land_scope(&db, vec![ScopeOp::Append { scope: ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("other")), row: rid("m2"), order_key: "a".to_string() }]);
     put(&db, "moments", json!({"id": "m3", "userId": "u1", "text": "outside"}));
     assert_eq!(calls(&log), vec![1]);
-    assert_eq!(db.diagnostics().observation_reads, reads);
+    assert_eq!(db.counters().observation_reads, reads);
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "inside changed"}));
     assert_eq!(calls(&log), vec![1, 1]);
 }
@@ -110,9 +110,9 @@ fn observe_row_follows_one_row() {
     let (log, callback) = recorder();
     let _subscription = db.observe_row("moments", &rid("m1"), callback).unwrap();
     db.settle();
-    let reads = db.diagnostics().observation_reads;
+    let reads = db.counters().observation_reads;
     put(&db, "moments", json!({"id": "m2", "userId": "u2", "text": "other row"}));
-    assert_eq!(db.diagnostics().observation_reads, reads);
+    assert_eq!(db.counters().observation_reads, reads);
     db.update("moments", &rid("m1"), obj(json!({"text": "changed"}))).unwrap();
     db.settle();
     assert_eq!(texts(&changes(&log)[1]), ["changed"]);
@@ -165,7 +165,7 @@ fn a_temp_id_swap_arrives_as_replaced() {
 fn destroying_a_parent_is_one_delivery_per_observer_with_one_revision() {
     let db = booted();
     seed_tree(&db);
-    let observed: Vec<(ChangeLog, Subscription)> = ["moments", "users", "vibes"]
+    let observed: Vec<(ChangeLog, ObserverHandle)> = ["moments", "users", "vibes"]
         .iter()
         .map(|model| {
             let (log, callback) = recorder();
@@ -191,21 +191,21 @@ fn destroying_a_parent_is_one_delivery_per_observer_with_one_revision() {
 #[test]
 fn a_thousand_subscribers_cost_at_most_one_read_per_commit() {
     let db = booted();
-    let logs: Vec<(ChangeLog, Subscription)> = (0..1000)
+    let logs: Vec<(ChangeLog, ObserverHandle)> = (0..1000)
         .map(|_| {
             let (log, callback) = recorder();
             (log, db.observe(Query::new("moments"), callback).unwrap())
         })
         .collect();
     db.settle();
-    let reads = db.diagnostics().observation_reads;
+    let reads = db.counters().observation_reads;
     for number in 0..100 {
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{number}")), row: obj(json!({"id": format!("m{number}"), "userId": "u1", "text": "t"})) });
         db.land(envelope).unwrap();
     }
     db.settle();
-    assert!(db.diagnostics().observation_reads - reads <= 100);
+    assert!(db.counters().observation_reads - reads <= 100);
     assert!(logs.iter().all(|(log, _)| changes(log).last().unwrap().rows.len() == 100));
 }
 
@@ -288,7 +288,7 @@ fn reset_moves_every_observer_to_the_empty_state_and_keeps_the_subscriptions() {
     db.settle();
     assert_eq!(calls(&log), vec![2, 0]);
     assert_eq!(changes(&log)[1].diff.removed.len(), 2);
-    assert_eq!(db.diagnostics().subscriptions, 1);
+    assert_eq!(db.observer_census().subscriptions, 1);
     assert!(db.find("moments", &rid("m1")).unwrap().is_none());
     put(&db, "moments", json!({"id": "m9", "userId": "u1", "text": "after"}));
     assert_eq!(calls(&log), vec![2, 0, 1]);
@@ -386,7 +386,7 @@ fn model_test_with_threads_ends_every_observer_on_the_fresh_state() {
             Query::new("moments").in_scope(feed().key),
             Query::new("moments").including(&["author"]),
         ];
-        let logs: Vec<(Query, ChangeLog, Subscription)> = queries
+        let logs: Vec<(Query, ChangeLog, ObserverHandle)> = queries
             .iter()
             .map(|query| {
                 let (log, callback) = recorder();

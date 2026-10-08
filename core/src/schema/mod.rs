@@ -10,6 +10,10 @@ use crate::value::{
     SortDirection,
 };
 
+mod ephemeral;
+
+pub use ephemeral::{EphemeralSpec, Storage};
+
 const FORBIDDEN_ACTION_MEMBERS: [&str; 6] = ["after", "invalidate", "onCommit", "extract", "complete", "resume"];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -74,8 +78,6 @@ pub enum DeclarationError {
     MissingTempRowRetention(String),
     #[error("optimistic destroy {0} cannot cascade")]
     OptimisticDestroyWithCascade(String),
-    #[error("durable action {0} must not destroy the root")]
-    DurableRootNotInsert(String),
     #[error("action declares forbidden member {0}")]
     ForbiddenMember(String),
     #[error("once action {0} needs a dedupe key")]
@@ -84,6 +86,26 @@ pub enum DeclarationError {
     UnknownRefetch { action: String, relation: String },
     #[error("action {action} patches unknown field {field}")]
     UnknownOptimisticField { action: String, field: String },
+    #[error("ephemeral field {0} cannot be a file")]
+    EphemeralFile(String),
+    #[error("ephemeral field {0} needs a default or null: true")]
+    EphemeralNeedsDefault(String),
+    #[error("ephemeral field {0} sets reset_after without a default")]
+    ResetWithoutDefault(String),
+    #[error("ephemeral field {0} cannot be indexed")]
+    EphemeralIndexed(String),
+    #[error("relation {relation} uses ephemeral field {field}")]
+    EphemeralInRelation { relation: String, field: String },
+    #[error("duration {0} is not a positive count with a unit")]
+    InvalidDuration(String),
+    #[error("memory model has file field {0}")]
+    MemoryHasFile(String),
+    #[error("memory model declares action {0}")]
+    MemoryHasActions(String),
+    #[error("expire_after needs storage: :memory")]
+    ExpireNeedsMemory,
+    #[error("relation {relation} sets {field}, which is not an ephemeral field")]
+    UnknownSetField { relation: String, field: String },
 }
 
 pub type DroppedRow = (usize, SchemaError);
@@ -332,6 +354,8 @@ pub struct UpdatesSpec {
     pub subscription: String,
     #[serde(default)]
     pub deleted_by: Option<String>,
+    #[serde(default)]
+    pub set: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -440,6 +464,9 @@ impl RelationSpec {
         }
         let relation = || self.name.clone();
         for column in &self.by_columns {
+            if model.ephemeral_field(column).is_some() {
+                return Err(DeclarationError::EphemeralInRelation { relation: relation(), field: column.clone() });
+            }
             if model.field(column).is_none() {
                 return Err(DeclarationError::UnknownByColumn { relation: relation(), column: column.clone() });
             }
@@ -448,19 +475,29 @@ impl RelationSpec {
             }
         }
         if let Sort::Fields(fields) = &self.sort {
+            if let Some(field) = fields.iter().find(|field| model.ephemeral_field(&field.column).is_some()) {
+                return Err(DeclarationError::EphemeralInRelation { relation: relation(), field: field.column.clone() });
+            }
             if let Some(field) = fields.iter().find(|field| model.field(&field.column).is_none()) {
                 return Err(DeclarationError::UnknownSortColumn { relation: relation(), column: field.column.clone() });
+            }
+        }
+        let set = self.remote.iter().filter_map(|remote| remote.updates.as_ref()).flat_map(|updates| updates.set.keys());
+        for field in set {
+            if model.ephemeral_field(field).is_none() {
+                return Err(DeclarationError::UnknownSetField { relation: relation(), field: field.clone() });
             }
         }
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ActionMode {
-    Request,
-    Durable,
+pub enum OnFailure {
+    #[default]
+    Rollback,
+    Keep,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -473,8 +510,9 @@ pub enum RootShape {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActionDeclaration {
     pub name: String,
-    pub mode: ActionMode,
     pub root_shape: RootShape,
+    #[serde(default)]
+    pub on_failure: OnFailure,
     #[serde(default)]
     pub has_optimistic: bool,
     #[serde(default)]
@@ -498,11 +536,11 @@ pub struct ActionDeclaration {
 }
 
 impl ActionDeclaration {
-    pub fn new(name: &str, mode: ActionMode, root_shape: RootShape) -> Self {
+    pub fn new(name: &str, root_shape: RootShape) -> Self {
         Self {
             name: name.to_string(),
-            mode,
             root_shape,
+            on_failure: OnFailure::Rollback,
             has_optimistic: false,
             has_temp_row_retention: false,
             has_cascade_dependents: false,
@@ -520,9 +558,6 @@ impl ActionDeclaration {
         let name = || self.name.clone();
         if taken_names.contains(&self.name) {
             return Err(DeclarationError::ActionNameCollision(name()));
-        }
-        if self.mode == ActionMode::Durable && self.root_shape == RootShape::Destroy {
-            return Err(DeclarationError::DurableRootNotInsert(name()));
         }
         if self.has_optimistic && self.root_shape == RootShape::Upsert && !self.has_temp_row_retention {
             return Err(DeclarationError::MissingTempRowRetention(name()));
@@ -558,10 +593,16 @@ pub struct ModelSpec {
     pub composite_indexes: Vec<Vec<String>>,
     #[serde(default)]
     pub actions: Vec<ActionDeclaration>,
+    #[serde(default)]
+    pub ephemeral: Vec<EphemeralSpec>,
+    #[serde(default)]
+    pub storage: Storage,
+    #[serde(default)]
+    pub expire_after: Option<String>,
 }
 
 fn is_reserved_name(name: &str) -> bool {
-    name == "orderKey" || name.starts_with('$')
+    name == "orderKey" || name == "sync" || name.starts_with('$')
 }
 
 impl ModelSpec {
@@ -573,6 +614,9 @@ impl ModelSpec {
             relations: Vec::new(),
             composite_indexes: Vec::new(),
             actions: Vec::new(),
+            ephemeral: Vec::new(),
+            storage: Storage::Disk,
+            expire_after: None,
         }
     }
 
@@ -644,6 +688,8 @@ impl ModelSpec {
             return Err(DeclarationError::NoFields);
         }
         self.check_fields()?;
+        self.check_ephemeral()?;
+        self.check_storage()?;
         self.check_indexes()?;
         let indexed: HashSet<&str> = self.fields.iter().filter(|field| field.indexed).map(|field| field.name.as_str()).collect();
         for association in &self.associations {
@@ -741,5 +787,7 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
     faults
 }
 
+#[cfg(test)]
+mod ephemeral_tests;
 #[cfg(test)]
 mod schema_tests;

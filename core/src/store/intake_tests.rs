@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};

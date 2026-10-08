@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use serde_json::json;
 
@@ -17,7 +17,7 @@ fn seed(store: &Store) {
         .unwrap();
     exec(
         store,
-        "INSERT INTO op (action_key, action_mode, status, row_ids, input, created_at) VALUES ('messages:send', 'request', 'pending', x'5b5d', x'7b7d', 1);\
+        "INSERT INTO op (action_key, status, row_ids, input, created_at, since) VALUES ('messages:send', 'pending', x'5b5d', x'7b7d', 1, 1);\
          INSERT INTO quarantine (model, payload, reason) VALUES ('messages', x'00', 'test');",
     );
 }

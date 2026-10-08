@@ -1,7 +1,6 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use crate::query::Query;
-use crate::schema::ActionMode;
 use serde_json::json;
 
 #[test]
@@ -14,7 +13,6 @@ fn create_stores_a_temp_row_and_enqueues_a_create_operation() {
     let outbox = db.outbox().unwrap();
     assert_eq!(outbox.len(), 1);
     assert_eq!(outbox[0].operation.action_key, "moments:create");
-    assert_eq!(outbox[0].operation.mode, ActionMode::Durable);
     assert_eq!(outbox[0].operation.temp_id, Some(row.id.clone()));
     assert_eq!(outbox[0].input["text"], json!("hi"));
     assert_eq!(outbox[0].input["id"], json!(row.id.as_str()));
@@ -125,7 +123,6 @@ fn destroy_removes_the_row_and_enqueues_a_destroy_operation() {
     let outbox = db.outbox().unwrap();
     assert_eq!(outbox.len(), 1);
     assert_eq!(outbox[0].operation.action_key, "vibes:destroy");
-    assert_eq!(outbox[0].operation.mode, ActionMode::Request);
     assert_eq!(outbox[0].input, json!({"id": "v1"}));
 }
 
@@ -162,16 +159,4 @@ fn destroy_of_a_missing_row_fails() {
     let db = booted();
     assert!(matches!(db.destroy("users", &rid("nope")), Err(DbError::NotFound { .. })));
     assert!(db.outbox().unwrap().is_empty());
-}
-
-#[test]
-fn declared_action_overrides_the_default_mode() {
-    let mut spec = vibes_spec();
-    let mut declaration = crate::schema::ActionDeclaration::new("create", ActionMode::Request, crate::schema::RootShape::Upsert);
-    declaration.has_optimistic = true;
-    declaration.has_temp_row_retention = true;
-    spec.actions.push(declaration);
-    let db = Db::open_in_memory(vec![spec], None).unwrap();
-    db.create("vibes", obj(json!({"momentId": "m1"}))).unwrap();
-    assert_eq!(db.outbox().unwrap()[0].operation.mode, ActionMode::Request);
 }

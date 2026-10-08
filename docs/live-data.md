@@ -14,6 +14,20 @@ Every read of a model is live. A read gives you the current value and a stream o
 
 The first delivery contains every row as `inserted`.
 
+## Ephemeral values
+
+Ephemeral fields (see [models](models.md)) arrive in the same change. A write or a timed reset puts the row in `diff.updated` and `revision` stays the same, because nothing was written to the database. Two deliveries of one observer can therefore share a revision, and the later one is always newer.
+
+```swift
+@Live var user: User?
+// user.typing turns true on a write and false again after reset_after
+```
+
+```kotlin
+val user by User.find(userId).collectAsLive()
+// user.typing turns true on a write and false again after reset_after
+```
+
 ## Guarantees
 
 - One commit is one visible transition: a parent with its cascade-deleted children, a replaced list and an id swap appear together.

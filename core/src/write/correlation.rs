@@ -4,7 +4,6 @@ use serde_json::Value;
 
 use super::path::Path;
 use crate::operation::{OperationId, OperationStatus};
-use crate::schema::ActionMode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CorrelationVerdict {
@@ -32,14 +31,13 @@ pub struct CorrelationCandidate {
     pub created_at: i64,
     pub status: OperationStatus,
     pub transport_started: bool,
-    pub mode: ActionMode,
 }
 
 pub fn eligible(candidates: &[CorrelationCandidate]) -> Vec<CorrelationCandidate> {
     candidates
         .iter()
         .filter(|candidate| matches!(candidate.status, OperationStatus::Pending | OperationStatus::DeliveryUnknown))
-        .filter(|candidate| candidate.mode != ActionMode::Durable || candidate.transport_started)
+        .filter(|candidate| candidate.transport_started)
         .cloned()
         .collect()
 }

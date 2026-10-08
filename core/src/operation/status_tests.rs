@@ -1,9 +1,8 @@
 use super::*;
 use crate::identity::RowId;
-use crate::schema::ActionMode;
 
 fn operation(dedupe_key: Option<&str>) -> Operation {
-    let mut operation = Operation::new("message:create", ActionMode::Request, vec![], 1, 2);
+    let mut operation = Operation::new("message:create", vec![], 1, 2);
     operation.dedupe_key = dedupe_key.map(String::from);
     operation
 }
@@ -28,7 +27,7 @@ fn ledger_removes_terminal_rows_recovers_by_transport_flag_and_namespaces_by_act
     assert!(removes_row(Committed));
     assert!(removes_row(RolledBack));
     assert_eq!(recovered_status(true, Pending), DeliveryUnknown);
-    assert_eq!(recovered_status(false, Pending), Failed);
+    assert_eq!(recovered_status(false, Pending), Pending);
     assert_eq!(recovered_status(true, DeliveryUnknown), DeliveryUnknown);
     assert_eq!(recovered_status(false, Failed), Failed);
     assert_eq!(dedupe_namespace(&operation(Some("message-1"))), Some("message:create".to_string()));
@@ -54,7 +53,7 @@ fn status_text_round_trips() {
 
 #[test]
 fn operation_round_trips_through_json() {
-    let mut operation = Operation::new("message:create", ActionMode::Durable, vec![RowId::new("row-1").unwrap()], 4, 5);
+    let mut operation = Operation::new("message:create", vec![RowId::new("row-1").unwrap()], 4, 5);
     operation.id = OperationId(3);
     operation.status = OperationStatus::DeliveryUnknown;
     operation.temp_id = Some(RowId::new("temp-1").unwrap());

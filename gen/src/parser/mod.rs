@@ -46,6 +46,7 @@ pub struct ModelNode {
     pub line: usize,
     pub column: usize,
     pub file: usize,
+    pub options: Vec<Pair>,
     pub body: Vec<Call>,
 }
 
@@ -137,13 +138,13 @@ fn model_from(call: Call, file: usize) -> Result<ModelNode, ParseError> {
         return Err(at(format!("expected `model`, found `{}`", call.word)));
     }
     let name = match call.args.as_slice() {
-        [Node { item: Value::Const(name), .. }] if call.options.is_empty() => name.clone(),
+        [Node { item: Value::Const(name), .. }] => name.clone(),
         _ => return Err(at("model needs a constant name, for example `model User do`".to_string())),
     };
     let Some(body) = call.block else {
         return Err(at(format!("model {name} needs a `do ... end` block")));
     };
-    Ok(ModelNode { name, line: call.line, column: call.column, file, body })
+    Ok(ModelNode { name, line: call.line, column: call.column, file, options: call.options, body })
 }
 
 fn parse_call(reader: &mut Reader) -> Result<Call, ParseError> {

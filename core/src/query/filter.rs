@@ -7,6 +7,8 @@ use crate::schema::ModelSpec;
 
 use super::statement::QueryError;
 
+pub(super) const SYNC_FIELD: &str = "sync";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompareOp {
@@ -171,6 +173,12 @@ fn compile_group(
 pub(super) fn column_sql(model: &ModelSpec, field: &str) -> Result<String, QueryError> {
     if field == "id" {
         return Ok("r.id".to_string());
+    }
+    if field == SYNC_FIELD {
+        return Ok("COALESCE(s.state, 'synced')".to_string());
+    }
+    if model.ephemeral_field(field).is_some() {
+        return Err(QueryError::EphemeralField(field.to_string()));
     }
     let spec = model.field(field).ok_or_else(|| QueryError::UnknownField(field.to_string()))?;
     if spec.indexed && column_type(&spec.kind).is_some() {

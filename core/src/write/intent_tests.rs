@@ -1,7 +1,6 @@
 use super::*;
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{Generation, ModelKey, RowId, ScopeKey};
-use crate::operation::QuarantineReason;
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 
@@ -37,7 +36,7 @@ fn intents_collect_models_without_duplicates_in_order_of_appearance() {
     plan.invalidate(model("messages"), "thread");
     assert!(!plan.is_empty());
     assert_eq!(plan.intents().len(), 4);
-    assert_eq!(plan.intents().last(), Some(&WriteIntent::Invalidate(InvalidationRequest { model: model("messages"), relation_name: "thread".into() })));
+    assert_eq!(plan.intents().last(), Some(&WriteIntent::Invalidate(RelationInvalidation { model: model("messages"), relation_name: "thread".into() })));
     assert_eq!(plan.models(), [model("messages"), model("chats")]);
 }
 
@@ -87,7 +86,7 @@ fn envelope_merges_ops_per_row_and_validates() {
     );
     assert!(matches!(envelope.entity_ops[1], EntityOp::Destroy { .. }));
     assert!(envelope.validate(Generation::INITIAL).is_ok());
-    assert_eq!(plan.invalidations(), [InvalidationRequest { model: model("messages"), relation_name: "thread".into() }]);
+    assert_eq!(plan.invalidations(), [RelationInvalidation { model: model("messages"), relation_name: "thread".into() }]);
 }
 
 #[test]
@@ -183,12 +182,4 @@ fn affected_keys_filter_subscriptions_and_tick_count_is_one_per_envelope() {
     assert_eq!(tick_count(&rows, generation, &none, &none), 0);
     assert_eq!(tick_count(&empty, generation, &subscribed, &none), 0);
     assert_eq!(tick_count(&scoped, generation, &none, &[scope_key].into()), 1);
-}
-
-#[test]
-fn seams_and_intake_outcomes_are_plain_data() {
-    assert_eq!(WriteSeam::ALL, [WriteSeam::ModelPrepare, WriteSeam::ScopeLanding, WriteSeam::ReplaceSuccessor]);
-    let rejected = IntakeOutcome::Quarantined(QuarantineReason::NormalizeRejected);
-    assert_ne!(rejected, IntakeOutcome::DroppedByTombstone);
-    assert_eq!(IntakeOutcome::Accepted(object(json!({"id": "1"}))), IntakeOutcome::Accepted(object(json!({"id": "1"}))));
 }

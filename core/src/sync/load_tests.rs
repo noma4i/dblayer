@@ -1,6 +1,6 @@
 use super::error::SyncError;
 use super::load::{DiscardReason, LoadOptions, LoadStatus};
-use super::support::*;
+use super::rig::*;
 use crate::store::WindowRecord;
 use crate::transport::{Reply, TransportError};
 use serde_json::{json, Map};

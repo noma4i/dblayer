@@ -4,8 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use crate::identity::RowId;
+use crate::pacing::Counters;
 
-use super::diagnostics::Counters;
+use super::open::locked;
 use super::diff::Diff;
 use super::dispatch::{mark_core_thread, Busy};
 use super::watch::{Body, Change, CountChange, Version};
@@ -65,11 +66,11 @@ pub(crate) struct Subscriber {
     cancelled: AtomicBool,
     mailbox: Mutex<Mailbox>,
     listener: Listener,
-    counters: Arc<Counters>,
+    counters: Arc<Mutex<Counters>>,
 }
 
 impl Subscriber {
-    pub(crate) fn new(listener: Listener, counters: Arc<Counters>) -> Arc<Self> {
+    pub(crate) fn new(listener: Listener, counters: Arc<Mutex<Counters>>) -> Arc<Self> {
         Arc::new(Self { cancelled: AtomicBool::new(false), mailbox: Mutex::new(Mailbox::default()), listener, counters })
     }
 
@@ -129,17 +130,17 @@ impl Subscriber {
             _ => None,
         };
         if outcome.is_some() {
-            self.counters.count_call();
+            locked(&self.counters).observer_calls += 1;
         }
     }
 
     fn rows_diff(&self, previous: &Version, taken: &Taken) -> Option<Diff> {
         let (Body::Rows(old), Body::Rows(new)) = (&previous.body, &taken.latest.body) else { return None };
-        if previous.revision >= taken.latest.revision {
+        if previous.position() >= taken.latest.position() {
             return None;
         }
         let diff = match &new.step {
-            Some(step) if taken.steps == 1 && step.from == previous.revision => step.diff.clone(),
+            Some(step) if taken.steps == 1 && step.from == previous.position() => step.diff.clone(),
             _ => Diff::between(&old.entries, &new.entries, &taken.replaced),
         };
         (!diff.is_empty()).then_some(diff)

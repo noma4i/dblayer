@@ -1,4 +1,4 @@
-use super::support::*;
+use super::fixtures::*;
 use super::*;
 use crate::query::{Query, Where};
 use serde_json::json;
@@ -62,11 +62,11 @@ fn observer_is_not_called_for_a_commit_on_another_model() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
     db.settle();
-    let reads = db.diagnostics().observation_reads;
+    let reads = db.counters().observation_reads;
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     put(&db, "chats", json!({"id": "c1", "title": "t"}));
     assert_eq!(calls(&log), vec![0]);
-    assert_eq!(db.diagnostics().observation_reads, reads);
+    assert_eq!(db.counters().observation_reads, reads);
 }
 
 #[test]
@@ -77,10 +77,10 @@ fn observer_is_not_called_when_the_result_set_is_unchanged() {
     let (log, callback) = recorder();
     let _subscription = db.observe(query, callback).unwrap();
     db.settle();
-    let reads = db.diagnostics().observation_reads;
+    let reads = db.counters().observation_reads;
     put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "other"}));
     assert_eq!(calls(&log), vec![1]);
-    assert_eq!(db.diagnostics().observation_reads, reads + 1);
+    assert_eq!(db.counters().observation_reads, reads + 1);
 }
 
 #[test]
@@ -157,31 +157,31 @@ fn dropping_the_subscription_stops_delivery() {
     let (log, callback) = recorder();
     let subscription = db.observe(Query::new("moments"), callback).unwrap();
     db.settle();
-    assert_eq!(db.diagnostics().subscriptions, 1);
+    assert_eq!(db.observer_census().subscriptions, 1);
     drop(subscription);
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     assert_eq!(calls(&log), vec![0]);
-    assert_eq!(db.diagnostics().subscriptions, 0);
-    assert_eq!(db.diagnostics().observed_queries, 0);
+    assert_eq!(db.observer_census().subscriptions, 0);
+    assert_eq!(db.observer_census().observed_queries, 0);
 }
 
 #[test]
 fn many_observers_of_one_query_share_one_read_per_commit() {
     let db = booted();
     seed_tree(&db);
-    let logs: Vec<(ChangeLog, Subscription)> = (0..5)
+    let logs: Vec<(ChangeLog, ObserverHandle)> = (0..5)
         .map(|_| {
             let (log, callback) = recorder();
             (log, db.observe(Query::new("moments"), callback).unwrap())
         })
         .collect();
     db.settle();
-    assert_eq!(db.diagnostics().observation_reads, 1);
-    assert_eq!(db.diagnostics().observed_queries, 1);
+    assert_eq!(db.counters().observation_reads, 1);
+    assert_eq!(db.observer_census().observed_queries, 1);
     put(&db, "moments", json!({"id": "m3", "userId": "u1", "text": "three"}));
-    assert_eq!(db.diagnostics().observation_reads, 2);
+    assert_eq!(db.counters().observation_reads, 2);
     assert!(logs.iter().all(|(log, _)| calls(log) == vec![2, 3]));
-    assert_eq!(db.diagnostics().observer_calls, 10);
+    assert_eq!(db.counters().observer_calls, 10);
 }
 
 #[test]
@@ -191,11 +191,11 @@ fn different_queries_are_read_separately() {
     let (_, second) = recorder();
     let _a = db.observe(Query::new("moments"), first).unwrap();
     let _b = db.observe(Query::new("moments").limited(1), second).unwrap();
-    assert_eq!(db.diagnostics().observed_queries, 2);
+    assert_eq!(db.observer_census().observed_queries, 2);
     db.settle();
-    let reads = db.diagnostics().observation_reads;
+    let reads = db.counters().observation_reads;
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    assert_eq!(db.diagnostics().observation_reads, reads + 2);
+    assert_eq!(db.counters().observation_reads, reads + 2);
 }
 
 #[test]
@@ -205,11 +205,11 @@ fn late_subscriber_joins_the_shared_value_without_a_read() {
     let (_, first) = recorder();
     let _a = db.observe(Query::new("moments"), first).unwrap();
     db.settle();
-    let reads = db.diagnostics().observation_reads;
+    let reads = db.counters().observation_reads;
     let (log, second) = recorder();
     let _b = db.observe(Query::new("moments"), second).unwrap();
     db.settle();
-    assert_eq!(db.diagnostics().observation_reads, reads);
+    assert_eq!(db.counters().observation_reads, reads);
     assert_eq!(calls(&log), vec![2]);
     assert_eq!(changes(&log)[0].diff.inserted.len(), 2);
 }
