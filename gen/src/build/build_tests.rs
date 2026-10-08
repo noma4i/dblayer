@@ -230,3 +230,10 @@ fn paginate_with_its_own_cursor_names_variable_and_source() {
     let cursor = CursorSpec { variable: "afterSequence".to_string(), from: "lastSequenceNumber".to_string(), numeric: true };
     assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: Some(cursor) });
 }
+
+#[test]
+fn operations_can_be_named_with_a_string_when_the_graphql_name_is_lowercase() {
+    let model = build_one("  remote :feed do\n    query \"feed\"\n  end\n  action :like, mutation: \"likeMoment\"");
+    assert_eq!(model.relations[0].remote.as_ref().unwrap().operation, "feed");
+    assert_eq!(model.actions.iter().find(|action| action.name == "like").unwrap().mutation.as_deref(), Some("likeMoment"));
+}

@@ -145,7 +145,7 @@ fn syntax_errors_stop_before_checks() {
 fn standard_action_rules() {
     assert_eq!(failure_in("  create input: { name: :name }"), (7, "`create` needs `with:`".to_string()));
     assert_eq!(failure_in("  create with: A\n  create with: B"), (8, "`create` is declared twice".to_string()));
-    assert_eq!(failure_in("  update with: :a"), (7, "`with` must be an operation name like `CreateMoment`".to_string()));
+    assert_eq!(failure_in("  update with: :a"), (7, "`with` must be an operation name like `CreateMoment` or \"likeMoment\"".to_string()));
     assert_eq!(failure_in("  destroy :x, with: A"), (7, "`destroy` takes no arguments".to_string()));
     assert_eq!(failure_in("  create with: A, input: [1]"), (7, "`input` must be a hash like `{ field: :param }`".to_string()));
     assert_eq!(failure_in("  create with: A, input: { name: 1 }"), (7, "input value must be a field symbol".to_string()));
@@ -165,7 +165,7 @@ fn action_block_rules() {
 
 #[test]
 fn updates_line_rules() {
-    assert_eq!(failure_in("  remote :feed do\n    query Q\n    updates :x\n  end"), (9, "`updates` needs an operation name like `MomentsFeed`".to_string()));
+    assert_eq!(failure_in("  remote :feed do\n    query Q\n    updates :x\n  end"), (9, "`updates` needs an operation name like `MomentsFeed` or \"feed\"".to_string()));
     assert_eq!(failure_in("  remote :feed do\n    query Q\n    updates E, deleted_by: 1\n  end"), (9, "`deleted_by` must be a symbol like `:name`".to_string()));
     assert_eq!(failure_in("  remote :feed do\n    query Q\n    updates E\n    updates F\n  end"), (10, "`updates` is declared twice".to_string()));
     assert_eq!(failure_in("  live :events do\n    subscription E\n  end"), (7, "unknown word `live`".to_string()));

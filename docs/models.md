@@ -168,6 +168,8 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 | `updates Subscription, deleted_by: :field` | keep the relation current with a subscription | none |
 | `on_absent :detach` or `:destroy` | what happens to rows missing from a refreshed response | `:detach` |
 
+An operation name is a constant like `MomentsFeed`, or a string like `"feed"` when the GraphQL name starts with a lowercase letter.
+
 Durations are written `30.seconds`, `5.minutes`, `2.hours`, `1.day`. Mutations and the `updates` line are described in [server sync](server-sync.md).
 
 ## Validation

@@ -466,8 +466,8 @@ fn check_shape(call: &Call, shape: Shape, report: &mut impl FnMut(usize, usize, 
         Shape::Names if args.len() < 2 || args.iter().any(|arg| !matches!(arg.item, Value::Symbol(_))) => {
             format!("`{word}` needs 2 or more field names like `:a, :b`")
         }
-        Shape::Const if !matches!(args, [Node { item: Value::Const(_), .. }]) => {
-            format!("`{word}` needs an operation name like `MomentsFeed`")
+        Shape::Const if !matches!(args, [Node { item: Value::Const(_) | Value::Str(_), .. }]) => {
+            format!("`{word}` needs an operation name like `MomentsFeed` or \"feed\"")
         }
         Shape::Int if !matches!(args, [Node { item: Value::Int(_), .. }]) => format!("`{word}` needs a number"),
         Shape::Duration if !matches!(args, [Node { item: Value::Duration { .. }, .. }]) => {
@@ -489,8 +489,8 @@ fn check_value(pair: &Pair, want: Want, report: &mut impl FnMut(usize, usize, St
         Want::Bool if !matches!(value, Value::Bool(_)) => format!("`{key}` must be true or false"),
         Want::Symbol if !matches!(value, Value::Symbol(_)) => format!("`{key}` must be a symbol like `:name`"),
         Want::Const if !matches!(value, Value::Const(_)) => format!("`{key}` must be a model name like `User`"),
-        Want::Operation if !matches!(value, Value::Const(_)) => {
-            format!("`{key}` must be an operation name like `CreateMoment`")
+        Want::Operation if !matches!(value, Value::Const(_) | Value::Str(_)) => {
+            format!("`{key}` must be an operation name like `CreateMoment` or \"likeMoment\"")
         }
         Want::Symbols if !is_symbol_list(value) => format!("`{key}` must be a list of symbols"),
         Want::Hash if !matches!(value, Value::Hash(_)) => format!("`{key}` must be a hash like `{{ field: :param }}`"),
