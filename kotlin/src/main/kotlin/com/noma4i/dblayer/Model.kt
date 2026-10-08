@@ -74,6 +74,9 @@ fun retryAll() { background.launch { runCatching { DBlayer.database.retryAll() }
 
 suspend fun DBModel.destroy() { DBlayer.database.destroy(modelName, id) }
 
+/** The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline. */
+suspend fun DBModel.confirmedId(): String = DBlayer.database.confirmed(modelName, id)
+
 suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, serializer: KSerializer<Model>): Model =
     dbJson.decodeFromString(serializer, DBlayer.database.act(modelName, id, action, values.toString(), args.toString()))
 

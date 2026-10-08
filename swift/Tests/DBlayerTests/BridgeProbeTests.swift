@@ -9,8 +9,8 @@ struct BridgeProbeTests {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     var changes = Moment.recent.live.stream.makeAsyncIterator()
     #expect(await changes.next()?.isEmpty == true)
-    let moment = try await Moment.create(uuid: "m", createdAt: "2026-10-08T00:00:00.000Z")
-    #expect(await changes.next()?.first?.uuid == "m")
+    let moment = try await Moment.create(text: "m")
+    #expect(await changes.next()?.first?.text == "m")
     _ = try await moment.update(text: "edited")
     #expect(await changes.next()?.first?.text == "edited")
     try await moment.destroy()
@@ -53,5 +53,18 @@ struct BridgeProbeTests {
     #expect(rows.byId["1"]?.uuid == "a")
     rows.stop()
     list.stop()
+  }
+
+  @Test
+  func confirmedIdWaitsForTheServerIdOfALocalCreate() async throws {
+    let transport = MockTransport()
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
+
+    let local = try await Moment.create(text: "hello", media: nil)
+    #expect(local.id.hasPrefix("temp"))
+    let real = try await local.confirmedId()
+    #expect(real == "m77")
   }
 }

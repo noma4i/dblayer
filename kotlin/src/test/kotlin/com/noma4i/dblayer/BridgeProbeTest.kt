@@ -16,8 +16,8 @@ class BridgeProbeTest {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val live = Moment.recent.live.flow
         assertEquals(emptyList<Moment>(), withTimeout(5000) { live.first() })
-        val moment = Moment.create(uuid = "m", createdAt = "2026-10-08T00:00:00.000Z")
-        assertEquals("m", withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first().uuid)
+        val moment = Moment.create(text = "m")
+        assertEquals("m", withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first().text)
         moment.update(text = "edited")
         assertEquals("edited", withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.text == "edited" } }.first().text)
         moment.destroy()
@@ -60,5 +60,17 @@ class BridgeProbeTest {
         assertEquals("a", rows.byId.value["1"]?.uuid)
         rows.stop()
         list.stop()
+    }
+
+    @Test
+    fun confirmedIdWaitsForTheServerIdOfALocalCreate() = runBlocking {
+        val transport = MockTransport()
+        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
+
+        val local = Moment.create(text = "hello", media = null)
+        assertEquals(true, local.id.startsWith("temp"))
+        assertEquals("m77", withTimeout(5000) { local.confirmedId() })
     }
 }

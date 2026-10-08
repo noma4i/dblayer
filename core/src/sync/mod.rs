@@ -91,6 +91,7 @@ pub(crate) struct Inner {
     pub uploads: Mutex<upload::UploadRuns>,
     pub connectivity: Connectivity,
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
+    pub replaced: Mutex<HashMap<String, String>>,
 }
 
 impl Inner {
@@ -130,6 +131,7 @@ impl Sync {
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             connectivity: Connectivity::new(),
             wake: Mutex::new(None),
+            replaced: Mutex::new(HashMap::new()),
         };
         Self { inner: Arc::new(inner) }
     }

@@ -452,3 +452,21 @@ async fn action_that_ignores_its_response_keeps_the_local_row() {
     assert_eq!(call_variables(&rig, "PokeMoment"), [json!({"momentId": "m1"})]);
     assert_eq!(text_of(&rig, "moments", "m1"), Some("t".to_string()));
 }
+
+#[tokio::test(start_paused = true)]
+async fn confirmed_waits_for_the_server_id_of_a_local_create() {
+    let rig = rig();
+    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    rig.transport.enqueue("CreateMoment", created("m77", "hello"));
+    let real = rig.sync.confirmed("moments", &local.id).await.unwrap();
+    assert_eq!(real.as_str(), "m77");
+    assert_eq!(rig.sync.confirmed("moments", &real).await.unwrap(), real);
+}
+
+#[tokio::test(start_paused = true)]
+async fn confirmed_fails_when_the_create_was_refused() {
+    let rig = rig();
+    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    rig.transport.enqueue("CreateMoment", Reply::graphql_error("nope", "FORBIDDEN"));
+    assert!(rig.sync.confirmed("moments", &local.id).await.is_err());
+}

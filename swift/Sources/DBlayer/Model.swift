@@ -30,6 +30,8 @@ extension DBModel {
     try DB.database.setEphemeral(model: Self.modelName, rowId: id, valuesJson: JSONValue.object(values).text)
   }
   public func destroy() async throws { try DB.database.destroy(model: Self.modelName, rowId: id) }
+  /// The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline.
+  public func confirmedId() async throws -> String { try await DB.database.confirmed(model: Self.modelName, rowId: id) }
 
   public func retry() { Task { try? await DB.database.retry(model: Self.modelName, rowId: id) } }
   public func discard() { try? DB.database.discard(model: Self.modelName, rowId: id) }

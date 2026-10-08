@@ -323,6 +323,9 @@ impl Inner {
         if committed.is_none() {
             return Ok(SendResult::Discarded);
         }
+        if let (Some(temp), Some(real)) = (&temp, &real) {
+            locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string());
+        }
         self.db.shared.files.discard(&held.iter().map(|file| file.id.clone()).collect::<Vec<_>>());
         self.invalidate_after(&sending.model, &sending.action).await?;
         Ok(SendResult::Committed)

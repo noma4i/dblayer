@@ -37,6 +37,18 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`, `
 
 A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
 
+To wait for the server id, for example to open the screen of the record you just created, call `confirmedId()`. It returns the real id once the queued `create` is answered and throws if the server refuses it or the device is offline:
+
+```swift
+let chat = try await Chat.create(name: "Trip", userIds: ids)
+let chatId = try await chat.confirmedId()
+```
+
+```kotlin
+val chat = Chat.create(name = "Trip", userIds = ids)
+val chatId = chat.confirmedId()
+```
+
 ## Rolling back
 
 Every queued change keeps what it replaced: the old field values, or the destroyed rows with their files and list positions.

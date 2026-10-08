@@ -19,6 +19,9 @@ echo "== kotlin: libs for 4 Android ABI, bindings, gradle unit tests"
 bash "$root/scripts/build_kotlin.sh"
 "$gradle" -p "$root/kotlin" testDebugUnitTest --console=plain
 
+echo "== fixtures: generated models match fixtures/*.dbl"
+bash "$root/scripts/gen_fixtures.sh" --check
+
 echo "== zoo: one mechanism per question"
 bash "$root/scripts/check_zoo.sh"
 

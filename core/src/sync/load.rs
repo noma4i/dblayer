@@ -126,7 +126,7 @@ impl Inner {
             scope_params.insert(column.clone(), value.clone());
             kinds.insert(column.clone(), kind as ScalarKind);
         }
-        let mut scope_values = scope_params.clone();
+        let scope_values = scope_params.clone();
         for param in &declared.text_params {
             let value = params.get(param).ok_or_else(|| SyncError::Params(format!("missing param {param}")))?;
             scope_params.insert(param.clone(), value.clone());

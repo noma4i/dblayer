@@ -138,6 +138,12 @@ impl Database {
         self.sync()?.upload(&model, &id(&row_id)?, serde_json::from_str(&input_json)?).await?;
         Ok(())
     }
+    pub async fn confirmed(&self, model: String, row_id: String) -> Result<String, DbError> {
+        let sync = self.sync()?.clone();
+        let row = id(&row_id)?;
+        let real = executor().spawn(async move { sync.confirmed(&model, &row).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })??;
+        Ok(real.to_string())
+    }
     pub async fn cancel_upload(&self, model: String, row_id: String) -> Result<bool, DbError> { Ok(self.sync()?.cancel_upload(&model, &id(&row_id)?).await?) }
     pub fn maintain(&self) -> Result<(), DbError> { self.db.maintain(&[])?; Ok(()) }
     pub fn logout(&self) -> Result<(), DbError> { self.db.reset_all()?; Ok(()) }
