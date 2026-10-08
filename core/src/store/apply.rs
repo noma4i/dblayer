@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::{
     CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition,
-    RowChange, RowChangeKind, ScopeOp, ScopeRef,
+    RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
 use crate::ddl::{manifest_write, RECORD_VERSION, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
@@ -13,6 +13,7 @@ use crate::syncstate::{operation_keys, recompute_sync, SyncKey};
 
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, encode_row, hydrate, placeholders, Reader, CHUNK};
+use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
 use super::{Inner, ModelInfo, Store, StoreError};
 
@@ -89,7 +90,7 @@ impl Store {
 fn attempt(inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
     let transaction = inner.connection.unchecked_transaction()?;
     let outcome = apply_envelope(&transaction, &inner.models, envelope, now_ms)?;
-    if outcome.is_noop() {
+    if outcome.is_noop() && envelope.window.is_none() {
         transaction.rollback()?;
     } else {
         transaction.commit()?;
@@ -346,6 +347,9 @@ pub(crate) fn apply_envelope(
         &visible
     };
     wrote |= apply_scope_ops(connection, scope_ops, &mut result.scopes)?;
+    if let Some(window) = &envelope.window {
+        save_window(connection, window, envelope.generation, now_ms)?;
+    }
 
     if wrote {
         manifest_write(connection, REVISION_SEQ_KEY, &revision.to_string())?;
@@ -359,6 +363,19 @@ pub(crate) fn apply_envelope(
         result.scopes.clear();
     }
     Ok(result)
+}
+
+fn save_window(connection: &Connection, window: &WindowSave, generation: Generation, now_ms: i64) -> Result<(), StoreError> {
+    let mut statement = connection.prepare_cached("SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 ORDER BY order_key, row_id")?;
+    let ids: Vec<String> = statement.query_map(params![window.scope.model.as_str(), window.scope.key.as_str()], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    let kept = window.tail.as_ref().filter(|tail| ids.contains(&tail.anchor));
+    let (cursor, has_next) = kept.map_or((window.cursor.clone(), window.has_next), |tail| (tail.cursor.clone(), tail.has_next));
+    let record = WindowRecord { key: window.key.clone(), cursor, has_next, ids, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
+    upsert_window(connection, &record, now_ms)?;
+    if let Some(landed_at) = window.cleared_at {
+        connection.execute("UPDATE query_window SET invalidated = 0, landed_at = ?1 WHERE key = ?2", params![landed_at, window.key])?;
+    }
+    Ok(())
 }
 
 fn collect_scopes(

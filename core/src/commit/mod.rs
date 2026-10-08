@@ -157,6 +157,25 @@ pub enum OperationTransition {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct WindowTail {
+    pub anchor: String,
+    pub cursor: Option<String>,
+    pub has_next: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowSave {
+    pub key: String,
+    pub scope: ScopeRef,
+    pub cursor: Option<String>,
+    pub has_next: bool,
+    pub tail: Option<WindowTail>,
+    pub issued: i64,
+    pub applied: i64,
+    pub cleared_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CommitEnvelope {
     pub schema_version: u32,
     pub tx_id: Uuid,
@@ -164,6 +183,7 @@ pub struct CommitEnvelope {
     pub scope_ops: Vec<ScopeOp>,
     pub file_ops: Vec<FileOp>,
     pub operation_transitions: Vec<OperationTransition>,
+    pub window: Option<WindowSave>,
     pub origin: WriteOrigin,
     pub generation: Generation,
 }
@@ -191,13 +211,14 @@ impl CommitEnvelope {
             scope_ops: Vec::new(),
             file_ops: Vec::new(),
             operation_transitions: Vec::new(),
+            window: None,
             origin,
             generation,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty()
+        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none()
     }
 
     pub fn touched_rows(&self) -> Vec<RowRef> {

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::identity::{RowId, ScopeKey};
 use crate::schema::PageDirection;
@@ -171,30 +171,33 @@ impl Pagination {
     }
 }
 
+pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, landed_at: i64) -> Result<(), StoreError> {
+    connection.execute(
+        "INSERT INTO query_window (key, cursor, has_next, ids, issued, applied, generation, count, landed_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+         ON CONFLICT (key) DO UPDATE SET cursor = excluded.cursor, has_next = excluded.has_next, \
+         ids = excluded.ids, issued = excluded.issued, applied = excluded.applied, \
+         generation = excluded.generation, count = excluded.count",
+        params![
+            record.key,
+            record.cursor,
+            i64::from(record.has_next),
+            serde_json::to_vec(&record.ids)?,
+            record.issued,
+            record.applied,
+            record.generation,
+            record.ids.len() as i64,
+            landed_at,
+        ],
+    )?;
+    Ok(())
+}
+
 impl Store {
     pub fn save_window(&self, record: &WindowRecord) -> Result<(), StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        let ids = serde_json::to_vec(&record.ids)?;
-        inner.connection.execute(
-            "INSERT INTO query_window (key, cursor, has_next, ids, issued, applied, generation, count, landed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
-             ON CONFLICT (key) DO UPDATE SET cursor = excluded.cursor, has_next = excluded.has_next, \
-             ids = excluded.ids, issued = excluded.issued, applied = excluded.applied, \
-             generation = excluded.generation, count = excluded.count",
-            params![
-                record.key,
-                record.cursor,
-                i64::from(record.has_next),
-                ids,
-                record.issued,
-                record.applied,
-                record.generation,
-                record.ids.len() as i64,
-                inner.now_ms(),
-            ],
-        )?;
-        Ok(())
+        upsert_window(&inner.connection, record, inner.now_ms())
     }
 
     pub fn window(&self, key: &str) -> Result<Option<WindowRecord>, StoreError> {

@@ -77,3 +77,12 @@ async fn inv_fresh_11_a_response_read_before_the_server_got_the_destroy_does_not
     rig.sync.inner.land(stale).unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), None);
 }
+
+#[test]
+fn inv_merge_09_a_failing_window_write_leaves_no_landed_rows() {
+    let rig = rig();
+    rig.db.execute_for_test("CREATE TRIGGER refuse BEFORE INSERT ON query_window BEGIN SELECT RAISE(ABORT, 'refused'); END");
+    assert!(rig.sync.inner.land(landing(&rig, 100, &["m1"])).is_err());
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+    assert!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()).is_empty());
+}

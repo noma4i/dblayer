@@ -2,12 +2,12 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, EntityOp, EnvelopeFault, ScopeRef, WriteOrigin};
+use crate::commit::{CommitEnvelope, EntityOp, EnvelopeFault, ScopeRef, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
 use crate::db::{Prior, ReplaceRequest};
 use crate::schema::Coverage;
 use crate::read::{plan_landing, StoredMember};
-use crate::store::{admit_upsert, PageInfo, PlanCommitError, Reader, StoreError, UpsertAdmission, WindowRecord};
+use crate::store::{admit_upsert, PageInfo, PlanCommitError, Reader, StoreError, UpsertAdmission};
 use crate::transport::FetchAttempt;
 use crate::value::read_id;
 
@@ -81,6 +81,12 @@ impl Inner {
             return Ok(Landed::Discarded(DiscardReason::ChainMoved));
         }
         let model_key = ModelKey::new(&model);
+        let applied = if is_first_page { attempt.issued } else { applied_before.unwrap_or(attempt.issued) };
+        let tail = window.as_ref().filter(|_| plans_as_first && coverage == Coverage::Page).and_then(|window| {
+            let last = window.ids.last()?;
+            let listed = normalized.roots.iter().any(|root| root.get("id").and_then(read_id).is_some_and(|id| id.as_str() == last));
+            (!listed).then(|| WindowTail { anchor: last.clone(), cursor: window.cursor.clone(), has_next: window.has_next })
+        });
         let mut drops = 0;
         let mut admitted_roots = 0;
         let committed = store.commit_with(generation, |reader| {
@@ -112,6 +118,16 @@ impl Inner {
             }
             envelope.entity_ops.extend(plan.entity_ops);
             envelope.scope_ops = plan.scope_ops;
+            envelope.window = Some(WindowSave {
+                key: window_key.clone(),
+                scope: scope.clone(),
+                cursor: page_info.as_ref().and_then(|info| info.end_cursor.clone()),
+                has_next: page_info.as_ref().is_some_and(|info| info.has_next_page),
+                tail: tail.clone(),
+                issued: attempt.issued,
+                applied,
+                cleared_at: is_first_page.then(|| self.now_ms()),
+            });
             Ok::<_, SyncError>(Some(envelope))
         });
         match committed {
@@ -121,22 +137,6 @@ impl Inner {
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
         }
         locked(&self.counters).record_stale_version_drops(drops);
-        let ids: Vec<String> = store.scope_members(&model, scope.key.as_str())?.into_iter().map(|(id, _)| id).collect();
-        let tail_kept = plans_as_first
-            && coverage == Coverage::Page
-            && window.as_ref().and_then(|window| window.ids.last()).is_some_and(|last| {
-                ids.contains(last) && !normalized.roots.iter().any(|root| root.get("id").and_then(read_id).is_some_and(|id| id.as_str() == last))
-            });
-        let (cursor, has_next) = match (&window, tail_kept) {
-            (Some(window), true) => (window.cursor.clone(), window.has_next),
-            _ => page_info.map_or((None, false), |info| (info.end_cursor, info.has_next_page)),
-        };
-        let applied = if is_first_page { attempt.issued } else { applied_before.unwrap_or(attempt.issued) };
-        let record = WindowRecord { key: window_key.clone(), cursor, has_next, ids, issued: attempt.issued, applied, generation: generation.value() as i64 };
-        store.save_window(&record)?;
-        if is_first_page {
-            store.clear_invalidation(&window_key, self.now_ms())?;
-        }
         Ok(Landed::Applied { rows: admitted_roots })
     }
 }
