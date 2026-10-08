@@ -165,6 +165,7 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 | `fresh_for 5.minutes` | how long a response counts as fresh | `5.minutes` |
 | `fresh_for 5.minutes, empty: 30.seconds` | shorter freshness for an empty response | same |
 | `max_pages 5` | page limit per load | none |
+| `variables statusFilter: :status, includeGifts: false` | name the GraphQL variables: a symbol takes the value of a relation param, any other value is sent as written | every param under its own name |
 | `updates Subscription, deleted_by: :field` | keep the relation current with a subscription | none |
 | `on_absent :detach` or `:destroy` | what happens to rows missing from a refreshed response | `:detach` |
 

@@ -198,7 +198,7 @@ impl Inner {
         let base_revision = self.db.revision_seq()?;
         let issued = self.next_issued();
         let has_window = self.db.shared.store.window(&resolved.window_key)?.is_some();
-        let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref());
+        let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &resolved.remote.variables);
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);
         let fetched = self.query_with_retry(request).await.and_then(|(response, attempts)| {
             let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;

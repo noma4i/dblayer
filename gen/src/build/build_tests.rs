@@ -1,4 +1,4 @@
-use dblayer::schema::{CursorSpec, 
+use dblayer::schema::{CursorSpec, VariableSource, 
     AssociationKind, Coverage, Dependent, FieldKind, ModelSpec, OnFailure, PageDirection, RemoteShape, RootShape, Sort,
     Storage, UpdatesSpec,
 };
@@ -236,4 +236,13 @@ fn operations_can_be_named_with_a_string_when_the_graphql_name_is_lowercase() {
     let model = build_one("  remote :feed do\n    query \"feed\"\n  end\n  action :like, mutation: \"likeMoment\"");
     assert_eq!(model.relations[0].remote.as_ref().unwrap().operation, "feed");
     assert_eq!(model.actions.iter().find(|action| action.name == "like").unwrap().mutation.as_deref(), Some("likeMoment"));
+}
+
+#[test]
+fn variables_line_renames_params_and_fixes_constants() {
+    let model = build_one("  remote :list do\n    query \"chats\"\n    variables statusFilter: :status, includeGifts: false, mediaKinds: [\"image\", \"video\"]\n  end");
+    let variables = &model.relations[0].remote.as_ref().unwrap().variables;
+    assert_eq!(variables["statusFilter"], VariableSource::Param { name: "status".to_string() });
+    assert_eq!(variables["includeGifts"], VariableSource::Constant { value: json!(false) });
+    assert_eq!(variables["mediaKinds"], VariableSource::Constant { value: json!(["image", "video"]) });
 }

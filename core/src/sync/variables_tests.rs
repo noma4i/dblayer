@@ -14,26 +14,26 @@ fn connection(direction: PageDirection) -> RemoteShape {
 
 #[test]
 fn forward_first_page_sends_first_without_after() {
-    let variables = load_variables(&params(), &connection(PageDirection::Forward), 20, None);
+    let variables = load_variables(&params(), &connection(PageDirection::Forward), 20, None, &Default::default());
     assert_eq!(variables, json!({"userId": "u1", "first": 20}));
 }
 
 #[test]
 fn forward_next_page_sends_first_and_after() {
-    let variables = load_variables(&params(), &connection(PageDirection::Forward), 20, Some("c1"));
+    let variables = load_variables(&params(), &connection(PageDirection::Forward), 20, Some("c1"), &Default::default());
     assert_eq!(variables, json!({"userId": "u1", "first": 20, "after": "c1"}));
 }
 
 #[test]
 fn backward_page_sends_last_and_before() {
-    let variables = load_variables(&params(), &connection(PageDirection::Backward), 10, Some("c9"));
+    let variables = load_variables(&params(), &connection(PageDirection::Backward), 10, Some("c9"), &Default::default());
     assert_eq!(variables, json!({"userId": "u1", "last": 10, "before": "c9"}));
 }
 
 #[test]
 fn list_and_single_send_only_params() {
-    assert_eq!(load_variables(&params(), &RemoteShape::List { coverage: Coverage::Complete }, 20, None), json!({"userId": "u1"}));
-    assert_eq!(load_variables(&Map::new(), &RemoteShape::Single, 20, None), json!({}));
+    assert_eq!(load_variables(&params(), &RemoteShape::List { coverage: Coverage::Complete }, 20, None, &Default::default()), json!({"userId": "u1"}));
+    assert_eq!(load_variables(&Map::new(), &RemoteShape::Single, 20, None, &Default::default()), json!({}));
 }
 
 fn sequenced() -> RemoteShape {
@@ -43,6 +43,18 @@ fn sequenced() -> RemoteShape {
 
 #[test]
 fn custom_cursor_names_its_variable_and_sends_no_page_size() {
-    assert_eq!(load_variables(&params(), &sequenced(), 20, None), json!({"userId": "u1"}));
-    assert_eq!(load_variables(&params(), &sequenced(), 20, Some("7")), json!({"userId": "u1", "afterSequence": 7}));
+    assert_eq!(load_variables(&params(), &sequenced(), 20, None, &Default::default()), json!({"userId": "u1"}));
+    assert_eq!(load_variables(&params(), &sequenced(), 20, Some("7"), &Default::default()), json!({"userId": "u1", "afterSequence": 7}));
+}
+
+#[test]
+fn mapped_variables_rename_params_and_add_constants() {
+    use crate::schema::VariableSource;
+    use std::collections::BTreeMap;
+    let mapping = BTreeMap::from([
+        ("statusFilter".to_string(), VariableSource::Param { name: "userId".to_string() }),
+        ("includeGifts".to_string(), VariableSource::Constant { value: json!(false) }),
+    ]);
+    let variables = load_variables(&params(), &connection(PageDirection::Forward), 20, None, &mapping);
+    assert_eq!(variables, json!({"statusFilter": "u1", "includeGifts": false, "first": 20}));
 }

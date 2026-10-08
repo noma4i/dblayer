@@ -1,4 +1,4 @@
-use dblayer::schema::{CursorSpec, 
+use dblayer::schema::{CursorSpec, VariableSource, 
     ActionDeclaration, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
     OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
 };
@@ -159,6 +159,16 @@ fn sort_field(pair: &Pair) -> SortField {
     SortField { column: pair.key.clone(), direction: if descending { SortDirection::Desc } else { SortDirection::Asc } }
 }
 
+fn variables_of(call: &Call) -> std::collections::BTreeMap<String, VariableSource> {
+    call.options.iter().map(|pair| {
+        let source = match &pair.value.item {
+            Value::Symbol(name) => VariableSource::Param { name: name.clone() },
+            other => VariableSource::Constant { value: json_of(other) },
+        };
+        (pair.key.clone(), source)
+    }).collect()
+}
+
 fn cursor_of(paginate: &Call) -> Option<CursorSpec> {
     let variable = option(paginate, "cursor").and_then(|pair| text_of(&pair.value.item))?;
     let from = option(paginate, "from").and_then(|pair| text_of(&pair.value.item))?;
@@ -194,6 +204,7 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         stale_time: fresh.and_then(|fresh| fresh.args.first()).and_then(|arg| text_of(&arg.item)).unwrap_or(DEFAULT_FRESHNESS.to_string()),
         empty_stale_time: fresh.and_then(|fresh| option(fresh, "empty")).and_then(|pair| text_of(&pair.value.item)),
         page_size,
+        variables: line("variables").map(variables_of).unwrap_or_default(),
         updates: line("updates").map(|updates| UpdatesSpec {
             subscription: first_name(updates),
             deleted_by: option(updates, "deleted_by").and_then(|pair| text_of(&pair.value.item)),

@@ -22,6 +22,7 @@ fn paged_remote(selects_page_info: bool) -> RemoteSpec {
         selects_page_info,
         updates: None,
         page_size: None,
+        variables: Default::default(),
     }
 }
 
@@ -34,6 +35,7 @@ fn complete_remote() -> RemoteSpec {
         selects_page_info: false,
         updates: None,
         page_size: None,
+        variables: Default::default(),
     }
 }
 
