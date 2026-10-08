@@ -12,6 +12,7 @@ use super::dispatch::{mark_core_thread, Busy};
 use super::watch::{Body, Change, CountChange, Version};
 
 const MAX_WORKERS: usize = 64;
+pub(crate) const MAX_REPLACED_PAIRS: usize = 10_000;
 
 fn held<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -21,6 +22,7 @@ pub(crate) struct Taken {
     pub latest: Arc<Version>,
     pub delivered: Option<Arc<Version>>,
     pub replaced: Vec<(RowId, RowId)>,
+    pub overflowed: bool,
     pub steps: usize,
 }
 
@@ -28,6 +30,7 @@ pub(crate) struct Taken {
 pub(crate) struct Mailbox {
     latest: Option<Arc<Version>>,
     replaced: Vec<(RowId, RowId)>,
+    overflowed: bool,
     steps: usize,
     scheduled: bool,
     delivered: Option<Arc<Version>>,
@@ -36,14 +39,36 @@ pub(crate) struct Mailbox {
 impl Mailbox {
     pub(crate) fn push(&mut self, version: Arc<Version>, replaced: &[(RowId, RowId)]) -> bool {
         self.latest = Some(version);
-        self.replaced.extend_from_slice(replaced);
+        for (from, to) in replaced {
+            self.record_replacement(from, to);
+        }
         self.steps += 1;
         !std::mem::replace(&mut self.scheduled, true)
     }
 
+    fn record_replacement(&mut self, from: &RowId, to: &RowId) {
+        if self.overflowed {
+            return;
+        }
+        match self.replaced.iter_mut().find(|(_, last)| last == from) {
+            Some(pair) => pair.1 = to.clone(),
+            None => self.replaced.push((from.clone(), to.clone())),
+        }
+        if self.replaced.len() > MAX_REPLACED_PAIRS {
+            self.replaced.clear();
+            self.overflowed = true;
+        }
+    }
+
     pub(crate) fn take(&mut self) -> Option<Taken> {
         let latest = self.latest.take()?;
-        Some(Taken { latest, delivered: self.delivered.clone(), replaced: std::mem::take(&mut self.replaced), steps: std::mem::take(&mut self.steps) })
+        Some(Taken {
+            latest,
+            delivered: self.delivered.clone(),
+            replaced: std::mem::take(&mut self.replaced),
+            overflowed: std::mem::take(&mut self.overflowed),
+            steps: std::mem::take(&mut self.steps),
+        })
     }
 
     pub(crate) fn finish(&mut self) {
@@ -53,6 +78,7 @@ impl Mailbox {
     fn drop_pending(&mut self) {
         self.latest = None;
         self.replaced.clear();
+        self.overflowed = false;
         self.steps = 0;
     }
 }
@@ -141,7 +167,7 @@ impl Subscriber {
         }
         let diff = match &new.step {
             Some(step) if taken.steps == 1 && step.from == previous.position() => step.diff.clone(),
-            _ => Diff::between(&old.entries, &new.entries, &taken.replaced),
+            _ => Diff::between(&old.entries, &new.entries, if taken.overflowed { &[] } else { &taken.replaced }),
         };
         (!diff.is_empty()).then_some(diff)
     }
