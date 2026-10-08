@@ -143,7 +143,7 @@ impl Inner {
         let Some(freshness) = store.window_freshness(&resolved.window_key)? else { return Ok(false) };
         let is_empty = store.window(&resolved.window_key)?.is_none_or(|window| window.ids.is_empty());
         let policy = selected_policy(is_empty, &resolved.remote.stale_time, resolved.remote.empty_stale_time.as_deref());
-        let window = stale_window(&self.config.freshness, policy)?;
+        let window = stale_window(policy)?;
         Ok(freshness.is_fresh(self.now_ms(), i64::try_from(window.as_millis()).unwrap_or(i64::MAX)))
     }
 
