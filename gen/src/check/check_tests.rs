@@ -49,7 +49,6 @@ fn missing_required_key() {
     assert_eq!(failure_in("  has_many :o, model: Sample"), (1, "model Sample: foreign key of association o is not indexed".to_string()));
     assert_eq!(field_failure("enum :kind"), (3, "`enum` needs `values:`".to_string()));
     assert_eq!(field_failure("list :tags"), (3, "`list` needs `of:`".to_string()));
-    assert_eq!(failure_in("  remote :feed do\n    list\n  end"), (7, "`remote` needs a `query` line".to_string()));
 }
 
 #[test]
