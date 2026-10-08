@@ -49,3 +49,11 @@ fn object_field_can_name_the_app_type_it_decodes_to() {
     assert!(swift.contains("public let widgets: [MomentWidget]"), "{swift}");
     assert!(swift.contains("Column<Moment, MomentMedia?>(\"media\")"), "{swift}");
 }
+
+#[test]
+fn swift_models_can_be_built_directly_with_defaults_for_sync_state() {
+    let models = parse_models("model Moment do\n  schema do\n    string :uuid\n    string :text, null: true\n    bool :liked, default: false\n    int :count, default: 3\n  end\nend\n").unwrap();
+    let swift = emit_swift(&models);
+    assert!(swift.contains("public init(id: String, uuid: String, text: String? = nil, liked: Bool = false, count: Int = 3, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil)"), "{swift}");
+    assert!(swift.contains("self.liked = liked"), "{swift}");
+}

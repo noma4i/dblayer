@@ -11,7 +11,7 @@ fn name(text: &str) -> String {
 fn scalar(kind: ScalarKind, swift: bool) -> &'static str {
     match (kind, swift) {
         (ScalarKind::Bool, _) => "Bool",
-        (ScalarKind::Int, true) => "Int64",
+        (ScalarKind::Int, true) => "Int",
         (ScalarKind::Int, false) => "Long",
         (ScalarKind::Num, _) => "Double",
         _ => "String",
@@ -29,6 +29,17 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
     if field.nullable || field.optional { format!("{base}?") } else { base }
 }
 
+fn swift_default(field: &FieldSpec) -> Option<String> {
+    if field.nullable || field.optional { return Some("nil".into()); }
+    match (&field.kind, field.default.as_ref()?) {
+        (FieldKind::Scalar { kind: ScalarKind::Bool }, serde_json::Value::Bool(flag)) => Some(flag.to_string()),
+        (FieldKind::Scalar { kind: ScalarKind::Int | ScalarKind::Num }, serde_json::Value::Number(number)) => Some(number.to_string()),
+        (FieldKind::Scalar { kind: ScalarKind::Str | ScalarKind::Date | ScalarKind::Id }, serde_json::Value::String(text)) => Some(format!("{text:?}")),
+        (FieldKind::Enum { .. }, serde_json::Value::String(text)) => Some(format!("{text:?}")),
+        _ => None,
+    }
+}
+
 pub fn emit_swift(models: &[ModelSpec]) -> String {
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
     for model in models {
@@ -38,6 +49,14 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             writeln!(out, "    public let {}: {}", field.name, field_type(field, true)).unwrap();
         }
         writeln!(out, "    public let sync: SyncInfo\n    public let upload: UploadInfo?\n").unwrap();
+        let fields: Vec<&FieldSpec> = model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)).collect();
+        let params: Vec<String> = fields.iter().map(|field| {
+            let default = swift_default(field).map(|value| format!(" = {value}")).unwrap_or_default();
+            format!("{}: {}{}", field.name, field_type(field, true), default)
+        }).chain(["sync: SyncInfo = SyncInfo()".to_string(), "upload: UploadInfo? = nil".to_string()]).collect();
+        writeln!(out, "    public init({}) {{", params.join(", ")).unwrap();
+        for field in fields.iter().map(|field| field.name.as_str()).chain(["sync", "upload"]) { writeln!(out, "        self.{field} = {field}").unwrap(); }
+        out.push_str("    }\n\n");
         for field in &model.fields {
             if field.name != "id" { writeln!(out, "    public static let {} = Column<{class}, {}>(\"{}\")", field.name, field_type(field, true), field.name).unwrap(); }
         }
