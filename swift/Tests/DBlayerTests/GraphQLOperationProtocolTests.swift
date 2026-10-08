@@ -36,7 +36,7 @@ private struct TickSubscription: GraphQLSubscription {
 }
 
 @Suite(.serialized)
-struct GraphQLOperationTests {
+struct GraphQLOperationProtocolTests {
   @Test
   func dataDecodesPingResponse() throws {
     let data = try JSONDecoder().decode(
