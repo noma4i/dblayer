@@ -1,9 +1,11 @@
 mod database;
 mod live;
+mod state;
 mod transport;
 
 pub use database::{Config, Database};
 pub use live::{LiveChange, LiveSubscription, QueryListener};
+pub use state::{RelationStateChange, StateListener, StateSubscription};
 pub use transport::{ByteProgress, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]

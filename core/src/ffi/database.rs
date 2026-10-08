@@ -10,7 +10,7 @@ use crate::schema::ModelSpec;
 use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
 use super::live::LiveHandles;
 use super::transport::ForeignTransport;
-use super::{row_json, DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, Transport};
+use super::{row_json, DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, RelationStateChange, StateListener, StateSubscription, Transport};
 
 pub(super) fn executor() -> &'static Runtime {
     static EXECUTOR: OnceLock<Runtime> = OnceLock::new();
@@ -46,6 +46,18 @@ impl Database {
     }
     pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.connect_json(&query_json, true, listener)
+    }
+    pub fn live_state(&self, model: String, relation: String, params_json: String, listener: Arc<dyn StateListener>) -> Result<Arc<StateSubscription>, DbError> {
+        let params: Map<String, Value> = serde_json::from_str(&params_json)?;
+        let mut receiver = self.sync()?.relation_state(&model, &relation, &params)?;
+        let task = executor().spawn(async move {
+            loop {
+                let change = RelationStateChange::of(&receiver.borrow_and_update());
+                listener.changed(change);
+                if receiver.changed().await.is_err() { return; }
+            }
+        });
+        Ok(Arc::new(StateSubscription { task: Mutex::new(Some(task.abort_handle())) }))
     }
     pub fn live_belongs_to(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.related(model, row_id, name, listener)
