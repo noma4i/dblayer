@@ -15,7 +15,8 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
     else if let value = try? container.decode(Double.self) { self = .number(value) }
     else if let value = try? container.decode(String.self) { self = .string(value) }
     else if let value = try? container.decode([JSONValue].self) { self = .array(value) }
-    else { self = .object(try container.decode([String: JSONValue].self)) }
+    else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }
+    else { throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unsupported JSON value")) }
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -33,6 +34,23 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
   public static func encode<T: Encodable>(_ value: T) -> JSONValue {
     guard let data = try? JSONEncoder().encode(value), let decoded = try? JSONDecoder().decode(JSONValue.self, from: data) else { return .null }
     return decoded
+  }
+
+  public func jsonData() throws -> Data {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return try encoder.encode(self)
+  }
+
+  public static func decode(_ data: Data) throws -> JSONValue {
+    try JSONDecoder().decode(JSONValue.self, from: data)
+  }
+
+  public static func decodeObject(_ data: Data) throws -> [String: JSONValue] {
+    guard case let .object(object) = try decode(data) else {
+      throw DecodingError.typeMismatch([String: JSONValue].self, DecodingError.Context(codingPath: [], debugDescription: "JSON body is not an object"))
+    }
+    return object
   }
 
   public static func parse(_ text: String) -> JSONValue {
