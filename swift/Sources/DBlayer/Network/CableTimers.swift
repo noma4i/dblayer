@@ -9,7 +9,7 @@ public struct CableRecycle: Sendable, Equatable {
 }
 
 public struct CableTimers: Sendable {
-  public var now: @Sendable () -> Date = Date.init
+  public var now: @Sendable () -> Date = { Date() }
   public var sleep: @Sendable (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) }
   public var jitter: @Sendable (Double) -> Double = { Double.random(in: 0 ... $0) }
   public var recycled: @Sendable (CableRecycle) -> Void = { recycle in

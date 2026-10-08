@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
+export IPHONEOS_DEPLOYMENT_TARGET=17.0
 bridge="$root/swift"
 build="$root/target/ios-build"
 targets=(aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios)
