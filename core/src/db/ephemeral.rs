@@ -256,13 +256,20 @@ impl Db {
         }
         let generation = self.generation();
         let mut destroyed = 0;
-        let committed = self.shared.store.commit_with(generation, |_| {
+        let committed = self.shared.store.commit_with(generation, |reader| {
             let claimed = self.shared.ephemeral.lock().claim_expired(candidates);
             destroyed = claimed.len();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
+            let mut targets: Vec<RowRef> = Vec::new();
             for (model, id) in &claimed {
-                envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: RowId::new(id)?, reason: DestroyReason::Expired });
+                let own = RowRef::new(ModelKey::new(model), RowId::new(id)?);
+                for target in self.destroy_targets(reader, &own, WriteOrigin::Event)? {
+                    if !targets.contains(&target) {
+                        targets.push(target);
+                    }
+                }
             }
+            envelope.entity_ops = targets.into_iter().map(|target| EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Expired }).collect();
             Ok::<_, DbError>(Some(envelope))
         });
         self.shared.ephemeral.lock().claim_expired(candidates);
