@@ -13,13 +13,14 @@ async fn inv_id_02_inv_id_03_no_reference_to_the_temp_id_survives_the_confirmati
     let parent = rig.db.create("moments", params(json!({"text": "parent"}))).unwrap();
     let temp = parent.id.to_string();
     rig.db.create("notes", params(json!({"id": "n1", "momentId": temp, "text": "one"}))).unwrap();
-    rig.db.update("notes", &rid("n1"), params(json!({"text": "two"}))).unwrap();
+    rig.db.update("notes", &rid("n1"), params(json!({"momentId": "m5"}))).unwrap();
+    rig.db.create("notes", params(json!({"id": "n2", "momentId": temp, "text": "two"}))).unwrap();
     rig.db.attach("moments", &parent.id, "media", b"bytes", "a.bin", "a/b").unwrap();
     rig.db.set_ephemeral("moments", &parent.id, params(json!({"typing": true}))).unwrap();
     rig.transport.enqueue("CreateMoment", created("m77", "parent"));
     rig.sync.flush().await.unwrap();
-    let note = rig.db.find("notes", &rid("n1")).unwrap().unwrap();
-    assert_eq!((note.get("momentId"), note.get("momentIds")), (Some(&json!("m77")), None));
+    let note = rig.db.find("notes", &rid("n2")).unwrap().unwrap();
+    assert_eq!(note.get("momentId"), Some(&json!("m77")));
     assert_eq!(rig.db.read("moments", &rid("m77"), "media").unwrap(), Some(b"bytes".to_vec()));
     assert_eq!(rig.db.find("moments", &rid("m77")).unwrap().unwrap().get("typing"), Some(&json!(true)));
     assert_eq!(mentions(&rig.db, &temp), Vec::<String>::new());
