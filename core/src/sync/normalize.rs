@@ -34,19 +34,72 @@ pub(crate) fn normalize_nodes(db: &Db, model: &str, nodes: &[Map<String, Value>]
 
 pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Map<String, Value>, SyncError> {
     let spec = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
+    let parent_id = node.get("id").and_then(read_id);
     let mut input = node.clone();
-    for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo) {
-        let Some(nested) = node.get(&association.name).and_then(Value::as_object) else { continue };
+    for association in &spec.associations {
         let target = association.target.as_str();
         if db.spec(target).is_err() {
             continue;
         }
-        let Some(parent) = normalize_node(db, target, nested, related)? else { continue };
-        let Some(id) = parent.get("id").and_then(read_id) else { continue };
-        input.insert(association.foreign_key.clone(), Value::String(id.as_str().to_string()));
-        related.insert((target.to_string(), id.as_str().to_string()), parent);
+        let path = association.from.as_deref().unwrap_or(&association.name);
+        let Some(found) = nested_values(node, path) else { continue };
+        let mut ids = Vec::new();
+        for nested in found.iter().filter_map(|value| value.as_object()) {
+            let mut child = nested.clone();
+            if matches!(association.kind, AssociationKind::HasOne | AssociationKind::HasMany) {
+                let Some(parent) = &parent_id else { continue };
+                child.insert(association.foreign_key.clone(), Value::String(parent.as_str().to_string()));
+            }
+            let Some(row) = normalize_node(db, target, &child, related)? else { continue };
+            let Some(id) = row.get("id").and_then(read_id) else { continue };
+            related.insert((target.to_string(), id.as_str().to_string()), row);
+            ids.push(Value::String(id.as_str().to_string()));
+        }
+        match association.kind {
+            AssociationKind::BelongsTo => {
+                if let Some(Value::String(id)) = ids.first() {
+                    input.insert(association.foreign_key.clone(), Value::String(id.clone()));
+                }
+            }
+            AssociationKind::References => {
+                input.insert(association.foreign_key.clone(), Value::Array(ids));
+            }
+            AssociationKind::HasOne | AssociationKind::HasMany => {}
+        }
+        if path == association.name {
+            input.remove(&association.name);
+        }
     }
     Ok(input)
+}
+
+/// The nested values at a dotted path. Lists are walked element by element, and a connection (`nodes` or `edges`) yields its nodes.
+fn nested_values<'a>(node: &'a Map<String, Value>, path: &str) -> Option<Vec<&'a Value>> {
+    let mut segments = path.split('.');
+    let mut current: Vec<&Value> = vec![node.get(segments.next()?)?];
+    for segment in segments {
+        current = flatten(current).into_iter().filter_map(|value| value.as_object()?.get(segment)).collect();
+    }
+    let found: Vec<&Value> = flatten(current).into_iter().flat_map(connection_items).filter(|value| !value.is_null()).collect();
+    Some(found)
+}
+
+fn flatten(values: Vec<&Value>) -> Vec<&Value> {
+    values.into_iter().flat_map(|value| match value {
+        Value::Array(items) => items.iter().collect(),
+        other => vec![other],
+    }).collect()
+}
+
+fn connection_items(value: &Value) -> Vec<&Value> {
+    let Some(fields) = value.as_object() else { return vec![value] };
+    if let Some(nodes) = fields.get("nodes").and_then(Value::as_array) {
+        return nodes.iter().collect();
+    }
+    if let Some(edges) = fields.get("edges").and_then(Value::as_array) {
+        return edges.iter().filter_map(|edge| edge.get("node")).collect();
+    }
+    vec![value]
 }
 
 pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, SyncError> {

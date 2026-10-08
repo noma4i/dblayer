@@ -121,14 +121,14 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         ),
         (Context::Model, "belongs_to") => plain(
             Shape::Name,
-            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("touch", Want::Bool, false)],
+            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("touch", Want::Bool, false), key("from", Want::Any, false)],
         ),
         (Context::Model, "has_many" | "has_one") => plain(
             Shape::Name,
-            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("dependent", Want::Symbol, false)],
+            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("dependent", Want::Symbol, false), key("from", Want::Any, false)],
         ),
         (Context::Model, "references") => {
-            plain(Shape::Name, vec![key("model", Want::Const, false), key("key", Want::Symbol, false)])
+            plain(Shape::Name, vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("from", Want::Any, false)])
         }
         (Context::Schema, "index") => plain(Shape::Names, vec![]),
         (Context::Schema, "ephemeral") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),

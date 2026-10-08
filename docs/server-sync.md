@@ -17,7 +17,7 @@ Every response, whether from a query, a mutation or a subscription event, goes t
 | Rule | Behavior |
 | ---- | -------- |
 | Identity | an object with `__typename` and `id` is a row of the model with that name |
-| Nesting | a nested object of an association becomes a row of its own model, the outer row keeps the key (`userId`) |
+| Nesting | objects found at the `from:` path of an association (its name by default) become rows of the target model. `belongs_to` keeps the key (`userId`) on the outer row, `has_many` and `has_one` rows get the outer id, `references` keeps the ids |
 | Lists and pages | lists and `edges { node }` with `pageInfo` are recognized from the document and keep server order |
 | Partial responses | fields a query did not select are never erased, each field is updated on its own and the newer revision wins |
 | Unknown fields | ignored |

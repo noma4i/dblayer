@@ -136,6 +136,7 @@ fn build_association(call: &Call, kind: AssociationKind, owner: &str) -> Associa
     });
     let mut association = AssociationSpec::new(&name, kind, &target, &key);
     association.touches_parent = flag(call, "touch");
+    association.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));
     association.dependent = option(call, "dependent").map(|_| Dependent::Destroy);
     association
 }

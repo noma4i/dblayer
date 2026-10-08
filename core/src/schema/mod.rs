@@ -290,6 +290,8 @@ pub struct AssociationSpec {
     pub dependent: Option<Dependent>,
     #[serde(default)]
     pub touches_parent: bool,
+    #[serde(default)]
+    pub from: Option<String>,
 }
 
 impl AssociationSpec {
@@ -301,6 +303,7 @@ impl AssociationSpec {
             foreign_key: foreign_key.to_string(),
             dependent: None,
             touches_parent: false,
+            from: None,
         }
     }
 

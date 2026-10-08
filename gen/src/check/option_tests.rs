@@ -58,6 +58,9 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("scope.order", assoc("  scope :by"), assoc("  scope :by, order: { ownerId: :desc }")),
         ("belongs_to.model", assoc("  belongs_to :u, model: User, key: :ownerId"), assoc("  belongs_to :u, model: Vibe, key: :ownerId")),
         ("belongs_to.key", assoc("  belongs_to :u, model: User, key: :ownerId"), assoc("  belongs_to :u, model: User, key: :a")),
+        ("belongs_to.from", assoc("  belongs_to :u, model: User, key: :ownerId"), assoc("  belongs_to :u, model: User, key: :ownerId, from: \"x.u\"")),
+        ("has_many.from", assoc("  has_many :v, model: Vibe, key: :momentId"), assoc("  has_many :v, model: Vibe, key: :momentId, from: \"x.v\"")),
+        ("references.from", assoc("  references :u, model: User, key: :ownerId"), assoc("  references :u, model: User, key: :ownerId, from: \"x.u\"")),
         ("belongs_to.touch", assoc("  belongs_to :u, model: User, key: :ownerId"), assoc("  belongs_to :u, model: User, key: :ownerId, touch: true")),
         ("has_many.model", assoc("  has_many :v, model: Vibe, key: :momentId"), assoc("  has_many :v, model: User, key: :momentId")),
         ("has_many.key", assoc("  has_many :v, model: Vibe, key: :momentId"), assoc("  has_many :v, model: Vibe, key: :ownerId")),
@@ -125,6 +128,7 @@ fn inv_dsl_03_the_table_names_every_option_the_checker_declares() {
     declared.remove("has_one.model");
     declared.remove("has_one.key");
     declared.remove("has_one.dependent");
+    declared.remove("has_one.from");
     let missing: Vec<&String> = declared.iter().filter(|label| !labelled.contains(*label)).collect();
     assert_eq!(missing, Vec::<&String>::new(), "options without a row in the table");
 }
