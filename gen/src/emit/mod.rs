@@ -69,14 +69,14 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
                 writeln!(out, "    public static func {method}({params}) -> Query<Self> {{").unwrap();
             }
             let params = relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("\"{key}\": JSONValue.encode({key})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "        var query = Query<Self>(relation: \"{}\", params: [{}])", relation.name, if params.is_empty() { ":" } else { &params }).unwrap();
+            writeln!(out, "        var built = Query<Self>(relation: \"{}\", params: [{}])", relation.name, if params.is_empty() { ":" } else { &params }).unwrap();
             if relation.remote.is_none() {
-                for key in &relation.by_columns { writeln!(out, "        query = query.where(Condition.equal(\"{key}\", JSONValue.encode({key})))").unwrap(); }
+                for key in &relation.by_columns { writeln!(out, "        built = built.where(Condition.equal(\"{key}\", JSONValue.encode({key})))").unwrap(); }
                 if let Sort::Fields(fields) = &relation.sort {
-                    for field in fields { writeln!(out, "        query = query.order(Order(field: \"{}\", direction: \"{}\"))", field.column, if field.direction == SortDirection::Desc { "desc" } else { "asc" }).unwrap(); }
+                    for field in fields { writeln!(out, "        built = built.order(Order(field: \"{}\", direction: \"{}\"))", field.column, if field.direction == SortDirection::Desc { "desc" } else { "asc" }).unwrap(); }
                 }
             }
-            out.push_str("        return query\n    }\n");
+            out.push_str("        return built\n    }\n");
         }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id").collect();
         let params = fields.iter().map(|field| {
@@ -131,13 +131,13 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             if params.is_empty() { writeln!(out, "        val {method}: Query<{class}> get() {{").unwrap(); }
             else { writeln!(out, "        fun {method}({params}): Query<{class}> {{").unwrap(); }
             let params = relation.by_columns.iter().map(|key| format!("\"{key}\" to jsonValue({key})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "            var query = Query(\"{class}\", serializer(), relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("put(\"{key}\", jsonValue({key}))")).collect::<Vec<_>>().join("; ")).unwrap();
+            writeln!(out, "            var built = Query(\"{class}\", serializer(), relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("put(\"{key}\", jsonValue({key}))")).collect::<Vec<_>>().join("; ")).unwrap();
             let _ = params;
             if relation.remote.is_none() {
-                for key in &relation.by_columns { writeln!(out, "            query = query.where(Condition.equal(\"{key}\", jsonValue({key})))").unwrap(); }
-                if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            query = query.order(Order(\"{}\", \"{}\"))", field.column, if field.direction == SortDirection::Desc { "desc" } else { "asc" }).unwrap(); } }
+                for key in &relation.by_columns { writeln!(out, "            built = built.where(Condition.equal(\"{key}\", jsonValue({key})))").unwrap(); }
+                if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            built = built.order(Order(\"{}\", \"{}\"))", field.column, if field.direction == SortDirection::Desc { "desc" } else { "asc" }).unwrap(); } }
             }
-            out.push_str("            return query\n        }\n");
+            out.push_str("            return built\n        }\n");
         }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id").collect();
         let params = fields.iter().map(|field| {

@@ -57,3 +57,24 @@ fn swift_models_can_be_built_directly_with_defaults_for_sync_state() {
     assert!(swift.contains("public init(id: String, uuid: String, text: String? = nil, liked: Bool = false, count: Int = 3, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil)"), "{swift}");
     assert!(swift.contains("self.liked = liked"), "{swift}");
 }
+
+#[test]
+fn text_param_relation_takes_a_string_and_keeps_its_name_free() {
+    let models = parse_models(r#"
+model Hit do
+  schema do
+    string :title
+  end
+  remote :search, text: [:query] do
+    list
+  end
+end
+"#).unwrap();
+    let swift = emit_swift(&models);
+    let kotlin = emit_kotlin(&models);
+    assert!(swift.contains("static func search(_ query: String) -> Query<Self>"));
+    assert!(swift.contains("params: [\"query\": JSONValue.encode(query)]"));
+    assert!(!swift.contains("var query ="));
+    assert!(kotlin.contains("fun search(query: String): Query<Hit>"));
+    assert!(!kotlin.contains("var query ="));
+}
