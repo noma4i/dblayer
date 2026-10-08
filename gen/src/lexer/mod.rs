@@ -27,7 +27,7 @@ pub struct Token {
     pub column: usize,
 }
 
-const DURATION_UNITS: [&str; 8] = ["second", "seconds", "minute", "minutes", "hour", "hours", "day", "days"];
+const DURATION_UNITS: [&str; 10] = ["millisecond", "milliseconds", "second", "seconds", "minute", "minutes", "hour", "hours", "day", "days"];
 
 struct Cursor {
     chars: Vec<char>,

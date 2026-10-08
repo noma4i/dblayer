@@ -12,3 +12,9 @@ fn rejects_text_without_a_count_or_a_known_unit() {
     assert_eq!(parse_duration("soon"), None);
     assert_eq!(parse_duration("5.fortnights"), None);
 }
+
+#[test]
+fn parses_milliseconds() {
+    assert_eq!(parse_duration("300.milliseconds"), Some(Duration::from_millis(300)));
+    assert_eq!(parse_duration("1.millisecond"), Some(Duration::from_millis(1)));
+}
