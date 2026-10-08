@@ -106,7 +106,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
             )
         }
         (Context::Model, "destroy") => {
-            plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("wrap", Want::Symbol, false), key("root", Want::Any, false)])
+            plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false)])
         }
         (Context::Action, "mutation") => plain(Shape::Const, vec![]),
         (Context::Action, "on_failure") => plain(Shape::Name, vec![]),
@@ -299,8 +299,8 @@ fn check_action_line(call: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str
             }
         }
         "args" => {
-            for pair in call.options.iter().filter(|pair| !matches!(&pair.value.item, Value::Symbol(kind) if ["bool", "int", "num", "string", "id"].contains(&kind.as_str()))) {
-                report(pair.value.line, pair.value.column, "arg type must be :bool, :int, :num, :string or :id".to_string());
+            for pair in call.options.iter().filter(|pair| !matches!(&pair.value.item, Value::Symbol(kind) if ["bool", "int", "num", "string", "id", "ids"].contains(&kind.as_str()))) {
+                report(pair.value.line, pair.value.column, "arg type must be :bool, :int, :num, :string, :id or :ids".to_string());
             }
         }
         "on_failure" => {

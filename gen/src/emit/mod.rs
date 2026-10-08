@@ -35,6 +35,8 @@ fn arg_type(kind: &str, swift: bool) -> &'static str {
         ("bool", false) => "Boolean",
         ("int", _) => "Int",
         ("num", _) => "Double",
+        ("ids", true) => "[String]",
+        ("ids", false) => "List<String>",
         _ => "String",
     }
 }

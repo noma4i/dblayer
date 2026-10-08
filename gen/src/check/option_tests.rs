@@ -57,6 +57,7 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("update.input", assoc("  update with: UpdateA"), assoc("  update with: UpdateA, input: { a: :a }")),
         ("update.on_failure", assoc("  update with: UpdateA"), assoc("  update with: UpdateA, on_failure: keep")),
         ("destroy.with", assoc("  destroy with: DeleteA"), assoc("  destroy with: DeleteB")),
+        ("destroy.input", assoc("  destroy with: DeleteA"), assoc("  destroy with: DeleteA, input: { a: :a }")),
         ("destroy.wrap", assoc("  destroy with: DeleteA"), assoc("  destroy with: DeleteA, wrap: :input")),
         ("destroy.root", assoc("  destroy with: DeleteA"), assoc("  destroy with: DeleteA, root: \"deleteA.a\"")),
         ("scope.params", assoc("  scope :by"), assoc("  scope :by, params: [:ownerId]")),
