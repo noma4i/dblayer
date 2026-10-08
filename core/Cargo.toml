@@ -9,11 +9,17 @@ name = "dblayer"
 
 [features]
 cli = ["uniffi/cli"]
+stress = ["tokio/rt-multi-thread", "tokio/test-util"]
 
 [[bin]]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 required-features = ["cli"]
+
+[[bin]]
+name = "stress"
+path = "src/bin/stress.rs"
+required-features = ["stress"]
 
 [dependencies]
 async-trait = "0.1.92"

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde_json::{Map, Value};
@@ -117,15 +117,83 @@ fn diff_fields(old: &Map<String, Value>, new: &Map<String, Value>) -> BTreeSet<S
     changed
 }
 
+type HiddenRows = HashSet<(String, String)>;
+type OpenDestroy = (i64, String, Vec<u8>, Option<Vec<u8>>);
+
+fn hidden_rows(connection: &Connection, transitions: &[OperationTransition]) -> Result<HiddenRows, StoreError> {
+    let mut released: HashSet<i64> = HashSet::new();
+    let mut rewritten: HashMap<i64, &OperationRecord> = HashMap::new();
+    for transition in transitions {
+        match transition {
+            OperationTransition::Close { seq, status, .. } if status.is_terminal() => {
+                released.insert(*seq);
+            }
+            OperationTransition::Fail { seq, status: OperationStatus::Failed, .. } | OperationTransition::Remove { seq, .. } => {
+                released.insert(*seq);
+            }
+            OperationTransition::Begin(record) => {
+                if let Some(seq) = record.seq {
+                    rewritten.insert(seq, record);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut statement =
+        connection.prepare_cached("SELECT seq, action_key, row_ids, rollback FROM op WHERE status IN ('pending', 'delivery_unknown') AND action_key LIKE '%:destroy'")?;
+    let open: Vec<OpenDestroy> =
+        statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?.collect::<Result<_, _>>()?;
+    let mut hidden = HiddenRows::new();
+    for (seq, action_key, row_ids, rollback) in open {
+        if released.contains(&seq) {
+            continue;
+        }
+        let model = action_key.split(':').next().unwrap_or_default().to_string();
+        let ids: Vec<String> = match rewritten.get(&seq) {
+            Some(record) => record.row_ids.iter().map(|id| id.to_string()).collect(),
+            None => serde_json::from_slice(&row_ids)?,
+        };
+        hidden.extend(ids.into_iter().map(|id| (model.clone(), id)));
+        let snapshot: Option<Value> = rollback.map(|bytes| serde_json::from_slice(&bytes)).transpose()?;
+        let rows = snapshot.as_ref().and_then(|snapshot| snapshot.get("rows")).and_then(Value::as_array);
+        for item in rows.into_iter().flatten() {
+            let owner = item.get("model").and_then(Value::as_str);
+            let id = item.get("id").and_then(Value::as_str);
+            if let (Some(owner), Some(id)) = (owner, id) {
+                hidden.insert((owner.to_string(), id.to_string()));
+            }
+        }
+    }
+    Ok(hidden)
+}
+
+fn visible_scope_ops(operations: &[ScopeOp], hidden: &HiddenRows) -> Vec<ScopeOp> {
+    let is_hidden = |scope: &ScopeRef, row: &crate::identity::RowId| hidden.contains(&(scope.model.to_string(), row.to_string()));
+    operations
+        .iter()
+        .filter_map(|operation| match operation {
+            ScopeOp::Append { scope, row, .. } | ScopeOp::Move { scope, row, .. } if is_hidden(scope, row) => None,
+            ScopeOp::ReplaceAll { scope, members } => {
+                Some(ScopeOp::ReplaceAll { scope: scope.clone(), members: members.iter().filter(|(row, _)| !is_hidden(scope, row)).cloned().collect() })
+            }
+            other => Some(other.clone()),
+        })
+        .collect()
+}
+
 fn apply_upsert(
     connection: &Connection,
     info: &ModelInfo,
     model: &ModelKey,
     row: &Map<String, Value>,
     revision: i64,
+    hidden: &HiddenRows,
     result: &mut RowChanges,
 ) -> Result<(), StoreError> {
     let Some((id, payload)) = encode_row(row)? else { return Ok(()) };
+    if hidden.contains(&(model.to_string(), id.clone())) {
+        return Ok(());
+    }
     let existing: Option<(i64, Vec<u8>, i64, Vec<u8>)> = connection
         .query_row(
             &format!("SELECT born_rev, field_rev, record_version, payload FROM {} WHERE id = ?1", info.table),
@@ -201,12 +269,14 @@ pub(crate) fn apply_envelope(
     let mut destroyed: Vec<Destroyed> = Vec::new();
     let mut replaced: Vec<(RowRef, crate::identity::RowId)> = Vec::new();
     let mut result = CommitResult::noop(envelope.tx_id);
+    let lands_rows = envelope.entity_ops.iter().any(|operation| matches!(operation, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
+    let hidden = if lands_rows { hidden_rows(connection, &envelope.operation_transitions)? } else { HiddenRows::new() };
 
     for operation in &envelope.entity_ops {
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                apply_upsert(connection, info, model, row, revision, &mut changes)?;
+                apply_upsert(connection, info, model, row, revision, &hidden, &mut changes)?;
             }
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
@@ -267,7 +337,14 @@ pub(crate) fn apply_envelope(
     files_changed |= apply_file_ops(connection, &envelope.file_ops)?;
     wrote |= files_changed;
 
-    wrote |= apply_scope_ops(connection, &envelope.scope_ops, &mut result.scopes)?;
+    let visible;
+    let scope_ops: &[ScopeOp] = if hidden.is_empty() {
+        &envelope.scope_ops
+    } else {
+        visible = visible_scope_ops(&envelope.scope_ops, &hidden);
+        &visible
+    };
+    wrote |= apply_scope_ops(connection, scope_ops, &mut result.scopes)?;
 
     if wrote {
         manifest_write(connection, REVISION_SEQ_KEY, &revision.to_string())?;

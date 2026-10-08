@@ -95,8 +95,19 @@ impl OutboxQueue {
     }
 
     pub fn is_blocked(&self, row: &RowRef) -> bool {
-        self.head(row).is_some_and(|operation| {
-            blocks_followers(&OutboxEntry::new(operation.id.0, operation.status, operation.transport_started))
-        })
+        self.is_blocked_before(row, i64::MAX)
+    }
+
+    pub fn is_held_before(&self, row: &RowRef, sequence: i64, held: &HashSet<i64>) -> bool {
+        self.of_model(row.model.as_str())
+            .filter(|operation| operation.row_ids.contains(&row.id) || operation.temp_id.as_ref() == Some(&row.id))
+            .any(|operation| operation.id.0 < sequence && held.contains(&operation.id.0))
+    }
+
+    pub fn is_blocked_before(&self, row: &RowRef, sequence: i64) -> bool {
+        self.of_model(row.model.as_str())
+            .filter(|operation| operation.row_ids.contains(&row.id) || operation.temp_id.as_ref() == Some(&row.id))
+            .filter(|operation| operation.id.0 < sequence)
+            .any(|operation| blocks_followers(&OutboxEntry::new(operation.id.0, operation.status, operation.transport_started)))
     }
 }

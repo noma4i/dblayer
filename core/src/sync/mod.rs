@@ -136,8 +136,10 @@ impl Sync {
     }
 }
 
-#[cfg(test)]
-mod rig;
+#[cfg(any(test, feature = "stress"))]
+pub mod rig;
+#[cfg(feature = "stress")]
+pub mod stress;
 
 #[cfg(test)]
 mod extract_tests;

@@ -44,4 +44,36 @@ Test conventions:
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.
 - Tests count work (reads, calls, commits) instead of measuring time.
 
+## Stress stand
+
+A separate program runs random operations from several threads against one database. A fake server drops, delays, refuses and repeats answers, goes offline and pushes late and duplicate subscription events. The stand is not part of `cargo test`.
+
+```sh
+cargo run -p dblayer --features stress --bin stress -- --seed 7 --threads 4 --seconds 20
+```
+
+| Flag | Meaning |
+| ---- | ------- |
+| `--seed N[,N...]` | One run per seed, default 1 |
+| `--threads T` | Worker count, default 4. With 1 the run is deterministic: same seed, same final state |
+| `--seconds S` | Time limit per run, default 10 |
+| `--ops N` | Operations per worker instead of a time limit |
+| `--trace` | Print every operation, server decision, queue and row list |
+| `--no-minimize` | Skip the search for a shorter failing run |
+
+Operations: create, update, destroy, like, replace, refresh, load, load more, retry, retry all, discard, ephemeral write, upload, reset, offline and online, clock steps, subscription events.
+
+Checks while the run goes and at the end:
+
+- Observers on lists, scopes, counts and single rows see growing revisions and a diff that leads from their previous state to the next. Their last state equals a fresh read.
+- The row cache equals the database, ephemeral values included.
+- `row_sync` equals the state derived from the open operations. A temp row always has an open create. No list repeats a row or points at a missing row.
+- The server applies the writes of one record in the order they were made. A mutation is sent again only after a retry. Every write reaches the server, unless its record was discarded or its create was refused.
+- After all operations finish, rows equal the server rows, and equal them again after a complete reload.
+- A step that runs longer than 30 s fails with a dump of the queue. A blocked thread ends the run after 60 s with the dump of every worker.
+
+A failing run prints the findings, the command to repeat it and, for one thread, the smallest `--ops` that still fails. With several threads the same seed repeats the choices, not the interleaving, so a race may need several runs.
+
+`scripts/check_dblayer.sh` runs 3 fixed single-thread seeds (deterministic, blocking) and 3 four-thread seeds of 5 s (report only while open races remain).
+
 Example models for tests are in `fixtures/` (`User`, `Moment`, `Vibe`, `Chat`, `Message`).

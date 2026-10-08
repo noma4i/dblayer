@@ -48,6 +48,8 @@ mod put_tests;
 #[cfg(test)]
 mod request_tests;
 #[cfg(test)]
+mod respond_tests;
+#[cfg(test)]
 mod response_tests;
 #[cfg(test)]
 mod retry_tests;

@@ -32,9 +32,21 @@ impl Sync {
 }
 
 #[cfg(test)]
+mod failure_tests;
+#[cfg(test)]
 mod flush_tests;
 #[cfg(test)]
+mod follower_tests;
+#[cfg(test)]
+mod hold_tests;
+#[cfg(test)]
 mod network_tests;
+#[cfg(test)]
+mod order_tests;
+#[cfg(test)]
+mod pass_tests;
+#[cfg(test)]
+mod reset_tests;
 #[cfg(test)]
 mod rollback_tests;
 #[cfg(test)]

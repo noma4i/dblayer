@@ -90,6 +90,8 @@ impl PutReply {
 
 const PUT_STEPS: u32 = 4;
 
+type Responder = Arc<dyn Fn(&GraphQLRequest) -> Option<Reply> + Send + Sync>;
+
 #[derive(Default)]
 struct MockState {
     puts: HashMap<String, VecDeque<PutReply>>,
@@ -101,6 +103,7 @@ struct MockState {
     senders: HashMap<String, Vec<UnboundedSender<SubscriptionEvent>>>,
     cancellations: HashMap<String, usize>,
     calls: Vec<RecordedCall>,
+    responder: Option<Responder>,
 }
 
 #[derive(Clone, Default)]
@@ -115,6 +118,10 @@ impl MockTransport {
 
     pub fn enqueue(&self, operation_name: &str, reply: Reply) {
         self.lock().replies.entry(operation_name.to_string()).or_default().push_back(reply);
+    }
+
+    pub fn respond_with(&self, responder: impl Fn(&GraphQLRequest) -> Option<Reply> + Send + Sync + 'static) {
+        self.lock().responder = Some(Arc::new(responder));
     }
 
     pub fn script_subscription(&self, operation_name: &str, events: Vec<SubscriptionEvent>) {
@@ -175,7 +182,9 @@ impl MockTransport {
 
     async fn reply(&self, kind: CallKind, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.record(kind, &request);
-        let reply = {
+        let responder = self.lock().responder.clone();
+        let answered = responder.and_then(|answer| answer(&request));
+        let reply = answered.or_else(|| {
             let mut state = self.lock();
             let queue = state.replies.get_mut(&request.operation_name);
             match queue {
@@ -183,7 +192,7 @@ impl MockTransport {
                 Some(queue) => queue.front().cloned(),
                 None => None,
             }
-        };
+        });
         let reply = reply.ok_or_else(|| TransportError::Unscripted(request.operation_name.clone()))?;
         if !reply.delay.is_zero() {
             tokio::time::sleep(reply.delay).await;

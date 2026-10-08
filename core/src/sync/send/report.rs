@@ -18,6 +18,12 @@ pub enum SendResult {
     Discarded,
 }
 
+impl SendResult {
+    pub fn keeps_row_waiting(&self) -> bool {
+        matches!(self, SendResult::Deferred | SendResult::Discarded)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SentOperation {
     pub sequence: i64,
