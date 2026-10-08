@@ -1,6 +1,7 @@
 plugins {
   id("com.android.library") version "9.2.1"
   id("org.jetbrains.kotlin.plugin.serialization") version "2.2.10"
+  id("org.jetbrains.kotlin.plugin.compose") version "2.2.10"
 }
 
 android {
@@ -22,6 +23,7 @@ android {
 }
 
 dependencies {
+  api("androidx.compose.runtime:runtime:1.11.4")
   api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
   api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
