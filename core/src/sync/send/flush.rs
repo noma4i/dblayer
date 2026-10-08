@@ -55,19 +55,15 @@ impl Inner {
         let _serial = self.outbox_gate.lock().await;
         let mut report = FlushReport::default();
         let mut attempted = HashSet::new();
-        let mut held = HashSet::new();
-        while let Some(entry) = self.next_ready(&mut attempted, &mut held, &mut report)? {
+        while let Some(entry) = self.next_ready(&mut attempted, &mut report)? {
             attempted.insert(entry.operation.id.0);
             let result = self.send(&entry).await?;
-            if result.keeps_row_waiting() {
-                held.insert(entry.operation.id.0);
-            }
             report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key.clone(), result });
         }
         Ok(report)
     }
 
-    fn next_ready(&self, attempted: &mut HashSet<i64>, held: &mut HashSet<i64>, report: &mut FlushReport) -> Result<Option<OutboxOperation>, SyncError> {
+    fn next_ready(&self, attempted: &mut HashSet<i64>, report: &mut FlushReport) -> Result<Option<OutboxOperation>, SyncError> {
         let entries = self.db.outbox()?;
         let queue = OutboxQueue::new(entries.iter().map(|entry| entry.operation.clone()).collect());
         let gate: Vec<GateEntry> = entries
@@ -83,7 +79,7 @@ impl Inner {
                 continue;
             }
             let row = row_of(entry);
-            let held_back = row.as_ref().is_some_and(|row| queue.is_held_before(row, sequence, held));
+            let held_back = row.as_ref().is_some_and(|row| queue.is_held_before(row, sequence, attempted));
             let blocked = held_back || row.as_ref().is_some_and(|row| queue.is_blocked_before(row, sequence));
             let gate_entry = gate.iter().find(|candidate| candidate.sequence == sequence);
             let waiting = if held_back { None } else { self.waiting_reason(&entry.operation) };
@@ -91,7 +87,6 @@ impl Inner {
                 return Ok(Some(entry.clone()));
             }
             attempted.insert(sequence);
-            held.insert(sequence);
             report.operations.push(SentOperation {
                 sequence,
                 action_key: entry.operation.action_key.clone(),
