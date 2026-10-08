@@ -49,6 +49,7 @@ Field options:
 | `default: value` | default value |
 | `index: true` | indexed column (not allowed for `object`, `array`, `raw`, `list`, `file`) |
 | `id_from: :parent` | take the id from a nested parent object |
+| `from: "location.lat"` | read the value from a nested path of the response when the field name itself is absent |
 
 `index :a, :b` inside `schema` declares a composite index over fields that are already indexed.
 
@@ -156,6 +157,7 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 | `query Operation` | GraphQL operation name (required) | none |
 | `paginate 20` | Relay-style pages of 20, forward | whole response |
 | `paginate 20, backward: true` | pages backward | forward |
+| `paginate 20, cursor: :afterSequence, from: "lastSequenceNumber", cursor_type: :int` | the server pages by its own variable: the next page sends `afterSequence`, taken from `lastSequenceNumber` of the connection. No page size is sent | Relay `first`/`after` |
 | `list` | response is a plain list | single record |
 | `fresh_for 5.minutes` | how long a response counts as fresh | `5.minutes` |
 | `fresh_for 5.minutes, empty: 30.seconds` | shorter freshness for an empty response | same |

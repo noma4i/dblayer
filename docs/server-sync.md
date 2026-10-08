@@ -6,7 +6,7 @@ DBlayer talks to a GraphQL endpoint. You describe operations and models once. Re
 
 1. Create a transport with the endpoint and headers (for example an auth token).
 2. Open the database with your models and the transport.
-3. Register your GraphQL operations: name, document and where the nodes sit in `data`.
+3. Pass your GraphQL operation types. The name and document come from the type, the response root is the first field of the document.
 
 The transport is an interface with three calls: `query`, `mutate` and `subscribe`. Your app gets HTTP and WebSocket implementations for each platform. Tests use a mock transport. A REST transport implements the same interface.
 
