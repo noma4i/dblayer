@@ -626,6 +626,8 @@ pub struct ActionDeclaration {
     #[serde(default)]
     pub args: BTreeMap<String, String>,
     #[serde(default)]
+    pub ignore_response: bool,
+    #[serde(default)]
     pub wrap: Option<String>,
     #[serde(default)]
     pub root: Option<String>,
@@ -648,6 +650,7 @@ impl ActionDeclaration {
             optimistic: Map::new(),
             refetch: Vec::new(),
             args: BTreeMap::new(),
+            ignore_response: false,
             wrap: None,
             root: None,
         }

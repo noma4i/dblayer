@@ -441,3 +441,14 @@ async fn wrapped_action_nests_its_variables_and_reads_the_row_at_its_root() {
     assert_eq!(call_variables(&rig, "StarMoment"), [json!({"input": {"momentId": "m1"}})]);
     assert_eq!(text_of(&rig, "moments", "m1"), Some("starred".to_string()));
 }
+
+#[tokio::test(start_paused = true)]
+async fn action_that_ignores_its_response_keeps_the_local_row() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.db.act("moments", "poke", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
+    rig.transport.enqueue("PokeMoment", Reply::data(json!({"pokeMoment": {"id": "m1", "text": "SERVER", "userId": null}})));
+    rig.sync.flush().await.unwrap();
+    assert_eq!(call_variables(&rig, "PokeMoment"), [json!({"momentId": "m1"})]);
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("t".to_string()));
+}

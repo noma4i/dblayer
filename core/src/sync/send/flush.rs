@@ -329,7 +329,8 @@ impl Inner {
     }
 
     fn read_response(&self, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> Normalized {
-        if sending.action == "destroy" {
+        let ignored = self.db.spec(&sending.model).ok().is_some_and(|spec| spec.actions.iter().any(|declared| declared.name == sending.action && declared.ignore_response));
+        if sending.action == "destroy" || ignored {
             return Normalized::default();
         }
         let declared_root = self.db.spec(&sending.model).ok().and_then(|spec| spec.actions.iter().find(|declared| declared.name == sending.action).and_then(|declared| declared.root.clone()));

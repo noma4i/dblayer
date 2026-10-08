@@ -70,6 +70,7 @@ pub fn moments_spec() -> ModelSpec {
         bound("destroy", RootShape::Destroy, "DeleteMoment"),
         like_action(),
         wrapped_action(),
+        ignoring_action(),
     ];
     spec
 }
@@ -90,6 +91,13 @@ fn wrapped_action() -> ActionDeclaration {
     action.variables.insert("momentId".to_string(), "id".to_string());
     action.wrap = Some("input".to_string());
     action.root = Some("starMoment.moment".to_string());
+    action
+}
+
+fn ignoring_action() -> ActionDeclaration {
+    let mut action = bound("poke", RootShape::Upsert, "PokeMoment");
+    action.variables.insert("momentId".to_string(), "id".to_string());
+    action.ignore_response = true;
     action
 }
 
@@ -141,6 +149,7 @@ pub fn register_operations(sync: &Sync) {
         ("DeleteMoment", "deleteMoment"),
         ("LikeMoment", "likeMoment"),
         ("StarMoment", "starMoment"),
+        ("PokeMoment", "pokeMoment"),
     ] {
         sync.register(OperationDef::new(name, &format!("operation {name} {{ x }}"), root).paged(2));
     }
