@@ -62,10 +62,9 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
   public var text: String { String(decoding: (try? JSONEncoder().encode(self)) ?? Data("null".utf8), as: UTF8.self) }
 }
 
-extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral, ExpressibleByFloatLiteral, ExpressibleByNilLiteral {
+extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral, ExpressibleByFloatLiteral {
   public init(stringLiteral value: String) { self = .string(value) }
   public init(integerLiteral value: Int) { self = .number(Double(value)) }
   public init(booleanLiteral value: Bool) { self = .bool(value) }
   public init(floatLiteral value: Double) { self = .number(value) }
-  public init(nilLiteral: ()) { self = .null }
 }
