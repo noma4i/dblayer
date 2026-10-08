@@ -178,3 +178,32 @@ fn a_field_named_sync_and_an_action_named_like_a_record_gesture_are_rejected() {
         assert!(matches!(Db::open_in_memory(vec![spec], None), Err(DbError::Invalid(_))), "{name}");
     }
 }
+
+#[test]
+fn a_new_action_on_a_pending_row_reaches_its_observer() {
+    let db = booted();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
+    db.update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
+    let (log, callback) = recorder();
+    let _subscription = db.observe_row("moments", &rid("m1"), callback).unwrap();
+    db.settle();
+    db.act("moments", "like", &rid("m1"), serde_json::Map::new(), serde_json::Map::new()).unwrap();
+    db.settle();
+    let last = changes(&log).pop().unwrap();
+    assert_eq!(last.rows[0].sync.actions, vec!["update".to_string(), "like".to_string()]);
+}
+
+#[test]
+fn a_state_change_of_an_included_row_reaches_the_parent_observer() {
+    let db = booted();
+    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
+    db.update("users", &rid("u1"), obj(json!({"name": "Anna"}))).unwrap();
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("moments").including(&["author"]), callback).unwrap();
+    db.settle();
+    apply(&db, OperationTransition::Start { seq: only_seq(&db) });
+    db.settle();
+    let last = changes(&log).pop().unwrap();
+    assert_eq!(last.diff.updated, vec![rid("m1")]);
+}

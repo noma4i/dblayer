@@ -9,7 +9,6 @@ use crate::read::LandingPlan;
 use crate::schema::Coverage;
 use crate::store::Reader;
 use crate::value::{fractional_between, read_id};
-use crate::write::cascade_destroys;
 
 use super::diff::longest_increasing;
 use super::error::DbError;
@@ -116,10 +115,7 @@ impl Db {
         let mut destroyed: HashSet<RowRef> = HashSet::new();
         for index in destroyable.iter().filter(|index| !is_local(&current[**index].id)) {
             let own = RowRef::new(model.clone(), RowId::new(&current[*index].id)?);
-            let mut descendants = Vec::new();
-            let mut visited = HashSet::from([own.clone()]);
-            self.descendants(reader, &own, &mut visited, &mut descendants)?;
-            for target in cascade_destroys(&own, &descendants, true) {
+            for target in self.destroy_targets(reader, &own, WriteOrigin::Event)? {
                 let upserted = target.model == *model && seen.contains(target.id.as_str());
                 if !upserted && destroyed.insert(target.clone()) {
                     entity_ops.push(EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Server });

@@ -1,14 +1,21 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::identity::{RowId, RowRef};
-use crate::syncstate::SyncStamp;
+use crate::db::Row;
+use crate::syncstate::SyncInfo;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Stamp {
     pub revision: i64,
-    pub sync: SyncStamp,
-    pub related: Vec<(RowRef, i64, u64)>,
+    pub sync: SyncInfo,
+    pub related: Vec<(RowRef, Stamp)>,
     pub ephemeral: u64,
+}
+
+impl Stamp {
+    pub fn of(row: &Row, related: Vec<(RowRef, Stamp)>) -> Self {
+        Self { revision: row.revision, sync: row.sync.clone(), related, ephemeral: row.ephemeral }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

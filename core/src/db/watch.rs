@@ -16,7 +16,7 @@ use super::open::Shared;
 use super::row::Row;
 
 pub type Related = BTreeMap<String, BTreeMap<RowId, Vec<Row>>>;
-type ParentStamps = HashMap<RowId, Vec<(RowRef, i64, u64)>>;
+type ParentStamps = HashMap<RowId, Vec<(RowRef, Stamp)>>;
 
 #[derive(Debug, Clone)]
 pub struct Change {
@@ -173,7 +173,7 @@ impl Shared {
         let (related, mut stamps) = self.related_rows(reader, spec, &query.include, &rows)?;
         let entries = rows
             .iter()
-            .map(|row| Entry { id: row.id.clone(), stamp: Stamp { revision: row.revision, sync: row.sync.stamp(), ephemeral: row.ephemeral, related: stamps.remove(&row.id).unwrap_or_default() } })
+            .map(|row| Entry { id: row.id.clone(), stamp: Stamp::of(row, stamps.remove(&row.id).unwrap_or_default()) })
             .collect();
         Ok(Body::Rows(RowsBody { entries, rows, related, step: None }))
     }
@@ -233,7 +233,7 @@ impl Shared {
                     continue;
                 }
                 let stamp = stamps.entry(parent.clone()).or_default();
-                stamp.extend(found.iter().map(|row| (RowRef::new(association.target.clone(), row.id.clone()), row.revision, row.ephemeral)));
+                stamp.extend(found.iter().map(|row| (RowRef::new(association.target.clone(), row.id.clone()), Stamp::of(row, Vec::new()))));
                 slot.insert(parent, found);
             }
         }

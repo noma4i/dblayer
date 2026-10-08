@@ -12,6 +12,7 @@ use crate::schema::ModelSpec;
 
 use super::dispatch::Event;
 use super::error::DbError;
+use super::local_write::plan_fault;
 use super::open::{locked, Db, Shared};
 
 type RowKey = (String, String);
@@ -107,7 +108,7 @@ impl State {
         true
     }
 
-    fn take_due(&mut self) -> Due {
+    pub(crate) fn take_due(&mut self) -> Due {
         let now = self.clock.now();
         let mut reset = Vec::new();
         let mut epoch = self.epoch;
@@ -127,11 +128,20 @@ impl State {
             }
         }
         self.epoch = epoch;
-        let expired: Vec<RowKey> = self.expiry.iter().filter(|(_, due)| **due <= now).map(|(key, _)| key.clone()).collect();
-        for key in &expired {
+        let expired = self.lapsed(now, None);
+        Due { reset, expired }
+    }
+
+    fn lapsed(&self, now: Duration, among: Option<&[RowKey]>) -> Vec<RowKey> {
+        self.expiry.iter().filter(|(key, due)| **due <= now && among.is_none_or(|among| among.contains(key))).map(|(key, _)| key.clone()).collect()
+    }
+
+    pub(crate) fn claim_expired(&mut self, candidates: &[RowKey]) -> Vec<RowKey> {
+        let claimed = self.lapsed(self.clock.now(), Some(candidates));
+        for key in &claimed {
             self.expiry.remove(key);
         }
-        Due { reset, expired }
+        claimed
     }
 
     fn next_due(&self) -> Option<Duration> {
@@ -237,13 +247,26 @@ impl Db {
             (due, state.epoch)
         };
         self.shared.publish_overlay(&due.reset, epoch)?;
-        if !due.expired.is_empty() {
-            let mut envelope = CommitEnvelope::new(WriteOrigin::Event, self.generation());
-            for (model, id) in &due.expired {
+        Ok(due.reset.len() + self.destroy_expired(&due.expired)?)
+    }
+
+    pub(crate) fn destroy_expired(&self, candidates: &[RowKey]) -> Result<usize, DbError> {
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+        let generation = self.generation();
+        let mut destroyed = 0;
+        let committed = self.shared.store.commit_with(generation, |_| {
+            let claimed = self.shared.ephemeral.lock().claim_expired(candidates);
+            destroyed = claimed.len();
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
+            for (model, id) in &claimed {
                 envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: RowId::new(id)?, reason: DestroyReason::Expired });
             }
-            self.shared.store.commit(envelope)?;
-        }
-        Ok(due.reset.len() + due.expired.len())
+            Ok::<_, DbError>(Some(envelope))
+        });
+        self.shared.ephemeral.lock().claim_expired(candidates);
+        committed.map_err(plan_fault)?;
+        Ok(destroyed)
     }
 }

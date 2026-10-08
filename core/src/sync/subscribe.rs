@@ -7,17 +7,18 @@ use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
-use crate::identity::{ModelKey, RowId};
+use crate::identity::{ModelKey, RowId, RowRef};
 use crate::pacing::Debounce;
+use crate::store::PlanCommitError;
 use crate::transport::{
     EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFault,
-    SubscriptionRetry, RETRY_BACKOFF,
+    SubscriptionRetry, TransportError, RETRY_BACKOFF,
 };
 use crate::value::read_id;
 
 use super::error::SyncError;
 use super::extract::root_value;
-use super::normalize::{normalize_node, Related};
+use super::normalize::{merge_selected, Related};
 use super::{locked, Inner, Sync};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,62 +115,73 @@ impl Feed {
         Some(Pending { bucket: self.def.event.bucket_key(id.as_str()), id, node: node.clone() })
     }
 
-    fn apply(&self, items: Vec<Pending>) {
+    async fn apply(&self, items: Vec<Pending>) {
         if items.is_empty() {
             return;
         }
-        let rejected = self.try_apply(items).is_err();
-        let mut status = locked(&self.status);
-        status.rejected += usize::from(rejected);
+        match self.try_apply(items) {
+            Ok(true) => {
+                let _ = self.inner.invalidate_model(&self.def.model).await;
+            }
+            Ok(false) => {}
+            Err(_) => locked(&self.status).rejected += 1,
+        }
     }
 
-    fn try_apply(&self, items: Vec<Pending>) -> Result<(), SyncError> {
+    fn try_apply(&self, items: Vec<Pending>) -> Result<bool, SyncError> {
         let db = &self.inner.db;
         let model = self.def.model.as_str();
-        let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
-        let mut count = 0;
+        let spec = db.spec(model)?;
+        let (mut count, mut created) = (0, false);
         let mut announced: Vec<RowId> = Vec::new();
-        for item in items {
-            let key = (model.to_string(), item.id.as_str().to_string());
-            let deleted = self.def.deleted_by.as_ref().and_then(|field| item.node.get(field)).is_some_and(is_truthy);
-            if !deleted && self.def.effect != EventEffect::Destroy && !self.def.set.is_empty() {
-                announced.push(item.id.clone());
-            }
-            match self.def.effect {
-                _ if deleted => {
-                    let operation = EntityOp::Destroy { model: ModelKey::new(model), id: item.id, reason: DestroyReason::Server };
-                    operations.insert(key, operation);
+        let generation = db.generation();
+        let committed = db.shared.store.commit_with(generation, |reader| {
+            let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
+            let mut touches: Vec<EntityOp> = Vec::new();
+            for item in items {
+                let key = (model.to_string(), item.id.as_str().to_string());
+                let deleted = self.def.deleted_by.as_ref().and_then(|field| item.node.get(field)).is_some_and(is_truthy);
+                if !deleted && self.def.effect != EventEffect::Destroy && !self.def.set.is_empty() {
+                    announced.push(item.id.clone());
                 }
-                EventEffect::Upsert => {
+                if deleted || self.def.effect == EventEffect::Destroy {
+                    let own = RowRef::new(ModelKey::new(model), item.id);
+                    for target in db.destroy_targets(reader, &own, WriteOrigin::Event)? {
+                        operations.insert((target.model.to_string(), target.id.to_string()), EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Server });
+                    }
+                } else {
+                    let stored = reader.point(model, item.id.as_str())?;
+                    if stored.is_none() && self.def.effect == EventEffect::Patch {
+                        continue;
+                    }
                     let mut related = Related::new();
-                    let Some(row) = normalize_node(db, model, &item.node, &mut related)? else { continue };
+                    let Some(row) = merge_selected(db, model, stored.clone(), &item.node, &mut related)? else { continue };
+                    created |= stored.is_none();
+                    let own = RowRef::new(ModelKey::new(model), item.id.clone());
+                    let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();
+                    touches.extend(db.touch_ops(reader, spec, &seen, &own)?);
                     for ((related_model, related_id), row) in related {
                         let id = RowId::new(&related_id).map_err(|error| SyncError::Event(error.to_string()))?;
                         operations.insert((related_model.clone(), related_id), EntityOp::Upsert { model: ModelKey::new(&related_model), id, row });
                     }
                     operations.insert(key, EntityOp::Upsert { model: ModelKey::new(model), id: item.id, row });
                 }
-                EventEffect::Patch => {
-                    let Some(existing) = db.find(model, &item.id)? else { continue };
-                    let mut row = existing.data.clone();
-                    row.extend(db.spec(model)?.patch(&item.node));
-                    operations.insert(key, EntityOp::Upsert { model: ModelKey::new(model), id: item.id, row });
-                }
-                EventEffect::Destroy => {
-                    let operation = EntityOp::Destroy { model: ModelKey::new(model), id: item.id, reason: DestroyReason::Server };
-                    operations.insert(key, operation);
-                }
+                count += 1;
             }
-            count += 1;
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
+            envelope.entity_ops = operations.into_values().chain(touches).collect();
+            Ok::<_, SyncError>(Some(envelope))
+        });
+        match committed {
+            Ok(_) => {}
+            Err(PlanCommitError::Plan(error)) => return Err(error),
+            Err(PlanCommitError::Store(error)) => return Err(error.into()),
         }
-        let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-        envelope.entity_ops = operations.into_values().collect();
-        db.land(envelope)?;
         for id in &announced {
             db.set_ephemeral(model, id, self.def.set.clone())?;
         }
         locked(&self.status).applied += count;
-        Ok(())
+        Ok(created)
     }
 
     async fn pump(&self, connection: &mut Subscription, retry: &mut SubscriptionRetry) -> Option<SubscriptionFailureKind> {
@@ -181,7 +193,7 @@ impl Feed {
             tokio::select! {
                 event = connection.next() => match event {
                     None => {
-                        self.apply(std::mem::take(&mut pending));
+                        self.apply(std::mem::take(&mut pending)).await;
                         return None;
                     }
                     Some(SubscriptionEvent::Ready) => {
@@ -195,16 +207,16 @@ impl Feed {
                                 pending = debounce.coalesce(std::mem::take(&mut pending), item);
                                 deadline.get_or_insert_with(|| Instant::now() + debounce.interval);
                             }
-                            None => self.apply(vec![item]),
+                            None => self.apply(vec![item]).await,
                         }
                     }
                     Some(SubscriptionEvent::Failed(failure)) => {
-                        self.apply(std::mem::take(&mut pending));
+                        self.apply(std::mem::take(&mut pending)).await;
                         return Some(failure.kind);
                     }
                 },
                 _ = tokio::time::sleep_until(wake), if deadline.is_some() => {
-                    self.apply(std::mem::take(&mut pending));
+                    self.apply(std::mem::take(&mut pending)).await;
                     deadline = None;
                 }
             }
@@ -223,29 +235,36 @@ impl Feed {
         None
     }
 
-    async fn run(self, request: GraphQLRequest, first: Subscription) {
+    async fn run(self, request: GraphQLRequest, first: Result<Subscription, TransportError>) {
         let mut retry = SubscriptionRetry::default();
         let mut opened = Some(first);
         loop {
-            let mut connection = match opened.take() {
-                Some(connection) => connection,
+            let attempt = match opened.take() {
+                Some(attempt) => attempt,
                 None if !self.inner.connectivity.is_online() => {
                     self.inner.connectivity.online().await;
                     continue;
                 }
-                None => match self.inner.transport.subscribe(request.clone()).await {
-                    Ok(connection) => {
-                        locked(&self.status).connects += 1;
+                None => self.inner.transport.subscribe(request.clone()).await,
+            };
+            let mut connection = match attempt {
+                Ok(connection) => {
+                    let reconnected = {
+                        let mut status = locked(&self.status);
+                        status.connects += 1;
+                        status.connects > 1
+                    };
+                    if reconnected {
                         self.inner.reload_watched(&self.def.model, None, false).await;
-                        connection
                     }
-                    Err(_) if !self.inner.connectivity.is_online() => continue,
-                    Err(_) => {
-                        let Some(delay) = self.register_failure(&mut retry, SubscriptionFault::Transient) else { return };
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-                },
+                    connection
+                }
+                Err(_) if !self.inner.connectivity.is_online() => continue,
+                Err(_) => {
+                    let Some(delay) = self.register_failure(&mut retry, SubscriptionFault::Transient) else { return };
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
             };
             let fault = self.pump(&mut connection, &mut retry).await.map_or(SubscriptionFault::Transient, SubscriptionFailureKind::fault);
             drop(connection);
@@ -269,8 +288,8 @@ impl Sync {
             .cloned()
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
-        let first = self.inner.transport.subscribe(request.clone()).await.map_err(|error| SyncError::Transport(error.to_string()))?;
-        let status = Arc::new(Mutex::new(SubscriptionStatus { connects: 1, ..SubscriptionStatus::default() }));
+        let first = self.inner.transport.subscribe(request.clone()).await;
+        let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
         let feed = Feed { inner: self.inner.clone(), def, root_path: operation.root_path, status: status.clone() };
         let task = tokio::spawn(feed.run(request, first));
         Ok(EventSubscription { abort: task.abort_handle(), status })

@@ -97,6 +97,10 @@ end
 ```
 
 - Events are normalized like responses. `deleted_by:` names the field that marks a deleted row.
+- An event changes only the fields it carries. Fields it does not select keep their stored values. The read of the stored row and the write happen in one transaction, so a local edit made at the same moment is never overwritten by an older copy.
+- A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.
+- An event that creates a row the library did not have makes the relations of that model stale, like a successful `create`, and refetches the ones someone is reading.
+- If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
 - The subscription starts when the first reader connects, is shared by all readers and closes some time after the last reader leaves (30 seconds by default).
 - After a dropped connection the library reconnects with a growing delay and refetches the relation, because events may have been missed. Offline (`setOnline(false)`) it does not reconnect and spends no attempts. `setOnline(true)` reconnects at once.
 - Bursts of events are merged into one commit.
@@ -105,7 +109,7 @@ end
 
 | Event | Result |
 | ----- | ------ |
-| Successful `create` or `destroy` of a model | relations rooted in that model become stale and are refetched at once if someone is reading them |
+| Successful `create` or `destroy` of a model, or a subscription event that creates a row | relations rooted in that model become stale and are refetched at once if someone is reading them |
 | Successful mutation with `refetch` | the listed relations become stale |
 | `fresh_for` expired | refetched when next read or when the app resumes |
 | App resumes | stale relations with readers are refetched in small groups |

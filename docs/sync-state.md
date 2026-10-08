@@ -161,7 +161,7 @@ Two kinds of refreshing exist:
 
 ## Guarantees
 
-- The state is part of every delivery: a state change without a data change still reaches observers, in order.
+- The whole `sync` value is part of every delivery: a change of `state`, `actions`, `dirtyFields` or `error` without a data change still reaches observers, in order. The parent of an included row is delivered when the sync of that row changes.
 - The state is written in the same commit that changes the queue, so a reader never sees a queued change without its state.
 - Every queued change is durable: a record created offline stays `pending` across restarts and is sent when the queue next runs, for example after a reconnect. A change that was `sending` when the app stopped is `deliveryUnknown` after the restart.
 - When the server answers, the temporary id is replaced by the real one in one commit and the state becomes `synced`. Observers see the swap as `replaced`.

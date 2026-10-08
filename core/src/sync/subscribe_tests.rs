@@ -1,7 +1,12 @@
 use super::error::SyncError;
 use super::subscribe::{EventEffect, SubscriptionDef};
 use super::rig::*;
+use crate::db::Db;
+use crate::pacing::ManualClock;
 use crate::query::Query;
+use crate::schema::{AssociationKind, AssociationSpec, Dependent};
+use crate::sync::{Sync, SyncConfig};
+use crate::transport::MockTransport;
 use crate::transport::{EventSpec, Response, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
@@ -210,4 +215,102 @@ async fn a_destroying_event_sets_nothing() {
     put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
     let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
     assert_eq!(user.get("typing"), Some(&json!(false)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn upsert_event_keeps_the_fields_it_does_not_select() {
+    let rig = rig_with_subscription();
+    put(&rig, "moments", json!({"id": "m1", "text": "keep", "userId": "u1"}));
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "likedByMe": true})));
+    settle().await;
+    let row = rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap();
+    assert_eq!((row.text("text"), row.text("userId"), row.get("likedByMe")), (Some("keep"), Some("u1"), Some(&json!(true))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn destroy_event_removes_the_dependent_children() {
+    let mut users = users_spec();
+    let mut moments = AssociationSpec::new("moments", AssociationKind::HasMany, "moments", "userId");
+    moments.dependent = Some(Dependent::Destroy);
+    users.associations.push(moments);
+    let rig = rig_on(Db::open_in_memory(vec![users, moments_spec()], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+    put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
+    put(&rig, "moments", json!({"id": "m1", "text": "child", "userId": "u1"}));
+    let def = SubscriptionDef::new(EventSpec::new("user_gone"), "MomentChanged", "users", EventEffect::Destroy);
+    let _subscription = rig.sync.subscribe(def).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "u1"})));
+    settle().await;
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn event_that_creates_a_row_refreshes_the_watched_lists_of_its_model() {
+    let rig = rig_with_subscription();
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2"));
+    let _watch = rig.sync.watch("moments", "feed", &serde_json::Map::new()).unwrap();
+    rig.sync.load("moments", "feed", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": null})));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()), ["m1", "m2"]);
+}
+
+struct RefusingFirstSubscribe {
+    inner: MockTransport,
+    refusals: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::transport::Transport for RefusingFirstSubscribe {
+    async fn query(&self, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
+        self.inner.query(request).await
+    }
+    async fn mutate(&self, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
+        self.inner.mutate(request).await
+    }
+    async fn subscribe(&self, request: crate::transport::GraphQLRequest) -> Result<crate::transport::Subscription, crate::transport::TransportError> {
+        let refused = self.refusals.try_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |left| left.checked_sub(1)).is_ok();
+        if refused {
+            return Err(crate::transport::TransportError::Network("down".to_string()));
+        }
+        self.inner.subscribe(request).await
+    }
+    async fn put(&self, request: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> {
+        self.inner.put(request).await
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refused_first_connection_is_retried_like_a_reconnect() {
+    let inner = MockTransport::new();
+    let transport = Arc::new(RefusingFirstSubscribe { inner: inner.clone(), refusals: 1.into() });
+    let db = Db::open_in_memory(specs(), None).unwrap();
+    let sync = Sync::new(db.clone(), transport, Arc::new(ManualClock::new(Duration::from_millis(START_MS))), SyncConfig::default());
+    register_operations(&sync);
+    sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+    let subscription = sync.subscribe(upsert_def()).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(subscription.status().connects, 1);
+    inner.emit("MomentChanged", next(json!({"id": "m1", "text": "late", "userId": null})));
+    settle().await;
+    let row = db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap();
+    assert_eq!(row.and_then(|row| row.text("text").map(str::to_string)), Some("late".to_string()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn upsert_event_touches_the_parent_that_asks_for_it() {
+    let mut moments = moments_spec();
+    moments.associations.iter_mut().for_each(|association| association.touches_parent = true);
+    let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+    put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
+    let user = crate::identity::RowId::new("u1").unwrap();
+    let before = rig.db.find("users", &user).unwrap().unwrap().revision;
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "t", "userId": "u1"})));
+    settle().await;
+    assert!(rig.db.find("users", &user).unwrap().unwrap().revision > before);
 }

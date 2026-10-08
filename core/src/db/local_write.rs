@@ -191,14 +191,7 @@ impl Db {
                 if reader.point(model, id.as_str())?.is_none() {
                     return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() });
                 }
-                let mut descendants = Vec::new();
-                let mut seen = HashSet::from([own.clone()]);
-                self.descendants(reader, &own, &mut seen, &mut descendants)?;
-                destroyed = if cascades(RootShape::Destroy, WriteOrigin::Optimistic, true) {
-                    cascade_destroys(&own, &descendants, true)
-                } else {
-                    vec![own.clone()]
-                };
+                destroyed = self.destroy_targets(reader, &own, WriteOrigin::Optimistic)?;
                 let mut rows = Vec::new();
                 for target in &destroyed {
                     rows.extend(PriorRow::destroyed(reader, target.model.as_str(), target.id.as_str())?);
@@ -262,7 +255,7 @@ impl Db {
         }))
     }
 
-    fn touch_ops(&self, reader: &Reader<'_>, spec: &ModelSpec, rows: &[&Map<String, Value>], own: &RowRef) -> Result<Vec<EntityOp>, DbError> {
+    pub(crate) fn touch_ops(&self, reader: &Reader<'_>, spec: &ModelSpec, rows: &[&Map<String, Value>], own: &RowRef) -> Result<Vec<EntityOp>, DbError> {
         if !touches_parent(RootShape::Upsert, WriteOrigin::Optimistic, false) {
             return Ok(Vec::new());
         }
@@ -282,7 +275,16 @@ impl Db {
         Ok(ops)
     }
 
-    pub(super) fn descendants(&self, reader: &Reader<'_>, parent: &RowRef, seen: &mut HashSet<RowRef>, found: &mut Vec<RowRef>) -> Result<(), DbError> {
+    pub(crate) fn destroy_targets(&self, reader: &Reader<'_>, own: &RowRef, origin: WriteOrigin) -> Result<Vec<RowRef>, DbError> {
+        if !cascades(RootShape::Destroy, origin, true) {
+            return Ok(vec![own.clone()]);
+        }
+        let mut descendants = Vec::new();
+        self.descendants(reader, own, &mut HashSet::from([own.clone()]), &mut descendants)?;
+        Ok(cascade_destroys(own, &descendants, true))
+    }
+
+    fn descendants(&self, reader: &Reader<'_>, parent: &RowRef, seen: &mut HashSet<RowRef>, found: &mut Vec<RowRef>) -> Result<(), DbError> {
         let spec = self.shared.spec(parent.model.as_str())?;
         for association in spec.associations.iter().filter(|association| association.owns_children() && association.dependent == Some(Dependent::Destroy)) {
             let query = Query::new(association.target.as_str()).filtered(Where::equal(&association.foreign_key, json!(parent.id.as_str())));

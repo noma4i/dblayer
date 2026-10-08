@@ -45,6 +45,8 @@ val chat by Chat.find(chatId).collectAsLive()
 - One commit is one visible transition: a parent with its cascade-deleted children, a replaced list and an id swap appear together.
 - Deliveries for one observer are in revision order. Older state never arrives after newer state. Several quick commits may be merged into one delivery, and the last state always arrives.
 - If nothing the query reads has changed, nothing is delivered.
+- Everything in `sync` is something the query reads: a change of `state`, `actions`, `dirtyFields`, `error` or the upload progress of a row is a delivery. The same holds for an included row: when its `sync` changes, the parent is in `diff.updated`.
+- A memory row that was written again after its lifetime ran out is not deleted. The new write wins.
 - After a write call returns, any new read sees the write.
 - Dropping the subscription stops delivery at once.
 - Listeners are called from library threads. Hop to your main thread yourself.

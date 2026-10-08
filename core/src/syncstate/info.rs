@@ -64,8 +64,6 @@ pub struct SyncInfo {
     pub upload: Option<UploadInfo>,
 }
 
-pub type SyncStamp = (SyncState, u32, Option<UploadInfo>);
-
 impl SyncInfo {
     pub fn is_synced(&self) -> bool {
         self.state == SyncState::Synced
@@ -77,9 +75,5 @@ impl SyncInfo {
 
     pub fn is_failed(&self) -> bool {
         self.state == SyncState::Failed
-    }
-
-    pub fn stamp(&self) -> SyncStamp {
-        (self.state, self.attempts, self.upload.clone())
     }
 }

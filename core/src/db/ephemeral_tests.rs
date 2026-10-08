@@ -200,6 +200,17 @@ fn memory_models_read_and_observe_like_stored_ones_and_expire_by_the_clock() {
 }
 
 #[test]
+fn a_landing_after_the_due_scan_keeps_the_memory_row_alive() {
+    let (db, clock) = rig();
+    put(&db, "presence", json!({"id": "r1", "room": "lobby"}));
+    clock.advance(seconds(31));
+    let due = db.shared.ephemeral.lock().take_due();
+    put(&db, "presence", json!({"id": "r1", "room": "garden"}));
+    assert_eq!(db.destroy_expired(&due.expired).unwrap(), 0);
+    assert!(db.find("presence", &rid("r1")).unwrap().is_some());
+}
+
+#[test]
 fn a_rewrite_keeps_a_memory_row_alive() {
     let (db, clock) = rig();
     put(&db, "presence", json!({"id": "r1", "room": "lobby"}));

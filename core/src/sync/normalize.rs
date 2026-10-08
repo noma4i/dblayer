@@ -32,7 +32,7 @@ pub(crate) fn normalize_nodes(db: &Db, model: &str, nodes: &[Map<String, Value>]
     Ok(normalized)
 }
 
-pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, SyncError> {
+pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Map<String, Value>, SyncError> {
     let spec = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
     let mut input = node.clone();
     for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo) {
@@ -46,6 +46,19 @@ pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, re
         input.insert(association.foreign_key.clone(), Value::String(id.as_str().to_string()));
         related.insert((target.to_string(), id.as_str().to_string()), parent);
     }
-    let Ok(row) = spec.normalize(&input) else { return Ok(None) };
+    Ok(input)
+}
+
+pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, SyncError> {
+    let input = nested_input(db, model, node, related)?;
+    let Ok(row) = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?.normalize(&input) else { return Ok(None) };
     Ok(row.get("id").is_some().then_some(row))
+}
+
+pub(crate) fn merge_selected(db: &Db, model: &str, stored: Option<Map<String, Value>>, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, SyncError> {
+    let input = nested_input(db, model, node, related)?;
+    let spec = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
+    let Some(mut row) = stored else { return Ok(spec.normalize(&input).ok().filter(|row| row.get("id").is_some())) };
+    row.extend(spec.patch(&input));
+    Ok(Some(row))
 }
