@@ -143,7 +143,7 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 | `references :name` | `model:`, `key:` (array of ids), `from:` |
 
 - `from: "visitorsList.nodes"` is the dotted path in a response where the association's objects sit. It defaults to the association name. A list on the way is walked element by element, and a connection (`nodes` or `edges { node }`) gives its nodes.
-- Objects found there become rows of the target model. `has_many` and `has_one` rows get the parent id in `key:`. A `references` parent keeps the ids of its rows in `key:`; declare that field in `schema` (`list :similarIds, of: :id`), the model is rejected without it.
+- Objects found there become rows of the target model. A `belongs_to` object that holds only its `id` (`owner { id }`) cannot become a row when the target needs more fields, and it still sets `key:` to that id. `has_many` and `has_one` rows get the parent id in `key:`. A `references` parent keeps the ids of its rows in `key:`; declare that field in `schema` (`list :similarIds, of: :id`), the model is rejected without it.
 - `dependent: :destroy` removes children in the same commit as the parent.
 - `touch: true` bumps the parent's revision when a child changes, so observers of the parent refresh.
 - The foreign key of a `has_many` or `has_one` must be an indexed field of the target model.

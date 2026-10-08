@@ -3,6 +3,9 @@ use super::normalize::*;
 use serde_json::{Map, Value};
 use crate::sync::rig::{rig, Rig};
 use serde_json::json;
+use crate::db::Db;
+use crate::schema::{AssociationKind, AssociationSpec, FieldSpec, ModelSpec};
+use crate::value::ScalarKind;
 
 fn nodes(value: Value) -> Vec<Map<String, Value>> {
     value.as_array().unwrap().iter().map(|node| node.as_object().unwrap().clone()).collect()
@@ -19,6 +22,18 @@ fn nested_author_becomes_user_row_and_sets_foreign_key() {
     assert_eq!(normalized.related[0].0.as_str(), "users");
     assert_eq!(normalized.related[0].1["name"], json!("Ann"));
     assert!(!normalized.roots[0].contains_key("author"));
+}
+
+#[test]
+fn nested_author_with_only_an_id_still_sets_the_foreign_key_when_the_user_row_needs_more_fields() {
+    let users = ModelSpec::new("users", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("fullName", ScalarKind::Str)]);
+    let mut moments = ModelSpec::new("moments", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("userId", ScalarKind::Id).nullable().indexed()]);
+    moments.associations.push(AssociationSpec::new("author", AssociationKind::BelongsTo, "users", "userId"));
+    let db = Db::open_in_memory(vec![users, moments], None).unwrap();
+    let input = nodes(json!([{"id": "m1", "text": "hi", "author": {"id": "u7"}}]));
+    let normalized = normalize_nodes(&db, "moments", &input).unwrap();
+    assert_eq!(normalized.roots[0]["userId"], json!("u7"));
+    assert!(normalized.related.is_empty());
 }
 
 #[test]

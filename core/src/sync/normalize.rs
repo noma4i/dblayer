@@ -44,7 +44,9 @@ pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, rela
         let path = association.from.as_deref().unwrap_or(&association.name);
         let Some(found) = nested_values(node, path) else { continue };
         let mut ids = Vec::new();
+        let mut bare_id = None;
         for nested in found.iter().filter_map(|value| value.as_object()) {
+            bare_id = bare_id.or_else(|| nested.get("id").and_then(read_id));
             let mut child = nested.clone();
             if matches!(association.kind, AssociationKind::HasOne | AssociationKind::HasMany) {
                 let Some(parent) = &parent_id else { continue };
@@ -57,8 +59,9 @@ pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, rela
         }
         match association.kind {
             AssociationKind::BelongsTo => {
-                if let Some(Value::String(id)) = ids.first() {
-                    input.insert(association.foreign_key.clone(), Value::String(id.clone()));
+                let key = ids.first().and_then(Value::as_str).map(str::to_string).or_else(|| bare_id.map(|id| id.as_str().to_string()));
+                if let Some(id) = key {
+                    input.insert(association.foreign_key.clone(), Value::String(id));
                 }
             }
             AssociationKind::References => {
