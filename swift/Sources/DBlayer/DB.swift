@@ -8,7 +8,7 @@ public enum DB {
     try open(transport: UrlSessionTransport(endpoint: endpoint, headers: headers), modelsJSON: modelsJSON, path: path, operations: operations)
   }
 
-  public static func open(transport: Transport, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
+  public static func open(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
     let database = try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport)
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     try database.registerOperations(defsJson: JSONValue.array(definitions).text)
