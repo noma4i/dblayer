@@ -1,4 +1,4 @@
-use dblayer::schema::{
+use dblayer::schema::{CursorSpec, 
     AssociationKind, Coverage, Dependent, FieldKind, ModelSpec, OnFailure, PageDirection, RemoteShape, RootShape, Sort,
     Storage, UpdatesSpec,
 };
@@ -124,7 +124,7 @@ fn remote_list_is_complete_list() {
 fn remote_paginate_is_forward_page_connection() {
     let model = build_one("  remote :feed do\n    query Feed\n    paginate 20\n    fresh_for 5.minutes, empty: 30.seconds\n    max_pages 5\n  end");
     let remote = model.relations[0].remote.as_ref().unwrap();
-    assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(5) });
+    assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(5), cursor: None });
     assert!(remote.selects_page_info);
     assert_eq!(remote.empty_stale_time.as_deref(), Some("30.seconds"));
 }
@@ -133,7 +133,7 @@ fn remote_paginate_is_forward_page_connection() {
 fn remote_paginate_backward_without_cap() {
     let model = build_one("  remote :feed do\n    query Feed\n    paginate 20, backward: true\n  end");
     let remote = model.relations[0].remote.as_ref().unwrap();
-    assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Backward, coverage: Coverage::Page, max_pages: None });
+    assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Backward, coverage: Coverage::Page, max_pages: None, cursor: None });
 }
 
 #[test]
@@ -221,4 +221,12 @@ fn updates_set_builds_ephemeral_values() {
     .remove(0);
     let updates = model.relations[0].remote.as_ref().unwrap().updates.clone().unwrap();
     assert_eq!(updates.set.get("typing"), Some(&json!(true)));
+}
+
+#[test]
+fn paginate_with_its_own_cursor_names_variable_and_source() {
+    let model = build_one("  remote :feed do\n    query Feed\n    paginate 20, cursor: :afterSequence, from: \"lastSequenceNumber\", cursor_type: :int\n  end");
+    let remote = model.relations[0].remote.as_ref().unwrap();
+    let cursor = CursorSpec { variable: "afterSequence".to_string(), from: "lastSequenceNumber".to_string(), numeric: true };
+    assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: Some(cursor) });
 }

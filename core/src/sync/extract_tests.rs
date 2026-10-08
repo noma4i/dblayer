@@ -6,7 +6,7 @@ use crate::schema::{Coverage, PageDirection};
 use serde_json::json;
 
 fn connection() -> RemoteShape {
-    RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None }
+    RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None }
 }
 
 #[test]
@@ -53,4 +53,17 @@ fn connection_without_page_info_or_cursor_is_malformed() {
     assert!(matches!(extract(&no_info, "feed", &connection()), Err(SyncError::Malformed(_))));
     let no_cursor = json!({"feed": {"nodes": [], "pageInfo": {"hasNextPage": true}}});
     assert!(matches!(extract(&no_cursor, "feed", &connection()), Err(SyncError::Malformed(_))));
+}
+
+#[test]
+fn custom_cursor_is_read_from_its_path_in_the_connection() {
+    let cursor = crate::schema::CursorSpec { variable: "afterSequence".into(), from: "lastSequenceNumber".into(), numeric: true };
+    let shape = RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: Some(cursor) };
+    let data = json!({"feed": {"edges": [{"node": {"id": "m1"}}], "pageInfo": {"hasNextPage": true}, "lastSequenceNumber": 7}});
+
+    let extracted = extract(&data, "feed", &shape).unwrap();
+
+    assert_eq!(extracted.page_info, Some(PageInfo { has_next_page: true, end_cursor: Some("7".to_string()) }));
+    let missing = json!({"feed": {"edges": [], "pageInfo": {"hasNextPage": true}}});
+    assert!(extract(&missing, "feed", &shape).is_err());
 }

@@ -356,12 +356,28 @@ pub enum PageDirection {
     Backward,
 }
 
+/// A server that pages by its own variable instead of Relay `first`/`after`: the next page is
+/// asked for with `variable`, whose value is read from `from` inside the connection object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CursorSpec {
+    pub variable: String,
+    pub from: String,
+    #[serde(default)]
+    pub numeric: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RemoteShape {
     Single,
     List { coverage: Coverage },
-    Connection { direction: PageDirection, coverage: Coverage, max_pages: Option<u32> },
+    Connection {
+        direction: PageDirection,
+        coverage: Coverage,
+        max_pages: Option<u32>,
+        #[serde(default)]
+        cursor: Option<CursorSpec>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

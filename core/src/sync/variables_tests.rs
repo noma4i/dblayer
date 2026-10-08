@@ -9,7 +9,7 @@ fn params() -> Map<String, Value> {
 }
 
 fn connection(direction: PageDirection) -> RemoteShape {
-    RemoteShape::Connection { direction, coverage: Coverage::Page, max_pages: None }
+    RemoteShape::Connection { direction, coverage: Coverage::Page, max_pages: None, cursor: None }
 }
 
 #[test]
@@ -34,4 +34,15 @@ fn backward_page_sends_last_and_before() {
 fn list_and_single_send_only_params() {
     assert_eq!(load_variables(&params(), &RemoteShape::List { coverage: Coverage::Complete }, 20, None), json!({"userId": "u1"}));
     assert_eq!(load_variables(&Map::new(), &RemoteShape::Single, 20, None), json!({}));
+}
+
+fn sequenced() -> RemoteShape {
+    let cursor = crate::schema::CursorSpec { variable: "afterSequence".into(), from: "lastSequenceNumber".into(), numeric: true };
+    RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: Some(cursor) }
+}
+
+#[test]
+fn custom_cursor_names_its_variable_and_sends_no_page_size() {
+    assert_eq!(load_variables(&params(), &sequenced(), 20, None), json!({"userId": "u1"}));
+    assert_eq!(load_variables(&params(), &sequenced(), 20, Some("7")), json!({"userId": "u1", "afterSequence": 7}));
 }

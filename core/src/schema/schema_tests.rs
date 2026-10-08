@@ -15,7 +15,7 @@ fn model(fields: Vec<FieldSpec>) -> ModelSpec {
 
 fn paged_remote(selects_page_info: bool) -> RemoteSpec {
     RemoteSpec {
-        shape: RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None },
+        shape: RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None },
         operation: "PagedOperation".into(),
         stale_time: "paged_session".into(),
         empty_stale_time: None,
@@ -330,7 +330,7 @@ fn relation_name_by_columns_and_remote_faults_match_spec() {
     );
     let zero_pages = RelationSpec {
         remote: Some(RemoteSpec {
-            shape: RemoteShape::Connection { direction: PageDirection::Backward, coverage: Coverage::Page, max_pages: Some(0) },
+            shape: RemoteShape::Connection { direction: PageDirection::Backward, coverage: Coverage::Page, max_pages: Some(0), cursor: None },
             ..paged_remote(true)
         }),
         ..RelationSpec::new("thread", &["chatId"])

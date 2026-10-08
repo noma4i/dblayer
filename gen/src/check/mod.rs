@@ -134,7 +134,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Schema, field) if FIELD_WORDS.contains(&field) => plain(Shape::Name, field_keys(field)),
         (Context::Ephemeral, field) if EPHEMERAL_WORDS.contains(&field) => plain(Shape::Name, ephemeral_keys(field)),
         (Context::Remote, "query") => plain(Shape::Const, vec![]),
-        (Context::Remote, "paginate") => plain(Shape::Int, vec![key("backward", Want::Bool, false)]),
+        (Context::Remote, "paginate") => plain(Shape::Int, vec![key("backward", Want::Bool, false), key("cursor", Want::Symbol, false), key("from", Want::Any, false), key("cursor_type", Want::Symbol, false)]),
         (Context::Remote, "list") => plain(Shape::Nothing, vec![]),
         (Context::Remote, "fresh_for") => plain(Shape::Duration, vec![key("empty", Want::Duration, false)]),
         (Context::Remote, "max_pages") => plain(Shape::Int, vec![]),

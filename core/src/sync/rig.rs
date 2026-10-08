@@ -41,8 +41,8 @@ pub fn moments_spec() -> ModelSpec {
         ],
     );
     spec.associations.push(AssociationSpec::new("author", AssociationKind::BelongsTo, "users", "userId"));
-    let forward = RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2) };
-    let backward = RemoteShape::Connection { direction: PageDirection::Backward, coverage: Coverage::Page, max_pages: None };
+    let forward = RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None };
+    let backward = RemoteShape::Connection { direction: PageDirection::Backward, coverage: Coverage::Page, max_pages: None, cursor: None };
     let mut feed = RelationSpec::global("feed");
     feed.remote = Some(remote("MomentsFeed", forward, "5.minutes"));
     let mut history = RelationSpec::global("history");
@@ -54,7 +54,7 @@ pub fn moments_spec() -> ModelSpec {
     spec_remote.empty_stale_time = Some("10.seconds".to_string());
     empty_aware.remote = Some(spec_remote);
     let mut pulse = RelationSpec::global("pulse");
-    let mut pulse_remote = remote("MomentsPulse", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2) }, "5.minutes");
+    let mut pulse_remote = remote("MomentsPulse", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes");
     pulse_remote.updates = Some(UpdatesSpec { subscription: "MomentEvents".to_string(), deleted_by: Some("destroyed".to_string()), set: Map::new() });
     pulse.remote = Some(pulse_remote);
     spec.relations.extend([feed, history, by_user, empty_aware, pulse, RelationSpec::global("recent")]);

@@ -1,4 +1,4 @@
-use dblayer::schema::{
+use dblayer::schema::{CursorSpec, 
     ActionDeclaration, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
     OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
 };
@@ -157,6 +157,13 @@ fn sort_field(pair: &Pair) -> SortField {
     SortField { column: pair.key.clone(), direction: if descending { SortDirection::Desc } else { SortDirection::Asc } }
 }
 
+fn cursor_of(paginate: &Call) -> Option<CursorSpec> {
+    let variable = option(paginate, "cursor").and_then(|pair| text_of(&pair.value.item))?;
+    let from = option(paginate, "from").and_then(|pair| text_of(&pair.value.item))?;
+    let numeric = option(paginate, "cursor_type").and_then(|pair| text_of(&pair.value.item)).is_some_and(|kind| kind == "int");
+    Some(CursorSpec { variable, from, numeric })
+}
+
 fn build_remote(call: &Call, owner: &str) -> RelationSpec {
     let lines = call.block.as_deref().unwrap_or_default();
     let line = |word: &str| lines.iter().find(|candidate| candidate.word == word);
@@ -164,6 +171,7 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         (Some(paginate), _) => RemoteShape::Connection {
             direction: if flag(paginate, "backward") { PageDirection::Backward } else { PageDirection::Forward },
             coverage: Coverage::Page,
+            cursor: cursor_of(paginate),
             max_pages: line("max_pages").and_then(|pages| pages.args.first()).and_then(|arg| match arg.item {
                 Value::Int(count) => u32::try_from(count).ok(),
                 _ => None,

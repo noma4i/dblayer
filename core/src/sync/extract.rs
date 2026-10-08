@@ -28,12 +28,13 @@ pub(crate) fn extract(data: &Value, root_path: &str, shape: &RemoteShape) -> Res
             let items = root.and_then(Value::as_array).ok_or_else(|| malformed("expected a list"))?;
             Ok(Extracted { nodes: objects(items), page_info: None })
         }
-        RemoteShape::Connection { .. } => {
+        RemoteShape::Connection { cursor, .. } => {
+            let cursor = cursor.as_ref();
             let connection = root.ok_or_else(|| malformed("expected a connection"))?;
-            if let Some(fault) = landing_fault(connection) {
+            if let Some(fault) = landing_fault(connection, cursor) {
                 return Err(malformed(&format!("{fault:?}")));
             }
-            Ok(Extracted { nodes: objects(&connection_nodes(connection)), page_info: Some(connection_page_info(connection)) })
+            Ok(Extracted { nodes: objects(&connection_nodes(connection)), page_info: Some(connection_page_info(connection, cursor)) })
         }
     }
 }
