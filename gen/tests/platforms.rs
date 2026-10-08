@@ -78,3 +78,33 @@ end
     assert!(kotlin.contains("fun search(query: String): Query<Hit>"));
     assert!(!kotlin.contains("var query ="));
 }
+
+#[test]
+fn action_args_become_parameters_of_the_generated_call() {
+    let models = parse_models(r#"
+model Chat do
+  schema do
+    bool :muted, default: false
+  end
+  action :mute do
+    mutation ChatMute
+    args       mute: :bool
+    input      chatId: :id, mute: :mute
+    optimistic muted: :mute
+    wrap       :input
+    root       "chatMute.chat"
+  end
+end
+"#).unwrap();
+    let action = &models[0].actions[0];
+    assert_eq!(action.args["mute"], "bool");
+    assert_eq!(action.wrap.as_deref(), Some("input"));
+    assert_eq!(action.root.as_deref(), Some("chatMute.chat"));
+    let swift = emit_swift(&models);
+    let kotlin = emit_kotlin(&models);
+    assert!(swift.contains("public func mute(mute: Bool) async throws -> Self"));
+    assert!(swift.contains("values[\"muted\"] = JSONValue.encode(mute)"));
+    assert!(swift.contains("args: [\"mute\": JSONValue.encode(mute)]"));
+    assert!(kotlin.contains("suspend fun mute(mute: Boolean): Chat"));
+    assert!(kotlin.contains("\"muted\" to jsonValue(mute)"));
+}

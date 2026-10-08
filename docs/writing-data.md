@@ -81,6 +81,27 @@ action :like do
 end
 ```
 
+An action can take arguments. `args` declares them (`:bool`, `:int`, `:num`, `:string`, `:id`). `input` and `optimistic` can use an argument by name:
+
+```ruby
+action :mute do
+  mutation   ChatMute
+  args       mute: :bool
+  input      chatId: :id, mute: :mute
+  optimistic muted: :mute
+  wrap       :input
+  root       "chatMute.chat"
+end
+```
+
+```swift
+try await chat.mute(mute: true)
+```
+
+```kotlin
+chat.mute(mute = true)
+```
+
 `optimistic` is applied locally at once and rolled back if the server refuses. `refetch` marks the listed relations stale after success. See [server sync](server-sync.md).
 
 ## Replacing data

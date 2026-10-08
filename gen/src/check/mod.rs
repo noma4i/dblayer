@@ -111,8 +111,8 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Action, "mutation") => plain(Shape::Const, vec![]),
         (Context::Action, "on_failure") => plain(Shape::Name, vec![]),
         (Context::Action, "wrap") => plain(Shape::Name, vec![]),
-        (Context::Action, "root") => plain(Shape::Name, vec![]),
-        (Context::Action, "input" | "optimistic") => free(),
+        (Context::Action, "root") => plain(Shape::Const, vec![]),
+        (Context::Action, "input" | "optimistic" | "args") => free(),
         (Context::Remote, "variables") => free(),
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
         (Context::Remote, "updates") => {
@@ -296,6 +296,11 @@ fn check_action_line(call: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str
                 if matches!(pair.value.item, Value::Hash(_) | Value::Array(_)) {
                     report(pair.value.line, pair.value.column, "optimistic value must be a literal".to_string());
                 }
+            }
+        }
+        "args" => {
+            for pair in call.options.iter().filter(|pair| !matches!(&pair.value.item, Value::Symbol(kind) if ["bool", "int", "num", "string", "id"].contains(&kind.as_str()))) {
+                report(pair.value.line, pair.value.column, "arg type must be :bool, :int, :num, :string or :id".to_string());
             }
         }
         "on_failure" => {

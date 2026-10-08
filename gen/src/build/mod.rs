@@ -266,10 +266,16 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
             "input" => action.variables = line.options.iter().filter_map(variable_binding).collect(),
             "optimistic" => action.optimistic = line.options.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
             "on_failure" => action.on_failure = on_failure_of(&first_name(line)),
+            "args" => action.args = line.options.iter().filter_map(variable_binding).collect(),
             "wrap" => action.wrap = Some(first_name(line)),
             "root" => action.root = Some(first_name(line)),
             "refetch" => action.refetch = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
             _ => {}
+        }
+    }
+    for value in action.optimistic.values_mut() {
+        if let Json::String(name) = value {
+            if action.args.contains_key(name.as_str()) { *value = serde_json::json!({ "$arg": name.clone() }); }
         }
     }
     if action.variables.is_empty() { action.variables.insert(format!("{}Id", lower(owner)), "id".into()); }
