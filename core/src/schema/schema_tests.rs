@@ -21,6 +21,7 @@ fn paged_remote(selects_page_info: bool) -> RemoteSpec {
         empty_stale_time: None,
         selects_page_info,
         updates: None,
+        page_size: None,
     }
 }
 
@@ -32,6 +33,7 @@ fn complete_remote() -> RemoteSpec {
         empty_stale_time: Some("empty_retry".into()),
         selects_page_info: false,
         updates: None,
+        page_size: None,
     }
 }
 

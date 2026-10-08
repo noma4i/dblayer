@@ -114,6 +114,7 @@ fn updates_set_must_name_ephemeral_fields() {
             empty_stale_time: None,
             selects_page_info: false,
             updates: Some(UpdatesSpec { subscription: "UserTyping".into(), deleted_by: None, set: Map::new() }),
+            page_size: None,
         };
         remote.updates.as_mut().unwrap().set.insert(field.into(), json!(true));
         let mut relation = RelationSpec::global("current");

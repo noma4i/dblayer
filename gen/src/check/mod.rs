@@ -395,6 +395,13 @@ fn check_scope(call: &Call, report: &mut impl FnMut(usize, usize, String)) {
             }
         }
     }
+    let used: Vec<&str> = match option("where").map(|pair| &pair.value.item) {
+        Some(Value::Hash(pairs)) => pairs.iter().filter_map(|pair| symbol_name(Some(&pair.value))).collect(),
+        _ => Vec::new(),
+    };
+    for name in params.iter().filter(|name| !used.contains(name)) {
+        report(call.line, call.column, format!("param `:{name}` is not used in `where`"));
+    }
     if let Some(Value::Hash(pairs)) = option("order").map(|pair| &pair.value.item) {
         let valid = |pair: &Pair| matches!(&pair.value.item, Value::Symbol(name) if name == "asc" || name == "desc");
         if pairs.iter().any(|pair| !valid(pair)) {
@@ -512,3 +519,5 @@ fn symbol_name(node: Option<&Node<Value>>) -> Option<&str> {
 
 #[cfg(test)]
 mod check_tests;
+#[cfg(test)]
+mod option_tests;

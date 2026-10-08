@@ -62,7 +62,7 @@ fn wrong_value_types() {
     );
     assert_eq!(failure_in("  scope :s, order: { name: :up }"), (7, "order direction must be `:asc` or `:desc`".to_string()));
     assert_eq!(
-        failure_in("  scope :s, params: [:a], where: { name: :b }"),
+        failure_in("  scope :s, params: [:a], where: { name: :b, other: :a }"),
         (7, "where value `:b` is not listed in `params`".to_string())
     );
     assert_eq!(failure_in("  scope :s, where: [1]"), (7, "`where` must be a hash like `{ field: :param }`".to_string()));

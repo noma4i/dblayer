@@ -67,6 +67,10 @@ pub(crate) struct Resolved {
 }
 
 impl Resolved {
+    pub(crate) fn page_size(&self) -> u32 {
+        self.remote.page_size.unwrap_or(self.operation.page_size)
+    }
+
     fn is_connection(&self) -> bool {
         matches!(self.remote.shape, RemoteShape::Connection { .. })
     }
@@ -194,7 +198,7 @@ impl Inner {
         let base_revision = self.db.revision_seq()?;
         let issued = self.next_issued();
         let has_window = self.db.shared.store.window(&resolved.window_key)?.is_some();
-        let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.operation.page_size, cursor.as_deref());
+        let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref());
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);
         let fetched = self.query_with_retry(request).await.and_then(|(response, attempts)| {
             let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;
@@ -268,7 +272,7 @@ impl Inner {
         let chain = PageChain {
             cursor: window.cursor.clone(),
             has_next: window.has_next,
-            loaded_pages: window.ids.len().div_ceil(resolved.operation.page_size.max(1) as usize),
+            loaded_pages: window.ids.len().div_ceil(resolved.page_size().max(1) as usize),
             is_loading: self.is_loading(resolved),
         };
         let verdict = LoadMoreVerdict::of(&chain, max_pages.map(|pages| pages as usize));

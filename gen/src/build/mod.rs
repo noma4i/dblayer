@@ -172,12 +172,17 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         (None, None) => RemoteShape::Single,
     };
     let fresh = line("fresh_for");
+    let page_size = line("paginate").and_then(|paginate| paginate.args.first()).and_then(|arg| match arg.item {
+        Value::Int(size) => u32::try_from(size).ok(),
+        _ => None,
+    });
     let remote = RemoteSpec {
         operation: line("query").and_then(|query| query.args.first()).and_then(|arg| text_of(&arg.item)).unwrap_or_else(|| format!("{owner}s{}", camel(&first_name(call)))),
         selects_page_info: matches!(shape, RemoteShape::Connection { .. }),
         shape,
         stale_time: fresh.and_then(|fresh| fresh.args.first()).and_then(|arg| text_of(&arg.item)).unwrap_or(DEFAULT_FRESHNESS.to_string()),
         empty_stale_time: fresh.and_then(|fresh| option(fresh, "empty")).and_then(|pair| text_of(&pair.value.item)),
+        page_size,
         updates: line("updates").map(|updates| UpdatesSpec {
             subscription: first_name(updates),
             deleted_by: option(updates, "deleted_by").and_then(|pair| text_of(&pair.value.item)),

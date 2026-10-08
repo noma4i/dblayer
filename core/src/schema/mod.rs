@@ -373,6 +373,8 @@ pub struct RemoteSpec {
     pub selects_page_info: bool,
     #[serde(default)]
     pub updates: Option<UpdatesSpec>,
+    #[serde(default)]
+    pub page_size: Option<u32>,
 }
 
 impl RemoteSpec {

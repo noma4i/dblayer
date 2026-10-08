@@ -9,6 +9,8 @@ mod gate_tests;
 #[cfg(test)]
 mod oracle_tests;
 #[cfg(test)]
+mod page_tests;
+#[cfg(test)]
 mod race_tests;
 #[cfg(test)]
 mod replace_tests;
