@@ -121,6 +121,26 @@ end
 - After a dropped connection the library reconnects with a growing delay and refetches the relation, because events may have been missed. Offline (`setOnline(false)`) it does not reconnect and spends no attempts. `setOnline(true)` reconnects at once.
 - Bursts of events are merged into one commit.
 
+### Model-level subscriptions
+
+`updates` lives while a screen reads the relation. For events that should reach the database for the whole session (presence, counters), declare `listen` on the model. It takes the same options as `updates`:
+
+```ruby
+model User do
+  listen "userUpdated", debounce: 300.milliseconds
+end
+```
+
+```swift
+try DB.listen()      // after sign-in
+try DB.unlisten()    // on sign-out
+```
+
+```kotlin
+DBlayer.listen()
+DBlayer.unlisten()
+```
+
 ## Automatic refetching
 
 | Event | Result |

@@ -33,6 +33,22 @@ impl Inner {
         updates.into_iter().map(|updates| self.acquire_one(model, updates)).collect()
     }
 
+    /// Starts the model-level subscriptions (`listen` lines). They stay open until `unlisten`.
+    pub(crate) fn listen_all(self: &std::sync::Arc<Self>) {
+        for spec in self.db.shared.specs.values() {
+            for updates in &spec.listens {
+                self.acquire_one(spec.key.as_str(), updates.clone());
+            }
+        }
+    }
+
+    pub(crate) fn unlisten_all(self: &std::sync::Arc<Self>) {
+        let keys: Vec<String> = self.db.shared.specs.values().flat_map(|spec| spec.listens.iter().map(|updates| format!("{}|{}", spec.key.as_str(), updates.subscription))).collect();
+        for key in keys {
+            self.release_live(&key);
+        }
+    }
+
     fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec) -> String {
         let key = format!("{model}|{}", updates.subscription);
         let mut lives = locked(&self.lives);

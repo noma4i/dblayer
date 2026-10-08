@@ -127,6 +127,16 @@ impl Database {
     pub async fn load_more(&self, model: String, relation: String, params_json: String) -> Result<bool, DbError> {
         Ok(self.sync()?.load_more(&model, &relation, &serde_json::from_str(&params_json)?).await?.has_next)
     }
+    pub fn listen(&self) -> Result<(), DbError> {
+        let _entered = executor().enter();
+        self.sync()?.listen();
+        Ok(())
+    }
+    pub fn unlisten(&self) -> Result<(), DbError> {
+        let _entered = executor().enter();
+        self.sync()?.unlisten();
+        Ok(())
+    }
     pub async fn flush(&self) -> Result<(), DbError> { self.sync()?.flush().await?; Ok(()) }
     pub async fn retry(&self, model: String, row_id: String) -> Result<(), DbError> { self.sync()?.retry(&model, &id(&row_id)?).await?; Ok(()) }
     pub async fn retry_all(&self) -> Result<(), DbError> { self.sync()?.retry_all().await?; Ok(()) }

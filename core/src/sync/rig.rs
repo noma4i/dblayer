@@ -67,6 +67,7 @@ pub fn moments_spec() -> ModelSpec {
     ];
     pulse.remote = Some(pulse_remote);
     spec.relations.extend([feed, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
+    spec.listens = vec![UpdatesSpec { subscription: "MomentListen".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None }];
     spec.actions = vec![
         bound("create", RootShape::Upsert, "CreateMoment"),
         bound("update", RootShape::Upsert, "UpdateMoment"),
@@ -143,6 +144,7 @@ pub fn register_operations(sync: &Sync) {
         ("MomentsHistory", "history"),
         ("MomentsByUser", "moments"),
         ("MomentsSearch", "moments"),
+        ("MomentListen", "momentListen"),
         ("MomentsByMood", "moments"),
         ("MomentsPulse", "feed"),
         ("CurrentUser", "me"),

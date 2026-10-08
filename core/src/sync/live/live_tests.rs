@@ -109,3 +109,17 @@ async fn a_relation_with_two_subscriptions_starts_both_and_a_removing_one_delete
     tokio::time::sleep(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentRemoved"), 1);
 }
+
+#[tokio::test(start_paused = true)]
+async fn listen_opens_the_model_subscriptions_without_a_reader_and_unlisten_closes_them() {
+    let rig = rig();
+    rig.sync.listen();
+    settle().await;
+    assert_eq!(rig.transport.call_count("MomentListen"), 1);
+    rig.transport.emit("MomentListen", SubscriptionEvent::Next(Response::data(json!({"momentListen": {"id": "m9", "text": "pushed", "userId": null}}))));
+    settle().await;
+    assert_eq!(text_of(&rig, "moments", "m9"), Some("pushed".to_string()));
+    rig.sync.unlisten();
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert_eq!(rig.transport.cancellations("MomentListen"), 1);
+}

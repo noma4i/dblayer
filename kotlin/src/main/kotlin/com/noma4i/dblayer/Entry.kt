@@ -5,6 +5,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 object DBlayer {
+    /** Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`. */
+    fun listen() = database.listen()
+    fun unlisten() = database.unlisten()
+
     lateinit var database: Database
 
     fun open(endpoint: String, headers: Map<String, String> = emptyMap(), modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList()) =

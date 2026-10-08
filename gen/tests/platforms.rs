@@ -126,3 +126,20 @@ end
     assert!(swift.contains("public static func create(name: String? = nil, unreadCount: Int) async throws -> Self"));
     assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long): Chat"));
 }
+
+#[test]
+fn model_listen_lines_become_model_subscriptions() {
+    let models = parse_models(r#"
+model User do
+  schema do
+    bool :online
+  end
+  listen "userUpdated", debounce: 300.milliseconds
+  listen "userBlocked", removes: true
+end
+"#).unwrap();
+    let listens = &models[0].listens;
+    assert_eq!(listens.len(), 2);
+    assert_eq!((listens[0].subscription.as_str(), listens[0].debounce.as_deref()), ("userUpdated", Some("300.milliseconds")));
+    assert!(listens[1].removes);
+}

@@ -115,6 +115,9 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Action, "input" | "optimistic" | "args") => free(),
         (Context::Remote, "variables") => free(),
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
+        (Context::Model, "listen") => {
+            plain(Shape::Const, vec![key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
+        }
         (Context::Remote, "updates") => {
             plain(Shape::Const, vec![key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
         }

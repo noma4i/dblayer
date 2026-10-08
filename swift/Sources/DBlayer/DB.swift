@@ -4,6 +4,10 @@ public enum DB {
   static let reachability = Reachability()
   public nonisolated(unsafe) static var database: Database!
 
+  /// Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`.
+  public static func listen() throws { try database.listen() }
+  public static func unlisten() throws { try database.unlisten() }
+
   public static func open(endpoint: URL, headers: [String: String] = [:], modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
     try open(transport: UrlSessionTransport(endpoint: endpoint, headers: headers), modelsJSON: modelsJSON, path: path, operations: operations)
   }

@@ -66,6 +66,15 @@ impl Sync {
         }
     }
 
+    /// Opens the model-level subscriptions declared with `listen`.
+    pub fn listen(&self) {
+        self.inner.listen_all();
+    }
+
+    pub fn unlisten(&self) {
+        self.inner.unlisten_all();
+    }
+
     pub async fn flush(&self) -> Result<FlushReport, SyncError> {
         let report = self.inner.flush().await?;
         self.start_uploads()?;

@@ -707,6 +707,8 @@ pub struct ModelSpec {
     pub storage: Storage,
     #[serde(default)]
     pub expire_after: Option<String>,
+    #[serde(default)]
+    pub listens: Vec<UpdatesSpec>,
 }
 
 fn is_reserved_name(name: &str) -> bool {
@@ -725,6 +727,7 @@ impl ModelSpec {
             ephemeral: Vec::new(),
             storage: Storage::Disk,
             expire_after: None,
+            listens: Vec::new(),
         }
     }
 

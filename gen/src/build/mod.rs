@@ -42,6 +42,7 @@ fn build_model(node: &ModelNode) -> ModelSpec {
             "references" => model.associations.push(build_association(call, AssociationKind::References, &node.name)),
             "scope" => model.relations.push(build_scope(call)),
             "remote" => model.relations.push(build_remote(call, &node.name)),
+            "listen" => model.listens.push(updates_spec(call)),
             "create" | "update" | "destroy" => model.actions.push(build_standard_action(call)),
             "action" => model.actions.push(build_action(call, &node.name)),
             _ => {}
@@ -206,16 +207,7 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         page_size,
         variables: line("variables").map(variables_of).unwrap_or_default(),
         root: line("query").and_then(|query| option(query, "root")).and_then(|pair| text_of(&pair.value.item)),
-        updates: lines.iter().filter(|candidate| candidate.word == "updates").map(|updates| UpdatesSpec {
-            subscription: first_name(updates),
-            deleted_by: option(updates, "deleted_by").and_then(|pair| text_of(&pair.value.item)),
-            set: match option(updates, "set").map(|pair| &pair.value.item) {
-                Some(Value::Hash(pairs)) => pairs.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
-                _ => Map::new(),
-            },
-            removes: flag(updates, "removes"),
-            debounce: option(updates, "debounce").and_then(|pair| text_of(&pair.value.item)),
-        }).collect(),
+        updates: lines.iter().filter(|candidate| candidate.word == "updates").map(updates_spec).collect(),
     };
     let columns: Vec<String> = match option(call, "params").map(|pair| &pair.value.item) {
         Some(Value::Array(items)) => items.iter().filter_map(|item| text_of(&item.item)).collect(),
@@ -234,6 +226,19 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
     }
     relation.remote = Some(remote);
     relation
+}
+
+fn updates_spec(updates: &Call) -> UpdatesSpec {
+    UpdatesSpec {
+        subscription: first_name(updates),
+        deleted_by: option(updates, "deleted_by").and_then(|pair| text_of(&pair.value.item)),
+        set: match option(updates, "set").map(|pair| &pair.value.item) {
+            Some(Value::Hash(pairs)) => pairs.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
+            _ => Map::new(),
+        },
+        removes: flag(updates, "removes"),
+        debounce: option(updates, "debounce").and_then(|pair| text_of(&pair.value.item)),
+    }
 }
 
 fn build_standard_action(call: &Call) -> ActionDeclaration {
