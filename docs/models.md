@@ -158,6 +158,7 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 | Line | Meaning | Default |
 | ---- | ------- | ------- |
 | `query Operation` | GraphQL operation name (required) | none |
+| `query Operation, root: "a.b"` | path of the rows inside the response | first field of the operation |
 | `paginate 20` | Relay-style pages of 20, forward | whole response |
 | `paginate 20, backward: true` | pages backward | forward |
 | `paginate 20, cursor: :afterSequence, from: "lastSequenceNumber", cursor_type: :int` | the server pages by its own variable: the next page sends `afterSequence`, taken from `lastSequenceNumber` of the connection. No page size is sent | Relay `first`/`after` |

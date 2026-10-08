@@ -68,6 +68,7 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("references.model", assoc("  references :r, model: User"), assoc("  references :r, model: Vibe")),
         ("references.key", assoc("  references :r, model: User"), assoc("  references :r, model: User, key: :a")),
         ("query", remote(""), remote("").replace("query Feed", "query Other")),
+        ("query.root", remote(""), remote("").replace("query Feed", "query Feed, root: \"feed.items\"")),
         ("paginate", remote("    paginate 20"), remote("    paginate 30")),
         ("paginate.backward", remote("    paginate 20"), remote("    paginate 20, backward: true")),
         ("list", remote(""), remote("    list")),

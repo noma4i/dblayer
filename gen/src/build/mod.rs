@@ -205,6 +205,7 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         empty_stale_time: fresh.and_then(|fresh| option(fresh, "empty")).and_then(|pair| text_of(&pair.value.item)),
         page_size,
         variables: line("variables").map(variables_of).unwrap_or_default(),
+        root: line("query").and_then(|query| option(query, "root")).and_then(|pair| text_of(&pair.value.item)),
         updates: lines.iter().filter(|candidate| candidate.word == "updates").map(|updates| UpdatesSpec {
             subscription: first_name(updates),
             deleted_by: option(updates, "deleted_by").and_then(|pair| text_of(&pair.value.item)),

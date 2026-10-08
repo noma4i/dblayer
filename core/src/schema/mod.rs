@@ -430,6 +430,8 @@ pub struct RemoteSpec {
     pub page_size: Option<u32>,
     #[serde(default)]
     pub variables: BTreeMap<String, VariableSource>,
+    #[serde(default)]
+    pub root: Option<String>,
 }
 
 impl RemoteSpec {

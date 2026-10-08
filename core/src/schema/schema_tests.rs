@@ -22,7 +22,7 @@ fn paged_remote(selects_page_info: bool) -> RemoteSpec {
         selects_page_info,
         updates: Vec::new(),
         page_size: None,
-        variables: Default::default(),
+        variables: Default::default(), root: None,
     }
 }
 
@@ -36,6 +36,7 @@ fn complete_remote() -> RemoteSpec {
         updates: Vec::new(),
         page_size: None,
         variables: Default::default(),
+        root: None,
     }
 }
 
