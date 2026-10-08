@@ -263,3 +263,11 @@ fn a_remote_relation_can_take_params_that_name_columns() {
     assert_eq!(relation.by_columns, vec!["ownerId".to_string()]);
     assert!(!relation.is_global && relation.remote.is_some());
 }
+
+#[test]
+fn a_relation_can_take_the_id_as_its_param() {
+    let model = build_one("  remote :details, params: [:id] do\n    query \"sample\"\n  end");
+    assert_eq!(model.relations[0].by_columns, vec!["id".to_string()]);
+    assert!(!model.field("id").unwrap().indexed);
+    assert!(dblayer::schema::validate_models(&[model], &[]).is_empty());
+}

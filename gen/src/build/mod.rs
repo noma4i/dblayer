@@ -16,7 +16,7 @@ pub fn build(nodes: &[ModelNode]) -> Vec<ModelSpec> {
         (owner, association.foreign_key.clone())
     })).collect();
     for model in &mut models {
-        for field in &mut model.fields {
+        for field in model.fields.iter_mut().filter(|field| field.name != "id") {
             if indexes.iter().any(|(owner, key)| owner == model.key.as_str() && key == &field.name)
                 || model.relations.iter().any(|relation| relation.by_columns.contains(&field.name)
                     || matches!(&relation.sort, Sort::Fields(fields) if fields.iter().any(|sort| sort.column == field.name))) {

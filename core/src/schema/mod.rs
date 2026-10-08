@@ -696,7 +696,7 @@ impl ModelSpec {
     }
 
     pub fn is_indexed(&self, name: &str) -> bool {
-        self.field(name).is_some_and(|field| field.indexed)
+        name == "id" || self.field(name).is_some_and(|field| field.indexed)
     }
 
     pub fn indexed_names(&self) -> Vec<String> {

@@ -550,3 +550,10 @@ fn field_with_a_path_reads_the_nested_value() {
     assert_eq!(field.read(&object(json!({"location": {"city": "Kyiv"}}))), None);
     assert_eq!(field.read(&object(json!({"location": null}))), None);
 }
+
+#[test]
+fn the_id_counts_as_an_indexed_column() {
+    let spec = ModelSpec::new("m", vec![FieldSpec::raw("id")]);
+    assert!(spec.is_indexed("id"));
+    assert!(!spec.is_indexed("other"));
+}
