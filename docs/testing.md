@@ -5,16 +5,20 @@
 Open a database in memory or in a temporary directory and give it a mock transport. The mock replies by operation name, can delay or fail replies, and can break a subscription.
 
 ```swift
+import DBlayerTesting
+
 let transport = MockTransport()
 transport.enqueue("MomentsFeed", reply: feedJSON)
-let db = try Database.open(config: .inMemory, models: models, transport: transport)
+DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
 ```
 
 ```kotlin
 val transport = MockTransport()
-transport.enqueue("MomentsFeed", reply = feedJson)
-val db = Database.open(config = Config.inMemory, models = models, transport = transport)
+transport.enqueue("MomentsFeed", feedJson)
+DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
 ```
+
+`transport.calls` lists the requests it received. `emit` pushes a subscription event and `breakSubscription` drops the subscription.
 
 Use a manual clock to test freshness and load retries without sleeping.
 

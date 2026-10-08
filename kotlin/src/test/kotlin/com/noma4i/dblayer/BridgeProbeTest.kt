@@ -23,4 +23,17 @@ class BridgeProbeTest {
         moment.destroy()
         assertEquals(emptyList<Moment>(), withTimeout(5000) { Moment.recent.live.flow.first { it.isEmpty() } })
     }
+
+    @Test
+    fun feedLoadsFromTheTransportIntoLiveRows() = runBlocking {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+
+        Moment.feed.refresh()
+
+        assertEquals("a", withTimeout(5000) { Moment.feed.live.flow.first { it.isNotEmpty() } }.first().uuid)
+        assertEquals("MomentsFeed", transport.calls.first().operationName)
+    }
 }
