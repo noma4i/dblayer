@@ -69,7 +69,8 @@ pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, rela
             }
             AssociationKind::HasOne | AssociationKind::HasMany => {}
         }
-        if path == association.name {
+        let feeds_an_id = spec.fields.iter().any(|field| field.id_from_parent.as_deref() == Some(association.name.as_str()));
+        if path == association.name && !feeds_an_id {
             input.remove(&association.name);
         }
     }

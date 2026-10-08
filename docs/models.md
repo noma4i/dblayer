@@ -48,7 +48,7 @@ Field options:
 | `optional: true` | key may be absent in server responses |
 | `default: value` | default value |
 | `index: true` | indexed column (not allowed for `object`, `array`, `raw`, `list`, `file`) |
-| `id_from: :parent` | take the id from a nested parent object |
+| `id_from: :parent` | take the id from a nested parent object, also when the same object is a `belongs_to` association |
 | `as: MomentMedia` | for `object`, `array`, `raw`: the app type the generated model decodes the value to (a `Codable` you provide) |
 | `from: "location.lat"` | read the value from a nested path of the response when the field name itself is absent |
 

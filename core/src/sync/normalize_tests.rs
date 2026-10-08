@@ -37,6 +37,23 @@ fn nested_author_with_only_an_id_still_sets_the_foreign_key_when_the_user_row_ne
 }
 
 #[test]
+fn a_row_whose_id_comes_from_its_belongs_to_parent_keeps_that_parent_id() {
+    let hit = ModelSpec::new(
+        "hits",
+        vec![FieldSpec::parent_id("id", "chat"), FieldSpec::scalar("chatId", ScalarKind::Id).indexed()],
+    );
+    let mut hit = hit;
+    hit.associations.push(AssociationSpec::new("chat", AssociationKind::BelongsTo, "chats", "chatId"));
+    let chats = ModelSpec::new("chats", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str).optional()]);
+    let db = Db::open_in_memory(vec![hit, chats], None).unwrap();
+    let input = nodes(json!([{"chat": {"id": "c7", "title": "Ann"}}]));
+    let normalized = normalize_nodes(&db, "hits", &input).unwrap();
+    assert_eq!(normalized.roots.len(), 1);
+    assert_eq!(normalized.roots[0]["id"], json!("c7"));
+    assert_eq!(normalized.roots[0]["chatId"], json!("c7"));
+}
+
+#[test]
 fn shared_author_is_reported_once() {
     let Rig { db, .. } = rig();
     let input = nodes(json!([
