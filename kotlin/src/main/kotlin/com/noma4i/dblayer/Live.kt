@@ -78,3 +78,29 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     suspend fun loadMore(): Boolean = query.loadMore()
     fun stop() = jobs.forEach { it.cancel() }
 }
+
+/** Live rows of one model looked up by id, for the records a list refers to (authors, last messages). */
+class LiveRows<Model : DBModel>(private val idsQuery: (List<String>) -> Query<Model>, private val scope: kotlinx.coroutines.CoroutineScope) {
+    private val mutableById = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Model>>(emptyMap())
+    private var ids: List<String> = emptyList()
+    private var job: kotlinx.coroutines.Job? = null
+
+    val byId: kotlinx.coroutines.flow.StateFlow<Map<String, Model>> get() = mutableById
+
+    fun track(nextIds: List<String>) {
+        val unique = nextIds.toSet().sorted()
+        if (unique == ids) return
+        ids = unique
+        job?.cancel()
+        if (unique.isEmpty()) {
+            mutableById.value = emptyMap()
+            return
+        }
+        job = scope.launch { idsQuery(unique).live.flow.collect { rows -> mutableById.value = rows.associateBy { it.id } } }
+    }
+
+    fun stop() {
+        job?.cancel()
+        job = null
+    }
+}

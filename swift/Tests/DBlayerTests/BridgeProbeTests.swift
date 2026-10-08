@@ -47,6 +47,11 @@ struct BridgeProbeTests {
 
     #expect(list.rows.first?.uuid == "a")
     #expect(list.state.hasMore && list.state.phase == .idle)
+    let rows = LiveRows<Moment>()
+    rows.track(list.rows.map(\.id))
+    for _ in 0 ..< 200 where rows.byId.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(rows.byId["1"]?.uuid == "a")
+    rows.stop()
     list.stop()
   }
 }

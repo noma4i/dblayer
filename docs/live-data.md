@@ -100,6 +100,18 @@ feed.refresh()
 feed.loadMore()
 ```
 
+`LiveRows` follows the rows a list points at, such as the authors of moments. Call `track(ids)` whenever the list changes. It keeps one live query for the ids and exposes `byId`:
+
+```swift
+let authors = LiveRows<User>()
+authors.track(feed.rows.compactMap(\.userId))   // authors.byId["u1"]
+```
+
+```kotlin
+val authors = LiveRows(User.Companion::ids, viewModelScope)
+authors.track(feed.rows.value.mapNotNull { it.userId })   // authors.byId is a StateFlow
+```
+
 **UIKit and Android views.** Apply the diff to a diffable data source or a collection view. The diff already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:
 
 ```swift

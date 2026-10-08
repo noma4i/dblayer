@@ -54,6 +54,11 @@ class BridgeProbeTest {
         assertEquals("a", list.rows.value.first().uuid)
         assertEquals(true, state.hasMore)
         assertEquals(LoadPhase.Idle, state.phase)
+        val rows = LiveRows(Moment.Companion::ids, this)
+        rows.track(list.rows.value.map { it.id })
+        withTimeout(5000) { rows.byId.first { it.isNotEmpty() } }
+        assertEquals("a", rows.byId.value["1"]?.uuid)
+        rows.stop()
         list.stop()
     }
 }

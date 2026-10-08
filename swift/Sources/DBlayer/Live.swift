@@ -115,3 +115,39 @@ public final class LiveList<Model: DBModel> {
 
   isolated deinit { stop() }
 }
+
+/// Live rows of one model looked up by id, for the records a list refers to (authors, last messages).
+@MainActor
+@Observable
+public final class LiveRows<Model: DBModel> {
+  public private(set) var byId: [String: Model] = [:]
+  @ObservationIgnored private var ids: [String] = []
+  @ObservationIgnored private var task: Task<Void, Never>?
+
+  public init() {}
+
+  public func track(_ nextIds: [String]) {
+    let unique = Array(Set(nextIds)).sorted()
+    guard unique != ids else { return }
+
+    ids = unique
+    task?.cancel()
+    guard !unique.isEmpty else {
+      byId = [:]
+      return
+    }
+
+    task = Task { [weak self] in
+      for await rows in Model.ids(unique).live.stream {
+        self?.byId = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+      }
+    }
+  }
+
+  public func stop() {
+    task?.cancel()
+    task = nil
+  }
+
+  isolated deinit { stop() }
+}
