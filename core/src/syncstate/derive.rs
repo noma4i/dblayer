@@ -1,6 +1,6 @@
 use crate::commit::OperationStatus;
 
-use crate::upload::{UploadInfo, UploadState, UploadStatus};
+use crate::upload::{UploadInfo, UploadState, UploadStatus, WaitReason};
 
 use super::info::{OperationFailure, SyncInfo, SyncState};
 
@@ -40,9 +40,10 @@ pub fn fold_entries(entries: &[SyncEntry]) -> Option<SyncInfo> {
             dirty_fields.push(field.clone());
         }
     }
+    let waiting = entries.iter().any(|entry| entry.action == "create").then_some(WaitReason::CreateUnconfirmed);
     let upload = entries
         .iter()
-        .find_map(|entry| entry.upload.as_ref().map(|state| UploadInfo::of(entry.status, entry.transport_started, state, entry.error.clone())));
+        .find_map(|entry| entry.upload.as_ref().map(|state| UploadInfo::of(entry.status, entry.transport_started, state, waiting, entry.error.clone())));
     Some(SyncInfo {
         state: decisive.state(),
         actions: entries.iter().map(|entry| entry.action.clone()).collect(),

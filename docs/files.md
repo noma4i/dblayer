@@ -92,11 +92,14 @@ The file is read in ranges: a single upload in one range up to the 10 MB thresho
 
 | Field | Meaning |
 | ----- | ------- |
-| `status` | `preparing`, `queued`, `uploading`, `sending`, `failed`, `deliveryUnknown` |
+| `status` | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `failed`, `deliveryUnknown` |
+| `waitReason` | why a `waiting` upload does not run yet: `createUnconfirmed` (the record is still local, its `create` has no answer). `nil` in every other status |
 | `stage` | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation` |
 | `sentBytes`, `totalBytes`, `fraction` | for multipart the sum over all parts divided by the file size |
 | `attempts` | transport retries used since the last start |
 | `error` | kind and message, `isRetryable` is false for a rejection |
+
+An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `fraction` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 
 A finished upload closes its operation, so `upload` goes back to `nil` and the record is `synced`. Progress ticks are limited to one per 100 ms and never go down inside a phase. A restarted phase starts again from the bytes of its finished parts.
 

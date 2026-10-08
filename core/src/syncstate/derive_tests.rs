@@ -50,3 +50,13 @@ fn state_names_round_trip_through_sql() {
     }
     assert_eq!(SyncState::from_sql("bogus"), None);
 }
+
+#[test]
+fn inv_upload_14_an_upload_behind_an_open_create_folds_to_waiting_and_stops_waiting_without_it() {
+    use crate::upload::{UploadState, UploadStatus, WaitReason};
+    let upload = SyncEntry { upload: Some(UploadState::queued()), ..entry("upload", OperationStatus::Pending, false, 2) };
+    let behind = fold_entries(&[entry("create", OperationStatus::Pending, false, 1), upload.clone()]).unwrap().upload.unwrap();
+    assert_eq!((behind.status, behind.wait_reason), (UploadStatus::Waiting, Some(WaitReason::CreateUnconfirmed)));
+    let alone = fold_entries(&[upload]).unwrap().upload.unwrap();
+    assert_eq!((alone.status, alone.wait_reason), (UploadStatus::Queued, None));
+}

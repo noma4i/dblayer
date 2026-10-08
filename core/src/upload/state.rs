@@ -6,6 +6,7 @@ use crate::syncstate::OperationFailure;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UploadStatus {
+    Waiting,
     Preparing,
     Queued,
     Uploading,
@@ -14,6 +15,12 @@ pub enum UploadStatus {
     Failed,
     DeliveryUnknown,
     Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitReason {
+    CreateUnconfirmed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -86,19 +93,22 @@ pub struct UploadInfo {
     pub stage: UploadStage,
     pub sent_bytes: u64,
     pub total_bytes: u64,
+    pub wait_reason: Option<WaitReason>,
     pub attempts: u32,
     pub error: Option<OperationFailure>,
 }
 
 impl UploadInfo {
-    pub fn of(status: OperationStatus, transport_started: bool, state: &UploadState, error: Option<OperationFailure>) -> Self {
+    pub fn of(status: OperationStatus, transport_started: bool, state: &UploadState, wait_reason: Option<WaitReason>, error: Option<OperationFailure>) -> Self {
         let shown = match (status, transport_started) {
             (OperationStatus::Failed, _) => UploadStatus::Failed,
             (OperationStatus::DeliveryUnknown, _) => UploadStatus::DeliveryUnknown,
             (_, true) => UploadStatus::Sending,
+            _ if wait_reason.is_some() => UploadStatus::Waiting,
             _ => state.phase,
         };
-        Self { status: shown, stage: state.stage, sent_bytes: state.sent_bytes, total_bytes: state.total_bytes, attempts: state.retries, error }
+        let wait_reason = (shown == UploadStatus::Waiting).then_some(wait_reason).flatten();
+        Self { status: shown, stage: state.stage, sent_bytes: state.sent_bytes, total_bytes: state.total_bytes, wait_reason, attempts: state.retries, error }
     }
 
     pub fn fraction(&self) -> f64 {
