@@ -64,6 +64,7 @@ struct BridgeProbeTests {
 
     let local = try await Moment.create(text: "hello", media: nil)
     #expect(local.id.hasPrefix("temp"))
+    try await local.settled()
     let real = try await local.confirmedId()
     #expect(real == "m77")
   }

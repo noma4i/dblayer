@@ -92,6 +92,7 @@ pub(crate) struct Inner {
     pub connectivity: Connectivity,
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
     pub replaced: Mutex<HashMap<String, String>>,
+    pub outcomes: Mutex<HashMap<i64, send::SendResult>>,
 }
 
 impl Inner {
@@ -132,6 +133,7 @@ impl Sync {
             connectivity: Connectivity::new(),
             wake: Mutex::new(None),
             replaced: Mutex::new(HashMap::new()),
+            outcomes: Mutex::new(HashMap::new()),
         };
         Self { inner: Arc::new(inner) }
     }

@@ -71,6 +71,7 @@ class BridgeProbeTest {
 
         val local = Moment.create(text = "hello", media = null)
         assertEquals(true, local.id.startsWith("temp"))
+        withTimeout(5000) { local.settled() }
         assertEquals("m77", withTimeout(5000) { local.confirmedId() })
     }
 }

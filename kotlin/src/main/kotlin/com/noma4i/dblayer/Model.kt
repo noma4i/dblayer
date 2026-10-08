@@ -74,6 +74,9 @@ fun retryAll() { background.launch { runCatching { DBlayer.database.retryAll() }
 
 suspend fun DBModel.destroy() { DBlayer.database.destroy(modelName, id) }
 
+/** Waits until the server has answered every queued change of the record, throws on a refusal or when offline. */
+suspend fun DBModel.settled() { DBlayer.database.settled(modelName, id) }
+
 /** The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline. */
 suspend fun DBModel.confirmedId(): String = DBlayer.database.confirmed(modelName, id)
 

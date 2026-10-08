@@ -144,6 +144,12 @@ impl Database {
         let real = executor().spawn(async move { sync.confirmed(&model, &row).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })??;
         Ok(real.to_string())
     }
+    pub async fn settled(&self, model: String, row_id: String) -> Result<(), DbError> {
+        let sync = self.sync()?.clone();
+        let row = id(&row_id)?;
+        executor().spawn(async move { sync.settled(&model, &row).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })??;
+        Ok(())
+    }
     pub async fn cancel_upload(&self, model: String, row_id: String) -> Result<bool, DbError> { Ok(self.sync()?.cancel_upload(&model, &id(&row_id)?).await?) }
     pub fn maintain(&self) -> Result<(), DbError> { self.db.maintain(&[])?; Ok(()) }
     pub fn logout(&self) -> Result<(), DbError> { self.db.reset_all()?; Ok(()) }

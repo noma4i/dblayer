@@ -470,3 +470,23 @@ async fn confirmed_fails_when_the_create_was_refused() {
     rig.transport.enqueue("CreateMoment", Reply::graphql_error("nope", "FORBIDDEN"));
     assert!(rig.sync.confirmed("moments", &local.id).await.is_err());
 }
+
+#[tokio::test(start_paused = true)]
+async fn settled_waits_for_every_change_of_the_record() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
+    rig.sync.settled("moments", &rid("m1")).await.unwrap();
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn settled_fails_with_the_refusal() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
+    let error = rig.sync.settled("moments", &rid("m1")).await.unwrap_err();
+    assert!(error.to_string().contains("not allowed"));
+}
