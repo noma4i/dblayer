@@ -178,6 +178,6 @@ Null handling follows one rule: a row with a null field matches `!(field == valu
 
 Connecting to a relation that has a `remote` block loads it when its data is stale, keeps it fresh through its `updates` subscription while someone reads it, and lets go a while after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.
 
-A row that does not fit the generated model is skipped and logged as `Row of <Model> failed to decode` (Swift: `os` subsystem `DBlayer`, category `decode`; Kotlin: `java.util.logging` logger `DBlayer`). An empty list with this line in the log means the model and the server schema disagree.
+A row that does not fit the generated model is skipped and logged as `Row of <Model> failed to decode` (Swift: `os` subsystem `DBlayer`, category `decode`; Kotlin: the JVM logger named `DBlayer`). An empty list with this line in the log means the model and the server schema disagree.
 
 See [server sync](server-sync.md) and [threading](threading.md).
