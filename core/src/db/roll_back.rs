@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use serde_json::{Map, Value};
 
@@ -108,6 +108,7 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
     let own = entry.operation.id.0;
     let mut chain = Chain::new(outbox, own);
     let revision = reader.revision_seq()? + 1;
+    let mut taken = HashSet::new();
     for row in &prior.rows {
         let Ok(row_id) = RowId::new(row.id()) else { continue };
         match row {
@@ -121,7 +122,7 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
             }
             PriorRow::Destroyed { .. } if entry.operation.status == OperationStatus::Failed => {}
             PriorRow::Destroyed { .. } => {
-                let (entity_ops, scope_ops) = row.reappearing();
+                let (entity_ops, scope_ops) = row.reappearing(reader, &mut taken)?;
                 plan.entity_ops.extend(entity_ops);
                 plan.scope_ops.extend(scope_ops);
             }

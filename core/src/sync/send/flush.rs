@@ -325,10 +325,12 @@ impl Inner {
 
     fn fail(&self, sending: &Sending<'_>, status: OperationStatus, failure: OperationFailure, result: SendResult) -> Result<SendResult, SyncError> {
         let seq = sending.entry.operation.id.0;
-        let committed = self.commit(sending.generation, |_| {
+        let committed = self.commit(sending.generation, |reader| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
             if status == OperationStatus::Failed && sending.action == "destroy" {
-                (envelope.entity_ops, envelope.scope_ops) = Prior::of(sending.entry).map(|prior| prior.reappearing()).unwrap_or_default();
+                if let Some(prior) = Prior::of(sending.entry) {
+                    (envelope.entity_ops, envelope.scope_ops) = prior.reappearing(reader)?;
+                }
             }
             envelope.operation_transitions.push(OperationTransition::Fail { seq, status, failure });
             Ok(Some(envelope))

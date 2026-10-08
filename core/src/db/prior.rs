@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -52,18 +52,17 @@ impl PriorRow {
         }
     }
 
-    pub fn reappearing(&self) -> (Option<EntityOp>, Vec<ScopeOp>) {
-        let PriorRow::Destroyed { model, id, before, members, .. } = self else { return (None, Vec::new()) };
-        let (Ok(row_id), key) = (RowId::new(id), ModelKey::new(model)) else { return (None, Vec::new()) };
-        let scopes = members
-            .iter()
-            .map(|member| ScopeOp::Append {
-                scope: ScopeRef::new(key.clone(), ScopeKey::from_raw(&member.scope_key)),
-                row: row_id.clone(),
-                order_key: member.order_key.clone(),
-            })
-            .collect();
-        (Some(EntityOp::Upsert { model: key, id: row_id, row: before.clone() }), scopes)
+    pub fn reappearing(&self, reader: &Reader<'_>, taken: &mut HashSet<(String, String, String)>) -> Result<(Option<EntityOp>, Vec<ScopeOp>), StoreError> {
+        let PriorRow::Destroyed { model, id, before, members, .. } = self else { return Ok((None, Vec::new())) };
+        let (Ok(row_id), key) = (RowId::new(id), ModelKey::new(model)) else { return Ok((None, Vec::new())) };
+        let mut scopes = Vec::new();
+        for member in members {
+            let claimed: HashSet<String> = taken.iter().filter(|(owner, scope, _)| owner == model && scope == &member.scope_key).map(|(_, _, key)| key.clone()).collect();
+            let order_key = reader.free_order_key(model, &member.scope_key, id, &member.order_key, &claimed)?;
+            taken.insert((model.clone(), member.scope_key.clone(), order_key.clone()));
+            scopes.push(ScopeOp::Append { scope: ScopeRef::new(key.clone(), ScopeKey::from_raw(&member.scope_key)), row: row_id.clone(), order_key });
+        }
+        Ok((Some(EntityOp::Upsert { model: key, id: row_id, row: before.clone() }), scopes))
     }
 
     pub fn destroyed(reader: &Reader<'_>, model: &str, id: &str) -> Result<Option<PriorRow>, StoreError> {
@@ -93,13 +92,14 @@ impl Prior {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
 
-    pub fn reappearing(&self) -> (Vec<EntityOp>, Vec<ScopeOp>) {
-        let (mut entity_ops, mut scope_ops) = (Vec::new(), Vec::new());
-        for (entity, scopes) in self.rows.iter().map(PriorRow::reappearing) {
+    pub fn reappearing(&self, reader: &Reader<'_>) -> Result<(Vec<EntityOp>, Vec<ScopeOp>), StoreError> {
+        let (mut entity_ops, mut scope_ops, mut taken) = (Vec::new(), Vec::new(), HashSet::new());
+        for row in &self.rows {
+            let (entity, scopes) = row.reappearing(reader, &mut taken)?;
             entity_ops.extend(entity);
             scope_ops.extend(scopes);
         }
-        (entity_ops, scope_ops)
+        Ok((entity_ops, scope_ops))
     }
 
     pub fn hiding(&self) -> Vec<EntityOp> {

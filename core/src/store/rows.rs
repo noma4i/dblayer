@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
@@ -6,6 +6,7 @@ use serde_json::{Map, Value};
 
 use crate::ddl::{manifest_read, ColumnType, RECORD_VERSION, REVISION_SEQ_KEY};
 use crate::identity::RowId;
+use crate::value::fractional_between;
 
 use super::{ModelInfo, Store, StoreError};
 
@@ -228,6 +229,23 @@ impl<'a> Reader<'a> {
         )?;
         let rows = statement.query_map(params![model, scope_key], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn free_order_key(&self, model: &str, scope_key: &str, row_id: &str, wanted: &str, taken: &HashSet<String>) -> Result<String, StoreError> {
+        let mut key = wanted.to_string();
+        loop {
+            let holder: Option<String> = self
+                .connection
+                .query_row("SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND order_key = ?3", params![model, scope_key, key], |row| row.get(0))
+                .optional()?;
+            if holder.as_deref().is_none_or(|holder| holder == row_id) && !taken.contains(&key) {
+                return Ok(key);
+            }
+            let upper: Option<String> = self
+                .connection
+                .query_row("SELECT MIN(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND order_key > ?3", params![model, scope_key, key], |row| row.get(0))?;
+            key = fractional_between(Some(&key), upper.as_deref()).map_err(|error| StoreError::Constraint(error.to_string()))?;
+        }
     }
 
     pub fn scopes_of(&self, model: &str, row_id: &str) -> Result<Vec<String>, StoreError> {

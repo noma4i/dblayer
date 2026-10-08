@@ -1,6 +1,9 @@
 use super::fixtures::*;
 use super::*;
+use crate::commit::ScopeRef;
+use crate::identity::{ModelKey, ScopeKey};
 use crate::query::Query;
+use crate::schema::Coverage;
 use serde_json::json;
 
 fn only_seq(db: &Db) -> i64 {
@@ -97,4 +100,19 @@ fn rolling_back_a_create_with_an_explicit_id_removes_the_row_and_its_queued_edit
 fn rolling_back_an_unknown_operation_fails() {
     let db = booted();
     assert!(matches!(db.roll_back(99), Err(DbError::UnknownOperation(99))));
+}
+
+#[test]
+fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
+    let db = booted();
+    let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("feed"));
+    let request = ReplaceRequest::new(scope, Coverage::Complete);
+    let rows = |ids: &[&str]| ids.iter().map(|id| obj(json!({"id": id, "userId": "u1", "text": id}))).collect::<Vec<_>>();
+    db.replace(&request, rows(&["a", "b"])).unwrap();
+    db.destroy("moments", &rid("b")).unwrap();
+    db.replace(&request, rows(&["a", "x"])).unwrap();
+    db.roll_back(only_seq(&db)).unwrap();
+    let members: Vec<String> = db.shared.store.scope_members("moments", "feed").unwrap().into_iter().map(|(id, _)| id).collect();
+    assert_eq!(members.len(), 3);
+    assert!(members.contains(&"b".to_string()));
 }
