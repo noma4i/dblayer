@@ -1,21 +1,22 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
+use crate::identity::{RowId, RowRef};
 use crate::identity::ModelKey;
 use crate::query::Query;
 
+use super::dispatch::Event;
 use super::error::DbError;
-use super::lookup::RowKey;
+use super::listeners::{Listener, Subscriber};
 use super::open::{locked, Db, Shared};
-use super::row::Row;
-
-type Callback = Arc<dyn Fn(&[Row]) + Send + Sync>;
+use super::watch::{Change, CountChange, Deps, Subject, Version};
 
 struct Group {
-    query: Query,
-    keys: Vec<RowKey>,
-    rows: Vec<Row>,
-    subscribers: Vec<(u64, Callback)>,
+    subject: Subject,
+    deps: Deps,
+    at: i64,
+    version: Arc<Version>,
+    subscribers: Vec<(u64, Arc<Subscriber>)>,
 }
 
 #[derive(Default)]
@@ -38,10 +39,12 @@ pub struct Subscription {
     shared: Weak<Shared>,
     group: String,
     id: u64,
+    subscriber: Arc<Subscriber>,
 }
 
 impl Drop for Subscription {
     fn drop(&mut self) {
+        self.subscriber.cancel();
         let Some(shared) = self.shared.upgrade() else { return };
         let mut observers = locked(&shared.observers);
         let Some(group) = observers.groups.get_mut(&self.group) else { return };
@@ -53,67 +56,72 @@ impl Drop for Subscription {
 }
 
 impl Shared {
-    fn refresh(&self, query: &Query, previous: Option<&[RowKey]>) -> Result<Option<(Vec<RowKey>, Vec<Row>)>, DbError> {
-        self.read(|reader| {
-            let keys = self.query_keys(reader, query)?;
-            if previous == Some(keys.as_slice()) {
-                return Ok(None);
-            }
-            let rows = self.rows_for_keys(reader, query.model.as_str(), &keys)?;
-            Ok(Some((keys, rows)))
-        })
-    }
-
-    pub(crate) fn notify(&self, changed: &BTreeSet<ModelKey>) {
-        if changed.is_empty() {
-            return;
-        }
-        let mut deliveries: Vec<(Vec<Callback>, Vec<Row>)> = Vec::new();
-        {
+    pub(crate) fn refresh_groups(&self, batch: &[Event]) {
+        let due: Vec<(String, Subject, i64, Arc<Version>)> = {
+            let observers = locked(&self.observers);
+            observers
+                .groups
+                .iter()
+                .filter(|(_, group)| batch.iter().any(|event| event.revision > group.at && group.deps.hit(event)))
+                .map(|(key, group)| (key.clone(), group.subject.clone(), group.at, group.version.clone()))
+                .collect()
+        };
+        for (key, subject, at, previous) in due {
+            self.counters.count_read();
+            let Ok(next) = self.evaluate(&subject) else { continue };
+            let revision = next.revision;
+            let replaced: Vec<(RowId, RowId)> = batch.iter().filter(|event| event.revision > at).flat_map(|event| event.replaced.iter().cloned()).collect();
+            let published = next.succeeding(&previous, &replaced).map(Arc::new);
             let mut observers = locked(&self.observers);
-            for group in observers.groups.values_mut().filter(|group| changed.contains(&group.query.model)) {
-                self.counters.count_read();
-                let Ok(Some((keys, rows))) = self.refresh(&group.query, Some(&group.keys)) else { continue };
-                group.keys = keys;
-                group.rows = rows.clone();
-                deliveries.push((group.subscribers.iter().map(|(_, callback)| callback.clone()).collect(), rows));
+            let Some(group) = observers.groups.get_mut(&key) else { continue };
+            if group.at >= revision || !Arc::ptr_eq(&group.version, &previous) {
+                continue;
             }
-        }
-        for (callbacks, rows) in deliveries {
-            for callback in callbacks {
-                callback(&rows);
-                self.counters.count_call();
+            group.at = revision;
+            let Some(version) = published else { continue };
+            group.version = version.clone();
+            for (_, subscriber) in &group.subscribers {
+                subscriber.post(&self.executor, version.clone(), &replaced);
             }
         }
     }
 }
 
 impl Db {
-    pub fn observe(&self, query: Query, callback: impl Fn(&[Row]) + Send + Sync + 'static) -> Result<Subscription, DbError> {
-        self.shared.spec(query.model.as_str())?;
-        let group_key = serde_json::to_string(&query).expect("query serializes");
-        let callback: Callback = Arc::new(callback);
-        let (id, rows) = {
-            let mut observers = locked(&self.shared.observers);
-            let id = observers.next_id;
-            let rows = match observers.groups.get_mut(&group_key) {
-                Some(group) => {
-                    group.subscribers.push((id, callback.clone()));
-                    group.rows.clone()
-                }
-                None => {
-                    self.shared.counters.count_read();
-                    let (keys, rows) = self.shared.refresh(&query, None)?.expect("first read has no previous keys");
-                    let group = Group { query, keys, rows: rows.clone(), subscribers: vec![(id, callback.clone())] };
-                    observers.groups.insert(group_key.clone(), group);
-                    rows
-                }
-            };
-            observers.next_id += 1;
-            (id, rows)
+    fn subscribe(&self, subject: Subject, listener: Listener) -> Result<Subscription, DbError> {
+        let key = subject.key();
+        let deps = self.shared.deps(&subject)?;
+        let subscriber = Subscriber::new(listener, self.shared.counters.clone());
+        let mut observers = locked(&self.shared.observers);
+        let id = observers.next_id;
+        observers.next_id += 1;
+        let version = match observers.groups.get_mut(&key) {
+            Some(group) => {
+                group.subscribers.push((id, subscriber.clone()));
+                group.version.clone()
+            }
+            None => {
+                self.shared.counters.count_read();
+                let version = Arc::new(self.shared.evaluate(&subject)?);
+                let group = Group { subject, deps, at: version.revision, version: version.clone(), subscribers: vec![(id, subscriber.clone())] };
+                observers.groups.insert(key.clone(), group);
+                version
+            }
         };
-        callback(&rows);
-        self.shared.counters.count_call();
-        Ok(Subscription { shared: Arc::downgrade(&self.shared), group: group_key, id })
+        subscriber.post(&self.shared.executor, version, &[]);
+        drop(observers);
+        Ok(Subscription { shared: Arc::downgrade(&self.shared), group: key, id, subscriber })
+    }
+
+    pub fn observe(&self, query: Query, listener: impl Fn(&Change) + Send + Sync + 'static) -> Result<Subscription, DbError> {
+        self.subscribe(Subject::Rows(query), Listener::Rows(Box::new(listener)))
+    }
+
+    pub fn observe_row(&self, model: &str, id: &RowId, listener: impl Fn(&Change) + Send + Sync + 'static) -> Result<Subscription, DbError> {
+        self.subscribe(Subject::Row(RowRef::new(ModelKey::new(model), id.clone())), Listener::Rows(Box::new(listener)))
+    }
+
+    pub fn observe_count(&self, query: Query, listener: impl Fn(&CountChange) + Send + Sync + 'static) -> Result<Subscription, DbError> {
+        self.subscribe(Subject::Count(query), Listener::Count(Box::new(listener)))
     }
 }

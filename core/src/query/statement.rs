@@ -65,11 +65,15 @@ pub struct Query {
     pub limit: Option<u32>,
     #[serde(default)]
     pub offset: Option<u32>,
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub scope: Option<ScopeKey>,
 }
 
 impl Query {
     pub fn new(model: &str) -> Self {
-        Self { model: ModelKey::new(model), r#where: None, order: Vec::new(), limit: None, offset: None }
+        Self { model: ModelKey::new(model), r#where: None, order: Vec::new(), limit: None, offset: None, include: Vec::new(), scope: None }
     }
 
     pub fn filtered(self, clause: Where) -> Self {
@@ -86,6 +90,14 @@ impl Query {
 
     pub fn offset_by(self, offset: u32) -> Self {
         Self { offset: Some(offset), ..self }
+    }
+
+    pub fn including(self, names: &[&str]) -> Self {
+        Self { include: names.iter().map(|name| name.to_string()).collect(), ..self }
+    }
+
+    pub fn in_scope(self, scope: ScopeKey) -> Self {
+        Self { scope: Some(scope), ..self }
     }
 
     pub fn unindexed_fields(&self, model: &ModelSpec) -> Vec<String> {
@@ -123,9 +135,15 @@ fn filter_clause(query: &Query, model: &ModelSpec, bindings: &mut Vec<SqlValue>)
     }
 }
 
+fn join_clause(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
+    let Some(scope) = &query.scope else { return String::new() };
+    bindings.extend(scope_bindings(&query.model, scope));
+    " JOIN scope_member AS m ON m.row_id = r.id AND m.model = ? AND m.scope_key = ?".to_string()
+}
+
 fn order_clause(query: &Query, model: &ModelSpec) -> Result<String, QueryError> {
     if query.order.is_empty() {
-        return Ok(String::new());
+        return Ok(if query.scope.is_some() { " ORDER BY m.order_key, m.row_id".to_string() } else { String::new() });
     }
     let mut parts = Vec::new();
     for order in &query.order {
@@ -161,10 +179,11 @@ fn window_clause(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
 fn compile_columns(query: &Query, model: &ModelSpec, columns: &str) -> Result<CompiledStatement, QueryError> {
     check_model(query, model)?;
     let mut bindings = Vec::new();
+    let join = join_clause(query, &mut bindings);
     let filter = filter_clause(query, model, &mut bindings)?;
     let order = order_clause(query, model)?;
     let window = window_clause(query, &mut bindings);
-    let sql = format!("SELECT {columns} FROM {} AS r{filter}{order}{window}", table_name(query.model.as_str()));
+    let sql = format!("SELECT {columns} FROM {} AS r{join}{filter}{order}{window}", table_name(query.model.as_str()));
     Ok(CompiledStatement { sql, bindings })
 }
 
@@ -179,8 +198,9 @@ pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatemen
 pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
     check_model(query, model)?;
     let mut bindings = Vec::new();
+    let join = join_clause(query, &mut bindings);
     let filter = filter_clause(query, model, &mut bindings)?;
-    let sql = format!("SELECT COUNT(*) FROM {} AS r{filter}", table_name(query.model.as_str()));
+    let sql = format!("SELECT COUNT(*) FROM {} AS r{join}{filter}", table_name(query.model.as_str()));
     Ok(CompiledStatement { sql, bindings })
 }
 

@@ -64,6 +64,7 @@ fn has_many_query_can_be_observed() {
     let query = db.has_many_query("moments", &rid("m1"), "vibes").unwrap();
     let (log, callback) = recorder();
     let _subscription = db.observe(query, callback).unwrap();
+    db.settle();
     put(&db, "vibes", json!({"id": "v3", "momentId": "m1", "kind": "fire"}));
     put(&db, "vibes", json!({"id": "v4", "momentId": "m2", "kind": "fire"}));
     assert_eq!(calls(&log), vec![2, 3]);

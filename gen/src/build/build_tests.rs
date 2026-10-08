@@ -1,5 +1,6 @@
 use dblayer::schema::{
-    AssociationKind, Coverage, Dependent, FieldKind, ModelSpec, PageDirection, RemoteShape, Sort,
+    ActionMode, AssociationKind, Coverage, Dependent, FieldKind, ModelSpec, PageDirection, RemoteShape, RootShape, Sort,
+    UpdatesSpec,
 };
 use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::json;
@@ -150,4 +151,39 @@ fn scopes_and_remotes_keep_written_order() {
 fn comments_and_blank_lines_are_ignored() {
     let model = build_one("  # note\n\n  scope :a # tail\n");
     assert_eq!(model.relations.len(), 1);
+}
+
+#[test]
+fn standard_actions_bind_mutations_and_input() {
+    let model = build_one("  create with: CreateSample, input: { text: :createdAt, ownerId: :ownerId }\n  update with: UpdateSample\n  destroy with: DeleteSample");
+    let names: Vec<_> = model.actions.iter().map(|action| action.name.as_str()).collect();
+    assert_eq!(names, vec!["create", "update", "destroy"]);
+    let create = &model.actions[0];
+    assert_eq!((create.mutation.as_deref(), create.mode, create.root_shape), (Some("CreateSample"), ActionMode::Durable, RootShape::Upsert));
+    assert!(create.has_optimistic && create.has_temp_row_retention);
+    assert_eq!(create.variables.get("text").map(String::as_str), Some("createdAt"));
+    assert_eq!(model.actions[1].variables.len(), 0);
+    let destroy = &model.actions[2];
+    assert_eq!((destroy.mutation.as_deref(), destroy.mode, destroy.root_shape), (Some("DeleteSample"), ActionMode::Request, RootShape::Destroy));
+}
+
+#[test]
+fn action_block_collects_mutation_input_optimistic_and_refetch() {
+    let model = build_one("  remote :feed do\n    query Feed\n  end\n  action :like do\n    mutation LikeSample\n    input sampleId: :id\n    optimistic createdAt: \"liked\", ownerId: nil\n    refetch :feed\n  end");
+    let action = &model.actions[0];
+    assert_eq!(action.name, "like");
+    assert_eq!((action.mode, action.root_shape, action.has_optimistic), (ActionMode::Request, RootShape::Upsert, false));
+    assert_eq!(action.mutation.as_deref(), Some("LikeSample"));
+    assert_eq!(action.variables.get("sampleId").map(String::as_str), Some("id"));
+    assert_eq!(action.optimistic.get("createdAt"), Some(&json!("liked")));
+    assert_eq!(action.optimistic.get("ownerId"), Some(&json!(null)));
+    assert_eq!(action.refetch, vec!["feed".to_string()]);
+}
+
+#[test]
+fn remote_updates_line_builds_updates_spec() {
+    let model = build_one("  remote :feed do\n    query Feed\n    updates SampleEvents, deleted_by: :destroyed\n  end\n  remote :plain do\n    query Plain\n    updates PlainEvents\n  end");
+    let updates = |index: usize| model.relations[index].remote.as_ref().unwrap().updates.clone();
+    assert_eq!(updates(0), Some(UpdatesSpec { subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()) }));
+    assert_eq!(updates(1), Some(UpdatesSpec { subscription: "PlainEvents".into(), deleted_by: None }));
 }

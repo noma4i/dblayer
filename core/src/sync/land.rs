@@ -4,6 +4,8 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, EntityOp, EnvelopeFault, ScopeRef, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
+use crate::db::ReplaceRequest;
+use crate::schema::Coverage;
 use crate::read::{plan_landing, StoredMember};
 use crate::store::{admit_upsert, PageInfo, PlanCommitError, Reader, StoreError, UpsertAdmission, WindowRecord};
 use crate::transport::FetchAttempt;
@@ -21,6 +23,7 @@ pub(crate) struct Landing {
     pub normalized: Normalized,
     pub is_first_page: bool,
     pub plans_as_first: bool,
+    pub coverage: Coverage,
     pub requested_cursor: Option<String>,
     pub page_info: Option<PageInfo>,
     pub attempt: FetchAttempt,
@@ -32,7 +35,7 @@ pub(crate) enum Landed {
     Discarded(DiscardReason),
 }
 
-fn admit(reader: &Reader<'_>, base: i64, model: &str, rows: &[Map<String, Value>], drops: &mut usize) -> Result<Vec<Map<String, Value>>, StoreError> {
+pub(crate) fn admit(reader: &Reader<'_>, base: i64, model: &str, rows: &[Map<String, Value>], drops: &mut usize) -> Result<Vec<Map<String, Value>>, StoreError> {
     let mut admitted = Vec::with_capacity(rows.len());
     for row in rows {
         let Some(id) = row.get("id").and_then(read_id) else { continue };
@@ -52,7 +55,7 @@ fn admit(reader: &Reader<'_>, base: i64, model: &str, rows: &[Map<String, Value>
 impl Inner {
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
-        let Landing { model, scope, window_key, normalized, is_first_page, plans_as_first, requested_cursor, page_info, attempt } = landing;
+        let Landing { model, scope, window_key, normalized, is_first_page, plans_as_first, coverage, requested_cursor, page_info, attempt } = landing;
         let generation = self.db.generation();
         if !attempt.applies_to(generation) {
             return Ok(Landed::Discarded(DiscardReason::StaleGeneration));
@@ -74,12 +77,17 @@ impl Inner {
         let committed = store.commit_with(generation, |reader| {
             let roots = admit(reader, attempt.base_revision, &model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
-            let current: Vec<StoredMember> = reader
-                .scope_members(&model, scope.key.as_str())?
-                .into_iter()
-                .map(|(id, order_key)| StoredMember { id, order_key })
-                .collect();
-            let plan = plan_landing(&scope, &model_key, &current, &roots, plans_as_first).map_err(|error| SyncError::Malformed(error.to_string()))?;
+            let plan = if plans_as_first {
+                let request = ReplaceRequest::new(scope.clone(), coverage);
+                self.db.replace_plan(reader, &request, &roots).map_err(|error| SyncError::Malformed(error.to_string()))?
+            } else {
+                let current: Vec<StoredMember> = reader
+                    .scope_members(&model, scope.key.as_str())?
+                    .into_iter()
+                    .map(|(id, order_key)| StoredMember { id, order_key })
+                    .collect();
+                plan_landing(&scope, &model_key, &current, &roots, false).map_err(|error| SyncError::Malformed(error.to_string()))?
+            };
             let planned: BTreeSet<(ModelKey, RowId)> = plan.entity_ops.iter().map(|op| {
                 let row = op.row_ref();
                 (row.model, row.id)
@@ -97,16 +105,23 @@ impl Inner {
             envelope.scope_ops = plan.scope_ops;
             Ok::<_, SyncError>(Some(envelope))
         });
-        let result = match committed {
-            Ok(result) => result,
+        match committed {
+            Ok(_) => {}
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(Landed::Discarded(DiscardReason::StaleGeneration)),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
-        };
-        self.db.publish(&result);
+        }
         locked(&self.counters).record_stale_version_drops(drops);
-        let ids = store.scope_members(&model, scope.key.as_str())?.into_iter().map(|(id, _)| id).collect();
-        let (cursor, has_next) = page_info.map_or((None, false), |info| (info.end_cursor, info.has_next_page));
+        let ids: Vec<String> = store.scope_members(&model, scope.key.as_str())?.into_iter().map(|(id, _)| id).collect();
+        let tail_kept = plans_as_first
+            && coverage == Coverage::Page
+            && window.as_ref().and_then(|window| window.ids.last()).is_some_and(|last| {
+                ids.contains(last) && !normalized.roots.iter().any(|root| root.get("id").and_then(read_id).is_some_and(|id| id.as_str() == last))
+            });
+        let (cursor, has_next) = match (&window, tail_kept) {
+            (Some(window), true) => (window.cursor.clone(), window.has_next),
+            _ => page_info.map_or((None, false), |info| (info.end_cursor, info.has_next_page)),
+        };
         let applied = if is_first_page { attempt.issued } else { applied_before.unwrap_or(attempt.issued) };
         let record = WindowRecord { key: window_key.clone(), cursor, has_next, ids, issued: attempt.issued, applied, generation: generation.value() as i64 };
         store.save_window(&record)?;

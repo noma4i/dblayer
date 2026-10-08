@@ -6,7 +6,8 @@ use serde_json::{json, Map, Value};
 use crate::db::Db;
 use crate::pacing::ManualClock;
 use crate::schema::{
-    AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec,
+    ActionDeclaration, ActionMode, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec,
+    RemoteShape, RemoteSpec, RootShape, UpdatesSpec,
 };
 use crate::transport::MockTransport;
 use crate::value::ScalarKind;
@@ -17,7 +18,7 @@ pub const START_MS: u64 = 1_000_000;
 
 fn remote(operation: &str, shape: RemoteShape, stale: &str) -> RemoteSpec {
     let selects_page_info = matches!(shape, RemoteShape::Connection { .. });
-    RemoteSpec { operation: operation.to_string(), shape, stale_time: stale.to_string(), empty_stale_time: None, selects_page_info }
+    RemoteSpec { operation: operation.to_string(), shape, stale_time: stale.to_string(), empty_stale_time: None, selects_page_info, updates: None }
 }
 
 pub fn users_spec() -> ModelSpec {
@@ -35,6 +36,7 @@ pub fn moments_spec() -> ModelSpec {
             FieldSpec::scalar("id", ScalarKind::Id),
             FieldSpec::scalar("userId", ScalarKind::Id).nullable().indexed(),
             FieldSpec::scalar("text", ScalarKind::Str).optional(),
+            FieldSpec::scalar("likedByMe", ScalarKind::Bool).optional(),
         ],
     );
     spec.associations.push(AssociationSpec::new("author", AssociationKind::BelongsTo, "users", "userId"));
@@ -50,8 +52,37 @@ pub fn moments_spec() -> ModelSpec {
     let mut spec_remote = remote("MomentsByUser", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
     spec_remote.empty_stale_time = Some("10.seconds".to_string());
     empty_aware.remote = Some(spec_remote);
-    spec.relations.extend([feed, history, by_user, empty_aware, RelationSpec::global("recent")]);
+    let mut pulse = RelationSpec::global("pulse");
+    let mut pulse_remote = remote("MomentsPulse", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2) }, "5.minutes");
+    pulse_remote.updates = Some(UpdatesSpec { subscription: "MomentEvents".to_string(), deleted_by: Some("destroyed".to_string()) });
+    pulse.remote = Some(pulse_remote);
+    spec.relations.extend([feed, history, by_user, empty_aware, pulse, RelationSpec::global("recent")]);
+    spec.actions = vec![
+        bound("create", ActionMode::Durable, RootShape::Upsert, "CreateMoment"),
+        bound("update", ActionMode::Durable, RootShape::Upsert, "UpdateMoment"),
+        bound("destroy", ActionMode::Request, RootShape::Destroy, "DeleteMoment"),
+        like_action(),
+    ];
     spec
+}
+
+fn bound(name: &str, mode: ActionMode, shape: RootShape, mutation: &str) -> ActionDeclaration {
+    let mut action = ActionDeclaration::new(name, mode, shape);
+    action.mutation = Some(mutation.to_string());
+    action.has_optimistic = name == "create";
+    action.has_temp_row_retention = name == "create";
+    if name == "create" {
+        action.variables.insert("text".to_string(), "text".to_string());
+    }
+    action
+}
+
+fn like_action() -> ActionDeclaration {
+    let mut action = bound("like", ActionMode::Request, RootShape::Upsert, "LikeMoment");
+    action.variables.insert("momentId".to_string(), "id".to_string());
+    action.optimistic.insert("likedByMe".to_string(), json!(true));
+    action.refetch.push("history".to_string());
+    action
 }
 
 pub fn vibes_spec() -> ModelSpec {
@@ -73,14 +104,32 @@ pub fn rig() -> Rig {
     rig_with(SyncConfig::default())
 }
 
+pub fn register_operations(sync: &Sync) {
+    for (name, root) in [
+        ("MomentsFeed", "feed"),
+        ("MomentsHistory", "history"),
+        ("MomentsByUser", "moments"),
+        ("MomentsPulse", "feed"),
+        ("CurrentUser", "me"),
+        ("MomentEvents", "momentEvent"),
+        ("CreateMoment", "createMoment"),
+        ("UpdateMoment", "updateMoment"),
+        ("DeleteMoment", "deleteMoment"),
+        ("LikeMoment", "likeMoment"),
+    ] {
+        sync.register(OperationDef::new(name, &format!("operation {name} {{ x }}"), root).paged(2));
+    }
+}
+
 pub fn rig_with(config: SyncConfig) -> Rig {
     let db = Db::open_in_memory(specs(), None).unwrap();
-    let transport = MockTransport::new();
+    rig_on(db, MockTransport::new(), config)
+}
+
+pub fn rig_on(db: Db, transport: MockTransport, config: SyncConfig) -> Rig {
     let clock = ManualClock::new(Duration::from_millis(START_MS));
     let sync = Sync::new(db.clone(), Arc::new(transport.clone()), Arc::new(clock.clone()), config);
-    for (name, root) in [("MomentsFeed", "feed"), ("MomentsHistory", "history"), ("MomentsByUser", "moments"), ("CurrentUser", "me")] {
-        sync.register(OperationDef::new(name, &format!("query {name} {{ x }}"), root).paged(2));
-    }
+    register_operations(&sync);
     Rig { sync, db, transport, clock }
 }
 

@@ -80,6 +80,10 @@ pub enum DeclarationError {
     ForbiddenMember(String),
     #[error("once action {0} needs a dedupe key")]
     OnceKeyRequired(String),
+    #[error("action {action} refetches {relation}, which is not a remote relation")]
+    UnknownRefetch { action: String, relation: String },
+    #[error("action {action} patches unknown field {field}")]
+    UnknownOptimisticField { action: String, field: String },
 }
 
 pub type DroppedRow = (usize, SchemaError);
@@ -324,6 +328,13 @@ pub enum RemoteFault {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdatesSpec {
+    pub subscription: String,
+    #[serde(default)]
+    pub deleted_by: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteSpec {
     pub operation: String,
     pub shape: RemoteShape,
@@ -332,6 +343,8 @@ pub struct RemoteSpec {
     pub empty_stale_time: Option<String>,
     #[serde(default)]
     pub selects_page_info: bool,
+    #[serde(default)]
+    pub updates: Option<UpdatesSpec>,
 }
 
 impl RemoteSpec {
@@ -457,7 +470,7 @@ pub enum RootShape {
     Destroy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActionDeclaration {
     pub name: String,
     pub mode: ActionMode,
@@ -474,6 +487,14 @@ pub struct ActionDeclaration {
     pub dedupe_key: Option<String>,
     #[serde(default)]
     pub members: Vec<String>,
+    #[serde(default)]
+    pub mutation: Option<String>,
+    #[serde(default)]
+    pub variables: BTreeMap<String, String>,
+    #[serde(default)]
+    pub optimistic: Map<String, Value>,
+    #[serde(default)]
+    pub refetch: Vec<String>,
 }
 
 impl ActionDeclaration {
@@ -488,10 +509,14 @@ impl ActionDeclaration {
             has_once: false,
             dedupe_key: None,
             members: Vec::new(),
+            mutation: None,
+            variables: BTreeMap::new(),
+            optimistic: Map::new(),
+            refetch: Vec::new(),
         }
     }
 
-    fn check(&self, taken_names: &HashSet<String>) -> Result<(), DeclarationError> {
+    fn check(&self, model: &ModelSpec, taken_names: &HashSet<String>) -> Result<(), DeclarationError> {
         let name = || self.name.clone();
         if taken_names.contains(&self.name) {
             return Err(DeclarationError::ActionNameCollision(name()));
@@ -511,7 +536,13 @@ impl ActionDeclaration {
         if self.has_once && self.dedupe_key.as_deref().is_none_or(str::is_empty) {
             return Err(DeclarationError::OnceKeyRequired(name()));
         }
-        Ok(())
+        if let Some(relation) = self.refetch.iter().find(|relation| !model.has_remote(relation)) {
+            return Err(DeclarationError::UnknownRefetch { action: name(), relation: relation.clone() });
+        }
+        match self.optimistic.keys().find(|field| model.field(field).is_none()) {
+            Some(field) => Err(DeclarationError::UnknownOptimisticField { action: name(), field: field.clone() }),
+            None => Ok(()),
+        }
     }
 }
 
@@ -547,6 +578,10 @@ impl ModelSpec {
 
     pub fn field(&self, name: &str) -> Option<&FieldSpec> {
         self.fields.iter().find(|field| field.name == name)
+    }
+
+    pub fn has_remote(&self, relation: &str) -> bool {
+        self.relations.iter().any(|candidate| candidate.name == relation && candidate.remote.is_some())
     }
 
     pub fn is_indexed(&self, name: &str) -> bool {
@@ -678,7 +713,7 @@ impl ModelSpec {
         taken.extend(self.relations.iter().map(|relation| relation.name.clone()));
         taken.extend(self.associations.iter().map(|association| association.name.clone()));
         for action in &self.actions {
-            action.check(&taken)?;
+            action.check(self, &taken)?;
             taken.insert(action.name.clone());
         }
         Ok(())

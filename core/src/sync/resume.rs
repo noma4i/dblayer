@@ -21,11 +21,15 @@ pub struct ResumeReport {
 pub struct Watch {
     inner: Arc<Inner>,
     id: u64,
+    live: Option<String>,
 }
 
 impl Drop for Watch {
     fn drop(&mut self) {
         locked(&self.inner.watches).remove(&self.id);
+        if let Some(key) = &self.live {
+            self.inner.release_live(key);
+        }
     }
 }
 
@@ -35,7 +39,8 @@ impl Sync {
         let id = self.inner.next_watch.fetch_add(1, Ordering::SeqCst) as u64;
         let entry = WatchEntry { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key };
         locked(&self.inner.watches).insert(id, entry);
-        Ok(Watch { inner: self.inner.clone(), id })
+        let live = self.inner.acquire_live(model, relation);
+        Ok(Watch { inner: self.inner.clone(), id, live })
     }
 
     pub async fn resume(&self) -> Result<ResumeReport, SyncError> {

@@ -20,6 +20,7 @@ fn paged_remote(selects_page_info: bool) -> RemoteSpec {
         stale_time: "paged_session".into(),
         empty_stale_time: None,
         selects_page_info,
+        updates: None,
     }
 }
 
@@ -30,6 +31,7 @@ fn complete_remote() -> RemoteSpec {
         stale_time: "catalog".into(),
         empty_stale_time: Some("empty_retry".into()),
         selects_page_info: false,
+        updates: None,
     }
 }
 
@@ -511,4 +513,44 @@ fn remote_without_operation_is_a_fault() {
     let nameless = RemoteSpec { operation: String::new(), ..complete_remote() };
     assert_eq!(nameless.fault(), Some(RemoteFault::MissingOperation));
     assert_eq!(complete_remote().fault(), None);
+}
+
+#[test]
+fn updates_spec_survives_serde_and_defaults_to_none() {
+    let remote = RemoteSpec { updates: Some(UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()) }), ..complete_remote() };
+    let text = serde_json::to_string(&remote).unwrap();
+    assert_eq!(serde_json::from_str::<RemoteSpec>(&text).unwrap(), remote);
+    let bare = r#"{"operation":"Q","shape":{"type":"single"},"stale_time":"5.minutes"}"#;
+    assert_eq!(serde_json::from_str::<RemoteSpec>(bare).unwrap().updates, None);
+}
+
+#[test]
+fn action_binding_fields_default_to_empty_and_survive_serde() {
+    let bare = r#"{"name":"like","mode":"request","root_shape":"upsert"}"#;
+    let parsed: ActionDeclaration = serde_json::from_str(bare).unwrap();
+    assert_eq!((parsed.mutation.clone(), parsed.variables.len(), parsed.optimistic.len(), parsed.refetch.len()), (None, 0, 0, 0));
+    let mut full = action("like", ActionMode::Request, RootShape::Upsert);
+    full.mutation = Some("LikeMoment".into());
+    full.variables.insert("momentId".into(), "id".into());
+    full.optimistic.insert("likedByMe".into(), serde_json::json!(true));
+    full.refetch.push("feed".into());
+    assert_eq!(serde_json::from_str::<ActionDeclaration>(&serde_json::to_string(&full).unwrap()).unwrap(), full);
+}
+
+#[test]
+fn action_refetch_must_name_a_remote_relation_and_optimistic_a_field() {
+    let mut remote_relation = RelationSpec::global("feed");
+    remote_relation.remote = Some(complete_remote());
+    let host = |refetch: &str, optimistic: &str| {
+        let mut declared = action("like", ActionMode::Request, RootShape::Upsert);
+        declared.refetch.push(refetch.into());
+        declared.optimistic.insert(optimistic.into(), serde_json::json!(true));
+        ModelSpec { actions: vec![declared], relations: vec![remote_relation.clone()], ..model(vec![id_field()]) }
+    };
+    let mut ok = host("feed", "id");
+    assert_eq!(ok.validate(&[]), Ok(()));
+    ok = host("missing", "id");
+    assert_eq!(ok.validate(&[]), Err(DeclarationError::UnknownRefetch { action: "like".into(), relation: "missing".into() }));
+    ok = host("feed", "ghost");
+    assert_eq!(ok.validate(&[]), Err(DeclarationError::UnknownOptimisticField { action: "like".into(), field: "ghost".into() }));
 }

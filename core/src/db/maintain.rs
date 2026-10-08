@@ -12,9 +12,6 @@ use super::open::{locked, Db};
 impl Db {
     pub fn maintain(&self, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, DbError> {
         let report = self.shared.store.maintain(temp_rows)?;
-        if let Some(result) = &report.commit {
-            self.publish(result);
-        }
         self.sweep_files()?;
         Ok(report)
     }
@@ -68,10 +65,9 @@ impl Db {
                 field: reference.field.clone(),
             });
         }
-        let result = self.shared.store.commit_with(generation, |_| Ok::<_, DbError>(Some(envelope))).map_err(plan_fault)?;
+        self.shared.store.commit_with(generation, |_| Ok::<_, DbError>(Some(envelope))).map_err(plan_fault)?;
         let ids: Vec<String> = references.iter().map(|reference| reference.id.clone()).collect();
         self.shared.files.discard(&ids);
-        self.publish(&result);
         Ok(())
     }
 }

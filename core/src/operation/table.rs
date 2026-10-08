@@ -57,6 +57,11 @@ pub fn mark_transport(connection: &Connection, sequence: i64) -> rusqlite::Resul
     Ok(())
 }
 
+pub fn clear_transport(connection: &Connection, sequence: i64) -> rusqlite::Result<()> {
+    connection.execute("UPDATE op SET transport_started = 0 WHERE seq = ?", [sequence])?;
+    Ok(())
+}
+
 pub fn delete_operation(connection: &Connection, sequence: i64) -> rusqlite::Result<()> {
     connection.execute("DELETE FROM op WHERE seq = ?", [sequence])?;
     Ok(())

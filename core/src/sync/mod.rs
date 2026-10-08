@@ -1,23 +1,29 @@
 mod error;
 mod extract;
 mod freshness;
+mod invalidate;
 mod land;
+mod live;
 mod load;
 mod normalize;
 mod registry;
 mod resume;
+mod send;
 mod subscribe;
 mod variables;
 
 pub use error::SyncError;
+pub use invalidate::ReconnectReport;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
 pub use resume::{ResumeReport, Watch};
+pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
 pub use subscribe::{EventEffect, EventSubscription, SubscriptionDef, SubscriptionStatus};
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use serde_json::{Map, Value};
 use tokio::sync::watch;
@@ -26,10 +32,19 @@ use crate::db::Db;
 use crate::pacing::{Clock, Counters, FetchCoalescing, FreshnessTable, ResumeDrain};
 use crate::transport::Transport;
 
-#[derive(Debug, Clone, Default)]
+pub const LIVE_LINGER: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone)]
 pub struct SyncConfig {
     pub freshness: FreshnessTable,
     pub resume: ResumeDrain,
+    pub live_linger: Duration,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self { freshness: FreshnessTable::default(), resume: ResumeDrain::default(), live_linger: LIVE_LINGER }
+    }
 }
 
 pub(crate) type FlightResult = Result<LoadOutcome, SyncError>;
@@ -59,6 +74,8 @@ pub(crate) struct Inner {
     pub issued: AtomicI64,
     pub watches: Mutex<HashMap<u64, WatchEntry>>,
     pub next_watch: AtomicI64,
+    pub lives: Mutex<HashMap<String, live::Live>>,
+    pub outbox_gate: tokio::sync::Mutex<()>,
 }
 
 impl Inner {
@@ -91,6 +108,8 @@ impl Sync {
             issued: AtomicI64::new(0),
             watches: Mutex::new(HashMap::new()),
             next_watch: AtomicI64::new(0),
+            lives: Mutex::new(HashMap::new()),
+            outbox_gate: tokio::sync::Mutex::new(()),
         };
         Self { inner: Arc::new(inner) }
     }

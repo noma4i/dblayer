@@ -65,9 +65,8 @@ impl Db {
             Ok(Some(envelope))
         });
         match committed {
-            Ok(result) => {
+            Ok(_) => {
                 self.shared.files.discard(&replaced.into_iter().collect::<Vec<_>>());
-                self.publish(&result);
                 Ok(descriptor)
             }
             Err(error) => {
@@ -134,7 +133,6 @@ impl Db {
             })
             .map_err(plan_fault)?;
         self.shared.files.discard(&removed.into_iter().collect::<Vec<_>>());
-        self.publish(&result);
         Ok(!result.is_noop())
     }
 }

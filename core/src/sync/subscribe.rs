@@ -34,11 +34,26 @@ pub struct SubscriptionDef {
     pub model: String,
     pub effect: EventEffect,
     pub variables: Value,
+    pub deleted_by: Option<String>,
 }
 
 impl SubscriptionDef {
     pub fn new(event: EventSpec, operation: &str, model: &str, effect: EventEffect) -> Self {
-        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}) }
+        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None }
+    }
+
+    pub fn deleting_when(self, field: &str) -> Self {
+        Self { deleted_by: Some(field.to_string()), ..self }
+    }
+}
+
+fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
+        Value::String(text) => !text.is_empty(),
+        _ => true,
     }
 }
 
@@ -110,7 +125,12 @@ impl Feed {
         let mut count = 0;
         for item in items {
             let key = (model.to_string(), item.id.as_str().to_string());
+            let deleted = self.def.deleted_by.as_ref().and_then(|field| item.node.get(field)).is_some_and(is_truthy);
             match self.def.effect {
+                _ if deleted => {
+                    let operation = EntityOp::Destroy { model: ModelKey::new(model), id: item.id, reason: DestroyReason::Server };
+                    operations.insert(key, operation);
+                }
                 EventEffect::Upsert => {
                     let mut related = Related::new();
                     let Some(row) = normalize_node(db, model, &item.node, &mut related)? else { continue };
@@ -200,6 +220,7 @@ impl Feed {
                 None => match self.inner.transport.subscribe(request.clone()).await {
                     Ok(connection) => {
                         locked(&self.status).connects += 1;
+                        self.inner.reload_watched(&self.def.model, None, false).await;
                         connection
                     }
                     Err(_) => {

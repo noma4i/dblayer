@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use rusqlite::Connection;
 
@@ -122,9 +122,17 @@ impl Inner {
     }
 }
 
+pub enum StoreEvent<'a> {
+    Committed(&'a crate::commit::CommitResult),
+    Reset { revision: i64, models: Option<Vec<String>> },
+}
+
+pub type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
+
 pub struct Store {
     inner: Mutex<Inner>,
     path: Option<PathBuf>,
+    hook: OnceLock<StoreHook>,
 }
 
 impl Store {
@@ -139,11 +147,21 @@ impl Store {
             data_version: None,
             counters: StoreCounters::default(),
         };
-        Self { inner: Mutex::new(inner), path }
+        Self { inner: Mutex::new(inner), path, hook: OnceLock::new() }
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn set_hook(&self, hook: StoreHook) {
+        let _ = self.hook.set(hook);
+    }
+
+    pub(crate) fn announce(&self, event: StoreEvent<'_>) {
+        if let Some(hook) = self.hook.get() {
+            hook(event);
+        }
     }
 
     pub fn path(&self) -> Option<&Path> {

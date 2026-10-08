@@ -98,7 +98,7 @@ impl fmt::Display for ModelKey {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RowRef {
     pub model: ModelKey,
     pub id: RowId,

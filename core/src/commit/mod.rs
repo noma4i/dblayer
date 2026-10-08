@@ -284,6 +284,7 @@ pub struct CommitResult {
     pub rows: Vec<RowChange>,
     pub scopes: BTreeSet<ScopeRef>,
     pub operations: BTreeSet<i64>,
+    pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
     pub affected_key_statements: u32,
 }
@@ -296,6 +297,7 @@ impl CommitResult {
             rows: Vec::new(),
             scopes: BTreeSet::new(),
             operations: BTreeSet::new(),
+            replaced: Vec::new(),
             unknown_operation_acks: 0,
             affected_key_statements: 0,
         }

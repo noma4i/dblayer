@@ -3,6 +3,7 @@ model Moment do
     string :uuid,      index: true
     id     :userId,    null: true, index: true
     string :text,      null: true
+    bool   :likedByMe, default: false
     object :media,     default: {}
     date   :createdAt, index: true
 
@@ -19,5 +20,17 @@ model Moment do
     query MomentsFeed
     paginate 20
     fresh_for 5.minutes
+    updates MomentEvents, deleted_by: :destroyed
+  end
+
+  create  with: CreateMoment, input: { text: :text, media: :media }
+  update  with: UpdateMoment
+  destroy with: DeleteMoment
+
+  action :like do
+    mutation   LikeMoment
+    input      momentId: :id
+    optimistic likedByMe: true
+    refetch    :feed
   end
 end

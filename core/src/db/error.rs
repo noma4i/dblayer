@@ -28,6 +28,12 @@ pub enum DbError {
     NotFound { model: String, id: String },
     #[error("origin {0:?} cannot be landed")]
     OriginNotLandable(WriteOrigin),
+    #[error("operation {0} is not in the outbox")]
+    UnknownOperation(i64),
+    #[error("operation {0} cannot be rolled back")]
+    NotRollbackable(String),
+    #[error(transparent)]
+    Landing(#[from] crate::read::LandingError),
 }
 
 impl From<rusqlite::Error> for DbError {

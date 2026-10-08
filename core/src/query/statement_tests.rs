@@ -181,3 +181,32 @@ fn key_statement_reads_id_and_revision_with_the_same_clauses() {
     assert_eq!(keys.sql, rows.sql.replacen("r.id, r.record_version, r.payload", "r.id, r.revision", 1));
     assert_eq!(keys.bindings, rows.bindings);
 }
+
+#[test]
+fn a_scope_query_joins_the_membership_and_reads_in_server_order() {
+    let scope = ScopeKey::from_raw("feed");
+    let statement = compile_keys(&query().in_scope(scope.clone()), &people()).unwrap();
+    assert!(statement.sql.contains("JOIN scope_member AS m ON m.row_id = r.id AND m.model = ? AND m.scope_key = ?"));
+    assert!(statement.sql.ends_with("ORDER BY m.order_key, m.row_id"));
+    assert_eq!(statement.bindings[0], SqlValue::Text("people".into()));
+    assert_eq!(statement.bindings[1], SqlValue::Text("feed".into()));
+    assert!(statement.is_balanced());
+}
+
+#[test]
+fn a_scope_query_keeps_its_filter_and_counts_members() {
+    let scope = ScopeKey::from_raw("feed");
+    let filtered = query().in_scope(scope).filtered(Where::equal("status", json!("active")));
+    let statement = compile_count(&filtered, &people()).unwrap();
+    assert!(statement.sql.contains("JOIN scope_member"));
+    assert!(statement.sql.contains("WHERE"));
+    assert_eq!(statement.bindings.len(), 3);
+    assert!(statement.is_balanced());
+}
+
+#[test]
+fn include_and_scope_default_to_empty_when_a_query_is_read_from_json() {
+    let parsed: Query = serde_json::from_value(json!({"model": "people"})).unwrap();
+    assert!(parsed.include.is_empty() && parsed.scope.is_none());
+    assert_eq!(parsed, query());
+}

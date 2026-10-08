@@ -33,13 +33,15 @@ async fn upsert_event_changes_the_row_and_fires_the_observer() {
     let sink = seen.clone();
     let _observer = rig
         .db
-        .observe(Query::new("moments"), move |rows| {
-            sink.lock().unwrap().push(rows.iter().filter_map(|row| row.text("text")).collect::<Vec<_>>().join(","));
+        .observe(Query::new("moments"), move |change| {
+            sink.lock().unwrap().push(change.rows.iter().filter_map(|row| row.text("text")).collect::<Vec<_>>().join(","));
         })
         .unwrap();
+    rig.db.settle();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "after"})));
     settle().await;
+    rig.db.settle();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("after".to_string()));
     assert_eq!(*seen.lock().unwrap(), ["before", "after"]);
     assert_eq!(subscription.status().applied, 1);
@@ -138,6 +140,7 @@ async fn debounced_events_land_once_per_row_after_the_interval() {
     let rig = rig_with_subscription();
     put(&rig, "moments", json!({"id": "m1", "text": "start", "userId": null}));
     let _observer = rig.db.observe(Query::new("moments"), |_| {}).unwrap();
+    rig.db.settle();
     let event = EventSpec::new("moment_changed").debounced(Duration::from_millis(500)).merged_by_row();
     let def = SubscriptionDef::new(event, "MomentChanged", "moments", EventEffect::Upsert);
     let _subscription = rig.sync.subscribe(def).await.unwrap();
@@ -148,6 +151,7 @@ async fn debounced_events_land_once_per_row_after_the_interval() {
     assert_eq!(text_of(&rig, "moments", "m1"), Some("start".to_string()));
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("three".to_string()));
+    rig.db.settle();
     assert_eq!(rig.db.diagnostics().observer_calls, 2);
 }
 

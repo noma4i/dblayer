@@ -19,7 +19,7 @@ fn fixtures_parse_and_validate_together() {
         .collect();
     assert_eq!(
         summary,
-        vec![("Chat", 2, 1, 1), ("Message", 4, 1, 2), ("Moment", 5, 2, 3), ("User", 3, 0, 0), ("Vibe", 3, 0, 0)]
+        vec![("Chat", 2, 1, 1), ("Message", 4, 1, 2), ("Moment", 6, 2, 3), ("User", 3, 0, 0), ("Vibe", 3, 0, 0)]
     );
 }
 
@@ -36,7 +36,7 @@ fn unknown_model_across_files_is_reported_per_file() {
     fs::copy(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/moment.dbl"), &only_moment).unwrap();
     let errors = parse_files(&[only_moment.clone()]).unwrap_err();
     assert!(errors.iter().all(|error| error.file == only_moment.display().to_string()));
-    assert_eq!(errors.iter().map(|error| error.error.line).collect::<Vec<_>>(), vec![12, 13]);
+    assert_eq!(errors.iter().map(|error| error.error.line).collect::<Vec<_>>(), vec![13, 14]);
 }
 
 #[test]

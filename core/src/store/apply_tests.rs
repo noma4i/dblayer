@@ -509,3 +509,34 @@ fn destroy_prunes_tombstones_over_ttl_in_the_same_commit() {
     assert!(!store.is_tombstoned("messages", "old").unwrap());
     assert!(store.is_tombstoned("messages", "fresh").unwrap());
 }
+
+#[test]
+fn a_replaced_destroy_is_reported_as_a_pair() {
+    let (store, _) = booted_store();
+    commit(&store, vec![upsert("messages", message("temp-1", "c1"))], vec![]);
+    let result = commit(
+        &store,
+        vec![destroy("messages", "temp-1", DestroyReason::Replaced { by: id("m1") }), upsert("messages", message("m1", "c1"))],
+        vec![],
+    );
+    assert_eq!(result.replaced, vec![(crate::identity::RowRef::new(model("messages"), id("temp-1")), id("m1"))]);
+}
+
+#[test]
+fn the_commit_hook_runs_inside_the_commit_for_every_non_empty_result() {
+    use crate::store::StoreEvent;
+    use std::sync::{Arc, Mutex};
+    let (store, _) = booted_store();
+    let seen: Arc<Mutex<Vec<i64>>> = Arc::default();
+    let sink = seen.clone();
+    store.set_hook(Box::new(move |event| {
+        if let StoreEvent::Committed(result) = event {
+            sink.lock().unwrap().push(result.revision.unwrap());
+        }
+    }));
+    commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
+    commit(&store, vec![], vec![]);
+    commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
+    commit(&store, vec![upsert("messages", message("m2", "c1"))], vec![]);
+    assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
+}

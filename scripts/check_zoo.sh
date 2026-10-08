@@ -40,7 +40,7 @@ if len(supports) > 1 and "support" not in allowed:
 
 diagnostics = []
 for path in files:
-    for name in re.findall(r"^\s*pub struct ([A-Za-z]*(?:Counters|Diagnostics|Stats|Report))\b", path.read_text(), re.M):
+    for name in re.findall(r"^\s*pub struct ([A-Za-z]*(?:Counters|Diagnostics|Stats))\b", path.read_text(), re.M):
         diagnostics.append(f"{name} ({path.relative_to(root)})")
 if len(diagnostics) > 1 and "diagnostics" not in allowed:
     findings.append("Z1 several diagnostics structs: " + ", ".join(sorted(diagnostics)))

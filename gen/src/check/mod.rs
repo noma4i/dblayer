@@ -18,6 +18,7 @@ enum Context {
     Model,
     Schema,
     Remote,
+    Action,
 }
 
 #[derive(Clone, Copy)]
@@ -27,6 +28,7 @@ enum Shape {
     Const,
     Int,
     Duration,
+    Symbols,
     Nothing,
 }
 
@@ -35,6 +37,7 @@ enum Want {
     Bool,
     Symbol,
     Const,
+    Operation,
     Symbols,
     Hash,
     Duration,
@@ -51,6 +54,7 @@ struct Word {
     shape: Shape,
     keys: Vec<Key>,
     block: bool,
+    free_keys: bool,
 }
 
 fn key(name: &'static str, want: Want, required: bool) -> Key {
@@ -77,10 +81,19 @@ fn field_keys(word: &str) -> Vec<Key> {
 }
 
 fn word_for(context: Context, word: &str) -> Option<Word> {
-    let plain = |shape, keys| Some(Word { shape, keys, block: false });
+    let plain = |shape, keys| Some(Word { shape, keys, block: false, free_keys: false });
+    let free = || Some(Word { shape: Shape::Nothing, keys: vec![], block: false, free_keys: true });
     match (context, word) {
-        (Context::Model, "schema") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true }),
-        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![], block: true }),
+        (Context::Model, "schema") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
+        (Context::Model, "remote" | "action") => Some(Word { shape: Shape::Name, keys: vec![], block: true, free_keys: false }),
+        (Context::Model, "create" | "update") => {
+            plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("input", Want::Hash, false)])
+        }
+        (Context::Model, "destroy") => plain(Shape::Nothing, vec![key("with", Want::Operation, true)]),
+        (Context::Action, "mutation") => plain(Shape::Const, vec![]),
+        (Context::Action, "input" | "optimistic") => free(),
+        (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
+        (Context::Remote, "updates") => plain(Shape::Const, vec![key("deleted_by", Want::Symbol, false)]),
         (Context::Model, "scope") => plain(
             Shape::Name,
             vec![key("params", Want::Symbols, false), key("where", Want::Hash, false), key("order", Want::Hash, false)],
@@ -144,6 +157,16 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
     let mut report = |line: usize, column: usize, message: String| errors.push(at(file, line, column, message));
     let mut schemas = 0;
     let mut member_names = HashSet::new();
+    let mut standard_words = HashSet::new();
+    let fields: HashSet<&str> = node
+        .body
+        .iter()
+        .filter(|call| call.word == "schema")
+        .flat_map(|schema| schema.block.iter().flatten())
+        .filter_map(|call| symbol_name(call.args.first()))
+        .collect();
+    let remotes: HashSet<&str> =
+        node.body.iter().filter(|call| call.word == "remote").filter_map(|call| symbol_name(call.args.first())).collect();
     for call in &node.body {
         if call.word == "schema" {
             schemas += 1;
@@ -170,9 +193,73 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
         if call.word == "scope" {
             check_scope(call, &mut report);
         }
+        if matches!(call.word.as_str(), "create" | "update" | "destroy") {
+            if !standard_words.insert(call.word.as_str()) {
+                report(call.line, call.column, format!("`{}` is declared twice", call.word));
+            }
+            check_standard_input(call, &fields, &mut report);
+        }
+        if call.word == "action" {
+            check_action(call, &fields, &remotes, &mut report);
+        }
     }
     for schema in node.body.iter().filter(|call| call.word == "schema") {
         check_schema(schema, &mut report);
+    }
+}
+
+fn check_standard_input(call: &Call, fields: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
+    let Some(Pair { value: Node { item: Value::Hash(pairs), .. }, .. }) = call.options.iter().find(|pair| pair.key == "input")
+    else {
+        return;
+    };
+    for pair in pairs {
+        match &pair.value.item {
+            Value::Symbol(field) if fields.contains(field.as_str()) => {}
+            Value::Symbol(field) => report(call.line, call.column, format!("input names unknown field `{field}`")),
+            _ => report(call.line, call.column, "input value must be a field symbol".to_string()),
+        }
+    }
+}
+
+fn check_action(action: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
+    let lines: Vec<&Call> = action.block.iter().flatten().collect();
+    let mut seen = HashSet::new();
+    for call in &lines {
+        check_call(call, Context::Action, report);
+        if !seen.insert(call.word.as_str()) {
+            report(call.line, call.column, format!("`{}` is declared twice", call.word));
+        }
+        check_action_line(call, fields, remotes, report);
+    }
+    if action.block.is_some() && !seen.contains("mutation") {
+        report(action.line, action.column, "`action` needs a `mutation` line".to_string());
+    }
+}
+
+fn check_action_line(call: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
+    match call.word.as_str() {
+        "input" => {
+            for pair in call.options.iter().filter(|pair| !matches!(pair.value.item, Value::Symbol(_))) {
+                report(pair.value.line, pair.value.column, "input value must be a field symbol".to_string());
+            }
+        }
+        "optimistic" => {
+            for pair in &call.options {
+                if !fields.contains(pair.key.as_str()) {
+                    report(pair.line, pair.column, format!("`optimistic` names unknown field `{}`", pair.key));
+                }
+                if matches!(pair.value.item, Value::Hash(_) | Value::Array(_)) {
+                    report(pair.value.line, pair.value.column, "optimistic value must be a literal".to_string());
+                }
+            }
+        }
+        "refetch" => {
+            for name in call.args.iter().filter_map(|arg| symbol_name(Some(arg))).filter(|name| !remotes.contains(name)) {
+                report(call.line, call.column, format!("`refetch` names `{name}`, which is not a `remote`"));
+            }
+        }
+        _ => {}
     }
 }
 
@@ -279,6 +366,7 @@ fn check_call(call: &Call, context: Context, report: &mut impl FnMut(usize, usiz
     }
     for pair in &call.options {
         match word.keys.iter().find(|candidate| candidate.name == pair.key) {
+            None if word.free_keys => {}
             None => report(pair.line, pair.column, format!("unknown key `{}` for `{}`", pair.key, call.word)),
             Some(expected) => check_value(pair, expected.want, report),
         }
@@ -305,6 +393,9 @@ fn check_shape(call: &Call, shape: Shape, report: &mut impl FnMut(usize, usize, 
         Shape::Duration if !matches!(args, [Node { item: Value::Duration { .. }, .. }]) => {
             format!("`{word}` needs a duration like `5.minutes`")
         }
+        Shape::Symbols if args.is_empty() || args.iter().any(|arg| !matches!(arg.item, Value::Symbol(_))) => {
+            format!("`{word}` needs 1 or more names like `:a, :b`")
+        }
         Shape::Nothing if !args.is_empty() => format!("`{word}` takes no arguments"),
         _ => return,
     };
@@ -318,6 +409,9 @@ fn check_value(pair: &Pair, want: Want, report: &mut impl FnMut(usize, usize, St
         Want::Bool if !matches!(value, Value::Bool(_)) => format!("`{key}` must be true or false"),
         Want::Symbol if !matches!(value, Value::Symbol(_)) => format!("`{key}` must be a symbol like `:name`"),
         Want::Const if !matches!(value, Value::Const(_)) => format!("`{key}` must be a model name like `User`"),
+        Want::Operation if !matches!(value, Value::Const(_)) => {
+            format!("`{key}` must be an operation name like `CreateMoment`")
+        }
         Want::Symbols if !is_symbol_list(value) => format!("`{key}` must be a list of symbols"),
         Want::Hash if !matches!(value, Value::Hash(_)) => format!("`{key}` must be a hash like `{{ field: :param }}`"),
         Want::Duration if !matches!(value, Value::Duration { .. }) => format!("`{key}` must be a duration like `5.minutes`"),

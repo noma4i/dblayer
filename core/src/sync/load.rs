@@ -216,6 +216,7 @@ impl Inner {
             normalized,
             is_first_page,
             plans_as_first,
+            coverage: resolved.remote.coverage(),
             requested_cursor: cursor,
             page_info: extracted.page_info,
             attempt: FetchAttempt::new(&resolved.window_key, issued, generation, base_revision),

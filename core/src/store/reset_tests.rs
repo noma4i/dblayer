@@ -138,14 +138,14 @@ fn incompatible_restores_manifest_atomically() {
 }
 
 #[test]
-fn reset_advances_generation_and_keeps_revision_sequence() {
+fn reset_advances_generation_and_the_revision_sequence() {
     let (store, _) = booted_store();
     seed_two_models(&store);
     let before = store.generation();
     let revision = store.revision_seq().unwrap();
     store.reset_incompatible().unwrap();
     assert!(store.generation() > before);
-    assert_eq!(store.revision_seq().unwrap(), revision);
+    assert_eq!(store.revision_seq().unwrap(), revision + 1);
     store.reset_cache_only(&["items"]).unwrap();
     assert!(store.generation() > before.next());
 }
@@ -201,4 +201,23 @@ fn open_completes_interrupted_logout() {
 fn logout_of_in_memory_store_is_a_noop() {
     let (store, _) = booted_store();
     store.logout().unwrap();
+}
+
+#[test]
+fn resets_advance_the_revision_and_tell_the_hook() {
+    use std::sync::{Arc, Mutex};
+    let (store, _) = booted_store();
+    store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
+    let seen: Arc<Mutex<Vec<(i64, Option<Vec<String>>)>>> = Arc::default();
+    let sink = seen.clone();
+    store.set_hook(Box::new(move |event| {
+        if let StoreEvent::Reset { revision, models } = event {
+            sink.lock().unwrap().push((revision, models));
+        }
+    }));
+    store.reset_cache_only(&["messages"]).unwrap();
+    assert_eq!(store.revision_seq().unwrap(), 2);
+    store.reset_incompatible().unwrap();
+    assert_eq!(store.revision_seq().unwrap(), 3);
+    assert_eq!(*seen.lock().unwrap(), vec![(2, Some(vec!["messages".to_string()])), (3, None)]);
 }

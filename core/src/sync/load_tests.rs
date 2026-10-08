@@ -228,7 +228,7 @@ async fn single_load_lands_one_row() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn refreshing_the_first_page_resets_the_page_chain() {
+async fn refreshing_the_first_page_keeps_the_loaded_tail_when_the_anchor_is_found() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], false, "c4"));
@@ -237,7 +237,20 @@ async fn refreshing_the_first_page_resets_the_page_chain() {
     rig.sync.load_more("moments", "feed", &none()).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["a", "b", "c", "d"]);
     rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
-    assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["a", "b"]);
+    assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["a", "b", "c", "d"]);
+    assert_eq!(window(&rig, "feed", &none()).unwrap().cursor.as_deref(), Some("c4"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn refreshing_a_first_page_without_the_anchor_drops_the_loaded_tail() {
+    let rig = rig();
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], false, "c4"));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["x", "y"], true, "r2"));
+    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load_more("moments", "feed", &none()).await.unwrap();
+    rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
+    assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["x", "y"]);
     assert_eq!(window(&rig, "feed", &none()).unwrap().cursor.as_deref(), Some("r2"));
 }
 
@@ -275,4 +288,31 @@ async fn invalid_params_are_reported() {
     let rig = rig();
     let result = rig.sync.load("moments", "by_user", &params(json!({"bogus": "x"})), LoadOptions::default()).await;
     assert!(matches!(result, Err(SyncError::Params(_))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery() {
+    let rig = rig();
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c1"));
+    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let spec = rig.db.spec("moments").unwrap();
+    let relation = spec.relations.iter().find(|candidate| candidate.name == "feed").unwrap();
+    let scope = relation.scope_key("moments", &Default::default()).unwrap();
+    let seen: std::sync::Arc<std::sync::Mutex<Vec<(Vec<String>, usize)>>> = Default::default();
+    let sink = seen.clone();
+    let _subscription = rig
+        .db
+        .observe(crate::query::Query::new("moments").in_scope(scope), move |change| {
+            sink.lock().unwrap().push((change.rows.iter().map(|row| row.id.to_string()).collect(), change.diff.removed.len()));
+        })
+        .unwrap();
+    rig.db.settle();
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["m2", "m3"], false, "c2"));
+    rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
+    rig.db.settle();
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["m2", "m3"], false, "c2"));
+    rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
+    rig.db.settle();
+    let all = seen.lock().unwrap().clone();
+    assert_eq!(all, vec![(vec!["m1".to_string(), "m2".to_string()], 0), (vec!["m2".to_string(), "m3".to_string()], 1)]);
 }

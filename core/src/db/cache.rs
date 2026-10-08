@@ -48,6 +48,17 @@ impl RowCache {
         }
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub(crate) fn evict_models(&mut self, models: &[String]) {
+        let doomed: Vec<(String, String)> = self.entries.iter().filter(|(key, _)| models.contains(&key.0)).map(|(key, _)| key.clone()).collect();
+        for key in doomed {
+            self.entries.pop(&key);
+        }
+    }
+
     pub(crate) fn stats(&self) -> CacheStats {
         self.stats
     }

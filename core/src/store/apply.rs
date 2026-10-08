@@ -79,6 +79,9 @@ impl Store {
 
     fn finish(&self, mut inner: std::sync::MutexGuard<'_, Inner>, result: (CommitResult, u32)) -> CommitResult {
         inner.counters.unknown_operation_acks += result.1 as usize;
+        if !result.0.is_noop() {
+            self.announce(super::StoreEvent::Committed(&result.0));
+        }
         result.0
     }
 }
@@ -196,6 +199,7 @@ pub(crate) fn apply_envelope(
     let mut files_changed = false;
     let mut changes = RowChanges::default();
     let mut destroyed: Vec<Destroyed> = Vec::new();
+    let mut replaced: Vec<(RowRef, crate::identity::RowId)> = Vec::new();
     let mut result = CommitResult::noop(envelope.tx_id);
 
     for operation in &envelope.entity_ops {
@@ -222,6 +226,9 @@ pub(crate) fn apply_envelope(
                 }
                 if removed > 0 {
                     changes.push(model, id.as_str(), RowChangeKind::Destroyed, BTreeSet::new());
+                    if let DestroyReason::Replaced { by } = reason {
+                        replaced.push((RowRef::new(model.clone(), id.clone()), by.clone()));
+                    }
                 }
                 files_changed |= release_files(connection, model, id, reason)?;
                 destroyed.push(Destroyed { model: model.clone(), id: id.as_str().to_string(), reason: reason.clone() });
@@ -257,6 +264,7 @@ pub(crate) fn apply_envelope(
         manifest_write(connection, REVISION_SEQ_KEY, &revision.to_string())?;
         result.revision = Some(revision);
         result.rows = changes.changes;
+        result.replaced = replaced;
         if tombstoned {
             prune_tombstones(connection, now_ms, &TombstoneRetention::DEFAULT)?;
         }

@@ -4,12 +4,12 @@ use std::fs;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
-use crate::ddl::{fingerprint, manifest_read, manifest_stamp, manifest_write, RESET_INTENT_KEY};
+use crate::ddl::{fingerprint, manifest_read, manifest_stamp, manifest_write, RESET_INTENT_KEY, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ScopeKey;
 
 use super::location::{reset_marker, remove_database_files};
-use super::{Inner, Store, StoreError};
+use super::{Inner, Store, StoreError, StoreEvent};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResetMode {
@@ -114,6 +114,12 @@ pub(crate) fn write_intent(connection: &Connection, mode: &str, models: &[String
     Ok(())
 }
 
+fn bump_revision(connection: &Connection) -> Result<i64, StoreError> {
+    let current = manifest_read(connection, REVISION_SEQ_KEY)?.and_then(|text| text.parse::<i64>().ok()).unwrap_or(0);
+    manifest_write(connection, REVISION_SEQ_KEY, &(current + 1).to_string())?;
+    Ok(current + 1)
+}
+
 pub(crate) fn clear_intent(connection: &Connection) -> Result<(), StoreError> {
     connection.execute("DELETE FROM manifest WHERE key = ?1", params![RESET_INTENT_KEY])?;
     Ok(())
@@ -205,9 +211,11 @@ impl Store {
         for (model, table) in &tables {
             wipe_model_cache(&transaction, model, table, false)?;
         }
+        let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
         transaction.commit()?;
         inner.poison = None;
+        self.announce(StoreEvent::Reset { revision, models: Some(names) });
         Ok(())
     }
 
@@ -219,9 +227,11 @@ impl Store {
         let transaction = inner.connection.unchecked_transaction()?;
         wipe_all_cache(&transaction, false)?;
         manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner))?;
+        let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
         transaction.commit()?;
         inner.poison = None;
+        self.announce(StoreEvent::Reset { revision, models: None });
         Ok(())
     }
 

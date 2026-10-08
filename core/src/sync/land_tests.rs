@@ -17,6 +17,7 @@ fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
         normalized: Normalized { roots, related: Vec::new(), dropped: 0 },
         is_first_page: true,
         plans_as_first: true,
+        coverage: crate::schema::Coverage::Complete,
         requested_cursor: None,
         page_info: None,
         attempt: FetchAttempt::new(key, issued, rig.db.generation(), rig.db.revision_seq().unwrap()),

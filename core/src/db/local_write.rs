@@ -29,26 +29,27 @@ pub struct OutboxEntry {
     pub rollback: Option<Value>,
 }
 
-#[derive(Clone, Copy)]
 enum Action {
     Create,
     Update,
     Destroy,
+    Named(String),
 }
 
 impl Action {
-    fn name(self) -> &'static str {
+    fn name(&self) -> &str {
         match self {
             Action::Create => "create",
             Action::Update => "update",
             Action::Destroy => "destroy",
+            Action::Named(name) => name,
         }
     }
 
-    fn default_mode(self) -> ActionMode {
+    fn default_mode(&self) -> ActionMode {
         match self {
             Action::Create | Action::Update => ActionMode::Durable,
-            Action::Destroy => ActionMode::Request,
+            Action::Destroy | Action::Named(_) => ActionMode::Request,
         }
     }
 }
@@ -127,6 +128,26 @@ impl Db {
         self.find(model, id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
     }
 
+    pub fn act(&self, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+        let spec = self.shared.spec(model)?;
+        let patch = spec.patch(&patch);
+        let key = ModelKey::new(model);
+        let own = RowRef::new(key.clone(), id.clone());
+        let mut input = args;
+        input.insert("id".to_string(), Value::String(id.to_string()));
+        let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None };
+        self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
+            let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+            let mut merged = current.clone();
+            merged.extend(patch.clone());
+            let fields: Vec<String> = patch.keys().cloned().collect();
+            queued.rollback = Some(Value::Object(restore_patch(&fields, &current)));
+            plan.update(key.clone(), id.clone(), merged.clone());
+            Ok(Some(self.touch_ops(reader, spec, &[&merged, &current], &own)?))
+        })?;
+        self.find(model, id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
+    }
+
     pub fn destroy(&self, model: &str, id: &RowId) -> Result<Vec<RowRef>, DbError> {
         let spec = self.shared.spec(model)?;
         let own = RowRef::new(ModelKey::new(model), id.clone());
@@ -134,8 +155,7 @@ impl Db {
         let created_at = self.shared.store.lock().now_ms();
         let mut destroyed: Vec<RowRef> = Vec::new();
         let mut file_ids: Vec<String> = Vec::new();
-        let result = self
-            .shared
+        self.shared
             .store
             .commit_with(generation, |reader| {
                 if reader.point(model, id.as_str())?.is_none() {
@@ -170,7 +190,6 @@ impl Db {
             })
             .map_err(plan_fault)?;
         self.shared.files.discard(&file_ids);
-        self.publish(&result);
         Ok(destroyed)
     }
 
@@ -226,7 +245,6 @@ impl Db {
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
-        self.publish(&result);
         Ok(!result.is_noop())
     }
 
@@ -269,7 +287,7 @@ impl Db {
         Ok(ops)
     }
 
-    fn descendants(&self, reader: &Reader<'_>, parent: &RowRef, seen: &mut HashSet<RowRef>, found: &mut Vec<RowRef>) -> Result<(), DbError> {
+    pub(super) fn descendants(&self, reader: &Reader<'_>, parent: &RowRef, seen: &mut HashSet<RowRef>, found: &mut Vec<RowRef>) -> Result<(), DbError> {
         let spec = self.shared.spec(parent.model.as_str())?;
         for association in spec.associations.iter().filter(|association| association.owns_children() && association.dependent == Some(Dependent::Destroy)) {
             let query = Query::new(association.target.as_str()).filtered(Where::equal(&association.foreign_key, json!(parent.id.as_str())));

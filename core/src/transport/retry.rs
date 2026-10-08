@@ -39,7 +39,7 @@ impl RetryClass {
         match error {
             TransportError::Network(_) => RetryClass::Network,
             TransportError::Http { status, .. } => RetryClass::classify(false, Some(*status), &[]),
-            TransportError::Decode(_) | TransportError::Unscripted(_) => RetryClass::Fatal,
+            TransportError::Interrupted(_) | TransportError::Decode(_) | TransportError::Unscripted(_) => RetryClass::Fatal,
         }
     }
 

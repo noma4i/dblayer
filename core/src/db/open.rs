@@ -10,11 +10,13 @@ use crate::identity::ModelKey;
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, OutboxQueue};
 use crate::pacing::Clock;
 use crate::schema::{validate_models, ModelSpec};
-use crate::store::{Reader, Store, StoreError};
+use crate::store::{Reader, Store, StoreError, StoreEvent};
 
 use super::cache::{CacheStats, RowCache};
 use super::diagnostics::{Counters, Diagnostics};
+use super::dispatch::{Dispatch, Event};
 use super::error::DbError;
+use super::listeners::Executor;
 use super::observe::Observers;
 
 const RESERVED_MEMBERS: [&str; 9] = ["id", "find", "where", "save", "count", "exists", "first", "observe", "order"];
@@ -33,15 +35,24 @@ impl Default for DbConfig {
 pub(crate) struct Shared {
     pub store: Store,
     pub specs: BTreeMap<String, ModelSpec>,
-    pub cache: Mutex<RowCache>,
+    pub cache: Arc<Mutex<RowCache>>,
     pub observers: Mutex<Observers>,
-    pub counters: Counters,
+    pub counters: Arc<Counters>,
+    pub dispatch: Arc<Dispatch>,
+    pub executor: Arc<Executor>,
     pub files: FileDirectories,
     pub files_gate: Mutex<()>,
 }
 
 pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        self.dispatch.close();
+        self.executor.close();
+    }
 }
 
 impl Shared {
@@ -91,16 +102,22 @@ impl Db {
         recover_operations(&store, &models)?;
         store.mark_ready();
         let specs = models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect();
-        let shared = Shared {
+        let cache = Arc::new(Mutex::new(RowCache::new(config.cache_rows)));
+        let dispatch = Arc::new(Dispatch::new());
+        store.set_hook(commit_hook(cache.clone(), dispatch.clone()));
+        let shared = Arc::new(Shared {
             store,
             specs,
-            cache: Mutex::new(RowCache::new(config.cache_rows)),
+            cache,
             observers: Mutex::new(Observers::default()),
-            counters: Counters::default(),
+            counters: Arc::new(Counters::default()),
+            executor: Executor::new(dispatch.busy.clone()),
+            dispatch: dispatch.clone(),
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
             files_gate: Mutex::new(()),
-        };
-        Ok(Db { shared: Arc::new(shared) })
+        });
+        Dispatch::start(dispatch, Arc::downgrade(&shared));
+        Ok(Db { shared })
     }
 
     pub fn set_clock(&self, clock: Arc<dyn Clock>) {
@@ -136,6 +153,30 @@ impl Db {
             subscriptions: observers.subscription_count(),
         }
     }
+}
+
+fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>) -> crate::store::StoreHook {
+    Box::new(move |event| match event {
+        StoreEvent::Committed(result) => {
+            {
+                let mut cache = locked(&cache);
+                for change in &result.rows {
+                    cache.evict(change.row.model.as_str(), change.row.id.as_str());
+                }
+            }
+            dispatch.push(Event::of_commit(result));
+        }
+        StoreEvent::Reset { revision, models } => {
+            {
+                let mut cache = locked(&cache);
+                match &models {
+                    Some(models) => cache.evict_models(models),
+                    None => cache.clear(),
+                }
+            }
+            dispatch.push(Event::of_reset(revision, models.as_deref()));
+        }
+    })
 }
 
 fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreError> {
