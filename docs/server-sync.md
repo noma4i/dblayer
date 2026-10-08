@@ -112,6 +112,7 @@ remote :feed do
 end
 ```
 
+- `root: "a.b"` is the path of the row inside the event payload (default: the first field), `id: "messageId"` is the key that holds its id (default: `id`). Use them when the server wraps the row or sends only an id for a delete.
 - Events are normalized like responses. `deleted_by:` names the field that marks a deleted row.
 - An event changes only the fields it carries. Fields it does not select keep their stored values. The read of the stored row and the write happen in one transaction, so a local edit made at the same moment is never overwritten by an older copy.
 - A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.

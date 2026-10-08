@@ -431,6 +431,10 @@ pub struct UpdatesSpec {
     pub removes: bool,
     #[serde(default)]
     pub debounce: Option<String>,
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

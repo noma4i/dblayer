@@ -113,7 +113,7 @@ fn updates_set_must_name_ephemeral_fields() {
             stale_time: "5.minutes".into(),
             empty_stale_time: None,
             selects_page_info: false,
-            updates: vec![UpdatesSpec { subscription: "UserTyping".into(), deleted_by: None, set: Map::new(), removes: false, debounce: None }],
+            updates: vec![UpdatesSpec { subscription: "UserTyping".into(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None }],
             page_size: None,
             variables: Default::default(), root: None,
         };

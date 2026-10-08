@@ -174,8 +174,8 @@ fn action_block_collects_mutation_input_optimistic_and_refetch() {
 fn remote_updates_line_builds_updates_spec() {
     let model = build_one("  remote :feed do\n    query Feed\n    updates SampleEvents, deleted_by: :destroyed\n  end\n  remote :plain do\n    query Plain\n    updates PlainEvents\n  end");
     let updates = |index: usize| model.relations[index].remote.as_ref().unwrap().updates.clone();
-    assert_eq!(updates(0), vec![UpdatesSpec { subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), set: Default::default(), removes: false, debounce: None }]);
-    assert_eq!(updates(1), vec![UpdatesSpec { subscription: "PlainEvents".into(), deleted_by: None, set: Default::default(), removes: false, debounce: None }]);
+    assert_eq!(updates(0), vec![UpdatesSpec { subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), set: Default::default(), removes: false, debounce: None, root: None, id: None }]);
+    assert_eq!(updates(1), vec![UpdatesSpec { subscription: "PlainEvents".into(), deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }]);
 }
 
 #[test]

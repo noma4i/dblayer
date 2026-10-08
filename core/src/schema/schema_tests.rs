@@ -484,7 +484,7 @@ fn specs_round_trip_through_json_and_default_missing_parts() {
     .unwrap();
     assert_eq!(minimal, ModelSpec::new("m", vec![FieldSpec::raw("id")]));
 
-    let remote = RemoteSpec { updates: vec![UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()), set: Map::new(), removes: false, debounce: None }], ..complete_remote() };
+    let remote = RemoteSpec { updates: vec![UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()), set: Map::new(), removes: false, debounce: None, root: None, id: None }], ..complete_remote() };
     let text = serde_json::to_string(&remote).unwrap();
     assert_eq!(serde_json::from_str::<RemoteSpec>(&text).unwrap(), remote);
     let bare = r#"{"operation":"Q","shape":{"type":"single"},"stale_time":"5.minutes"}"#;

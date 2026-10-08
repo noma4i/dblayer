@@ -73,6 +73,8 @@ impl Inner {
             let mut def = SubscriptionDef::new(event, &updates.subscription, &model, effect);
             def.deleted_by = updates.deleted_by;
             def.set = updates.set;
+            def.root = updates.root;
+            def.id = updates.id;
             let started = Sync { inner: inner.clone() }.subscribe(def).await;
             let mut lives = locked(&inner.lives);
             let Some(live) = lives.get_mut(&slot) else { return };

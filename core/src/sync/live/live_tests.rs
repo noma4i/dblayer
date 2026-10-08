@@ -123,3 +123,14 @@ async fn listen_opens_the_model_subscriptions_without_a_reader_and_unlisten_clos
     tokio::time::sleep(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1);
 }
+
+#[tokio::test(start_paused = true)]
+async fn event_root_and_id_paths_find_the_row_in_a_wrapped_payload() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.sync.listen();
+    settle().await;
+    rig.transport.emit("MomentWrapped", SubscriptionEvent::Next(Response::data(json!({"momentWrapped": {"wrapped": {"key": "m1", "text": "from wrapper"}}}))));
+    settle().await;
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("from wrapper".to_string()));
+}

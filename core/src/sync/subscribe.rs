@@ -39,11 +39,13 @@ pub struct SubscriptionDef {
     pub variables: Value,
     pub deleted_by: Option<String>,
     pub set: Map<String, Value>,
+    pub root: Option<String>,
+    pub id: Option<String>,
 }
 
 impl SubscriptionDef {
     pub fn new(event: EventSpec, operation: &str, model: &str, effect: EventEffect) -> Self {
-        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None, set: Map::new() }
+        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None, set: Map::new(), root: None, id: None }
     }
 
     pub fn setting(self, set: Map<String, Value>) -> Self {
@@ -114,8 +116,10 @@ struct Feed {
 impl Feed {
     fn parse(&self, response: &Response) -> Option<Pending> {
         let node = root_value(response.data.as_ref()?, &self.root_path)?.as_object()?;
-        let id = read_id(node.get("id")?)?;
-        Some(Pending { bucket: self.def.event.bucket_key(id.as_str()), id, node: node.clone(), generation: self.inner.db.generation() })
+        let id = read_id(node.get(self.def.id.as_deref().unwrap_or("id"))?)?;
+        let mut node = node.clone();
+        node.insert("id".to_string(), Value::String(id.to_string()));
+        Some(Pending { bucket: self.def.event.bucket_key(id.as_str()), id, node, generation: self.inner.db.generation() })
     }
 
     async fn apply(&self, mut items: Vec<Pending>) {
@@ -312,7 +316,8 @@ impl Sync {
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
         let first = self.inner.transport.subscribe(request.clone()).await;
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
-        let feed = Feed { inner: self.inner.clone(), def, root_path: operation.root_path, status: status.clone() };
+        let def_root = def.root.clone();
+        let feed = Feed { inner: self.inner.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone() };
         let task = tokio::spawn(feed.run(request, first));
         Ok(EventSubscription { abort: task.abort_handle(), status })
     }

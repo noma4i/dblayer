@@ -238,6 +238,8 @@ fn updates_spec(updates: &Call) -> UpdatesSpec {
         },
         removes: flag(updates, "removes"),
         debounce: option(updates, "debounce").and_then(|pair| text_of(&pair.value.item)),
+        root: option(updates, "root").and_then(|pair| text_of(&pair.value.item)),
+        id: option(updates, "id").and_then(|pair| text_of(&pair.value.item)),
     }
 }
 

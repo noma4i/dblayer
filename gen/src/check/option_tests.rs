@@ -95,6 +95,8 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("updates.deleted_by", remote("    updates Changed"), remote("    updates Changed, deleted_by: :gone")),
         ("updates.removes", remote("    updates Changed"), remote("    updates Changed, removes: true")),
         ("updates.debounce", remote("    updates Changed"), remote("    updates Changed, debounce: 300.milliseconds")),
+        ("updates.root", remote("    updates Changed"), remote("    updates Changed, root: \"a.b\"")),
+        ("updates.id", remote("    updates Changed"), remote("    updates Changed, id: \"chatId\"")),
         ("updates.set", remote("    updates Changed"), remote("    updates Changed, set: { a: \"x\" }")),
         ("action.mutation", action(""), action("").replace("mutation Like", "mutation Dislike")),
         ("action.input", action(""), action("    input momentId: :id")),
