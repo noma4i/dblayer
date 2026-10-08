@@ -12,6 +12,10 @@ fn is_stuck(entry: &OutboxOperation) -> bool {
     matches!(entry.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown)
 }
 
+fn is_sending(entry: &OutboxOperation) -> bool {
+    entry.operation.status == OperationStatus::Pending && entry.operation.transport_started
+}
+
 fn is_failed_destroy(entry: &OutboxOperation) -> bool {
     entry.operation.status == OperationStatus::Failed && entry.operation.action_key.ends_with(":destroy")
 }
@@ -54,8 +58,11 @@ impl Db {
     }
 
     pub fn discard(&self, model: &str, id: &RowId) -> Result<usize, DbError> {
+        if self.record_operations(model, id)?.iter().any(is_sending) {
+            return Err(DbError::InFlight { model: model.to_string(), id: id.to_string() });
+        }
         let mut discarded = 0;
-        while let Some(entry) = self.stuck_operations(model, id)?.first() {
+        while let Some(entry) = self.record_operations(model, id)?.first() {
             self.roll_back(entry.operation.id.0)?;
             discarded += 1;
         }
@@ -63,12 +70,15 @@ impl Db {
     }
 
     fn stuck_operations(&self, model: &str, id: &RowId) -> Result<Vec<OutboxOperation>, DbError> {
+        Ok(self.record_operations(model, id)?.into_iter().filter(is_stuck).collect())
+    }
+
+    fn record_operations(&self, model: &str, id: &RowId) -> Result<Vec<OutboxOperation>, DbError> {
         self.shared.spec(model)?;
         let wanted = (model.to_string(), id.to_string());
         Ok(self
             .outbox()?
             .into_iter()
-            .filter(is_stuck)
             .filter(|entry| operation_keys(&entry.operation.action_key, &entry.operation.row_ids, entry.operation.temp_id.as_ref()).contains(&wanted))
             .collect())
     }

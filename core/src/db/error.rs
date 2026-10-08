@@ -34,6 +34,8 @@ pub enum DbError {
     OriginNotLandable(WriteOrigin),
     #[error("row {id} of {model} already exists")]
     AlreadyExists { model: String, id: String },
+    #[error("row {id} of {model} has an operation in flight")]
+    InFlight { model: String, id: String },
     #[error("operation {0} is not in the outbox")]
     UnknownOperation(i64),
     #[error(transparent)]

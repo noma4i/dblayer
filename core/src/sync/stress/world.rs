@@ -116,7 +116,7 @@ impl World {
     pub fn expect(&self, step: &str, outcome: Result<(), DbError>) {
         if let Err(error) = outcome {
             let racing_a_reset = error.to_string().contains("generation is stale");
-            if !matches!(error, DbError::NotFound { .. }) && !racing_a_reset {
+            if !matches!(error, DbError::NotFound { .. } | DbError::InFlight { .. }) && !racing_a_reset {
                 self.findings.report("api-error", format!("{step}: {error}"));
             }
         }

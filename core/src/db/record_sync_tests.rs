@@ -140,11 +140,11 @@ fn discard_restores_the_values_of_a_failed_update() {
 }
 
 #[test]
-fn retry_and_discard_do_nothing_for_a_record_without_stuck_operations() {
+fn retry_does_nothing_for_a_record_without_stuck_operations() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     db.update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
-    assert_eq!((db.retry("moments", &rid("m1")).unwrap(), db.discard("moments", &rid("m1")).unwrap()), (0, 0));
+    assert_eq!(db.retry("moments", &rid("m1")).unwrap(), 0);
     assert_eq!(db.outbox().unwrap().len(), 1);
     assert!(matches!(db.retry("nope", &rid("m1")), Err(DbError::UnknownModel(_))));
 }
