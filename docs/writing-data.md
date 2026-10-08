@@ -23,7 +23,7 @@ moment.destroy()
 
 | Call | Local effect | Queued action |
 | ---- | ------------ | ------------- |
-| `create` | new row with a temporary id (`temp-...`) | `create` |
+| `create` | new row with a temporary id (`temp-...`). A `create` with an id that already exists is an error (`AlreadyExists`), change an existing row with `update` | `create` |
 | `update` | patch merged into the current row, no commit if nothing changes | `update` |
 | `destroy` | row and its dependent children removed | `destroy` |
 
@@ -42,6 +42,8 @@ Every queued change keeps what it replaced: the old field values, or the destroy
 - A rollback gives back only what the change still owns. A field edited later, or overwritten by the server, keeps its newer value.
 - Rolling back an older edit while a newer edit of the same field is queued hands the old value to the newer edit. Rolling back both, in either order, ends at the original value.
 - A created row disappears with the changes queued on it, whether it has a temporary id or one you chose.
+- Destroying a row with a temporary id whose `create` has not started removes the `create` and every change queued on it without any network call. If the `create` is already in flight, the destroy waits for the answer and is then sent with the real id.
+- When the server deletes a row (an event or a list refresh), the changes still queued on it are closed without being sent and without a rollback, because a rollback would bring the deleted row back.
 - A destroyed row keeps its file bytes until the server confirms the destroy. A refusal brings back the row, the files and the list positions.
 
 ## Failures
@@ -49,7 +51,7 @@ Every queued change keeps what it replaced: the old field values, or the destroy
 - If the network is unreachable before the transfer starts (no connection, connection refused, offline), the record stays `pending` and is sent again by itself with a growing pause, up to 40 attempts. Offline spends no attempts: the change waits for `setOnline(true)`. After 40 attempts the change fails like a refusal.
 - If the connection breaks after the transfer started, or no readable answer arrives, the record is marked `deliveryUnknown` and is never sent again by itself, because the server may have applied it.
 - A server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for you.
-- A destroyed record disappears at once. If the destroy fails for good (a refusal or 40 unreached attempts), the record comes back with `state = failed` and the error, like a kept update. `retry()` hides it again and sends the destroy, `discard()` keeps the record and drops the destroy. `on_failure: :keep` is not allowed on `destroy`.
+- A destroyed record disappears at once. If the destroy fails for good (a refusal or 40 unreached attempts), the record comes back with `state = failed` and the error, like a kept update. `retry()` hides it again and sends the destroy, `discard()` keeps the record and drops the destroy. `discard()` also takes back changes that are still `pending`, and refuses with `InFlight` while one of the changes is being sent. `on_failure: :keep` is not allowed on `destroy`.
 - A `failed` or `deliveryUnknown` record is sent again only by `retry()`, or rolled back by `discard()` ([sync state](sync-state.md)). `retryAll()` does it for every such record.
 - Responses that cannot be understood are moved to quarantine instead of being lost.
 - The queue lives in the database and every queued write is durable, so pending writes survive restarts and are sent when the queue next runs. A write that was `sending` when the app stopped is `deliveryUnknown` after the restart.
