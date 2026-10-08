@@ -216,7 +216,13 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
             debounce: option(updates, "debounce").and_then(|pair| text_of(&pair.value.item)),
         }).collect(),
     };
-    let mut relation = RelationSpec::global(&first_name(call));
+    let columns: Vec<String> = match option(call, "params").map(|pair| &pair.value.item) {
+        Some(Value::Array(items)) => items.iter().filter_map(|item| text_of(&item.item)).collect(),
+        Some(single) => text_of(single).into_iter().collect(),
+        None => Vec::new(),
+    };
+    let mut relation = RelationSpec::new(&first_name(call), &columns.iter().map(String::as_str).collect::<Vec<_>>());
+    relation.is_global = columns.is_empty();
     relation.remote = Some(remote);
     relation
 }

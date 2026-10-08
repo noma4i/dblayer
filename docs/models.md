@@ -153,7 +153,7 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 
 `scope :name` declares a named query: `params:`, `where: { field: :param }`, `order: { field: :asc | :desc }`.
 
-`remote :name do ... end` connects a relation to the server:
+`remote :name do ... end` connects a relation to the server. A relation that depends on columns names them: `remote :by_user, params: [:userId] do ... end` loads and lists the rows whose `userId` equals the param.
 
 | Line | Meaning | Default |
 | ---- | ------- | ------- |

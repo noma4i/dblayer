@@ -255,3 +255,11 @@ fn a_relation_can_follow_several_subscriptions() {
     assert_eq!(updates[1].debounce.as_deref(), Some("300.milliseconds"));
     assert!(updates[2].removes && !updates[0].removes);
 }
+
+#[test]
+fn a_remote_relation_can_take_params_that_name_columns() {
+    let model = build_one("  remote :by_owner, params: [:ownerId] do\n    query \"owned\"\n    paginate 10\n  end");
+    let relation = &model.relations[0];
+    assert_eq!(relation.by_columns, vec!["ownerId".to_string()]);
+    assert!(!relation.is_global && relation.remote.is_some());
+}
