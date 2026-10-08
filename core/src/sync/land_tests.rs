@@ -65,3 +65,15 @@ async fn inv_merge_03_a_response_does_not_undo_an_edit_that_is_still_unconfirmed
     rig.sync.inner.land(landing(&rig, 100, &["m1"])).unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("mine".to_string()));
 }
+
+#[tokio::test(start_paused = true)]
+async fn inv_fresh_11_a_response_read_before_the_server_got_the_destroy_does_not_bring_the_row_back() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.destroy("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap();
+    let stale = landing(&rig, 100, &["m1"]);
+    rig.transport.enqueue("DeleteMoment", crate::transport::Reply::data(serde_json::json!({"deleteMoment": {"id": "m1"}})));
+    rig.sync.flush().await.unwrap();
+    rig.sync.inner.land(stale).unwrap();
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+}
