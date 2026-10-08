@@ -69,6 +69,7 @@ pub fn moments_spec() -> ModelSpec {
         bound("update", RootShape::Upsert, "UpdateMoment"),
         bound("destroy", RootShape::Destroy, "DeleteMoment"),
         like_action(),
+        wrapped_action(),
     ];
     spec
 }
@@ -81,6 +82,14 @@ fn bound(name: &str, shape: RootShape, mutation: &str) -> ActionDeclaration {
     if name == "create" {
         action.variables.insert("text".to_string(), "text".to_string());
     }
+    action
+}
+
+fn wrapped_action() -> ActionDeclaration {
+    let mut action = bound("star", RootShape::Upsert, "StarMoment");
+    action.variables.insert("momentId".to_string(), "id".to_string());
+    action.wrap = Some("input".to_string());
+    action.root = Some("starMoment.moment".to_string());
     action
 }
 
@@ -131,6 +140,7 @@ pub fn register_operations(sync: &Sync) {
         ("UpdateMoment", "updateMoment"),
         ("DeleteMoment", "deleteMoment"),
         ("LikeMoment", "likeMoment"),
+        ("StarMoment", "starMoment"),
     ] {
         sync.register(OperationDef::new(name, &format!("operation {name} {{ x }}"), root).paged(2));
     }

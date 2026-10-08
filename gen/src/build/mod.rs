@@ -246,6 +246,8 @@ fn build_standard_action(call: &Call) -> ActionDeclaration {
     action.has_temp_row_retention = call.word == "create";
     action.mutation = Some(symbol_of(call, "with"));
     action.on_failure = on_failure_of(&symbol_of(call, "on_failure"));
+    action.wrap = option(call, "wrap").and_then(|pair| text_of(&pair.value.item));
+    action.root = option(call, "root").and_then(|pair| text_of(&pair.value.item));
     if let Some(Value::Hash(pairs)) = option(call, "input").map(|pair| &pair.value.item) {
         action.variables = pairs.iter().filter_map(variable_binding).collect();
     }
@@ -264,6 +266,8 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
             "input" => action.variables = line.options.iter().filter_map(variable_binding).collect(),
             "optimistic" => action.optimistic = line.options.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
             "on_failure" => action.on_failure = on_failure_of(&first_name(line)),
+            "wrap" => action.wrap = Some(first_name(line)),
+            "root" => action.root = Some(first_name(line)),
             "refetch" => action.refetch = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
             _ => {}
         }

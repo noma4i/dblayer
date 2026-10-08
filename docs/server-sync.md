@@ -85,6 +85,20 @@ update  with: UpdateMoment
 destroy with: DeleteMoment
 ```
 
+Servers that take one input object and answer with a payload (the Relay mutation style) use `wrap:` and `root:`:
+
+```ruby
+update  with: UpdateChat, wrap: :input, root: "chatUpdate.chat"
+action :mute do
+  mutation ChatMute
+  wrap     :input
+  root     "chatMute.chat"
+  input    chatId: :id
+end
+```
+
+`wrap: :input` sends `{ input: { ...variables } }`. `root:` is the path of the row inside the response, by default the first field of the operation.
+
 `create`, `update` and `destroy` call the named mutation. `input:` maps row fields to variables (same names by default). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
 
 ## Subscriptions

@@ -4,6 +4,14 @@ use crate::identity::RowId;
 use crate::schema::ActionDeclaration;
 
 pub(crate) fn mutation_variables(declaration: &ActionDeclaration, input: &Value, temp: Option<&RowId>) -> Value {
+    let variables = plain_variables(declaration, input, temp);
+    match &declaration.wrap {
+        Some(key) => Value::Object(Map::from_iter([(key.clone(), variables)])),
+        None => variables,
+    }
+}
+
+fn plain_variables(declaration: &ActionDeclaration, input: &Value, temp: Option<&RowId>) -> Value {
     let Some(input) = input.as_object() else { return Value::Object(Map::new()) };
     if declaration.variables.is_empty() {
         let is_temp = |value: &Value| temp.is_some_and(|temp| value.as_str() == Some(temp.as_str()));

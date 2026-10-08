@@ -332,7 +332,8 @@ impl Inner {
         if sending.action == "destroy" {
             return Normalized::default();
         }
-        extract(data, &operation.root_path, &RemoteShape::Single)
+        let declared_root = self.db.spec(&sending.model).ok().and_then(|spec| spec.actions.iter().find(|declared| declared.name == sending.action).and_then(|declared| declared.root.clone()));
+        extract(data, declared_root.as_deref().unwrap_or(&operation.root_path), &RemoteShape::Single)
             .and_then(|extracted| normalize_nodes(&self.db, &sending.model, &extracted.nodes))
             .unwrap_or_default()
     }

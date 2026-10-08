@@ -102,14 +102,16 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Model, "create" | "update") => {
             plain(
                 Shape::Nothing,
-                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false)],
+                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false)],
             )
         }
         (Context::Model, "destroy") => {
-            plain(Shape::Nothing, vec![key("with", Want::Operation, true)])
+            plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("wrap", Want::Symbol, false), key("root", Want::Any, false)])
         }
         (Context::Action, "mutation") => plain(Shape::Const, vec![]),
         (Context::Action, "on_failure") => plain(Shape::Name, vec![]),
+        (Context::Action, "wrap") => plain(Shape::Name, vec![]),
+        (Context::Action, "root") => plain(Shape::Name, vec![]),
         (Context::Action, "input" | "optimistic") => free(),
         (Context::Remote, "variables") => free(),
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),

@@ -430,3 +430,14 @@ async fn custom_action_queued_before_a_restart_is_kept_and_sent_afterwards() {
     rig.transport.enqueue("DeleteMoment", Reply::data(json!({"deleteMoment": {"id": "m1"}})));
     assert_eq!(rig.sync.flush().await.unwrap().committed(), 2);
 }
+
+#[tokio::test(start_paused = true)]
+async fn wrapped_action_nests_its_variables_and_reads_the_row_at_its_root() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.db.act("moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
+    rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"moment": {"id": "m1", "text": "starred", "userId": null}}})));
+    rig.sync.flush().await.unwrap();
+    assert_eq!(call_variables(&rig, "StarMoment"), [json!({"input": {"momentId": "m1"}})]);
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("starred".to_string()));
+}
