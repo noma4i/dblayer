@@ -259,7 +259,7 @@ fn check_standard_input(call: &Call, fields: &HashSet<&str>, report: &mut impl F
     };
     for pair in pairs {
         match &pair.value.item {
-            Value::Symbol(field) if fields.contains(field.as_str()) => {}
+            Value::Symbol(field) if field == "id" || fields.contains(field.as_str()) => {}
             Value::Symbol(field) => report(call.line, call.column, format!("input names unknown field `{field}`")),
             _ => report(call.line, call.column, "input value must be a field symbol".to_string()),
         }
