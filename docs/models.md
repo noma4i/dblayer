@@ -49,6 +49,7 @@ Field options:
 | `default: value` | default value |
 | `index: true` | indexed column (not allowed for `object`, `array`, `raw`, `list`, `file`) |
 | `id_from: :parent` | take the id from a nested parent object |
+| `as: MomentMedia` | for `object`, `array`, `raw`: the app type the generated model decodes the value to (a `Codable` you provide) |
 | `from: "location.lat"` | read the value from a nested path of the response when the field name itself is absent |
 
 `index :a, :b` inside `schema` declares a composite index over fields that are already indexed.

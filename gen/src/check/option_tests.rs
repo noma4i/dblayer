@@ -36,6 +36,7 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("field.default", with_schema("    string :b"), with_schema("    string :b, default: \"x\"")),
         ("field.id_from", with_schema("    id :b"), with_schema("    id :b, id_from: :ownerId")),
         ("field.from", with_schema("    num :b"), with_schema("    num :b, from: \"loc.b\"")),
+        ("field.as", with_schema("    object :b"), with_schema("    object :b, as: Media")),
         ("field.index", with_schema("    string :b"), with_schema("    string :b, index: true")),
         ("field.values", with_schema("    enum :b, values: [:x]"), with_schema("    enum :b, values: [:x, :y]")),
         ("field.of", with_schema("    list :b, of: :int"), with_schema("    list :b, of: :string")),

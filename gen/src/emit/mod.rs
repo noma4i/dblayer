@@ -23,7 +23,7 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
         FieldKind::Scalar { kind } => scalar(*kind, swift).to_string(),
         FieldKind::Enum { .. } => "String".into(),
         FieldKind::List { element } => if swift { format!("[{}]", scalar(*element, true)) } else { format!("List<{}>", scalar(*element, false)) },
-        _ => if swift { "JSONValue".into() } else { "JsonElement".into() },
+        _ => field.app_type.clone().unwrap_or_else(|| if swift { "JSONValue".into() } else { "JsonElement".into() }),
     };
     let base = if !swift && base == "Bool" { "Boolean".into() } else { base };
     if field.nullable || field.optional { format!("{base}?") } else { base }

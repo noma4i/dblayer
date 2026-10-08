@@ -40,3 +40,12 @@ end
         assert!(kotlin.contains(token), "missing Kotlin {token}");
     }
 }
+
+#[test]
+fn object_field_can_name_the_app_type_it_decodes_to() {
+    let models = parse_models("model Moment do\n  schema do\n    object :media, as: MomentMedia, null: true\n    array :widgets, as: \"[MomentWidget]\"\n  end\nend\n").unwrap();
+    let swift = emit_swift(&models);
+    assert!(swift.contains("public let media: MomentMedia?"), "{swift}");
+    assert!(swift.contains("public let widgets: [MomentWidget]"), "{swift}");
+    assert!(swift.contains("Column<Moment, MomentMedia?>(\"media\")"), "{swift}");
+}

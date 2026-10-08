@@ -148,6 +148,8 @@ pub struct FieldSpec {
     pub id_from_parent: Option<String>,
     #[serde(default)]
     pub from: Option<String>,
+    #[serde(default)]
+    pub app_type: Option<String>,
 }
 
 impl FieldSpec {
@@ -161,6 +163,7 @@ impl FieldSpec {
             indexed: false,
             id_from_parent: None,
             from: None,
+            app_type: None,
         }
     }
 
