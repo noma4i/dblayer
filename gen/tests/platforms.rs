@@ -143,3 +143,21 @@ end
     assert_eq!((listens[0].subscription.as_str(), listens[0].debounce.as_deref()), ("userUpdated", Some("300.milliseconds")));
     assert!(listens[1].removes);
 }
+
+#[test]
+fn internal_access_drops_public_and_unmutated_locals_are_constants() {
+    let models = parse_models(r#"
+model Hit do
+  schema do
+    string :title
+  end
+  remote :search, text: [:query] do
+    list
+  end
+end
+"#).unwrap();
+    let internal = dblayer_gen::emit_swift_with(&models, dblayer_gen::Access::Internal);
+    assert!(internal.contains("struct Hit: DBModel"));
+    assert!(!internal.contains("public "));
+    assert!(internal.contains("let built = Query<Self>(relation: \"search\""));
+}

@@ -57,6 +57,27 @@ fn swift_default(field: &FieldSpec) -> Option<String> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    Public,
+    Internal,
+}
+
+/// Swift source for the models. `Internal` drops `public` for apps that generate the models into their own module.
+pub fn emit_swift_with(models: &[ModelSpec], access: Access) -> String {
+    let source = emit_swift(models);
+    if access == Access::Public {
+        return source;
+    }
+    source.lines().map(|line| {
+        let indent = line.len() - line.trim_start().len();
+        match line.trim_start().strip_prefix("public ") {
+            Some(rest) => format!("{}{}", &line[..indent], rest),
+            None => line.to_string(),
+        }
+    }).collect::<Vec<_>>().join("\n") + "\n"
+}
+
 pub fn emit_swift(models: &[ModelSpec]) -> String {
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
     for model in models {
@@ -86,7 +107,7 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
                 writeln!(out, "    public static func {method}({params}) -> Query<Self> {{").unwrap();
             }
             let params = relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("\"{key}\": JSONValue.encode({key})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "        var built = Query<Self>(relation: \"{}\", params: [{}])", relation.name, if params.is_empty() { ":" } else { &params }).unwrap();
+            writeln!(out, "        {} built = Query<Self>(relation: \"{}\", params: [{}])", if relation.remote.is_none() { "var" } else { "let" }, relation.name, if params.is_empty() { ":" } else { &params }).unwrap();
             if relation.remote.is_none() {
                 for key in &relation.by_columns { writeln!(out, "        built = built.where(Condition.equal(\"{key}\", JSONValue.encode({key})))").unwrap(); }
                 if let Sort::Fields(fields) = &relation.sort {
@@ -127,7 +148,7 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}", arg_type(kind, true))).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             writeln!(out, "    public func {}({params}) async throws -> Self {{", name(&action.name)).unwrap();
-            writeln!(out, "        var values = JSONValue.parse(#\"{}\"#).objectValue", serde_json::to_string(&literals).unwrap()).unwrap();
+            writeln!(out, "        {} values = JSONValue.parse(#\"{}\"#).objectValue", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
             for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        values[\"{field}\"] = JSONValue.encode({arg})").unwrap(); } }
             let args = action.args.keys().map(|arg| format!("\"{arg}\": JSONValue.encode({arg})")).collect::<Vec<_>>().join(", ");
             writeln!(out, "        return try await act(\"{}\", values: values, args: [{}])\n    }}", action.name, if args.is_empty() { ":" } else { &args }).unwrap();

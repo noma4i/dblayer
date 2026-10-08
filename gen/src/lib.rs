@@ -3,7 +3,7 @@ mod check;
 mod lexer;
 mod parser;
 mod emit;
-pub use emit::{emit_swift, emit_kotlin};
+pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
 
 use std::fmt;
 use std::fs;

@@ -187,3 +187,7 @@ cargo run -p dblayer-gen -- spec fixtures/*.dbl     # print the model specificat
 ```
 
 Example models live in `fixtures/`.
+
+## Access level
+
+`dblayer-gen --internal swift ...` emits the Swift models without `public`, for an app that generates them into its own module and uses app types in `as:`.
