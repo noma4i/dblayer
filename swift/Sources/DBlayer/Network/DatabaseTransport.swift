@@ -36,17 +36,12 @@ public final class DatabaseTransport: Transport, @unchecked Sendable {
         if !Task.isCancelled { sink.failed(kind: error as? CableClientError == .rejected ? "graphql" : "transport", detail: String(describing: error)) }
       }
     }
-    lock.lock()
-    tasks[token] = task
-    lock.unlock()
+    lock.withLock { tasks[token] = task }
     return token
   }
 
   public func unsubscribe(token: String) {
-    lock.lock()
-    let task = tasks.removeValue(forKey: token)
-    lock.unlock()
-    task?.cancel()
+    lock.withLock { tasks.removeValue(forKey: token) }?.cancel()
   }
 
   public func put(url: String, headers: [String: String], bytes: Data, progress: ByteProgress) async throws -> PutReply {
