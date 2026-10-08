@@ -168,6 +168,9 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
             }
             {
                 let mut values = ephemeral.lock();
+                for (from, to) in &result.replaced {
+                    values.rename(from.model.as_str(), from.id.as_str(), to.as_str());
+                }
                 for change in &result.rows {
                     let (model, id) = (change.row.model.as_str(), change.row.id.as_str());
                     if change.kind == RowChangeKind::Destroyed {

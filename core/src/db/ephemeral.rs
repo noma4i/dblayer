@@ -90,6 +90,16 @@ impl State {
         Ok(changed.then_some(self.epoch))
     }
 
+    pub(crate) fn rename(&mut self, model: &str, from: &str, to: &str) {
+        let (from, to) = ((model.to_string(), from.to_string()), (model.to_string(), to.to_string()));
+        if let Some(values) = self.rows.remove(&from) {
+            self.rows.entry(to.clone()).or_insert(values);
+        }
+        if let Some(due) = self.expiry.remove(&from) {
+            self.expiry.entry(to).or_insert(due);
+        }
+    }
+
     pub(crate) fn forget(&mut self, model: &str, id: &str) {
         let key = (model.to_string(), id.to_string());
         self.rows.remove(&key);
