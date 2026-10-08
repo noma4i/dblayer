@@ -96,7 +96,7 @@ pub fn specs() -> Vec<ModelSpec> {
 
 pub fn keeping_specs() -> Vec<ModelSpec> {
     let mut moments = moments_spec();
-    moments.actions.iter_mut().for_each(|action| action.on_failure = OnFailure::Keep);
+    moments.actions.iter_mut().filter(|action| action.name != "destroy").for_each(|action| action.on_failure = OnFailure::Keep);
     vec![users_spec(), moments, vibes_spec()]
 }
 

@@ -191,7 +191,7 @@ fn remote_updates_line_builds_updates_spec() {
 #[test]
 fn on_failure_defaults_to_rollback_and_reads_keep_from_standard_and_block_actions() {
     let model = build_one(
-        "  create with: CreateSample, on_failure: :keep\n  update with: UpdateSample\n  destroy with: DeleteSample, on_failure: :rollback\n  action :like do\n    mutation LikeSample\n    on_failure :keep\n  end\n  action :poke do\n    mutation PokeSample\n  end",
+        "  create with: CreateSample, on_failure: :keep\n  update with: UpdateSample\n  destroy with: DeleteSample\n  action :like do\n    mutation LikeSample\n    on_failure :keep\n  end\n  action :poke do\n    mutation PokeSample\n  end",
     );
     let policies: Vec<(&str, OnFailure)> = model.actions.iter().map(|action| (action.name.as_str(), action.on_failure)).collect();
     assert_eq!(

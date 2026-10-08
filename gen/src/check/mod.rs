@@ -103,7 +103,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
             )
         }
         (Context::Model, "destroy") => {
-            plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("on_failure", Want::Policy, false)])
+            plain(Shape::Nothing, vec![key("with", Want::Operation, true)])
         }
         (Context::Action, "mutation") => plain(Shape::Const, vec![]),
         (Context::Action, "on_failure") => plain(Shape::Name, vec![]),

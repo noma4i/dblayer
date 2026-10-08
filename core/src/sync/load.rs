@@ -237,6 +237,9 @@ impl Inner {
     async fn query_with_retry(&self, request: GraphQLRequest) -> Result<(Response, u32), SyncError> {
         let mut attempt = 0;
         loop {
+            if !self.connectivity.is_online() {
+                return Err(SyncError::Offline);
+            }
             locked(&self.counters).record_transport_call();
             let (class, error) = match self.transport.query(request.clone()).await {
                 Ok(response) if response.shape().outcome() == ResponseOutcome::Commit => return Ok((response, attempt + 1)),

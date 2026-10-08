@@ -447,6 +447,19 @@ fn apply_transitions(
                 result.operations.insert(*seq);
                 wrote = true;
             }
+            OperationTransition::Postpone { seq, failure } => {
+                synced.extend(op_keys_of(connection, *seq)?);
+                let postponed = connection.execute(
+                    "UPDATE op SET transport_started = 0, error = ?2, since = ?3 WHERE seq = ?1 AND status = 'pending' AND transport_started = 1",
+                    params![seq, json_bytes(failure)?, now_ms],
+                )?;
+                if postponed == 0 {
+                    result.unknown_operation_acks += 1;
+                    continue;
+                }
+                result.operations.insert(*seq);
+                wrote = true;
+            }
             OperationTransition::Progress { seq, state } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let saved = connection.execute("UPDATE op SET upload = ?2 WHERE seq = ?1", params![seq, json_bytes(state)?])?;

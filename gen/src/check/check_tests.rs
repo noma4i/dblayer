@@ -178,11 +178,17 @@ fn on_failure_accepts_keep_and_rollback_only() {
     let message = "`on_failure` must be `:keep` or `:rollback`".to_string();
     assert_eq!(failure_in("  create with: A, on_failure: :ghost"), (7, message.clone()));
     assert_eq!(failure_in("  update with: A, on_failure: 1"), (7, message.clone()));
-    assert_eq!(failure_in("  destroy with: A, on_failure: :retry"), (7, message.clone()));
     assert_eq!(failure_in("  action :x do\n    mutation M\n    on_failure :ghost\n  end"), (9, message.clone()));
     assert_eq!(failure_in("  action :x do\n    mutation M\n    on_failure :keep\n    on_failure :keep\n  end"), (10, "`on_failure` is declared twice".to_string()));
     let valid = "model Sample do\n  schema do\n    string :name\n  end\n  create with: A, on_failure: :keep\n  action :x do\n    mutation M\n    on_failure :rollback\n  end\nend\n";
     assert!(parse_models(valid).is_ok());
+}
+
+#[test]
+fn destroy_takes_no_on_failure() {
+    let message = "unknown key `on_failure` for `destroy`".to_string();
+    assert_eq!(failure_in("  destroy with: A, on_failure: :keep"), (7, message.clone()));
+    assert_eq!(failure_in("  destroy with: A, on_failure: :rollback"), (7, message));
 }
 
 fn ephemeral_failure(lines: &str) -> (usize, String) {

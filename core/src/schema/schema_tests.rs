@@ -443,6 +443,16 @@ fn action_rules_reject_invalid_combinations() {
 }
 
 #[test]
+fn a_destroying_action_cannot_declare_keep() {
+    let mut destroy = action("destroy", RootShape::Destroy);
+    destroy.on_failure = OnFailure::Keep;
+    let mut upsert = action("update", RootShape::Upsert);
+    upsert.on_failure = OnFailure::Keep;
+    assert_eq!(with_actions(vec![destroy]).validate(&[]), Err(DeclarationError::KeepOnDestroy("destroy".into())));
+    assert_eq!(with_actions(vec![upsert]).validate(&[]), Ok(()));
+}
+
+#[test]
 fn forbidden_members_and_once_key_are_checked() {
     let with_member = |member: &str| ActionDeclaration {
         members: vec![member.to_string()],

@@ -3,6 +3,8 @@ pub enum SkipReason {
     NotBound,
     UnknownOperation(String),
     BlockedByHead,
+    Offline,
+    Waiting,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,6 +12,7 @@ pub enum SendResult {
     Committed,
     Rejected(String),
     DeliveryUnknown,
+    Deferred,
     Quarantined,
     Skipped(SkipReason),
     Discarded,

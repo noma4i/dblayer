@@ -87,11 +87,11 @@ async fn rejected_create_removes_the_temp_row_and_rejected_destroy_restores_the_
 }
 
 #[tokio::test(start_paused = true)]
-async fn network_error_is_not_retried_and_leaves_delivery_unknown() {
+async fn interrupted_transfer_is_not_retried_and_leaves_delivery_unknown() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
-    rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Network("offline".into())));
+    rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Interrupted("reset".into())));
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
     let report = rig.sync.flush().await.unwrap();
     assert_eq!(report.operations[0].result, SendResult::DeliveryUnknown);
@@ -252,11 +252,11 @@ async fn record_is_sending_while_the_request_is_in_flight_and_synced_after_the_a
 }
 
 #[tokio::test(start_paused = true)]
-async fn network_error_records_the_kind_and_attempt_and_retry_sends_the_same_operation_again() {
+async fn interrupted_transfer_records_the_kind_and_attempt_and_retry_sends_the_same_operation_again() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
-    rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Network("offline".into())));
+    rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Interrupted("reset".into())));
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
     rig.sync.flush().await.unwrap();
     let unknown = info(&rig, "m1");

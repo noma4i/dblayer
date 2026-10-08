@@ -16,7 +16,7 @@ async fn reconnect_sends_the_queue_then_rereads_watched_windows() {
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m9", "m1"], false, "c2"));
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let local = rig.db.create("moments", params(json!({"text": "t"}))).unwrap();
-    rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Network("offline".into())));
+    rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Interrupted("reset".into())));
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m9", "text": "t", "userId": null}})));
     assert_eq!(rig.sync.flush().await.unwrap().committed(), 0);
     assert_eq!(rig.db.outbox().unwrap().len(), 1);

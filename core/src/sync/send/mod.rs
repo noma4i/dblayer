@@ -1,4 +1,5 @@
 mod flush;
+mod pause;
 mod report;
 mod settle;
 mod variables;
@@ -15,6 +16,7 @@ impl Sync {
     pub async fn flush(&self) -> Result<FlushReport, SyncError> {
         let report = self.inner.flush().await?;
         self.start_uploads()?;
+        self.arm_wake();
         Ok(report)
     }
 
@@ -22,9 +24,16 @@ impl Sync {
         self.inner.db.retry(model, id)?;
         self.flush().await
     }
+
+    pub async fn retry_all(&self) -> Result<FlushReport, SyncError> {
+        self.inner.db.retry_all()?;
+        self.flush().await
+    }
 }
 
 #[cfg(test)]
 mod flush_tests;
+#[cfg(test)]
+mod network_tests;
 #[cfg(test)]
 mod variables_tests;

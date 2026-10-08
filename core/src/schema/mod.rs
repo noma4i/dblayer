@@ -52,6 +52,8 @@ pub enum DeclarationError {
     DependentOnNonOwner(String),
     #[error("association {0} targets an unknown model")]
     UnknownTarget(String),
+    #[error("action {0} destroys a record and cannot keep it on failure")]
+    KeepOnDestroy(String),
     #[error("relation name is empty")]
     EmptyRelationName,
     #[error("relation name {0} is reserved")]
@@ -572,6 +574,9 @@ impl ActionDeclaration {
         }
         if let Some(member) = self.members.iter().find(|member| FORBIDDEN_ACTION_MEMBERS.contains(&member.as_str())) {
             return Err(DeclarationError::ForbiddenMember(member.clone()));
+        }
+        if self.root_shape == RootShape::Destroy && self.on_failure == OnFailure::Keep {
+            return Err(DeclarationError::KeepOnDestroy(name()));
         }
         if self.has_once && self.dedupe_key.as_deref().is_none_or(str::is_empty) {
             return Err(DeclarationError::OnceKeyRequired(name()));

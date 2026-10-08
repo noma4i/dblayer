@@ -6,6 +6,7 @@ mod land;
 mod live;
 mod load;
 mod normalize;
+mod online;
 mod registry;
 mod resume;
 mod send;
@@ -30,11 +31,12 @@ use serde_json::{Map, Value};
 use tokio::sync::watch;
 
 use crate::db::Db;
-use crate::pacing::{Clock, Counters, FetchCoalescing, FreshnessTable, ResumeDrain};
-use crate::transport::{Connectivity, Transport};
+use crate::pacing::{Backoff, Clock, Counters, FetchCoalescing, FreshnessTable, ResumeDrain};
+use crate::transport::{Connectivity, Transport, RETRY_BACKOFF};
 use crate::upload::UploadConfig;
 
 pub const LIVE_LINGER: Duration = Duration::from_secs(30);
+pub const SEND_BACKOFF: Backoff = RETRY_BACKOFF.with_jitter(0.2, 0x5eed_5eed).limited(40);
 
 #[derive(Debug, Clone)]
 pub struct SyncConfig {
@@ -42,11 +44,12 @@ pub struct SyncConfig {
     pub resume: ResumeDrain,
     pub live_linger: Duration,
     pub upload: UploadConfig,
+    pub send_backoff: Backoff,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
-        Self { freshness: FreshnessTable::default(), resume: ResumeDrain::default(), live_linger: LIVE_LINGER, upload: UploadConfig::default() }
+        Self { freshness: FreshnessTable::default(), resume: ResumeDrain::default(), live_linger: LIVE_LINGER, upload: UploadConfig::default(), send_backoff: SEND_BACKOFF }
     }
 }
 
@@ -81,6 +84,7 @@ pub(crate) struct Inner {
     pub outbox_gate: tokio::sync::Mutex<()>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub connectivity: Connectivity,
+    pub wake: Mutex<Option<tokio::task::AbortHandle>>,
 }
 
 impl Inner {
@@ -118,6 +122,7 @@ impl Sync {
             outbox_gate: tokio::sync::Mutex::new(()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             connectivity: Connectivity::new(),
+            wake: Mutex::new(None),
         };
         Self { inner: Arc::new(inner) }
     }

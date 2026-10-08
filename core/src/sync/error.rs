@@ -19,6 +19,8 @@ pub enum SyncError {
     Params(String),
     #[error("transport: {0}")]
     Transport(String),
+    #[error("offline")]
+    Offline,
     #[error("graphql: {0}")]
     Graphql(String),
     #[error("malformed response: {0}")]

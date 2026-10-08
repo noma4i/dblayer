@@ -114,6 +114,19 @@ async fn network_error_is_retried_with_delay() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn offline_load_makes_no_call_and_online_loads_again() {
+    let rig = rig();
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
+    rig.sync.set_online(false);
+    let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
+    assert_eq!(result, Err(SyncError::Offline));
+    assert_eq!(rig.transport.call_count("MomentsFeed"), 0);
+    rig.sync.set_online(true);
+    let outcome = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    assert_eq!(outcome.status, LoadStatus::Loaded);
+}
+
+#[tokio::test(start_paused = true)]
 async fn retry_budget_is_spent_then_the_error_is_returned() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::fail(TransportError::Network("down".to_string())));

@@ -37,21 +37,24 @@ A created row has a temporary id until the server answers. When the response arr
 
 ## Failures
 
-- A mutation is sent once. It is never retried by itself, neither after a network error nor after a server error status.
-- If the connection breaks after sending started, or no readable answer arrives, the record is marked `deliveryUnknown` and waits for you.
+- If the network is unreachable before the transfer starts (no connection, connection refused, offline), the record stays `pending` and is sent again by itself with a growing pause, up to 40 attempts. Offline spends no attempts: the change waits for `setOnline(true)`. After 40 attempts the change fails like a refusal.
+- If the connection breaks after the transfer started, or no readable answer arrives, the record is marked `deliveryUnknown` and is never sent again by itself, because the server may have applied it.
 - A server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for you.
-- A `failed` or `deliveryUnknown` record is sent again only by `retry()`, or rolled back by `discard()` ([sync state](sync-state.md)).
+- A destroyed record disappears at once. If the destroy fails for good (a refusal or 40 unreached attempts), the record comes back. `on_failure: :keep` is not allowed on `destroy`.
+- A `failed` or `deliveryUnknown` record is sent again only by `retry()`, or rolled back by `discard()` ([sync state](sync-state.md)). `retryAll()` does it for every such record.
 - Responses that cannot be understood are moved to quarantine instead of being lost.
 - The queue lives in the database and every queued write is durable, so pending writes survive restarts and are sent when the queue next runs. A write that was `sending` when the app stopped is `deliveryUnknown` after the restart.
 
 ```swift
 try await message.retry()      // send the same change again
 try await message.discard()    // roll the change back and drop it
+try await sync.retryAll()      // send every failed and deliveryUnknown change again
 ```
 
 ```kotlin
 message.retry()      // send the same change again
 message.discard()    // roll the change back and drop it
+sync.retryAll()      // send every failed and deliveryUnknown change again
 ```
 
 ## Custom actions

@@ -123,10 +123,6 @@ impl Sync {
         Ok(true)
     }
 
-    pub fn set_online(&self, online: bool) {
-        self.inner.connectivity.set(online);
-    }
-
     pub async fn wait_uploads(&self) {
         loop {
             let mut tasks = std::mem::take(&mut locked(&self.inner.uploads).tasks);

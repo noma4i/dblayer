@@ -28,6 +28,7 @@ use super::variables::mutation_variables;
 pub(crate) enum Delivery {
     Response(Response),
     Rejected(OperationFailure),
+    Unreached(OperationFailure),
     Unknown(OperationFailure),
 }
 
@@ -53,15 +54,19 @@ impl Inner {
         let _serial = self.outbox_gate.lock().await;
         let mut report = FlushReport::default();
         let mut attempted = HashSet::new();
-        while let Some(entry) = self.next_ready(&mut attempted, &mut report)? {
+        let mut held = HashSet::new();
+        while let Some(entry) = self.next_ready(&mut attempted, &mut held, &mut report)? {
             attempted.insert(entry.operation.id.0);
             let result = self.send(&entry).await?;
+            if result == SendResult::Deferred {
+                held.extend(row_of(&entry));
+            }
             report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key.clone(), result });
         }
         Ok(report)
     }
 
-    fn next_ready(&self, attempted: &mut HashSet<i64>, report: &mut FlushReport) -> Result<Option<OutboxOperation>, SyncError> {
+    fn next_ready(&self, attempted: &mut HashSet<i64>, held: &mut HashSet<RowRef>, report: &mut FlushReport) -> Result<Option<OutboxOperation>, SyncError> {
         let entries = self.db.outbox()?;
         let queue = OutboxQueue::new(entries.iter().map(|entry| entry.operation.clone()).collect());
         let gate: Vec<GateEntry> = entries
@@ -76,19 +81,32 @@ impl Inner {
             if entry.operation.upload.is_some() {
                 continue;
             }
-            let blocked = row_of(entry).is_some_and(|row| queue.is_blocked(&row));
+            let row = row_of(entry);
+            let held_back = row.as_ref().is_some_and(|row| held.contains(row));
+            let blocked = held_back || row.as_ref().is_some_and(|row| queue.is_blocked(row));
             let gate_entry = gate.iter().find(|candidate| candidate.sequence == sequence);
-            if transport_verdict(gate_entry, false, blocked) == TransportVerdict::Send {
+            let waiting = if held_back { None } else { self.waiting_reason(&entry.operation) };
+            if waiting.is_none() && transport_verdict(gate_entry, false, blocked) == TransportVerdict::Send {
                 return Ok(Some(entry.clone()));
             }
             attempted.insert(sequence);
+            if waiting.is_some() {
+                held.extend(row);
+            }
             report.operations.push(SentOperation {
                 sequence,
                 action_key: entry.operation.action_key.clone(),
-                result: SendResult::Skipped(SkipReason::BlockedByHead),
+                result: SendResult::Skipped(waiting.unwrap_or(SkipReason::BlockedByHead)),
             });
         }
         Ok(None)
+    }
+
+    fn waiting_reason(&self, operation: &Operation) -> Option<SkipReason> {
+        if !self.connectivity.is_online() {
+            return Some(SkipReason::Offline);
+        }
+        self.retry_due(operation).filter(|due| *due > self.clock.now()).map(|_| SkipReason::Waiting)
     }
 
     async fn send(&self, entry: &OutboxOperation) -> Result<SendResult, SyncError> {
@@ -116,13 +134,31 @@ impl Inner {
     pub(crate) async fn settle_delivery(&self, sending: &Sending<'_>, operation: &OperationDef, delivery: Delivery, keep: bool) -> Result<SendResult, SyncError> {
         Ok(match delivery {
             Delivery::Response(response) => self.settle_response(sending, operation, response).await?,
-            Delivery::Rejected(failure) if keep => {
-                let message = failure.message.clone();
-                self.fail(sending, OperationStatus::Failed, failure, SendResult::Rejected(message))?
+            Delivery::Rejected(failure) => self.refuse(sending, failure, keep).await?,
+            Delivery::Unreached(failure) if self.send_backoff(sending.entry.operation.id.0).allows(sending.entry.operation.attempts + 1) => {
+                self.postpone(sending, failure)?
             }
-            Delivery::Rejected(failure) => self.roll_back(sending, failure.message).await?,
+            Delivery::Unreached(failure) => self.refuse(sending, failure, keep).await?,
             Delivery::Unknown(failure) => self.fail(sending, OperationStatus::DeliveryUnknown, failure, SendResult::DeliveryUnknown)?,
         })
+    }
+
+    async fn refuse(&self, sending: &Sending<'_>, failure: OperationFailure, keep: bool) -> Result<SendResult, SyncError> {
+        if keep {
+            let message = failure.message.clone();
+            return self.fail(sending, OperationStatus::Failed, failure, SendResult::Rejected(message));
+        }
+        self.roll_back(sending, failure.message).await
+    }
+
+    fn postpone(&self, sending: &Sending<'_>, failure: OperationFailure) -> Result<SendResult, SyncError> {
+        let seq = sending.entry.operation.id.0;
+        let committed = self.commit(sending.generation, |_| {
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
+            envelope.operation_transitions.push(OperationTransition::Postpone { seq, failure });
+            Ok(Some(envelope))
+        })?;
+        Ok(if committed.is_some() { SendResult::Deferred } else { SendResult::Discarded })
     }
 
     fn start(&self, sending: &Sending<'_>) -> Result<bool, SyncError> {
@@ -144,7 +180,7 @@ impl Inner {
                 let kind = if RetryClass::classify(false, None, &codes) == RetryClass::Retriable { FailureKind::Server } else { FailureKind::Rejected };
                 Delivery::Rejected(OperationFailure::new(kind, message_of(&response)))
             }
-            Err(error @ TransportError::Network(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, error.to_string())),
+            Err(error @ TransportError::Network(_)) => Delivery::Unreached(OperationFailure::new(FailureKind::Network, error.to_string())),
             Err(error @ TransportError::Interrupted(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, error.to_string())),
             Err(error @ TransportError::Http { status, .. }) if status >= 500 => {
                 Delivery::Unknown(OperationFailure::new(FailureKind::Server, error.to_string()))

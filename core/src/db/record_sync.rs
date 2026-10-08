@@ -4,8 +4,12 @@ use crate::syncstate::{operation_keys, read_sync, SyncInfo};
 use crate::upload::UploadInfo;
 
 use super::error::DbError;
-use super::local_write::plan_fault;
+use super::local_write::{plan_fault, OutboxOperation};
 use super::open::Db;
+
+fn is_stuck(entry: &OutboxOperation) -> bool {
+    matches!(entry.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown)
+}
 
 impl Db {
     pub fn sync_info(&self, model: &str, id: &RowId) -> Result<SyncInfo, DbError> {
@@ -19,6 +23,15 @@ impl Db {
 
     pub fn retry(&self, model: &str, id: &RowId) -> Result<usize, DbError> {
         let stuck = self.stuck_operations(model, id)?;
+        self.retry_operations(&stuck)
+    }
+
+    pub fn retry_all(&self) -> Result<usize, DbError> {
+        let stuck: Vec<i64> = self.outbox()?.iter().filter(|entry| is_stuck(entry)).map(|entry| entry.operation.id.0).collect();
+        self.retry_operations(&stuck)
+    }
+
+    fn retry_operations(&self, stuck: &[i64]) -> Result<usize, DbError> {
         if stuck.is_empty() {
             return Ok(0);
         }
@@ -49,7 +62,7 @@ impl Db {
         Ok(self
             .outbox()?
             .into_iter()
-            .filter(|entry| matches!(entry.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown))
+            .filter(is_stuck)
             .filter(|entry| operation_keys(&entry.operation.action_key, &entry.operation.row_ids, entry.operation.temp_id.as_ref()).contains(&wanted))
             .map(|entry| entry.operation.id.0)
             .collect())
