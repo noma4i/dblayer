@@ -1,0 +1,283 @@
+package com.noma4i.dblayer.models
+
+import com.noma4i.dblayer.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.*
+
+@Serializable
+data class Chat(
+    override val id: String,
+    val title: String,
+    val lastMessageAt: String? = null,
+    override val sync: SyncInfo = SyncInfo(),
+    override val upload: UploadInfo? = null
+) : DBModel {
+    override val modelName get() = "Chat"
+    companion object {
+        val title = Column<Chat, String>("title")
+        val lastMessageAt = Column<Chat, String?>("lastMessageAt")
+        fun find(id: String) = Query("Chat", serializer()).find(id)
+        fun where(condition: Condition) = Query("Chat", serializer()).where(condition)
+        val recent: Query<Chat> get() {
+            var query = Query("Chat", serializer(), relation = "recent", params = buildJsonObject {  })
+            query = query.order(Order("lastMessageAt", "desc"))
+            return query
+        }
+        suspend fun create(title: String, lastMessageAt: String? = null): Chat {
+            val values = buildJsonObject {
+                put("title", jsonValue(title))
+                lastMessageAt?.let { put("lastMessageAt", jsonValue(it)) }
+            }
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Chat", values.toString()))
+        }
+    }
+    suspend fun update(title: String? = null, lastMessageAt: String? = null): Chat {
+        val values = buildJsonObject {
+            title?.let { put("title", jsonValue(it)) }
+            lastMessageAt?.let { put("lastMessageAt", jsonValue(it)) }
+        }
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString()))
+    }
+    val messages get() = related("messages", Message.serializer())
+}
+
+@Serializable
+data class Message(
+    override val id: String,
+    val chatId: String,
+    val authorId: String,
+    val text: String,
+    val createdAt: String,
+    override val sync: SyncInfo = SyncInfo(),
+    override val upload: UploadInfo? = null
+) : DBModel {
+    override val modelName get() = "Message"
+    companion object {
+        val chatId = Column<Message, String>("chatId")
+        val authorId = Column<Message, String>("authorId")
+        val text = Column<Message, String>("text")
+        val createdAt = Column<Message, String>("createdAt")
+        fun find(id: String) = Query("Message", serializer()).find(id)
+        fun where(condition: Condition) = Query("Message", serializer()).where(condition)
+        fun byChat(chatId: String): Query<Message> {
+            var query = Query("Message", serializer(), relation = "by_chat", params = buildJsonObject { put("chatId", jsonValue(chatId)) })
+            query = query.where(Condition.equal("chatId", jsonValue(chatId)))
+            query = query.order(Order("createdAt", "asc"))
+            return query
+        }
+        val history: Query<Message> get() {
+            var query = Query("Message", serializer(), relation = "history", params = buildJsonObject {  })
+            return query
+        }
+        suspend fun create(chatId: String, authorId: String, text: String, createdAt: String): Message {
+            val values = buildJsonObject {
+                put("chatId", jsonValue(chatId))
+                put("authorId", jsonValue(authorId))
+                put("text", jsonValue(text))
+                put("createdAt", jsonValue(createdAt))
+            }
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Message", values.toString()))
+        }
+    }
+    suspend fun update(chatId: String? = null, authorId: String? = null, text: String? = null, createdAt: String? = null): Message {
+        val values = buildJsonObject {
+            chatId?.let { put("chatId", jsonValue(it)) }
+            authorId?.let { put("authorId", jsonValue(it)) }
+            text?.let { put("text", jsonValue(it)) }
+            createdAt?.let { put("createdAt", jsonValue(it)) }
+        }
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString()))
+    }
+    val chat get() = related("chat", Chat.serializer())
+}
+
+@Serializable
+data class Moment(
+    override val id: String,
+    val uuid: String,
+    val userId: String? = null,
+    val text: String? = null,
+    val likedByMe: Boolean,
+    val media: JsonElement,
+    val createdAt: String,
+    override val sync: SyncInfo = SyncInfo(),
+    override val upload: UploadInfo? = null
+) : DBModel {
+    override val modelName get() = "Moment"
+    companion object {
+        val uuid = Column<Moment, String>("uuid")
+        val userId = Column<Moment, String?>("userId")
+        val text = Column<Moment, String?>("text")
+        val likedByMe = Column<Moment, Boolean>("likedByMe")
+        val media = Column<Moment, JsonElement>("media")
+        val createdAt = Column<Moment, String>("createdAt")
+        fun find(id: String) = Query("Moment", serializer()).find(id)
+        fun where(condition: Condition) = Query("Moment", serializer()).where(condition)
+        val recent: Query<Moment> get() {
+            var query = Query("Moment", serializer(), relation = "recent", params = buildJsonObject {  })
+            query = query.order(Order("createdAt", "desc"))
+            return query
+        }
+        fun byUser(userId: String?): Query<Moment> {
+            var query = Query("Moment", serializer(), relation = "by_user", params = buildJsonObject { put("userId", jsonValue(userId)) })
+            query = query.where(Condition.equal("userId", jsonValue(userId)))
+            query = query.order(Order("createdAt", "desc"))
+            return query
+        }
+        val feed: Query<Moment> get() {
+            var query = Query("Moment", serializer(), relation = "feed", params = buildJsonObject {  })
+            return query
+        }
+        suspend fun create(uuid: String, userId: String? = null, text: String? = null, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String): Moment {
+            val values = buildJsonObject {
+                put("uuid", jsonValue(uuid))
+                userId?.let { put("userId", jsonValue(it)) }
+                text?.let { put("text", jsonValue(it)) }
+                likedByMe?.let { put("likedByMe", jsonValue(it)) }
+                media?.let { put("media", jsonValue(it)) }
+                put("createdAt", jsonValue(createdAt))
+            }
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Moment", values.toString()))
+        }
+    }
+    suspend fun update(uuid: String? = null, userId: String? = null, text: String? = null, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String? = null): Moment {
+        val values = buildJsonObject {
+            uuid?.let { put("uuid", jsonValue(it)) }
+            userId?.let { put("userId", jsonValue(it)) }
+            text?.let { put("text", jsonValue(it)) }
+            likedByMe?.let { put("likedByMe", jsonValue(it)) }
+            media?.let { put("media", jsonValue(it)) }
+            createdAt?.let { put("createdAt", jsonValue(it)) }
+        }
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString()))
+    }
+    suspend fun like(): Moment = act("like", parseJsonObject("""{"likedByMe":true}"""), JsonObject(emptyMap()), serializer())
+    val author get() = related("author", User.serializer())
+    val vibes get() = related("vibes", Vibe.serializer())
+}
+
+@Serializable
+data class Presence(
+    override val id: String,
+    val userId: String,
+    val room: String,
+    override val sync: SyncInfo = SyncInfo(),
+    override val upload: UploadInfo? = null
+) : DBModel {
+    override val modelName get() = "Presence"
+    companion object {
+        val userId = Column<Presence, String>("userId")
+        val room = Column<Presence, String>("room")
+        fun find(id: String) = Query("Presence", serializer()).find(id)
+        fun where(condition: Condition) = Query("Presence", serializer()).where(condition)
+        fun forUser(userId: String): Query<Presence> {
+            var query = Query("Presence", serializer(), relation = "for_user", params = buildJsonObject { put("userId", jsonValue(userId)) })
+            query = query.where(Condition.equal("userId", jsonValue(userId)))
+            return query
+        }
+        val online: Query<Presence> get() {
+            var query = Query("Presence", serializer(), relation = "online", params = buildJsonObject {  })
+            return query
+        }
+        suspend fun create(userId: String, room: String): Presence {
+            val values = buildJsonObject {
+                put("userId", jsonValue(userId))
+                put("room", jsonValue(room))
+            }
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Presence", values.toString()))
+        }
+    }
+    suspend fun update(userId: String? = null, room: String? = null): Presence {
+        val values = buildJsonObject {
+            userId?.let { put("userId", jsonValue(it)) }
+            room?.let { put("room", jsonValue(it)) }
+        }
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString()))
+    }
+    val user get() = related("user", User.serializer())
+}
+
+@Serializable
+data class User(
+    override val id: String,
+    val name: String,
+    val avatar: JsonElement? = null,
+    val birthday: String? = null,
+    val typing: Boolean,
+    val mood: String? = null,
+    override val sync: SyncInfo = SyncInfo(),
+    override val upload: UploadInfo? = null
+) : DBModel {
+    override val modelName get() = "User"
+    companion object {
+        val name = Column<User, String>("name")
+        val avatar = Column<User, JsonElement?>("avatar")
+        val birthday = Column<User, String?>("birthday")
+        fun find(id: String) = Query("User", serializer()).find(id)
+        fun where(condition: Condition) = Query("User", serializer()).where(condition)
+        val profile: Query<User> get() {
+            var query = Query("User", serializer(), relation = "profile", params = buildJsonObject {  })
+            return query
+        }
+        suspend fun create(name: String, avatar: JsonElement? = null, birthday: String? = null): User {
+            val values = buildJsonObject {
+                put("name", jsonValue(name))
+                avatar?.let { put("avatar", jsonValue(it)) }
+                birthday?.let { put("birthday", jsonValue(it)) }
+            }
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("User", values.toString()))
+        }
+    }
+    suspend fun update(name: String? = null, avatar: JsonElement? = null, birthday: String? = null): User {
+        val values = buildJsonObject {
+            name?.let { put("name", jsonValue(it)) }
+            avatar?.let { put("avatar", jsonValue(it)) }
+            birthday?.let { put("birthday", jsonValue(it)) }
+        }
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString()))
+    }
+    suspend fun set(typing: Boolean? = null, mood: String? = null) {
+        DBlayer.database.setEphemeral(modelName, id, buildJsonObject {
+            typing?.let { put("typing", jsonValue(it)) }
+            mood?.let { put("mood", jsonValue(it)) }
+        }.toString())
+    }
+}
+
+@Serializable
+data class Vibe(
+    override val id: String,
+    val momentId: String,
+    val userId: String,
+    val kind: String,
+    override val sync: SyncInfo = SyncInfo(),
+    override val upload: UploadInfo? = null
+) : DBModel {
+    override val modelName get() = "Vibe"
+    companion object {
+        val momentId = Column<Vibe, String>("momentId")
+        val userId = Column<Vibe, String>("userId")
+        val kind = Column<Vibe, String>("kind")
+        fun find(id: String) = Query("Vibe", serializer()).find(id)
+        fun where(condition: Condition) = Query("Vibe", serializer()).where(condition)
+        suspend fun create(momentId: String, userId: String, kind: String): Vibe {
+            val values = buildJsonObject {
+                put("momentId", jsonValue(momentId))
+                put("userId", jsonValue(userId))
+                put("kind", jsonValue(kind))
+            }
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Vibe", values.toString()))
+        }
+    }
+    suspend fun update(momentId: String? = null, userId: String? = null, kind: String? = null): Vibe {
+        val values = buildJsonObject {
+            momentId?.let { put("momentId", jsonValue(it)) }
+            userId?.let { put("userId", jsonValue(it)) }
+            kind?.let { put("kind", jsonValue(it)) }
+        }
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString()))
+    }
+}
+
+val modelsJSON = """[{"key":"Chat","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"title","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"lastMessageAt","kind":{"type":"scalar","kind":"date"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null}],"associations":[{"name":"messages","kind":"has_many","target":"Message","foreign_key":"chatId","dependent":"destroy","touches_parent":false}],"relations":[{"name":"recent","by_columns":[],"remote":null,"is_global":true,"sort":{"fields":[{"column":"lastMessageAt","direction":"desc"}]}}],"composite_indexes":[],"actions":[],"ephemeral":[],"storage":"disk","expire_after":null},{"key":"Message","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"chatId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null},{"name":"authorId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"createdAt","kind":{"type":"scalar","kind":"date"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null}],"associations":[{"name":"chat","kind":"belongs_to","target":"Chat","foreign_key":"chatId","dependent":null,"touches_parent":false}],"relations":[{"name":"by_chat","by_columns":["chatId"],"remote":null,"is_global":false,"sort":{"fields":[{"column":"createdAt","direction":"asc"}]}},{"name":"history","by_columns":[],"remote":{"operation":"ChatMessages","shape":{"type":"connection","direction":"backward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"1.minute","empty_stale_time":"10.seconds","selects_page_info":true,"updates":null,"page_size":30},"is_global":true,"sort":"server_order"}],"composite_indexes":[],"actions":[],"ephemeral":[],"storage":"disk","expire_after":null},{"key":"Moment","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"uuid","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null},{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"likedByMe","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"media","kind":{"type":"object"},"nullable":false,"optional":false,"default":{},"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"createdAt","kind":{"type":"scalar","kind":"date"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null}],"associations":[{"name":"author","kind":"belongs_to","target":"User","foreign_key":"userId","dependent":null,"touches_parent":true},{"name":"vibes","kind":"has_many","target":"Vibe","foreign_key":"momentId","dependent":"destroy","touches_parent":false}],"relations":[{"name":"recent","by_columns":[],"remote":null,"is_global":true,"sort":{"fields":[{"column":"createdAt","direction":"desc"}]}},{"name":"by_user","by_columns":["userId"],"remote":null,"is_global":false,"sort":{"fields":[{"column":"createdAt","direction":"desc"}]}},{"name":"feed","by_columns":[],"remote":{"operation":"MomentsFeed","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"updates":{"subscription":"MomentEvents","deleted_by":"destroyed","set":{}},"page_size":20},"is_global":true,"sort":"server_order"}],"composite_indexes":[["userId","createdAt"]],"actions":[{"name":"create","root_shape":"upsert","on_failure":"rollback","has_optimistic":true,"has_temp_row_retention":true,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"CreateMoment","variables":{"media":"media","text":"text"},"optimistic":{},"refetch":[]},{"name":"update","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"UpdateMoment","variables":{},"optimistic":{},"refetch":[]},{"name":"destroy","root_shape":"destroy","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"DeleteMoment","variables":{},"optimistic":{},"refetch":[]},{"name":"like","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"LikeMoment","variables":{"momentId":"id"},"optimistic":{"likedByMe":true},"refetch":["feed"]}],"ephemeral":[],"storage":"disk","expire_after":null},{"key":"Presence","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null},{"name":"room","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null}],"associations":[{"name":"user","kind":"belongs_to","target":"User","foreign_key":"userId","dependent":null,"touches_parent":false}],"relations":[{"name":"for_user","by_columns":["userId"],"remote":null,"is_global":false,"sort":"server_order"},{"name":"online","by_columns":[],"remote":{"operation":"PresenceOnline","shape":{"type":"list","coverage":"complete"},"stale_time":"30.seconds","empty_stale_time":null,"selects_page_info":false,"updates":{"subscription":"PresenceChanged","deleted_by":"left","set":{}},"page_size":null},"is_global":true,"sort":"server_order"}],"composite_indexes":[],"actions":[],"ephemeral":[],"storage":"memory","expire_after":"1.minute"},{"key":"User","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"avatar","kind":{"type":"file"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"birthday","kind":{"type":"scalar","kind":"date"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null}],"associations":[],"relations":[{"name":"profile","by_columns":[],"remote":{"operation":"UserProfile","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":{"subscription":"UserTyping","deleted_by":null,"set":{"typing":true}},"page_size":null},"is_global":true,"sort":"server_order"}],"composite_indexes":[],"actions":[],"ephemeral":[{"name":"typing","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"reset_after":"5.seconds"},{"name":"mood","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"reset_after":null}],"storage":"disk","expire_after":null},{"key":"Vibe","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null},{"name":"momentId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null},{"name":"kind","kind":{"type":"enum","values":["like","love","laugh"]},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null}],"associations":[],"relations":[],"composite_indexes":[],"actions":[],"ephemeral":[],"storage":"disk","expire_after":null}]"""
+

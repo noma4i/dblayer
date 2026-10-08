@@ -33,10 +33,10 @@ end
     assert_eq!(moment.relations[1].remote.as_ref().unwrap().operation, "MomentsFeed");
     let swift = emit_swift(&models);
     let kotlin = emit_kotlin(&models);
-    for token in ["struct Moment", "DBModel", "func create(", "func set(", "static var recent", "static var feed"] {
+    for token in ["struct Moment", "DBModel", "func create(", "func set(", "static var recent", "static var feed", "func like("] {
         assert!(swift.contains(token), "missing Swift {token}");
     }
-    for token in ["@Serializable", "data class Moment", "fun create(", "fun set(", "val recent", "val feed"] {
+    for token in ["@Serializable", "data class Moment", "fun create(", "fun set(", "val recent", "val feed", "fun like("] {
         assert!(kotlin.contains(token), "missing Kotlin {token}");
     }
 }

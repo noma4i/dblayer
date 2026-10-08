@@ -143,6 +143,9 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             for field in &model.ephemeral { writeln!(out, "            {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.field.name, field.field.name).unwrap(); }
             out.push_str("        }.toString())\n    }\n");
         }
+        for action in model.actions.iter().filter(|action| !["create", "update", "destroy"].contains(&action.name.as_str())) {
+            writeln!(out, "    suspend fun {}(): {class} = act(\"{}\", parseJsonObject(\"\"\"{}\"\"\"), JsonObject(emptyMap()), serializer())", name(&action.name), action.name, serde_json::to_string(&action.optimistic).unwrap()).unwrap();
+        }
         for association in &model.associations { writeln!(out, "    val {} get() = related(\"{}\", {}.serializer())", association.name, association.name, association.target).unwrap(); }
         out.push_str("}\n\n");
     }
