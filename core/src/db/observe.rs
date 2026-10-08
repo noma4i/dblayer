@@ -74,23 +74,27 @@ impl Shared {
                 .collect()
         };
         for (key, subject, at, previous) in due {
-            locked(&self.counters).observation_reads += 1;
-            let Ok(next) = self.evaluate(&subject) else { continue };
-            let (revision, epoch) = next.position();
             let replaced: Vec<(RowId, RowId)> = batch.iter().filter(|event| event.revision > at).flat_map(|event| event.replaced.iter().cloned()).collect();
-            let published = next.succeeding(&previous, &replaced).map(Arc::new);
-            let mut observers = locked(&self.observers);
-            let Some(group) = observers.groups.get_mut(&key) else { continue };
-            if (group.at >= revision && group.epoch >= epoch) || !Arc::ptr_eq(&group.version, &previous) {
-                continue;
-            }
-            group.at = revision;
-            group.epoch = epoch;
-            let Some(version) = published else { continue };
-            group.version = version.clone();
-            for (_, subscriber) in &group.subscribers {
-                subscriber.post(&self.executor, version.clone(), &replaced);
-            }
+            self.publish_group(&key, &subject, &previous, &replaced);
+        }
+    }
+
+    fn publish_group(&self, key: &str, subject: &Subject, previous: &Arc<Version>, replaced: &[(RowId, RowId)]) {
+        locked(&self.counters).observation_reads += 1;
+        let Ok(next) = self.evaluate(subject) else { return };
+        let (revision, epoch) = next.position();
+        let published = next.succeeding(previous, replaced).map(Arc::new);
+        let mut observers = locked(&self.observers);
+        let Some(group) = observers.groups.get_mut(key) else { return };
+        if (group.at >= revision && group.epoch >= epoch) || !Arc::ptr_eq(&group.version, previous) {
+            return;
+        }
+        group.at = revision;
+        group.epoch = epoch;
+        let Some(version) = published else { return };
+        group.version = version.clone();
+        for (_, subscriber) in &group.subscribers {
+            subscriber.post(&self.executor, version.clone(), replaced);
         }
     }
 }
@@ -100,6 +104,10 @@ impl Db {
         let key = subject.key();
         let deps = self.shared.deps(&subject)?;
         let subscriber = Subscriber::new(listener, self.shared.counters.clone());
+        let current = locked(&self.shared.observers).groups.get(&key).map(|group| (group.at, group.version.clone()));
+        if let Some((_, previous)) = current.filter(|(at, _)| self.shared.store.revision_seq().is_ok_and(|latest| latest > *at)) {
+            self.shared.publish_group(&key, &subject, &previous, &[]);
+        }
         let mut observers = locked(&self.shared.observers);
         let id = observers.next_id;
         observers.next_id += 1;

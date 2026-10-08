@@ -1,3 +1,5 @@
+use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
+use crate::identity::ModelKey;
 use super::fixtures::*;
 use super::*;
 use crate::query::{Query, Where};
@@ -243,4 +245,23 @@ fn a_panicking_listener_does_not_stop_the_others() {
     db.settle();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     assert_eq!(calls(&log), vec![0, 1]);
+}
+
+#[test]
+fn late_observer_of_a_shared_query_sees_the_write_that_preceded_it() {
+    let db = booted();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
+    let (_, first) = recorder();
+    let _early = db.observe(Query::new("moments"), first).unwrap();
+    db.settle();
+    for round in 0..50 {
+        let text = format!("v{round}");
+        let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m1"), row: obj(json!({"id": "m1", "userId": "u1", "text": text})) });
+        db.land(envelope).unwrap();
+        let (log, second) = recorder();
+        let _late = db.observe(Query::new("moments"), second).unwrap();
+        db.settle();
+        assert_eq!(texts(&changes(&log)[0]), vec![text], "round {round}");
+    }
 }
