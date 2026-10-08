@@ -232,6 +232,22 @@ impl FieldSpec {
         input.get(parent)?.as_object()?.get("id").cloned()
     }
 
+    fn zero(&self, now_ms: i64) -> Option<Value> {
+        match &self.kind {
+            FieldKind::Scalar { kind } => match kind {
+                ScalarKind::Str => Some(Value::String(String::new())),
+                ScalarKind::Int | ScalarKind::Num => Some(Value::from(0)),
+                ScalarKind::Bool => Some(Value::Bool(false)),
+                ScalarKind::Date => Some(Value::from(now_ms)),
+                ScalarKind::Id => None,
+            },
+            FieldKind::Enum { values } => values.first().cloned().map(Value::String),
+            FieldKind::Object => Some(Value::Object(Map::new())),
+            FieldKind::Array | FieldKind::List { .. } => Some(Value::Array(Vec::new())),
+            FieldKind::Raw | FieldKind::File => None,
+        }
+    }
+
     pub fn decode(&self, value: &Value) -> Option<Value> {
         match &self.kind {
             FieldKind::Scalar { kind } => read_scalar(value, *kind),
@@ -739,6 +755,20 @@ impl ModelSpec {
             }
         }
         Ok(normalized)
+    }
+
+    /// Normalizes a locally created row. Server-owned fields the caller did not give take a zero value of their type, dates take `now_ms`.
+    pub fn normalize_local(&self, input: &Map<String, Value>, now_ms: i64) -> Result<Map<String, Value>, SchemaError> {
+        let mut completed = input.clone();
+        for field in &self.fields {
+            if field.nullable || field.optional || field.default.is_some() || field.read(input).is_some() {
+                continue;
+            }
+            if let Some(zero) = field.zero(now_ms) {
+                completed.insert(field.name.clone(), zero);
+            }
+        }
+        self.normalize(&completed)
     }
 
     pub fn normalize_all(&self, inputs: &[Map<String, Value>]) -> (Vec<Map<String, Value>>, Vec<DroppedRow>) {

@@ -29,6 +29,11 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
     if field.nullable || field.optional { format!("{base}?") } else { base }
 }
 
+fn create_fields<'a>(model: &ModelSpec, fields: &[&'a FieldSpec]) -> Vec<&'a FieldSpec> {
+    let sources: Option<Vec<&str>> = model.actions.iter().find(|action| action.name == "create").filter(|action| !action.variables.is_empty()).map(|action| action.variables.values().map(String::as_str).collect());
+    fields.iter().copied().filter(|field| sources.as_ref().is_none_or(|names| names.contains(&field.name.as_str()))).collect()
+}
+
 fn arg_type(kind: &str, swift: bool) -> &'static str {
     match (kind, swift) {
         ("bool", true) => "Bool",
@@ -91,14 +96,15 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             out.push_str("        return built\n    }\n");
         }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id").collect();
-        let params = fields.iter().map(|field| {
+        let create_fields = create_fields(model, &fields);
+        let params = create_fields.iter().map(|field| {
             let optional = field.nullable || field.optional || field.default.is_some();
             let mut kind = field_type(field, true);
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", field.name, kind, if optional { " = nil" } else { "" })
         }).collect::<Vec<_>>().join(", ");
         writeln!(out, "    public static func create({params}) async throws -> Self {{\n        var values: [String: JSONValue] = [:]").unwrap();
-        for field in &fields {
+        for field in &create_fields {
             if field.nullable || field.optional || field.default.is_some() { writeln!(out, "        if let value = {} {{ values[\"{}\"] = JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
             else { writeln!(out, "        values[\"{}\"] = JSONValue.encode({})", field.name, field.name).unwrap(); }
         }
@@ -158,14 +164,15 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             out.push_str("            return built\n        }\n");
         }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id").collect();
-        let params = fields.iter().map(|field| {
+        let create_fields = create_fields(model, &fields);
+        let params = create_fields.iter().map(|field| {
             let optional = field.nullable || field.optional || field.default.is_some();
             let mut kind = field_type(field, false);
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", field.name, kind, if optional { " = null" } else { "" })
         }).collect::<Vec<_>>().join(", ");
         writeln!(out, "        suspend fun create({params}): {class} {{\n            val values = buildJsonObject {{").unwrap();
-        for field in &fields {
+        for field in &create_fields {
             if field.nullable || field.optional || field.default.is_some() { writeln!(out, "                {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.name, field.name).unwrap(); }
             else { writeln!(out, "                put(\"{}\", jsonValue({}))", field.name, field.name).unwrap(); }
         }

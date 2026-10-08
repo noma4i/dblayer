@@ -127,7 +127,8 @@ impl Db {
             None => RowId::generate_temp(None),
         };
         input.insert("id".to_string(), Value::String(id.to_string()));
-        let data = spec.normalize(&input)?;
+        let now_ms = self.shared.store.lock().now_ms();
+        let data = spec.normalize_local(&input, now_ms)?;
         let key = ModelKey::new(model);
         let mut queued = Queued {
             action: Action::Create,

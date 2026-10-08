@@ -14,6 +14,8 @@ moment.update(text = "hello world")
 moment.destroy()
 ```
 
+`create` takes the fields that the `create` line maps in `input:`, or every field when there is no `input:`. Fields the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
+
 ## What a write does
 
 1. Plans the change: the row, cascades for `dependent: :destroy`, parent touches for `touch: true`.

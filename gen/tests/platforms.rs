@@ -108,3 +108,21 @@ end
     assert!(kotlin.contains("suspend fun mute(mute: Boolean): Chat"));
     assert!(kotlin.contains("\"muted\" to jsonValue(mute)"));
 }
+
+#[test]
+fn create_takes_only_the_fields_the_mutation_input_maps() {
+    let models = parse_models(r#"
+model Chat do
+  schema do
+    string :name, null: true
+    int    :unreadCount
+    date   :createdAt
+  end
+  create with: ChatGroupCreate, input: { name: :name }
+end
+"#).unwrap();
+    let swift = emit_swift(&models);
+    let kotlin = emit_kotlin(&models);
+    assert!(swift.contains("public static func create(name: String? = nil) async throws -> Self"));
+    assert!(kotlin.contains("suspend fun create(name: String? = null): Chat"));
+}
