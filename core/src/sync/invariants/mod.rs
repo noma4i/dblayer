@@ -5,6 +5,8 @@ mod fault_tests;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
+mod gate_tests;
+#[cfg(test)]
 mod race_tests;
 #[cfg(test)]
 mod replace_tests;
