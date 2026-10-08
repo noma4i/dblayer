@@ -193,6 +193,14 @@ fn model_accepts_indexed_association_and_reports_missing_index() {
 }
 
 #[test]
+fn references_key_must_be_a_declared_field() {
+    let undeclared = ModelSpec { associations: vec![association("chats", AssociationKind::References, "chats", "chatIds")], ..model(vec![id_field()]) };
+    assert_eq!(undeclared.validate(&[]), Err(DeclarationError::ReferencesKeyNotField("chats".into())));
+    let declared = ModelSpec { associations: vec![association("chats", AssociationKind::References, "chats", "id")], ..model(vec![id_field()]) };
+    assert_eq!(declared.validate(&[]), Ok(()));
+}
+
+#[test]
 fn association_kinds_choose_ownership_and_read_plan() {
     let belongs_to = association("chat", AssociationKind::BelongsTo, "chats", "chatId");
     let has_many = association("messages", AssociationKind::HasMany, "chats", "chatId");

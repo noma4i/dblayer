@@ -63,7 +63,7 @@ fn defaults_convert_to_json() {
 #[test]
 fn associations_and_composite_index() {
     let model = parse_models(
-        "model Owner do\n  schema do\n    string :n\n  end\nend\nmodel Sample do\n  schema do\n    id :ownerId, index: true\n    date :createdAt, index: true\n    index :ownerId, :createdAt\n  end\n  belongs_to :owner, model: Owner, key: :ownerId, touch: true\n  has_one :first, model: Sample, key: :ownerId, dependent: :destroy\n  references :peers, model: Owner\nend\n",
+        "model Owner do\n  schema do\n    string :n\n  end\nend\nmodel Sample do\n  schema do\n    id :ownerId, index: true\n    date :createdAt, index: true\n    list :peers, of: :id\n    index :ownerId, :createdAt\n  end\n  belongs_to :owner, model: Owner, key: :ownerId, touch: true\n  has_one :first, model: Sample, key: :ownerId, dependent: :destroy\n  references :peers, model: Owner\nend\n",
     )
     .unwrap()
     .remove(1);
@@ -73,6 +73,12 @@ fn associations_and_composite_index() {
     assert_eq!(model.associations[1].dependent, Some(Dependent::Destroy));
     assert_eq!(model.associations[2].kind, AssociationKind::References);
     assert_eq!(model.associations[2].foreign_key, "peers");
+}
+
+#[test]
+fn references_to_the_same_model_keep_their_list_key_unindexed() {
+    let models = parse_models("model Node do\n  schema do\n    list :nearIds, of: :id\n  end\n  references :near, model: Node, key: :nearIds\nend\n").unwrap();
+    assert!(!models[0].fields.iter().find(|field| field.name == "nearIds").unwrap().indexed);
 }
 
 #[test]

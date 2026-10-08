@@ -11,7 +11,7 @@ const DEFAULT_FRESHNESS: &str = "5.minutes";
 
 pub fn build(nodes: &[ModelNode]) -> Vec<ModelSpec> {
     let mut models: Vec<_> = nodes.iter().map(build_model).collect();
-    let indexes: Vec<_> = models.iter().flat_map(|model| model.associations.iter().map(move |association| {
+    let indexes: Vec<_> = models.iter().flat_map(|model| model.associations.iter().filter(|association| association.kind != AssociationKind::References).map(move |association| {
         let owner = if association.kind == AssociationKind::BelongsTo { model.key.to_string() } else { association.target.to_string() };
         (owner, association.foreign_key.clone())
     })).collect();

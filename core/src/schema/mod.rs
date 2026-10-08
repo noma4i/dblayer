@@ -48,6 +48,8 @@ pub enum DeclarationError {
     EmptyForeignKey(String),
     #[error("foreign key of association {0} is not indexed")]
     ForeignKeyNotIndexed(String),
+    #[error("references key of association {0} is not a declared field")]
+    ReferencesKeyNotField(String),
     #[error("association {0} declares dependent without owning children")]
     DependentOnNonOwner(String),
     #[error("association {0} targets an unknown model")]
@@ -341,8 +343,11 @@ impl AssociationSpec {
         }
     }
 
-    fn check_local(&self, indexed: &HashSet<&str>) -> Result<(), DeclarationError> {
+    fn check_local(&self, indexed: &HashSet<&str>, fields: &HashSet<&str>) -> Result<(), DeclarationError> {
         let name = || self.name.clone();
+        if self.kind == AssociationKind::References && !self.foreign_key.is_empty() && !fields.contains(self.foreign_key.as_str()) {
+            return Err(DeclarationError::ReferencesKeyNotField(name()));
+        }
         if self.requires_foreign_key() {
             if self.foreign_key.is_empty() {
                 return Err(DeclarationError::EmptyForeignKey(name()));
@@ -821,8 +826,9 @@ impl ModelSpec {
         self.check_storage()?;
         self.check_indexes()?;
         let indexed: HashSet<&str> = self.fields.iter().filter(|field| field.indexed).map(|field| field.name.as_str()).collect();
+        let declared: HashSet<&str> = self.fields.iter().map(|field| field.name.as_str()).collect();
         for association in &self.associations {
-            association.check_local(&indexed)?;
+            association.check_local(&indexed, &declared)?;
         }
         for relation in &self.relations {
             relation.check(self)?;
