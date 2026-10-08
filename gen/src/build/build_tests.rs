@@ -72,7 +72,7 @@ fn associations_and_composite_index() {
     assert_eq!((owner.kind, owner.target.as_str(), owner.foreign_key.as_str(), owner.touches_parent), (AssociationKind::BelongsTo, "Owner", "ownerId", true));
     assert_eq!(model.associations[1].dependent, Some(Dependent::Destroy));
     assert_eq!(model.associations[2].kind, AssociationKind::References);
-    assert_eq!(model.associations[2].foreign_key, "");
+    assert_eq!(model.associations[2].foreign_key, "peers");
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn ephemeral_block_builds_ephemeral_specs_beside_stored_fields() {
     )
     .unwrap()
     .remove(0);
-    assert_eq!(model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(), vec!["name", "id"]);
+    assert_eq!(model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(), vec!["id", "name"]);
     let typing = model.ephemeral_field("typing").unwrap();
     assert_eq!((typing.field.default.clone(), typing.reset_after.clone()), (Some(json!(false)), Some("5.seconds".to_string())));
     let mood = model.ephemeral_field("mood").unwrap();

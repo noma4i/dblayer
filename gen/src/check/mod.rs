@@ -70,9 +70,10 @@ fn field_keys(word: &str) -> Vec<Key> {
         key("optional", Want::Bool, false),
         key("default", Want::Any, false),
         key("id_from", Want::Symbol, false),
+        key("from", Want::Any, false),
     ];
     match word {
-        "file" => keys.retain(|candidate| candidate.name != "id_from"),
+        "file" => keys.retain(|candidate| !matches!(candidate.name, "id_from" | "from")),
         "enum" => keys.push(key("values", Want::Symbols, true)),
         "list" => keys.push(key("of", Want::Symbol, true)),
         _ => {}
@@ -85,7 +86,7 @@ fn field_keys(word: &str) -> Vec<Key> {
 
 fn ephemeral_keys(word: &str) -> Vec<Key> {
     let mut keys = field_keys(word);
-    keys.retain(|candidate| !matches!(candidate.name, "optional" | "id_from"));
+    keys.retain(|candidate| !matches!(candidate.name, "optional" | "id_from" | "from"));
     keys.push(key("reset_after", Want::Duration, false));
     keys
 }

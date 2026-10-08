@@ -146,6 +146,8 @@ pub struct FieldSpec {
     pub indexed: bool,
     #[serde(default)]
     pub id_from_parent: Option<String>,
+    #[serde(default)]
+    pub from: Option<String>,
 }
 
 impl FieldSpec {
@@ -158,6 +160,7 @@ impl FieldSpec {
             default: None,
             indexed: false,
             id_from_parent: None,
+            from: None,
         }
     }
 
@@ -193,6 +196,10 @@ impl FieldSpec {
         Self { id_from_parent: Some(parent.to_string()), ..Self::scalar(name, ScalarKind::Id) }
     }
 
+    pub fn read_from(self, path: &str) -> Self {
+        Self { from: Some(path.to_string()), ..self }
+    }
+
     pub fn nullable(self) -> Self {
         Self { nullable: true, ..self }
     }
@@ -213,6 +220,9 @@ impl FieldSpec {
         if let Some(value) = input.get(&self.name) {
             return Some(value.clone());
         }
+        if let Some(path) = &self.from {
+            return read_path(input, path);
+        }
         let parent = self.id_from_parent.as_ref()?;
         input.get(parent)?.as_object()?.get("id").cloned()
     }
@@ -230,6 +240,15 @@ impl FieldSpec {
             }
         }
     }
+}
+
+fn read_path(input: &Map<String, Value>, path: &str) -> Option<Value> {
+    let mut parts = path.split('.');
+    let mut current = input.get(parts.next()?)?;
+    for part in parts {
+        current = current.as_object()?.get(part)?;
+    }
+    (!current.is_null()).then(|| current.clone())
 }
 
 fn is_file_descriptor(value: &Value) -> bool {

@@ -90,6 +90,7 @@ fn build_field(call: &Call) -> FieldSpec {
     field.optional = flag(call, "optional");
     field.indexed = flag(call, "index");
     field.id_from_parent = option(call, "id_from").and_then(|pair| text_of(&pair.value.item));
+    field.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));
     field.default = option(call, "default").map(|pair| json_of(&pair.value.item));
     field
 }

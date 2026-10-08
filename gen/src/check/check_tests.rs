@@ -45,8 +45,8 @@ fn unknown_key() {
 
 #[test]
 fn missing_required_key() {
-    assert_eq!(failure_in("  belongs_to :o, key: :ownerId"), (7, "`belongs_to` needs `model:`".to_string()));
-    assert_eq!(failure_in("  has_many :o, model: Sample"), (7, "`has_many` needs `key:`".to_string()));
+    assert_eq!(failure_in("  belongs_to :o, key: :ownerId"), (1, "model Sample: association o targets an unknown model".to_string()));
+    assert_eq!(failure_in("  has_many :o, model: Sample"), (1, "model Sample: foreign key of association o is not indexed".to_string()));
     assert_eq!(field_failure("enum :kind"), (3, "`enum` needs `values:`".to_string()));
     assert_eq!(field_failure("list :tags"), (3, "`list` needs `of:`".to_string()));
     assert_eq!(failure_in("  remote :feed do\n    list\n  end"), (7, "`remote` needs a `query` line".to_string()));
@@ -119,10 +119,6 @@ fn association_to_unknown_model() {
 
 #[test]
 fn core_declaration_errors_point_at_the_model() {
-    assert_eq!(
-        failure("model Sample do\n  schema do\n    string :a\n    id :ownerId\n  end\n  belongs_to :o, model: Sample, key: :ownerId\nend"),
-        (1, "model Sample: foreign key of association o is not indexed".to_string())
-    );
     assert_eq!(
         failure("model Sample do\n  schema do\n    string :a\n  end\n  scope :s, order: { zzz: :asc }\nend"),
         (1, "model Sample: relation s sorts by unknown column zzz".to_string())

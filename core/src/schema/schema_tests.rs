@@ -538,3 +538,13 @@ fn action_refetch_must_name_a_remote_relation_and_optimistic_a_field() {
     ok = host("feed", "ghost");
     assert_eq!(ok.validate(&[]), Err(DeclarationError::UnknownOptimisticField { action: "like".into(), field: "ghost".into() }));
 }
+
+#[test]
+fn field_with_a_path_reads_the_nested_value() {
+    let field = FieldSpec::scalar("locationLat", ScalarKind::Num).read_from("location.lat");
+
+    assert_eq!(field.read(&object(json!({"location": {"lat": 1.5}}))), Some(json!(1.5)));
+    assert_eq!(field.read(&object(json!({"locationLat": 2.5, "location": {"lat": 1.5}}))), Some(json!(2.5)));
+    assert_eq!(field.read(&object(json!({"location": {"city": "Kyiv"}}))), None);
+    assert_eq!(field.read(&object(json!({"location": null}))), None);
+}
