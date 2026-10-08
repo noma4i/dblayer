@@ -33,7 +33,16 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`, `
 
 ## Temporary ids
 
-A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows that point at the temporary id are updated in the same commit.
+A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
+
+## Rolling back
+
+Every queued change keeps what it replaced: the old field values, or the destroyed rows with their files and list positions.
+
+- A rollback gives back only what the change still owns. A field edited later, or overwritten by the server, keeps its newer value.
+- Rolling back an older edit while a newer edit of the same field is queued hands the old value to the newer edit. Rolling back both, in either order, ends at the original value.
+- A created row disappears with the changes queued on it, whether it has a temporary id or one you chose.
+- A destroyed row keeps its file bytes until the server confirms the destroy. A refusal brings back the row, the files and the list positions.
 
 ## Failures
 

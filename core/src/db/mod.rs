@@ -11,9 +11,11 @@ mod lookup;
 mod maintain;
 mod observe;
 mod open;
+mod prior;
 mod related;
 mod replace;
 mod record_sync;
+mod references;
 mod reset;
 mod roll_back;
 mod row;
@@ -26,7 +28,9 @@ pub use observe::ObserverHandle;
 pub use open::{Db, DbConfig};
 pub use replace::{OnAbsent, ReplaceRequest};
 pub use row::{Record, Row};
-pub(crate) use roll_back::{follows, restore_destroyed};
+pub(crate) use local_write::read_outbox;
+pub(crate) use prior::{swap_id, Prior};
+pub(crate) use references::ReferencingRow;
 pub use watch::{Change, CountChange, Related};
 
 #[cfg(test)]

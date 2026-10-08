@@ -6,8 +6,9 @@ use crate::identity::{ModelKey, RowId};
 use crate::store::{MaintenanceReport, TempRowPolicy};
 
 use super::error::DbError;
-use super::local_write::plan_fault;
+use super::local_write::{plan_fault, read_outbox};
 use super::open::{locked, Db};
+use super::prior::Prior;
 
 impl Db {
     pub fn maintain(&self, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, DbError> {
@@ -19,9 +20,16 @@ impl Db {
     pub fn sweep_files(&self) -> Result<usize, DbError> {
         let _gate = locked(&self.shared.files_gate);
         let orphans = self.shared.read(|reader| {
+            let held: HashSet<String> = read_outbox(reader)?
+                .iter()
+                .filter_map(Prior::of)
+                .flat_map(|prior| prior.held_files())
+                .map(|file| file.id)
+                .collect();
             let mut orphans = Vec::new();
             for reference in all_references(reader.connection())? {
-                let described = self.shared.specs.contains_key(&reference.model)
+                let described = held.contains(&reference.id)
+                    || self.shared.specs.contains_key(&reference.model)
                     && reader
                         .point(&reference.model, &reference.row_id)?
                         .and_then(|row| row.get(&reference.field).and_then(FileDescriptor::from_value))

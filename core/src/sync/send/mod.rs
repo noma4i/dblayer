@@ -36,4 +36,6 @@ mod flush_tests;
 #[cfg(test)]
 mod network_tests;
 #[cfg(test)]
+mod rollback_tests;
+#[cfg(test)]
 mod variables_tests;

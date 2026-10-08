@@ -65,14 +65,17 @@ fn put_replaces_the_file_of_the_pair_and_remove_deletes_it() {
 }
 
 #[test]
-fn destroying_a_row_deletes_its_files_for_every_reason() {
+fn destroying_a_row_deletes_its_files_unless_a_local_destroy_holds_them() {
     let (store, _) = booted_store();
-    for (index, reason) in [DestroyReason::Server, DestroyReason::Local, DestroyReason::Expired].into_iter().enumerate() {
+    for (index, reason) in [DestroyReason::Server, DestroyReason::Expired].into_iter().enumerate() {
         let row = format!("m{index}");
         store.commit(with_files(&store, vec![upsert("messages", message(&row, "c1"))], vec![FileOp::Put(file(&format!("f{index}"), &row, "media", b"x"))])).unwrap();
         store.commit(envelope(&store, vec![destroy("messages", &row, reason)], vec![])).unwrap();
         assert!(stored(&store, &row, "media").is_none());
     }
+    store.commit(with_files(&store, vec![upsert("messages", message("m9", "c1"))], vec![FileOp::Put(file("f9", "m9", "media", b"x"))])).unwrap();
+    store.commit(envelope(&store, vec![destroy("messages", "m9", DestroyReason::Local)], vec![])).unwrap();
+    assert_eq!(stored(&store, "m9", "media").unwrap().id, "f9");
 }
 
 #[test]

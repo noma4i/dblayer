@@ -24,7 +24,12 @@ impl Db {
 
     fn stored_file(&self, model: &str, id: &RowId, field: &str) -> Result<Option<FileRecord>, DbError> {
         self.file_field(model, field)?;
-        self.shared.read(|reader| Ok(find(reader.connection(), model, id.as_str(), field)?))
+        self.shared.read(|reader| {
+            if reader.point(model, id.as_str())?.is_none() {
+                return Ok(None);
+            }
+            Ok(find(reader.connection(), model, id.as_str(), field)?)
+        })
     }
 
     pub fn attach(&self, model: &str, id: &RowId, field: &str, bytes: &[u8], name: &str, mime: &str) -> Result<FileDescriptor, DbError> {

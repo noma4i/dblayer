@@ -7,19 +7,19 @@ use crate::commit::{
     CommitEnvelope, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition, WriteOrigin,
 };
 use crate::ddl::table_name;
-use crate::files::ids_of_rows;
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::operation::Operation;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, RootShape};
-use crate::store::{PlanCommitError, Reader};
+use crate::store::{PlanCommitError, Reader, StoreError};
 use crate::value::read_id;
 use crate::write::{
-    cascade_destroys, cascade_envelope, cascades, restore_patch, touches_parent, WritePlan,
+    cascade_destroys, cascade_envelope, cascades, touches_parent, WritePlan,
 };
 
 use super::error::DbError;
 use super::open::Db;
+use super::prior::{Prior, PriorRow};
 use super::row::Row;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +27,41 @@ pub struct OutboxOperation {
     pub operation: Operation,
     pub input: Value,
     pub rollback: Option<Value>,
+}
+
+impl OutboxOperation {
+    pub(crate) fn rewritten(&self, row_ids: Vec<RowId>, input: Value, rollback: Option<Value>) -> OperationTransition {
+        let operation = &self.operation;
+        OperationTransition::Begin(OperationRecord {
+            seq: Some(operation.id.0),
+            action_key: operation.action_key.clone(),
+            status: operation.status,
+            row_ids,
+            temp_id: operation.temp_id.clone(),
+            input,
+            transport_started: operation.transport_started,
+            base_revision: Some(operation.base_revision),
+            created_at: operation.created_at,
+            dedupe_key: operation.dedupe_key.clone(),
+            rollback,
+            upload: None,
+        })
+    }
+}
+
+pub(crate) fn read_outbox(reader: &Reader<'_>) -> Result<Vec<OutboxOperation>, StoreError> {
+    let operations = crate::operation::open_operations(reader.connection())?;
+    let mut statement = reader.connection().prepare("SELECT input, rollback FROM op WHERE seq = ?1")?;
+    let mut entries = Vec::with_capacity(operations.len());
+    for operation in operations {
+        let (input, rollback): (Vec<u8>, Option<Vec<u8>>) = statement.query_row([operation.id.0], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        entries.push(OutboxOperation {
+            operation,
+            input: serde_json::from_slice(&input)?,
+            rollback: rollback.map(|bytes| serde_json::from_slice(&bytes)).transpose()?,
+        });
+    }
+    Ok(entries)
 }
 
 enum Action {
@@ -79,16 +114,21 @@ impl Db {
         input.insert("id".to_string(), Value::String(id.to_string()));
         let data = spec.normalize(&input)?;
         let key = ModelKey::new(model);
-        let queued = Queued {
+        let mut queued = Queued {
             action: Action::Create,
             row_id: id.clone(),
             temp_id: id.is_temp().then(|| id.clone()),
             input: Value::Object(data.clone()),
             rollback: None,
         };
-        self.commit_local(spec, queued, |reader, plan| {
+        self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
+            let prior = match reader.point(model, id.as_str())? {
+                None => PriorRow::Created { model: model.to_string(), id: id.to_string() },
+                Some(current) => PriorRow::edited(reader, model, id.as_str(), &current, &data)?,
+            };
+            queued.rollback = Some(Prior { rows: vec![prior] }.to_value());
             plan.upsert(key.clone(), vec![data.clone()]);
-            self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))
+            Ok(Some(self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?))
         })?;
         self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
     }
@@ -109,8 +149,7 @@ impl Db {
             if merged == current {
                 return Ok(None);
             }
-            let fields: Vec<String> = patch.keys().cloned().collect();
-            queued.rollback = Some(Value::Object(restore_patch(&fields, &current)));
+            queued.rollback = Some(Prior { rows: vec![PriorRow::edited(reader, model, id.as_str(), &current, &merged)?] }.to_value());
             plan.update(key.clone(), id.clone(), merged.clone());
             Ok(Some(self.touch_ops(reader, spec, &[&merged, &current], &own)?))
         })?;
@@ -133,8 +172,7 @@ impl Db {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
-            let fields: Vec<String> = patch.keys().cloned().collect();
-            queued.rollback = Some(Value::Object(restore_patch(&fields, &current)));
+            queued.rollback = Some(Prior { rows: vec![PriorRow::edited(reader, model, id.as_str(), &current, &merged)?] }.to_value());
             plan.update(key.clone(), id.clone(), merged.clone());
             Ok(Some(self.touch_ops(reader, spec, &[&merged, &current], &own)?))
         })?;
@@ -147,7 +185,6 @@ impl Db {
         let generation = self.generation();
         let created_at = self.shared.store.lock().now_ms();
         let mut destroyed: Vec<RowRef> = Vec::new();
-        let mut file_ids: Vec<String> = Vec::new();
         self.shared
             .store
             .commit_with(generation, |reader| {
@@ -162,13 +199,9 @@ impl Db {
                 } else {
                     vec![own.clone()]
                 };
-                let pairs: Vec<(String, String)> = destroyed.iter().map(|target| (target.model.to_string(), target.id.to_string())).collect();
-                file_ids = ids_of_rows(reader.connection(), &pairs)?;
                 let mut rows = Vec::new();
                 for target in &destroyed {
-                    if let Some(data) = reader.point(target.model.as_str(), target.id.as_str())? {
-                        rows.push(json!({"model": target.model.as_str(), "row": data}));
-                    }
+                    rows.extend(PriorRow::destroyed(reader, target.model.as_str(), target.id.as_str())?);
                 }
                 let mut envelope = cascade_envelope(&destroyed, DestroyReason::Local, WriteOrigin::Optimistic, generation);
                 let queued = Queued {
@@ -176,46 +209,17 @@ impl Db {
                     row_id: id.clone(),
                     temp_id: None,
                     input: json!({"id": id.as_str()}),
-                    rollback: Some(json!({"rows": rows})),
+                    rollback: Some(Prior { rows }.to_value()),
                 };
                 envelope.operation_transitions.push(self.begin(reader, spec, &queued, created_at)?);
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
-        self.shared.files.discard(&file_ids);
         Ok(destroyed)
     }
 
     pub fn outbox(&self) -> Result<Vec<OutboxOperation>, DbError> {
-        self.shared.read(|reader| {
-            let operations = crate::operation::open_operations(reader.connection())?;
-            let mut statement = reader.connection().prepare("SELECT input, rollback FROM op WHERE seq = ?1")?;
-            let mut entries = Vec::with_capacity(operations.len());
-            for operation in operations {
-                let (input, rollback): (Vec<u8>, Option<Vec<u8>>) =
-                    statement.query_row([operation.id.0], |row| Ok((row.get(0)?, row.get(1)?)))?;
-                entries.push(OutboxOperation {
-                    operation,
-                    input: serde_json::from_slice(&input).map_err(crate::store::StoreError::from)?,
-                    rollback: rollback
-                        .map(|bytes| serde_json::from_slice(&bytes))
-                        .transpose()
-                        .map_err(crate::store::StoreError::from)?,
-                });
-            }
-            Ok(entries)
-        })
-    }
-
-    fn commit_local(
-        &self,
-        spec: &ModelSpec,
-        queued: Queued,
-        build: impl FnOnce(&Reader<'_>, &mut WritePlan) -> Result<Vec<EntityOp>, DbError>,
-    ) -> Result<(), DbError> {
-        let mut queued = queued;
-        self.commit_local_optional(spec, &mut queued, |reader, plan, _| build(reader, plan).map(Some))?;
-        Ok(())
+        self.shared.read(|reader| Ok(read_outbox(reader)?))
     }
 
     fn commit_local_optional(

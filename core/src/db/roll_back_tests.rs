@@ -54,6 +54,46 @@ fn rolling_back_a_destroy_restores_the_cascade() {
 }
 
 #[test]
+fn rolling_back_an_older_update_keeps_a_newer_edit() {
+    let db = booted();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "A"}));
+    db.update("moments", &rid("m1"), obj(json!({"text": "B"}))).unwrap();
+    let older = only_seq(&db);
+    db.update("moments", &rid("m1"), obj(json!({"text": "C"}))).unwrap();
+    db.roll_back(older).unwrap();
+    assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("C"));
+}
+
+#[test]
+fn rolling_back_every_update_restores_the_original_in_either_order() {
+    for oldest_first in [true, false] {
+        let db = booted();
+        put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "A"}));
+        db.update("moments", &rid("m1"), obj(json!({"text": "B"}))).unwrap();
+        db.update("moments", &rid("m1"), obj(json!({"text": "C"}))).unwrap();
+        let mut seqs: Vec<i64> = db.outbox().unwrap().iter().map(|entry| entry.operation.id.0).collect();
+        if !oldest_first {
+            seqs.reverse();
+        }
+        for seq in seqs {
+            db.roll_back(seq).unwrap();
+        }
+        assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("A"), "oldest_first={oldest_first}");
+    }
+}
+
+#[test]
+fn rolling_back_a_create_with_an_explicit_id_removes_the_row_and_its_queued_edits() {
+    let db = booted();
+    db.create("moments", obj(json!({"id": "m9", "userId": "u1", "text": "new"}))).unwrap();
+    let create = only_seq(&db);
+    db.update("moments", &rid("m9"), obj(json!({"text": "edited"}))).unwrap();
+    db.roll_back(create).unwrap();
+    assert!(db.find("moments", &rid("m9")).unwrap().is_none());
+    assert!(db.outbox().unwrap().is_empty());
+}
+
+#[test]
 fn rolling_back_an_unknown_operation_fails() {
     let db = booted();
     assert!(matches!(db.roll_back(99), Err(DbError::UnknownOperation(99))));

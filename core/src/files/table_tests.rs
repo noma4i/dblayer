@@ -70,15 +70,13 @@ fn move_row_hands_files_to_the_new_id_and_replaces_a_clash() {
 }
 
 #[test]
-fn ids_of_rows_lists_files_of_the_given_rows() {
+fn references_of_row_lists_the_files_of_one_row_by_field() {
     let connection = connection();
     put(&connection, &record("f1", "m1", "media", Location::Table, b"1")).unwrap();
-    put(&connection, &record("f2", "m2", "media", Location::Directory, b"")).unwrap();
+    put(&connection, &record("f2", "m1", "cover", Location::Directory, b"")).unwrap();
     put(&connection, &record("f3", "m3", "media", Location::Table, b"3")).unwrap();
-    let rows = [("moments".to_string(), "m1".to_string()), ("moments".to_string(), "m2".to_string())];
-    let mut ids = ids_of_rows(&connection, &rows).unwrap();
-    ids.sort();
-    assert_eq!(ids, vec!["f1", "f2"]);
+    let found = references_of_row(&connection, "moments", "m1").unwrap();
+    assert_eq!(found.iter().map(|reference| (reference.field.as_str(), reference.id.as_str())).collect::<Vec<_>>(), vec![("cover", "f2"), ("media", "f1")]);
 }
 
 #[test]

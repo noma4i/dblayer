@@ -65,7 +65,7 @@ fn update_merges_the_patch_into_the_stored_row() {
 }
 
 #[test]
-fn update_enqueues_an_update_operation_with_rollback_values() {
+fn update_enqueues_an_update_operation_that_holds_the_values_it_replaces() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     db.update("moments", &rid("m1"), obj(json!({"text": "uno"}))).unwrap();
@@ -74,7 +74,9 @@ fn update_enqueues_an_update_operation_with_rollback_values() {
     assert_eq!(outbox[0].operation.action_key, "moments:update");
     assert_eq!(outbox[0].operation.row_ids, vec![rid("m1")]);
     assert_eq!(outbox[0].input, json!({"id": "m1", "text": "uno"}));
-    assert_eq!(outbox[0].rollback, Some(json!({"text": "one"})));
+    let held = &outbox[0].rollback.as_ref().unwrap()["rows"][0];
+    assert_eq!((held["model"].as_str(), held["id"].as_str(), &held["before"]), (Some("moments"), Some("m1"), &json!({"text": "one"})));
+    assert_eq!(held["owned"].as_object().unwrap().keys().collect::<Vec<_>>(), ["text"]);
 }
 
 #[test]

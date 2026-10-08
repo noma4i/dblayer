@@ -34,8 +34,6 @@ pub enum DbError {
     OriginNotLandable(WriteOrigin),
     #[error("operation {0} is not in the outbox")]
     UnknownOperation(i64),
-    #[error("operation {0} cannot be rolled back")]
-    NotRollbackable(String),
     #[error(transparent)]
     Landing(#[from] crate::read::LandingError),
 }

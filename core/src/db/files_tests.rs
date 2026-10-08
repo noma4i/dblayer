@@ -145,18 +145,21 @@ fn detach_clears_the_description_the_bytes_and_the_directory_file() {
 }
 
 #[test]
-fn destroying_a_row_removes_its_files_and_those_of_cascaded_children() {
+fn destroying_a_row_hides_its_files_and_those_of_cascaded_children_but_keeps_their_bytes() {
     let (_root, db) = on_disk();
     seed_tree(&db);
     attach(&db, "m1", "media", &large());
     db.attach("vibes", &rid("v1"), "media", &large(), "v.bin", "a/b").unwrap();
     db.attach("vibes", &rid("v2"), "media", SMALL, "w.bin", "a/b").unwrap();
-    let kept = attach(&db, "m2", "media", &large());
-    let cached = db.url("vibes", &rid("v2"), "media").unwrap().unwrap();
+    attach(&db, "m2", "media", &large());
     db.destroy("moments", &rid("m1")).unwrap();
-    assert_eq!(count_files(&db), 1);
-    assert_eq!(db.shared.files.directory_entries(), vec![kept.id]);
-    assert!(!cached.exists());
+    for (model, id) in [("moments", "m1"), ("vibes", "v1"), ("vibes", "v2")] {
+        assert_eq!(db.read(model, &rid(id), "media").unwrap(), None);
+    }
+    assert_eq!(count_files(&db), 4);
+    assert_eq!(db.shared.files.directory_entries().len(), 3);
+    db.sweep_files().unwrap();
+    assert_eq!(count_files(&db), 4);
 }
 
 #[test]

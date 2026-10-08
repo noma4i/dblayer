@@ -99,7 +99,7 @@ The pause is computed from the clock and the stored attempt count, so an app res
 
 | How the send ends | State | What happens to the record |
 | ----------------- | ----- | -------------------------- |
-| The server confirms | `synced` | the server row replaces the local one, a temporary id is swapped for the real one |
+| The server confirms | `synced` | the server row replaces the local one, a temporary id is swapped for the real one, references to it are rewritten |
 | The server refuses (GraphQL errors, a 4xx status) | `failed` with `on_failure: :keep`, otherwise gone | with `:rollback` the change is rolled back in one commit and the error is reported |
 | Unreachable before the transfer starts | `pending`, then `failed` or gone after 40 attempts | sent again by itself, the final outcome follows `on_failure` like a refusal |
 | No answer after the transfer started (broken connection, 5xx status, unreadable answer) | `deliveryUnknown` | the record stays as it is, whatever `on_failure` says, because the change may have reached the server |
@@ -110,7 +110,7 @@ You choose per action, in the model file:
 
 | Setting | Result |
 | ------- | ------ |
-| `on_failure: :rollback` (default) | the local change is rolled back in one commit (a created record disappears) and the error is reported |
+| `on_failure: :rollback` (default) | the local change is rolled back in one commit and the error is reported: a created record disappears, an edit gives back only the fields it still owns |
 | `on_failure: :keep` | the record stays with `state = failed` and its error, and waits for your decision |
 
 ```ruby
@@ -122,7 +122,7 @@ action :like do
 end
 ```
 
-`destroy` has no `on_failure`: the record is hidden at once, and if the destroy fails for good (a refusal or 40 unreached attempts) the record comes back with `state = failed` and the error, attempts and time in `sync`. `retry()` hides the record again and sends the destroy. `discard()` keeps the record and drops the destroy. Declaring `on_failure` on `destroy` is an error.
+`destroy` has no `on_failure`: the record is hidden at once, and if the destroy fails for good (a refusal or 40 unreached attempts) the record comes back with its files and list positions, `state = failed` and the error, attempts and time in `sync`. `retry()` hides the record again and sends the destroy. `discard()` keeps the record and drops the destroy. Declaring `on_failure` on `destroy` is an error.
 
 A record in `failed` or `deliveryUnknown` has two gestures:
 
@@ -165,7 +165,8 @@ Two kinds of refreshing exist:
 - The state is written in the same commit that changes the queue, so a reader never sees a queued change without its state.
 - Every queued change is durable: a record created offline stays `pending` across restarts and is sent when the queue next runs, for example after a reconnect. A change that was `sending` when the app stopped is `deliveryUnknown` after the restart.
 - When the server answers, the temporary id is replaced by the real one in one commit and the state becomes `synced`. Observers see the swap as `replaced`.
-- Rows of other models that point at the temporary id are updated in the same commit.
+- Rows and queued changes of other models that point at the temporary id through a declared association are updated in the same commit.
+- A rollback restores the state saved in the change itself and only the parts the change still owns, see [writing data](writing-data.md#rolling-back).
 
 ## Uploads
 

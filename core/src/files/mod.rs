@@ -8,7 +8,7 @@ pub use table::{FileRecord, Location};
 pub(crate) use descriptor::sha256_hex;
 pub(crate) use directories::{is_partial, remove_beside, FileDirectories};
 pub(crate) use table::{
-    all_references, clear_all, clear_model, find, ids_of_rows, move_row, put, remove_pair, remove_row, FileReference,
+    all_references, clear_all, clear_model, find, move_row, put, references_of_row, remove_pair, remove_row, FileReference,
 };
 
 pub(crate) const TABLE_LIMIT: usize = 256 * 1024;

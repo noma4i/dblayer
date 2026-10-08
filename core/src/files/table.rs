@@ -69,6 +69,11 @@ fn record_from(row: &Row<'_>) -> rusqlite::Result<FileRecord> {
     })
 }
 
+fn reference_from(row: &Row<'_>) -> rusqlite::Result<FileReference> {
+    let location: String = row.get(4)?;
+    Ok(FileReference { id: row.get(0)?, model: row.get(1)?, row_id: row.get(2)?, field: row.get(3)?, location: Location::from_sql(&location) })
+}
+
 pub(crate) fn put(connection: &Connection, record: &FileRecord) -> rusqlite::Result<()> {
     remove_pair(connection, &record.model, &record.row_id, &record.field)?;
     let data = (record.location == Location::Table).then_some(record.data.as_slice());
@@ -113,30 +118,17 @@ pub(crate) fn move_row(connection: &Connection, model: &str, from: &str, to: &st
     connection.execute("UPDATE OR REPLACE file SET row_id = ?3 WHERE model = ?1 AND row_id = ?2", params![model, from, to])
 }
 
-pub(crate) fn ids_of_rows(connection: &Connection, rows: &[(String, String)]) -> rusqlite::Result<Vec<String>> {
-    let mut statement = connection.prepare("SELECT id FROM file WHERE model = ?1 AND row_id = ?2")?;
-    let mut ids = Vec::new();
-    for (model, row_id) in rows {
-        for id in statement.query_map(params![model, row_id], |row| row.get::<_, String>(0))? {
-            ids.push(id?);
-        }
-    }
-    Ok(ids)
+pub(crate) fn references_of_row(connection: &Connection, model: &str, row_id: &str) -> rusqlite::Result<Vec<FileReference>> {
+    connection
+        .prepare("SELECT id, model, row_id, field, location FROM file WHERE model = ?1 AND row_id = ?2 ORDER BY field")?
+        .query_map(params![model, row_id], reference_from)?
+        .collect()
 }
 
 pub(crate) fn all_references(connection: &Connection) -> rusqlite::Result<Vec<FileReference>> {
     connection
         .prepare("SELECT id, model, row_id, field, location FROM file ORDER BY created_at, id")?
-        .query_map([], |row| {
-            let location: String = row.get(4)?;
-            Ok(FileReference {
-                id: row.get(0)?,
-                model: row.get(1)?,
-                row_id: row.get(2)?,
-                field: row.get(3)?,
-                location: Location::from_sql(&location),
-            })
-        })?
+        .query_map([], reference_from)?
         .collect()
 }
 
