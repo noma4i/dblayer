@@ -26,10 +26,10 @@ dependencies {
   api("androidx.compose.runtime:runtime:1.11.4")
   api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
   api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-  implementation("com.squareup.okhttp3:okhttp:4.12.0")
+  implementation("com.squareup.okhttp3:okhttp:5.5.0")
   implementation("net.java.dev.jna:jna:5.17.0@aar")
   testImplementation("net.java.dev.jna:jna:5.17.0")
   testImplementation("junit:junit:4.13.2")
-  testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+  testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }
