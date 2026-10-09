@@ -1,6 +1,9 @@
 use super::fixtures::*;
 use super::*;
+use crate::identity::ScopeKey;
 use crate::query::Query;
+use crate::schema::{Coverage, PageDirection, RelationSpec, RemoteShape, RemoteSpec, VariableSource};
+use crate::value::relation_scope_key;
 use serde_json::json;
 
 #[test]
@@ -152,4 +155,45 @@ fn destroy_of_a_missing_row_fails() {
     let db = booted();
     assert!(matches!(db.destroy("users", &rid("nope")), Err(DbError::NotFound { .. })));
     assert!(db.outbox().unwrap().is_empty());
+}
+
+fn threaded_db() -> Db {
+    let remote = |variables| RemoteSpec {
+        operation: "Thread".into(),
+        shape: RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None },
+        stale_time: "session".into(),
+        empty_stale_time: None,
+        selects_page_info: true,
+        updates: Vec::new(),
+        page_size: None,
+        variables,
+        root: None,
+    };
+    let mut spec = messages_spec();
+    let mut thread = RelationSpec::new("thread", &["chatId"]);
+    thread.remote = Some(remote(Default::default()));
+    let mut media = RelationSpec::new("media", &["chatId"]);
+    media.remote = Some(remote([("kinds".to_string(), VariableSource::Constant { value: json!(["image"]) })].into()));
+    spec.relations.extend([thread, media]);
+    Db::open_in_memory(vec![chats_spec(), spec], None).unwrap()
+}
+
+fn scope_of(relation: &str, chat: &str) -> ScopeKey {
+    relation_scope_key("messages", relation, &[("chatId".to_string(), chat.to_string())].into()).unwrap()
+}
+
+#[test]
+fn create_lands_the_temp_row_in_the_unfiltered_scope_of_its_params() {
+    let db = threaded_db();
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("messages").in_scope(scope_of("thread", "c1")), callback).unwrap();
+    db.settle();
+    let row = db.create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
+    db.settle();
+    assert_eq!(ids(changes(&log).last().unwrap()), [row.id.to_string()]);
+    let other = db.create("messages", obj(json!({"chatId": "c2", "body": "elsewhere"}))).unwrap();
+    db.settle();
+    assert_eq!(ids(changes(&log).last().unwrap()), [row.id.to_string()]);
+    assert_eq!(db.shared.store.scope_members("messages", scope_of("media", "c1").as_str()).unwrap(), vec![]);
+    assert!(db.shared.store.scope_members("messages", scope_of("thread", "c2").as_str()).unwrap().iter().any(|(id, _)| id == other.id.as_str()));
 }

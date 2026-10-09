@@ -35,7 +35,7 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`, `
 
 ## Temporary ids
 
-A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
+A created row joins, at the front, the list of every remote relation whose params it carries and that has no constant variable filter, so a live list shows it at once. A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
 
 `settled()` waits until the server has answered every queued change of a record and throws on a refusal, which is how a screen shows a save error for an optimistic `update`:
 

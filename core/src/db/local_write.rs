@@ -4,11 +4,13 @@ use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
 
 use crate::commit::{
-    CommitEnvelope, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition, WriteOrigin,
+    CommitEnvelope, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition, ScopeOp, ScopeRef, WriteOrigin,
 };
 use crate::ddl::table_name;
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId, RowRef};
+use crate::schema::{FieldKind, RelationSpec, VariableSource};
+use crate::value::{fractional_between, normalize_relation_params, relation_scope_key, ScalarKind};
 use crate::operation::Operation;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, RootShape};
@@ -90,6 +92,41 @@ struct Queued {
     temp_id: Option<RowId>,
     input: Value,
     rollback: Option<Value>,
+    scope_ops: Vec<ScopeOp>,
+}
+
+fn lists_every_row_of_its_params(relation: &RelationSpec) -> bool {
+    let Some(remote) = &relation.remote else { return false };
+    !relation.by_columns.is_empty()
+        && relation.text_params.is_empty()
+        && !remote.variables.values().any(|source| matches!(source, VariableSource::Constant { .. }))
+}
+
+fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId, row: &Map<String, Value>) -> Result<Vec<ScopeOp>, DbError> {
+    let mut operations = Vec::new();
+    for relation in spec.relations.iter().filter(|relation| lists_every_row_of_its_params(relation)) {
+        let mut params = Map::new();
+        let mut kinds = std::collections::BTreeMap::new();
+        for column in &relation.by_columns {
+            let kind = match spec.field(column).map(|field| &field.kind) {
+                Some(FieldKind::Scalar { kind }) => *kind,
+                Some(FieldKind::Enum { .. }) => ScalarKind::Str,
+                _ => break,
+            };
+            let Some(value) = row.get(column) else { break };
+            params.insert(column.clone(), value.clone());
+            kinds.insert(column.clone(), kind);
+        }
+        if params.len() != relation.by_columns.len() {
+            continue;
+        }
+        let Ok(normalized) = normalize_relation_params(&params, &kinds) else { continue };
+        let Ok(key) = relation_scope_key(spec.key.as_str(), &relation.name, &normalized) else { continue };
+        let first = reader.scope_members(spec.key.as_str(), key.as_str())?.into_iter().map(|(_, order_key)| order_key).min();
+        let order_key = fractional_between(None, first.as_deref()).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
+        operations.push(ScopeOp::Append { scope: ScopeRef::new(spec.key.clone(), key), row: id.clone(), order_key });
+    }
+    Ok(operations)
 }
 
 pub(super) fn plan_fault(error: PlanCommitError<DbError>) -> DbError {
@@ -136,12 +173,14 @@ impl Db {
             temp_id: id.is_temp().then(|| id.clone()),
             input: Value::Object(data.clone()),
             rollback: None,
+            scope_ops: Vec::new(),
         };
         self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
             if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
                 return Err(DbError::AlreadyExists { model: model.to_string(), id: id.to_string() });
             }
             queued.rollback = Some(Prior { rows: vec![PriorRow::Created { model: model.to_string(), id: id.to_string() }] }.to_value());
+            queued.scope_ops = local_scope_ops(reader, spec, &id, &data)?;
             plan.upsert(key.clone(), vec![data.clone()]);
             Ok(Some(self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?))
         })?;
@@ -156,7 +195,7 @@ impl Db {
         let own = RowRef::new(key.clone(), id.clone());
         let mut input = patch.clone();
         input.insert("id".to_string(), Value::String(id.to_string()));
-        let mut queued = Queued { action: Action::Update, row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None };
+        let mut queued = Queued { action: Action::Update, row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new() };
         let committed = self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
@@ -182,7 +221,7 @@ impl Db {
         let own = RowRef::new(key.clone(), id.clone());
         let mut input = args;
         input.insert("id".to_string(), Value::String(id.to_string()));
-        let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None };
+        let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new() };
         self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
@@ -227,6 +266,7 @@ impl Db {
                     temp_id: None,
                     input: json!({"id": id.as_str()}),
                     rollback: Some(Prior { rows }.to_value()),
+                    scope_ops: Vec::new(),
                 };
                 envelope.operation_transitions.push(self.begin(reader, spec, &queued, created_at)?);
                 Ok(Some(envelope))
@@ -256,6 +296,7 @@ impl Db {
                 let Some(touches) = build(reader, &mut plan, queued)? else { return Ok(None) };
                 let mut envelope: CommitEnvelope = plan.envelope(WriteOrigin::Optimistic, generation);
                 envelope.entity_ops.extend(touches);
+                envelope.scope_ops.extend(std::mem::take(&mut queued.scope_ops));
                 envelope.operation_transitions.push(self.begin(reader, spec, queued, created_at)?);
                 Ok(Some(envelope))
             })
