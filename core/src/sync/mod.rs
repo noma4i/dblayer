@@ -165,6 +165,8 @@ mod load_more_tests;
 #[cfg(test)]
 mod load_tests;
 #[cfg(test)]
+mod merge_tests;
+#[cfg(test)]
 mod normalize_tests;
 #[cfg(test)]
 mod resume_tests;

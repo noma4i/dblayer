@@ -814,6 +814,13 @@ impl ModelSpec {
         patched
     }
 
+    pub fn merged(&self, stored: Option<&Map<String, Value>>, patch: &Map<String, Value>) -> Option<Map<String, Value>> {
+        let Some(stored) = stored else { return self.normalize(patch).ok().filter(|row| row.get("id").is_some()) };
+        let mut row = stored.clone();
+        row.extend(patch.clone());
+        Some(row)
+    }
+
     pub fn validate(&self, reserved_members: &[&str]) -> Result<(), DeclarationError> {
         if self.key.as_str().is_empty() {
             return Err(DeclarationError::EmptyModelKey);

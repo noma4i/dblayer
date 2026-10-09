@@ -20,7 +20,7 @@ use crate::value::read_id;
 
 use super::error::SyncError;
 use super::extract::root_value;
-use super::normalize::{merge_selected, Related};
+use super::normalize::{merge_stored, normalize_node, Related};
 use super::{locked, Inner, Sync};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,12 +166,14 @@ impl Feed {
                         continue;
                     }
                     let mut related = Related::new();
-                    let Some(row) = merge_selected(db, model, stored.clone(), &item.node, &mut related)? else { continue };
+                    let Some(patch) = normalize_node(db, model, &item.node, &mut related)? else { continue };
+                    let Some(row) = spec.merged(stored.as_ref(), &patch) else { continue };
                     created |= stored.is_none();
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
                     let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();
                     touches.extend(db.touch_ops(reader, spec, &seen, &own)?);
-                    for ((related_model, related_id), row) in related {
+                    for ((related_model, related_id), patch) in related {
+                        let Some(row) = merge_stored(db, reader, &related_model, &patch)? else { continue };
                         let id = RowId::new(&related_id).map_err(|error| SyncError::Event(error.to_string()))?;
                         operations.insert((related_model.clone(), related_id), EntityOp::Upsert { model: ModelKey::new(&related_model), id, row });
                     }

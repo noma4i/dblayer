@@ -33,7 +33,7 @@ fn nested_author_with_only_an_id_still_sets_the_foreign_key_when_the_user_row_ne
     let input = nodes(json!([{"id": "m1", "text": "hi", "author": {"id": "u7"}}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();
     assert_eq!(normalized.roots[0]["userId"], json!("u7"));
-    assert!(normalized.related.is_empty());
+    assert!(db.spec("users").unwrap().merged(None, &normalized.related[0].1).is_none());
 }
 
 #[test]

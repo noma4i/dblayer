@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 use crate::db::Db;
 use crate::identity::ModelKey;
 use crate::schema::AssociationKind;
+use crate::store::Reader;
 use crate::value::read_id;
 
 use super::error::SyncError;
@@ -54,7 +55,7 @@ pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, rela
             }
             let Some(row) = normalize_node(db, target, &child, related)? else { continue };
             let Some(id) = row.get("id").and_then(read_id) else { continue };
-            related.insert((target.to_string(), id.as_str().to_string()), row);
+            related.entry((target.to_string(), id.as_str().to_string())).or_default().extend(row);
             ids.push(Value::String(id.as_str().to_string()));
         }
         match association.kind {
@@ -108,14 +109,12 @@ fn connection_items(value: &Value) -> Vec<&Value> {
 
 pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, SyncError> {
     let input = nested_input(db, model, node, related)?;
-    let Ok(row) = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?.normalize(&input) else { return Ok(None) };
-    Ok(row.get("id").is_some().then_some(row))
+    let patch = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?.patch(&input);
+    Ok(patch.get("id").and_then(read_id).is_some().then_some(patch))
 }
 
-pub(crate) fn merge_selected(db: &Db, model: &str, stored: Option<Map<String, Value>>, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, SyncError> {
-    let input = nested_input(db, model, node, related)?;
+pub(crate) fn merge_stored(db: &Db, reader: &Reader<'_>, model: &str, patch: &Map<String, Value>) -> Result<Option<Map<String, Value>>, SyncError> {
     let spec = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
-    let Some(mut row) = stored else { return Ok(spec.normalize(&input).ok().filter(|row| row.get("id").is_some())) };
-    row.extend(spec.patch(&input));
-    Ok(Some(row))
+    let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
+    Ok(spec.merged(reader.point(model, id.as_str())?.as_ref(), patch))
 }

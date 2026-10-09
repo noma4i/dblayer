@@ -109,6 +109,20 @@ fn parent_id_field_reads_direct_value_then_parent_id() {
 }
 
 #[test]
+fn merged_keeps_stored_fields_and_creates_with_defaults() {
+    let spec = model(vec![
+        FieldSpec::scalar("id", ScalarKind::Str),
+        FieldSpec::scalar("kind", ScalarKind::Str).with_default(json!("text")),
+        FieldSpec::scalar("body", ScalarKind::Str),
+    ]);
+    let stored = object(json!({"id": "1", "kind": "voice", "body": "hi"}));
+
+    assert_eq!(spec.merged(Some(&stored), &object(json!({"id": "1", "body": "yo"}))), Some(object(json!({"id": "1", "kind": "voice", "body": "yo"}))));
+    assert_eq!(spec.merged(None, &object(json!({"id": "1", "body": "yo"}))), Some(object(json!({"id": "1", "kind": "text", "body": "yo"}))));
+    assert_eq!(spec.merged(None, &object(json!({"id": "1"}))), None);
+}
+
+#[test]
 fn normalize_all_keeps_valid_rows_and_reports_dropped() {
     let spec = model(vec![FieldSpec::scalar("id", ScalarKind::Str)]);
     let inputs = vec![object(json!({"id": "1"})), Map::new(), object(json!({"id": "3"}))];

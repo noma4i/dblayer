@@ -276,7 +276,8 @@ impl Inner {
         let temp = entry.operation.temp_id.clone();
         let normalized = self.read_response(sending, operation, &data);
         let real = normalized.roots.first().and_then(|row| row.get("id")).and_then(read_id);
-        if temp.is_some() && (normalized.roots.len() != 1 || real.is_none() || real == temp) {
+        let creatable = normalized.roots.first().is_some_and(|row| self.db.spec(&sending.model).is_ok_and(|spec| spec.normalize(row).is_ok()));
+        if temp.is_some() && (normalized.roots.len() != 1 || real.is_none() || real == temp || !creatable) {
             return self.quarantine(sending, &data);
         }
         let held = Prior::of(entry).map(|prior| prior.held_files()).unwrap_or_default();
@@ -288,7 +289,7 @@ impl Inner {
                 let outbox = read_outbox(reader)?;
                 let mut drops = 0;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
-                envelope.entity_ops = response_ops(reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
+                envelope.entity_ops = response_ops(&self.db, reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
                 if let (Some(temp), Some(real)) = (&temp, &real) {
                     let own = entry.operation.id.0;
                     let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);

@@ -237,7 +237,7 @@ impl Inner {
             attempt: FetchAttempt::new(&resolved.window_key, issued, generation, base_revision),
         };
         Ok(match self.land(landing)? {
-            Landed::Applied { rows } => LoadOutcome { status: LoadStatus::Loaded, rows, dropped, has_next, attempts },
+            Landed::Applied { rows, invalid } => LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts },
             Landed::Discarded(reason) => LoadOutcome { attempts, ..LoadOutcome::of(LoadStatus::Discarded(reason)) },
         })
     }
