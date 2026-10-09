@@ -20,6 +20,8 @@ DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
 
 `transport.calls` lists the requests it received. `emit` pushes a subscription event and `breakSubscription` drops the subscription.
 
+A live query loads by itself when something subscribes, and an explicit refresh can add a second request. Queue 2 or 3 replies per operation and assert the content of `transport.calls`, not their exact count.
+
 Use a manual clock to test freshness and load retries without sleeping.
 
 Typical scenarios to cover:
