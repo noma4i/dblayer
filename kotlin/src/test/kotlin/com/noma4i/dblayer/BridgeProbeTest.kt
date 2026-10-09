@@ -88,4 +88,20 @@ class BridgeProbeTest {
         withTimeout(5000) { local.settled() }
         assertEquals("m77", withTimeout(5000) { local.confirmedId() })
     }
+
+    @Test
+    fun resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() = runBlocking {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+        val list = LiveList(Moment.feed, this)
+        withTimeout(5000) { list.state.first { it.phase == LoadPhase.Failed } }
+        val before = transport.calls.size
+
+        DBlayer.resume()
+
+        assertEquals(true, transport.calls.size > before)
+        list.stop()
+    }
 }

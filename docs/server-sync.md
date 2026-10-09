@@ -152,7 +152,7 @@ DBlayer.unlisten()
 | Successful `create` or `destroy` of a model, or a subscription event that creates a row | relations rooted in that model become stale and are refetched at once if someone is reading them |
 | Successful mutation with `refetch` | the listed relations become stale |
 | `fresh_for` expired | refetched when next read or when the app resumes |
-| App resumes | stale relations with readers are refetched in small groups |
+| App resumes | the app calls `DB.resume()` (Swift) or `DBlayer.resume()` (Kotlin), stale relations with readers are refetched in small groups |
 | Network is back | the queue is sent and stale relations are refetched |
 | Subscription reconnects | the relation is refetched |
 

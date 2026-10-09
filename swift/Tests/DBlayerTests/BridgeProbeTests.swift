@@ -114,4 +114,21 @@ struct BridgeProbeTests {
     let real = try await local.confirmedId()
     #expect(real == "m77")
   }
+
+  @MainActor
+  @Test
+  func resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+    let list = LiveList(Moment.feed)
+    for _ in 0 ..< 200 where list.state.phase != .failed { try await Task.sleep(for: .milliseconds(10)) }
+    let before = transport.calls.count
+
+    try await DB.resume()
+
+    #expect(transport.calls.count > before)
+    list.stop()
+  }
 }
