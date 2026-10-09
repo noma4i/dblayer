@@ -806,7 +806,8 @@ impl ModelSpec {
         for field in &self.fields {
             let Some(value) = field.read(input) else { continue };
             if value.is_null() {
-                patched.insert(field.name.clone(), Value::Null);
+                let emptied = if field.nullable { None } else { field.default.clone() };
+                patched.insert(field.name.clone(), emptied.unwrap_or(Value::Null));
             } else if let Some(decoded) = field.decode(&value) {
                 patched.insert(field.name.clone(), decoded);
             }

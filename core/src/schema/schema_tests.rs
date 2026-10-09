@@ -600,3 +600,17 @@ fn local_rows_get_zero_values_for_fields_the_server_owns() {
     assert_eq!(row["createdAt"], json!("1970-01-01T00:00:01.000Z"));
     assert!(spec.normalize(&json!({"id": "c1", "name": "Ann"}).as_object().unwrap().clone()).is_err());
 }
+
+#[test]
+fn a_null_from_the_server_never_empties_a_field_that_has_a_default() {
+    let spec = model(vec![
+        FieldSpec::scalar("id", ScalarKind::Str),
+        FieldSpec::array("location").with_default(json!([])),
+        FieldSpec::scalar("body", ScalarKind::Str).nullable(),
+    ]);
+    let stored = object(json!({"id": "1", "location": [{"city": "Oslo"}], "body": "hi"}));
+
+    let merged = spec.merged(Some(&stored), &spec.patch(&object(json!({"id": "1", "location": null, "body": null})))).unwrap();
+
+    assert_eq!(merged, object(json!({"id": "1", "location": [], "body": null})));
+}

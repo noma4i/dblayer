@@ -46,7 +46,7 @@ Field options:
 | ------ | ------- |
 | `null: true` | value may be null |
 | `optional: true` | key may be absent in server responses |
-| `default: value` | default value |
+| `default: value` | default value, also stored when the server answers null for a field without `null: true` |
 | `index: true` | indexed column (not allowed for `object`, `array`, `raw`, `list`, `file`) |
 | `id_from: :parent` | take the id from a nested parent object, also when the same object is a `belongs_to` association |
 | `as: MomentMedia` | for `object`, `array`, `raw`: the app type the generated model decodes the value to (a `Codable` you provide) |
