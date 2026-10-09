@@ -190,6 +190,7 @@ fn apply_upsert(
     revision: i64,
     hidden: &HiddenRows,
     result: &mut RowChanges,
+    moves: &mut Vec<ScopeOp>,
 ) -> Result<(), StoreError> {
     let Some((id, payload)) = encode_row(row)? else { return Ok(()) };
     if hidden.contains(&(model.to_string(), id.clone())) {
@@ -232,8 +233,36 @@ fn apply_upsert(
     ];
     values.extend(info.promoted.iter().map(|column| column_value(column.kind, row.get(&column.field))));
     connection.execute(&info.upsert_sql, params_from_iter(values))?;
+    if let Some(old) = &old_row {
+        moves.extend(membership_moves(connection, info, model, &id, old, row)?);
+    }
     result.push(model, &id, kind, changed);
     Ok(())
+}
+
+fn membership_moves(
+    connection: &Connection,
+    info: &ModelInfo,
+    model: &ModelKey,
+    id: &str,
+    old: &Map<String, Value>,
+    new: &Map<String, Value>,
+) -> Result<Vec<ScopeOp>, StoreError> {
+    let before = info.spec.list_scopes(old);
+    let after = info.spec.list_scopes(new);
+    let Ok(row) = crate::identity::RowId::new(id) else { return Ok(Vec::new()) };
+    let mut operations: Vec<ScopeOp> = before
+        .iter()
+        .filter(|key| !after.contains(key))
+        .map(|key| ScopeOp::Detach { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone() })
+        .collect();
+    for key in after.iter().filter(|key| !before.contains(key)) {
+        let first: Option<String> = connection
+            .query_row("SELECT MIN(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", params![model.as_str(), key.as_str()], |found| found.get(0))?;
+        let order_key = crate::value::fractional_between(None, first.as_deref()).map_err(|error| StoreError::Constraint(error.to_string()))?;
+        operations.push(ScopeOp::Append { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone(), order_key });
+    }
+    Ok(operations)
 }
 
 #[derive(Default)]
@@ -267,6 +296,7 @@ pub(crate) fn apply_envelope(
     let mut tombstoned = false;
     let mut files_changed = false;
     let mut changes = RowChanges::default();
+    let mut moves: Vec<ScopeOp> = Vec::new();
     let mut destroyed: Vec<Destroyed> = Vec::new();
     let mut replaced: Vec<(RowRef, crate::identity::RowId)> = Vec::new();
     let mut result = CommitResult::noop(envelope.tx_id);
@@ -277,7 +307,7 @@ pub(crate) fn apply_envelope(
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                apply_upsert(connection, info, model, row, revision, &hidden, &mut changes)?;
+                apply_upsert(connection, info, model, row, revision, &hidden, &mut changes, &mut moves)?;
             }
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
@@ -346,6 +376,7 @@ pub(crate) fn apply_envelope(
         visible = visible_scope_ops(&envelope.scope_ops, &hidden);
         &visible
     };
+    wrote |= apply_scope_ops(connection, &moves, &mut result.scopes)?;
     wrote |= apply_scope_ops(connection, scope_ops, &mut result.scopes)?;
     if let Some(window) = &envelope.window {
         save_window(connection, window, envelope.generation, now_ms)?;

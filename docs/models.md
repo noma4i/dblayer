@@ -155,7 +155,7 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 
 When a response row has no value for a column the relation groups by, the param fills it. A response without an id becomes a row keyed by the param.
 
-`remote :name do ... end` connects a relation to the server. A relation that depends on columns names them: `remote :by_user, params: [:userId] do ... end` loads and lists the rows whose `userId` equals the param. `order: { createdAt: :desc }` sorts the rows locally, otherwise the server order is kept.
+`remote :name do ... end` connects a relation to the server. A relation that depends on columns names them: `remote :by_user, params: [:userId] do ... end` loads and lists the rows whose `userId` equals the param. `order: { createdAt: :desc }` sorts the rows locally, otherwise the server order is kept. A row whose param column changes (a message moving to another `chatId`) leaves the list of the old value and joins the head of the list of the new value in the same commit, for relations that list every row of their params.
 
 `params:` accepts scalar and enum columns. A param passed as `nil` is a value of its own: `Moment.feed(nil)` is the unfiltered list and has its own window. `text: [:query]` declares params that are not columns, such as a search string. They are sent as variables, always strings, and each value gets its own window: `remote :search, text: [:query] do ... end` generates `Model.search("cats")`.
 

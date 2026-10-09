@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use crate::ddl::{column_name, column_type, SERVICE_COLUMNS};
 use crate::identity::{ModelKey, ScopeKey};
 use crate::value::{
-    duplicates, read_array, read_enum, read_raw, read_scalar, relation_scope_key, ScalarKind, ScopeKeyError,
+    duplicates, read_array, read_enum, read_raw, read_scalar, relation_scope_key, relation_scope_key_from_values, ScalarKind, ScopeKeyError,
     SortDirection,
 };
 
@@ -534,6 +534,13 @@ impl RelationSpec {
         self.remote.is_none()
     }
 
+    pub fn lists_every_row_of_its_params(&self) -> bool {
+        let Some(remote) = &self.remote else { return false };
+        !self.by_columns.is_empty()
+            && self.text_params.is_empty()
+            && !remote.variables.values().any(|source| matches!(source, VariableSource::Constant { .. }))
+    }
+
     pub fn has_more(&self) -> bool {
         self.remote.as_ref().is_some_and(RemoteSpec::supports_paging)
     }
@@ -742,6 +749,27 @@ impl ModelSpec {
 
     pub fn field(&self, name: &str) -> Option<&FieldSpec> {
         self.fields.iter().find(|field| field.name == name)
+    }
+
+    pub fn list_scopes(&self, row: &Map<String, Value>) -> Vec<ScopeKey> {
+        self.relations
+            .iter()
+            .filter(|relation| relation.lists_every_row_of_its_params())
+            .filter_map(|relation| {
+                let mut params = Map::new();
+                let mut kinds = BTreeMap::new();
+                for column in &relation.by_columns {
+                    let kind = match self.field(column).map(|field| &field.kind) {
+                        Some(FieldKind::Scalar { kind }) => *kind,
+                        Some(FieldKind::Enum { .. }) => ScalarKind::Str,
+                        _ => return None,
+                    };
+                    params.insert(column.clone(), row.get(column)?.clone());
+                    kinds.insert(column.clone(), kind);
+                }
+                relation_scope_key_from_values(self.key.as_str(), &relation.name, &params, &kinds).ok()
+            })
+            .collect()
     }
 
     pub fn has_remote(&self, relation: &str) -> bool {

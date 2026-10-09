@@ -7,7 +7,6 @@ use crate::identity::RowId;
 use crate::pacing::SystemClock;
 use crate::query::{Query, Where};
 use crate::schema::ModelSpec;
-use crate::value::relation_param_text;
 use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
 use super::live::LiveHandles;
 use super::transport::ForeignTransport;
@@ -218,13 +217,12 @@ impl Database {
         let mut query: Query = serde_json::from_value(description.clone())?;
         let remote = description["relation"].as_str().map(|name| -> Result<_, DbError> {
             let params: Map<String, Value> = description.get("params").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or_default();
-            let spec = self.db.spec(query.model.as_str())?;
-            let relation = spec.relations.iter().find(|relation| relation.name == name).ok_or_else(|| DbError::Invalid { detail: format!("unknown relation {name}") })?;
-            if relation.remote.is_some() {
-                let strings = params.iter().map(|(key, value)| (key.clone(), relation_param_text(value))).collect();
-                query.scope = Some(relation.scope_key(query.model.as_str(), &strings).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
-                Ok(Some((name.to_string(), params)))
-            } else { Ok(None) }
+            let relation_query = self.db.remote_relation_query(query.model.as_str(), name, &params).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+            Ok(relation_query.map(|relation_query| {
+                query.scope = relation_query.scope;
+                if query.order.is_empty() { query.order = relation_query.order; }
+                (name.to_string(), params)
+            }))
         }).transpose()?.flatten();
         self.connect(query, remote, count, listener)
     }

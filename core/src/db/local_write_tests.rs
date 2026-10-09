@@ -1,6 +1,7 @@
 use super::fixtures::*;
 use super::*;
-use crate::identity::ScopeKey;
+use crate::commit::{CommitEnvelope, ScopeOp, ScopeRef, WriteOrigin};
+use crate::identity::{ModelKey, ScopeKey};
 use crate::query::Query;
 use crate::schema::{Coverage, PageDirection, RelationSpec, RemoteShape, RemoteSpec, VariableSource};
 use crate::value::relation_scope_key;
@@ -157,8 +158,12 @@ fn destroy_of_a_missing_row_fails() {
     assert!(db.outbox().unwrap().is_empty());
 }
 
-fn threaded_db() -> Db {
-    let remote = |variables| RemoteSpec {
+fn threaded_db_remote() -> Option<RemoteSpec> {
+    Some(thread_remote(Default::default()))
+}
+
+fn thread_remote(variables: std::collections::BTreeMap<String, VariableSource>) -> RemoteSpec {
+    RemoteSpec {
         operation: "Thread".into(),
         shape: RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None },
         stale_time: "session".into(),
@@ -168,7 +173,11 @@ fn threaded_db() -> Db {
         page_size: None,
         variables,
         root: None,
-    };
+    }
+}
+
+fn threaded_db() -> Db {
+    let remote = thread_remote;
     let mut spec = messages_spec();
     let mut thread = RelationSpec::new("thread", &["chatId"]);
     thread.remote = Some(remote(Default::default()));
@@ -196,4 +205,42 @@ fn create_lands_the_temp_row_in_the_unfiltered_scope_of_its_params() {
     assert_eq!(ids(changes(&log).last().unwrap()), [row.id.to_string()]);
     assert_eq!(db.shared.store.scope_members("messages", scope_of("media", "c1").as_str()).unwrap(), vec![]);
     assert!(db.shared.store.scope_members("messages", scope_of("thread", "c2").as_str()).unwrap().iter().any(|(id, _)| id == other.id.as_str()));
+}
+
+#[test]
+fn changing_a_by_column_moves_the_row_between_the_unfiltered_scopes() {
+    let db = threaded_db();
+    put(&db, "chats", json!({"id": "c1", "title": "one"}));
+    put(&db, "chats", json!({"id": "c2", "title": "two"}));
+    let row = db.create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
+    let (first, first_callback) = recorder();
+    let (second, second_callback) = recorder();
+    let _one = db.observe(Query::new("messages").in_scope(scope_of("thread", "c1")), first_callback).unwrap();
+    let _two = db.observe(Query::new("messages").in_scope(scope_of("thread", "c2")), second_callback).unwrap();
+    db.settle();
+    db.update("messages", &row.id, obj(json!({"chatId": "c2"}))).unwrap();
+    db.settle();
+    assert_eq!(ids(changes(&first).last().unwrap()), Vec::<String>::new());
+    assert_eq!(ids(changes(&second).last().unwrap()), [row.id.to_string()]);
+}
+
+#[test]
+fn a_remote_relation_lists_its_scope_in_the_relation_order() {
+    let mut spec = messages_spec();
+    let mut thread = RelationSpec::new("thread", &["chatId"]);
+    thread.remote = threaded_db_remote();
+    thread.sort = crate::schema::Sort::Fields(vec![crate::schema::SortField { column: "body".into(), direction: crate::value::SortDirection::Asc }]);
+    spec.relations.push(thread);
+    let db = Db::open_in_memory(vec![chats_spec(), spec], None).unwrap();
+    put(&db, "messages", json!({"id": "m1", "chatId": "c1", "body": "b"}));
+    put(&db, "messages", json!({"id": "m2", "chatId": "c1", "body": "a"}));
+    let scope = ScopeRef::new(ModelKey::new("messages"), scope_of("thread", "c1"));
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    envelope.scope_ops.extend([
+        ScopeOp::Append { scope: scope.clone(), row: rid("m1"), order_key: "a".into() },
+        ScopeOp::Append { scope, row: rid("m2"), order_key: "b".into() },
+    ]);
+    db.land(envelope).unwrap();
+    let query = db.remote_relation_query("messages", "thread", &obj(json!({"chatId": "c1"}))).unwrap().unwrap();
+    assert_eq!(db.query(&query).unwrap().iter().map(|row| row.id.to_string()).collect::<Vec<_>>(), ["m2", "m1"]);
 }

@@ -9,8 +9,7 @@ use crate::commit::{
 use crate::ddl::table_name;
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::schema::{FieldKind, RelationSpec, VariableSource};
-use crate::value::{fractional_between, normalize_relation_params, relation_scope_key, ScalarKind};
+use crate::value::fractional_between;
 use crate::operation::Operation;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, RootShape};
@@ -95,33 +94,9 @@ struct Queued {
     scope_ops: Vec<ScopeOp>,
 }
 
-fn lists_every_row_of_its_params(relation: &RelationSpec) -> bool {
-    let Some(remote) = &relation.remote else { return false };
-    !relation.by_columns.is_empty()
-        && relation.text_params.is_empty()
-        && !remote.variables.values().any(|source| matches!(source, VariableSource::Constant { .. }))
-}
-
 fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId, row: &Map<String, Value>) -> Result<Vec<ScopeOp>, DbError> {
     let mut operations = Vec::new();
-    for relation in spec.relations.iter().filter(|relation| lists_every_row_of_its_params(relation)) {
-        let mut params = Map::new();
-        let mut kinds = std::collections::BTreeMap::new();
-        for column in &relation.by_columns {
-            let kind = match spec.field(column).map(|field| &field.kind) {
-                Some(FieldKind::Scalar { kind }) => *kind,
-                Some(FieldKind::Enum { .. }) => ScalarKind::Str,
-                _ => break,
-            };
-            let Some(value) = row.get(column) else { break };
-            params.insert(column.clone(), value.clone());
-            kinds.insert(column.clone(), kind);
-        }
-        if params.len() != relation.by_columns.len() {
-            continue;
-        }
-        let Ok(normalized) = normalize_relation_params(&params, &kinds) else { continue };
-        let Ok(key) = relation_scope_key(spec.key.as_str(), &relation.name, &normalized) else { continue };
+    for key in spec.list_scopes(row) {
         let first = reader.scope_members(spec.key.as_str(), key.as_str())?.into_iter().map(|(_, order_key)| order_key).min();
         let order_key = fractional_between(None, first.as_deref()).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
         operations.push(ScopeOp::Append { scope: ScopeRef::new(spec.key.clone(), key), row: id.clone(), order_key });

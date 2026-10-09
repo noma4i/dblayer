@@ -1,8 +1,12 @@
 use std::collections::HashMap;
+
+use serde_json::{Map, Value};
 use std::sync::Arc;
 
 use crate::identity::RowId;
-use crate::query::{compile_count, compile_keys, fetch_count, fetch_keys, Query};
+use crate::query::{compile_count, compile_keys, fetch_count, fetch_keys, Order, Query};
+use crate::schema::Sort;
+use crate::value::relation_param_text;
 use crate::store::{Reader, StoreError};
 use crate::syncstate::read_sync;
 
@@ -117,5 +121,22 @@ impl Db {
     pub fn first(&self, query: &Query) -> Result<Option<Row>, DbError> {
         let probe = Query { limit: Some(1), ..query.clone() };
         Ok(self.query(&probe)?.into_iter().next())
+    }
+}
+
+impl Db {
+    pub fn remote_relation_query(&self, model: &str, name: &str, params: &Map<String, Value>) -> Result<Option<Query>, DbError> {
+        let spec = self.spec(model)?;
+        let relation = spec.relations.iter().find(|relation| relation.name == name).ok_or_else(|| DbError::UnknownAssociation { model: model.to_string(), name: name.to_string() })?;
+        if relation.remote.is_none() {
+            return Ok(None);
+        }
+        let strings = params.iter().map(|(key, value)| (key.clone(), relation_param_text(value))).collect();
+        let scope = relation.scope_key(model, &strings).map_err(|_| DbError::UnknownAssociation { model: model.to_string(), name: name.to_string() })?;
+        let order = match &relation.sort {
+            Sort::ServerOrder => Vec::new(),
+            Sort::Fields(fields) => fields.iter().map(|field| Order::new(&field.column, field.direction)).collect(),
+        };
+        Ok(Some(Query::new(model).in_scope(scope).ordered(order)))
     }
 }
