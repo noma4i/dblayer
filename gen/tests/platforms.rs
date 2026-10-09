@@ -48,6 +48,28 @@ fn object_field_can_name_the_app_type_it_decodes_to() {
     assert!(swift.contains("public let media: MomentMedia?"), "{swift}");
     assert!(swift.contains("public let widgets: [MomentWidget]"), "{swift}");
     assert!(swift.contains("Column<Moment, MomentMedia?>(\"media\")"), "{swift}");
+    let kotlin = emit_kotlin(&models);
+    assert!(kotlin.contains("val media: JsonElement?"), "{kotlin}");
+    assert!(kotlin.contains("val widgets: List<JsonElement>"), "{kotlin}");
+}
+
+#[test]
+fn kotlin_models_json_escapes_interpolation_markers() {
+    let models = parse_models(r#"
+model Moment do
+  schema do
+    bool :liked
+  end
+  action :like do
+    mutation LikeMoment
+    args liked: :bool
+    input liked: :liked
+    optimistic liked: :liked
+  end
+end
+"#).unwrap();
+    let kotlin = emit_kotlin(&models);
+    assert!(kotlin.contains(r#"${'$'}arg"#), "{kotlin}");
 }
 
 #[test]

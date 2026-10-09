@@ -31,12 +31,20 @@ fn scalar(kind: ScalarKind, swift: bool) -> &'static str {
     }
 }
 
+fn kotlin_app_type(app_type: &str) -> String {
+    let app_type = app_type.trim();
+    if let Some(element) = app_type.strip_prefix('[').and_then(|value| value.strip_suffix(']')) {
+        return format!("List<{}>", kotlin_app_type(element));
+    }
+    "JsonElement".into()
+}
+
 fn field_type(field: &FieldSpec, swift: bool) -> String {
     let base = match &field.kind {
         FieldKind::Scalar { kind } => scalar(*kind, swift).to_string(),
         FieldKind::Enum { .. } => "String".into(),
         FieldKind::List { element } => if swift { format!("[{}]", scalar(*element, true)) } else { format!("List<{}>", scalar(*element, false)) },
-        _ => field.app_type.clone().unwrap_or_else(|| if swift { "JSONValue".into() } else { "JsonElement".into() }),
+        _ => field.app_type.as_ref().map(|app_type| if swift { app_type.clone() } else { kotlin_app_type(app_type) }).unwrap_or_else(|| if swift { "JSONValue".into() } else { "JsonElement".into() }),
     };
     let base = if !swift && base == "Bool" { "Boolean".into() } else { base };
     if field.nullable || field.optional { format!("{base}?") } else { base }
@@ -249,6 +257,7 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             writeln!(out, "@Serializable\ndata class {}({fields})\n", result_type(class, &action.name)).unwrap();
         }
     }
-    writeln!(out, "val modelsJSON = \"\"\"{}\"\"\"", serde_json::to_string(models).unwrap()).unwrap();
+    let models_json = serde_json::to_string(models).unwrap().replace('$', "${'$'}");
+    writeln!(out, "val modelsJSON = \"\"\"{models_json}\"\"\"").unwrap();
     out
 }
