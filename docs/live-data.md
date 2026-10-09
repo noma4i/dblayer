@@ -150,6 +150,8 @@ for await change in Moment.recent { handle(change.rows) }
 Moment.recent.collect { change -> handle(change.rows) }
 ```
 
+A live query that cannot start ends its stream without a value. `current()` then returns the initial value.
+
 ## Queries
 
 ```swift

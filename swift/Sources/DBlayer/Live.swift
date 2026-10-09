@@ -42,8 +42,8 @@ public struct LiveSource<Value: Sendable>: Sendable {
 
   public var stream: AsyncStream<Value> {
     AsyncStream { continuation in
-      let cancel = try? subscribe { continuation.yield($0) }
-      continuation.onTermination = { _ in cancel?() }
+      guard let cancel = try? subscribe({ continuation.yield($0) }) else { return continuation.finish() }
+      continuation.onTermination = { _ in cancel() }
     }
   }
 
