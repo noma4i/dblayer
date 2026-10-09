@@ -55,7 +55,10 @@ pub(crate) fn admit(reader: &Reader<'_>, base: i64, closing: Option<i64>, model:
                 *drops += usize::from(dropped);
                 admitted.push(row);
             }
-            UpsertAdmission::DropExistence => *drops += 1,
+            UpsertAdmission::DropExistence => {
+                *drops += 1;
+                admitted.extend(stored.and_then(|stored| stored.row));
+            }
         }
     }
     Ok(admitted)

@@ -86,3 +86,13 @@ fn inv_merge_09_a_failing_window_write_leaves_no_landed_rows() {
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     assert!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()).is_empty());
 }
+
+#[test]
+fn a_row_created_by_another_landing_after_the_fetch_began_still_joins_the_listed_scope() {
+    let rig = rig();
+    let listing = landing(&rig, 100, &["m1"]);
+    put(&rig, "moments", moment("m1", "from another landing"));
+    assert_eq!(rig.sync.inner.land(listing).unwrap(), Landed::Applied { rows: 1 });
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("from another landing".to_string()));
+    assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()), ["m1"]);
+}

@@ -41,6 +41,7 @@ Moment.feed.refresh()            // pull to refresh, replaces in one commit
 - Identical parallel loads become one request.
 - Network and server errors of a load are retried within a budget; fatal errors are returned. Mutations are never retried by themselves, see [sync state](sync-state.md).
 - A response older than the data already stored never overwrites it.
+- A row that another response stored while this one was in flight keeps its stored data and still joins the list this response names.
 - `max_pages` limits how many pages one load takes.
 
 ## Refresh merges, it does not replace
