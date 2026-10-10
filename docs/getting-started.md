@@ -32,6 +32,7 @@ Single steps:
 | `bash scripts/build_kotlin.sh` | Builds `libdblayer.so` for 4 ABIs and generates the Kotlin bindings |
 | `bash scripts/check_zoo.sh` | Finds duplicate mechanisms and names (see [architecture](architecture.md)) |
 | `bash scripts/check_docs.sh` | Checks that paths mentioned in README and docs exist |
+| `bash scripts/reclaim_target.sh` | Removes the build output of `dblayer` and `dblayer-gen` from `target` and prints its size before and after. Refuses while `cargo` runs |
 
 ## Typical app setup
 
