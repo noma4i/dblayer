@@ -18,12 +18,13 @@ public enum GraphQLChannel: Sendable {
     )
   }
 
-  public static func requestId(channelId: String, attempt: Int) -> String {
-    "\(channelId):\(attempt)"
+  public static func requestId(operationId: String, attempt: Int) -> String {
+    "\(operationId):\(attempt)"
   }
 
   public static func execute(
     channelId: String,
+    operationId: String,
     attempt: Int,
     document: String,
     operationName: String
@@ -32,16 +33,47 @@ public enum GraphQLChannel: Sendable {
       "{\"action\":",
       encoded(.string("execute")),
       ",\"requestId\":",
-      encoded(.string(requestId(channelId: channelId, attempt: attempt))),
+      encoded(.string(requestId(operationId: operationId, attempt: attempt))),
       ",\"query\":",
       encoded(.string(document)),
       ",\"variables\":",
       encoded(.object([:])),
       ",\"operationName\":",
       encoded(.string(operationName)),
+      ",\"multiplex\":true}"
+    ].joined()
+    return .message(identifier: identifier(channelId: channelId), data: data)
+  }
+
+  public static func unsubscribeSubscription(channelId: String, subscriptionId: String) -> CableCommand {
+    let data = [
+      "{\"action\":",
+      encoded(.string("unsubscribe_subscription")),
+      ",\"subscriptionId\":",
+      encoded(.string(subscriptionId)),
       "}"
     ].joined()
     return .message(identifier: identifier(channelId: channelId), data: data)
+  }
+
+  public struct Route: Sendable, Equatable {
+    public let requestId: String?
+    public let subscriptionId: String?
+  }
+
+  public static func route(of payload: JSONValue) -> Route {
+    guard case let .object(fields) = payload else {
+      return Route(requestId: nil, subscriptionId: nil)
+    }
+    var requestId: String?
+    var subscriptionId: String?
+    if case let .string(value) = fields["requestId"] {
+      requestId = value
+    }
+    if case let .string(value) = fields["subscriptionId"] {
+      subscriptionId = value
+    }
+    return Route(requestId: requestId, subscriptionId: subscriptionId)
   }
 
   public static func event(from payload: JSONValue, requestId: String) -> GraphQLSubscriptionEvent? {

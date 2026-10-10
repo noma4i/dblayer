@@ -4,6 +4,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -70,11 +71,18 @@ class CableProtocolTest {
     @Test
     fun channelCommandsCarryServerWireFormat() {
         assertEquals("""{"channel":"GraphqlChannel","channelId":"abc","api_version":"2"}""", GraphQLChannel.identifier("abc"))
-        assertEquals("abc:2", GraphQLChannel.requestId("abc", 2))
+        assertEquals("op:2", GraphQLChannel.requestId("op", 2))
         assertEquals(
-            CableCommand.Message(GraphQLChannel.identifier("abc"), """{"action":"execute","requestId":"abc:1","query":"subscription X { x }","variables":{},"operationName":"X"}"""),
-            GraphQLChannel.execute("abc", 1, "subscription X { x }", "X"),
+            CableCommand.Message(GraphQLChannel.identifier("abc"), """{"action":"execute","requestId":"op:1","query":"subscription X { x }","variables":{},"operationName":"X","multiplex":true}"""),
+            GraphQLChannel.execute("abc", "op", 1, "subscription X { x }", "X"),
         )
+    }
+
+    @Test
+    fun framesRouteByRequestIdOrSubscriptionId() {
+        assertEquals(GraphQLChannel.Route("op:1", "s1"), GraphQLChannel.route(parseJson("""{"requestId":"op:1","subscriptionId":"s1","subscriptionReady":true}""")))
+        assertEquals(GraphQLChannel.Route(null, "s1"), GraphQLChannel.route(parseJson("""{"result":{"data":{"x":1}},"more":true,"subscriptionId":"s1"}""")))
+        assertEquals(GraphQLChannel.Route(null, null), GraphQLChannel.route(parseJson("""{"result":{"data":{"x":1}},"more":true}""")))
     }
 
     @Test
@@ -127,16 +135,59 @@ class CableClientTest {
         val stream = client.subscribeGraphQL(document, "X")
         val start = launch { client.start() }
         socket.waitForRecordedCount(2)
-        assertEquals(listOf(CableCommand.Subscribe(identifier).json, GraphQLChannel.execute("abc", 1, document, "X").json), socket.texts())
+        assertEquals(listOf(CableCommand.Subscribe(identifier).json, GraphQLChannel.execute("abc", "abc", 1, document, "X").json), socket.texts())
         client.stop()
         assertTrue(events(stream).isEmpty())
         start.join()
     }
 
     @Test
+    fun runsManySubscriptionsOnOneChannelAndRoutesBySubscriptionId() = runBlocking {
+        val shared = GraphQLChannel.identifier("shared")
+        val socket = TestCableSocket(
+            listOf(
+                WELCOME,
+                confirmation(shared),
+                message(shared, """{"requestId":"a:1","subscriptionId":"sa","subscriptionReady":true,"more":true}"""),
+                message(shared, """{"requestId":"b:1","subscriptionId":"sb","subscriptionReady":true,"more":true}"""),
+                message(shared, """{"result":{"data":{"x":"for-b"}},"more":true,"subscriptionId":"sb"}"""),
+                message(shared, """{"result":{"data":null},"more":false,"subscriptionId":"sa"}"""),
+                message(shared, """{"result":{"data":{"x":"b-after-a-closed"}},"more":true,"subscriptionId":"sb"}"""),
+            ),
+        )
+        val ids = ArrayDeque(listOf("shared", "a", "b"))
+        val client = CableClient("/test", "token", { _, _ -> socket }, { ids.removeFirst() })
+        val first = client.subscribeGraphQL("subscription A { a }", "A")
+        val second = client.subscribeGraphQL("subscription B { b }", "B")
+        val start = launch { client.start() }
+        assertEquals(listOf(GraphQLSubscriptionEvent.Ready), events(first))
+        socket.waitForRecordedCount(3)
+        assertEquals(
+            listOf(
+                CableCommand.Subscribe(shared).json,
+                GraphQLChannel.execute("shared", "a", 1, "subscription A { a }", "A").json,
+                GraphQLChannel.execute("shared", "b", 1, "subscription B { b }", "B").json,
+            ),
+            socket.texts(),
+        )
+        val secondEvents = withTimeout(5000) { second.take(3).toList() }
+        client.stop()
+        start.join()
+        assertEquals(
+            listOf(
+                GraphQLSubscriptionEvent.Ready,
+                GraphQLSubscriptionEvent.Payload(parseJson("""{"x":"for-b"}""")),
+                GraphQLSubscriptionEvent.Payload(parseJson("""{"x":"b-after-a-closed"}""")),
+            ),
+            secondEvents,
+        )
+        assertEquals(3, socket.texts().size)
+    }
+
+    @Test
     fun emitsReadyOnceThenPayloadEvents() = runBlocking {
-        val ready = """{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionReady":true}"""
-        val payload = """{"result":{"data":{"chatUpdated":{"id":"1"}}},"more":true}"""
+        val ready = """{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionId":"s1","subscriptionReady":true}"""
+        val payload = """{"result":{"data":{"chatUpdated":{"id":"1"}}},"more":true,"subscriptionId":"s1"}"""
         val socket = TestCableSocket(listOf(WELCOME, confirmation(identifier), message(identifier, ready), message(identifier, ready), message(identifier, payload), rejection(identifier)))
         val client = client(socket)
         val stream = client.subscribeGraphQL(document, "X")
@@ -162,11 +213,18 @@ class CableClientTest {
 
     @Test
     fun finishesAndUnsubscribesOnMoreFalse() = runBlocking {
-        val socket = TestCableSocket(listOf(WELCOME, confirmation(identifier), message(identifier, """{"result":{"data":null},"more":false}""")))
+        val socket = TestCableSocket(
+            listOf(
+                WELCOME,
+                confirmation(identifier),
+                message(identifier, """{"requestId":"abc:1","subscriptionId":"s1","subscriptionReady":true,"more":true}"""),
+                message(identifier, """{"result":{"data":null},"more":false,"subscriptionId":"s1"}"""),
+            ),
+        )
         val client = client(socket)
         val stream = client.subscribeGraphQL(document, "X")
         val start = launch { client.start() }
-        assertTrue(events(stream).isEmpty())
+        assertEquals(listOf(GraphQLSubscriptionEvent.Ready), events(stream))
         socket.waitForRecordedCount(3)
         client.stop()
         start.join()
@@ -198,9 +256,9 @@ class CableClientTest {
         assertEquals(
             listOf(
                 CableCommand.Subscribe(identifier).json,
-                GraphQLChannel.execute("abc", 1, document, "X").json,
+                GraphQLChannel.execute("abc", "abc", 1, document, "X").json,
                 CableCommand.Subscribe(identifier).json,
-                GraphQLChannel.execute("abc", 2, document, "X").json,
+                GraphQLChannel.execute("abc", "abc", 2, document, "X").json,
             ),
             socket.texts(),
         )

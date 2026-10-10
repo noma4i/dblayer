@@ -24,6 +24,7 @@ struct CableClientTests {
           CableCommand.subscribe(identifier: identifier).json,
           GraphQLChannel.execute(
             channelId: "abc",
+            operationId: "abc",
             attempt: 1,
             document: "subscription X { x }",
             operationName: "X"
@@ -38,10 +39,73 @@ struct CableClientTests {
   }
 
   @Test
+  func runsManySubscriptionsOnOneChannelAndRoutesBySubscriptionId() async throws {
+    let identifier = GraphQLChannel.identifier(channelId: "shared")
+    let socket = TestCableClientSocket(
+      frames: [
+        "{\"type\":\"welcome\"}",
+        confirmationFrame(identifier: identifier),
+        messageFrame(identifier: identifier, payload: #"{"requestId":"a:1","subscriptionId":"sa","subscriptionReady":true,"more":true}"#),
+        messageFrame(identifier: identifier, payload: #"{"requestId":"b:1","subscriptionId":"sb","subscriptionReady":true,"more":true}"#),
+        messageFrame(identifier: identifier, payload: #"{"result":{"data":{"x":"for-b"}},"more":true,"subscriptionId":"sb"}"#),
+        messageFrame(identifier: identifier, payload: #"{"result":{"data":null},"more":false,"subscriptionId":"sa"}"#),
+        messageFrame(identifier: identifier, payload: #"{"result":{"data":{"x":"b-after-a-closed"}},"more":true,"subscriptionId":"sb"}"#)
+      ]
+    )
+    let ids = IdSequence(["shared", "a", "b"])
+    let client = CableClient(
+      url: URL(fileURLWithPath: "/test"),
+      token: "token",
+      makeSocket: { _, _ in socket },
+      makeChannelId: { ids.next() }
+    )
+    let first = await client.subscribeGraphQL(document: "subscription A { a }", operationName: "A")
+    let second = await client.subscribeGraphQL(document: "subscription B { b }", operationName: "B")
+    let startTask = Task { await client.start() }
+
+    let firstEvents = try await collectEvents(from: first)
+    await socket.waitForRecordedCount(3)
+    #expect(
+      socket.recordedTexts()
+        == [
+          CableCommand.subscribe(identifier: identifier).json,
+          GraphQLChannel.execute(
+            channelId: "shared", operationId: "a", attempt: 1,
+            document: "subscription A { a }", operationName: "A"
+          ).json,
+          GraphQLChannel.execute(
+            channelId: "shared", operationId: "b", attempt: 1,
+            document: "subscription B { b }", operationName: "B"
+          ).json
+        ]
+    )
+    #expect(firstEvents == [.ready])
+
+    var secondEvents: [GraphQLSubscriptionEvent] = []
+    for try await event in second {
+      secondEvents.append(event)
+      if secondEvents.count == 3 {
+        break
+      }
+    }
+    await client.stop()
+    await startTask.value
+    #expect(
+      secondEvents
+        == [
+          .ready,
+          .payload(JSONValue.object(["x": .string("for-b")])),
+          .payload(JSONValue.object(["x": .string("b-after-a-closed")]))
+        ]
+    )
+    #expect(socket.recordedTexts().count == 3)
+  }
+
+  @Test
   func emitsReadyOnceThenPayloadEvents() async throws {
     let identifier = GraphQLChannel.identifier(channelId: "abc")
-    let readyPayload = #"{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionReady":true}"#
-    let payload = #"{"result":{"data":{"chatUpdated":{"id":"1"}}},"more":true}"#
+    let readyPayload = #"{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionId":"s1","subscriptionReady":true}"#
+    let payload = #"{"result":{"data":{"chatUpdated":{"id":"1"}}},"more":true,"subscriptionId":"s1"}"#
     let socket = TestCableClientSocket(
       frames: [
         "{\"type\":\"welcome\"}",
@@ -98,7 +162,8 @@ struct CableClientTests {
       frames: [
         "{\"type\":\"welcome\"}",
         confirmationFrame(identifier: identifier),
-        messageFrame(identifier: identifier, payload: #"{"result":{"data":null},"more":false}"#)
+        messageFrame(identifier: identifier, payload: #"{"requestId":"abc:1","subscriptionId":"s1","subscriptionReady":true,"more":true}"#),
+        messageFrame(identifier: identifier, payload: #"{"result":{"data":null},"more":false,"subscriptionId":"s1"}"#)
       ]
     )
     let client = makeClient(socket: socket)
@@ -110,7 +175,7 @@ struct CableClientTests {
     await client.stop()
     await startTask.value
 
-    #expect(events.isEmpty)
+    #expect(events == [.ready])
     #expect(socket.recordedTexts().last == CableCommand.unsubscribe(identifier: identifier).json)
   }
 
@@ -161,6 +226,7 @@ struct CableClientTests {
           CableCommand.subscribe(identifier: identifier).json,
           GraphQLChannel.execute(
             channelId: "abc",
+            operationId: "abc",
             attempt: 1,
             document: "subscription X { x }",
             operationName: "X"
@@ -168,6 +234,7 @@ struct CableClientTests {
           CableCommand.subscribe(identifier: identifier).json,
           GraphQLChannel.execute(
             channelId: "abc",
+            operationId: "abc",
             attempt: 2,
             document: "subscription X { x }",
             operationName: "X"
@@ -203,6 +270,19 @@ struct CableClientTests {
       return events
     }
     return events
+  }
+}
+
+final class IdSequence: @unchecked Sendable {
+  private let lock = NSLock()
+  private var ids: [String]
+
+  init(_ ids: [String]) {
+    self.ids = ids
+  }
+
+  func next() -> String {
+    lock.withLock { ids.removeFirst() }
   }
 }
 

@@ -82,7 +82,10 @@ struct CableLifecycleTests {
     bench.sockets[1].deliver(confirmationFrame(identifier: identifier))
     await eventually { bench.sockets[1].sent.count == 2 }
     bench.sockets[1].deliver(
-      messageFrame(identifier: identifier, payload: #"{"result":{"data":{"chatUpdated":{"id":"1"}}},"more":true}"#)
+      messageFrame(identifier: identifier, payload: #"{"requestId":"abc:2","subscriptionId":"s2","subscriptionReady":true,"more":true}"#)
+    )
+    bench.sockets[1].deliver(
+      messageFrame(identifier: identifier, payload: #"{"result":{"data":{"chatUpdated":{"id":"1"}}},"more":true,"subscriptionId":"s2"}"#)
     )
 
     #expect(bench.sockets[1].sent.first == CableCommand.subscribe(identifier: identifier).json)
@@ -91,8 +94,8 @@ struct CableLifecycleTests {
     for try await event in stream {
       if case .payload = event {
         received += 1
+        break
       }
-      break
     }
     #expect(received == 1)
     await client.stop()
@@ -129,7 +132,7 @@ struct CableLifecycleTests {
 
   @Test
   func tokenChangeRecreatesConnectionWithNewHeader() async {
-    let bench = CableBench(channelIds: ["old", "new"])
+    let bench = CableBench(channelIds: ["old", "old-op", "new", "new-op"])
     let client = bench.makeClient()
     _ = await client.subscribeGraphQL(document: "subscription X { x }", operationName: "X")
     let start = Task { await client.start() }

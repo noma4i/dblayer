@@ -150,8 +150,8 @@ struct NetworkTransportTests {
   @Test
   func subscriptionDeliversReadyAndPayload() async throws {
     let identifier = GraphQLChannel.identifier(channelId: "abc")
-    let readyPayload = #"{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionReady":true}"#
-    let payload = #"{"result":{"data":{"id":"9"}},"more":true}"#
+    let readyPayload = #"{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionId":"s1","subscriptionReady":true}"#
+    let payload = #"{"result":{"data":{"id":"9"}},"more":true,"subscriptionId":"s1"}"#
     let socket = TestCableClientSocket(
       frames: [
         "{\"type\":\"welcome\"}",
@@ -196,11 +196,16 @@ struct NetworkTransportTests {
     let identifier = GraphQLChannel.identifier(channelId: "abc")
     let welcome = "{\"type\":\"welcome\"}"
     let confirmation = confirmationFrame(identifier: identifier)
+    let ready = messageFrame(
+      identifier: identifier,
+      payload: #"{"requestId":"abc:1","subscriptionId":"s1","subscriptionReady":true,"more":true}"#
+    )
     let graphqlError = try await firstFailure(
       frames: [
         welcome,
         confirmation,
-        messageFrame(identifier: identifier, payload: #"{"result":{"errors":[{"message":"boom"}]}}"#),
+        ready,
+        messageFrame(identifier: identifier, payload: #"{"result":{"errors":[{"message":"boom"}]},"subscriptionId":"s1"}"#),
         rejectionFrame(identifier: identifier)
       ],
       scriptId: "network-transport-subscription-graphql"
@@ -209,7 +214,8 @@ struct NetworkTransportTests {
       frames: [
         welcome,
         confirmation,
-        messageFrame(identifier: identifier, payload: #"{"result":{"data":{"id":5}}}"#),
+        ready,
+        messageFrame(identifier: identifier, payload: #"{"result":{"data":{"id":5}},"subscriptionId":"s1"}"#),
         rejectionFrame(identifier: identifier)
       ],
       scriptId: "network-transport-subscription-decode"
@@ -222,7 +228,8 @@ struct NetworkTransportTests {
       frames: [
         welcome,
         confirmation,
-        messageFrame(identifier: identifier, payload: #"{"result":{"data":null},"more":false}"#)
+        ready,
+        messageFrame(identifier: identifier, payload: #"{"result":{"data":null},"more":false,"subscriptionId":"s1"}"#)
       ],
       scriptId: "network-transport-subscription-completed"
     )
@@ -251,7 +258,10 @@ struct NetworkTransportTests {
     let startTask = Task { await cable.start() }
     var iterator = callbacks.makeAsyncIterator()
 
-    let callback = await iterator.next()
+    var callback = await iterator.next()
+    if callback == .ready {
+      callback = await iterator.next()
+    }
 
     handle.cancel()
     await cable.stop()

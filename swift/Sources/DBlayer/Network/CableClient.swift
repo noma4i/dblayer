@@ -9,6 +9,10 @@ public actor CableClient {
   private let connection: CableConnection
   private let makeChannelId: @Sendable () -> String
   private var subscriptions: [String: CableSubscription] = [:]
+  private var operationOrder: [String] = []
+  private var sharedChannelId: String?
+  private var isSharedRequested = false
+  private var isSharedConfirmed = false
   private var hasWelcomed = false
   private let pingInterval: TimeInterval
   private var presenceUserId: String?
@@ -71,19 +75,21 @@ public actor CableClient {
     document: String,
     operationName: String
   ) -> AsyncThrowingStream<GraphQLSubscriptionEvent, Error> {
-    let channelId = makeChannelId()
-    let identifier = GraphQLChannel.identifier(channelId: channelId)
+    if sharedChannelId == nil {
+      sharedChannelId = makeChannelId()
+    }
+    let operationId = makeChannelId()
     let stream = AsyncThrowingStream<GraphQLSubscriptionEvent, Error>.makeStream()
-    subscriptions[channelId] = CableSubscription(
-      channelId: channelId,
-      identifier: identifier,
+    subscriptions[operationId] = CableSubscription(
+      operationId: operationId,
       document: document,
       operationName: operationName,
       continuation: stream.continuation
     )
+    operationOrder.append(operationId)
     if hasWelcomed {
       Task { [weak self] in
-        try? await self?.sendSubscribe(channelId: channelId)
+        await self?.activate(operationId: operationId)
       }
     }
     return stream.stream
@@ -92,10 +98,22 @@ public actor CableClient {
   public func replaceToken(_ token: String) async {
     hasWelcomed = false
     isPresenceConfirmed = false
+    resetSharedState()
     presenceTask?.cancel()
     presenceTask = nil
-    let rekeyed = subscriptions.values.map { $0.rekeyed(channelId: makeChannelId()) }
-    subscriptions = Dictionary(uniqueKeysWithValues: rekeyed.map { ($0.channelId, $0) })
+    sharedChannelId = subscriptions.isEmpty ? nil : makeChannelId()
+    var rekeyed: [String: CableSubscription] = [:]
+    var order: [String] = []
+    for operationId in operationOrder {
+      guard let subscription = subscriptions[operationId] else {
+        continue
+      }
+      let newId = makeChannelId()
+      rekeyed[newId] = subscription.rekeyed(operationId: newId)
+      order.append(newId)
+    }
+    subscriptions = rekeyed
+    operationOrder = order
     await connection.replaceToken(token, channels: channelCount)
   }
 
@@ -147,8 +165,9 @@ public actor CableClient {
       }
       await handleConfirmation(identifier: identifier)
     case let .rejected(identifier):
-      if let channelId = channelId(for: identifier) {
-        finishSubscription(channelId: channelId, error: CableClientError.rejected)
+      if identifier == sharedIdentifier {
+        resetSharedState()
+        finishSubscriptions(error: CableClientError.rejected)
       }
     case let .message(identifier, payload):
       handleMessage(identifier: identifier, payload: payload)
@@ -163,8 +182,10 @@ public actor CableClient {
 
   private func resubscribeAll() async {
     hasWelcomed = true
-    for channelId in Array(subscriptions.keys) {
-      try? await sendSubscribe(channelId: channelId)
+    resetSharedState()
+    if let sharedIdentifier, !subscriptions.isEmpty {
+      isSharedRequested = true
+      try? await connection.send(.subscribe(identifier: sharedIdentifier))
     }
     try? await sendPresenceSubscribe()
   }
@@ -180,19 +201,44 @@ public actor CableClient {
   private func markSocketClosed() {
     hasWelcomed = false
     isPresenceConfirmed = false
+    resetSharedState()
     presenceTask?.cancel()
     presenceTask = nil
   }
 
   private func handleConfirmation(identifier: String) async {
-    guard let channelId = channelId(for: identifier), var subscription = subscriptions[channelId] else {
+    guard identifier == sharedIdentifier else {
+      return
+    }
+    isSharedConfirmed = true
+    for operationId in operationOrder {
+      await execute(operationId: operationId)
+    }
+  }
+
+  private func activate(operationId: String) async {
+    if isSharedConfirmed {
+      await execute(operationId: operationId)
+      return
+    }
+    guard !isSharedRequested, let sharedIdentifier else {
+      return
+    }
+    isSharedRequested = true
+    try? await connection.send(.subscribe(identifier: sharedIdentifier))
+  }
+
+  private func execute(operationId: String) async {
+    guard let sharedChannelId, var subscription = subscriptions[operationId] else {
       return
     }
     subscription.attempt += 1
-    subscriptions[channelId] = subscription
+    subscription.serverId = nil
+    subscriptions[operationId] = subscription
     try? await connection.send(
       GraphQLChannel.execute(
-        channelId: subscription.channelId,
+        channelId: sharedChannelId,
+        operationId: operationId,
         attempt: subscription.attempt,
         document: subscription.document,
         operationName: subscription.operationName
@@ -201,14 +247,19 @@ public actor CableClient {
   }
 
   private func handleMessage(identifier: String, payload: JSONValue) {
-    guard let channelId = channelId(for: identifier), var subscription = subscriptions[channelId] else {
+    guard identifier == sharedIdentifier else {
       return
     }
-    let requestId = GraphQLChannel.requestId(
-      channelId: subscription.channelId,
-      attempt: subscription.attempt
-    )
+    let route = GraphQLChannel.route(of: payload)
+    guard let operationId = operationId(for: route), var subscription = subscriptions[operationId] else {
+      return
+    }
+    if let subscriptionId = route.subscriptionId {
+      subscription.serverId = subscriptionId
+    }
+    let requestId = subscription.requestId
     guard let event = GraphQLChannel.event(from: payload, requestId: requestId) else {
+      subscriptions[operationId] = subscription
       return
     }
     switch event {
@@ -222,28 +273,40 @@ public actor CableClient {
     case let .errors(messages):
       subscription.continuation.yield(.errors(messages))
     case .completed:
-      finishSubscription(channelId: channelId, error: nil)
+      finishSubscription(operationId: operationId, error: nil)
+      guard subscriptions.isEmpty, let sharedIdentifier else {
+        return
+      }
+      resetSharedState()
       Task { [weak self] in
-        try? await self?.connection.send(.unsubscribe(identifier: subscription.identifier))
+        try? await self?.connection.send(.unsubscribe(identifier: sharedIdentifier))
       }
       return
     }
-    subscriptions[channelId] = subscription
+    subscriptions[operationId] = subscription
   }
 
-  private func sendSubscribe(channelId: String) async throws {
-    guard let subscription = subscriptions[channelId] else {
-      return
-    }
-    try await connection.send(.subscribe(identifier: subscription.identifier))
+  private var sharedIdentifier: String? {
+    sharedChannelId.map { GraphQLChannel.identifier(channelId: $0) }
   }
 
   private var channelCount: Int {
-    subscriptions.count + (presenceUserId == nil ? 0 : 1)
+    (subscriptions.isEmpty ? 0 : 1) + (presenceUserId == nil ? 0 : 1)
   }
 
-  private func channelId(for identifier: String) -> String? {
-    subscriptions.first { $0.value.identifier == identifier }?.key
+  private func operationId(for route: GraphQLChannel.Route) -> String? {
+    if let requestId = route.requestId {
+      return subscriptions.first { $0.value.requestId == requestId }?.key
+    }
+    guard let subscriptionId = route.subscriptionId else {
+      return nil
+    }
+    return subscriptions.first { $0.value.serverId == subscriptionId }?.key
+  }
+
+  private func resetSharedState() {
+    isSharedRequested = false
+    isSharedConfirmed = false
   }
 
   private func sendPresenceSubscribe() async throws {
@@ -265,17 +328,19 @@ public actor CableClient {
     }
   }
 
-  private func finishSubscription(channelId: String, error: (any Error)?) {
-    subscriptions.removeValue(forKey: channelId)?.continuation.finish(throwing: error)
+  private func finishSubscription(operationId: String, error: (any Error)?) {
+    operationOrder.removeAll { $0 == operationId }
+    subscriptions.removeValue(forKey: operationId)?.continuation.finish(throwing: error)
   }
 
-  private func finishSubscriptions() {
+  private func finishSubscriptions(error: (any Error)? = nil) {
     presenceTask?.cancel()
     presenceTask = nil
     let activeSubscriptions = subscriptions.values
     subscriptions.removeAll()
+    operationOrder.removeAll()
     for subscription in activeSubscriptions {
-      subscription.continuation.finish()
+      subscription.continuation.finish(throwing: error)
     }
   }
 }

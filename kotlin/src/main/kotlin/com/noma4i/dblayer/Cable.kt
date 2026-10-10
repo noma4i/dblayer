@@ -313,19 +313,20 @@ class CableClientException(val reason: Reason) : Exception(reason.name) {
 }
 
 private class CableSubscription(
-    var channelId: String,
-    var identifier: String,
+    var operationId: String,
     val document: String,
     val operationName: String,
     val events: Channel<GraphQLSubscriptionEvent>,
 ) {
     var attempt = 0
+    var serverId: String? = null
     val readyRequestIds = mutableSetOf<String>()
+    val requestId: String get() = GraphQLChannel.requestId(operationId, attempt)
 
-    fun rekey(newChannelId: String) {
-        channelId = newChannelId
-        identifier = GraphQLChannel.identifier(newChannelId)
+    fun rekey(newOperationId: String) {
+        operationId = newOperationId
         attempt = 0
+        serverId = null
         readyRequestIds.clear()
     }
 }
@@ -342,6 +343,9 @@ class CableClient(
     private val confined = serial
     private val scope = CoroutineScope(SupervisorJob() + confined)
     private val subscriptions = linkedMapOf<String, CableSubscription>()
+    private var sharedChannelId: String? = null
+    private var isSharedRequested = false
+    private var isSharedConfirmed = false
     private var hasWelcomed = false
     private var presenceUserId: String? = null
     private var presenceJob: Job? = null
@@ -363,10 +367,11 @@ class CableClient(
     }
 
     suspend fun subscribeGraphQL(document: String, operationName: String): Flow<GraphQLSubscriptionEvent> = withContext(confined) {
-        val channelId = makeChannelId()
+        if (sharedChannelId == null) sharedChannelId = makeChannelId()
+        val operationId = makeChannelId()
         val events = Channel<GraphQLSubscriptionEvent>(Channel.UNLIMITED)
-        subscriptions[channelId] = CableSubscription(channelId, GraphQLChannel.identifier(channelId), document, operationName, events)
-        if (hasWelcomed) scope.launch { runCatching { sendSubscribe(channelId) } }
+        subscriptions[operationId] = CableSubscription(operationId, document, operationName, events)
+        if (hasWelcomed) scope.launch { activate(operationId) }
         events.receiveAsFlow()
     }
 
@@ -376,9 +381,11 @@ class CableClient(
             isPresenceConfirmed = false
             presenceJob?.cancel()
             presenceJob = null
+            resetSharedState()
+            sharedChannelId = if (subscriptions.isEmpty()) null else makeChannelId()
             val rekeyed = subscriptions.values.toList()
             subscriptions.clear()
-            rekeyed.forEach { it.rekey(makeChannelId()); subscriptions[it.channelId] = it }
+            rekeyed.forEach { it.rekey(makeChannelId()); subscriptions[it.operationId] = it }
         }
         connection.replaceToken(token, withContext(confined) { channelCount })
     }
@@ -421,12 +428,16 @@ class CableClient(
                 }
                 handleConfirmation(frame.identifier)
             }
-            is CableFrame.Rejected -> channelId(frame.identifier)?.let { finishSubscription(it, CableClientException(CableClientException.Reason.Rejected)) }
+            is CableFrame.Rejected -> if (frame.identifier == sharedIdentifier) {
+                resetSharedState()
+                finishSubscriptions(CableClientException(CableClientException.Reason.Rejected))
+            }
             is CableFrame.Message -> handleMessage(frame.identifier, frame.payload)
             is CableFrame.Disconnect -> if (frame.reconnect) connection.closeSocket() else connection.close()
             CableFrame.Closed -> {
                 hasWelcomed = false
                 isPresenceConfirmed = false
+                resetSharedState()
                 presenceJob?.cancel()
                 presenceJob = null
             }
@@ -436,40 +447,76 @@ class CableClient(
 
     private suspend fun resubscribeAll() {
         hasWelcomed = true
-        subscriptions.keys.toList().forEach { runCatching { sendSubscribe(it) } }
+        resetSharedState()
+        val identifier = sharedIdentifier
+        if (identifier != null && subscriptions.isNotEmpty()) {
+            isSharedRequested = true
+            runCatching { connection.send(CableCommand.Subscribe(identifier)) }
+        }
         runCatching { sendPresenceSubscribe() }
     }
 
     private suspend fun handleConfirmation(identifier: String) {
-        val id = channelId(identifier) ?: return
-        val subscription = subscriptions[id] ?: return
+        if (identifier != sharedIdentifier) return
+        isSharedConfirmed = true
+        subscriptions.keys.toList().forEach { execute(it) }
+    }
+
+    private suspend fun activate(operationId: String) {
+        if (isSharedConfirmed) {
+            execute(operationId)
+            return
+        }
+        val identifier = sharedIdentifier
+        if (isSharedRequested || identifier == null) return
+        isSharedRequested = true
+        runCatching { connection.send(CableCommand.Subscribe(identifier)) }
+    }
+
+    private suspend fun execute(operationId: String) {
+        val channelId = sharedChannelId ?: return
+        val subscription = subscriptions[operationId] ?: return
         subscription.attempt += 1
-        runCatching { connection.send(GraphQLChannel.execute(subscription.channelId, subscription.attempt, subscription.document, subscription.operationName)) }
+        subscription.serverId = null
+        runCatching { connection.send(GraphQLChannel.execute(channelId, operationId, subscription.attempt, subscription.document, subscription.operationName)) }
+    }
+
+    private fun operationId(route: GraphQLChannel.Route): String? {
+        route.requestId?.let { requestId -> return subscriptions.entries.firstOrNull { it.value.requestId == requestId }?.key }
+        val subscriptionId = route.subscriptionId ?: return null
+        return subscriptions.entries.firstOrNull { it.value.serverId == subscriptionId }?.key
     }
 
     private fun handleMessage(identifier: String, payload: kotlinx.serialization.json.JsonElement) {
-        val id = channelId(identifier) ?: return
+        if (identifier != sharedIdentifier) return
+        val route = GraphQLChannel.route(payload)
+        val id = operationId(route) ?: return
         val subscription = subscriptions[id] ?: return
-        val requestId = GraphQLChannel.requestId(subscription.channelId, subscription.attempt)
+        route.subscriptionId?.let { subscription.serverId = it }
+        val requestId = subscription.requestId
         when (val event = GraphQLChannel.event(payload, requestId) ?: return) {
             GraphQLSubscriptionEvent.Ready -> if (subscription.readyRequestIds.add(requestId)) subscription.events.trySend(GraphQLSubscriptionEvent.Ready)
             is GraphQLSubscriptionEvent.Payload -> subscription.events.trySend(event)
             is GraphQLSubscriptionEvent.Errors -> subscription.events.trySend(event)
             GraphQLSubscriptionEvent.Completed -> {
                 finishSubscription(id, null)
-                scope.launch { runCatching { connection.send(CableCommand.Unsubscribe(subscription.identifier)) } }
+                val shared = sharedIdentifier
+                if (subscriptions.isEmpty() && shared != null) {
+                    resetSharedState()
+                    scope.launch { runCatching { connection.send(CableCommand.Unsubscribe(shared)) } }
+                }
             }
         }
     }
 
-    private suspend fun sendSubscribe(channelId: String) {
-        val subscription = subscriptions[channelId] ?: return
-        connection.send(CableCommand.Subscribe(subscription.identifier))
+    private val sharedIdentifier: String? get() = sharedChannelId?.let { GraphQLChannel.identifier(it) }
+
+    private val channelCount: Int get() = (if (subscriptions.isEmpty()) 0 else 1) + if (presenceUserId == null) 0 else 1
+
+    private fun resetSharedState() {
+        isSharedRequested = false
+        isSharedConfirmed = false
     }
-
-    private val channelCount: Int get() = subscriptions.size + if (presenceUserId == null) 0 else 1
-
-    private fun channelId(identifier: String): String? = subscriptions.entries.firstOrNull { it.value.identifier == identifier }?.key
 
     private suspend fun sendPresenceSubscribe() {
         val user = presenceUserId ?: return
@@ -490,12 +537,12 @@ class CableClient(
         subscriptions.remove(channelId)?.events?.close(error)
     }
 
-    private fun finishSubscriptions() {
+    private fun finishSubscriptions(error: Throwable? = null) {
         presenceJob?.cancel()
         presenceJob = null
         val active = subscriptions.values.toList()
         subscriptions.clear()
-        active.forEach { it.events.close() }
+        active.forEach { it.events.close(error) }
     }
 }
 

@@ -90,12 +90,20 @@ object GraphQLChannel {
 
     fun identifier(channelId: String) = CableCommand.identifier(CHANNEL_NAME, listOf("channelId" to channelId, "api_version" to API_VERSION))
 
-    fun requestId(channelId: String, attempt: Int) = "$channelId:$attempt"
+    fun requestId(operationId: String, attempt: Int) = "$operationId:$attempt"
 
-    fun execute(channelId: String, attempt: Int, document: String, operationName: String): CableCommand {
+    fun execute(channelId: String, operationId: String, attempt: Int, document: String, operationName: String): CableCommand {
         val q = CableCommand.Companion::quoted
-        val data = "{\"action\":${q("execute")},\"requestId\":${q(requestId(channelId, attempt))},\"query\":${q(document)},\"variables\":{},\"operationName\":${q(operationName)}}"
+        val data = "{\"action\":${q("execute")},\"requestId\":${q(requestId(operationId, attempt))},\"query\":${q(document)},\"variables\":{},\"operationName\":${q(operationName)},\"multiplex\":true}"
         return CableCommand.Message(identifier(channelId), data)
+    }
+
+    data class Route(val requestId: String?, val subscriptionId: String?)
+
+    fun route(payload: JsonElement): Route {
+        val fields = payload as? JsonObject ?: return Route(null, null)
+        fun text(key: String) = (fields[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        return Route(text("requestId"), text("subscriptionId"))
     }
 
     fun event(payload: JsonElement, requestId: String): GraphQLSubscriptionEvent? {
