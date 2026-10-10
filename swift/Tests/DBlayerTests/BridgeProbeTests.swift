@@ -17,6 +17,27 @@ struct BridgeProbeTests {
     #expect(await changes.next()?.isEmpty == true)
   }
 
+  @MainActor
+  @Test
+  func liveRowsFollowAnEditAndDropRowsWhenTheTrackedIdsChange() async throws {
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let first = try await Moment.create(text: "one")
+    let second = try await Moment.create(text: "two")
+    let rows = LiveRows<Moment>()
+    rows.track([first.id])
+    for _ in 0 ..< 200 where rows.byId[first.id] == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(rows.byId[first.id]?.text == "one")
+
+    _ = try await first.update(text: "edited")
+    for _ in 0 ..< 200 where rows.byId[first.id]?.text != "edited" { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(rows.byId[first.id]?.text == "edited")
+
+    rows.track([second.id])
+    for _ in 0 ..< 200 where rows.byId[second.id] == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(Set(rows.byId.keys) == [second.id])
+    rows.stop()
+  }
+
   @Test
   func snapshotsOfOneRowWithDifferentFieldsAreNotEqual() {
     let before = Moment(id: "1", uuid: "a", text: "m", media: .object([:]), createdAt: "2026-10-08T00:00:00.000Z")

@@ -12,6 +12,21 @@ import org.junit.Test
 
 class BridgeProbeTest {
     @Test
+    fun liveRowsFollowAnEditAndDropRowsWhenTheTrackedIdsChange() = runBlocking {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        val first = Moment.create(text = "one")
+        val second = Moment.create(text = "two")
+        val rows = LiveRows(Moment.Companion::ids, this)
+        rows.track(listOf(first.id))
+        assertEquals("one", withTimeout(5000) { rows.byId.first { it[first.id] != null } }[first.id]?.text)
+        first.update(text = "edited")
+        assertEquals("edited", withTimeout(5000) { rows.byId.first { it[first.id]?.text == "edited" } }[first.id]?.text)
+        rows.track(listOf(second.id))
+        assertEquals(setOf(second.id), withTimeout(5000) { rows.byId.first { it.keys == setOf(second.id) } }.keys)
+        rows.stop()
+    }
+
+    @Test
     fun writesReachTypedLiveRows() = runBlocking {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val live = Moment.recent.live.flow
