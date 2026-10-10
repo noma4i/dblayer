@@ -296,3 +296,24 @@ fn schema_ahead_database_refuses_to_open() {
     }
     assert!(matches!(Store::open(&path), Err(StoreError::Ddl(_))));
 }
+
+#[test]
+fn incompatible_boot_rebuilds_cache_tables_with_the_current_columns() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    let models = [messages_spec()];
+    {
+        let (store, _) = reopen(&path, &models, None);
+        exec(
+            &store,
+            "DROP TABLE query_window; \
+             CREATE TABLE query_window (key TEXT PRIMARY KEY NOT NULL, cursor TEXT, has_next INTEGER NOT NULL, ids BLOB NOT NULL, \
+             issued INTEGER NOT NULL, applied INTEGER NOT NULL, generation INTEGER NOT NULL, count INTEGER NOT NULL, \
+             landed_at INTEGER NOT NULL, invalidated INTEGER NOT NULL DEFAULT 0) STRICT; \
+             UPDATE manifest SET value = '1' WHERE key = 'format_version'",
+        );
+    }
+    let (store, report) = reopen(&path, &models, None);
+    assert_eq!(report.verdict, ManifestVerdict::Incompatible);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('query_window') WHERE name = 'total'"), 1);
+}

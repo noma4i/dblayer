@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::schema::{FieldKind, FieldSpec, ModelSpec, Sort};
 use crate::value::ScalarKind;
 
-pub const FORMAT_VERSION: i64 = 1;
+pub const FORMAT_VERSION: i64 = 2;
 pub const RECORD_VERSION: i64 = 1;
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -21,11 +21,7 @@ pub const SERVICE_COLUMNS: [&str; 6] = ["id", "revision", "born_rev", "field_rev
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
 const CACHE_TABLES: [&str; 3] = ["scope_member", "tombstone", "query_window"];
 
-const CORE_STATEMENTS: [&str; 18] = [
-    "CREATE TABLE manifest (
-  key TEXT PRIMARY KEY NOT NULL,
-  value TEXT NOT NULL
-) STRICT",
+const CACHE_STATEMENTS: [&str; 7] = [
     "CREATE TABLE scope_member (
   model TEXT NOT NULL,
   scope_key TEXT NOT NULL,
@@ -56,6 +52,13 @@ const CORE_STATEMENTS: [&str; 18] = [
   count INTEGER NOT NULL,
   landed_at INTEGER NOT NULL,
   invalidated INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1))
+) STRICT",
+];
+
+const CORE_STATEMENTS: [&str; 11] = [
+    "CREATE TABLE manifest (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
 ) STRICT",
     "CREATE TABLE op (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -270,7 +273,7 @@ pub fn migrate_core(connection: &Connection) -> Result<(), DdlError> {
         SCHEMA_VERSION => Ok(()),
         0 => {
             let transaction = connection.unchecked_transaction()?;
-            for statement in CORE_STATEMENTS {
+            for statement in CORE_STATEMENTS.iter().chain(CACHE_STATEMENTS.iter()) {
                 transaction.execute_batch(statement)?;
             }
             transaction.execute_batch(&format!("pragma user_version = {SCHEMA_VERSION}"))?;
@@ -278,6 +281,16 @@ pub fn migrate_core(connection: &Connection) -> Result<(), DdlError> {
         }
         found => Err(DdlError::SchemaVersionAhead { found }),
     }
+}
+
+pub fn rebuild_cache_tables(connection: &Connection) -> Result<(), DdlError> {
+    for table in CACHE_TABLES {
+        connection.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
+    }
+    for statement in CACHE_STATEMENTS {
+        connection.execute_batch(statement)?;
+    }
+    Ok(())
 }
 
 pub fn create_model_tables(connection: &Connection, models: &[ModelSpec]) -> Result<(), DdlError> {

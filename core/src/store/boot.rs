@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use rusqlite::{params, Connection};
 
 use crate::ddl::{
-    create_model_tables, fingerprint_key, manifest_read, manifest_stamp, manifest_verify, stale_version_delete,
+    create_model_tables, fingerprint_key, manifest_read, manifest_stamp, manifest_verify, rebuild_cache_tables,
+    stale_version_delete,
     table_name, ManifestVerdict, RECORD_VERSION, RECORD_VERSION_KEY,
 };
 use crate::operation::QuarantineReason;
@@ -73,6 +74,7 @@ impl Store {
                 write_intent(&inner.connection, "incompatible", &[], now)?;
                 let transaction = inner.connection.unchecked_transaction()?;
                 wipe_all_cache(&transaction, true)?;
+                rebuild_cache_tables(&transaction)?;
                 retire_operations(&transaction, None, Some(QuarantineReason::SchemaChanged))?;
                 transaction.execute("DELETE FROM manifest WHERE key LIKE 'fingerprint:%'", [])?;
                 transaction.commit()?;
