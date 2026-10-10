@@ -8,7 +8,6 @@ public protocol DBModel: Codable, Sendable, Identifiable, Hashable {
 }
 
 extension DBModel {
-  public static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id && lhs.sync == rhs.sync }
   public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
   public var needsAttention: Bool { sync.state == .failed || sync.state == .deliveryUnknown }

@@ -18,6 +18,15 @@ struct BridgeProbeTests {
   }
 
   @Test
+  func snapshotsOfOneRowWithDifferentFieldsAreNotEqual() {
+    let before = Moment(id: "1", uuid: "a", text: "m", media: .object([:]), createdAt: "2026-10-08T00:00:00.000Z")
+    let after = Moment(id: "1", uuid: "a", text: "edited", media: .object([:]), createdAt: "2026-10-08T00:00:00.000Z")
+    #expect(before != after)
+    #expect(before.hashValue == after.hashValue)
+    #expect(before == before)
+  }
+
+  @Test
   func feedLoadsFromTheTransportIntoLiveRows() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
