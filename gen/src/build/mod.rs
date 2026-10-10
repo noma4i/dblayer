@@ -1,5 +1,5 @@
 use dblayer::schema::{CursorSpec, VariableSource, 
-    ActionDeclaration, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
+    ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
     OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
 };
 use dblayer::value::{ScalarKind, SortDirection};
@@ -280,6 +280,7 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
             "response" => action.ignore_response = first_name(line) == "ignore",
             "wrap" => action.wrap = Some(first_name(line)),
             "root" => action.root = Some(first_name(line)),
+            "lands" => action.lands.push(ActionLanding { model: first_name(line), root: option(line, "root").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default() }),
             "refetch" => action.refetch = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
             _ => {}
         }

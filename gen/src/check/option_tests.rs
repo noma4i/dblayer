@@ -103,6 +103,7 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("action.optimistic", action(""), action("    optimistic a: \"x\"")),
         ("action.refetch", action(""), action("    refetch :feed")),
         ("action.on_failure", action(""), action("    on_failure keep")),
+        ("action.lands", action(""), action("    lands User, root: \"like.user\"")),
     ]
 }
 
@@ -126,7 +127,7 @@ fn declared_keys() -> BTreeSet<String> {
     collect("", Context::Ephemeral, &EPHEMERAL_WORDS);
     collect("", Context::Remote, &["query", "paginate", "list", "fresh_for", "max_pages", "updates"]);
     found.extend(["model.storage".to_string(), "model.expire_after".to_string()]);
-    found.extend(["action.mutation", "action.input", "action.optimistic", "action.refetch", "action.on_failure"].map(str::to_string));
+    found.extend(["action.mutation", "action.input", "action.optimistic", "action.refetch", "action.on_failure", "action.lands"].map(str::to_string));
     found
 }
 

@@ -254,6 +254,21 @@ fn association_faults_for_foreign_key_and_dependent() {
 }
 
 #[test]
+fn an_action_that_lands_an_unknown_model_is_reported() {
+    let chats = ModelSpec::new("chats", vec![id_field()]);
+    let mut landing = action("read", RootShape::Upsert);
+    landing.lands.push(ActionLanding { model: "ghosts".into(), root: "chatRead.ghost".into() });
+    let host = ModelSpec { actions: vec![landing.clone()], ..ModelSpec::new("moments", vec![id_field()]) };
+    assert_eq!(
+        validate_models(&[chats.clone(), host], &[]),
+        vec![ModelFault { model: ModelKey::new("moments"), error: DeclarationError::UnknownLanding { action: "read".into(), model: "ghosts".into() } }]
+    );
+    landing.lands[0].model = "chats".into();
+    let host = ModelSpec { actions: vec![landing], ..ModelSpec::new("moments", vec![id_field()]) };
+    assert!(validate_models(&[chats, host], &[]).is_empty());
+}
+
+#[test]
 fn cross_model_checks_report_unknown_target_and_foreign_key() {
     let chats = ModelSpec::new("chats", vec![id_field(), FieldSpec::scalar("unreadCount", ScalarKind::Int)]);
     let messages = |association: AssociationSpec| ModelSpec {

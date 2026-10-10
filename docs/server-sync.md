@@ -98,11 +98,19 @@ action :mute do
   root     "chatMute.chat"
   input    chatId: :id
 end
+
+action :send_gift do
+  mutation GiftSend
+  wrap     :input
+  root     "giftSend.user"
+  lands    Message, root: "giftSend.message"
+  input    userId: :id, giftId: :giftId
+end
 ```
 
 `response: :ignore` skips reading the response, for a mutation whose answer is not the model's row; add `refetch: [:profile]` (or a `refetch` line in an action) to reload the relation instead.
 
-`wrap: :input` sends `{ input: { ...variables } }`. `root:` is the path of the row inside the response, by default the first field of the operation.
+`wrap: :input` sends `{ input: { ...variables } }`. `root:` is the path of the row inside the response, by default the first field of the operation. `lands Model, root: "a.b"` writes the row at another path of the response into that model, once per line, so a payload that carries several rows lands all of them. The model must exist, and a path that the response lacks lands nothing.
 
 `create`, `update` and `destroy` call the named mutation. `input:` maps row fields to variables (same names by default). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
 

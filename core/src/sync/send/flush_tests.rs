@@ -443,6 +443,17 @@ async fn wrapped_action_nests_its_variables_and_reads_the_row_at_its_root() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn action_lands_the_rows_it_declares_outside_its_root() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.db.act("moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
+    rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"moment": {"id": "m1", "text": "starred", "userId": null}, "viewer": {"id": "u9", "name": "Zed"}}})));
+    rig.sync.flush().await.unwrap();
+    let viewer = rig.db.find("users", &rid("u9")).unwrap().expect("the viewer row lands");
+    assert_eq!(viewer.text("name"), Some("Zed"));
+}
+
+#[tokio::test(start_paused = true)]
 async fn action_that_ignores_its_response_keeps_the_local_row() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));

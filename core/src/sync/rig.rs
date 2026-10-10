@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use crate::db::Db;
 use crate::pacing::ManualClock;
 use crate::schema::{
-    ActionDeclaration, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, OnFailure, PageDirection, RelationSpec,
+    ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, OnFailure, PageDirection, RelationSpec,
     RemoteShape, RemoteSpec, RootShape, UpdatesSpec, EphemeralSpec,
 };
 use crate::transport::MockTransport;
@@ -97,6 +97,7 @@ fn wrapped_action() -> ActionDeclaration {
     action.variables.insert("momentId".to_string(), "id".to_string());
     action.wrap = Some("input".to_string());
     action.root = Some("starMoment.moment".to_string());
+    action.lands.push(ActionLanding { model: "users".to_string(), root: "starMoment.viewer".to_string() });
     action
 }
 

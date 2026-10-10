@@ -350,10 +350,19 @@ impl Inner {
         if sending.action == "destroy" || ignored {
             return Normalized::default();
         }
-        let declared_root = self.db.spec(&sending.model).ok().and_then(|spec| spec.actions.iter().find(|declared| declared.name == sending.action).and_then(|declared| declared.root.clone()));
-        extract(data, declared_root.as_deref().unwrap_or(&operation.root_path), &RemoteShape::Single)
+        let declared = self.db.spec(&sending.model).ok().and_then(|spec| spec.actions.iter().find(|declared| declared.name == sending.action).cloned());
+        let root = declared.as_ref().and_then(|declared| declared.root.as_deref()).unwrap_or(&operation.root_path);
+        let mut normalized = extract(data, root, &RemoteShape::Single)
             .and_then(|extracted| normalize_nodes(&self.db, &sending.model, &extracted.nodes))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        for landing in declared.iter().flat_map(|declared| &declared.lands) {
+            let Ok(landed) = extract(data, &landing.root, &RemoteShape::Single).and_then(|extracted| normalize_nodes(&self.db, &landing.model, &extracted.nodes)) else { continue };
+            let model = ModelKey::new(&landing.model);
+            normalized.related.extend(landed.roots.into_iter().map(|row| (model.clone(), row)));
+            normalized.related.extend(landed.related);
+            normalized.dropped += landed.dropped;
+        }
+        normalized
     }
 
     fn quarantine(&self, sending: &Sending<'_>, data: &Value) -> Result<SendResult, SyncError> {

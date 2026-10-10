@@ -54,6 +54,8 @@ pub enum DeclarationError {
     DependentOnNonOwner(String),
     #[error("association {0} targets an unknown model")]
     UnknownTarget(String),
+    #[error("action {action} lands the unknown model {model}")]
+    UnknownLanding { action: String, model: String },
     #[error("action {0} destroys a record and cannot keep it on failure")]
     KeepOnDestroy(String),
     #[error("relation name is empty")]
@@ -649,6 +651,14 @@ pub struct ActionDeclaration {
     pub wrap: Option<String>,
     #[serde(default)]
     pub root: Option<String>,
+    #[serde(default)]
+    pub lands: Vec<ActionLanding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionLanding {
+    pub model: String,
+    pub root: String,
 }
 
 impl ActionDeclaration {
@@ -672,6 +682,7 @@ impl ActionDeclaration {
             ignore_response: false,
             wrap: None,
             root: None,
+            lands: Vec::new(),
         }
     }
 
@@ -950,6 +961,10 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
                 .associations
                 .iter()
                 .try_for_each(|association| association.check_target(by_key.get(association.target.as_str()).copied()))
+                .and_then(|()| {
+                    let unknown = model.actions.iter().flat_map(|action| action.lands.iter().map(move |landing| (action, landing))).find(|(_, landing)| !by_key.contains_key(landing.model.as_str()));
+                    unknown.map_or(Ok(()), |(action, landing)| Err(DeclarationError::UnknownLanding { action: action.name.clone(), model: landing.model.clone() }))
+                })
         });
         if let Err(error) = result {
             faults.push(ModelFault { model: model.key.clone(), error });
