@@ -105,14 +105,14 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
 }
 
 pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Result<(), StoreError> {
-    for table in row_tables(connection)? {
+    for table in row_tables(connection)?.into_iter().filter(|table| table != "row_sync") {
         if drop_tables {
             connection.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
         } else {
             connection.execute_batch(&format!("DELETE FROM {table}"))?;
         }
     }
-    connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window;")?;
+    connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window; DELETE FROM row_sync;")?;
     clear_all(connection)?;
     Ok(())
 }

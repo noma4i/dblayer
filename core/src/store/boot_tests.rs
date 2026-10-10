@@ -316,4 +316,5 @@ fn incompatible_boot_rebuilds_cache_tables_with_the_current_columns() {
     let (store, report) = reopen(&path, &models, None);
     assert_eq!(report.verdict, ManifestVerdict::Incompatible);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('query_window') WHERE name = 'total'"), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync"), 0);
 }
