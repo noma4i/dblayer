@@ -423,7 +423,7 @@ fn manifest_write_and_read_round_trip() {
 fn missing_format_format_mismatch_and_data_version_mismatch_are_incompatible() {
     let missing_format = verdict(&[("fingerprint:message", "message-v1")], None, &[]);
     let format_mismatch = verdict(&[(FORMAT_VERSION_KEY, "0")], None, &[]);
-    let format = FORMAT_VERSION.to_string();
+    let format = format_version();
     let data_mismatch = verdict(&[(FORMAT_VERSION_KEY, format.as_str()), (DATA_VERSION_KEY, "a")], Some("b"), &[]);
 
     assert_eq!(missing_format, ManifestVerdict::Incompatible);
@@ -433,7 +433,7 @@ fn missing_format_format_mismatch_and_data_version_mismatch_are_incompatible() {
 
 #[test]
 fn empty_database_is_fresh_and_fingerprint_mismatch_touches_one_model() {
-    let format = FORMAT_VERSION.to_string();
+    let format = format_version();
     let fresh = verdict(&[], None, &[]);
     let cache_only = verdict(
         &[(FORMAT_VERSION_KEY, format.as_str()), ("fingerprint:message", "x"), ("fingerprint:chat", "y")],
@@ -491,16 +491,4 @@ fn core_migration_creates_the_file_table_with_a_unique_pair_index() {
     connection.execute(insert, ["f1", "inline"]).unwrap();
     assert!(connection.execute(insert, ["f2", "inline"]).is_err());
     assert!(connection.execute(insert, ["f3", "elsewhere"]).is_err());
-}
-
-#[test]
-fn core_tables_change_only_together_with_the_format_version() {
-    use sha2::{Digest, Sha256};
-    let digest: String = Sha256::digest([CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice()].concat().join("\n").as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
-
-    assert_eq!(
-        (FORMAT_VERSION, digest.as_str()),
-        (2, "9f1e6ef06c1be7c5c09d224b30174bf26f7342bcbb021128809d92bd903deeac"),
-        "core table DDL changed: bump FORMAT_VERSION so existing databases rebuild, then pin the new digest"
-    );
 }

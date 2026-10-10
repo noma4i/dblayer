@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::schema::{FieldKind, FieldSpec, ModelSpec, Sort};
 use crate::value::ScalarKind;
 
-pub const FORMAT_VERSION: i64 = 2;
 pub const RECORD_VERSION: i64 = 1;
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -283,6 +283,11 @@ pub fn migrate_core(connection: &Connection) -> Result<(), DdlError> {
     }
 }
 
+pub fn format_version() -> String {
+    let text = [CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice()].concat().join("\n");
+    Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 pub fn rebuild_cache_tables(connection: &Connection) -> Result<(), DdlError> {
     for table in CACHE_TABLES {
         connection.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
@@ -380,7 +385,7 @@ pub fn manifest_stamp(
     data_version: Option<&str>,
     fingerprints: &BTreeMap<String, String>,
 ) -> Result<(), DdlError> {
-    manifest_write(connection, FORMAT_VERSION_KEY, &FORMAT_VERSION.to_string())?;
+    manifest_write(connection, FORMAT_VERSION_KEY, &format_version())?;
     manifest_write(connection, RECORD_VERSION_KEY, &RECORD_VERSION.to_string())?;
     manifest_write(connection, DATA_VERSION_KEY, data_version.unwrap_or(""))?;
     for (model, fingerprint) in fingerprints {
@@ -411,7 +416,7 @@ pub fn manifest_verify(
     if values.is_empty() && cache_is_empty(connection)? {
         return Ok(ManifestVerdict::Fresh);
     }
-    if values.get(FORMAT_VERSION_KEY).map(String::as_str) != Some(FORMAT_VERSION.to_string().as_str()) {
+    if values.get(FORMAT_VERSION_KEY).map(String::as_str) != Some(format_version().as_str()) {
         return Ok(ManifestVerdict::Incompatible);
     }
     let stored_data_version = values.get(DATA_VERSION_KEY).map_or("", String::as_str);
