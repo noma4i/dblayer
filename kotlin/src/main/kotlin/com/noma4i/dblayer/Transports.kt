@@ -73,6 +73,7 @@ class DatabaseTransport(
     private val run: suspend () -> OperationRun,
     private val cable: suspend () -> CableClient?,
     private val client: OkHttpClient = OkHttpClient(),
+    private val onEvent: (operationName: String, json: String) -> Unit = { _, _ -> },
 ) : Transport {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val jobs = ConcurrentHashMap<String, Job>()
@@ -89,7 +90,10 @@ class DatabaseTransport(
                 socket.subscribeGraphQL(request.document, request.operationName).collect { event ->
                     when (event) {
                         GraphQLSubscriptionEvent.Ready -> sink.ready()
-                        is GraphQLSubscriptionEvent.Payload -> sink.event(event.value.toString())
+                        is GraphQLSubscriptionEvent.Payload -> {
+                            onEvent(request.operationName, event.value.toString())
+                            sink.event(event.value.toString())
+                        }
                         is GraphQLSubscriptionEvent.Errors -> sink.failed("graphql", event.messages.joinToString("\n"))
                         GraphQLSubscriptionEvent.Completed -> Unit
                     }
