@@ -76,7 +76,7 @@ struct ProfileView: View {
 }
 ```
 
-**Loading state.** A remote relation reports `idle`, `loading` or `failed`, whether another page exists and when it last loaded:
+**Loading state.** A remote relation reports `idle`, `loading` or `failed`, whether another page exists, when it last loaded and the `total` the server reports for the whole list (`totalCount` of the connection, nil when the document does not select it):
 
 ```swift
 for await state in Moment.feed.state.stream { if state.isLoading { showSpinner() } }

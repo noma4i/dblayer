@@ -24,6 +24,7 @@ pub fn connection_page_info(connection: &Value, cursor: Option<&CursorSpec>) -> 
     PageInfo {
         has_next_page: info.and_then(|info| info.get("hasNextPage")).and_then(Value::as_bool).unwrap_or(false),
         end_cursor: cursor_text(connection, info, cursor),
+        total: connection.get("totalCount").and_then(Value::as_i64),
     }
 }
 

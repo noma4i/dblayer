@@ -94,6 +94,7 @@ public struct LoadState: Sendable, Equatable {
 
   public var phase: Phase = .idle
   public var hasMore = false
+  public var total: Int64?
   public var errorKind: String?
   public var error: String?
   public var loadedAt: Int64?
@@ -103,6 +104,7 @@ public struct LoadState: Sendable, Equatable {
   init(_ change: RelationStateChange) {
     phase = Phase(rawValue: change.phase) ?? .idle
     hasMore = change.hasMore
+    total = change.total
     errorKind = change.errorKind
     error = change.error
     loadedAt = change.loadedAt

@@ -6,6 +6,7 @@ use crate::sync::{LoadPhase, RelationState};
 pub struct RelationStateChange {
     pub phase: String,
     pub has_more: bool,
+    pub total: Option<i64>,
     pub error_kind: Option<String>,
     pub error: Option<String>,
     pub loaded_at: Option<i64>,
@@ -21,6 +22,7 @@ impl RelationStateChange {
         Self {
             phase: phase.into(),
             has_more: state.has_more,
+            total: state.total,
             error_kind: state.error.as_ref().map(|error| error.kind.to_string()),
             error: state.error.as_ref().map(|error| error.message.clone()),
             loaded_at: state.loaded_at,

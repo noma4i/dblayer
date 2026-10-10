@@ -6,7 +6,7 @@ use crate::identity::ScopeKey;
 use crate::schema::PageDirection;
 
 fn window(key: &str) -> WindowRecord {
-    WindowRecord { key: key.into(), cursor: None, has_next: false, ids: vec![], issued: 0, applied: 0, generation: 0 }
+    WindowRecord { key: key.into(), cursor: None, has_next: false, total: None, ids: vec![], issued: 0, applied: 0, generation: 0 }
 }
 
 fn key(model_name: &str, relation: &str, param: &str) -> String {
@@ -26,6 +26,7 @@ fn save_and_load_return_equal_record() {
         key: "messages:thread:1".into(),
         cursor: Some("c1".into()),
         has_next: true,
+        total: Some(5),
         ids: vec!["m1".into(), "m2".into()],
         issued: 1,
         applied: 2,
@@ -210,12 +211,12 @@ fn advance_appends_rows_skips_duplicates_and_rejects_malformed_page_info() {
     let window = QueryWindow { row_ids: ids(&["row-1"]), ..QueryWindow::new("inbox:forward", PageDirection::Forward) };
     let first = Pagination::advance(
         &window,
-        &PageInfo { has_next_page: true, end_cursor: Some("cursor-1".into()) },
+        &PageInfo { has_next_page: true, end_cursor: Some("cursor-1".into()), total: None },
         &ids(&["row-2", "row-3", "row-2"]),
     )
     .unwrap();
     let second =
-        Pagination::advance(&first, &PageInfo { has_next_page: false, end_cursor: None }, &ids(&["row-4"])).unwrap();
+        Pagination::advance(&first, &PageInfo { has_next_page: false, end_cursor: None, total: None }, &ids(&["row-4"])).unwrap();
     assert_eq!(first.cursor.as_deref(), Some("cursor-1"));
     assert!(first.has_next);
     assert_eq!(first.count, 1);
@@ -224,7 +225,7 @@ fn advance_appends_rows_skips_duplicates_and_rejects_malformed_page_info() {
     assert!(!second.has_next);
     assert_eq!(second.count, 2);
     assert_eq!(second.row_ids, ids(&["row-1", "row-2", "row-3", "row-4"]));
-    let malformed = Pagination::advance(&window, &PageInfo { has_next_page: true, end_cursor: None }, &[]);
+    let malformed = Pagination::advance(&window, &PageInfo { has_next_page: true, end_cursor: None, total: None }, &[]);
     assert!(matches!(malformed, Err(StoreError::Constraint(_))));
 }
 

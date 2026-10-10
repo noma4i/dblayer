@@ -45,6 +45,7 @@ enum class LoadPhase { Idle, Loading, Failed }
 data class LoadState(
     val phase: LoadPhase = LoadPhase.Idle,
     val hasMore: Boolean = false,
+    val total: Long? = null,
     val errorKind: String? = null,
     val error: String? = null,
     val loadedAt: Long? = null,
@@ -54,7 +55,7 @@ data class LoadState(
 
     internal constructor(change: RelationStateChange) : this(
         when (change.phase) { "loading" -> LoadPhase.Loading; "failed" -> LoadPhase.Failed; else -> LoadPhase.Idle },
-        change.hasMore, change.errorKind, change.error, change.loadedAt,
+        change.hasMore, change.total, change.errorKind, change.error, change.loadedAt,
     )
 }
 

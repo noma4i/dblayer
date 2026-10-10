@@ -48,6 +48,7 @@ const CORE_STATEMENTS: [&str; 18] = [
   key TEXT PRIMARY KEY NOT NULL,
   cursor TEXT,
   has_next INTEGER NOT NULL,
+  total INTEGER,
   ids BLOB NOT NULL,
   issued INTEGER NOT NULL,
   applied INTEGER NOT NULL,

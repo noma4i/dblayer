@@ -22,6 +22,7 @@ fn seed_two_models(store: &Store) {
                 key: window_key,
                 cursor: None,
                 has_next: false,
+                total: None,
                 ids: vec![],
                 issued: 0,
                 applied: 0,

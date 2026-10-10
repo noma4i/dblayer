@@ -44,7 +44,7 @@ fn connection_reads_edges_and_page_info() {
     let data = json!({"feed": {"edges": [{"node": {"id": "a"}}, {"node": {"id": "b"}}], "pageInfo": {"hasNextPage": true, "endCursor": "c2"}}});
     let extracted = extract(&data, "feed", &connection()).unwrap();
     assert_eq!(extracted.nodes.len(), 2);
-    assert_eq!(extracted.page_info, Some(PageInfo { has_next_page: true, end_cursor: Some("c2".to_string()) }));
+    assert_eq!(extracted.page_info, Some(PageInfo { has_next_page: true, end_cursor: Some("c2".to_string()), total: None }));
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn custom_cursor_is_read_from_its_path_in_the_connection() {
 
     let extracted = extract(&data, "feed", &shape).unwrap();
 
-    assert_eq!(extracted.page_info, Some(PageInfo { has_next_page: true, end_cursor: Some("7".to_string()) }));
+    assert_eq!(extracted.page_info, Some(PageInfo { has_next_page: true, end_cursor: Some("7".to_string()), total: None }));
     let missing = json!({"feed": {"edges": [], "pageInfo": {"hasNextPage": true}}});
     assert!(extract(&missing, "feed", &shape).is_err());
 }

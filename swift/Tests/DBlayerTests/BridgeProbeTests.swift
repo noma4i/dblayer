@@ -84,7 +84,7 @@ struct BridgeProbeTests {
   @Test
   func liveListLoadsTheRelationAndReportsItsState() async throws {
     let transport = MockTransport()
-    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}"#)
+    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"totalCount":9}}}"#)
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
@@ -93,6 +93,7 @@ struct BridgeProbeTests {
 
     #expect(list.rows.first?.uuid == "a")
     #expect(list.state.hasMore && list.state.phase == .idle)
+    #expect(list.state.total == 9)
     let rows = LiveRows<Moment>()
     rows.track(list.rows.map(\.id))
     for _ in 0 ..< 200 where rows.byId.isEmpty { try await Task.sleep(for: .milliseconds(10)) }

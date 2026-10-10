@@ -401,7 +401,7 @@ fn save_window(connection: &Connection, window: &WindowSave, generation: Generat
     let ids: Vec<String> = statement.query_map(params![window.scope.model.as_str(), window.scope.key.as_str()], |row| row.get(0))?.collect::<Result<_, _>>()?;
     let kept = window.tail.as_ref().filter(|tail| ids.contains(&tail.anchor));
     let (cursor, has_next) = kept.map_or((window.cursor.clone(), window.has_next), |tail| (tail.cursor.clone(), tail.has_next));
-    let record = WindowRecord { key: window.key.clone(), cursor, has_next, ids, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
+    let record = WindowRecord { key: window.key.clone(), cursor, has_next, total: window.total, ids, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
     upsert_window(connection, &record, now_ms)?;
     if let Some(landed_at) = window.cleared_at {
         connection.execute("UPDATE query_window SET invalidated = 0, landed_at = ?1 WHERE key = ?2", params![landed_at, window.key])?;

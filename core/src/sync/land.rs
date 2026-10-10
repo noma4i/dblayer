@@ -136,6 +136,7 @@ impl Inner {
                 scope: scope.clone(),
                 cursor: page_info.as_ref().and_then(|info| info.end_cursor.clone()),
                 has_next: page_info.as_ref().is_some_and(|info| info.has_next_page),
+                total: page_info.as_ref().and_then(|info| info.total),
                 tail: tail.clone(),
                 issued: attempt.issued,
                 applied,

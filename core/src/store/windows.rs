@@ -12,6 +12,7 @@ pub struct WindowRecord {
     pub key: String,
     pub cursor: Option<String>,
     pub has_next: bool,
+    pub total: Option<i64>,
     pub ids: Vec<String>,
     pub issued: i64,
     pub applied: i64,
@@ -102,6 +103,7 @@ pub fn window_key(scope_key: &str, direction: PageDirection) -> String {
 pub struct PageInfo {
     pub has_next_page: bool,
     pub end_cursor: Option<String>,
+    pub total: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,9 +175,9 @@ impl Pagination {
 
 pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, landed_at: i64) -> Result<(), StoreError> {
     connection.execute(
-        "INSERT INTO query_window (key, cursor, has_next, ids, issued, applied, generation, count, landed_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
-         ON CONFLICT (key) DO UPDATE SET cursor = excluded.cursor, has_next = excluded.has_next, \
+        "INSERT INTO query_window (key, cursor, has_next, total, ids, issued, applied, generation, count, landed_at) \
+         VALUES (?1, ?2, ?3, ?10, ?4, ?5, ?6, ?7, ?8, ?9) \
+         ON CONFLICT (key) DO UPDATE SET cursor = excluded.cursor, has_next = excluded.has_next, total = excluded.total, \
          ids = excluded.ids, issued = excluded.issued, applied = excluded.applied, \
          generation = excluded.generation, count = excluded.count",
         params![
@@ -188,6 +190,7 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
             record.generation,
             record.ids.len() as i64,
             landed_at,
+            record.total,
         ],
     )?;
     Ok(())
@@ -206,7 +209,7 @@ impl Store {
         let found = inner
             .connection
             .query_row(
-                "SELECT key, cursor, has_next, ids, issued, applied, generation FROM query_window WHERE key = ?1",
+                "SELECT key, cursor, has_next, ids, issued, applied, generation, total FROM query_window WHERE key = ?1",
                 params![key],
                 |row| {
                     Ok((
@@ -217,14 +220,15 @@ impl Store {
                         row.get::<_, i64>(4)?,
                         row.get::<_, i64>(5)?,
                         row.get::<_, i64>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((key, cursor, has_next, ids, issued, applied, generation)) = found else { return Ok(None) };
+        let Some((key, cursor, has_next, ids, issued, applied, generation, total)) = found else { return Ok(None) };
         let ids: Vec<serde_json::Value> = serde_json::from_slice(&ids)?;
         let ids = ids.into_iter().filter_map(|value| value.as_str().map(str::to_string)).collect();
-        Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, ids, issued, applied, generation }))
+        Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, ids, issued, applied, generation }))
     }
 
     pub fn window_freshness(&self, key: &str) -> Result<Option<WindowFreshness>, StoreError> {

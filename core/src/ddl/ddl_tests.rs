@@ -264,8 +264,8 @@ fn core_table_columns_match_spec() {
     assert_eq!(op_names, expected_op.into_iter().collect());
     assert!(!op["dedupe_key"].1 && !op["rollback"].1 && !op["temp_id"].1 && !op["base_revision"].1);
     assert!(op["input"].1 && op["row_ids"].1);
-    assert_eq!(window.len(), 10);
-    assert!(window["landed_at"].1 && !window["cursor"].1);
+    assert_eq!(window.len(), 11);
+    assert!(window["landed_at"].1 && !window["cursor"].1 && !window["total"].1);
     let bad_flag = connection.execute(
         "insert into query_window (key, has_next, ids, issued, applied, generation, count, landed_at, invalidated) values ('k', 0, x'00', 0, 0, 0, 0, 0, 2)",
         [],
