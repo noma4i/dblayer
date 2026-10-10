@@ -280,6 +280,7 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
             "response" => action.ignore_response = first_name(line) == "ignore",
             "wrap" => action.wrap = Some(first_name(line)),
             "root" => action.root = Some(first_name(line)),
+            "refetch_of" => action.refetch.push(format!("{}.{}", first_name(line), option(line, "relation").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default())),
             "lands" => action.lands.push(ActionLanding { model: first_name(line), root: option(line, "root").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default() }),
             "refetch" => action.refetch = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
             _ => {}

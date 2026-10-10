@@ -706,7 +706,7 @@ impl ActionDeclaration {
         if self.has_once && self.dedupe_key.as_deref().is_none_or(str::is_empty) {
             return Err(DeclarationError::OnceKeyRequired(name()));
         }
-        if let Some(relation) = self.refetch.iter().find(|relation| !model.has_remote(relation)) {
+        if let Some(relation) = self.refetch.iter().find(|relation| !relation.contains('.') && !model.has_remote(relation)) {
             return Err(DeclarationError::UnknownRefetch { action: name(), relation: relation.clone() });
         }
         match self.optimistic.keys().find(|field| model.field(field).is_none()) {
@@ -961,6 +961,13 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
                 .associations
                 .iter()
                 .try_for_each(|association| association.check_target(by_key.get(association.target.as_str()).copied()))
+                .and_then(|()| {
+                    let missing = model.actions.iter().flat_map(|action| action.refetch.iter().filter_map(|name| name.split_once('.')).map(move |(target, relation)| (action, target, relation)));
+                    missing
+                        .into_iter()
+                        .find(|(_, target, relation)| !by_key.get(target).is_some_and(|target| target.has_remote(relation)))
+                        .map_or(Ok(()), |(action, target, relation)| Err(DeclarationError::UnknownRefetch { action: action.name.clone(), relation: format!("{target}.{relation}") }))
+                })
                 .and_then(|()| {
                     let unknown = model.actions.iter().flat_map(|action| action.lands.iter().map(move |landing| (action, landing))).find(|(_, landing)| !by_key.contains_key(landing.model.as_str()));
                     unknown.map_or(Ok(()), |(action, landing)| Err(DeclarationError::UnknownLanding { action: action.name.clone(), model: landing.model.clone() }))

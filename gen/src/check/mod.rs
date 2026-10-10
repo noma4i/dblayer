@@ -115,6 +115,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Action, "lands") => plain(Shape::Const, vec![key("root", Want::Any, true)]),
         (Context::Action, "input" | "optimistic" | "args") => free(),
         (Context::Remote, "variables") => free(),
+        (Context::Action, "refetch_of") => plain(Shape::Const, vec![key("relation", Want::Symbol, true)]),
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
         (Context::Model, "listen") => {
             plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
@@ -275,7 +276,7 @@ fn check_action(action: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, 
     let mut seen = HashSet::new();
     for call in &lines {
         check_call(call, Context::Action, report);
-        if !seen.insert(call.word.as_str()) && call.word != "lands" {
+        if !seen.insert(call.word.as_str()) && !matches!(call.word.as_str(), "lands" | "refetch_of") {
             report(call.line, call.column, format!("`{}` is declared twice", call.word));
         }
         check_action_line(call, fields, remotes, report);

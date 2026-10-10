@@ -113,6 +113,7 @@ fn like_action() -> ActionDeclaration {
     action.variables.insert("momentId".to_string(), "id".to_string());
     action.optimistic.insert("likedByMe".to_string(), json!(true));
     action.refetch.push("history".to_string());
+    action.refetch.push("users.current".to_string());
     action
 }
 

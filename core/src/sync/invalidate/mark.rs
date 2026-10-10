@@ -15,6 +15,13 @@ impl Inner {
         if matches!(action, "create" | "destroy") {
             names.extend(spec.relations.iter().filter(|relation| relation.remote.is_some()).map(|relation| relation.name.clone()));
         }
+        let foreign: Vec<String> = names.iter().filter(|name| name.contains('.')).cloned().collect();
+        for name in &foreign {
+            names.remove(name);
+        }
+        for (target, relation) in foreign.iter().filter_map(|name| name.split_once('.')) {
+            self.mark_and_reload(target, &BTreeSet::from([relation.to_string()])).await?;
+        }
         self.mark_and_reload(model, &names).await
     }
 

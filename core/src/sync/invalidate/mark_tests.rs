@@ -86,6 +86,21 @@ async fn refetch_marks_only_the_named_relations() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn refetch_of_a_relation_of_another_model_marks_that_relation() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));
+    rig.sync.load("users", "current", &none(), LoadOptions::default()).await.unwrap();
+    let key = rig.sync.window_key("users", "current", &none()).unwrap();
+    let stale = || rig.db.shared.store.window_freshness(&key).unwrap().is_some_and(|freshness| freshness.invalidated);
+    assert!(!stale());
+    rig.db.act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+    rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
+    rig.sync.flush().await.unwrap();
+    assert!(stale());
+}
+
+#[tokio::test(start_paused = true)]
 async fn update_without_refetch_marks_nothing() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
