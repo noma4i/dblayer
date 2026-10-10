@@ -22,25 +22,25 @@ const FINGERPRINT_PREFIX: &str = "fingerprint:";
 const CACHE_TABLES: [&str; 3] = ["scope_member", "tombstone", "query_window"];
 
 const CACHE_STATEMENTS: [&str; 7] = [
-    "CREATE TABLE scope_member (
+    "CREATE TABLE IF NOT EXISTS scope_member (
   model TEXT NOT NULL,
   scope_key TEXT NOT NULL,
   row_id TEXT NOT NULL,
   order_key TEXT NOT NULL,
   PRIMARY KEY (model, scope_key, row_id)
 ) STRICT",
-    "CREATE UNIQUE INDEX scope_walk ON scope_member (model, scope_key, order_key, row_id)",
-    "CREATE UNIQUE INDEX scope_order_unique ON scope_member (model, scope_key, order_key)",
-    "CREATE INDEX scope_member_row ON scope_member (model, row_id)",
-    "CREATE TABLE tombstone (
+    "CREATE UNIQUE INDEX IF NOT EXISTS scope_walk ON scope_member (model, scope_key, order_key, row_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS scope_order_unique ON scope_member (model, scope_key, order_key)",
+    "CREATE INDEX IF NOT EXISTS scope_member_row ON scope_member (model, row_id)",
+    "CREATE TABLE IF NOT EXISTS tombstone (
   model TEXT NOT NULL,
   id TEXT NOT NULL,
   seq INTEGER NOT NULL,
   deleted_at INTEGER NOT NULL,
   PRIMARY KEY (model, id)
 ) STRICT, WITHOUT ROWID",
-    "CREATE INDEX tombstone_age ON tombstone (deleted_at)",
-    "CREATE TABLE query_window (
+    "CREATE INDEX IF NOT EXISTS tombstone_age ON tombstone (deleted_at)",
+    "CREATE TABLE IF NOT EXISTS query_window (
   key TEXT PRIMARY KEY NOT NULL,
   cursor TEXT,
   has_next INTEGER NOT NULL,
@@ -56,11 +56,11 @@ const CACHE_STATEMENTS: [&str; 7] = [
 ];
 
 const CORE_STATEMENTS: [&str; 11] = [
-    "CREATE TABLE manifest (
+    "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
 ) STRICT",
-    "CREATE TABLE op (
+    "CREATE TABLE IF NOT EXISTS op (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   action_key TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending', 'failed', 'delivery_unknown', 'committed', 'rolledback')),
@@ -77,7 +77,7 @@ const CORE_STATEMENTS: [&str; 11] = [
   since INTEGER NOT NULL,
   upload BLOB
 ) STRICT",
-    "CREATE TABLE row_sync (
+    "CREATE TABLE IF NOT EXISTS row_sync (
   model TEXT NOT NULL,
   row_id TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'failed', 'delivery_unknown')),
@@ -89,23 +89,23 @@ const CORE_STATEMENTS: [&str; 11] = [
   upload BLOB,
   PRIMARY KEY (model, row_id)
 ) STRICT, WITHOUT ROWID",
-    "CREATE INDEX op_open ON op (action_key, status)",
-    "CREATE INDEX op_temp ON op (temp_id)",
-    "CREATE UNIQUE INDEX op_open_dedupe ON op (action_key, dedupe_key)
+    "CREATE INDEX IF NOT EXISTS op_open ON op (action_key, status)",
+    "CREATE INDEX IF NOT EXISTS op_temp ON op (temp_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS op_open_dedupe ON op (action_key, dedupe_key)
   WHERE dedupe_key IS NOT NULL AND status IN ('pending', 'delivery_unknown')",
-    "CREATE TABLE op_once (
+    "CREATE TABLE IF NOT EXISTS op_once (
   namespace TEXT NOT NULL,
   dedupe_key TEXT NOT NULL,
   PRIMARY KEY (namespace, dedupe_key)
 ) STRICT, WITHOUT ROWID",
-    "CREATE TABLE quarantine (
+    "CREATE TABLE IF NOT EXISTS quarantine (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   model TEXT,
   payload BLOB NOT NULL,
   reason TEXT NOT NULL
 ) STRICT",
-    "CREATE INDEX quarantine_reason ON quarantine (reason, seq)",
-    "CREATE TABLE file (
+    "CREATE INDEX IF NOT EXISTS quarantine_reason ON quarantine (reason, seq)",
+    "CREATE TABLE IF NOT EXISTS file (
   id TEXT PRIMARY KEY NOT NULL,
   model TEXT NOT NULL,
   row_id TEXT NOT NULL,
@@ -118,7 +118,7 @@ const CORE_STATEMENTS: [&str; 11] = [
   data BLOB,
   created_at INTEGER NOT NULL
 ) STRICT",
-    "CREATE UNIQUE INDEX file_pair ON file (model, row_id, field)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS file_pair ON file (model, row_id, field)",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -269,18 +269,15 @@ pub fn prepare_connection(connection: &Connection) -> Result<(), DdlError> {
 
 pub fn migrate_core(connection: &Connection) -> Result<(), DdlError> {
     let version: i64 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
-    match version {
-        SCHEMA_VERSION => Ok(()),
-        0 => {
-            let transaction = connection.unchecked_transaction()?;
-            for statement in CORE_STATEMENTS.iter().chain(CACHE_STATEMENTS.iter()) {
-                transaction.execute_batch(statement)?;
-            }
-            transaction.execute_batch(&format!("pragma user_version = {SCHEMA_VERSION}"))?;
-            Ok(transaction.commit()?)
-        }
-        found => Err(DdlError::SchemaVersionAhead { found }),
+    if version != 0 && version != SCHEMA_VERSION {
+        return Err(DdlError::SchemaVersionAhead { found: version });
     }
+    let transaction = connection.unchecked_transaction()?;
+    for statement in CORE_STATEMENTS.iter().chain(CACHE_STATEMENTS.iter()) {
+        transaction.execute_batch(statement)?;
+    }
+    transaction.execute_batch(&format!("pragma user_version = {SCHEMA_VERSION}"))?;
+    Ok(transaction.commit()?)
 }
 
 pub fn format_version() -> String {

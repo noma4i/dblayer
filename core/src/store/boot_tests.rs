@@ -318,3 +318,16 @@ fn incompatible_boot_rebuilds_cache_tables_with_the_current_columns() {
     assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('query_window') WHERE name = 'total'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync"), 0);
 }
+
+#[test]
+fn open_recreates_a_missing_core_table() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    let models = [messages_spec()];
+    {
+        let (store, _) = reopen(&path, &models, None);
+        exec(&store, "DROP TABLE row_sync");
+    }
+    let (store, _) = reopen(&path, &models, None);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync"), 0);
+}
