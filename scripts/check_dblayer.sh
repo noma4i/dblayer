@@ -17,6 +17,7 @@ swift test --package-path "$root/swift"
 
 echo "== kotlin: libs for 4 Android ABI, bindings, gradle unit tests"
 bash "$root/scripts/build_kotlin.sh"
+bash "$root/scripts/check_android_artifacts.sh"
 "$gradle" -p "$root/kotlin" testDebugUnitTest --console=plain
 
 echo "== fixtures: generated models match fixtures/*.dbl"

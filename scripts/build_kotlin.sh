@@ -14,4 +14,5 @@ rm -rf "$module/src/main/kotlin/com/noma4i/dblayer/dblayer.kt"
 
 (cd -- "$root/core" && cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 \
   -o "$module/src/main/jniLibs" build --release)
+bash "$root/scripts/android_source_hash.sh" > "$module/src/main/jniLibs/SOURCE_HASH"
 find "$module/src/main/jniLibs" -name 'libdblayer.so' | sort
