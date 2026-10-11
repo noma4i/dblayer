@@ -304,3 +304,17 @@ fn a_remote_relation_lists_its_scope_in_the_relation_order() {
     let query = db.remote_relation_query("messages", "thread", &obj(json!({"chatId": "c1"}))).unwrap().unwrap();
     assert_eq!(db.query(&query).unwrap().iter().map(|row| row.id.to_string()).collect::<Vec<_>>(), ["m2", "m1"]);
 }
+
+#[test]
+fn a_keyed_patch_upserts_and_removes_one_element_of_an_array_field() {
+    let db = booted();
+    put(&db, "messages", json!({"id": "m1", "chatId": "c1", "reactions": [{"userId": "u2", "body": "x"}]}));
+    let react = |user: &str, body: &str| {
+        let patch = obj(json!({"reactions": {"$keyed": {"by": "userId", "element": {"userId": {"$arg": "user"}, "body": {"$arg": "body"}}}}}));
+        db.act("messages", "react", &rid("m1"), patch, obj(json!({"user": user, "body": body}))).unwrap();
+        db.find("messages", &rid("m1")).unwrap().unwrap().get("reactions").cloned().unwrap()
+    };
+    assert_eq!(react("u1", "a"), json!([{"userId": "u2", "body": "x"}, {"userId": "u1", "body": "a"}]));
+    assert_eq!(react("u1", "b"), json!([{"userId": "u2", "body": "x"}, {"userId": "u1", "body": "b"}]));
+    assert_eq!(react("u1", ""), json!([{"userId": "u2", "body": "x"}]));
+}

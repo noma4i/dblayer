@@ -315,6 +315,15 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
     for value in action.optimistic.values_mut() {
         if let Json::String(name) = value {
             if action.args.contains_key(name.as_str()) { *value = serde_json::json!({ "$arg": name.clone() }); }
+        } else if let Json::Object(op) = value {
+            if let Some(Json::Object(element)) = op.get_mut("element") {
+                for part in element.values_mut() {
+                    if let Json::String(name) = part {
+                        if action.args.contains_key(name.as_str()) { *part = serde_json::json!({ "$arg": name.clone() }); }
+                    }
+                }
+            }
+            *value = serde_json::json!({ "$keyed": value.clone() });
         }
     }
     if action.variables.is_empty() { action.variables.insert(format!("{}Id", lower(owner)), "id".into()); }

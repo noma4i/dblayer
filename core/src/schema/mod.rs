@@ -11,6 +11,7 @@ use crate::value::{
 };
 
 mod ephemeral;
+pub(crate) mod keyed;
 mod merge;
 mod newer;
 

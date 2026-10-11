@@ -189,6 +189,12 @@ fn action_block_collects_mutation_input_optimistic_and_refetch() {
 }
 
 #[test]
+fn keyed_optimistic_builds_an_op_that_names_its_args() {
+    let model = build_one("  action :tag do\n    mutation TagSample\n    args label: :string\n    optimistic ownerId: { by: :ownerId, element: { ownerId: :label, createdAt: nil } }\n  end");
+    assert_eq!(model.actions[0].optimistic.get("ownerId"), Some(&json!({"$keyed": {"by": "ownerId", "element": {"ownerId": {"$arg": "label"}, "createdAt": null}}})));
+}
+
+#[test]
 fn remote_updates_line_builds_updates_spec() {
     let model = build_one("  remote :feed do\n    query Feed\n    updates SampleEvents, deleted_by: :destroyed\n  end\n  remote :plain do\n    query Plain\n    updates PlainEvents\n  end");
     let updates = |index: usize| model.relations[index].remote.as_ref().unwrap().updates.clone();

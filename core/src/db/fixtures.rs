@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
 use crate::pacing::ManualClock;
-use crate::schema::{AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec, Newer};
+use crate::schema::{ActionDeclaration, RootShape, AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec, Newer};
 use crate::value::ScalarKind;
 
 use super::{Change, Db};
@@ -76,8 +76,10 @@ pub fn messages_spec() -> ModelSpec {
             FieldSpec::scalar("chatId", ScalarKind::Id).indexed(),
             FieldSpec::scalar("body", ScalarKind::Str).optional().indexed(),
             FieldSpec::scalar("createdAt", ScalarKind::Date).optional(),
+            FieldSpec::array("reactions").optional(),
         ],
     );
+    spec.actions.push(ActionDeclaration::new("react", RootShape::Upsert));
     let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "chats", "chatId");
     chat.touches_parent = true;
     chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "createdAt")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();

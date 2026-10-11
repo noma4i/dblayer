@@ -212,9 +212,12 @@ impl Db {
 
     pub fn act(&self, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Acted, DbError> {
         let spec = self.shared.spec(model)?;
+        let mut patch = patch;
+        let keyed = crate::schema::keyed::take(&mut patch);
         let patch = spec.patch(&patch);
         let key = ModelKey::new(model);
         let own = RowRef::new(key.clone(), id.clone());
+        let input_args = args.clone();
         let mut input = args;
         input.insert("id".to_string(), Value::String(id.to_string()));
         let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
@@ -222,6 +225,11 @@ impl Db {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
+            for (field, op) in &keyed {
+                if let Some(next) = crate::schema::keyed::apply(current.get(field), op, &input_args) {
+                    merged.insert(field.clone(), next);
+                }
+            }
             queued.rollback = Some(Prior { rows: vec![PriorRow::edited(reader, model, id.as_str(), &current, &merged)?] }.to_value());
             plan.update(key.clone(), id.clone(), merged.clone());
             Ok(Some(self.touch_ops(reader, spec, &[&merged, &current], &own)?))

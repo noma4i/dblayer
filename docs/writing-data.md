@@ -124,6 +124,19 @@ action :mute do
 end
 ```
 
+An array field holds records such as reactions. `optimistic` changes one element of it by a key and leaves the others, so two writers do not overwrite each other:
+
+```ruby
+action :react do
+  mutation   MessageReact
+  args       userId: :id, reactionBody: :string
+  input      messageId: :id, reactionBody: :reactionBody
+  optimistic reactions: { by: :userId, element: { userId: :userId, body: :reactionBody } }
+end
+```
+
+The element replaces the stored element with the same `by` value, or is appended when there is none. When every field of the element except the key is empty (`null`, `""`, `[]`, `{}`), the stored element is removed instead. A refused mutation restores the whole row like any other optimistic change.
+
 ```swift
 try await chat.mute(mute: true)
 ```

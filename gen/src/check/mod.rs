@@ -303,8 +303,10 @@ fn check_action_line(call: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str
                 if !fields.contains(pair.key.as_str()) {
                     report(pair.line, pair.column, format!("`optimistic` names unknown field `{}`", pair.key));
                 }
-                if matches!(pair.value.item, Value::Hash(_) | Value::Array(_)) {
-                    report(pair.value.line, pair.value.column, "optimistic value must be a literal".to_string());
+                match &pair.value.item {
+                    Value::Array(_) => report(pair.value.line, pair.value.column, "optimistic value must be a literal".to_string()),
+                    Value::Hash(parts) => report_keyed_optimistic(parts, pair, report),
+                    _ => {}
                 }
             }
         }
@@ -559,3 +561,18 @@ fn symbol_name(node: Option<&Node<Value>>) -> Option<&str> {
 mod check_tests;
 #[cfg(test)]
 mod option_tests;
+
+fn report_keyed_optimistic(parts: &[Pair], pair: &Pair, report: &mut impl FnMut(usize, usize, String)) {
+    let by = parts.iter().find(|part| part.key == "by").and_then(|part| match &part.value.item {
+        Value::Symbol(name) => Some(name.as_str()),
+        _ => None,
+    });
+    let element = parts.iter().find(|part| part.key == "element").and_then(|part| match &part.value.item {
+        Value::Hash(fields) => Some(fields),
+        _ => None,
+    });
+    let keyed = parts.len() == 2 && by.is_some_and(|by| element.is_some_and(|fields| fields.iter().any(|field| field.key == by)));
+    if !keyed {
+        report(pair.value.line, pair.value.column, "optimistic hash must be `{ by: :key, element: { key: :arg, ... } }` with the key among the element fields".to_string());
+    }
+}
