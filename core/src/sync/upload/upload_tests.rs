@@ -578,3 +578,22 @@ async fn inv_op_09_a_cancel_whose_abort_fails_keeps_the_upload_id_until_the_abor
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("AbortMultipart"), 2);
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_blob_step_reads_a_dotted_root_and_headers_given_as_a_json_string() {
+    let rig = upload_rig(small());
+    rig.sync.register(OperationDef::new("CreateDirectBlob", "operation x { x }", "uploadCreate.directUpload"));
+    rig.transport.enqueue(
+        "CreateDirectBlob",
+        Reply::data(json!({"uploadCreate": {"directUpload": {"url": "https://s3/single", "headers": "{\"x-a\":\"1\"}", "signedId": "sid", "blobId": "b1"}}})),
+    );
+    rig.transport.enqueue("CreateMoment", created("m9"));
+    let source = file(b"abcdef");
+    let steps = UploadSteps::new("CreateMoment").single("CreateDirectBlob");
+    let direct = UploadInput::new(source.path().to_str().unwrap(), steps).variable("text", json!("clip"));
+    rig.sync.upload("moments", &rid("m1"), direct).await.unwrap();
+    rig.sync.wait_uploads().await;
+    let puts = rig.transport.put_calls();
+    assert_eq!(puts.first().map(|put| put.headers.clone()), Some(vec![("x-a".to_string(), "1".to_string())]));
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1);
+}

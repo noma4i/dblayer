@@ -7,6 +7,7 @@ use crate::syncstate::{FailureKind, OperationFailure};
 use crate::transport::{GraphQLRequest, PutRequest, ResponseOutcome, RetryClass, TransportError};
 use crate::upload::read_range;
 
+use super::super::extract::root_value;
 use super::super::locked;
 use super::run::Runner;
 
@@ -79,7 +80,7 @@ impl Runner {
         }
         response
             .data
-            .and_then(|data| data.get(&operation.root_path).cloned())
+            .and_then(|data| root_value(&data, &operation.root_path).cloned())
             .filter(|root| !root.is_null())
             .ok_or_else(|| fatal(FailureKind::Unrecognized, format!("{name} answered without {}", operation.root_path)))
     }

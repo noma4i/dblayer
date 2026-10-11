@@ -49,6 +49,7 @@ pub fn parse_headers(value: Option<&Value>) -> Vec<(String, String)> {
                 Some((name.to_string(), item.get("value")?.as_str()?.to_string()))
             })
             .collect(),
+        Some(Value::String(text)) => parse_headers(serde_json::from_str(text).ok().as_ref()),
         _ => Vec::new(),
     }
 }

@@ -70,7 +70,7 @@ sync.cancelUpload(moment)
 
 | Scenario | Steps |
 | -------- | ----- |
-| single (smaller than the threshold) | `create` returns url, headers, `signedId`, `blobId`, then one PUT of the file |
+| single (smaller than the threshold) | `create` returns url, headers, `signedId`, `blobId`, then one PUT of the file. The answer may sit at a dotted path (`uploadCreate.directUpload`) and `headers` may be an object, a list or a JSON string |
 | multipart (threshold or larger) | `init` returns `key` and `uploadId`, `presign` returns one url per part, parts go out by PUT, `complete` receives the part numbers with their ETags and returns `signedId` and `blobId`, `abort` runs when the upload fails |
 | content mutation | runs once with the original variables plus `signedId` and `blobId` |
 
