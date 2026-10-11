@@ -2,6 +2,8 @@ package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -118,6 +120,31 @@ class BridgeProbeTest {
         DBlayer.resume()
 
         assertEquals(true, transport.calls.size > before)
+        list.stop()
+    }
+
+    @Test
+    fun aReloadAfterACommitReadsTheServerAfterTheLoadThatWasInFlight() = runBlocking {
+        val transport = MockTransport()
+        val empty = """{"data":{"feed":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"""
+        transport.enqueue("MomentsFeed", empty)
+        transport.enqueue("MomentsFeed", empty, 1000)
+        transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
+        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
+        val list = LiveList(Moment.feed, this)
+        withTimeout(5000) { list.state.first { it.phase == LoadPhase.Idle && it.loadedAt != null } }
+        val older = launch { list.refresh() }
+        withTimeout(5000) { while (transport.calls.count { it.operationName == "MomentsFeed" } < 2) delay(10) }
+
+        val local = Moment.create(text = "hello", media = null)
+        withTimeout(5000) { local.settled() }
+        withTimeout(5000) { list.rows.first { rows -> rows.map { it.id } == listOf("m77") } }
+
+        assertEquals(listOf("m77"), list.rows.value.map { it.id })
+        assertEquals(3, transport.calls.count { it.operationName == "MomentsFeed" })
+        older.join()
         list.stop()
     }
 }
