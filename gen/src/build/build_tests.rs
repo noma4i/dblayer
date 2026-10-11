@@ -1,4 +1,4 @@
-use dblayer::schema::{Newer, CursorSpec, VariableSource, 
+use dblayer::schema::{MergeRule, Newer, CursorSpec, VariableSource, 
     AssociationKind, Coverage, Dependent, FieldKind, ModelSpec, OnFailure, PageDirection, RemoteShape, RootShape, Sort,
     Storage, UpdatesSpec,
 };
@@ -294,4 +294,14 @@ fn a_relation_can_take_the_id_as_its_param() {
 fn a_remote_relation_can_order_its_rows_locally() {
     let model = build_one("  remote :recent, order: { createdAt: :desc } do\n    query \"recent\"\n  end");
     assert_eq!(model.relations[0].sort, Sort::Fields(vec![dblayer::schema::SortField { column: "createdAt".to_string(), direction: SortDirection::Desc }]));
+}
+
+#[test]
+fn a_field_merge_rule_keeps_its_words_tiers_and_keys() {
+    let models = parse_models("model Sample do\n  schema do\n    object :media, null: true, merge: { fileUrl: :non_empty, width: :positive, status: [[:PENDING, :PROGRESSING], [:COMPLETED]], progress: :monotonic }\n    string :url, null: true, merge: :non_empty\n  end\nend\n").unwrap();
+    let fields = &models[0].fields;
+    let tiers = vec![vec!["PENDING".to_string(), "PROGRESSING".to_string()], vec!["COMPLETED".to_string()]];
+    let keys = [("fileUrl", MergeRule::NonEmpty), ("width", MergeRule::Positive), ("status", MergeRule::Ladder { tiers }), ("progress", MergeRule::Monotonic)].map(|(key, rule)| (key.to_string(), rule)).into();
+    assert_eq!(fields.iter().find(|field| field.name == "media").unwrap().merge, Some(MergeRule::Keys { keys }));
+    assert_eq!(fields.iter().find(|field| field.name == "url").unwrap().merge, Some(MergeRule::NonEmpty));
 }

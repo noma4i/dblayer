@@ -38,6 +38,7 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("field.from", with_schema("    num :b"), with_schema("    num :b, from: \"loc.b\"")),
         ("field.as", with_schema("    object :b"), with_schema("    object :b, as: Media")),
         ("field.index", with_schema("    string :b"), with_schema("    string :b, index: true")),
+        ("field.merge", with_schema("    object :b"), with_schema("    object :b, merge: { width: :positive }")),
         ("field.values", with_schema("    enum :b, values: [:x]"), with_schema("    enum :b, values: [:x, :y]")),
         ("field.of", with_schema("    list :b, of: :int"), with_schema("    list :b, of: :string")),
         ("ephemeral.default", with_schema("    ephemeral do\n      bool :t, default: false\n    end"), with_schema("    ephemeral do\n      bool :t, default: true\n    end")),

@@ -51,8 +51,29 @@ Field options:
 | `id_from: :parent` | take the id from a nested parent object, also when the same object is a `belongs_to` association |
 | `as: MomentMedia` | for `object`, `array`, `raw`: the app type the generated model decodes the value to (a `Codable` you provide) |
 | `from: "location.lat"` | read the value from a nested path of the response when the field name itself is absent |
+| `merge: :non_empty` | what a row from the server may replace in a stored value, see below |
 
 `index :a, :b` inside `schema` declares a composite index over fields that are already indexed.
+
+### Merge rules
+
+A row from the server (page, event, mutation answer, replace) replaces the fields it carries. A `merge:` rule on a field decides what an arriving value may replace, so the order in which answers arrive does not matter.
+
+| Rule | An arriving value is ignored when |
+| ---- | --------------------------------- |
+| `:present` | it is null and a value is stored |
+| `:non_empty` | it is null, `""`, `[]` or `{}` and a non-empty value is stored |
+| `:positive` | it is not a number above 0 and a positive number is stored (`int`, `num`, `date`) |
+| `:monotonic` | it is null or lower than the stored number or date (`int`, `num`, `date`) |
+| `[[:PENDING, :PROGRESSING], [:COMPLETED, :FAILED]]` | its tier is below the tier of the stored value, values inside a tier replace each other (`enum` or `string`) |
+| `{ key: rule, ... }` | `object` and `raw`: the object is merged key by key, a key without a rule ignores null, a null object keeps the stored one |
+
+```ruby
+object :media, as: MomentMedia, null: true, merge: { fileUrl: :non_empty, width: :positive, transcodeStep: [[:PENDING, :SUBMITTED, :PROGRESSING], [:COMPLETED, :FAILED]], transcodeProgress: :monotonic }
+string :avatarUrl, null: true, merge: :non_empty
+```
+
+A local edit that is not confirmed yet is never replaced, with or without a rule. A rule that does not fit the field type rejects the model.
 
 ## Ephemeral fields
 

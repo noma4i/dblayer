@@ -648,3 +648,22 @@ fn a_set_or_compared_field_must_be_declared_on_its_side() {
     assert_eq!(faults("nope", "createdAt", "lastAt"), unknown);
     assert_eq!(faults("lastAt", "createdAt", "nope"), unknown);
 }
+
+#[test]
+fn a_merge_rule_must_fit_the_type_of_its_field() {
+    use crate::schema::MergeRule;
+    let faults = |field: FieldSpec, rule: MergeRule| {
+        let mut field = field;
+        field.merge = Some(rule);
+        let spec = ModelSpec::new("things", vec![FieldSpec::scalar("id", ScalarKind::Id), field]);
+        validate_models(&[spec], &[]).into_iter().map(|fault| fault.error).collect::<Vec<_>>()
+    };
+    let ladder = |names: &[&str]| MergeRule::Ladder { tiers: vec![names.iter().map(|name| name.to_string()).collect()] };
+    assert_eq!(faults(FieldSpec::scalar("size", ScalarKind::Int), MergeRule::Positive), vec![]);
+    assert_eq!(faults(FieldSpec::object("media"), MergeRule::Keys { keys: Default::default() }), vec![]);
+    assert_eq!(faults(FieldSpec::enumeration("state", &["a", "b"]), ladder(&["a"])), vec![]);
+    let mismatch = vec![DeclarationError::MergeRuleMismatch("x".into())];
+    assert_eq!(faults(FieldSpec::scalar("x", ScalarKind::Str), MergeRule::Positive), mismatch);
+    assert_eq!(faults(FieldSpec::scalar("x", ScalarKind::Int), MergeRule::Keys { keys: Default::default() }), mismatch);
+    assert_eq!(faults(FieldSpec::enumeration("x", &["a", "b"]), ladder(&["c"])), mismatch);
+}

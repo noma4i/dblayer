@@ -1,4 +1,4 @@
-use dblayer::schema::{Newer, CursorSpec, VariableSource, 
+use dblayer::schema::{MergeRule, Newer, CursorSpec, VariableSource, 
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
     OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
 };
@@ -94,7 +94,25 @@ fn build_field(call: &Call) -> FieldSpec {
     field.app_type = option(call, "as").and_then(|pair| text_of(&pair.value.item));
     field.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));
     field.default = option(call, "default").map(|pair| json_of(&pair.value.item));
+    field.merge = option(call, "merge").and_then(|pair| merge_of(&pair.value.item));
     field
+}
+
+fn merge_of(value: &Value) -> Option<MergeRule> {
+    match value {
+        Value::Symbol(name) => match name.as_str() {
+            "present" => Some(MergeRule::Present),
+            "non_empty" => Some(MergeRule::NonEmpty),
+            "positive" => Some(MergeRule::Positive),
+            "monotonic" => Some(MergeRule::Monotonic),
+            _ => None,
+        },
+        Value::Array(tiers) => Some(MergeRule::Ladder {
+            tiers: tiers.iter().filter_map(|tier| match &tier.item { Value::Array(names) => Some(names.iter().filter_map(|name| text_of(&name.item)).collect()), _ => None }).collect(),
+        }),
+        Value::Hash(pairs) => Some(MergeRule::Keys { keys: pairs.iter().filter_map(|pair| merge_of(&pair.value.item).map(|rule| (pair.key.clone(), rule))).collect() }),
+        _ => None,
+    }
 }
 
 fn build_ephemeral(call: &Call) -> EphemeralSpec {

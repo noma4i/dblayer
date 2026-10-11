@@ -11,9 +11,11 @@ use crate::value::{
 };
 
 mod ephemeral;
+mod merge;
 mod newer;
 
 pub use ephemeral::{EphemeralSpec, Storage};
+pub use merge::MergeRule;
 
 const FORBIDDEN_ACTION_MEMBERS: [&str; 6] = ["after", "invalidate", "onCommit", "extract", "complete", "resume"];
 
@@ -55,6 +57,8 @@ pub enum DeclarationError {
     DependentOnNonOwner(String),
     #[error("association {0} targets an unknown model")]
     UnknownTarget(String),
+    #[error("field {0} has a merge rule that does not fit its type")]
+    MergeRuleMismatch(String),
     #[error("association {0} sets or compares a field that is not declared")]
     SetsUnknownField(String),
     #[error("action {action} lands the unknown model {model}")]
@@ -159,6 +163,8 @@ pub struct FieldSpec {
     pub from: Option<String>,
     #[serde(default)]
     pub app_type: Option<String>,
+    #[serde(default)]
+    pub merge: Option<MergeRule>,
 }
 
 impl FieldSpec {
@@ -173,6 +179,7 @@ impl FieldSpec {
             id_from_parent: None,
             from: None,
             app_type: None,
+            merge: None,
         }
     }
 
@@ -883,7 +890,11 @@ impl ModelSpec {
     pub(crate) fn merged(&self, stored: Option<&Map<String, Value>>, patch: &Map<String, Value>) -> Option<Map<String, Value>> {
         let Some(stored) = stored else { return self.normalize(patch).ok().filter(|row| row.get("id").is_some()) };
         let mut row = stored.clone();
-        row.extend(patch.clone());
+        for (name, value) in patch {
+            let rule = self.field(name).and_then(|field| field.merge.as_ref());
+            let value = rule.map_or_else(|| value.clone(), |rule| rule.apply(stored.get(name), value.clone()));
+            row.insert(name.clone(), value);
+        }
         Some(row)
     }
 
@@ -917,6 +928,9 @@ impl ModelSpec {
             }
             if is_reserved_name(&field.name) {
                 return Err(DeclarationError::ReservedFieldName(field.name.clone()));
+            }
+            if field.merge.as_ref().is_some_and(|rule| !rule.fits(&field.kind)) {
+                return Err(DeclarationError::MergeRuleMismatch(field.name.clone()));
             }
         }
         let names: Vec<&str> = self.fields.iter().map(|field| field.name.as_str()).collect();
@@ -1008,6 +1022,8 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
 
 #[cfg(test)]
 mod ephemeral_tests;
+#[cfg(test)]
+mod merge_tests;
 #[cfg(test)]
 mod newer_tests;
 #[cfg(test)]

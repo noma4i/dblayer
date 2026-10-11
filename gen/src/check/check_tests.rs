@@ -249,3 +249,11 @@ fn updates_set_is_a_hash_of_ephemeral_values() {
     assert_eq!(failure(&unbounded), (1, "model Sample: relation one sets typing, which has no reset_after".to_string()));
     assert_eq!(failure(&model("{ name: true }")), (1, "model Sample: relation one sets name, which is not an ephemeral field".to_string()));
 }
+
+#[test]
+fn a_merge_rule_must_be_a_known_word_a_list_of_tiers_or_a_hash_of_those() {
+    let message = "`merge` must be `:present`, `:non_empty`, `:positive`, `:monotonic`, a list of tiers like `[[:a, :b], [:c]]` or a hash of those per key";
+    assert_eq!(field_failure("object :a, merge: :newest"), (3, message.to_string()));
+    assert_eq!(field_failure("object :a, merge: { width: { deep: :positive } }"), (3, message.to_string()));
+    assert_eq!(field_failure("enum :a, values: [:x], merge: [:x]"), (3, message.to_string()));
+}
