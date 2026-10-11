@@ -20,8 +20,6 @@ pub enum DbError {
     UnknownModel(String),
     #[error("model {model} has no association {name}")]
     UnknownAssociation { model: String, name: String },
-    #[error("association {name} of {model} has another kind")]
-    WrongAssociation { model: String, name: String },
     #[error("field {field} of {model} is not a file field")]
     NotFileField { model: String, field: String },
     #[error("field {field} of {model} is not an ephemeral field")]

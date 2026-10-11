@@ -23,6 +23,7 @@ pub(crate) struct Outcomes {
 }
 
 impl Outcomes {
+    #[cfg(test)]
     pub(crate) fn lost(&self) -> usize {
         self.lost
     }

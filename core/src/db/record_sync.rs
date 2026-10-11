@@ -1,6 +1,9 @@
 use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
 use crate::identity::RowId;
-use crate::syncstate::{operation_keys, read_sync, SyncInfo};
+use crate::syncstate::operation_keys;
+#[cfg(test)]
+use crate::syncstate::{read_sync, SyncInfo};
+#[cfg(test)]
 use crate::upload::UploadInfo;
 
 use super::error::DbError;
@@ -21,11 +24,13 @@ fn is_failed_destroy(entry: &OutboxOperation) -> bool {
 }
 
 impl Db {
+    #[cfg(test)]
     pub fn sync_info(&self, model: &str, id: &RowId) -> Result<SyncInfo, DbError> {
         self.shared.spec(model)?;
         self.shared.read(|reader| Ok(read_sync(reader.connection(), model, &[id.to_string()])?.remove(id.as_str()).unwrap_or_default()))
     }
 
+    #[cfg(test)]
     pub fn upload_info(&self, model: &str, id: &RowId) -> Result<Option<UploadInfo>, DbError> {
         Ok(self.sync_info(model, id)?.upload)
     }

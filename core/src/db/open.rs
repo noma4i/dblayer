@@ -80,6 +80,7 @@ pub struct Db {
 }
 
 impl Db {
+    #[cfg(test)]
     pub fn open(path: &Path, models: Vec<ModelSpec>, data_version: Option<&str>) -> Result<Db, DbError> {
         Db::open_with(Some(path), models, data_version, DbConfig::default())
     }
@@ -138,6 +139,7 @@ impl Db {
         self.shared.store.generation()
     }
 
+    #[cfg(test)]
     pub fn is_ready(&self) -> bool {
         self.shared.store.is_ready()
     }

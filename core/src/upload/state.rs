@@ -111,6 +111,7 @@ impl UploadInfo {
         Self { status: shown, stage: state.stage, sent_bytes: state.sent_bytes, total_bytes: state.total_bytes, wait_reason, attempts: state.retries, error }
     }
 
+    #[cfg(test)]
     pub fn fraction(&self) -> f64 {
         if self.total_bytes == 0 {
             return 0.0;
@@ -118,6 +119,7 @@ impl UploadInfo {
         (self.sent_bytes as f64 / self.total_bytes as f64).min(1.0)
     }
 
+    #[cfg(test)]
     pub fn is_retryable(&self) -> bool {
         self.error.as_ref().is_some_and(|error| error.kind != crate::syncstate::FailureKind::Rejected)
     }

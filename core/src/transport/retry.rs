@@ -7,10 +7,6 @@ const RETRIABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE
 
 pub const RETRY_BACKOFF: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
 
-pub fn retriable_codes() -> &'static [&'static str] {
-    &RETRIABLE_CODES
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryClass {
     Network,

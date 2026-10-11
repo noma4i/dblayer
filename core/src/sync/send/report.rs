@@ -30,10 +30,12 @@ pub struct FlushReport {
 }
 
 impl FlushReport {
+    #[cfg(test)]
     pub fn committed(&self) -> usize {
         self.operations.iter().filter(|sent| sent.result == SendResult::Committed).count()
     }
 
+    #[cfg(test)]
     pub fn rejections(&self) -> Vec<&str> {
         self.operations
             .iter()

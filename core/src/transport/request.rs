@@ -1,8 +1,6 @@
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::error::TransportError;
 use super::response::ResponseShape;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,29 +13,6 @@ pub struct GraphQLRequest {
 impl GraphQLRequest {
     pub fn new(document: impl Into<String>, operation_name: impl Into<String>, variables: Value) -> Self {
         Self { document: document.into(), operation_name: operation_name.into(), variables }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum Nullable<T> {
-    #[default]
-    Omitted,
-    Null,
-    Value(T),
-}
-
-impl<T> Nullable<T> {
-    pub fn is_omitted(&self) -> bool {
-        matches!(self, Nullable::Omitted)
-    }
-}
-
-impl<T: Serialize> Serialize for Nullable<T> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Nullable::Omitted | Nullable::Null => serializer.serialize_none(),
-            Nullable::Value(value) => value.serialize(serializer),
-        }
     }
 }
 
@@ -67,11 +42,6 @@ pub struct Response {
 impl Response {
     pub fn data(value: Value) -> Self {
         Self { data: Some(value), errors: Vec::new() }
-    }
-
-    pub fn decode<T: DeserializeOwned>(&self) -> Result<Option<T>, TransportError> {
-        let Some(data) = &self.data else { return Ok(None) };
-        serde_json::from_value(data.clone()).map(Some).map_err(|error| TransportError::Decode(error.to_string()))
     }
 
     pub fn shape(&self) -> ResponseShape {

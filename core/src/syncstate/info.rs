@@ -65,15 +65,8 @@ pub struct SyncInfo {
 }
 
 impl SyncInfo {
+    #[cfg(test)]
     pub fn is_synced(&self) -> bool {
         self.state == SyncState::Synced
-    }
-
-    pub fn is_pending(&self) -> bool {
-        self.state == SyncState::Pending
-    }
-
-    pub fn is_failed(&self) -> bool {
-        self.state == SyncState::Failed
     }
 }
