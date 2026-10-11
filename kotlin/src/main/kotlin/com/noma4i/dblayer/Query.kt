@@ -86,6 +86,9 @@ class Query<Model : DBModel>(
     val live: LiveSource<List<Model>>
         get() = LiveSource(emptyList(), { listener -> DBlayer.database.liveQuery(json, listener) }) { change -> change.decode(serializer) }
 
+    val snapshots: LiveSource<Snapshot<Model>>
+        get() = LiveSource(Snapshot(emptyList(), emptyMap()), { listener -> DBlayer.database.liveQuery(json, listener) }) { change -> Snapshot(change.decode(serializer), change.replacedIds()) }
+
     val count: LiveSource<Long>
         get() = LiveSource(0L, { listener -> DBlayer.database.liveCount(json, listener) }) { change -> change.count ?: 0L }
 

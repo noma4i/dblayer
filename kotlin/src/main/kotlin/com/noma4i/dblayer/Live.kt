@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 private class ChangeListener(private val body: (LiveChange) -> Unit) : QueryListener {
     override fun changed(change: LiveChange) = body(change)
@@ -39,6 +42,15 @@ class LiveSource<Value>(
 
     suspend fun current(): Value = flow.firstOrNull() ?: initial
 }
+
+/** The rows of a delivery with the ids it replaced: the real id of a row that replaced a temporary one, to the temporary id. */
+data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, String>)
+
+internal fun LiveChange.replacedIds(): Map<String, String> =
+    runCatching {
+        dbJson.parseToJsonElement(diffJson).jsonObject["replaced"]?.jsonArray
+            ?.associate { pair -> pair.jsonArray[1].jsonPrimitive.content to pair.jsonArray[0].jsonPrimitive.content }
+    }.getOrNull() ?: emptyMap()
 
 enum class LoadPhase { Idle, Loading, Failed }
 
@@ -80,13 +92,16 @@ internal fun stateSource(model: String, relation: String, paramsJson: String): L
 /** A live query for view models: the rows, the load state of the relation, and the calls that move them. */
 class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope) {
     private val mutableRows = kotlinx.coroutines.flow.MutableStateFlow<List<Model>>(emptyList())
+    private val mutableReplaced = kotlinx.coroutines.flow.MutableStateFlow<Map<String, String>>(emptyMap())
     private val mutableState = kotlinx.coroutines.flow.MutableStateFlow(LoadState())
     private val jobs = listOf(
-        scope.launch { query.live.flow.collect { mutableRows.value = it } },
+        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableRows.value = it.rows } },
         scope.launch { query.state.flow.collect { mutableState.value = it } },
     )
 
     val rows: kotlinx.coroutines.flow.StateFlow<List<Model>> get() = mutableRows
+    /** The ids that the last delivery of `rows` replaced: real id to temporary id. */
+    val replaced: kotlinx.coroutines.flow.StateFlow<Map<String, String>> get() = mutableReplaced
     val state: kotlinx.coroutines.flow.StateFlow<LoadState> get() = mutableState
 
     suspend fun refresh() = query.refresh()

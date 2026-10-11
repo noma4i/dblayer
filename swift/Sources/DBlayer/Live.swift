@@ -97,6 +97,8 @@ public struct LiveView<Value: Sendable, Content: View>: View {
 @Observable
 public final class LiveList<Model: DBModel> {
   public private(set) var rows: [Model] = []
+  /// The ids that the last delivery of `rows` replaced: real id to temporary id.
+  public private(set) var replaced: [String: String] = [:]
   public private(set) var state = LoadState()
   @ObservationIgnored private let query: Query<Model>
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
@@ -105,7 +107,10 @@ public final class LiveList<Model: DBModel> {
     self.query = query
     tasks = [
       Task { [weak self] in
-        for await next in query.live.stream { self?.rows = next }
+        for await next in query.snapshots.stream {
+          self?.replaced = next.replaced
+          self?.rows = next.rows
+        }
       },
       Task { [weak self] in
         for await next in query.state.stream { self?.state = next }

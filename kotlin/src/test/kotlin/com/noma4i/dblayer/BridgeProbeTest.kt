@@ -128,6 +128,23 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() = runBlocking {
+        val transport = MockTransport()
+        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
+        val seen = kotlinx.coroutines.flow.MutableSharedFlow<Snapshot<Moment>>(replay = 64)
+        val collecting = launch { Moment.recent.snapshots.flow.collect { seen.emit(it) } }
+        withTimeout(5000) { seen.first() }
+
+        val local = Moment.create(text = "hello", media = null)
+        val snapshot = withTimeout(5000) { seen.first { it.replaced.containsKey("m77") } }
+
+        assertEquals(local.id, snapshot.replaced["m77"])
+        collecting.cancel()
+    }
+
+    @Test
     fun aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() = runBlocking {
         val transport = MockTransport()
         transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://s3/x","headers":{},"signedId":"sid","blobId":"b1"}}}""")

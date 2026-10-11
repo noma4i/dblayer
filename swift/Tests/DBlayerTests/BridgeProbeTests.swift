@@ -170,6 +170,24 @@ struct BridgeProbeTests {
     #expect(real == "m77")
   }
 
+  @Test(.timeLimit(.minutes(1)))
+  func aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() async throws {
+    let transport = MockTransport()
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
+    var snapshots = Moment.recent.snapshots.stream.makeAsyncIterator()
+    _ = await snapshots.next()
+
+    let local = try await Moment.create(text: "hello", media: nil)
+    var replaced: String?
+    while replaced == nil, let snapshot = await snapshots.next() {
+      replaced = snapshot.replaced["m77"]
+    }
+
+    #expect(replaced == local.id)
+  }
+
   @Test
   func aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() async throws {
     let transport = MockTransport()

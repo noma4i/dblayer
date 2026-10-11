@@ -76,12 +76,33 @@ public struct Query<Model: DBModel>: Sendable {
   public func refresh() async throws { try await DB.database.refresh(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
   @discardableResult public func loadMore() async throws -> Bool { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
 
+  /// The rows with the ids that the delivery replaced: a created record answered by the server (or matched by `correlate`) arrives under its real id.
+  public var snapshots: LiveSource<Snapshot<Model>> {
+    LiveSource(initial: Snapshot(rows: [], replaced: [:])) { listener in try DB.database.liveQuery(queryJson: json, listener: listener) } map: {
+      Snapshot(rows: $0.decodeRows(), replaced: $0.replacedIds)
+    }
+  }
+
   public var state: LiveSource<LoadState> {
     let model = Model.modelName, relation = relation ?? "", params = JSONValue.object(params).text
     return LiveSource(initial: LoadState()) { emit in
       let subscription = try DB.database.liveState(model: model, relation: relation, paramsJson: params, listener: StateObserver { emit(LoadState($0)) })
       return { subscription.cancel() }
     }
+  }
+}
+
+public struct Snapshot<Model: DBModel>: Sendable {
+  public let rows: [Model]
+  /// Real id of a row that replaced a temporary one in this delivery, to the temporary id.
+  public let replaced: [String: String]
+}
+
+extension LiveChange {
+  var replacedIds: [String: String] {
+    struct Delivery: Decodable { let replaced: [[String]] }
+    guard let delivery = try? JSONDecoder().decode(Delivery.self, from: Data(diffJson.utf8)) else { return [:] }
+    return Dictionary(delivery.replaced.compactMap { $0.count == 2 ? ($0[1], $0[0]) : nil }, uniquingKeysWith: { first, _ in first })
   }
 }
 
