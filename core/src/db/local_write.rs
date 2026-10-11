@@ -132,25 +132,6 @@ fn unsent_operations(reader: &Reader<'_>, id: &RowId, destroyed: &[RowRef]) -> R
     Ok((!touching.is_empty() && touching.iter().all(unsent)).then_some(touching))
 }
 
-fn parent_sets(reader: &Reader<'_>, spec: &ModelSpec, data: &Map<String, Value>) -> Result<Vec<(RowRef, Map<String, Value>, Map<String, Value>)>, DbError> {
-    let mut changes = Vec::new();
-    for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && !association.sets.is_empty()) {
-        let Some(parent_id) = data.get(&association.foreign_key).and_then(read_id) else { continue };
-        let Some(current) = reader.point(association.target.as_str(), parent_id.as_str())? else { continue };
-        if !association.child_is_newer(&current, data) {
-            continue;
-        }
-        let mut merged = current.clone();
-        for (parent_field, child_field) in &association.sets {
-            merged.insert(parent_field.clone(), data.get(child_field).cloned().unwrap_or(Value::Null));
-        }
-        if merged != current {
-            changes.push((RowRef::new(association.target.clone(), parent_id), current, merged));
-        }
-    }
-    Ok(changes)
-}
-
 fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool, DbError> {
     let sql = format!("SELECT 1 FROM {} WHERE id = ?1", table_name(model.as_str()));
     let found: Option<i64> = reader.connection().query_row(&sql, [id.as_str()], |row| row.get(0)).optional()?;
@@ -195,19 +176,10 @@ impl Db {
             if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
                 return Err(DbError::AlreadyExists { model: model.to_string(), id: id.to_string() });
             }
-            let mut prior = vec![PriorRow::Created { model: model.to_string(), id: id.to_string() }];
             queued.scope_ops = local_scope_ops(reader, spec, &id, &data)?;
             plan.upsert(key.clone(), vec![data.clone()]);
-            let mut written: Vec<RowRef> = Vec::new();
-            for (parent, current, merged) in parent_sets(reader, spec, &data)? {
-                prior.push(PriorRow::edited(reader, parent.model.as_str(), parent.id.as_str(), &current, &merged)?);
-                written.push(parent.clone());
-                plan.update(parent.model, parent.id, merged);
-            }
-            queued.rollback = Some(Prior { rows: prior }.to_value());
-            let mut touches = self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?;
-            touches.retain(|op| !matches!(op, EntityOp::Touch { model, id } if written.contains(&RowRef::new(model.clone(), id.clone()))));
-            Ok(Some(touches))
+            queued.rollback = Some(Prior { rows: vec![PriorRow::Created { model: model.to_string(), id: id.to_string() }] }.to_value());
+            Ok(Some(self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?))
         })?;
         Ok(id)
     }
@@ -268,9 +240,7 @@ impl Db {
         let created_at = self.shared.store.lock().now_ms();
         let mut destroyed: Vec<RowRef> = Vec::new();
         let mut discarded: Vec<String> = Vec::new();
-        self.shared
-            .store
-            .commit_with(generation, |reader| {
+        self.commit_following(generation, |reader| {
                 if reader.point(model, id.as_str())?.is_none() {
                     return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() });
                 }
@@ -288,12 +258,13 @@ impl Db {
                     rows.extend(PriorRow::destroyed(reader, target.model.as_str(), target.id.as_str())?);
                 }
                 let mut envelope = cascade_envelope(&destroyed, DestroyReason::Local, WriteOrigin::Optimistic, generation);
+                let followed = self.follow_parent_pointers(reader, &mut envelope)?;
                 let queued = Queued {
                     action: Action::Destroy,
                     row_id: id.clone(),
                     temp_id: None,
                     input: json!({"id": id.as_str()}),
-                    rollback: Some(Prior { rows }.to_value()),
+                    rollback: Some(Prior::with_edits(Prior { rows }.to_value(), reader, &followed.edits)?),
                     scope_ops: Vec::new(),
                     upload: None,
                 };
@@ -317,15 +288,14 @@ impl Db {
     ) -> Result<CommitResult, DbError> {
         let generation = self.generation();
         let created_at = self.shared.store.lock().now_ms();
-        let result = self
-            .shared
-            .store
-            .commit_with(generation, |reader| {
+        let result = self.commit_following(generation, |reader| {
                 let mut plan = WritePlan::new();
                 let Some(touches) = build(reader, &mut plan, queued)? else { return Ok(None) };
                 let mut envelope: CommitEnvelope = plan.envelope(WriteOrigin::Optimistic, generation);
                 envelope.entity_ops.extend(touches);
                 envelope.scope_ops.extend(std::mem::take(&mut queued.scope_ops));
+                let followed = self.follow_parent_pointers(reader, &mut envelope)?;
+                queued.rollback = queued.rollback.take().map(|rollback| Prior::with_edits(rollback, reader, &followed.edits)).transpose()?;
                 envelope.operation_transitions.push(self.begin(reader, spec, queued, created_at)?);
                 Ok(Some(envelope))
             })

@@ -178,10 +178,7 @@ impl Db {
 
     pub(crate) fn roll_back_at(&self, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
-        let result = self
-            .shared
-            .store
-            .commit_with(generation, |reader| {
+        let result = self.commit_following(generation, |reader| {
                 let outbox = read_outbox(reader)?;
                 let entry = outbox.iter().find(|entry| entry.operation.id.0 == seq).ok_or(DbError::UnknownOperation(seq))?;
                 let plan = restore(reader, &outbox, entry)?;

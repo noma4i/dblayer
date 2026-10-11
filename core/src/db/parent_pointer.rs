@@ -1,8 +1,8 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use serde_json::{json, Map, Value};
 
-use crate::commit::{CommitEnvelope, EntityOp};
+use crate::commit::{CommitEnvelope, DestroyReason, EntityOp};
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::query::{Order, Query, Where};
 use crate::schema::{AssociationKind, AssociationSpec};
@@ -12,24 +12,77 @@ use crate::value::{read_id, SortDirection};
 use super::error::DbError;
 use super::open::Db;
 
-type Parents = BTreeMap<(String, String), Map<String, Value>>;
+type Row = Map<String, Value>;
+
+pub(crate) struct PointerEdit {
+    pub parent: RowRef,
+    pub before: Row,
+    pub after: Row,
+}
+
+#[derive(Default)]
+pub(crate) struct Followed {
+    pub edits: Vec<PointerEdit>,
+    pub absent: BTreeSet<ModelKey>,
+}
+
+#[derive(Default)]
+struct Parents {
+    rows: BTreeMap<RowRef, (Row, Row)>,
+    absent: BTreeSet<ModelKey>,
+}
+
+struct Ops<'a> {
+    entities: &'a mut Vec<EntityOp>,
+    written: HashMap<RowRef, usize>,
+    doomed: HashSet<RowRef>,
+}
+
+impl Ops<'_> {
+    fn current(&self, reader: &Reader<'_>, parents: &Parents, parent: &RowRef) -> Result<Option<Row>, DbError> {
+        if let Some((_, after)) = parents.rows.get(parent) {
+            return Ok(Some(after.clone()));
+        }
+        if let Some(EntityOp::Upsert { row, .. }) = self.written.get(parent).map(|index| &self.entities[*index]) {
+            return Ok(Some(row.clone()));
+        }
+        Ok(reader.point(parent.model.as_str(), parent.id.as_str())?)
+    }
+
+    fn set(&mut self, parents: &mut Parents, parent: RowRef, current: Row, merged: Row) {
+        if let Some(index) = self.written.get(&parent) {
+            if let EntityOp::Upsert { row, .. } = &mut self.entities[*index] {
+                *row = merged;
+            }
+            return;
+        }
+        let before = parents.rows.remove(&parent).map_or(current, |(before, _)| before);
+        parents.rows.insert(parent, (before, merged));
+    }
+}
 
 impl Db {
-    pub(crate) fn follow_parent_pointers(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope) -> Result<(), DbError> {
-        let mut parents = Parents::new();
-        let written: HashSet<RowRef> = envelope.entity_ops.iter().filter(|op| matches!(op, EntityOp::Upsert { .. })).map(EntityOp::row_ref).collect();
-        let doomed: HashSet<RowRef> = envelope.entity_ops.iter().filter(|op| matches!(op, EntityOp::Destroy { .. })).map(EntityOp::row_ref).collect();
-        for op in envelope.entity_ops.clone() {
+    pub(crate) fn follow_parent_pointers(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope) -> Result<Followed, DbError> {
+        let mut parents = Parents::default();
+        let written = envelope.entity_ops.iter().enumerate().filter(|(_, op)| matches!(op, EntityOp::Upsert { .. })).map(|(index, op)| (op.row_ref(), index)).collect();
+        let doomed = envelope.entity_ops.iter().filter(|op| matches!(op, EntityOp::Destroy { .. })).map(EntityOp::row_ref).collect();
+        let changes = envelope.entity_ops.clone();
+        let mut ops = Ops { entities: &mut envelope.entity_ops, written, doomed };
+        for op in changes {
             match op {
-                EntityOp::Upsert { model, row, .. } => self.advance_parents(reader, &model, &row, &written, &mut parents)?,
-                EntityOp::Destroy { model, id, .. } => self.retreat_parents(reader, &model, &id, &doomed, &written, &mut parents)?,
+                EntityOp::Upsert { model, row, .. } => self.advance_parents(reader, &model, &row, &mut ops, &mut parents)?,
+                EntityOp::Destroy { reason: DestroyReason::Replaced { .. }, .. } => {}
+                EntityOp::Destroy { model, id, .. } => self.retreat_parents(reader, &model, &id, &mut ops, &mut parents)?,
                 EntityOp::Touch { .. } => {}
             }
         }
-        for ((model, id), row) in parents {
-            envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(&model), id: RowId::new(&id)?, row });
+        let mut followed = Followed { absent: parents.absent, ..Followed::default() };
+        envelope.entity_ops.retain(|op| !matches!(op, EntityOp::Touch { .. }) || !parents.rows.contains_key(&op.row_ref()));
+        for (parent, (before, after)) in parents.rows {
+            envelope.entity_ops.push(EntityOp::Upsert { model: parent.model.clone(), id: parent.id.clone(), row: after.clone() });
+            followed.edits.push(PointerEdit { parent, before, after });
         }
-        Ok(())
+        Ok(followed)
     }
 
     fn pointer_associations(&self, model: &ModelKey) -> Result<Vec<AssociationSpec>, DbError> {
@@ -37,20 +90,17 @@ impl Db {
         Ok(spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && !association.sets.is_empty()).cloned().collect())
     }
 
-    fn parent_row(reader: &Reader<'_>, parents: &Parents, association: &AssociationSpec, id: &RowId) -> Result<Option<Map<String, Value>>, DbError> {
-        match parents.get(&(association.target.to_string(), id.to_string())) {
-            Some(row) => Ok(Some(row.clone())),
-            None => Ok(reader.point(association.target.as_str(), id.as_str())?),
-        }
-    }
-
-    fn advance_parents(&self, reader: &Reader<'_>, model: &ModelKey, row: &Map<String, Value>, written: &HashSet<RowRef>, parents: &mut Parents) -> Result<(), DbError> {
+    fn advance_parents(&self, reader: &Reader<'_>, model: &ModelKey, row: &Row, ops: &mut Ops<'_>, parents: &mut Parents) -> Result<(), DbError> {
         for association in self.pointer_associations(model)? {
             let Some(parent_id) = row.get(&association.foreign_key).and_then(read_id) else { continue };
-            if written.contains(&RowRef::new(association.target.clone(), parent_id.clone())) {
+            let parent = RowRef::new(association.target.clone(), parent_id);
+            if ops.doomed.contains(&parent) {
                 continue;
             }
-            let Some(current) = Self::parent_row(reader, parents, &association, &parent_id)? else { continue };
+            let Some(current) = ops.current(reader, parents, &parent)? else {
+                parents.absent.insert(association.target.clone());
+                continue;
+            };
             if !association.child_is_newer(&current, row) {
                 continue;
             }
@@ -59,21 +109,13 @@ impl Db {
                 merged.insert(parent_field.clone(), row.get(child_field).cloned().unwrap_or(Value::Null));
             }
             if merged != current {
-                parents.insert((association.target.to_string(), parent_id.to_string()), merged);
+                ops.set(parents, parent, current, merged);
             }
         }
         Ok(())
     }
 
-    fn retreat_parents(
-        &self,
-        reader: &Reader<'_>,
-        model: &ModelKey,
-        id: &RowId,
-        doomed: &HashSet<RowRef>,
-        written: &HashSet<RowRef>,
-        parents: &mut Parents,
-    ) -> Result<(), DbError> {
+    fn retreat_parents(&self, reader: &Reader<'_>, model: &ModelKey, id: &RowId, ops: &mut Ops<'_>, parents: &mut Parents) -> Result<(), DbError> {
         let associations = self.pointer_associations(model)?;
         if associations.is_empty() {
             return Ok(());
@@ -81,15 +123,16 @@ impl Db {
         let Some(child) = reader.point(model.as_str(), id.as_str())? else { return Ok(()) };
         for association in associations {
             let Some(parent_id) = child.get(&association.foreign_key).and_then(read_id).filter(|_| !association.newer.is_empty()) else { continue };
-            let Some(pointer) = association.sets.iter().find(|(_, child_field)| child_field.as_str() == "id").map(|(parent_field, _)| parent_field) else { continue };
-            if written.contains(&RowRef::new(association.target.clone(), parent_id.clone())) {
+            let Some(pointer) = association.pointer_field() else { continue };
+            let parent = RowRef::new(association.target.clone(), parent_id.clone());
+            if ops.doomed.contains(&parent) {
                 continue;
             }
-            let Some(current) = Self::parent_row(reader, parents, &association, &parent_id)? else { continue };
+            let Some(current) = ops.current(reader, parents, &parent)? else { continue };
             if current.get(pointer).and_then(read_id).as_ref() != Some(id) {
                 continue;
             }
-            let siblings = doomed.iter().filter(|row| row.model == *model).count() as u32;
+            let siblings = ops.doomed.iter().filter(|row| row.model == *model).count() as u32;
             let query = Query::new(model.as_str())
                 .filtered(Where::equal(&association.foreign_key, json!(parent_id.as_str())))
                 .ordered(association.newer.iter().map(|newer| Order::new(&newer.child, SortDirection::Desc)).collect())
@@ -97,7 +140,7 @@ impl Db {
             let mut previous = None;
             for (sibling_id, _) in self.shared.query_keys(reader, &query)? {
                 let sibling = RowRef::new(model.clone(), RowId::new(&sibling_id)?);
-                if doomed.contains(&sibling) {
+                if ops.doomed.contains(&sibling) {
                     continue;
                 }
                 previous = reader.point(model.as_str(), &sibling_id)?;
@@ -108,7 +151,7 @@ impl Db {
                 merged.insert(parent_field.clone(), previous.as_ref().and_then(|row| row.get(child_field).cloned()).unwrap_or(Value::Null));
             }
             if merged != current {
-                parents.insert((association.target.to_string(), parent_id.to_string()), merged);
+                ops.set(parents, parent, current, merged);
             }
         }
         Ok(())

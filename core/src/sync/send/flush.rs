@@ -420,7 +420,7 @@ impl Inner {
         generation: Generation,
         plan: impl FnOnce(&Reader<'_>) -> Result<Option<CommitEnvelope>, SyncError>,
     ) -> Result<Option<CommitResult>, SyncError> {
-        match self.db.shared.store.commit_with(generation, plan) {
+        match self.db.commit_following(generation, plan) {
             Ok(result) => Ok(Some(result)),
             Err(PlanCommitError::Plan(error)) => Err(error),
             Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => Ok(None),

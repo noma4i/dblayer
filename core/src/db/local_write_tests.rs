@@ -67,6 +67,28 @@ fn create_keeps_the_pointer_of_a_pending_message_that_is_newer() {
 }
 
 #[test]
+fn destroying_the_head_message_moves_the_pointer_to_the_previous_one_and_a_refusal_gives_it_back() {
+    let db = booted();
+    put(&db, "messages", json!({"id": "m1", "chatId": "c1", "createdAt": OLD}));
+    put(&db, "messages", json!({"id": "m2", "chatId": "c1", "createdAt": NEW}));
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m2", "lastMessageAt": NEW}));
+    db.destroy("messages", &rid("m2")).unwrap();
+    assert_eq!(chat_pointer(&db), (Some("m1".to_string()), Some(OLD.to_string())));
+    let seq = db.outbox().unwrap()[0].operation.id.0;
+    db.roll_back_at(seq, db.generation()).unwrap();
+    assert_eq!(chat_pointer(&db), (Some("m2".to_string()), Some(NEW.to_string())));
+}
+
+#[test]
+fn destroying_a_chat_does_not_bring_it_back_through_its_own_pointer() {
+    let db = booted();
+    put(&db, "messages", json!({"id": "m1", "chatId": "c1", "createdAt": OLD}));
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m1", "lastMessageAt": OLD}));
+    db.destroy("chats", &rid("c1")).unwrap();
+    assert!(db.find("chats", &rid("c1")).unwrap().is_none());
+}
+
+#[test]
 fn discarding_the_create_gives_the_parent_fields_back() {
     let db = booted();
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m0", "lastMessageAt": OLD}));

@@ -266,7 +266,7 @@ impl Db {
         }
         let generation = self.generation();
         let mut destroyed = 0;
-        let committed = self.shared.store.commit_with(generation, |reader| {
+        let committed = self.commit_following(generation, |reader| {
             let claimed = self.shared.ephemeral.lock().claim_expired(candidates);
             destroyed = claimed.len();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);

@@ -45,9 +45,7 @@ impl Db {
             return Ok(0);
         }
         let generation = self.generation();
-        self.shared
-            .store
-            .commit_with(generation, |_| {
+        self.commit_following(generation, |_| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 envelope.entity_ops = stuck.iter().filter(|entry| is_failed_destroy(entry)).filter_map(Prior::of).flat_map(|prior| prior.hiding()).collect();
                 envelope.operation_transitions.extend(stuck.iter().map(|entry| OperationTransition::Retry { seq: entry.operation.id.0 }));

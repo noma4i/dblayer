@@ -1,3 +1,4 @@
 type:DbError        # the ffi error mirrors core errors for the foreign bindings
 type:PutReply       # the ffi reply is the foreign-binding form of the core reply
 type:Transport      # the ffi trait is implemented by Swift and Kotlin, the core trait by the mock
+commit:core/src/db/open.rs   # rows rebuilt from the queue at open run before any Db exists

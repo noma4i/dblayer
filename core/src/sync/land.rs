@@ -101,7 +101,7 @@ impl Inner {
         });
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
-        let committed = store.commit_with(generation, |reader| {
+        let committed = self.db.commit_following(generation, |reader| {
             let Admitted { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, &model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
             invalid_roots = invalid;
@@ -142,7 +142,6 @@ impl Inner {
                 applied,
                 cleared_at: is_first_page.then(|| self.now_ms()),
             });
-            self.db.follow_parent_pointers(reader, &mut envelope)?;
             Ok::<_, SyncError>(Some(envelope))
         });
         match committed {

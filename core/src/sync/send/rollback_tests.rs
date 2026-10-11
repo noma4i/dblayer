@@ -168,3 +168,16 @@ async fn the_server_answer_moves_the_chat_pointer_from_the_temp_id_to_the_real_o
     rig.sync.flush().await.unwrap();
     assert_eq!(rig.db.find("chats", &rid("c1")).unwrap().unwrap().text("lastMessageId"), Some("m7"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_confirmed_message_moves_the_chat_fields_to_the_server_values() {
+    let rig = rig_on(Db::open_in_memory(with_chat_pointer(), None).unwrap(), MockTransport::new(), SyncConfig::default());
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
+    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("chats"), id: rid("c1"), row: params(json!({"id": "c1"})) });
+    rig.db.land(envelope).unwrap();
+    rig.sync.register(OperationDef::new("CreateMessage", "operation CreateMessage { x }", "createMessage"));
+    rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": {"id": "m7", "chatId": "c1", "createdAt": "2026-01-02T00:00:03.000Z"}})));
+    rig.db.create("messages", params(json!({"chatId": "c1", "createdAt": "2026-01-02T00:00:00.000Z"}))).unwrap();
+    rig.sync.flush().await.unwrap();
+    assert_eq!(rig.db.find("chats", &rid("c1")).unwrap().unwrap().text("lastMessageAt"), Some("2026-01-02T00:00:03.000Z"));
+}

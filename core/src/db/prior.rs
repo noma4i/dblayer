@@ -12,6 +12,7 @@ use crate::value::read_id;
 use crate::write::restore_patch;
 
 use super::local_write::{read_outbox, OutboxOperation};
+use super::parent_pointer::PointerEdit;
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub(crate) struct Prior {
@@ -98,6 +99,14 @@ impl Prior {
             }
         }
         Ok(owned)
+    }
+
+    pub(crate) fn with_edits(rollback: Value, reader: &Reader<'_>, edits: &[PointerEdit]) -> Result<Value, StoreError> {
+        let Ok(mut prior) = serde_json::from_value::<Prior>(rollback.clone()) else { return Ok(rollback) };
+        for edit in edits {
+            prior.rows.push(PriorRow::edited(reader, edit.parent.model.as_str(), edit.parent.id.as_str(), &edit.before, &edit.after)?);
+        }
+        Ok(prior.to_value())
     }
 
     pub fn to_value(&self) -> Value {

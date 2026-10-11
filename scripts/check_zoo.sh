@@ -45,6 +45,13 @@ for path in files:
 if len(diagnostics) > 1 and "diagnostics" not in allowed:
     findings.append("Z1 several diagnostics structs: " + ", ".join(sorted(diagnostics)))
 
+for path in files:
+    relative = str(path.relative_to(root))
+    if "/store/" in relative or relative.endswith(("db/commit.rs", "fixtures.rs")):
+        continue
+    if re.search(r"\.commit_with\(|\bstore\s*\.commit\(", path.read_text()) and f"commit:{relative}" not in allowed:
+        findings.append(f"Z7 commit outside db/commit.rs skips the parent pointer: {relative}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

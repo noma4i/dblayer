@@ -46,14 +46,11 @@ impl Db {
         let spec = self.shared.spec(request.scope.model.as_str())?;
         let rows = rows.iter().map(|row| spec.patch(row)).collect::<Vec<_>>();
         let generation = self.generation();
-        self.shared
-            .store
-            .commit_with(generation, |reader| {
+        self.commit_following(generation, |reader| {
                 let plan = self.replace_plan(reader, request, &rows, None)?;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, generation);
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;
-                self.follow_parent_pointers(reader, &mut envelope)?;
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)

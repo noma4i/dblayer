@@ -10,9 +10,7 @@ impl Db {
             return Err(DbError::OriginNotLandable(envelope.origin));
         }
         let generation = envelope.generation;
-        self.shared
-            .store
-            .commit_with(generation, |reader| {
+        self.commit_following(generation, |reader| {
                 let mut envelope = envelope;
                 self.follow_parent_pointers(reader, &mut envelope)?;
                 Ok(Some(envelope))

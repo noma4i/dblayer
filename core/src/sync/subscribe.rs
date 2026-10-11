@@ -144,7 +144,7 @@ impl Feed {
         let (mut count, mut created) = (0, false);
         let mut announced: Vec<RowId> = Vec::new();
         let mut held_files: Vec<String> = Vec::new();
-        let committed = db.shared.store.commit_with(generation, |reader| {
+        let committed = db.commit_following_report(generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut destroyed: BTreeSet<(String, String)> = BTreeSet::new();
@@ -197,7 +197,6 @@ impl Feed {
                     }
                 }
             }
-            db.follow_parent_pointers(reader, &mut envelope)?;
             Ok::<_, SyncError>(Some(envelope))
         });
         match committed {
