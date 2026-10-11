@@ -42,7 +42,7 @@ class HttpPipelineTest {
     @After fun stop() = server.shutdown()
 
     private fun makeRun(onFailure: (RequestFailure) -> Unit = {}) = OperationRun(
-        GraphQLHttpTransport(server.url("/graphql").toString(), OkHttpClient(), signer, ServerClock(), "1.0", "1", "device-1", "token"),
+        GraphQLHttpTransport(server.url("/graphql").toString(), OkHttpClient(), signer, ServerClock(), "1.0", "1", "device-1") { "token" },
         PersistedQueryHashes(),
         onFailure,
     )
@@ -100,6 +100,32 @@ class HttpPipelineTest {
         assertEquals(JsonPrimitive("Probe"), body["operationName"])
         assertNull(body["query"])
         assertNotNull(body["extensions"])
+    }
+
+    @Test
+    fun tokenSupplierReadsTheCurrentTokenOncePerRequest() = runBlocking {
+        val tokens = listOf("token-1", "token-2")
+        var reads = 0
+        val run = OperationRun(
+            GraphQLHttpTransport.make(
+                server.url("/graphql").toString(),
+                TransportInputs("1.0", "1", "device-1", tokenSupplier = { tokens[reads++] }),
+                OkHttpClient(),
+                signer,
+                ServerClock(),
+            ),
+            PersistedQueryHashes(),
+        )
+        server.enqueue(reply(200, """{"data":{"id":"7"}}"""))
+        server.enqueue(reply(200, """{"data":{"id":"8"}}"""))
+
+        val network = transport(run)
+        network.query(ProbeQuery, Unit)
+        network.query(ProbeQuery, Unit)
+
+        assertEquals(2, reads)
+        assertEquals("Bearer token-1", server.takeRequest().getHeader("authorization"))
+        assertEquals("Bearer token-2", server.takeRequest().getHeader("authorization"))
     }
 
     @Test

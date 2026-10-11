@@ -1,21 +1,21 @@
 import Foundation
 
-public struct TransportInputs: Equatable, Sendable {
+public struct TransportInputs: Sendable {
   public let appVersion: String
   public let appBuild: String
   public let deviceUUID: String
-  public let token: String?
+  public let tokenSupplier: @Sendable () -> String?
 
   public init(
     appVersion: String,
     appBuild: String,
     deviceUUID: String,
-    token: String? = nil
+    tokenSupplier: @escaping @Sendable () -> String?
   ) {
     self.appVersion = appVersion
     self.appBuild = appBuild
     self.deviceUUID = deviceUUID
-    self.token = token
+    self.tokenSupplier = tokenSupplier
   }
 }
 
@@ -35,7 +35,7 @@ public extension GraphQLHTTPTransport {
       appVersion: inputs.appVersion,
       appBuild: inputs.appBuild,
       deviceUUID: inputs.deviceUUID,
-      token: inputs.token
+      tokenSupplier: inputs.tokenSupplier
     )
   }
 }

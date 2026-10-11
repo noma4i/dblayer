@@ -8,7 +8,7 @@ public struct GraphQLHTTPTransport: Sendable {
   private let appVersion: String
   private let appBuild: String
   private let deviceUUID: String
-  private let token: String?
+  private let tokenSupplier: @Sendable () -> String?
 
   public init(
     url: URL,
@@ -18,7 +18,7 @@ public struct GraphQLHTTPTransport: Sendable {
     appVersion: String,
     appBuild: String,
     deviceUUID: String,
-    token: String?
+    tokenSupplier: @escaping @Sendable () -> String?
   ) {
     self.url = url
     self.session = session
@@ -27,7 +27,7 @@ public struct GraphQLHTTPTransport: Sendable {
     self.appVersion = appVersion
     self.appBuild = appBuild
     self.deviceUUID = deviceUUID
-    self.token = token
+    self.tokenSupplier = tokenSupplier
   }
 
   public static func makeSession(configuration: URLSessionConfiguration = .default) -> URLSession {
@@ -42,6 +42,7 @@ public struct GraphQLHTTPTransport: Sendable {
     document: String?,
     variablesJSON: Data
   ) async throws -> (status: Int, body: Data) {
+    let token = tokenSupplier()
     let identity = try TransportIdentity.resolve(operationName: operationName, token: token, deviceUUID: deviceUUID)
     let now = await clock.now()
     let nonce = RequestSigner.makeNonce()

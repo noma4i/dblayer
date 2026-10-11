@@ -126,7 +126,7 @@ object TransportHeaders {
     }
 }
 
-data class TransportInputs(val appVersion: String, val appBuild: String, val deviceUuid: String, val token: String? = null)
+data class TransportInputs(val appVersion: String, val appBuild: String, val deviceUuid: String, val tokenSupplier: () -> String?)
 
 data class GraphQLResponseError(val message: String, val code: String?, val status: Int?)
 
@@ -254,16 +254,17 @@ class GraphQLHttpTransport(
     private val appVersion: String,
     private val appBuild: String,
     private val deviceUuid: String,
-    private val token: String?,
+    private val tokenSupplier: () -> String?,
 ) {
     data class Reply(val status: Int, val body: ByteArray)
 
     companion object {
         fun make(url: String, inputs: TransportInputs, client: OkHttpClient, signer: RequestSigner, clock: ServerClock) =
-            GraphQLHttpTransport(url, client, signer, clock, inputs.appVersion, inputs.appBuild, inputs.deviceUuid, inputs.token)
+            GraphQLHttpTransport(url, client, signer, clock, inputs.appVersion, inputs.appBuild, inputs.deviceUuid, inputs.tokenSupplier)
     }
 
     suspend fun send(operationName: String, documentHash: String, document: String?, variablesJson: ByteArray): Reply {
+        val token = tokenSupplier()
         val identity = TransportIdentity.resolve(operationName, token, deviceUuid)
         val nowSeconds = clock.nowMillis() / 1000.0
         val signed = signer.sign(SignatureInput(operationName, variablesJson, identity, deviceUuid, nowSeconds, RequestSigner.makeNonce()))

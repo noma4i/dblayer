@@ -235,7 +235,7 @@ func makeScriptedTransport(scriptId: String) throws -> (GraphQLHTTPTransport, UR
       appVersion: "1.0",
       appBuild: "1",
       deviceUUID: "device-1",
-      token: "token"
+      tokenSupplier: { "token" }
     ),
     session: ScriptedURLProtocol.session(scriptId: scriptId),
     signer: RequestSigner(secret: "secret"),

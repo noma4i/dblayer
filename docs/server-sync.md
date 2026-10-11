@@ -4,7 +4,7 @@ DBlayer talks to a GraphQL endpoint. You describe operations and models once. Re
 
 ## Connecting
 
-1. Create a transport with the endpoint and headers (for example an auth token).
+1. Create a transport with the endpoint and a token supplier. The transport reads the current token once per request.
 2. Open the database with your models and the transport.
 3. Pass your GraphQL operation types. The name and document come from the type, the response root is the first field of the document.
 

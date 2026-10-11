@@ -22,7 +22,7 @@ struct TransportInputsTests {
 
     let transport = GraphQLHTTPTransport.make(
       url: graphqlURL,
-      inputs: TransportInputs(appVersion: "1.0", appBuild: "1", deviceUUID: "device-1", token: "token"),
+      inputs: TransportInputs(appVersion: "1.0", appBuild: "1", deviceUUID: "device-1", tokenSupplier: { "token" }),
       session: ScriptedURLProtocol.session(scriptId: scriptId),
       signer: RequestSigner(secret: "secret"),
       clock: ServerClock()

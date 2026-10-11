@@ -63,6 +63,41 @@ struct GraphQLHTTPTransportTests {
   }
 
   @Test
+  func tokenSupplierReadsTheCurrentTokenOncePerRequest() async throws {
+    ScriptedURLProtocol.reset(scriptId: Self.scriptId)
+
+    let url = try #require(URL(string: "https://api.yupi.social/"))
+    ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: Data(), url: url)
+    ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: Data(), url: url)
+    let tokens = TokenSequence()
+    let transport = GraphQLHTTPTransport.make(
+      url: url,
+      inputs: TransportInputs(
+        appVersion: "1.0",
+        appBuild: "1",
+        deviceUUID: "device-1",
+        tokenSupplier: { tokens.next() }
+      ),
+      session: ScriptedURLProtocol.session(scriptId: Self.scriptId),
+      signer: RequestSigner(secret: "secret"),
+      clock: ServerClock()
+    )
+
+    for _ in 0..<2 {
+      _ = try await transport.send(
+        operationName: "Ping",
+        documentHash: "abc123",
+        document: nil,
+        variablesJSON: Data("{}".utf8)
+      )
+    }
+
+    let requests = ScriptedURLProtocol.recordedRequests(scriptId: Self.scriptId)
+    #expect(tokens.reads == 2)
+    #expect(requests.map { $0.value(forHTTPHeaderField: "authorization") } == ["Bearer token-1", "Bearer token-2"])
+  }
+
+  @Test
   func decryptsEncryptedResponse() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
 
@@ -148,7 +183,26 @@ private extension GraphQLHTTPTransportTests {
       appVersion: "1.0",
       appBuild: "1",
       deviceUUID: "device-1",
-      token: token
+      tokenSupplier: { token }
     )
+  }
+
+}
+
+private final class TokenSequence: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count = 0
+
+  var reads: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return count
+  }
+
+  func next() -> String? {
+    lock.lock()
+    defer { lock.unlock() }
+    count += 1
+    return "token-\(count)"
   }
 }
