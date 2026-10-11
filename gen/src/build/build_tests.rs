@@ -78,7 +78,7 @@ fn associations_and_composite_index() {
 #[test]
 fn a_belongs_to_that_sets_parent_fields_keeps_them_and_the_newer_guard() {
     let model = parse_models(
-        "model Owner do\n  schema do\n    string :n\n  end\nend\nmodel Sample do\n  schema do\n    id :ownerId, index: true\n  end\n  belongs_to :owner, model: Owner, key: :ownerId, sets: { lastId: :id, lastAt: :createdAt }, newer: { createdAt: :lastAt }\nend\n",
+        "model Owner do\n  schema do\n    id :lastId, null: true\n    date :lastAt, null: true\n  end\nend\nmodel Sample do\n  schema do\n    id :ownerId, index: true\n    date :createdAt\n  end\n  belongs_to :owner, model: Owner, key: :ownerId, sets: { lastId: :id, lastAt: :createdAt }, newer: { createdAt: :lastAt }\nend\n",
     )
     .unwrap()
     .remove(1);
