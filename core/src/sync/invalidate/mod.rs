@@ -25,7 +25,8 @@ impl Inner {
                 continue;
             }
             let Ok(resolved) = self.resolve(model, &relation, &params) else { continue };
-            reloaded += usize::from(self.fetch(&resolved, None, true).await.is_ok());
+            let fetched = if only_stale { self.fetch_after_flights(&resolved).await } else { self.fetch(&resolved, None, true).await };
+            reloaded += usize::from(fetched.is_ok());
         }
         reloaded
     }

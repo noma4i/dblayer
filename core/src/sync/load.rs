@@ -164,6 +164,16 @@ impl Inner {
         locked(&self.flights).coalescing.in_flight().iter().any(|key| key.starts_with(&prefix))
     }
 
+    pub(crate) async fn fetch_after_flights(&self, resolved: &Resolved) -> FlightResult {
+        let paged = format!("{}|", resolved.window_key);
+        loop {
+            let pending = locked(&self.flights).waiting.iter().find(|(key, _)| **key == resolved.window_key || key.starts_with(&paged)).map(|(_, receiver)| receiver.clone());
+            let Some(mut receiver) = pending else { break };
+            let _ = receiver.wait_for(Option::is_some).await;
+        }
+        self.fetch(resolved, None, true).await
+    }
+
     pub(crate) async fn fetch(&self, resolved: &Resolved, cursor: Option<String>, force: bool) -> FlightResult {
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
