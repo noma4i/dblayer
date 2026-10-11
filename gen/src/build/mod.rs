@@ -1,4 +1,4 @@
-use dblayer::schema::{CursorSpec, VariableSource, 
+use dblayer::schema::{Newer, CursorSpec, VariableSource, 
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
     OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
 };
@@ -137,6 +137,8 @@ fn build_association(call: &Call, kind: AssociationKind, owner: &str) -> Associa
     });
     let mut association = AssociationSpec::new(&name, kind, &target, &key);
     association.touches_parent = flag(call, "touch");
+    association.sets = hash_texts(call, "sets").into_iter().collect();
+    association.newer = hash_texts(call, "newer").into_iter().next().map(|(child, parent)| Newer { child, parent });
     association.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));
     association.dependent = option(call, "dependent").map(|_| Dependent::Destroy);
     association
@@ -309,6 +311,13 @@ fn variable_binding(pair: &Pair) -> Option<(String, String)> {
 
 fn option<'a>(call: &'a Call, name: &str) -> Option<&'a Pair> {
     call.options.iter().find(|pair| pair.key == name)
+}
+
+fn hash_texts(call: &Call, name: &str) -> Vec<(String, String)> {
+    match option(call, name).map(|pair| &pair.value.item) {
+        Some(Value::Hash(pairs)) => pairs.iter().filter_map(|pair| text_of(&pair.value.item).map(|text| (pair.key.clone(), text))).collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn flag(call: &Call, name: &str) -> bool {

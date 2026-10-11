@@ -129,7 +129,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         ),
         (Context::Model, "belongs_to") => plain(
             Shape::Name,
-            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("touch", Want::Bool, false), key("from", Want::Any, false)],
+            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("touch", Want::Bool, false), key("sets", Want::Hash, false), key("newer", Want::Hash, false), key("from", Want::Any, false)],
         ),
         (Context::Model, "has_many" | "has_one") => plain(
             Shape::Name,

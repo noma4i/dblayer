@@ -75,6 +75,8 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("has_many.from", assoc("  has_many :v, model: Vibe, key: :momentId"), assoc("  has_many :v, model: Vibe, key: :momentId, from: \"x.v\"")),
         ("references.from", assoc("  references :u, model: User, key: :ownerId"), assoc("  references :u, model: User, key: :ownerId, from: \"x.u\"")),
         ("belongs_to.touch", assoc("  belongs_to :u, model: User, key: :ownerId"), assoc("  belongs_to :u, model: User, key: :ownerId, touch: true")),
+        ("belongs_to.sets", assoc("  belongs_to :u, model: User, key: :ownerId"), assoc("  belongs_to :u, model: User, key: :ownerId, sets: { lastId: :id }")),
+        ("belongs_to.newer", assoc("  belongs_to :u, model: User, key: :ownerId"), assoc("  belongs_to :u, model: User, key: :ownerId, newer: { createdAt: :lastAt }")),
         ("has_many.model", assoc("  has_many :v, model: Vibe, key: :momentId"), assoc("  has_many :v, model: User, key: :momentId")),
         ("has_many.key", assoc("  has_many :v, model: Vibe, key: :momentId"), assoc("  has_many :v, model: Vibe, key: :ownerId")),
         ("has_many.dependent", assoc("  has_many :v, model: Vibe, key: :momentId"), assoc("  has_many :v, model: Vibe, key: :momentId, dependent: :destroy")),
