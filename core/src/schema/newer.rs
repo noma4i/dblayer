@@ -61,15 +61,22 @@ impl AssociationSpec {
         self.sets.iter().find(|(_, child)| child.as_str() == "id").map(|(parent, _)| parent.as_str())
     }
 
-    pub fn child_is_newer(&self, parent: &Map<String, Value>, child: &Map<String, Value>) -> bool {
-        if self.newer.is_empty() {
-            return true;
+    fn parent_order<'a>(&'a self, row: &'a Map<String, Value>) -> Order<'a> {
+        Order {
+            id: self.pointer_field().and_then(|field| present(row.get(field))).and_then(Value::as_str),
+            tuple: self.newer.iter().map(|newer| present(row.get(&newer.parent))).collect(),
         }
-        let candidate = Order { id: child.get("id").and_then(Value::as_str), tuple: self.newer.iter().map(|newer| present(child.get(&newer.child))).collect() };
-        let current = Order {
-            id: self.pointer_field().and_then(|field| present(parent.get(field))).and_then(Value::as_str),
-            tuple: self.newer.iter().map(|newer| present(parent.get(&newer.parent))).collect(),
-        };
-        is_newer(&candidate, &current)
+    }
+
+    fn child_order<'a>(&'a self, row: &'a Map<String, Value>) -> Order<'a> {
+        Order { id: row.get("id").and_then(Value::as_str), tuple: self.newer.iter().map(|newer| present(row.get(&newer.child))).collect() }
+    }
+
+    pub fn parent_is_newer(&self, stored: &Map<String, Value>, incoming: &Map<String, Value>) -> bool {
+        self.newer.is_empty() || is_newer(&self.parent_order(incoming), &self.parent_order(stored))
+    }
+
+    pub fn child_is_newer(&self, parent: &Map<String, Value>, child: &Map<String, Value>) -> bool {
+        self.newer.is_empty() || is_newer(&self.child_order(child), &self.parent_order(parent))
     }
 }

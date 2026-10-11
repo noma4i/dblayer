@@ -167,7 +167,7 @@ impl Feed {
                     }
                     let mut related = Related::new();
                     let Some(patch) = normalize_node(db, model, &item.node, &mut related)? else { continue };
-                    let Some(row) = spec.merged(stored.as_ref(), &patch) else { continue };
+                    let Some(row) = db.merged(model, stored.as_ref(), &patch)? else { continue };
                     created |= stored.is_none();
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
                     let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();

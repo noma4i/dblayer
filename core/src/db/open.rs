@@ -10,7 +10,7 @@ use crate::identity::ModelKey;
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, OutboxQueue};
 use crate::syncstate::rebuild_sync;
 use crate::pacing::{Clock, Counters};
-use crate::schema::{validate_models, ModelSpec};
+use crate::schema::{validate_models, AssociationKind, AssociationSpec, ModelSpec};
 use crate::store::{Reader, Store, StoreError, StoreEvent};
 
 use super::cache::RowCache;
@@ -36,6 +36,7 @@ impl Default for DbConfig {
 pub(crate) struct Shared {
     pub store: Store,
     pub specs: BTreeMap<String, ModelSpec>,
+    pub pointer_guards: BTreeMap<String, Vec<AssociationSpec>>,
     pub cache: Arc<Mutex<RowCache>>,
     pub observers: Mutex<Observers>,
     pub counters: Arc<Mutex<Counters>>,
@@ -105,6 +106,7 @@ impl Db {
         recover_operations(&store, &models)?;
         store.mark_ready();
         let ephemeral = Ephemerals::new(&models);
+        let pointer_guards = pointer_guards(&models);
         let specs = models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect();
         let cache = Arc::new(Mutex::new(RowCache::new(config.cache_rows)));
         let dispatch = Arc::new(Dispatch::new());
@@ -112,6 +114,7 @@ impl Db {
         let shared = Arc::new(Shared {
             store,
             specs,
+            pointer_guards,
             cache,
             observers: Mutex::new(Observers::default()),
             counters: Arc::new(Mutex::new(Counters::default())),
@@ -228,4 +231,14 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
     envelope.entity_ops = rebuilt.into_iter().map(|row| EntityOp::Upsert { model: ModelKey::new(&row.model), id: row.id, row: row.row }).collect();
     store.commit(envelope)?;
     Ok(())
+}
+
+fn pointer_guards(models: &[ModelSpec]) -> BTreeMap<String, Vec<AssociationSpec>> {
+    let mut guards: BTreeMap<String, Vec<AssociationSpec>> = BTreeMap::new();
+    for association in models.iter().flat_map(|spec| &spec.associations) {
+        if association.kind == AssociationKind::BelongsTo && !association.sets.is_empty() && !association.newer.is_empty() {
+            guards.entry(association.target.to_string()).or_default().push(association.clone());
+        }
+    }
+    guards
 }

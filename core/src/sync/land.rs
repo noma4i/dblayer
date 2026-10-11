@@ -41,7 +41,7 @@ pub(crate) struct Admitted {
 }
 
 pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64>, model: &str, rows: &[Map<String, Value>], drops: &mut usize) -> Result<Admitted, SyncError> {
-    let spec = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
+    db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
     let unconfirmed = Prior::unconfirmed_fields(reader, closing)?;
     let mut admitted = Admitted { rows: Vec::with_capacity(rows.len()), invalid: 0 };
     for row in rows {
@@ -59,7 +59,7 @@ pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64
                     };
                 }
                 *drops += usize::from(dropped);
-                match spec.merged(stored.as_ref().and_then(|stored| stored.row.as_ref()), &row) {
+                match db.merged(model, stored.as_ref().and_then(|stored| stored.row.as_ref()), &row)? {
                     Some(merged) => admitted.rows.push(merged),
                     None => admitted.invalid += 1,
                 }

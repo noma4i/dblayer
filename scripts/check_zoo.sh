@@ -52,6 +52,13 @@ for path in files:
     if re.search(r"\.commit_with\(|\bstore\s*\.commit\(", path.read_text()) and f"commit:{relative}" not in allowed:
         findings.append(f"Z7 commit outside db/commit.rs skips the parent pointer: {relative}")
 
+for path in files:
+    relative = str(path.relative_to(root))
+    if relative.endswith("db/merge.rs") or "/schema/" in relative:
+        continue
+    if re.search(r"(?<!\bdb)(?<!\bself)\.merged\(", path.read_text()):
+        findings.append(f"Z8 server rows merge through Db::merged only: {relative}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

@@ -8,6 +8,7 @@ mod files;
 mod land;
 mod listeners;
 mod local_write;
+mod merge;
 mod lookup;
 mod maintain;
 mod observe;

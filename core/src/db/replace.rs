@@ -47,6 +47,14 @@ impl Db {
         let rows = rows.iter().map(|row| spec.patch(row)).collect::<Vec<_>>();
         let generation = self.generation();
         self.commit_following(generation, |reader| {
+                let model = request.scope.model.as_str();
+                let rows = rows
+                    .iter()
+                    .map(|row| match row.get("id").and_then(read_id) {
+                        Some(id) => Ok(self.merged(model, reader.point(model, id.as_str())?.as_ref(), row)?.unwrap_or_else(|| row.clone())),
+                        None => Ok(row.clone()),
+                    })
+                    .collect::<Result<Vec<_>, DbError>>()?;
                 let plan = self.replace_plan(reader, request, &rows, None)?;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, generation);
                 envelope.entity_ops = plan.entity_ops;
@@ -100,20 +108,7 @@ impl Db {
             OnAbsent::Destroy => anchor.map_or_else(Vec::new, |position| removed.iter().copied().filter(|index| *index < position).collect()),
         };
 
-        let stored = reader.stored_rows(model.as_str(), &incoming_ids)?;
-        let mut entity_ops: Vec<EntityOp> = incoming
-            .into_iter()
-            .map(|(id, row)| {
-                let merged = match stored.get(id.as_str()).and_then(|stored| stored.row.clone()) {
-                    Some(mut old) => {
-                        old.extend(row);
-                        old
-                    }
-                    None => row,
-                };
-                EntityOp::Upsert { model: model.clone(), id, row: merged }
-            })
-            .collect();
+        let mut entity_ops: Vec<EntityOp> = incoming.into_iter().map(|(id, row)| EntityOp::Upsert { model: model.clone(), id, row }).collect();
 
         let mut destroyed: HashSet<RowRef> = HashSet::new();
         for index in destroyable.iter().filter(|index| !is_local(&current[**index].id)) {

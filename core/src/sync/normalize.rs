@@ -114,7 +114,6 @@ pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, re
 }
 
 pub(crate) fn merge_stored(db: &Db, reader: &Reader<'_>, model: &str, patch: &Map<String, Value>) -> Result<Option<Map<String, Value>>, SyncError> {
-    let spec = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
-    Ok(spec.merged(reader.point(model, id.as_str())?.as_ref(), patch))
+    Ok(db.merged(model, reader.point(model, id.as_str())?.as_ref(), patch)?)
 }

@@ -177,3 +177,25 @@ fn replace_on_an_unknown_model_fails() {
     let ghost = ScopeRef::new(ModelKey::new("ghosts"), ScopeKey::from_raw("x"));
     assert!(matches!(db.replace(&ReplaceRequest::new(ghost, Coverage::Complete), vec![]), Err(DbError::UnknownModel(_))));
 }
+
+const OLD: &str = "2026-01-01T00:00:00.000Z";
+const NEW: &str = "2026-01-02T00:00:00.000Z";
+const NEWER: &str = "2026-01-03T00:00:00.000Z";
+
+#[test]
+fn a_server_row_moves_the_parent_pointer_only_forward() {
+    let cases = [
+        ("an older pointer from the server is kept out", "m1", OLD, ("m9", NEW)),
+        ("a newer pointer from the server is taken", "m10", NEWER, ("m10", NEWER)),
+        ("a pending pointer holds against a confirmed one", "m10", NEWER, ("temp-1", NEW)),
+    ];
+    for (name, id, at, (held, held_at)) in cases {
+        let db = booted();
+        put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": held, "lastMessageAt": held_at}));
+        let chats = ScopeRef::new(ModelKey::new("chats"), ScopeKey::from_raw("all"));
+        db.replace(&ReplaceRequest::new(chats, Coverage::Complete), vec![obj(json!({"id": "c1", "title": "t", "lastMessageId": id, "lastMessageAt": at}))]).unwrap();
+        let chat = db.find("chats", &rid("c1")).unwrap().unwrap();
+        let expected = if name.starts_with("a newer") { (id, at) } else { (held, held_at) };
+        assert_eq!((chat.text("lastMessageId"), chat.text("lastMessageAt")), (Some(expected.0), Some(expected.1)), "{name}");
+    }
+}
