@@ -24,13 +24,13 @@ Data crosses between the core and the platform as JSON strings. The platform dec
 | `schema`, `ddl` | Model specification, validation, tables and indexes |
 | `store`, `commit` | SQLite storage, atomic commits, revisions, tombstones, query windows |
 | `query` | Conditions, ordering and SQL compilation |
-| `read` | Landing plans for server data, page chains, loading state |
-| `write`, `operation` | Write plans, cascades, the durable outbox, quarantine |
+| `read` | Landing plans for server data, reading of connection payloads, load-more verdicts |
+| `write`, `operation` | Write plans, cascade envelopes, the durable outbox, quarantine |
 | `syncstate` | The stored sync state of every unconfirmed record, derived from the outbox |
 | `db` | The database object: reads, writes, cache, live results, files |
 | `files` | Attachment storage |
 | `sync` | Loading, pagination, mutations, subscriptions, refetching |
-| `transport`, `pacing` | The transport interface and mock, retry rules, throttling, freshness |
+| `transport`, `pacing` | The transport interface, retry rules, event specs, the scripted mock (tests and stress runs only), clocks, backoff, throttling, debouncing, fetch coalescing, counters |
 
 ## Key ideas
 

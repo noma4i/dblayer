@@ -1,7 +1,4 @@
 mod mark;
-mod reconnect;
-
-pub use reconnect::ReconnectReport;
 
 use std::collections::BTreeMap;
 
@@ -40,5 +37,3 @@ impl Sync {
 
 #[cfg(test)]
 mod mark_tests;
-#[cfg(test)]
-mod reconnect_tests;

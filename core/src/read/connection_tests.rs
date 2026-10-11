@@ -28,14 +28,6 @@ fn page_info_reads_pagination_fields() {
 }
 
 #[test]
-fn total_count_accepts_only_numbers() {
-    assert_eq!(connection_total_count(&json!({"totalCount": 12.7})), Some(12));
-    assert_eq!(connection_total_count(&json!({"totalCount": 9})), Some(9));
-    assert_eq!(connection_total_count(&json!({"totalCount": "5"})), None);
-    assert_eq!(connection_total_count(&json!({})), None);
-}
-
-#[test]
 fn malformed_payloads_are_not_landable() {
     assert_eq!(landing_fault(&json!("x"), None), Some(LandingFault::PayloadNotObject));
     assert_eq!(landing_fault(&json!(null), None), Some(LandingFault::PayloadNotObject));
@@ -44,12 +36,10 @@ fn malformed_payloads_are_not_landable() {
     assert_eq!(landing_fault(&json!({"pageInfo": {"hasNextPage": true}}), None), Some(LandingFault::CursorMissing));
     assert_eq!(landing_fault(&json!({"pageInfo": {"hasNextPage": true, "endCursor": null}}), None), Some(LandingFault::CursorMissing));
     assert_eq!(landing_fault(&json!({"pageInfo": {"hasNextPage": true, "endCursor": ""}}), None), Some(LandingFault::CursorMissing));
-    assert!(!is_landable(&json!({"pageInfo": {"hasNextPage": true}}), None));
 }
 
 #[test]
 fn next_page_with_cursor_and_last_page_are_landable() {
     assert_eq!(landing_fault(&json!({"pageInfo": {"hasNextPage": true, "endCursor": "c1"}}), None), None);
     assert_eq!(landing_fault(&json!({"pageInfo": {"hasNextPage": false}}), None), None);
-    assert!(is_landable(&json!({"pageInfo": {"hasNextPage": false}}), None));
 }

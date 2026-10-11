@@ -66,16 +66,7 @@ impl Database {
         });
         Ok(Arc::new(StateSubscription { task: Mutex::new(Some(task.abort_handle())) }))
     }
-    pub fn live_belongs_to(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        self.related(model, row_id, name, listener)
-    }
     pub fn live_has_many(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        self.related(model, row_id, name, listener)
-    }
-    pub fn live_has_one(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        self.related(model, row_id, name, listener)
-    }
-    pub fn live_references(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.related(model, row_id, name, listener)
     }
     pub fn create(&self, model: String, values_json: String) -> Result<String, DbError> {
@@ -211,16 +202,6 @@ impl Database {
     }
     pub fn maintain(&self) -> Result<(), DbError> { self.db.maintain(&[])?; Ok(()) }
     pub fn logout(&self) -> Result<(), DbError> { self.db.reset_all()?; Ok(()) }
-    pub fn cache_stats(&self) -> String {
-        let counts = self.db.counters();
-        serde_json::json!({ "hits": counts.cache_hits, "misses": counts.cache_misses, "evictions": counts.cache_evictions }).to_string()
-    }
-    pub fn diagnostics(&self) -> String {
-        let counts = self.db.counters();
-        let census = self.db.observer_census();
-        serde_json::json!({ "observationReads": counts.observation_reads, "observerCalls": counts.observer_calls,
-            "queries": census.observed_queries, "subscriptions": census.subscriptions }).to_string()
-    }
 }
 
 impl Database {

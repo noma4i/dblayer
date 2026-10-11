@@ -123,20 +123,6 @@ fn merged_keeps_stored_fields_and_creates_with_defaults() {
 }
 
 #[test]
-fn normalize_all_keeps_valid_rows_and_reports_dropped() {
-    let spec = model(vec![FieldSpec::scalar("id", ScalarKind::Str)]);
-    let inputs = vec![object(json!({"id": "1"})), Map::new(), object(json!({"id": "3"}))];
-
-    let (rows, dropped) = spec.normalize_all(&inputs);
-    let (none, none_dropped) = spec.normalize_all(&[]);
-
-    assert_eq!(rows, vec![object(json!({"id": "1"})), object(json!({"id": "3"}))]);
-    assert_eq!(dropped, vec![(1, SchemaError::MissingField("id".into()))]);
-    assert!(none.is_empty());
-    assert!(none_dropped.is_empty());
-}
-
-#[test]
 fn model_reports_invalid_key_fields_and_names() {
     let empty_key = ModelSpec::new("", vec![id_field()]);
     let no_fields = model(vec![]);
@@ -215,20 +201,15 @@ fn references_key_must_be_a_declared_field() {
 }
 
 #[test]
-fn association_kinds_choose_ownership_and_read_plan() {
+fn association_kinds_choose_ownership() {
     let belongs_to = association("chat", AssociationKind::BelongsTo, "chats", "chatId");
     let has_many = association("messages", AssociationKind::HasMany, "chats", "chatId");
-    let has_one = association("last", AssociationKind::HasOne, "chats", "chatId");
     let references = association("chats", AssociationKind::References, "chats", "");
 
     assert!(!belongs_to.owns_children());
     assert!(belongs_to.requires_foreign_key());
-    assert_eq!(belongs_to.read_plan(), ReadPlan::Find);
     assert!(has_many.owns_children());
-    assert_eq!(has_many.read_plan(), ReadPlan::Where);
-    assert_eq!(has_one.read_plan(), ReadPlan::Find);
     assert!(!references.requires_foreign_key());
-    assert_eq!(references.read_plan(), ReadPlan::ByIds);
 
     let host = ModelSpec { associations: vec![references], ..model(vec![id_field()]) };
     assert_eq!(host.validate(&[]), Ok(()));

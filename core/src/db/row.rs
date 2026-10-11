@@ -4,6 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::identity::RowId;
 use crate::syncstate::SyncInfo;
+#[cfg(test)]
 use crate::upload::UploadInfo;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +19,7 @@ pub struct Record {
 pub type Row = Arc<Record>;
 
 impl Record {
+    #[cfg(test)]
     pub fn upload(&self) -> Option<&UploadInfo> {
         self.sync.upload.as_ref()
     }
@@ -34,6 +36,7 @@ impl Record {
         self.data.get(field).and_then(Value::as_str)
     }
 
+    #[cfg(test)]
     pub fn json(&self) -> String {
         Value::Object(self.data.clone()).to_string()
     }

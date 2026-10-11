@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fs;
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -9,7 +8,6 @@ use crate::files::{clear_all, clear_model};
 use crate::identity::ScopeKey;
 use crate::operation::{quarantine_add, Operation, QuarantineReason};
 
-use super::location::{reset_marker, remove_database_files};
 use super::{Inner, Store, StoreError, StoreEvent};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -191,18 +189,9 @@ impl Store {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn reset_intent(&self) -> Result<Option<String>, StoreError> {
         let inner = self.lock();
         Ok(manifest_read(&inner.connection, RESET_INTENT_KEY)?)
-    }
-
-    pub fn logout(self) -> Result<(), StoreError> {
-        let Some(path) = self.path.clone() else { return Ok(()) };
-        let marker = reset_marker(&path);
-        fs::write(&marker, b"logout")?;
-        drop(self);
-        remove_database_files(&path)?;
-        fs::remove_file(&marker)?;
-        Ok(())
     }
 }

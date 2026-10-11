@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -77,7 +77,6 @@ pub enum ScopeOp {
     Append { scope: ScopeRef, row: RowId, order_key: String },
     Move { scope: ScopeRef, row: RowId, order_key: String },
     Detach { scope: ScopeRef, row: RowId },
-    ReplaceAll { scope: ScopeRef, members: Vec<(RowId, String)> },
 }
 
 impl ScopeOp {
@@ -85,8 +84,7 @@ impl ScopeOp {
         match self {
             ScopeOp::Append { scope, .. }
             | ScopeOp::Move { scope, .. }
-            | ScopeOp::Detach { scope, .. }
-            | ScopeOp::ReplaceAll { scope, .. } => scope,
+            | ScopeOp::Detach { scope, .. } => scope,
         }
     }
 }
@@ -222,29 +220,6 @@ impl CommitEnvelope {
         self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none()
     }
 
-    pub fn touched_rows(&self) -> Vec<RowRef> {
-        let mut seen = BTreeSet::new();
-        let mut rows = Vec::new();
-        for operation in &self.entity_ops {
-            let row = operation.row_ref();
-            if seen.insert((row.model.clone(), row.id.clone())) {
-                rows.push(row);
-            }
-        }
-        rows
-    }
-
-    pub fn touched_scopes(&self) -> Vec<ScopeRef> {
-        let mut seen = BTreeSet::new();
-        let mut scopes = Vec::new();
-        for operation in &self.scope_ops {
-            if seen.insert(operation.scope().clone()) {
-                scopes.push(operation.scope().clone());
-            }
-        }
-        scopes
-    }
-
     pub fn validate(&self, current: Generation) -> Result<(), EnvelopeFault> {
         if self.schema_version != ENVELOPE_VERSION {
             return Err(EnvelopeFault::SchemaVersionMismatch);
@@ -270,7 +245,6 @@ impl CommitEnvelope {
                 ScopeOp::Append { scope, row, .. } | ScopeOp::Move { scope, row, .. } | ScopeOp::Detach { scope, row } => {
                     Some((scope.clone(), row.clone()))
                 }
-                ScopeOp::ReplaceAll { .. } => None,
             })
             .collect();
         if !duplicates(&member_keys).is_empty() {
@@ -334,20 +308,8 @@ impl CommitResult {
         self.revision.is_none()
     }
 
-    pub fn affected_rows(&self) -> BTreeSet<(ModelKey, RowId)> {
-        self.rows.iter().map(|change| (change.row.model.clone(), change.row.id.clone())).collect()
-    }
-
     pub fn changed_models(&self) -> BTreeSet<ModelKey> {
         self.rows.iter().map(|change| change.row.model.clone()).collect()
-    }
-
-    pub fn rows_by_model(&self) -> BTreeMap<ModelKey, Vec<&RowChange>> {
-        let mut grouped: BTreeMap<ModelKey, Vec<&RowChange>> = BTreeMap::new();
-        for change in &self.rows {
-            grouped.entry(change.row.model.clone()).or_default().push(change);
-        }
-        grouped
     }
 }
 

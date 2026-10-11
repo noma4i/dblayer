@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
@@ -11,7 +12,6 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::identity::{RowId, ScopeKey};
 
 const ORDER_ALPHABET: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-const SIGN_BIT: u64 = 1 << 63;
 const INT_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -60,13 +60,6 @@ pub enum OrderKeyError {
 pub enum SortDirection {
     Asc,
     Desc,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum OrderValue {
-    Number(f64),
-    Text(String),
-    Missing,
 }
 
 pub fn read_str(value: &Value) -> Option<String> {
@@ -154,10 +147,6 @@ pub fn read_array<T>(value: &Value, element: impl Fn(&Value) -> Option<T>) -> Op
     value.as_array().map(|items| items.iter().filter_map(element).collect())
 }
 
-pub fn read_object<T>(value: &Value, read: impl Fn(&Map<String, Value>) -> Option<T>) -> Option<T> {
-    value.as_object().and_then(read)
-}
-
 pub fn read_scalar(value: &Value, kind: ScalarKind) -> Option<Value> {
     match kind {
         ScalarKind::Str => read_str(value).map(Value::String),
@@ -195,6 +184,7 @@ fn iso_from_milliseconds(milliseconds: f64) -> Option<String> {
     canonical_iso(OffsetDateTime::from_unix_timestamp_nanos(nanoseconds).ok()?)
 }
 
+#[cfg(test)]
 fn compare_numbers(left: &Number, right: &Number) -> Option<Ordering> {
     if let (Some(left), Some(right)) = (left.as_i64(), right.as_i64()) {
         return Some(left.cmp(&right));
@@ -205,6 +195,7 @@ fn compare_numbers(left: &Number, right: &Number) -> Option<Ordering> {
     left.as_f64()?.partial_cmp(&right.as_f64()?)
 }
 
+#[cfg(test)]
 fn values_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Number(left), Value::Number(right)) => compare_numbers(left, right) == Some(Ordering::Equal),
@@ -212,10 +203,12 @@ fn values_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
+#[cfg(test)]
 fn is_missing(value: Option<&Value>) -> bool {
     value.is_none_or(Value::is_null)
 }
 
+#[cfg(test)]
 pub fn null_equals(value: Option<&Value>, expected: Option<&Value>) -> bool {
     match (is_missing(value), is_missing(expected)) {
         (true, true) => true,
@@ -224,10 +217,12 @@ pub fn null_equals(value: Option<&Value>, expected: Option<&Value>) -> bool {
     }
 }
 
+#[cfg(test)]
 pub fn null_not_equals(value: Option<&Value>, expected: Option<&Value>) -> bool {
     !null_equals(value, expected)
 }
 
+#[cfg(test)]
 pub fn null_is_in(value: Option<&Value>, values: &[Value]) -> bool {
     match value.filter(|value| !value.is_null()) {
         Some(value) => values.iter().any(|candidate| values_equal(candidate, value)),
@@ -235,6 +230,7 @@ pub fn null_is_in(value: Option<&Value>, values: &[Value]) -> bool {
     }
 }
 
+#[cfg(test)]
 pub fn null_is_not_in(value: Option<&Value>, values: &[Value]) -> bool {
     match value.filter(|value| !value.is_null()) {
         Some(value) => !values.iter().any(|candidate| values_equal(candidate, value)),
@@ -242,6 +238,7 @@ pub fn null_is_not_in(value: Option<&Value>, values: &[Value]) -> bool {
     }
 }
 
+#[cfg(test)]
 pub fn null_compare(value: Option<&Value>, bound: &Value, keeps_greater: bool, or_equal: bool) -> bool {
     let Some(value) = value else { return false };
     let ordering = match (value, bound) {
@@ -254,48 +251,6 @@ pub fn null_compare(value: Option<&Value>, bound: &Value, keeps_greater: bool, o
         Some(Ordering::Equal) => or_equal,
         Some(ordering) => (ordering == Ordering::Greater) == keeps_greater,
     }
-}
-
-fn hex_byte(byte: u8) -> String {
-    format!("{byte:02x}")
-}
-
-fn encoded_number(number: f64, descending: bool) -> String {
-    if number.is_nan() {
-        return (if descending { "0" } else { "1" }).to_string();
-    }
-    let mut bits = number.to_bits();
-    bits = if bits & SIGN_BIT == 0 { bits ^ SIGN_BIT } else { !bits };
-    if descending {
-        bits = !bits;
-    }
-    format!("{}{bits:016x}", if descending { '1' } else { '0' })
-}
-
-fn encoded_text(text: &str, descending: bool) -> String {
-    let mut result = String::from(if descending { "1" } else { "0" });
-    for byte in text.bytes() {
-        result.push_str(&hex_byte(if descending { !byte } else { byte }));
-    }
-    result.push_str(&if descending { hex_byte(!b'.') } else { ".".to_string() });
-    result
-}
-
-pub fn order_key_encoded(values: &[OrderValue], directions: &[SortDirection], id: &RowId) -> String {
-    let mut result = String::new();
-    for (index, value) in values.iter().enumerate() {
-        let descending = directions.get(index) == Some(&SortDirection::Desc);
-        match value {
-            OrderValue::Number(number) => result.push_str(&encoded_number(*number, descending)),
-            OrderValue::Text(text) => result.push_str(&encoded_text(text, descending)),
-            OrderValue::Missing => result.push('2'),
-        }
-    }
-    result.push('.');
-    for byte in id.as_str().bytes() {
-        result.push_str(&hex_byte(byte));
-    }
-    result
 }
 
 pub fn fractional_between(lower: Option<&str>, upper: Option<&str>) -> Result<String, OrderKeyError> {

@@ -2,7 +2,6 @@ use crate::identity::Generation;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchError {
-    Offline,
     Transport(String),
 }
 
@@ -14,10 +13,6 @@ pub enum FetchReport {
 }
 
 impl FetchReport {
-    pub fn offline_start(has_window: bool) -> Option<FetchReport> {
-        (!has_window).then_some(FetchReport::Failed(FetchError::Offline))
-    }
-
     pub fn of(is_forced: bool, has_window: bool, failure: Option<&str>) -> FetchReport {
         let Some(failure) = failure else { return FetchReport::Loaded };
         if !is_forced && has_window {

@@ -87,33 +87,10 @@ fn several_member_scope_ops_for_one_row_are_duplicates() {
 }
 
 #[test]
-fn replace_all_may_precede_member_op_on_same_row() {
-    let mut mixed = envelope();
-    mixed.scope_ops = vec![
-        ScopeOp::ReplaceAll { scope: scope(), members: vec![(row("m1"), "a".into())] },
-        ScopeOp::Detach { scope: scope(), row: row("m1") },
-    ];
-    assert_eq!(mixed.validate(Generation::INITIAL), Ok(()));
-}
-
-#[test]
 fn upsert_payload_id_must_match_row_id() {
     let mut mismatch = envelope();
     mismatch.entity_ops = vec![EntityOp::Upsert { model: model(), id: row("m1"), row: payload("m2") }];
     assert_eq!(mismatch.validate(Generation::INITIAL), Err(EnvelopeFault::RowIdMismatch));
-}
-
-#[test]
-fn touched_rows_and_scopes_keep_first_occurrence() {
-    let mut touched = envelope();
-    touched.entity_ops = vec![upsert("m1"), touch("m1"), touch("m2")];
-    touched.scope_ops = vec![
-        ScopeOp::Append { scope: scope(), row: row("m1"), order_key: "a".into() },
-        ScopeOp::Move { scope: scope(), row: row("m2"), order_key: "b".into() },
-    ];
-    let rows: Vec<String> = touched.touched_rows().iter().map(|row| row.id.to_string()).collect();
-    assert_eq!(rows, vec!["m1", "m2"]);
-    assert_eq!(touched.touched_scopes(), vec![scope()]);
 }
 
 #[test]

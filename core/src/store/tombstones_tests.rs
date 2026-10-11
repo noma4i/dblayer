@@ -1,14 +1,7 @@
 use super::fixtures::*;
 use super::*;
-use std::collections::BTreeSet;
-
-use crate::identity::RowRef;
 
 const RETENTION: TombstoneRetention = TombstoneRetention::DEFAULT;
-
-fn reference(model_name: &str, row_id: &str) -> RowRef {
-    RowRef::new(model(model_name), id(row_id))
-}
 
 #[test]
 fn mark_checks_presence_for_the_same_model_and_id() {
@@ -29,48 +22,12 @@ fn repeated_mark_leaves_one_tombstone_row_with_latest_values() {
 }
 
 #[test]
-fn expiry_boundary_is_strict_and_caps_decide_eviction() {
-    let now = 100_000_000;
-    assert!(!RETENTION.is_expired(now - RETENTION.ttl_ms + 1, now));
-    assert!(!RETENTION.is_expired(now - RETENTION.ttl_ms, now));
-    assert!(RETENTION.is_expired(now - RETENTION.ttl_ms - 1, now));
+fn caps_decide_eviction() {
     assert_eq!(RETENTION.eviction_count(RETENTION.cap - 1), 0);
     assert_eq!(RETENTION.eviction_count(RETENTION.cap), 0);
     assert_eq!(RETENTION.eviction_count(RETENTION.cap + 3), 3);
     assert!(!RETENTION.ignores_minimum_age(RETENTION.overflow_cap));
     assert!(RETENTION.ignores_minimum_age(RETENTION.overflow_cap + 1));
-}
-
-#[test]
-fn evictable_takes_oldest_first_and_keeps_young_below_overflow() {
-    let now = 100_000_000;
-    let oldest = reference("message", "row-oldest");
-    let old = reference("message", "row-old");
-    let middle = reference("message", "row-middle");
-    let recent = reference("message", "row-recent");
-    let newest = reference("message", "row-newest");
-    let entries = vec![
-        (recent, now - 100_000),
-        (oldest.clone(), now - 86_401_000),
-        (newest, now - 1_000),
-        (middle.clone(), now - 500_000),
-        (old.clone(), now - 601_000),
-    ];
-    let young = vec![(middle.clone(), now - 500_000), (reference("message", "n"), now - 100_000), (old.clone(), now - 601_000)];
-    assert_eq!(RETENTION.evictable(&entries, now, RETENTION.cap + 2), vec![oldest, old.clone()]);
-    assert_eq!(RETENTION.evictable(&young, now, RETENTION.cap + 2), vec![old]);
-}
-
-#[test]
-fn temp_row_staleness_needs_ttl_and_no_open_operation() {
-    let now = 100_000_000;
-    let row_id = id("temp-row");
-    let open: BTreeSet<_> = [row_id.clone()].into();
-    let none = BTreeSet::new();
-    assert!(!TombstoneRetention::temp_row_is_stale(now - 601_000, now, None, &none, &row_id));
-    assert!(!TombstoneRetention::temp_row_is_stale(now - 601_000, now, Some(600_000), &open, &row_id));
-    assert!(!TombstoneRetention::temp_row_is_stale(now - 500_000, now, Some(600_000), &none, &row_id));
-    assert!(TombstoneRetention::temp_row_is_stale(now - 601_000, now, Some(600_000), &none, &row_id));
 }
 
 #[test]

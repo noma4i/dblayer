@@ -30,11 +30,6 @@ fn names(directory: &Path) -> Vec<String> {
     names
 }
 
-pub(crate) fn remove_beside(database: &Path) -> io::Result<()> {
-    ignore_missing(fs::remove_dir_all(suffixed(database, ".files")))?;
-    ignore_missing(fs::remove_dir_all(suffixed(database, ".cache")))
-}
-
 impl FileDirectories {
     pub(crate) fn beside(database: &Path) -> Self {
         Self { directory: Some(suffixed(database, ".files")), cache: suffixed(database, ".cache"), scratch: false }

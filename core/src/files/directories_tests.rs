@@ -63,13 +63,3 @@ fn entries_lists_nothing_before_the_directories_exist() {
     assert!(directories.directory_entries().is_empty());
     assert!(directories.cache_entries().is_empty());
 }
-
-#[test]
-fn remove_beside_deletes_both_directories() {
-    let (root, directories) = beside_database();
-    directories.write("f1", b"a").unwrap();
-    directories.materialize("f1", "a", b"a").unwrap();
-    remove_beside(&root.path().join("42.sqlite")).unwrap();
-    assert!(fs::read_dir(root.path()).unwrap().next().is_none());
-    remove_beside(&root.path().join("42.sqlite")).unwrap();
-}

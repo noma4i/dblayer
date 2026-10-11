@@ -125,8 +125,6 @@ pub enum DeclarationError {
     SetWithoutReset { relation: String, field: String },
 }
 
-pub type DroppedRow = (usize, SchemaError);
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelFault {
     pub model: ModelKey,
@@ -187,10 +185,12 @@ impl FieldSpec {
         Self::with_kind(name, FieldKind::Scalar { kind })
     }
 
+    #[cfg(test)]
     pub fn raw(name: &str) -> Self {
         Self::with_kind(name, FieldKind::Raw)
     }
 
+    #[cfg(test)]
     pub fn object(name: &str) -> Self {
         Self::with_kind(name, FieldKind::Object)
     }
@@ -199,10 +199,12 @@ impl FieldSpec {
         Self::with_kind(name, FieldKind::File)
     }
 
+    #[cfg(test)]
     pub fn array(name: &str) -> Self {
         Self::with_kind(name, FieldKind::Array)
     }
 
+    #[cfg(test)]
     pub fn list(name: &str, element: ScalarKind) -> Self {
         Self::with_kind(name, FieldKind::List { element })
     }
@@ -211,10 +213,12 @@ impl FieldSpec {
         Self::with_kind(name, FieldKind::Enum { values: values.iter().map(|value| value.to_string()).collect() })
     }
 
+    #[cfg(test)]
     pub fn parent_id(name: &str, parent: &str) -> Self {
         Self { id_from_parent: Some(parent.to_string()), ..Self::scalar(name, ScalarKind::Id) }
     }
 
+    #[cfg(test)]
     pub fn read_from(self, path: &str) -> Self {
         Self { from: Some(path.to_string()), ..self }
     }
@@ -305,13 +309,6 @@ pub enum Dependent {
     Destroy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadPlan {
-    Find,
-    Where,
-    ByIds,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssociationSpec {
     pub name: String,
@@ -357,14 +354,6 @@ impl AssociationSpec {
 
     pub fn requires_foreign_key(&self) -> bool {
         self.kind != AssociationKind::References
-    }
-
-    pub fn read_plan(&self) -> ReadPlan {
-        match self.kind {
-            AssociationKind::BelongsTo | AssociationKind::HasOne => ReadPlan::Find,
-            AssociationKind::HasMany => ReadPlan::Where,
-            AssociationKind::References => ReadPlan::ByIds,
-        }
     }
 
     fn check_local(&self, indexed: &HashSet<&str>, fields: &HashSet<&str>) -> Result<(), DeclarationError> {
@@ -494,6 +483,7 @@ pub struct RemoteSpec {
 }
 
 impl RemoteSpec {
+    #[cfg(test)]
     pub fn supports_paging(&self) -> bool {
         matches!(self.shape, RemoteShape::Connection { .. })
     }
@@ -562,6 +552,7 @@ impl RelationSpec {
         Self { is_global: true, ..Self::new(name, &[]) }
     }
 
+    #[cfg(test)]
     pub fn is_local(&self) -> bool {
         self.remote.is_none()
     }
@@ -573,6 +564,7 @@ impl RelationSpec {
             && !remote.variables.values().any(|source| matches!(source, VariableSource::Constant { .. }))
     }
 
+    #[cfg(test)]
     pub fn has_more(&self) -> bool {
         self.remote.as_ref().is_some_and(RemoteSpec::supports_paging)
     }
@@ -824,6 +816,7 @@ impl ModelSpec {
         name == "id" || self.field(name).is_some_and(|field| field.indexed)
     }
 
+    #[cfg(test)]
     pub fn indexed_names(&self) -> Vec<String> {
         self.fields.iter().filter(|field| field.indexed).map(|field| field.name.clone()).collect()
     }
@@ -859,18 +852,6 @@ impl ModelSpec {
             }
         }
         self.normalize(&completed)
-    }
-
-    pub fn normalize_all(&self, inputs: &[Map<String, Value>]) -> (Vec<Map<String, Value>>, Vec<DroppedRow>) {
-        let mut rows = Vec::with_capacity(inputs.len());
-        let mut dropped = Vec::new();
-        for (index, input) in inputs.iter().enumerate() {
-            match self.normalize(input) {
-                Ok(row) => rows.push(row),
-                Err(error) => dropped.push((index, error)),
-            }
-        }
-        (rows, dropped)
     }
 
     pub fn patch(&self, input: &Map<String, Value>) -> Map<String, Value> {

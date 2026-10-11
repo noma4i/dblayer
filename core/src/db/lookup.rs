@@ -75,6 +75,7 @@ impl Db {
         Ok(loaded.remove(id.as_str()))
     }
 
+    #[cfg(test)]
     pub fn find_many(&self, model: &str, ids: &[RowId]) -> Result<Vec<Row>, DbError> {
         self.shared.spec(model)?;
         let mut slots: Vec<Option<Row>> = Vec::with_capacity(ids.len());
@@ -113,11 +114,13 @@ impl Db {
         self.shared.read(|reader| Ok(fetch_count(reader.connection(), &statement)?))
     }
 
+    #[cfg(test)]
     pub fn exists(&self, query: &Query) -> Result<bool, DbError> {
         let probe = Query { limit: Some(1), ..query.clone() };
         self.shared.read(|reader| Ok(!self.shared.query_keys(reader, &probe)?.is_empty()))
     }
 
+    #[cfg(test)]
     pub fn first(&self, query: &Query) -> Result<Option<Row>, DbError> {
         let probe = Query { limit: Some(1), ..query.clone() };
         Ok(self.query(&probe)?.into_iter().next())

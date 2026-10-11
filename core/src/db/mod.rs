@@ -15,7 +15,6 @@ mod observe;
 mod open;
 mod parent_pointer;
 mod prior;
-mod related;
 mod replace;
 mod record_sync;
 mod references;
@@ -64,8 +63,6 @@ mod open_tests;
 mod reactivity_tests;
 #[cfg(test)]
 mod record_sync_tests;
-#[cfg(test)]
-mod related_tests;
 #[cfg(test)]
 mod replace_tests;
 #[cfg(test)]

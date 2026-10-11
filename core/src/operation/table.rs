@@ -4,31 +4,13 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
 use super::fsck::FsckAction;
-use super::once::OnceRequest;
 use super::quarantine::{quarantine_add, QuarantineReason};
 use super::status::{Operation, OperationId, OperationStatus};
 use crate::identity::RowId;
 
-pub const OP_COLUMNS: [&str; 15] = [
-    "seq",
-    "action_key",
-    "status",
-    "row_ids",
-    "temp_id",
-    "input",
-    "transport_started",
-    "base_revision",
-    "created_at",
-    "dedupe_key",
-    "rollback",
-    "attempts",
-    "error",
-    "since",
-    "upload",
-];
-
 const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
 
+#[cfg(test)]
 pub fn append_operation(connection: &Connection, operation: &Operation, input: &[u8]) -> rusqlite::Result<i64> {
     let row_ids = serde_json::to_vec(&operation.row_ids).expect("row ids serialize");
     connection.execute(
@@ -54,18 +36,8 @@ pub fn set_status(connection: &Connection, sequence: i64, status: OperationStatu
     Ok(())
 }
 
-pub fn delete_operation(connection: &Connection, sequence: i64) -> rusqlite::Result<()> {
-    connection.execute("DELETE FROM op WHERE seq = ?", [sequence])?;
-    Ok(())
-}
-
 pub fn operation_input(connection: &Connection, sequence: i64) -> rusqlite::Result<Option<Vec<u8>>> {
     connection.query_row("SELECT input FROM op WHERE seq = ?", [sequence], |row| row.get(0)).optional()
-}
-
-pub fn open_sequences(connection: &Connection, action_key: &str) -> rusqlite::Result<Vec<i64>> {
-    let sql = format!("SELECT seq FROM op WHERE action_key = ? AND status IN {OPEN_STATUSES} ORDER BY seq");
-    connection.prepare(&sql)?.query_map([action_key], |row| row.get(0))?.collect()
 }
 
 pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operation>> {
@@ -174,26 +146,4 @@ pub fn rebuilt_rows(
         }
     }
     Ok(rows)
-}
-
-pub fn record_once(connection: &Connection, request: &OnceRequest) -> rusqlite::Result<()> {
-    let Some(key) = request.dedupe_key.as_deref().filter(|key| !key.is_empty()) else {
-        return Ok(());
-    };
-    connection.execute("INSERT OR IGNORE INTO op_once (namespace, dedupe_key) VALUES (?, ?)", params![request.namespace, key])?;
-    Ok(())
-}
-
-pub fn committed_once_keys(connection: &Connection) -> rusqlite::Result<HashSet<OnceRequest>> {
-    connection
-        .prepare("SELECT namespace, dedupe_key FROM op_once")?
-        .query_map([], |row| Ok(OnceRequest { namespace: row.get(0)?, dedupe_key: Some(row.get(1)?) }))?
-        .collect()
-}
-
-pub fn open_once_keys(connection: &Connection) -> rusqlite::Result<HashSet<OnceRequest>> {
-    connection
-        .prepare("SELECT action_key, dedupe_key FROM op WHERE dedupe_key IS NOT NULL AND status IN ('pending', 'delivery_unknown')")?
-        .query_map([], |row| Ok(OnceRequest { namespace: row.get(0)?, dedupe_key: Some(row.get(1)?) }))?
-        .collect()
 }

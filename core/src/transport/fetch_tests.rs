@@ -2,12 +2,6 @@ use super::*;
 use crate::identity::Generation;
 
 #[test]
-fn offline_start_fails_only_without_window() {
-    assert_eq!(FetchReport::offline_start(false), Some(FetchReport::Failed(FetchError::Offline)));
-    assert_eq!(FetchReport::offline_start(true), None);
-}
-
-#[test]
 fn report_follows_failure_force_and_window() {
     assert_eq!(FetchReport::of(false, true, None), FetchReport::Loaded);
     assert_eq!(

@@ -1,5 +1,6 @@
 use rusqlite::types::Value as SqlValue;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use serde_json::Value;
 
 use crate::ddl::table_name;
@@ -35,6 +36,7 @@ pub struct CompiledStatement {
     pub bindings: Vec<SqlValue>,
 }
 
+#[cfg(test)]
 impl CompiledStatement {
     pub fn placeholder_count(&self) -> usize {
         self.sql.matches('?').count()
@@ -79,14 +81,17 @@ impl Query {
         Self { model: ModelKey::new(model), r#where: None, order: Vec::new(), limit: None, offset: None, include: Vec::new(), scope: None }
     }
 
+    #[cfg(test)]
     pub fn unsynced(model: &str) -> Self {
         Self::new(model).filtered(Where::not_equal(SYNC_FIELD, Value::from("synced")))
     }
 
+    #[cfg(test)]
     pub fn failed(model: &str) -> Self {
         Self::new(model).filtered(Where::equal(SYNC_FIELD, Value::from("failed")))
     }
 
+    #[cfg(test)]
     pub fn pending(model: &str) -> Self {
         Self::new(model).filtered(Where::equal(SYNC_FIELD, Value::from("pending")))
     }
@@ -103,6 +108,7 @@ impl Query {
         Self { limit: Some(limit), ..self }
     }
 
+    #[cfg(test)]
     pub fn offset_by(self, offset: u32) -> Self {
         Self { offset: Some(offset), ..self }
     }
@@ -114,25 +120,9 @@ impl Query {
     pub fn in_scope(self, scope: ScopeKey) -> Self {
         Self { scope: Some(scope), ..self }
     }
-
-    pub fn unindexed_fields(&self, model: &ModelSpec) -> Vec<String> {
-        let filtered = self.r#where.iter().flat_map(Where::fields);
-        let ordered = self.order.iter().map(|order| order.field.clone());
-        let mut found: Vec<String> = Vec::new();
-        for field in filtered.chain(ordered) {
-            let promoted = field == "id" || field == SYNC_FIELD || model.is_indexed(&field);
-            if !promoted && !found.contains(&field) {
-                found.push(field);
-            }
-        }
-        found
-    }
-
-    pub fn is_index_only(&self, model: &ModelSpec) -> bool {
-        self.unindexed_fields(model).is_empty()
-    }
 }
 
+#[cfg(test)]
 const ROW_COLUMNS: &str = "r.id, r.record_version, r.payload";
 const KEY_COLUMNS: &str = "r.id, r.revision";
 
@@ -212,6 +202,7 @@ fn compile_columns(query: &Query, model: &ModelSpec, columns: &str) -> Result<Co
     Ok(CompiledStatement { sql, bindings })
 }
 
+#[cfg(test)]
 pub fn compile(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
     compile_columns(query, model, ROW_COLUMNS)
 }
@@ -229,6 +220,7 @@ pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStateme
     Ok(CompiledStatement { sql, bindings })
 }
 
+#[cfg(test)]
 fn scope_join(model: &ModelKey) -> String {
     format!(
         "FROM scope_member AS m JOIN {} AS r ON r.id = m.row_id WHERE m.model = ? AND m.scope_key = ?",
@@ -240,6 +232,7 @@ fn scope_bindings(model: &ModelKey, scope: &ScopeKey) -> Vec<SqlValue> {
     vec![SqlValue::Text(model.as_str().to_string()), SqlValue::Text(scope.as_str().to_string())]
 }
 
+#[cfg(test)]
 pub fn scope_statement(model: &ModelKey, scope: &ScopeKey, limit: Option<usize>) -> CompiledStatement {
     let mut bindings = scope_bindings(model, scope);
     let mut sql = format!("SELECT {ROW_COLUMNS} {} ORDER BY m.order_key, m.row_id", scope_join(model));
@@ -250,6 +243,7 @@ pub fn scope_statement(model: &ModelKey, scope: &ScopeKey, limit: Option<usize>)
     CompiledStatement { sql, bindings }
 }
 
+#[cfg(test)]
 pub fn scope_count_statement(model: &ModelKey, scope: &ScopeKey) -> CompiledStatement {
     CompiledStatement { sql: format!("SELECT COUNT(*) {}", scope_join(model)), bindings: scope_bindings(model, scope) }
 }

@@ -48,12 +48,9 @@ impl SubscriptionDef {
         Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None, set: Map::new(), root: None, id: None }
     }
 
+    #[cfg(test)]
     pub fn setting(self, set: Map<String, Value>) -> Self {
         Self { set, ..self }
-    }
-
-    pub fn deleting_when(self, field: &str) -> Self {
-        Self { deleted_by: Some(field.to_string()), ..self }
     }
 }
 

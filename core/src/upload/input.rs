@@ -39,6 +39,7 @@ impl UploadSteps {
         self
     }
 
+    #[cfg(test)]
     pub fn multipart(mut self, init: &str, presign: &str, complete: &str, abort: &str) -> Self {
         self.multipart = Some(MultipartSteps {
             init: init.to_string(),

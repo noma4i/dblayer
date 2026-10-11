@@ -12,7 +12,6 @@ Every record knows whether the server has seen it. The state is live like everyt
 | `sync.error` | the last error (`kind` and `message`) when the state is `failed` or `deliveryUnknown` |
 | `sync.attempts` | how many times sending was tried since the last `retry()` |
 | `sync.since` | when the record entered this state |
-| `sync.isRefreshing` | the record is being reloaded from the server right now |
 | `isLocal` | the record has a temporary id and the server does not know it yet |
 | `isSynced`, `isPending`, `isFailed` | shortcuts for the state |
 
@@ -155,10 +154,7 @@ sync.setOnline(true)    // waiting changes and uploads are sent by themselves
 
 ## Refreshing
 
-Two kinds of refreshing exist:
-
-- A whole list: the loading state of the relation (`idle`, `loading`, `failed`) is live, see [live data](live-data.md).
-- One record: `moment.refresh()` reloads it, and `moment.sync.isRefreshing` is true until the answer arrives. A record can be `synced` and refreshing at the same time.
+A whole list refreshes with `refresh()`. The loading state of the relation (`idle`, `loading`, `failed`) is live, see [live data](live-data.md).
 
 ## Guarantees
 

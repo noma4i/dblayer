@@ -108,10 +108,6 @@ impl RowRef {
     pub fn new(model: ModelKey, id: RowId) -> Self {
         Self { model, id }
     }
-
-    pub fn action_key_prefix(&self) -> String {
-        format!("{}:", self.model.as_str())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -133,14 +129,11 @@ impl ScopeKey {
         Self(value)
     }
 
-    pub fn find(model: &str, id: &RowId) -> Self {
-        Self::compose(&[model, "id", id.as_str()])
-    }
-
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
+    #[cfg(test)]
     pub fn decompose(&self) -> Option<Vec<String>> {
         let mut segments = Vec::new();
         let mut rest = self.0.as_str();

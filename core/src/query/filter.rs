@@ -48,10 +48,12 @@ impl Where {
         Where::Equal { field: field.to_string(), value }
     }
 
+    #[cfg(test)]
     pub fn not_equal(field: &str, value: Value) -> Self {
         Where::NotEqual { field: field.to_string(), value }
     }
 
+    #[cfg(test)]
     pub fn compare(field: &str, op: CompareOp, value: Value) -> Self {
         Where::Compare { field: field.to_string(), op, value }
     }
@@ -60,22 +62,27 @@ impl Where {
         Where::InList { field: field.to_string(), values }
     }
 
+    #[cfg(test)]
     pub fn not_in_list(field: &str, values: Vec<Value>) -> Self {
         Where::NotInList { field: field.to_string(), values }
     }
 
+    #[cfg(test)]
     pub fn is_null(field: &str) -> Self {
         Where::IsNull { field: field.to_string() }
     }
 
+    #[cfg(test)]
     pub fn all_of(clauses: Vec<Where>) -> Self {
         Where::AllOf { clauses }
     }
 
+    #[cfg(test)]
     pub fn any_of(clauses: Vec<Where>) -> Self {
         Where::AnyOf { clauses }
     }
 
+    #[cfg(test)]
     pub fn negated(clause: Where) -> Self {
         Where::Not { clause: Box::new(clause) }
     }
@@ -93,6 +100,7 @@ impl Where {
         }
     }
 
+    #[cfg(test)]
     pub fn is_null_safe(&self) -> bool {
         match self {
             Where::InList { values, .. } => !values.iter().any(Value::is_null),

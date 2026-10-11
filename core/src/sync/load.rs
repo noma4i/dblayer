@@ -306,6 +306,7 @@ impl Inner {
 }
 
 impl Sync {
+    #[cfg(test)]
     pub fn window_key(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<String, SyncError> {
         Ok(self.inner.resolve(model, relation, params)?.window_key)
     }

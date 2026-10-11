@@ -60,15 +60,3 @@ fn scope_key_rejects_malformed_text() {
         assert_eq!(ScopeKey::from_raw(text).decompose(), None, "{text}");
     }
 }
-
-#[test]
-fn find_scope_uses_model_id_and_row_id() {
-    let id = RowId::new("7").unwrap();
-    assert_eq!(ScopeKey::find("moments", &id), ScopeKey::compose(&["moments", "id", "7"]));
-}
-
-#[test]
-fn row_ref_prefixes_action_keys_with_model() {
-    let reference = RowRef::new(ModelKey::new("moments"), RowId::new("1").unwrap());
-    assert_eq!(reference.action_key_prefix(), "moments:");
-}

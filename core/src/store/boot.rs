@@ -111,15 +111,4 @@ impl Store {
         let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT)?;
         Ok(BootReport { verdict, finished_interrupted_reset, stale_version_drops, tombstone_drops })
     }
-
-    pub fn drop_stale_versions(&self, model: &str) -> Result<usize, StoreError> {
-        let mut inner = self.lock();
-        inner.ensure_healthy()?;
-        inner.model(model)?;
-        let transaction = inner.connection.unchecked_transaction()?;
-        let dropped = drop_stale_versions(&transaction, model)?;
-        transaction.commit()?;
-        inner.counters.stale_version_drops += dropped;
-        Ok(dropped)
-    }
 }

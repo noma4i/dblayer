@@ -68,16 +68,6 @@ fn rows_by_ids_restores_requested_order_and_skips_missing() {
 }
 
 #[test]
-fn all_rows_returns_every_row_in_insert_order() {
-    let (store, _) = booted_store();
-    assert!(store.read(|reader| reader.all_rows("items")).unwrap().is_empty());
-    seed(&store, &[("v1", "c"), ("v2", "c")]);
-    let rows = store.read(|reader| reader.all_rows("messages")).unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0]["id"], json!("v1"));
-}
-
-#[test]
 fn scope_rows_follow_membership_limit_and_count() {
     let (store, _) = booted_store();
     let thread = scope("messages", "thread");

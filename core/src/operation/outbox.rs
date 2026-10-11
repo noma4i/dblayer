@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::status::{is_open, recovered_status, removes_row, Operation, OperationStatus};
+use super::status::{is_open, recovered_status, Operation, OperationStatus};
 use crate::identity::{ModelKey, RowId, RowRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,14 +55,6 @@ pub fn ready(entries: &[OutboxEntry]) -> Vec<i64> {
     sequences
 }
 
-pub fn counts_transport_call(verdict: TransportVerdict) -> bool {
-    verdict == TransportVerdict::Send
-}
-
-pub fn releases_input(status: OperationStatus) -> bool {
-    removes_row(status)
-}
-
 #[derive(Debug, Clone)]
 pub struct OutboxQueue {
     operations: Vec<Operation>,
@@ -86,16 +78,6 @@ impl OutboxQueue {
             ids.extend(operation.temp_id.iter().cloned());
         }
         ids
-    }
-
-    pub fn head(&self, row: &RowRef) -> Option<&Operation> {
-        self.of_model(row.model.as_str())
-            .filter(|operation| operation.row_ids.contains(&row.id) || operation.temp_id.as_ref() == Some(&row.id))
-            .min_by_key(|operation| operation.id)
-    }
-
-    pub fn is_blocked(&self, row: &RowRef) -> bool {
-        self.is_blocked_before(row, i64::MAX)
     }
 
     pub fn is_held_before(&self, row: &RowRef, sequence: i64, held: &HashSet<i64>) -> bool {

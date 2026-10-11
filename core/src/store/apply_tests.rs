@@ -224,29 +224,6 @@ fn order_key_collision_rolls_back_whole_envelope() {
 }
 
 #[test]
-fn replace_all_then_append_keeps_member_and_replace_all_then_detach_drops_it() {
-    let (store, _) = booted_store();
-    let thread = scope("messages", "thread");
-    commit(&store, vec![], vec![append(&thread, "m0", "a")]);
-    let mut keep = envelope(&store, vec![], vec![]);
-    keep.scope_ops = vec![
-        ScopeOp::ReplaceAll { scope: thread.clone(), members: vec![(id("m1"), "b".into())] },
-        append(&thread, "x", "c"),
-    ];
-    store.commit(keep).unwrap();
-    let members: Vec<String> = store.scope_members("messages", thread.key.as_str()).unwrap().into_iter().map(|m| m.0).collect();
-    assert_eq!(members, vec!["m1", "x"]);
-    let mut drop = envelope(&store, vec![], vec![]);
-    drop.scope_ops = vec![
-        ScopeOp::ReplaceAll { scope: thread.clone(), members: vec![(id("m1"), "b".into()), (id("x"), "c".into())] },
-        ScopeOp::Detach { scope: thread.clone(), row: id("x") },
-    ];
-    store.commit(drop).unwrap();
-    let members: Vec<String> = store.scope_members("messages", thread.key.as_str()).unwrap().into_iter().map(|m| m.0).collect();
-    assert_eq!(members, vec!["m1"]);
-}
-
-#[test]
 fn unchanged_append_is_not_a_write() {
     let (store, _) = booted_store();
     let thread = scope("messages", "thread");

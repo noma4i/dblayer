@@ -4,6 +4,7 @@ mod cancel;
 mod error;
 mod events;
 mod fetch;
+#[cfg(any(test, feature = "stress"))]
 mod mock;
 mod online;
 mod put;
@@ -14,14 +15,15 @@ mod subscription;
 
 pub use cancel::CancelToken;
 pub use error::TransportError;
-pub use events::{event_names, max_debounce, routable, EventFault, EventSpec, PublishVerdict};
+pub use events::{EventFault, EventSpec};
 pub use fetch::{FetchAttempt, FetchError, FetchReport};
+#[cfg(any(test, feature = "stress"))]
 pub use mock::{CallKind, MockTransport, PutReply, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
 pub use put::{ByteSink, PutRequest, PutResponse};
-pub use request::{GraphQLError, GraphQLRequest, Nullable, Response};
+pub use request::{GraphQLError, GraphQLRequest, Response};
 pub use response::{ResponseOutcome, ResponseShape};
-pub use retry::{retriable_codes, RetryClass, RETRY_BACKOFF};
+pub use retry::{RetryClass, RETRY_BACKOFF};
 pub use subscription::{
     Subscription, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionFault,
     SubscriptionHandle, SubscriptionOutcome, SubscriptionRetry,

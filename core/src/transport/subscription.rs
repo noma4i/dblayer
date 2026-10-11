@@ -79,6 +79,7 @@ impl Subscription {
         self.events.recv().await
     }
 
+    #[cfg(test)]
     pub fn cancel(&self) {
         self.handle.cancel();
     }

@@ -5,7 +5,6 @@ use rusqlite::Connection;
 
 use crate::ddl::{migrate_core, prepare_connection};
 
-use super::location::{reset_marker, remove_database_files};
 use super::{Store, StoreError};
 
 impl Store {
@@ -13,29 +12,26 @@ impl Store {
         if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
             fs::create_dir_all(parent)?;
         }
-        let marker = reset_marker(path);
-        if marker.exists() {
-            remove_database_files(path)?;
-            fs::remove_file(&marker)?;
-        }
         let connection = Connection::open(path)?;
         prepare_connection(&connection)?;
         migrate_core(&connection)?;
-        Ok(Store::from_connection(connection, Some(path.to_path_buf())))
+        Ok(Store::from_connection(connection))
     }
 
     pub fn open_in_memory() -> Result<Store, StoreError> {
         let connection = Connection::open_in_memory()?;
         prepare_connection(&connection)?;
         migrate_core(&connection)?;
-        Ok(Store::from_connection(connection, None))
+        Ok(Store::from_connection(connection))
     }
 
+    #[cfg(test)]
     pub fn journal_mode(&self) -> Result<String, StoreError> {
         let inner = self.lock();
         Ok(inner.connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?)
     }
 
+    #[cfg(test)]
     pub fn table_exists(&self, name: &str) -> Result<bool, StoreError> {
         let inner = self.lock();
         let found: Option<i64> = rusqlite::OptionalExtension::optional(inner.connection.query_row(

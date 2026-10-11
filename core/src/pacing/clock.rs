@@ -14,29 +14,6 @@ impl Clock for SystemClock {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct TokioClock {
-    start: tokio::time::Instant,
-}
-
-impl TokioClock {
-    pub fn new() -> Self {
-        Self { start: tokio::time::Instant::now() }
-    }
-}
-
-impl Default for TokioClock {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Clock for TokioClock {
-    fn now(&self) -> Duration {
-        self.start.elapsed()
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct ManualClock {
     now: Arc<Mutex<Duration>>,
@@ -51,6 +28,7 @@ impl ManualClock {
         *self.now.lock().expect("manual clock") += by;
     }
 
+    #[cfg(test)]
     pub fn set(&self, now: Duration) {
         *self.now.lock().expect("manual clock") = now;
     }

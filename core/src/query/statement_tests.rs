@@ -99,24 +99,6 @@ fn balance_compares_placeholders_with_bindings() {
 }
 
 #[test]
-fn unindexed_fields_list_each_scan_once_in_order() {
-    let query = query()
-        .filtered(Where::all_of(vec![
-            Where::equal("kind", json!("a")),
-            Where::equal("status", json!("b")),
-            Where::not_equal("kind", json!("c")),
-            Where::equal("other", json!(1)),
-        ]))
-        .ordered(vec![Order::new("kind", SortDirection::Asc), Order::new("createdAt", SortDirection::Asc)]);
-    assert_eq!(query.unindexed_fields(&people()), vec!["kind", "other"]);
-    assert!(!query.is_index_only(&people()));
-    let indexed = Query::new("people").filtered(Where::equal("status", json!("b")));
-    assert!(indexed.unindexed_fields(&people()).is_empty());
-    assert!(indexed.is_index_only(&people()));
-    assert!(Query::new("people").is_index_only(&people()));
-}
-
-#[test]
 fn query_round_trips_through_json() {
     let text = r#"{"model":"people","where":{"type":"equal","field":"status","value":"on"},"order":[{"field":"createdAt","direction":"desc"}],"limit":5,"offset":2}"#;
     let parsed: Query = serde_json::from_str(text).unwrap();
