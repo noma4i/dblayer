@@ -49,7 +49,7 @@ impl Db {
         self.shared
             .store
             .commit_with(generation, |reader| {
-                let plan = self.replace_plan(reader, request, &rows)?;
+                let plan = self.replace_plan(reader, request, &rows, None)?;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, generation);
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;
@@ -58,7 +58,7 @@ impl Db {
             .map_err(plan_fault)
     }
 
-    pub(crate) fn replace_plan(&self, reader: &Reader<'_>, request: &ReplaceRequest, rows: &[Map<String, Value>]) -> Result<LandingPlan, DbError> {
+    pub(crate) fn replace_plan(&self, reader: &Reader<'_>, request: &ReplaceRequest, rows: &[Map<String, Value>], base_revision: Option<i64>) -> Result<LandingPlan, DbError> {
         let model = &request.scope.model;
         let scope_key = request.scope.key.as_str();
         let current: Vec<Member> =
@@ -74,7 +74,12 @@ impl Db {
             }
         }
         let busy: HashSet<String> = open_operations(reader.connection())?.into_iter().flat_map(|operation| operation.row_ids).map(|id| id.to_string()).collect();
-        let is_local = |id: &str| id.starts_with("temp-") || busy.contains(id);
+        let names = current.iter().map(|member| member.id.clone()).collect::<Vec<_>>();
+        let newer: HashSet<String> = match base_revision {
+            Some(base) => reader.stored_rows(model.as_str(), &names)?.into_iter().filter(|(_, row)| row.revision > base).map(|(id, _)| id).collect(),
+            None => HashSet::new(),
+        };
+        let is_local = |id: &str| id.starts_with("temp-") || busy.contains(id) || newer.contains(id);
 
         let anchor = (request.coverage == Coverage::Page && !request.replace_all)
             .then(|| incoming_ids.last().and_then(|last| current.iter().position(|member| &member.id == last)))

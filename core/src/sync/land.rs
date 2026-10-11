@@ -107,7 +107,7 @@ impl Inner {
             invalid_roots = invalid;
             let plan = if plans_as_first {
                 let request = ReplaceRequest::new(scope.clone(), coverage);
-                self.db.replace_plan(reader, &request, &roots).map_err(|error| SyncError::Malformed(error.to_string()))?
+                self.db.replace_plan(reader, &request, &roots, Some(attempt.base_revision)).map_err(|error| SyncError::Malformed(error.to_string()))?
             } else {
                 let current: Vec<StoredMember> = reader
                     .scope_members(&model, scope.key.as_str())?

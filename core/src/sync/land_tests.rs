@@ -67,6 +67,37 @@ async fn inv_merge_03_a_response_does_not_undo_an_edit_that_is_still_unconfirmed
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_list_response_started_before_create_preserves_the_confirmed_member() {
+    for coverage in [crate::schema::Coverage::Page, crate::schema::Coverage::Complete] {
+        let rig = rig();
+        let query_params = params(serde_json::json!({"userId": "u42"}));
+        let key = rig.sync.window_key("moments", "by_user", &query_params).unwrap();
+        let scope = ScopeRef::new(ModelKey::new("moments"), crate::identity::ScopeKey::from_raw(key.trim_end_matches(":forward")));
+        let mut old = moment("m1", "old").as_object().unwrap().clone();
+        old.insert("userId".into(), serde_json::json!("u42"));
+        rig.db.replace(&crate::db::ReplaceRequest::new(scope.clone(), coverage), vec![old.clone()]).unwrap();
+        let response = |issued| {
+            let mut reply = landing(&rig, issued, &[]);
+            reply.scope = scope.clone();
+            reply.window_key = key.clone();
+            reply.coverage = coverage;
+            reply.normalized.roots = vec![old.clone()];
+            reply.attempt = FetchAttempt::new(&key, issued, rig.db.generation(), rig.db.revision_seq().unwrap());
+            reply
+        };
+        let stale = response(100);
+        rig.db.create("moments", params(serde_json::json!({"text": "mine", "userId": "u42"}))).unwrap();
+        rig.transport.enqueue("CreateMoment", crate::transport::Reply::data(serde_json::json!({"createMoment": {"id": "m2", "text": "mine", "userId": "u42"}})));
+        rig.sync.flush().await.unwrap();
+        assert_eq!(member_ids(&rig, "moments", "by_user", &query_params), ["m2", "m1"]);
+        rig.sync.inner.land(stale).unwrap();
+        assert_eq!(member_ids(&rig, "moments", "by_user", &query_params), ["m2", "m1"], "{coverage:?}");
+        rig.sync.inner.land(response(200)).unwrap();
+        assert_eq!(member_ids(&rig, "moments", "by_user", &query_params), ["m1"], "{coverage:?}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn inv_fresh_11_a_response_read_before_the_server_got_the_destroy_does_not_bring_the_row_back() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
