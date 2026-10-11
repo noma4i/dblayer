@@ -6,9 +6,9 @@ DBlayer never makes your threads wait. Loading data, writing, parsing responses 
 
 - Public calls are asynchronous (`async` in Swift, `suspend` in Kotlin) and cheap: they enqueue work and return.
 - The transports on both platforms do the whole network exchange, including reading the response body, off the caller thread: Kotlin on `Dispatchers.IO`, Swift through the async `URLSession` API. You can call them from the main thread.
-- Reads never wait for writes. The database runs in WAL mode and reads use their own connections.
-- There is one writer. Parsing, normalization and planning are done before the writer runs, so the writer only executes ready statements.
-- Locks are held briefly: no disk access, JSON parsing or callbacks under a lock.
+- The database runs in WAL mode. Reads and the single writer share one SQLite connection under one lock, so a read waits while a commit runs. There is no reader pool.
+- Parsing, normalization and planning are done before the writer runs, so the writer only executes ready statements.
+- Listener callbacks never run under the store lock.
 - Listeners are called from library threads, never from the main thread. Move to the main thread in your UI code.
 - Each listener has its own queue where the latest state wins. A slow listener does not delay others and does not build up a backlog.
 - Frequent changes are merged: a listener gets one change per dispatch cycle, and the last state always arrives.
@@ -25,4 +25,4 @@ A row cache keeps decoded rows keyed by model and id with their revision. Commit
 
 ## Diagnostics
 
-Counters expose cache hits and misses, reads per commit, queue lengths, longest lock hold and transport calls. Tests use these counters instead of wall-clock time.
+Counters count cache hits, misses and evictions, observation reads, observer calls and transport calls. Tests use these counters instead of wall-clock time.
