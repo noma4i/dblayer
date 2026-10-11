@@ -162,4 +162,30 @@ struct BridgeProbeTests {
     #expect(transport.calls.count > before)
     list.stop()
   }
+
+  @MainActor
+  @Test
+  func aReloadAfterACommitReadsTheServerAfterTheLoadThatWasInFlight() async throws {
+    let transport = MockTransport()
+    let empty = #"{"data":{"feed":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#
+    transport.enqueue("MomentsFeed", reply: empty)
+    transport.enqueue("MomentsFeed", reply: empty, delay: 1)
+    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
+    let list = LiveList(Moment.feed)
+    for _ in 0 ..< 200 where list.state.loadedAt == nil { try await Task.sleep(for: .milliseconds(10)) }
+    let older = Task { try await list.refresh() }
+    for _ in 0 ..< 200 where transport.calls.filter({ $0.operationName == "MomentsFeed" }).count < 2 { try await Task.sleep(for: .milliseconds(10)) }
+
+    let local = try await Moment.create(text: "hello", media: nil)
+    try await local.settled()
+    for _ in 0 ..< 400 where list.rows.map(\.id) != ["m77"] { try await Task.sleep(for: .milliseconds(10)) }
+
+    #expect(list.rows.map(\.id) == ["m77"])
+    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3)
+    try await older.value
+    list.stop()
+  }
 }
