@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::commit::{CommitEnvelope, CommitResult, EntityOp, EnvelopeFault, FileOp, OperationStatus, OperationTransition, WriteOrigin};
-use crate::db::{read_outbox, DbError, OutboxOperation, Prior, ReferencingRow};
+use crate::db::{read_outbox, DbError, OutboxOperation, Prior};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::operation::{
     quarantine_add, ready, transport_verdict, Operation, OutboxEntry as GateEntry, OutboxQueue, QuarantineReason, TransportVerdict,
@@ -21,7 +21,7 @@ use super::super::normalize::{normalize_nodes, Normalized};
 use super::super::registry::OperationDef;
 use super::super::{locked, Inner};
 use super::report::{FlushReport, SendResult, SentOperation, SkipReason};
-use super::settle::{response_ops, retarget, Swap};
+use super::settle::response_ops;
 use super::variables::mutation_variables;
 
 const SETTLE_ATTEMPTS: usize = 3;
@@ -296,34 +296,7 @@ impl Inner {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
                 envelope.entity_ops = response_ops(&self.db, reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
                 if let (Some(temp), Some(real)) = (&temp, &real) {
-                    let own = entry.operation.id.0;
-                    let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);
-                    if outbox.iter().filter(followed).any(|follower| follower.operation.action_key.ends_with(":destroy")) {
-                        envelope.entity_ops.retain(|operation| !matches!(operation, EntityOp::Upsert { model, id, .. } if model.as_str() == sending.model && id == real));
-                        envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&sending.model), id: real.clone(), reason: crate::commit::DestroyReason::Local });
-                    }
-                    envelope.entity_ops.push(EntityOp::Destroy {
-                        model: ModelKey::new(&sending.model),
-                        id: temp.clone(),
-                        reason: crate::commit::DestroyReason::Replaced { by: real.clone() },
-                    });
-                    let references = self.db.references_to(&sending.model);
-                    let swap = Swap { model: &sending.model, temp, real, references: &references };
-                    envelope.operation_transitions.extend(outbox.iter().filter(|other| other.operation.id.0 != own).filter_map(|other| retarget(other, &swap)));
-                    for ReferencingRow { model, field, mut row } in self.db.rows_referencing(reader, &references, temp)? {
-                        let Some(child) = row.get("id").and_then(read_id) else { continue };
-                        row.insert(field.clone(), Value::String(real.to_string()));
-                        let landing = envelope.entity_ops.iter_mut().find_map(|op| match op {
-                            EntityOp::Upsert { model: owner, id, row } if owner.as_str() == model && *id == child => Some(row),
-                            _ => None,
-                        });
-                        match landing {
-                            Some(landing) => {
-                                landing.insert(field, Value::String(real.to_string()));
-                            }
-                            None => envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(&model), id: child, row }),
-                        }
-                    }
+                    self.db.swap_temp(reader, &mut envelope, &outbox, &sending.model, temp, real, entry.operation.id.0)?;
                 }
                 envelope.file_ops.extend(held.iter().filter_map(|file| {
                     Some(FileOp::Remove { model: ModelKey::new(&file.model), row_id: RowId::new(&file.row_id).ok()?, field: file.field.clone() })

@@ -22,6 +22,7 @@ mod references;
 mod reset;
 mod roll_back;
 mod row;
+mod swap;
 mod watch;
 
 pub use diff::Diff;
@@ -32,8 +33,7 @@ pub use open::{Db, DbConfig};
 pub use replace::{OnAbsent, ReplaceRequest};
 pub use row::{Record, Row};
 pub(crate) use local_write::read_outbox;
-pub(crate) use prior::{swap_id, Prior};
-pub(crate) use references::ReferencingRow;
+pub(crate) use prior::Prior;
 pub use watch::{Change, CountChange, Related};
 
 #[cfg(test)]

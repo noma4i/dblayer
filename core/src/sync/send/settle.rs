@@ -1,9 +1,8 @@
 use std::collections::HashSet;
 
-use crate::commit::{EntityOp, OperationTransition};
-use crate::db::{swap_id, Db, OutboxOperation, Prior};
+use crate::commit::EntityOp;
+use crate::db::Db;
 use crate::identity::{ModelKey, RowId};
-use crate::operation::Operation;
 use crate::store::Reader;
 use crate::value::read_id;
 
@@ -30,35 +29,4 @@ pub(crate) fn response_ops(db: &Db, reader: &Reader<'_>, base: i64, closing: i64
         }
     }
     Ok(ops)
-}
-
-pub(crate) struct Swap<'a> {
-    pub model: &'a str,
-    pub temp: &'a RowId,
-    pub real: &'a RowId,
-    pub references: &'a [(String, String)],
-}
-
-pub(crate) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Option<OperationTransition> {
-    let Swap { model, temp, real, references } = *swap;
-    let owner = Operation::split_action_key(&entry.operation.action_key).map(|(owner, _)| owner).unwrap_or_default();
-    let mut input = entry.input.clone();
-    let mut changed = false;
-    if let Some(object) = input.as_object_mut() {
-        let own_id = (owner == model).then_some("id");
-        let fields = references.iter().filter(|(child, _)| *child == owner).map(|(_, field)| field.as_str());
-        for field in own_id.into_iter().chain(fields) {
-            changed |= object.get_mut(field).is_some_and(|value| swap_id(value, temp, real));
-        }
-    }
-    let row_ids: Vec<RowId> = entry.operation.row_ids.iter().map(|id| if id == temp { real.clone() } else { id.clone() }).collect();
-    changed |= row_ids != entry.operation.row_ids;
-    let mut rollback = entry.rollback.clone();
-    if let Some(mut prior) = Prior::of(entry) {
-        if prior.swap(temp, real, model, references) {
-            rollback = Some(prior.to_value());
-            changed = true;
-        }
-    }
-    changed.then(|| entry.rewritten(row_ids, input, rollback))
 }
