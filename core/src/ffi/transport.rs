@@ -35,7 +35,13 @@ pub struct SubscriptionSink { sender: Mutex<Option<mpsc::UnboundedSender<core::S
 impl SubscriptionSink {
     pub fn ready(&self) { self.send(core::SubscriptionEvent::Ready); }
     pub fn event(&self, json: String) -> Result<(), DbError> {
-        self.send(core::SubscriptionEvent::Next(serde_json::from_str(&json)?));
+        let response: core::Response = serde_json::from_str(&json)?;
+        if response.data.is_none() && response.errors.is_empty() {
+            let detail = format!("subscription frame without data: {}", json.chars().take(120).collect::<String>());
+            self.send(core::SubscriptionEvent::Failed(core::SubscriptionFailure::new(core::SubscriptionFailureKind::Internal, detail.clone())));
+            return Err(DbError::Invalid { detail });
+        }
+        self.send(core::SubscriptionEvent::Next(response));
         Ok(())
     }
     pub fn failed(&self, kind: String, detail: String) {
@@ -112,3 +118,7 @@ impl core::Transport for ForeignTransport {
         Ok(core::PutResponse { status: reply.status, etag: reply.etag })
     }
 }
+
+#[cfg(test)]
+#[path = "transport_tests.rs"]
+mod transport_tests;
