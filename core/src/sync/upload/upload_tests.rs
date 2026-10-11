@@ -580,6 +580,58 @@ async fn inv_op_09_a_cancel_whose_abort_fails_keeps_the_upload_id_until_the_abor
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_held_create_shows_its_row_at_once_and_one_mutation_swaps_the_temp_id() {
+    let rig = upload_rig(small());
+    single_replies(&rig);
+    let source = file(b"abcdef");
+    let temp = rig.sync.upload_create("moments", params(json!({"text": "clip"})), input(&source)).await.unwrap();
+    assert!(temp.is_temp());
+    assert_eq!(text_of(&rig, "moments", temp.as_str()), Some("clip".to_string()));
+    let queued: Vec<String> = rig.db.outbox().unwrap().into_iter().map(|entry| entry.operation.action_key).collect();
+    assert_eq!(queued, [crate::operation::Operation::action_key("moments", "upload")]);
+    rig.sync.wait_uploads().await;
+    assert_eq!(variables(&rig, "CreateMoment"), [json!({"text": "clip", "signedId": "sid", "blobId": "b1"})]);
+    assert_eq!(text_of(&rig, "moments", temp.as_str()), None);
+    assert_eq!(text_of(&rig, "moments", "m9"), Some("clip".to_string()));
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_held_create_keeps_its_row_and_retry_sends_once_without_a_second_row() {
+    let rig = upload_rig(small());
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue_put("https://s3/single", PutReply::status(400));
+    rig.transport.enqueue_put("https://s3/single", PutReply::etag("e"));
+    single_replies(&rig);
+    let source = file(b"abcdef");
+    let temp = rig.sync.upload_create("moments", params(json!({"text": "clip"})), input(&source)).await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!(upload_of(&rig, temp.as_str()).map(|failed| failed.status), Some(UploadStatus::Failed));
+    assert_eq!(text_of(&rig, "moments", temp.as_str()), Some("clip".to_string()));
+    assert_eq!(rig.transport.call_count("CreateMoment"), 0);
+    rig.sync.retry("moments", &temp).await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1);
+    assert_eq!(text_of(&rig, "moments", temp.as_str()), None);
+    assert_eq!(text_of(&rig, "moments", "m9"), Some("clip".to_string()));
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn discarding_a_failed_held_create_removes_the_row_and_sends_nothing() {
+    let rig = upload_rig(small());
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue_put("https://s3/single", PutReply::status(400));
+    let source = file(b"abcdef");
+    let temp = rig.sync.upload_create("moments", params(json!({"text": "clip"})), input(&source)).await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.db.discard("moments", &temp).unwrap(), 1);
+    assert_eq!(text_of(&rig, "moments", temp.as_str()), None);
+    assert_eq!(rig.transport.call_count("CreateMoment"), 0);
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_blob_step_reads_a_dotted_root_and_headers_given_as_a_json_string() {
     let rig = upload_rig(small());
     rig.sync.register(OperationDef::new("CreateDirectBlob", "operation x { x }", "uploadCreate.directUpload"));

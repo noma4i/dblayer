@@ -108,6 +108,27 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() = runBlocking {
+        val transport = MockTransport()
+        transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://s3/x","headers":{},"signedId":"sid","blobId":"b1"}}}""")
+        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"CreateBlob","document":"mutation CreateBlob(${'$'}filename: String!, ${'$'}contentType: String!, ${'$'}byteSize: Int!, ${'$'}checksum: String!) { createBlob(filename: ${'$'}filename, contentType: ${'$'}contentType, byteSize: ${'$'}byteSize, checksum: ${'$'}checksum) { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
+        val file = java.io.File.createTempFile("clip", ".mp4").apply { writeText("abcdef") }
+
+        val values = kotlinx.serialization.json.buildJsonObject { put("text", kotlinx.serialization.json.JsonPrimitive("hello")) }
+        val request = UploadRequest(file.path, "CreateMoment", createBlob = "CreateBlob", variables = values)
+        val local = uploadCreate("Moment", values, request, Moment.serializer())
+
+        assertEquals(true, local.id.startsWith("temp"))
+        assertEquals(true, local.upload != null)
+        assertEquals("m77", withTimeout(5000) { local.confirmedId() })
+        val sent = transport.calls.filter { it.operationName == "CreateMoment" }
+        assertEquals(1, sent.size)
+        assertEquals(true, sent.first().variablesJson.contains("\"signedId\":\"sid\""))
+    }
+
+    @Test
     fun resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() = runBlocking {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))

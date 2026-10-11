@@ -126,6 +126,14 @@ impl Sync {
         Ok(seq)
     }
 
+    pub async fn upload_create(&self, model: &str, values: serde_json::Map<String, serde_json::Value>, input: UploadInput) -> Result<RowId, SyncError> {
+        let queued = serde_json::to_value(&input).map_err(|error| SyncError::Params(error.to_string()))?;
+        let id = self.inner.db.create_held(model, values, queued, UploadState::queued())?;
+        let entry = upload_entry(self.inner.db.outbox()?, model, &id).ok_or(SyncError::Cancelled)?;
+        self.inner.spawn_run(entry.operation.id.0, Mode::Transfer);
+        Ok(id)
+    }
+
     pub async fn cancel_upload(&self, model: &str, id: &RowId) -> Result<bool, SyncError> {
         let Some(entry) = upload_entry(self.inner.db.outbox()?, model, id) else { return Ok(false) };
         let seq = entry.operation.id.0;

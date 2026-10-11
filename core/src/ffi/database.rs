@@ -176,6 +176,14 @@ impl Database {
         on_executor(async move { sync.upload(&model, &row, input).await }).await?;
         Ok(())
     }
+    pub async fn upload_create(&self, model: String, values_json: String, input_json: String) -> Result<String, DbError> {
+        let sync = self.sync()?.clone();
+        let (values, input) = (serde_json::from_str(&values_json)?, serde_json::from_str(&input_json)?);
+        let owner = model.clone();
+        let row_id = on_executor(async move { sync.upload_create(&owner, values, input).await }).await?;
+        let row = self.db.find(&model, &row_id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {row_id} was not created") })?;
+        Ok(row_json(&row))
+    }
     pub async fn confirmed(&self, model: String, row_id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;

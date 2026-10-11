@@ -15,6 +15,7 @@ use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, RootShape};
 use crate::store::{PlanCommitError, Reader, StoreError};
 use crate::syncstate::{operation_keys, read_sync};
+use crate::upload::UploadState;
 use crate::value::read_id;
 use crate::write::{
     cascade_destroys, cascade_envelope, cascades, touches_parent, WritePlan,
@@ -92,6 +93,7 @@ struct Queued {
     input: Value,
     rollback: Option<Value>,
     scope_ops: Vec<ScopeOp>,
+    upload: Option<UploadState>,
 }
 
 fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId, row: &Map<String, Value>) -> Result<Vec<ScopeOp>, DbError> {
@@ -132,6 +134,15 @@ fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool
 
 impl Db {
     pub fn create(&self, model: &str, values: Map<String, Value>) -> Result<Row, DbError> {
+        let id = self.insert_local(model, values, Action::Create, None)?;
+        self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
+    }
+
+    pub(crate) fn create_held(&self, model: &str, values: Map<String, Value>, input: Value, state: UploadState) -> Result<RowId, DbError> {
+        self.insert_local(model, values, Action::Named("upload".to_string()), Some((input, state)))
+    }
+
+    fn insert_local(&self, model: &str, values: Map<String, Value>, action: Action, held: Option<(Value, UploadState)>) -> Result<RowId, DbError> {
         let spec = self.shared.spec(model)?;
         let mut input = values;
         let id = match input.get("id").and_then(read_id) {
@@ -142,13 +153,18 @@ impl Db {
         let now_ms = self.shared.store.lock().now_ms();
         let data = spec.normalize_local(&input, now_ms)?;
         let key = ModelKey::new(model);
+        let (queued_input, upload) = match held {
+            Some((input, state)) => (input, Some(state)),
+            None => (Value::Object(data.clone()), None),
+        };
         let mut queued = Queued {
-            action: Action::Create,
+            action,
             row_id: id.clone(),
             temp_id: id.is_temp().then(|| id.clone()),
-            input: Value::Object(data.clone()),
+            input: queued_input,
             rollback: None,
             scope_ops: Vec::new(),
+            upload,
         };
         self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
             if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
@@ -159,7 +175,7 @@ impl Db {
             plan.upsert(key.clone(), vec![data.clone()]);
             Ok(Some(self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?))
         })?;
-        self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
+        Ok(id)
     }
 
     pub fn update(&self, model: &str, id: &RowId, patch: Map<String, Value>) -> Result<Row, DbError> {
@@ -170,7 +186,7 @@ impl Db {
         let own = RowRef::new(key.clone(), id.clone());
         let mut input = patch.clone();
         input.insert("id".to_string(), Value::String(id.to_string()));
-        let mut queued = Queued { action: Action::Update, row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new() };
+        let mut queued = Queued { action: Action::Update, row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
         let committed = self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
@@ -196,7 +212,7 @@ impl Db {
         let own = RowRef::new(key.clone(), id.clone());
         let mut input = args;
         input.insert("id".to_string(), Value::String(id.to_string()));
-        let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new() };
+        let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
         self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
@@ -242,6 +258,7 @@ impl Db {
                     input: json!({"id": id.as_str()}),
                     rollback: Some(Prior { rows }.to_value()),
                     scope_ops: Vec::new(),
+                    upload: None,
                 };
                 envelope.operation_transitions.push(self.begin(reader, spec, &queued, created_at)?);
                 Ok(Some(envelope))
@@ -290,9 +307,9 @@ impl Db {
             transport_started: false,
             base_revision: Some(reader.revision_seq()?),
             created_at,
-            dedupe_key: None,
+            dedupe_key: queued.upload.as_ref().map(|_| format!("{}:{}:upload", spec.key, queued.row_id)),
             rollback: queued.rollback.clone(),
-            upload: None,
+            upload: queued.upload.clone(),
         }))
     }
 

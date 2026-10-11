@@ -66,6 +66,26 @@ moment.upload?.fraction     // 0.42
 sync.cancelUpload(moment)
 ```
 
+### Create with an upload
+
+A record that does not exist yet can be created together with its upload. The record appears at once with a temporary id and its `upload` state. No create operation is queued: after the file is stored, the content mutation creates the record on the server and its id replaces the temporary one. A failed upload leaves the record failed, `retry()` sends again and `discard()` removes it.
+
+The model declares `action :upload` with the `root` of the created record, so the answer of the content mutation lands on the record.
+
+```swift
+let request = UploadRequest(path: url.path, mutation: "CreateMoment", createBlob: "CreateBlob", variables: ["text": .string("hello")])
+let moment = try await Moment.create(values: ["text": .string("hello")], uploading: request)
+moment.upload?.fraction     // 0.42
+try await moment.confirmedId()
+```
+
+```kotlin
+val request = UploadRequest(path = file.path, mutation = "CreateMoment", createBlob = "CreateBlob", variables = variables)
+val moment = uploadCreate("Moment", values, request, Moment.serializer())
+moment.upload?.percent      // 42.0
+moment.confirmedId()
+```
+
 ### Scenarios
 
 | Scenario | Steps |
