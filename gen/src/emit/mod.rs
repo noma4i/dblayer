@@ -1,5 +1,5 @@
 use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, Sort};
-use dblayer::value::{ScalarKind, SortDirection};
+use dblayer::value::ScalarKind;
 use std::fmt::Write;
 
 fn name(text: &str) -> String {
