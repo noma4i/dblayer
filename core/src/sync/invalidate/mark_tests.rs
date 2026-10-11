@@ -134,3 +134,34 @@ async fn refresh_rereads_a_fresh_window() {
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m2"]);
 }
+
+#[tokio::test(start_paused = true)]
+async fn reload_after_a_commit_is_issued_after_the_load_that_was_in_flight_at_the_commit() {
+    let rig = rig();
+    let _watch = rig.sync.watch("moments", "feed", &none()).unwrap();
+    let feed_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = feed_calls.clone();
+    rig.transport.respond_with(move |request| {
+        if request.operation_name != "MomentsFeed" {
+            return None;
+        }
+        Some(match counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            0 => feed_reply(&["m1"], false, "c"),
+            1 => feed_reply(&["m1"], false, "c").after(std::time::Duration::from_secs(1)),
+            _ => feed_reply(&["m9", "m1"], false, "c2"),
+        })
+    });
+    load(&rig, "feed").await;
+    rig.db.create("moments", params(json!({"text": "t"}))).unwrap();
+    rig.transport.enqueue("CreateMoment", created());
+    let no_params = none();
+    let older = rig.sync.refresh("moments", "feed", &no_params);
+    let commit = async {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        rig.sync.flush().await.unwrap();
+    };
+    let (older, ()) = tokio::join!(older, commit);
+    older.unwrap();
+    assert_eq!(rig.transport.call_count("MomentsFeed"), 3);
+    assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m9", "m1"]);
+}
