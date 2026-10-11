@@ -153,6 +153,13 @@ fn standard_action_rules() {
 }
 
 #[test]
+fn action_correlate_takes_fields_and_dotted_paths() {
+    let source = |line: &str| format!("model Sample do\n  schema do\n    string :name, index: true\n    object :media, null: true\n  end\n\n  action :x do\n    mutation M\n    {line}\n  end\nend\n");
+    assert!(parse_models(&source("correlate :name, \"media.blobId\"")).is_ok());
+    assert_eq!(failure(&source("correlate 1")), (9, "`correlate` needs 1 or more names like `:a, \"media.blobId\"`".to_string()));
+}
+
+#[test]
 fn action_block_rules() {
     assert_eq!(failure_in("  action :x do\n    input a: :id\n  end"), (7, "`action` needs a `mutation` line".to_string()));
     assert_eq!(failure_in("  action :x\n"), (7, "`action` needs a `do ... end` block".to_string()));

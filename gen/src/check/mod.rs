@@ -32,6 +32,7 @@ enum Shape {
     Int,
     Duration,
     Symbols,
+    Paths,
     Nothing,
 }
 
@@ -120,7 +121,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Remote, "variables") => free(),
         (Context::Action, "refetch_of") => plain(Shape::Const, vec![key("relation", Want::Symbol, true)]),
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
-        (Context::Action, "correlate") => plain(Shape::Symbols, vec![]),
+        (Context::Action, "correlate") => plain(Shape::Paths, vec![]),
         (Context::Model, "listen") => {
             plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
         }
@@ -497,6 +498,9 @@ fn check_shape(call: &Call, shape: Shape, report: &mut impl FnMut(usize, usize, 
         }
         Shape::Symbols if args.is_empty() || args.iter().any(|arg| !matches!(arg.item, Value::Symbol(_))) => {
             format!("`{word}` needs 1 or more names like `:a, :b`")
+        }
+        Shape::Paths if args.is_empty() || args.iter().any(|arg| !matches!(arg.item, Value::Symbol(_) | Value::Str(_))) => {
+            format!("`{word}` needs 1 or more names like `:a, \"media.blobId\"`")
         }
         Shape::Nothing if !args.is_empty() => format!("`{word}` takes no arguments"),
         _ => return,
