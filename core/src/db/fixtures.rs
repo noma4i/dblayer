@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
 use crate::pacing::ManualClock;
-use crate::schema::{AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec};
+use crate::schema::{AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec, Newer};
 use crate::value::ScalarKind;
 
 use super::{Change, Db};
@@ -52,20 +52,36 @@ pub fn vibes_spec() -> ModelSpec {
 }
 
 pub fn chats_spec() -> ModelSpec {
-    let mut spec = ModelSpec::new("chats", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str).optional()]);
+    let mut spec = ModelSpec::new(
+        "chats",
+        vec![
+            FieldSpec::scalar("id", ScalarKind::Id),
+            FieldSpec::scalar("title", ScalarKind::Str).optional(),
+            FieldSpec::scalar("lastMessageId", ScalarKind::Id).nullable().optional().indexed(),
+            FieldSpec::scalar("lastMessageAt", ScalarKind::Date).nullable().optional(),
+        ],
+    );
     let mut messages = AssociationSpec::new("messages", AssociationKind::HasMany, "messages", "chatId");
     messages.dependent = Some(Dependent::Destroy);
-    spec.associations.push(messages);
+    let last = AssociationSpec::new("lastMessage", AssociationKind::BelongsTo, "messages", "lastMessageId");
+    spec.associations.extend([messages, last]);
     spec
 }
 
 pub fn messages_spec() -> ModelSpec {
     let mut spec = ModelSpec::new(
         "messages",
-        vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("chatId", ScalarKind::Id).indexed(), FieldSpec::scalar("body", ScalarKind::Str).optional().indexed()],
+        vec![
+            FieldSpec::scalar("id", ScalarKind::Id),
+            FieldSpec::scalar("chatId", ScalarKind::Id).indexed(),
+            FieldSpec::scalar("body", ScalarKind::Str).optional().indexed(),
+            FieldSpec::scalar("createdAt", ScalarKind::Date).optional(),
+        ],
     );
     let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "chats", "chatId");
     chat.touches_parent = true;
+    chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "createdAt")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
+    chat.newer = Some(Newer { child: "createdAt".to_string(), parent: "lastMessageAt".to_string() });
     spec.associations.push(chat);
     spec
 }

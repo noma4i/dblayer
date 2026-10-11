@@ -629,3 +629,22 @@ fn a_null_from_the_server_never_empties_a_field_that_has_a_default() {
 
     assert_eq!(merged, object(json!({"id": "1", "location": [], "body": null})));
 }
+
+#[test]
+fn a_set_or_compared_field_must_be_declared_on_its_side() {
+    let chats = ModelSpec::new("chats", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("lastAt", ScalarKind::Date).nullable().optional()]);
+    let fields = vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("chatId", ScalarKind::Id).indexed(), FieldSpec::scalar("createdAt", ScalarKind::Date).optional()];
+    let faults = |parent_field: &str, child_field: &str, compared_parent: &str| {
+        let mut chat = association("chat", AssociationKind::BelongsTo, "chats", "chatId");
+        chat.sets = [(parent_field.to_string(), child_field.to_string())].into();
+        chat.newer = Some(Newer { child: "createdAt".to_string(), parent: compared_parent.to_string() });
+        let child = ModelSpec { associations: vec![chat], ..model(fields.clone()) };
+        validate_models(&[chats.clone(), child], &[]).into_iter().map(|fault| fault.error).collect::<Vec<_>>()
+    };
+
+    assert_eq!(faults("lastAt", "createdAt", "lastAt"), vec![]);
+    let unknown = vec![DeclarationError::SetsUnknownField("chat".into())];
+    assert_eq!(faults("lastAt", "missing", "lastAt"), unknown);
+    assert_eq!(faults("nope", "createdAt", "lastAt"), unknown);
+    assert_eq!(faults("lastAt", "createdAt", "nope"), unknown);
+}

@@ -2,9 +2,13 @@ model Chat do
   schema do
     string :title
     date   :lastMessageAt, null: true, index: true
+    id     :lastMessageId, null: true, index: true
   end
 
-  has_many :messages, model: Message, key: :chatId, dependent: :destroy
+  has_many   :messages,    model: Message, key: :chatId, dependent: :destroy
+  belongs_to :lastMessage, model: Message, key: :lastMessageId
 
   scope :recent, order: { lastMessageAt: :desc }
+
+  create with: CreateChat
 end

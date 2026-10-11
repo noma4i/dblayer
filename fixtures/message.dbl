@@ -6,9 +6,11 @@ model Message do
     date   :createdAt, index: true
   end
 
-  belongs_to :chat, model: Chat, key: :chatId
+  belongs_to :chat, model: Chat, key: :chatId, sets: { lastMessageId: :id, lastMessageAt: :createdAt }, newer: { createdAt: :lastMessageAt }
 
   scope :by_chat, params: [:chatId], where: { chatId: :chatId }, order: { createdAt: :asc }
+
+  create with: CreateMessage, input: { chatId: :chatId, text: :text }, local: [:authorId]
 
   remote :history do
     query ChatMessages

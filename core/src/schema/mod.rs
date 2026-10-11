@@ -54,6 +54,8 @@ pub enum DeclarationError {
     DependentOnNonOwner(String),
     #[error("association {0} targets an unknown model")]
     UnknownTarget(String),
+    #[error("association {0} sets or compares a field that is not declared")]
+    SetsUnknownField(String),
     #[error("action {action} lands the unknown model {model}")]
     UnknownLanding { action: String, model: String },
     #[error("action {0} destroys a record and cannot keep it on failure")]
@@ -313,7 +315,17 @@ pub struct AssociationSpec {
     #[serde(default)]
     pub touches_parent: bool,
     #[serde(default)]
+    pub sets: BTreeMap<String, String>,
+    #[serde(default)]
+    pub newer: Option<Newer>,
+    #[serde(default)]
     pub from: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Newer {
+    pub child: String,
+    pub parent: String,
 }
 
 impl AssociationSpec {
@@ -325,6 +337,8 @@ impl AssociationSpec {
             foreign_key: foreign_key.to_string(),
             dependent: None,
             touches_parent: false,
+            sets: BTreeMap::new(),
+            newer: None,
             from: None,
         }
     }
@@ -361,6 +375,10 @@ impl AssociationSpec {
         if self.dependent.is_some() && !self.owns_children() {
             return Err(DeclarationError::DependentOnNonOwner(name()));
         }
+        let compared = self.newer.iter().map(|newer| &newer.child);
+        if self.sets.values().chain(compared).any(|field| !fields.contains(field.as_str())) {
+            return Err(DeclarationError::SetsUnknownField(name()));
+        }
         Ok(())
     }
 
@@ -368,6 +386,10 @@ impl AssociationSpec {
         let target = target.ok_or_else(|| DeclarationError::UnknownTarget(self.name.clone()))?;
         if self.owns_children() && !target.is_indexed(&self.foreign_key) {
             return Err(DeclarationError::ForeignKeyNotIndexed(self.name.clone()));
+        }
+        let compared = self.newer.iter().map(|newer| &newer.parent);
+        if self.sets.keys().chain(compared).any(|field| !target.fields.iter().any(|declared| declared.name == *field)) {
+            return Err(DeclarationError::SetsUnknownField(self.name.clone()));
         }
         Ok(())
     }
