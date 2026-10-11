@@ -260,3 +260,14 @@ fn fetch_keys_returns_ids_and_revisions_in_row_order() {
     let statement = compile_keys(&query, &people()).unwrap();
     assert_eq!(fetch_keys(&connection, &statement).unwrap(), vec![("p2".to_string(), 7), ("p1".to_string(), 1)]);
 }
+
+#[test]
+fn a_direction_can_place_missing_values_first_or_last() {
+    let connection = seeded();
+    let ordered = |direction: &str| {
+        let order = Order { field: "age".to_string(), direction: serde_json::from_value(json!(direction)).unwrap() };
+        query_ids(&connection, &Query::new("people").ordered(vec![order]))
+    };
+    assert_eq!(ordered("asc_nulls_last"), ["p2", "p4", "p1", "p5", "p3", "p6"]);
+    assert_eq!(ordered("desc_nulls_first"), ["p3", "p6", "p5", "p1", "p4", "p2"]);
+}

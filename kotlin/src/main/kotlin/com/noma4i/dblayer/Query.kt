@@ -45,6 +45,8 @@ data class Order(val field: String, val direction: String)
 class Column<Model : DBModel, Value>(val name: String) {
     val asc get() = Order(name, "asc")
     val desc get() = Order(name, "desc")
+    val ascNullsLast get() = Order(name, "asc_nulls_last")
+    val descNullsFirst get() = Order(name, "desc_nulls_first")
     val isNull get() = Condition.isNull(name)
 }
 

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use dblayer::schema::{validate_models, ModelSpec};
+use dblayer::value::SortDirection;
 
 use crate::build::build;
 use crate::parser::{Call, ModelNode, Node, Pair, Value};
@@ -426,9 +427,9 @@ fn check_scope(call: &Call, report: &mut impl FnMut(usize, usize, String)) {
         report(call.line, call.column, format!("param `:{name}` is not used in `where`"));
     }
     if let Some(Value::Hash(pairs)) = option("order").map(|pair| &pair.value.item) {
-        let valid = |pair: &Pair| matches!(&pair.value.item, Value::Symbol(name) if name == "asc" || name == "desc");
+        let valid = |pair: &Pair| matches!(&pair.value.item, Value::Symbol(name) if SortDirection::parse(name).is_some());
         if pairs.iter().any(|pair| !valid(pair)) {
-            report(call.line, call.column, "order direction must be `:asc` or `:desc`".to_string());
+            report(call.line, call.column, "order direction must be `:asc`, `:desc`, `:asc_nulls_last` or `:desc_nulls_first`".to_string());
         }
     }
 }

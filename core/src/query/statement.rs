@@ -162,11 +162,13 @@ fn order_clause(query: &Query, model: &ModelSpec) -> Result<String, QueryError> 
     }
     let mut parts = Vec::new();
     for order in &query.order {
-        let direction = match order.direction {
-            SortDirection::Asc => "ASC",
-            SortDirection::Desc => "DESC",
-        };
-        parts.push(format!("{} {direction}", column_sql(model, &order.field)?));
+        let column = column_sql(model, &order.field)?;
+        parts.push(match order.direction {
+            SortDirection::Asc => format!("{column} ASC"),
+            SortDirection::Desc => format!("{column} DESC"),
+            SortDirection::AscNullsLast => format!("{column} IS NULL, {column} ASC"),
+            SortDirection::DescNullsFirst => format!("{column} IS NOT NULL, {column} DESC"),
+        });
     }
     if !query.order.iter().any(|order| order.field == "id") {
         parts.push("r.id".to_string());

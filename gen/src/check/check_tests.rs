@@ -59,7 +59,7 @@ fn wrong_value_types() {
         failure_in("  has_many :o, model: Sample, key: :ownerId, dependent: :nullify"),
         (7, "`dependent` must be `:destroy`".to_string())
     );
-    assert_eq!(failure_in("  scope :s, order: { name: :up }"), (7, "order direction must be `:asc` or `:desc`".to_string()));
+    assert_eq!(failure_in("  scope :s, order: { name: :up }"), (7, "order direction must be `:asc`, `:desc`, `:asc_nulls_last` or `:desc_nulls_first`".to_string()));
     assert_eq!(
         failure_in("  scope :s, params: [:a], where: { name: :b, other: :a }"),
         (7, "where value `:b` is not listed in `params`".to_string())

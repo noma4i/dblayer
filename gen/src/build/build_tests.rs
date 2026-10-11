@@ -313,3 +313,13 @@ fn a_create_and_an_action_keep_their_correlation_paths() {
     assert_eq!(actions.iter().find(|action| action.name == "create").unwrap().correlate, ["body", "media.blobId"]);
     assert_eq!(actions.iter().find(|action| action.name == "upload").unwrap().correlate, ["body"]);
 }
+
+#[test]
+fn a_scope_order_keeps_the_null_placement_of_each_key() {
+    let models = parse_models("model Sample do\n  schema do\n    int :seq, null: true, index: true\n    date :createdAt, index: true\n  end\n  scope :thread, order: { seq: :asc_nulls_last, createdAt: :desc }\nend\n").unwrap();
+    let sort = &models[0].relations.iter().find(|relation| relation.name == "thread").unwrap().sort;
+    assert_eq!(*sort, dblayer::schema::Sort::Fields(vec![
+        dblayer::schema::SortField { column: "seq".to_string(), direction: SortDirection::AscNullsLast },
+        dblayer::schema::SortField { column: "createdAt".to_string(), direction: SortDirection::Desc },
+    ]));
+}

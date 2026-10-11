@@ -173,7 +173,7 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 
 ## Scopes and remote relations
 
-`scope :name` declares a named query: `params:`, `where: { field: :param }`, `order: { field: :asc | :desc }`.
+`scope :name` declares a named query: `params:`, `where: { field: :param }`, `order: { field: :asc | :desc | :asc_nulls_last | :desc_nulls_first }`. Rows without a value come first in `:asc` and last in `:desc`; the two `nulls` directions turn that around, for example a message that has no sequence number yet (not sent) sorts after the numbered ones with `order: { sequenceNumber: :asc_nulls_last, createdAt: :asc }`.
 
 When a response row has no value for a column the relation groups by, the param fills it. A response without an id becomes a row keyed by the param.
 

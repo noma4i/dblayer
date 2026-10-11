@@ -117,7 +117,7 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             if relation.remote.is_none() {
                 for key in &relation.by_columns { writeln!(out, "        built = built.where(Condition.equal(\"{key}\", JSONValue.encode({key})))").unwrap(); }
                 if let Sort::Fields(fields) = &relation.sort {
-                    for field in fields { writeln!(out, "        built = built.order(Order(field: \"{}\", direction: \"{}\"))", field.column, if field.direction == SortDirection::Desc { "desc" } else { "asc" }).unwrap(); }
+                    for field in fields { writeln!(out, "        built = built.order(Order(field: \"{}\", direction: \"{}\"))", field.column, field.direction.name()).unwrap(); }
                 }
             }
             out.push_str("        return built\n    }\n");
@@ -192,7 +192,7 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             let _ = params;
             if relation.remote.is_none() {
                 for key in &relation.by_columns { writeln!(out, "            built = built.where(Condition.equal(\"{key}\", jsonValue({key})))").unwrap(); }
-                if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            built = built.order(Order(\"{}\", \"{}\"))", field.column, if field.direction == SortDirection::Desc { "desc" } else { "asc" }).unwrap(); } }
+                if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            built = built.order(Order(\"{}\", \"{}\"))", field.column, field.direction.name()).unwrap(); } }
             }
             out.push_str("            return built\n        }\n");
         }

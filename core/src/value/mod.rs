@@ -60,6 +60,29 @@ pub enum OrderKeyError {
 pub enum SortDirection {
     Asc,
     Desc,
+    AscNullsLast,
+    DescNullsFirst,
+}
+
+impl SortDirection {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "asc" => Some(SortDirection::Asc),
+            "desc" => Some(SortDirection::Desc),
+            "asc_nulls_last" => Some(SortDirection::AscNullsLast),
+            "desc_nulls_first" => Some(SortDirection::DescNullsFirst),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SortDirection::Asc => "asc",
+            SortDirection::Desc => "desc",
+            SortDirection::AscNullsLast => "asc_nulls_last",
+            SortDirection::DescNullsFirst => "desc_nulls_first",
+        }
+    }
 }
 
 pub fn read_str(value: &Value) -> Option<String> {

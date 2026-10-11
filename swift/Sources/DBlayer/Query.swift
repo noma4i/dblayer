@@ -27,6 +27,8 @@ public struct Column<Model: DBModel, Value: Encodable & Sendable>: Sendable {
   public init(_ name: String) { self.name = name }
   public var asc: Order { Order(field: name, direction: "asc") }
   public var desc: Order { Order(field: name, direction: "desc") }
+  public var ascNullsLast: Order { Order(field: name, direction: "asc_nulls_last") }
+  public var descNullsFirst: Order { Order(field: name, direction: "desc_nulls_first") }
   public var isNull: Condition { .isNull(name) }
   public func `in`(_ values: [Value]) -> Condition { .inList(name, values.map(JSONValue.encode)) }
 

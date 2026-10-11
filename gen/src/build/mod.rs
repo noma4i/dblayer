@@ -176,8 +176,11 @@ fn build_scope(call: &Call) -> RelationSpec {
 }
 
 fn sort_field(pair: &Pair) -> SortField {
-    let descending = pair.value.item == Value::Symbol("desc".to_string());
-    SortField { column: pair.key.clone(), direction: if descending { SortDirection::Desc } else { SortDirection::Asc } }
+    let direction = match &pair.value.item {
+        Value::Symbol(name) => SortDirection::parse(name).unwrap_or(SortDirection::Asc),
+        _ => SortDirection::Asc,
+    };
+    SortField { column: pair.key.clone(), direction }
 }
 
 fn variables_of(call: &Call) -> std::collections::BTreeMap<String, VariableSource> {
