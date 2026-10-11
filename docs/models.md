@@ -137,7 +137,7 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 
 | Word | Options |
 | ---- | ------- |
-| `belongs_to :name` | `model:`, `key:` (required), `touch: true`, `from:` |
+| `belongs_to :name` | `model:`, `key:` (required), `touch: true`, `sets:`, `newer:`, `from:` |
 | `has_many :name` | `model:`, `key:`, `dependent: :destroy`, `from:` |
 | `has_one :name` | `model:`, `key:`, `dependent: :destroy`, `from:` |
 | `references :name` | `model:`, `key:` (array of ids), `from:` |
@@ -146,6 +146,7 @@ val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 - Objects found there become rows of the target model. A `belongs_to` object that holds only its `id` (`owner { id }`) cannot become a row when the target needs more fields, and it still sets `key:` to that id. `has_many` and `has_one` rows get the parent id in `key:`. A `references` parent keeps the ids of its rows in `key:`; declare that field in `schema` (`list :similarIds, of: :id`), the model is rejected without it.
 - `dependent: :destroy` removes children in the same commit as the parent.
 - `touch: true` bumps the parent's revision when a child changes, so observers of the parent refresh.
+- `sets: { lastMessageId: :id, lastMessageAt: :createdAt }` on a `belongs_to` writes the child fields to the parent fields in the same commit as a local `create`. `newer: { createdAt: :lastMessageAt }` writes only when the child value is greater than the parent value (an empty parent value counts as older). A discard or a refusal gives the parent values back, the swap of a temporary child id moves a parent field that points at it. Both options name fields that exist on their side, otherwise the model is rejected.
 - The foreign key of a `has_many` or `has_one` must be an indexed field of the target model.
 - There are no counter caches. Count with a query: `moment.vibes.count`.
 
