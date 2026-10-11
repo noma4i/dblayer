@@ -53,6 +53,7 @@ impl Db {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, generation);
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;
+                self.follow_parent_pointers(reader, &mut envelope)?;
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)

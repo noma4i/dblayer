@@ -197,6 +197,7 @@ impl Feed {
                     }
                 }
             }
+            db.follow_parent_pointers(reader, &mut envelope)?;
             Ok::<_, SyncError>(Some(envelope))
         });
         match committed {

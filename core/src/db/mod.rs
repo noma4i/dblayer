@@ -11,6 +11,7 @@ mod lookup;
 mod maintain;
 mod observe;
 mod open;
+mod parent_pointer;
 mod prior;
 mod related;
 mod replace;

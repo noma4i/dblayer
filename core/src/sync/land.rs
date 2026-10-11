@@ -142,6 +142,7 @@ impl Inner {
                 applied,
                 cleared_at: is_first_page.then(|| self.now_ms()),
             });
+            self.db.follow_parent_pointers(reader, &mut envelope)?;
             Ok::<_, SyncError>(Some(envelope))
         });
         match committed {

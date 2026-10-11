@@ -46,3 +46,64 @@ fn land_of_an_identical_row_is_a_noop_that_keeps_the_cache() {
     assert!(result.is_noop());
     assert!(std::sync::Arc::ptr_eq(&first, &db.find("users", &rid("u1")).unwrap().unwrap()));
 }
+
+const OLD: &str = "2026-01-01T00:00:00.000Z";
+const MID: &str = "2026-01-02T00:00:00.000Z";
+const NEW: &str = "2026-01-03T00:00:00.000Z";
+
+fn message_envelope(db: &Db, origin: WriteOrigin, id: &str, created_at: &str) -> CommitEnvelope {
+    let mut envelope = CommitEnvelope::new(origin, db.generation());
+    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("messages"), id: rid(id), row: obj(json!({"id": id, "chatId": "c1", "createdAt": created_at})) });
+    envelope
+}
+
+fn chat_pointer(db: &Db) -> (Option<String>, Option<String>) {
+    let chat = db.find("chats", &rid("c1")).unwrap().unwrap();
+    (chat.text("lastMessageId").map(str::to_string), chat.text("lastMessageAt").map(str::to_string))
+}
+
+#[test]
+fn landed_newer_message_moves_the_chat_pointer() {
+    let db = booted();
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m1", "lastMessageAt": OLD}));
+    for origin in [WriteOrigin::Event, WriteOrigin::Snapshot, WriteOrigin::Response] {
+        db.land(message_envelope(&db, origin, "m2", NEW)).unwrap();
+        assert_eq!(chat_pointer(&db), (Some("m2".to_string()), Some(NEW.to_string())));
+        put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m1", "lastMessageAt": OLD}));
+    }
+}
+
+#[test]
+fn landed_older_message_keeps_the_chat_pointer() {
+    let db = booted();
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m9", "lastMessageAt": NEW}));
+    db.land(message_envelope(&db, WriteOrigin::Event, "m2", OLD)).unwrap();
+    assert_eq!(chat_pointer(&db), (Some("m9".to_string()), Some(NEW.to_string())));
+}
+
+fn destroy_envelope(db: &Db, id: &str) -> CommitEnvelope {
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("messages"), id: rid(id), reason: crate::commit::DestroyReason::Server });
+    envelope
+}
+
+#[test]
+fn destroying_the_head_message_falls_back_to_the_previous_one() {
+    let db = booted();
+    put(&db, "messages", json!({"id": "m1", "chatId": "c1", "createdAt": OLD}));
+    put(&db, "messages", json!({"id": "m2", "chatId": "c1", "createdAt": MID}));
+    put(&db, "messages", json!({"id": "m3", "chatId": "c1", "createdAt": NEW}));
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m3", "lastMessageAt": NEW}));
+    db.land(destroy_envelope(&db, "m3")).unwrap();
+    assert_eq!(chat_pointer(&db), (Some("m2".to_string()), Some(MID.to_string())));
+}
+
+#[test]
+fn destroying_a_non_head_message_keeps_the_chat_pointer() {
+    let db = booted();
+    put(&db, "messages", json!({"id": "m1", "chatId": "c1", "createdAt": OLD}));
+    put(&db, "messages", json!({"id": "m3", "chatId": "c1", "createdAt": NEW}));
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m3", "lastMessageAt": NEW}));
+    db.land(destroy_envelope(&db, "m1")).unwrap();
+    assert_eq!(chat_pointer(&db), (Some("m3".to_string()), Some(NEW.to_string())));
+}

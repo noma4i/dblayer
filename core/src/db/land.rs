@@ -1,6 +1,7 @@
 use crate::commit::{CommitEnvelope, CommitResult, WriteOrigin};
 
 use super::error::DbError;
+use super::local_write::plan_fault;
 use super::open::Db;
 
 impl Db {
@@ -8,6 +9,14 @@ impl Db {
         if envelope.origin == WriteOrigin::Optimistic {
             return Err(DbError::OriginNotLandable(envelope.origin));
         }
-        Ok(self.shared.store.commit(envelope)?)
+        let generation = envelope.generation;
+        self.shared
+            .store
+            .commit_with(generation, |reader| {
+                let mut envelope = envelope;
+                self.follow_parent_pointers(reader, &mut envelope)?;
+                Ok(Some(envelope))
+            })
+            .map_err(plan_fault)
     }
 }
