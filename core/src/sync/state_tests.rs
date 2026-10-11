@@ -13,7 +13,7 @@ fn none() -> Map<String, serde_json::Value> {
 async fn a_relation_never_loaded_is_idle_with_nothing_more() {
     let rig = rig();
     let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
-    assert_eq!(*state.borrow(), RelationState { phase: LoadPhase::Idle, has_more: false, total: None, error: None, loaded_at: None });
+    assert_eq!(*state.borrow(), RelationState { phase: LoadPhase::Idle, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None });
 }
 
 #[tokio::test(start_paused = true)]
@@ -86,4 +86,37 @@ async fn a_second_receiver_starts_from_the_stored_window() {
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let fresh = rig.sync.relation_state("moments", "feed", &none()).unwrap();
     assert!(fresh.borrow().has_more && fresh.borrow().loaded_at.is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_the_next_page() {
+    let rig = rig();
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1").after(Duration::from_secs(1)));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1").after(Duration::from_secs(1)));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["b"], false, "c2").after(Duration::from_secs(1)));
+    let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+    let running = |state: &RelationState| (state.initial, state.refreshing, state.fetching_more);
+    let first = tokio::spawn({
+        let sync = rig.sync.clone();
+        async move { sync.load("moments", "feed", &none(), LoadOptions::default()).await }
+    });
+    settle().await;
+    assert_eq!(running(&state.borrow()), (true, false, false));
+    first.await.unwrap().unwrap();
+    assert_eq!(running(&state.borrow()), (false, false, false));
+    let refresh = tokio::spawn({
+        let sync = rig.sync.clone();
+        async move { sync.load("moments", "feed", &none(), LoadOptions { force: true }).await }
+    });
+    settle().await;
+    assert_eq!(running(&state.borrow()), (false, true, false));
+    refresh.await.unwrap().unwrap();
+    let more = tokio::spawn({
+        let sync = rig.sync.clone();
+        async move { sync.load_more("moments", "feed", &none()).await }
+    });
+    settle().await;
+    assert_eq!(running(&state.borrow()), (false, false, true));
+    more.await.unwrap().unwrap();
+    assert_eq!(running(&state.borrow()), (false, false, false));
 }

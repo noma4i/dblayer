@@ -5,6 +5,9 @@ use crate::sync::{LoadPhase, RelationState};
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct RelationStateChange {
     pub phase: String,
+    pub initial: bool,
+    pub refreshing: bool,
+    pub fetching_more: bool,
     pub has_more: bool,
     pub total: Option<i64>,
     pub error_kind: Option<String>,
@@ -21,6 +24,9 @@ impl RelationStateChange {
         };
         Self {
             phase: phase.into(),
+            initial: state.initial,
+            refreshing: state.refreshing,
+            fetching_more: state.fetching_more,
             has_more: state.has_more,
             total: state.total,
             error_kind: state.error.as_ref().map(|error| error.kind.to_string()),
