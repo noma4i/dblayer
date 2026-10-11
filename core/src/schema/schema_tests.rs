@@ -637,7 +637,7 @@ fn a_set_or_compared_field_must_be_declared_on_its_side() {
     let faults = |parent_field: &str, child_field: &str, compared_parent: &str| {
         let mut chat = association("chat", AssociationKind::BelongsTo, "chats", "chatId");
         chat.sets = [(parent_field.to_string(), child_field.to_string())].into();
-        chat.newer = Some(Newer { child: "createdAt".to_string(), parent: compared_parent.to_string() });
+        chat.newer = vec![Newer { child: "createdAt".to_string(), parent: compared_parent.to_string() }];
         let child = ModelSpec { associations: vec![chat], ..model(fields.clone()) };
         validate_models(&[chats.clone(), child], &[]).into_iter().map(|fault| fault.error).collect::<Vec<_>>()
     };

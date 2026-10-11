@@ -14,12 +14,6 @@ use super::open::Db;
 
 type Parents = BTreeMap<(String, String), Map<String, Value>>;
 
-fn is_newer(association: &AssociationSpec, parent: &Map<String, Value>, child: &Map<String, Value>) -> bool {
-    let Some(newer) = &association.newer else { return true };
-    let Some(value) = child.get(&newer.child).and_then(Value::as_str) else { return false };
-    parent.get(&newer.parent).and_then(Value::as_str).is_none_or(|current| current < value)
-}
-
 impl Db {
     pub(crate) fn follow_parent_pointers(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope) -> Result<(), DbError> {
         let mut parents = Parents::new();
@@ -57,7 +51,7 @@ impl Db {
                 continue;
             }
             let Some(current) = Self::parent_row(reader, parents, &association, &parent_id)? else { continue };
-            if !is_newer(&association, &current, row) {
+            if !association.child_is_newer(&current, row) {
                 continue;
             }
             let mut merged = current.clone();
@@ -86,7 +80,7 @@ impl Db {
         }
         let Some(child) = reader.point(model.as_str(), id.as_str())? else { return Ok(()) };
         for association in associations {
-            let (Some(newer), Some(parent_id)) = (&association.newer, child.get(&association.foreign_key).and_then(read_id)) else { continue };
+            let Some(parent_id) = child.get(&association.foreign_key).and_then(read_id).filter(|_| !association.newer.is_empty()) else { continue };
             let Some(pointer) = association.sets.iter().find(|(_, child_field)| child_field.as_str() == "id").map(|(parent_field, _)| parent_field) else { continue };
             if written.contains(&RowRef::new(association.target.clone(), parent_id.clone())) {
                 continue;
@@ -98,7 +92,7 @@ impl Db {
             let siblings = doomed.iter().filter(|row| row.model == *model).count() as u32;
             let query = Query::new(model.as_str())
                 .filtered(Where::equal(&association.foreign_key, json!(parent_id.as_str())))
-                .ordered(vec![Order::new(&newer.child, SortDirection::Desc)])
+                .ordered(association.newer.iter().map(|newer| Order::new(&newer.child, SortDirection::Desc)).collect())
                 .limited(siblings + 1);
             let mut previous = None;
             for (sibling_id, _) in self.shared.query_keys(reader, &query)? {

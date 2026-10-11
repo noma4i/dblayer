@@ -59,11 +59,11 @@ fn create_sets_the_parent_fields_when_the_child_is_newer() {
 }
 
 #[test]
-fn create_keeps_the_parent_fields_when_the_parent_is_newer() {
+fn create_keeps_the_pointer_of_a_pending_message_that_is_newer() {
     let db = booted();
-    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m9", "lastMessageAt": NEW}));
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "temp-9", "lastMessageAt": NEW}));
     db.create("messages", obj(json!({"chatId": "c1", "body": "late", "createdAt": OLD}))).unwrap();
-    assert_eq!(chat_pointer(&db), (Some("m9".to_string()), Some(NEW.to_string())));
+    assert_eq!(chat_pointer(&db), (Some("temp-9".to_string()), Some(NEW.to_string())));
 }
 
 #[test]

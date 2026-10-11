@@ -137,11 +137,8 @@ fn parent_sets(reader: &Reader<'_>, spec: &ModelSpec, data: &Map<String, Value>)
     for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && !association.sets.is_empty()) {
         let Some(parent_id) = data.get(&association.foreign_key).and_then(read_id) else { continue };
         let Some(current) = reader.point(association.target.as_str(), parent_id.as_str())? else { continue };
-        if let Some(newer) = &association.newer {
-            let Some(child) = data.get(&newer.child).and_then(Value::as_str) else { continue };
-            if current.get(&newer.parent).and_then(Value::as_str).is_some_and(|parent| parent >= child) {
-                continue;
-            }
+        if !association.child_is_newer(&current, data) {
+            continue;
         }
         let mut merged = current.clone();
         for (parent_field, child_field) in &association.sets {

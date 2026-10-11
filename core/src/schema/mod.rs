@@ -11,6 +11,7 @@ use crate::value::{
 };
 
 mod ephemeral;
+mod newer;
 
 pub use ephemeral::{EphemeralSpec, Storage};
 
@@ -317,7 +318,7 @@ pub struct AssociationSpec {
     #[serde(default)]
     pub sets: BTreeMap<String, String>,
     #[serde(default)]
-    pub newer: Option<Newer>,
+    pub newer: Vec<Newer>,
     #[serde(default)]
     pub from: Option<String>,
 }
@@ -338,7 +339,7 @@ impl AssociationSpec {
             dependent: None,
             touches_parent: false,
             sets: BTreeMap::new(),
-            newer: None,
+            newer: Vec::new(),
             from: None,
         }
     }
@@ -1007,5 +1008,7 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
 
 #[cfg(test)]
 mod ephemeral_tests;
+#[cfg(test)]
+mod newer_tests;
 #[cfg(test)]
 mod schema_tests;

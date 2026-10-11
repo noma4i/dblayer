@@ -81,7 +81,7 @@ pub fn messages_spec() -> ModelSpec {
     let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "chats", "chatId");
     chat.touches_parent = true;
     chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "createdAt")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
-    chat.newer = Some(Newer { child: "createdAt".to_string(), parent: "lastMessageAt".to_string() });
+    chat.newer = vec![Newer { child: "createdAt".to_string(), parent: "lastMessageAt".to_string() }];
     spec.associations.push(chat);
     spec
 }
