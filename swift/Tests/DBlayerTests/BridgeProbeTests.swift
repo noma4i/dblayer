@@ -133,6 +133,29 @@ struct BridgeProbeTests {
     list.stop()
   }
 
+  @MainActor
+  @Test
+  func aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndSendsAfterRegisteringAndRetrying() async throws {
+    let transport = MockTransport()
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+
+    let local = try await Moment.create(text: "hello", media: nil)
+    let rows = LiveRows<Moment>()
+    rows.track([local.id])
+    for _ in 0 ..< 200 where rows.byId[local.id]?.sync.state != .failed { try await Task.sleep(for: .milliseconds(10)) }
+    let failed = rows.byId[local.id]
+    #expect(failed?.sync.state == .failed)
+    #expect(failed?.needsAttention == true)
+    #expect(failed?.sync.error?.message == "operation CreateMoment is not registered")
+    #expect(transport.calls.isEmpty)
+
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
+    try await DB.database.retry(model: "Moment", rowId: local.id)
+    #expect(try await local.confirmedId() == "m77")
+    rows.stop()
+  }
+
   @Test
   func confirmedIdWaitsForTheServerIdOfALocalCreate() async throws {
     let transport = MockTransport()

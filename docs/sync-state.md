@@ -102,6 +102,7 @@ The pause is computed from the clock and the stored attempt count, so an app res
 | The server confirms | `synced` | the server row replaces the local one, a temporary id is swapped for the real one, references to it are rewritten |
 | The server refuses (GraphQL errors, a 4xx status) | `failed` with `on_failure: :keep`, otherwise gone | with `:rollback` the change is rolled back in one commit and the error is reported |
 | Unreachable before the transfer starts | `pending`, then `failed` or gone after 40 attempts | sent again by itself, the final outcome follows `on_failure` like a refusal |
+| The action names a mutation that is not registered in `open(operations:)` | `failed` whatever `on_failure` says, error `operation <name> is not registered` | nothing is sent, the record keeps its change, register the operation and call `retry()` |
 | No answer after the transfer started (broken connection, 5xx status, unreadable answer) | `deliveryUnknown` | the record stays as it is, whatever `on_failure` says, because the change may have reached the server |
 
 ## What happens when the server refuses

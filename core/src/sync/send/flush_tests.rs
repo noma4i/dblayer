@@ -501,3 +501,21 @@ async fn settled_fails_with_the_refusal() {
     let error = rig.sync.settled("moments", &rid("m1")).await.unwrap_err();
     assert!(error.to_string().contains("not allowed"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn update_whose_mutation_is_not_registered_fails_visibly_and_sends_after_registering() {
+    let rig = rig_without_operations(crate::db::Db::open_in_memory(specs(), None).unwrap(), crate::transport::MockTransport::new(), crate::sync::SyncConfig::default());
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    let report = rig.sync.flush().await.unwrap();
+    let message = "operation UpdateMoment is not registered";
+    assert_eq!(report.operations[0].result, SendResult::Rejected(message.to_string()));
+    let failed = info(&rig, "m1");
+    assert_eq!((failed.state, failed.error), (SyncState::Failed, Some(OperationFailure::new(FailureKind::Rejected, message))));
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("new".to_string()));
+    assert_eq!(rig.transport.calls().len(), 0);
+    rig.sync.register(crate::sync::OperationDef::new("UpdateMoment", "operation UpdateMoment { x }", "updateMoment"));
+    rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
+    assert_eq!(rig.sync.retry("moments", &rid("m1")).await.unwrap().committed(), 1);
+    assert!(info(&rig, "m1").is_synced());
+}

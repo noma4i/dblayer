@@ -95,6 +95,26 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndSendsAfterRegisteringAndRetrying() = runBlocking {
+        val transport = MockTransport()
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+
+        val local = Moment.create(text = "hello", media = null)
+        val rows = LiveRows(Moment.Companion::ids, this)
+        rows.track(listOf(local.id))
+        val failed = withTimeout(5000) { rows.byId.first { it[local.id]?.sync?.state == SyncState.Failed } }.getValue(local.id)
+        assertEquals(true, failed.needsAttention)
+        assertEquals("operation CreateMoment is not registered", failed.sync.error?.message)
+        assertEquals(0, transport.calls.size)
+
+        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
+        DBlayer.database.retry("Moment", local.id)
+        assertEquals("m77", withTimeout(5000) { local.confirmedId() })
+        rows.stop()
+    }
+
+    @Test
     fun confirmedIdWaitsForTheServerIdOfALocalCreate() = runBlocking {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")

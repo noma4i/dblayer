@@ -147,12 +147,13 @@ impl Inner {
             return Ok(SendResult::Skipped(SkipReason::NotBound));
         };
         let Some(mutation) = declaration.mutation.clone() else { return Ok(SendResult::Skipped(SkipReason::NotBound)) };
-        let Some(operation) = locked(&self.operations).get(&mutation).cloned() else {
-            return Ok(SendResult::Skipped(SkipReason::UnknownOperation(mutation)));
-        };
         let is_id = |field: &str| spec.field(field).is_some_and(|field| matches!(field.kind, crate::schema::FieldKind::Scalar { kind: crate::value::ScalarKind::Id }));
         let variables = mutation_variables(declaration, &entry.input, entry.operation.temp_id.as_ref(), &is_id);
         let sending = Sending { entry, model, action, generation: self.db.generation(), base_revision: self.db.revision_seq()? };
+        let Some(operation) = locked(&self.operations).get(&mutation).cloned() else {
+            let message = format!("operation {mutation} is not registered");
+            return self.fail(&sending, OperationStatus::Failed, OperationFailure::new(FailureKind::Rejected, message.clone()), SendResult::Rejected(message));
+        };
         if !self.start(&sending)? {
             return Ok(SendResult::Discarded);
         }

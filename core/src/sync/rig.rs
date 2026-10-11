@@ -178,9 +178,14 @@ pub fn rig_with(config: SyncConfig) -> Rig {
 }
 
 pub fn rig_on(db: Db, transport: MockTransport, config: SyncConfig) -> Rig {
+    let rig = rig_without_operations(db, transport, config);
+    register_operations(&rig.sync);
+    rig
+}
+
+pub fn rig_without_operations(db: Db, transport: MockTransport, config: SyncConfig) -> Rig {
     let clock = ManualClock::new(Duration::from_millis(START_MS));
     let sync = Sync::new(db.clone(), Arc::new(transport.clone()), Arc::new(clock.clone()), config);
-    register_operations(&sync);
     Rig { sync, db, transport, clock }
 }
 

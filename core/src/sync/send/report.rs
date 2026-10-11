@@ -1,7 +1,6 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkipReason {
     NotBound,
-    UnknownOperation(String),
     BlockedByHead,
     Offline,
     Waiting,
