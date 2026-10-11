@@ -50,7 +50,7 @@ public final class DatabaseTransport: Transport, @unchecked Sendable {
         case .ready: sink.ready()
         case let .payload(data):
           onEvent(operationName, data.text)
-          try sink.event(json: data.text)
+          try sink.event(json: JSONValue.object(["data": data]).text)
         case let .errors(messages): sink.failed(kind: "graphql", detail: messages.joined(separator: "\n"))
         case .completed: break
         }

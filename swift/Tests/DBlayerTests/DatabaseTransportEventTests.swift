@@ -31,12 +31,13 @@ private final class EventTap: @unchecked Sendable {
 @Suite(.serialized)
 struct DatabaseTransportEventTests {
   @Test
-  func relayPassesEveryPayloadToTheEventObserverAndTheCore() async throws {
+  func relayWrapsAServerFrameInTheResponseEnvelopeForTheCoreAndKeepsItBareForTheObserver() async throws {
+    let frame = #"{"messageCreated":{"message":{"body":"doc probe","chatId":364161,"id":"478543","reactions":[],"userId":31222}}}"#
     let sink = RecordingSink()
     let tap = EventTap()
     let (events, continuation) = AsyncThrowingStream<GraphQLSubscriptionEvent, Error>.makeStream()
     continuation.yield(.ready)
-    continuation.yield(.payload(.object(["messageCreated": .object(["id": .string("9")])])))
+    continuation.yield(.payload(JSONValue.parse(frame)))
     continuation.finish()
 
     await DatabaseTransport.relay(
@@ -46,7 +47,7 @@ struct DatabaseTransportEventTests {
       onEvent: { name, json in tap.record(operationName: name, json: json) }
     )
 
-    #expect(sink.delivered == [#"{"messageCreated":{"id":"9"}}"#])
-    #expect(tap.all == [#"messageCreated|{"messageCreated":{"id":"9"}}"#])
+    #expect(sink.delivered.map(JSONValue.parse) == [JSONValue.parse(#"{"data":"# + frame + "}")])
+    #expect(tap.all.map { $0.replacingOccurrences(of: "messageCreated|", with: "") }.map(JSONValue.parse) == [JSONValue.parse(frame)])
   }
 }
