@@ -11,8 +11,9 @@ step() {
   timeout "$limit" "$@" || { echo "check_dblayer: step failed or passed $limit s: $*" >&2; return 1; }
 }
 
-echo "== rust: cargo test"
+echo "== rust: cargo test (core, gen)"
 step cargo test --manifest-path "$root/core/Cargo.toml"
+step cargo test --manifest-path "$root/Cargo.toml" -p dblayer-gen
 
 echo "== ios: xcframework, swift test, iOS simulator compile"
 step bash "$root/scripts/build_ios.sh"
