@@ -143,11 +143,14 @@ class OkHttpTransport(
         val http = Request.Builder().url(endpoint).post(body(request).toRequestBody("application/json".toMediaType())).apply {
             headers().forEach { (field, value) -> header(field, value) }
         }.build()
-        val response = try { client.newCall(http).await() } catch (error: java.io.IOException) { throw classifyTransportFailure(error, kind) }
-        response.use {
-            val text = it.body?.string().orEmpty()
-            if (it.code !in 200..299) throw DbException.Http(it.code.toUShort(), text)
-            return text
+        return try {
+            client.newCall(http).exchange { response ->
+                val text = response.body?.string().orEmpty()
+                if (response.code !in 200..299) throw DbException.Http(response.code.toUShort(), text)
+                text
+            }
+        } catch (error: java.io.IOException) {
+            throw classifyTransportFailure(error, kind)
         }
     }
 
@@ -222,7 +225,7 @@ internal suspend fun putBytes(client: OkHttpClient, url: String, headers: Map<St
     }
     val request = Request.Builder().url(url).put(body).apply { headers.forEach { (field, value) -> header(field, value) } }.build()
     return try {
-        client.newCall(request).await().use { PutReply(it.code.toUShort(), it.header("ETag")) }
+        client.newCall(request).exchange { PutReply(it.code.toUShort(), it.header("ETag")) }
     } catch (error: java.io.IOException) {
         if (progress.isCancelled()) throw DbException.Interrupted(error.message ?: "cancelled")
         throw DbException.Network(error.message ?: error.toString())

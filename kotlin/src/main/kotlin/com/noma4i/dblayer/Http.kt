@@ -1,6 +1,8 @@
 package com.noma4i.dblayer
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -275,11 +277,10 @@ class GraphQLHttpTransport(
         val request = Request.Builder().url(url).post(encrypted.toRequestBody("application/json".toMediaType())).apply {
             headers.forEach { (field, value) -> header(field, value) }
         }.build()
-        val response = client.newCall(request).await()
-        response.use {
-            val bytes = it.body?.bytes() ?: ByteArray(0)
-            clock.update(it.header("Date"), System.currentTimeMillis())
-            return Reply(it.code, open(bytes, it))
+        return client.newCall(request).exchange { response ->
+            val bytes = response.body?.bytes() ?: ByteArray(0)
+            clock.update(response.header("Date"), System.currentTimeMillis())
+            Reply(response.code, open(bytes, response))
         }
     }
 
@@ -297,7 +298,9 @@ class GraphQLHttpTransport(
 @kotlinx.serialization.Serializable
 internal data class EnvelopeWire(val v: Int, val iv: String, val ct: String, val tag: String)
 
-internal suspend fun Call.await(): HttpResponse = suspendCancellableCoroutine { continuation ->
+internal suspend fun <T> Call.exchange(read: (HttpResponse) -> T): T = withContext(Dispatchers.IO) { await().use(read) }
+
+private suspend fun Call.await(): HttpResponse = suspendCancellableCoroutine { continuation ->
     enqueue(object : Callback {
         override fun onFailure(call: Call, e: IOException) = continuation.resumeWithException(e)
         override fun onResponse(call: Call, response: HttpResponse) = continuation.resume(response)
