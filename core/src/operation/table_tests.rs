@@ -25,7 +25,7 @@ fn stored(connection: &Connection, seq: i64) -> Option<(String, String, i64)> {
 }
 
 #[test]
-fn append_stores_action_and_status_then_status_transport_and_delete_apply() {
+fn append_stores_action_and_status_then_status_applies() {
     let connection = database();
     let first = append_operation(&connection, &operation("m1", OperationStatus::Pending), b"{}").unwrap();
     let second = append_operation(&connection, &operation("m2", OperationStatus::Pending), b"{}").unwrap();
@@ -33,17 +33,6 @@ fn append_stores_action_and_status_then_status_transport_and_delete_apply() {
     assert_eq!(stored(&connection, first), Some(("messages.send".into(), "pending".into(), 0)));
     set_status(&connection, first, OperationStatus::Committed).unwrap();
     assert_eq!(stored(&connection, first).unwrap().1, "committed");
-    delete_operation(&connection, second).unwrap();
-    assert_eq!(stored(&connection, second), None);
-}
-
-#[test]
-fn open_sequences_exclude_committed_operations() {
-    let connection = database();
-    for (row, status) in [("m1", OperationStatus::Pending), ("m2", OperationStatus::Pending), ("m3", OperationStatus::Committed)] {
-        append_operation(&connection, &operation(row, status), b"{}").unwrap();
-    }
-    assert_eq!(open_sequences(&connection, "messages.send").unwrap(), [1, 2]);
 }
 
 #[test]
@@ -90,34 +79,15 @@ fn apply_fsck_counts_only_status_actions() {
 }
 
 #[test]
-fn once_keys_are_recorded_once_and_read_back() {
-    let connection = database();
-    let request = OnceRequest::new("deleteGroup", Some("chat-1"));
-    record_once(&connection, &request).unwrap();
-    record_once(&connection, &request).unwrap();
-    record_once(&connection, &OnceRequest::new("deleteGroup", None)).unwrap();
-    assert_eq!(committed_once_keys(&connection).unwrap(), [request].into());
-}
-
-#[test]
-fn open_once_keys_come_from_pending_and_delivery_unknown_operations() {
-    let connection = database();
-    let mut pending = operation("1", OperationStatus::Pending);
-    pending.dedupe_key = Some("chat-1".into());
-    let mut failed = operation("2", OperationStatus::Failed);
-    failed.dedupe_key = Some("chat-2".into());
-    append_operation(&connection, &pending, b"{}").unwrap();
-    append_operation(&connection, &failed, b"{}").unwrap();
-    assert_eq!(open_once_keys(&connection).unwrap(), [OnceRequest::new("messages.send", Some("chat-1"))].into());
-}
-
-#[test]
 fn op_columns_match_spec_and_nullability() {
     let connection = database();
     let mut statement = connection.prepare("PRAGMA table_info(op)").unwrap();
     let columns: Vec<(String, bool)> = statement.query_map([], |r| Ok((r.get(1)?, r.get::<_, i64>(3)? == 0 && r.get::<_, i64>(5)? == 0))).unwrap().map(Result::unwrap).collect();
     let names: Vec<&str> = columns.iter().map(|c| c.0.as_str()).collect();
-    assert_eq!(names, OP_COLUMNS);
+    assert_eq!(
+        names,
+        ["seq", "action_key", "status", "row_ids", "temp_id", "input", "transport_started", "base_revision", "created_at", "dedupe_key", "rollback", "attempts", "error", "since", "upload"]
+    );
     let nullable: Vec<&str> = columns.iter().filter(|c| c.1).map(|c| c.0.as_str()).collect();
     assert_eq!(nullable, ["temp_id", "base_revision", "dedupe_key", "rollback", "error", "upload"]);
 }

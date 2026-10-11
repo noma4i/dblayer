@@ -1,10 +1,13 @@
 use rusqlite::{params_from_iter, Connection};
+#[cfg(test)]
 use serde_json::{Map, Value};
 
+#[cfg(test)]
 use crate::ddl::RECORD_VERSION;
 
 use super::statement::{CompiledStatement, QueryError};
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RowsRead {
     pub rows: Vec<Map<String, Value>>,
@@ -12,6 +15,7 @@ pub struct RowsRead {
     pub rejected_records: usize,
 }
 
+#[cfg(test)]
 pub fn fetch_rows(connection: &Connection, statement: &CompiledStatement) -> Result<RowsRead, QueryError> {
     let mut prepared = connection.prepare_cached(&statement.sql)?;
     let records = prepared.query_map(params_from_iter(statement.bindings.iter()), |row| {

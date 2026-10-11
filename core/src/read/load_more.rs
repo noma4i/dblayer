@@ -14,12 +14,6 @@ pub struct PageChain {
     pub is_loading: bool,
 }
 
-impl PageChain {
-    pub fn advanced(&self, next_cursor: Option<String>, has_next: bool) -> Self {
-        Self { cursor: next_cursor, has_next, loaded_pages: self.loaded_pages + 1, is_loading: false }
-    }
-}
-
 impl LoadMoreVerdict {
     pub fn of(chain: &PageChain, max_pages: Option<usize>) -> Self {
         if chain.is_loading {

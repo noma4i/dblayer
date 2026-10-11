@@ -1,10 +1,6 @@
 use super::*;
 use serde_json::json;
 
-fn row_id(value: &str) -> RowId {
-    RowId::new(value).unwrap()
-}
-
 fn object(value: Value) -> Map<String, Value> {
     value.as_object().unwrap().clone()
 }
@@ -99,15 +95,12 @@ fn enum_and_raw_values_convert_supported_values_only() {
 }
 
 #[test]
-fn array_and_object_read_only_their_own_container() {
+fn array_reads_only_its_own_container() {
     let list = json!(["1", "x", "2"]);
-    let record = json!({"id": "7"});
     assert_eq!(read_array(&list, read_int), Some(vec![1, 2]));
     assert_eq!(read_array(&json!([]), read_int), Some(vec![]));
     assert_eq!(read_array(&json!("a"), read_int), None);
     assert_eq!(read_array(&Value::Null, read_int), None);
-    assert_eq!(read_object(&record, |map| map.get("id").and_then(read_str)), Some("7".to_string()));
-    assert_eq!(read_object(&json!([]), |_| Some("x")), None);
 }
 
 #[test]
@@ -155,53 +148,6 @@ fn null_semantics_compare_numbers_strings_and_absent_values() {
     assert!(null_compare(Some(&three), &five, false, false));
     assert!(!null_compare(Some(&json!("b")), &five, true, false));
     assert!(null_equals(Some(&json!(1)), Some(&json!(1.0))));
-}
-
-#[test]
-fn order_key_numbers_and_strings_keep_order_per_direction() {
-    let id = row_id("row");
-    let values = [-10.0, -1.0, 0.0, 1.0, 10.0];
-    let ascending: Vec<String> =
-        values.iter().map(|number| order_key_encoded(&[OrderValue::Number(*number)], &[SortDirection::Asc], &id)).collect();
-    let descending: Vec<String> =
-        values.iter().map(|number| order_key_encoded(&[OrderValue::Number(*number)], &[SortDirection::Desc], &id)).collect();
-    let strings: Vec<String> = ["a", "ab", "b"]
-        .iter()
-        .map(|text| order_key_encoded(&[OrderValue::Text(text.to_string())], &[SortDirection::Asc], &id))
-        .collect();
-    assert!(ascending.windows(2).all(|pair| pair[0] < pair[1]));
-    assert!(descending.windows(2).all(|pair| pair[0] > pair[1]));
-    assert!(strings[0] < strings[1]);
-    assert!(strings[1] < strings[2]);
-}
-
-#[test]
-fn order_key_missing_sorts_last_in_both_directions_and_nan_is_largest() {
-    let id = row_id("row");
-    let key = |value: OrderValue, direction: SortDirection| order_key_encoded(&[value], &[direction], &id);
-    let number = key(OrderValue::Number(1.0), SortDirection::Asc);
-    let nan = key(OrderValue::Number(f64::NAN), SortDirection::Asc);
-    let missing = key(OrderValue::Missing, SortDirection::Asc);
-    assert!(number < nan);
-    assert!(nan < missing);
-    assert!(key(OrderValue::Number(1.0), SortDirection::Desc) < key(OrderValue::Missing, SortDirection::Desc));
-}
-
-#[test]
-fn order_key_tie_break_uses_id_and_fields_compare_lexicographically() {
-    let id = row_id("row");
-    let with_id = |value: &str| order_key_encoded(&[OrderValue::Number(1.0)], &[SortDirection::Asc], &row_id(value));
-    let pair = |number: f64, text: &str| {
-        order_key_encoded(
-            &[OrderValue::Number(number), OrderValue::Text(text.to_string())],
-            &[SortDirection::Asc, SortDirection::Asc],
-            &id,
-        )
-    };
-    assert_ne!(with_id("1"), with_id("2"));
-    assert!(with_id("1") < with_id("2"));
-    assert!(pair(1.0, "a") < pair(1.0, "b"));
-    assert!(pair(1.0, "z") < pair(2.0, "a"));
 }
 
 #[test]

@@ -9,14 +9,6 @@ pub struct OperationId(pub i64);
 
 pub use crate::commit::OperationStatus;
 
-pub const ALL_STATUSES: [OperationStatus; 5] = [
-    OperationStatus::Pending,
-    OperationStatus::DeliveryUnknown,
-    OperationStatus::Committed,
-    OperationStatus::Failed,
-    OperationStatus::RolledBack,
-];
-
 pub fn is_open(status: OperationStatus) -> bool {
     !removes_row(status)
 }
@@ -39,6 +31,7 @@ pub struct Operation {
 }
 
 impl Operation {
+    #[cfg(test)]
     pub fn new(action_key: &str, row_ids: Vec<RowId>, base_revision: i64, created_at: i64) -> Self {
         Self {
             id: OperationId(0),
@@ -81,8 +74,4 @@ pub fn recovered_status(transport_started: bool, status: OperationStatus) -> Ope
         OperationStatus::Pending if transport_started => OperationStatus::DeliveryUnknown,
         other => other,
     }
-}
-
-pub fn dedupe_namespace(operation: &Operation) -> Option<String> {
-    operation.dedupe_key.as_deref().filter(|key| !key.is_empty()).map(|_| operation.action_key.clone())
 }

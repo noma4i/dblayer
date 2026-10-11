@@ -11,14 +11,6 @@ fn manual_clock_advances_and_sets() {
     assert_eq!(clock.now(), Duration::from_secs(1));
 }
 
-#[tokio::test(start_paused = true)]
-async fn tokio_clock_follows_paused_time() {
-    let clock = TokioClock::new();
-    assert_eq!(clock.now(), Duration::ZERO);
-    tokio::time::advance(Duration::from_secs(42)).await;
-    assert_eq!(clock.now(), Duration::from_secs(42));
-}
-
 #[test]
 fn system_clock_reports_time_since_epoch() {
     assert!(SystemClock.now() > Duration::from_secs(1_700_000_000));

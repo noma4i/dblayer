@@ -146,13 +146,6 @@ impl ColumnType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SchemaVerdict {
-    Fresh,
-    Compatible,
-    Stale,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManifestVerdict {
     Fresh,
@@ -238,25 +231,8 @@ pub fn models_statements(models: &[ModelSpec]) -> Vec<String> {
     models.iter().flat_map(model_statements).collect()
 }
 
-pub fn table_names(models: &[ModelSpec]) -> Vec<String> {
-    models.iter().map(|model| table_name(model.key.as_str())).collect()
-}
-
-pub fn drop_table_statement(model: &str) -> String {
-    format!("DROP TABLE IF EXISTS {}", table_name(model))
-}
-
 pub fn stale_version_delete(model: &str) -> String {
     format!("DELETE FROM {} WHERE record_version <> {RECORD_VERSION}", table_name(model))
-}
-
-pub fn expired_temp_rows_delete(model: &str, protected_count: usize) -> String {
-    let protected = if protected_count == 0 {
-        String::new()
-    } else {
-        format!(" AND id NOT IN ({})", vec!["?"; protected_count].join(", "))
-    };
-    format!("DELETE FROM {} WHERE id LIKE 'temp-%' AND created_at < ?{protected}", table_name(model))
 }
 
 pub fn prepare_connection(connection: &Connection) -> Result<(), DdlError> {
@@ -337,28 +313,6 @@ pub fn fingerprint(model: &ModelSpec) -> String {
     let mut composite_indexes: Vec<&Vec<String>> = model.composite_indexes.iter().collect();
     composite_indexes.sort();
     serde_json::to_string(&ModelFingerprint { fields, relations, composite_indexes }).expect("fingerprint serializes")
-}
-
-pub fn schema_verdicts(
-    stored: &BTreeMap<String, String>,
-    current: &BTreeMap<String, String>,
-) -> BTreeMap<String, SchemaVerdict> {
-    let models = stored.keys().chain(current.keys());
-    models
-        .map(|model| {
-            let verdict = match (stored.get(model), current.get(model)) {
-                (None, _) => SchemaVerdict::Fresh,
-                (Some(_), None) => SchemaVerdict::Stale,
-                (Some(before), Some(after)) if before == after => SchemaVerdict::Compatible,
-                (Some(_), Some(_)) => SchemaVerdict::Stale,
-            };
-            (model.clone(), verdict)
-        })
-        .collect()
-}
-
-pub fn models_needing_reset(verdicts: &BTreeMap<String, SchemaVerdict>) -> Vec<String> {
-    verdicts.iter().filter(|(_, verdict)| **verdict == SchemaVerdict::Stale).map(|(model, _)| model.clone()).collect()
 }
 
 pub fn fingerprint_key(model: &str) -> String {

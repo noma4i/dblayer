@@ -90,18 +90,6 @@ fn create_indexes_include_columns_and_composites() {
 }
 
 #[test]
-fn maintenance_deletes_use_current_version_and_protected_placeholders() {
-    let with_two = expired_temp_rows_delete("messages", 2);
-    let bare = "DELETE FROM row_messages WHERE id LIKE 'temp-%' AND created_at < ?";
-
-    assert_eq!(stale_version_delete("messages"), "DELETE FROM row_messages WHERE record_version <> 1");
-    assert!(with_two.starts_with("DELETE FROM row_messages"));
-    assert!(with_two.contains("id NOT IN (?, ?)"));
-    assert_eq!(expired_temp_rows_delete("messages", 0), bare);
-    assert_eq!(drop_table_statement("messages"), "DROP TABLE IF EXISTS row_messages");
-}
-
-#[test]
 fn model_statements_keep_model_order() {
     let specs = [groups(), messages()];
     let statements = models_statements(&specs);
@@ -109,7 +97,6 @@ fn model_statements_keep_model_order() {
     let messages_at = statements.iter().position(|sql| sql.contains("CREATE TABLE IF NOT EXISTS row_messages")).unwrap();
 
     assert!(groups_at < messages_at);
-    assert_eq!(table_names(&specs), vec!["row_groups".to_string(), "row_messages".to_string()]);
     assert_eq!(model_statements(&groups()).len(), 2);
 }
 
@@ -365,33 +352,6 @@ fn field_and_relation_changes_change_the_fingerprint() {
             ..RelationSpec::new("author", &["authorId"])
         })
     );
-}
-
-#[test]
-fn verdicts_cover_all_models_and_stale_ones_are_sorted() {
-    let stored = BTreeMap::from([("changed", "old"), ("same", "same"), ("removed", "removed")].map(|(k, v)| (k.to_string(), v.to_string())));
-    let current = BTreeMap::from([("new", "new"), ("changed", "new"), ("same", "same")].map(|(k, v)| (k.to_string(), v.to_string())));
-    let verdicts: BTreeMap<String, SchemaVerdict> = [
-        ("zeta", SchemaVerdict::Stale),
-        ("alpha", SchemaVerdict::Stale),
-        ("middle", SchemaVerdict::Compatible),
-        ("beta", SchemaVerdict::Stale),
-    ]
-    .map(|(k, v)| (k.to_string(), v))
-    .into();
-
-    assert_eq!(
-        schema_verdicts(&stored, &current),
-        [
-            ("new", SchemaVerdict::Fresh),
-            ("same", SchemaVerdict::Compatible),
-            ("changed", SchemaVerdict::Stale),
-            ("removed", SchemaVerdict::Stale)
-        ]
-        .map(|(k, v)| (k.to_string(), v))
-        .into()
-    );
-    assert_eq!(models_needing_reset(&verdicts), vec!["alpha", "beta", "zeta"]);
 }
 
 fn verdict(writes: &[(&str, &str)], data_version: Option<&str>, fingerprints: &[(&str, &str)]) -> ManifestVerdict {

@@ -40,11 +40,6 @@ fn cursor_text(connection: &Value, info: Option<&Value>, cursor: Option<&CursorS
     }
 }
 
-pub fn connection_total_count(connection: &Value) -> Option<i64> {
-    let count = connection.get("totalCount")?.as_f64()?;
-    count.is_finite().then(|| count.trunc() as i64)
-}
-
 pub fn landing_fault(connection: &Value, cursor: Option<&CursorSpec>) -> Option<LandingFault> {
     let Some(fields) = connection.as_object() else { return Some(LandingFault::PayloadNotObject) };
     let Some(info) = fields.get("pageInfo").and_then(Value::as_object) else { return Some(LandingFault::MissingPageInfo) };
@@ -55,8 +50,4 @@ pub fn landing_fault(connection: &Value, cursor: Option<&CursorSpec>) -> Option<
         Some(text) if !text.is_empty() => None,
         _ => Some(LandingFault::CursorMissing),
     }
-}
-
-pub fn is_landable(connection: &Value, cursor: Option<&CursorSpec>) -> bool {
-    landing_fault(connection, cursor).is_none()
 }
