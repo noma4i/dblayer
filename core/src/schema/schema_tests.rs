@@ -648,3 +648,19 @@ fn a_merge_rule_must_fit_the_type_of_its_field() {
     assert_eq!(faults(FieldSpec::scalar("x", ScalarKind::Int), MergeRule::Keys { keys: Default::default() }), mismatch);
     assert_eq!(faults(FieldSpec::enumeration("x", &["a", "b"]), ladder(&["c"])), mismatch);
 }
+
+#[test]
+fn a_correlation_path_must_start_at_a_declared_field() {
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.mutation = Some("Create".to_string());
+    create.has_optimistic = true;
+    create.has_temp_row_retention = true;
+    let faults = |paths: &[&str]| {
+        let mut action = create.clone();
+        action.correlate = paths.iter().map(|path| path.to_string()).collect();
+        let spec = ModelSpec { actions: vec![action], ..ModelSpec::new("things", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::object("media").nullable()]) };
+        validate_models(&[spec], &[]).into_iter().map(|fault| fault.error).collect::<Vec<_>>()
+    };
+    assert_eq!(faults(&["id", "media.blobId"]), vec![]);
+    assert_eq!(faults(&["media.blobId", "missing"]), vec![DeclarationError::CorrelateUnknownField("create".into())]);
+}

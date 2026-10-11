@@ -107,6 +107,8 @@ impl Sync {
 #[cfg(test)]
 mod answer_tests;
 #[cfg(test)]
+mod correlate_tests;
+#[cfg(test)]
 mod failure_tests;
 #[cfg(test)]
 mod flush_tests;

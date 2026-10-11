@@ -1,4 +1,4 @@
-use crate::commit::{CommitEnvelope, CommitResult};
+use crate::commit::{CommitEnvelope, CommitResult, WriteOrigin};
 use crate::identity::Generation;
 use crate::store::{PlanCommitError, Reader};
 
@@ -23,6 +23,9 @@ impl Db {
         let mut followed = Followed::default();
         let result = self.shared.store.commit_with(generation, |reader| {
             let Some(mut envelope) = plan(reader)? else { return Ok(None) };
+            if matches!(envelope.origin, WriteOrigin::Event | WriteOrigin::Snapshot) {
+                self.follow_correlations(reader, &mut envelope)?;
+            }
             followed = self.follow_parent_pointers(reader, &mut envelope)?;
             Ok(Some(envelope))
         })?;

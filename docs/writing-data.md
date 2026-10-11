@@ -63,6 +63,8 @@ val chat = Chat.create(name = "Trip", userIds = ids)
 val chatId = chat.confirmedId()
 ```
 
+A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `correlate: [:chatId, :userId, :kind, :body]` to the `create` line, or a `correlate :chatId, :body` line to a custom action, to name the fields that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The swap is the same as for the answer: observers get a `replaced` entry, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
+
 ## Rolling back
 
 Every queued change keeps what it replaced: the old field values, or the destroyed rows with their files and list positions.

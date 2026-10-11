@@ -1,5 +1,6 @@
 mod cache;
 mod commit;
+mod correlate;
 mod diff;
 mod dispatch;
 mod ephemeral;

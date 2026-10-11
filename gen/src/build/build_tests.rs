@@ -305,3 +305,11 @@ fn a_field_merge_rule_keeps_its_words_tiers_and_keys() {
     assert_eq!(fields.iter().find(|field| field.name == "media").unwrap().merge, Some(MergeRule::Keys { keys }));
     assert_eq!(fields.iter().find(|field| field.name == "url").unwrap().merge, Some(MergeRule::NonEmpty));
 }
+
+#[test]
+fn a_create_and_an_action_keep_their_correlation_paths() {
+    let models = parse_models("model Sample do\n  schema do\n    string :body\n    object :media, null: true\n  end\n  create with: CreateSample, correlate: [:body, \"media.blobId\"]\n  action :upload do\n    mutation Upload\n    correlate :body\n  end\nend\n").unwrap();
+    let actions = &models[0].actions;
+    assert_eq!(actions.iter().find(|action| action.name == "create").unwrap().correlate, ["body", "media.blobId"]);
+    assert_eq!(actions.iter().find(|action| action.name == "upload").unwrap().correlate, ["body"]);
+}

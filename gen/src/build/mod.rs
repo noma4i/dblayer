@@ -276,6 +276,7 @@ fn build_standard_action(call: &Call) -> ActionDeclaration {
     action.ignore_response = option(call, "response").and_then(|pair| text_of(&pair.value.item)).as_deref() == Some("ignore");
     action.refetch = list_of(call, "refetch");
     action.local = list_of(call, "local");
+    action.correlate = list_of(call, "correlate");
     action.wrap = option(call, "wrap").and_then(|pair| text_of(&pair.value.item));
     action.root = option(call, "root").and_then(|pair| text_of(&pair.value.item));
     if let Some(Value::Hash(pairs)) = option(call, "input").map(|pair| &pair.value.item) {
@@ -304,6 +305,7 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
             "refetch_of" => action.refetch.push(format!("{}.{}", first_name(line), option(line, "relation").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default())),
             "lands" => action.lands.push(ActionLanding { model: first_name(line), root: option(line, "root").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default() }),
             "refetch" => action.refetch = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
+            "correlate" => action.correlate = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
             _ => {}
         }
     }

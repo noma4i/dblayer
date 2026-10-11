@@ -57,6 +57,8 @@ pub enum DeclarationError {
     DependentOnNonOwner(String),
     #[error("association {0} targets an unknown model")]
     UnknownTarget(String),
+    #[error("action {0} correlates on a field that is not declared")]
+    CorrelateUnknownField(String),
     #[error("field {0} has a merge rule that does not fit its type")]
     MergeRuleMismatch(String),
     #[error("association {0} sets or compares a field that is not declared")]
@@ -185,12 +187,10 @@ impl FieldSpec {
         Self::with_kind(name, FieldKind::Scalar { kind })
     }
 
-    #[cfg(test)]
     pub fn raw(name: &str) -> Self {
         Self::with_kind(name, FieldKind::Raw)
     }
 
-    #[cfg(test)]
     pub fn object(name: &str) -> Self {
         Self::with_kind(name, FieldKind::Object)
     }
@@ -199,12 +199,10 @@ impl FieldSpec {
         Self::with_kind(name, FieldKind::File)
     }
 
-    #[cfg(test)]
     pub fn array(name: &str) -> Self {
         Self::with_kind(name, FieldKind::Array)
     }
 
-    #[cfg(test)]
     pub fn list(name: &str, element: ScalarKind) -> Self {
         Self::with_kind(name, FieldKind::List { element })
     }
@@ -668,6 +666,8 @@ pub struct ActionDeclaration {
     #[serde(default)]
     pub local: Vec<String>,
     #[serde(default)]
+    pub correlate: Vec<String>,
+    #[serde(default)]
     pub ignore_response: bool,
     #[serde(default)]
     pub wrap: Option<String>,
@@ -703,6 +703,7 @@ impl ActionDeclaration {
             refetch: Vec::new(),
             args: BTreeMap::new(),
             local: Vec::new(),
+            correlate: Vec::new(),
             ignore_response: false,
             wrap: None,
             root: None,
@@ -713,6 +714,10 @@ impl ActionDeclaration {
 
     fn check(&self, model: &ModelSpec, taken_names: &HashSet<String>) -> Result<(), DeclarationError> {
         let name = || self.name.clone();
+        let unknown = self.correlate.iter().any(|path| !model.fields.iter().any(|field| field.name == path.split('.').next().unwrap_or_default()));
+        if unknown {
+            return Err(DeclarationError::CorrelateUnknownField(name()));
+        }
         if taken_names.contains(&self.name) {
             return Err(DeclarationError::ActionNameCollision(name()));
         }

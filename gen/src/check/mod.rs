@@ -104,7 +104,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Model, "create" | "update") => {
             plain(
                 Shape::Nothing,
-                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false), key("response", Want::Symbol, false), key("refetch", Want::Symbols, false), key("local", Want::Symbols, false)],
+                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false), key("response", Want::Symbol, false), key("refetch", Want::Symbols, false), key("local", Want::Symbols, false), key("correlate", Want::Symbols, false)],
             )
         }
         (Context::Model, "destroy") => {
@@ -119,6 +119,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Remote, "variables") => free(),
         (Context::Action, "refetch_of") => plain(Shape::Const, vec![key("relation", Want::Symbol, true)]),
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
+        (Context::Action, "correlate") => plain(Shape::Symbols, vec![]),
         (Context::Model, "listen") => {
             plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
         }
