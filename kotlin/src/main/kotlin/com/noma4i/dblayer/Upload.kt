@@ -30,7 +30,7 @@ data class UploadRequest(
                 put("multipart", multipart?.let { buildJsonObject { put("init", it.initiate); put("presign", it.presign); put("complete", it.complete); put("abort", it.abort) } } ?: JsonNull)
                 put("mutation", mutation)
                 put("signed_id_variable", "signedId")
-                put("blob_id_variable", "blobId")
+                put("blob_id_variable", JsonNull)
             })
         }.toString()
 }

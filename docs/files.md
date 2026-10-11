@@ -92,7 +92,7 @@ moment.confirmedId()
 | -------- | ----- |
 | single (smaller than the threshold) | `create` returns url, headers, `signedId`, `blobId`, then one PUT of the file. The answer may sit at a dotted path (`uploadCreate.directUpload`) and `headers` may be an object, a list or a JSON string |
 | multipart (threshold or larger) | `init` returns `key` and `uploadId`, `presign` returns one url per part, parts go out by PUT, `complete` receives the part numbers with their ETags and returns `signedId` and `blobId`, `abort` runs when the upload fails |
-| content mutation | runs once with the original variables plus `signedId` and `blobId` |
+| content mutation | runs once with the original variables plus `signedId` (and `blobId` when the steps name a variable for it, the typed `UploadRequest` sends only `signedId`) |
 
 The file is read in ranges: a single upload in one range up to the 10 MB threshold, a multipart upload in parts of 5 MB. The checksum is base64 MD5, the MIME type comes from the file extension unless you pass one.
 

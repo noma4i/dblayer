@@ -24,7 +24,7 @@ public struct UploadRequest: Sendable {
   var json: String {
     let single = createBlob.map { JSONValue.object(["create": .string($0)]) } ?? .null
     let parts = multipart.map { JSONValue.object(["init": .string($0.initiate), "presign": .string($0.presign), "complete": .string($0.complete), "abort": .string($0.abort)]) } ?? .null
-    let steps = JSONValue.object(["single": single, "multipart": parts, "mutation": .string(mutation), "signed_id_variable": .string("signedId"), "blob_id_variable": .string("blobId")])
+    let steps = JSONValue.object(["single": single, "multipart": parts, "mutation": .string(mutation), "signed_id_variable": .string("signedId"), "blob_id_variable": .null])
     return JSONValue.object(["path": .string(path), "name": name.map(JSONValue.string) ?? .null, "mime": mime.map(JSONValue.string) ?? .null, "variables": .object(variables), "steps": steps]).text
   }
 }

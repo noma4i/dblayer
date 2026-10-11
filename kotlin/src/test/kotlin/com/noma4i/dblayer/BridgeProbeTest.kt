@@ -126,6 +126,7 @@ class BridgeProbeTest {
         val sent = transport.calls.filter { it.operationName == "CreateMoment" }
         assertEquals(1, sent.size)
         assertEquals(true, sent.first().variablesJson.contains("\"signedId\":\"sid\""))
+        assertEquals(false, sent.first().variablesJson.contains("blobId"))
     }
 
     @Test
