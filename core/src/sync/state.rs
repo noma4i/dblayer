@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 use tokio::sync::watch;
 
+use crate::commit::ScopeRef;
+
 use super::error::SyncError;
 use super::{locked, FlightResult, Inner, Sync};
 
@@ -78,8 +80,8 @@ impl Inner {
         states.entry(window_key.to_string()).or_insert_with(|| StateEntry { sender: watch::channel(self.stored_state(window_key)).0, loading: [0; 3] })
     }
 
-    pub(crate) fn load_kind(&self, window_key: &str, cursor: Option<&str>) -> LoadKind {
-        let has_rows = self.db.shared.store.window(window_key).ok().flatten().is_some_and(|window| !window.ids.is_empty());
+    pub(crate) fn load_kind(&self, scope: &ScopeRef, cursor: Option<&str>) -> LoadKind {
+        let has_rows = self.db.shared.store.scope_members(scope.model.as_str(), scope.key.as_str()).is_ok_and(|members| !members.is_empty());
         match (cursor, has_rows) {
             (Some(_), _) => LoadKind::More,
             (None, true) => LoadKind::Refresh,

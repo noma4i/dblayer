@@ -88,6 +88,8 @@ for await state in Moment.feed.state.stream { if state.isLoading { showSpinner()
 Moment.feed.state.flow.collect { state -> if (state.isLoading) showSpinner() }
 ```
 
+While a load runs the state also tells which load it is: `isInitialLoading` (the first load of a list without rows, for a skeleton), `isRefreshing` (a reload of a list with rows) and `isFetchingMore` (the next page, for a footer spinner). Concurrent loads of the same list do not mix, each flag follows its own loads.
+
 **View models.** `LiveList` keeps the rows and the state of a query and moves the relation:
 
 ```swift

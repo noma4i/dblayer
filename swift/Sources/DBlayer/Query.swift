@@ -93,6 +93,12 @@ public struct LoadState: Sendable, Equatable {
   public enum Phase: String, Sendable { case idle, loading, failed }
 
   public var phase: Phase = .idle
+  /// The running load is the first one of a list that has no rows yet.
+  public var isInitialLoading = false
+  /// The running load reloads a list that already has rows.
+  public var isRefreshing = false
+  /// The running load fetches the next page.
+  public var isFetchingMore = false
   public var hasMore = false
   public var total: Int64?
   public var errorKind: String?
@@ -103,6 +109,9 @@ public struct LoadState: Sendable, Equatable {
 
   init(_ change: RelationStateChange) {
     phase = Phase(rawValue: change.phase) ?? .idle
+    isInitialLoading = change.initial
+    isRefreshing = change.refreshing
+    isFetchingMore = change.fetchingMore
     hasMore = change.hasMore
     total = change.total
     errorKind = change.errorKind
