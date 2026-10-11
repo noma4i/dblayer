@@ -119,3 +119,21 @@ fn destroying_a_non_head_message_keeps_the_chat_pointer() {
     db.land(destroy_envelope(&db, "m1")).unwrap();
     assert_eq!(chat_pointer(&db), (Some("m3".to_string()), Some(NEW.to_string())));
 }
+
+#[test]
+fn server_seconds_and_local_milliseconds_sort_compare_and_filter_by_time() {
+    use crate::query::{Order, Query, Where};
+    use crate::value::SortDirection;
+    let db = booted();
+    let at = |id: &str, created_at: &str| {
+        let row = db.spec("messages").unwrap().patch(&obj(json!({"id": id, "chatId": "c1", "createdAt": created_at})));
+        put(&db, "messages", serde_json::Value::Object(row));
+    };
+    at("a", "2026-01-03T00:00:05.900Z");
+    at("b", "2026-01-03T00:00:05Z");
+    at("c", "2026-01-03T00:00:06Z");
+    let ids = |query: Query| db.query(&query).unwrap().into_iter().map(|row| row.id.to_string()).collect::<Vec<_>>();
+    assert_eq!(ids(Query::new("messages").ordered(vec![Order::new("createdAt", SortDirection::Asc)])), ["b", "a", "c"]);
+    let after = Where::compare("createdAt", crate::query::CompareOp::Greater, json!("2026-01-03T00:00:05.500Z"));
+    assert_eq!(ids(Query::new("messages").filtered(after).ordered(vec![Order::new("createdAt", SortDirection::Asc)])), ["a", "c"]);
+}

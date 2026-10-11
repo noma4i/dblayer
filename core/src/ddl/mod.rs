@@ -256,8 +256,10 @@ pub fn migrate_core(connection: &Connection) -> Result<(), DdlError> {
     Ok(transaction.commit()?)
 }
 
+const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds";
+
 pub fn format_version() -> String {
-    let text = [CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice()].concat().join("\n");
+    let text = [CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice(), &[STORED_VALUE_FORMAT]].concat().join("\n");
     Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
