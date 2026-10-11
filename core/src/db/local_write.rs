@@ -12,14 +12,12 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use crate::value::fractional_between;
 use crate::operation::Operation;
 use crate::query::{Query, Where};
-use crate::schema::{AssociationKind, Dependent, ModelSpec, RootShape};
+use crate::schema::{AssociationKind, Dependent, ModelSpec};
 use crate::store::{PlanCommitError, Reader, StoreError};
 use crate::syncstate::{operation_keys, read_sync};
 use crate::upload::UploadState;
 use crate::value::read_id;
-use crate::write::{
-    cascade_destroys, cascade_envelope, cascades, touches_parent, WritePlan,
-};
+use crate::write::{cascade_destroys, cascade_envelope, WritePlan};
 
 use super::error::DbError;
 use super::open::Db;
@@ -321,9 +319,6 @@ impl Db {
     }
 
     pub(crate) fn touch_ops(&self, reader: &Reader<'_>, spec: &ModelSpec, rows: &[&Map<String, Value>], own: &RowRef) -> Result<Vec<EntityOp>, DbError> {
-        if !touches_parent(RootShape::Upsert, WriteOrigin::Optimistic, false) {
-            return Ok(Vec::new());
-        }
         let mut seen = HashSet::from([own.clone()]);
         let mut ops = Vec::new();
         for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && association.touches_parent) {
@@ -341,7 +336,7 @@ impl Db {
     }
 
     pub(crate) fn destroy_targets(&self, reader: &Reader<'_>, own: &RowRef, origin: WriteOrigin) -> Result<Vec<RowRef>, DbError> {
-        if !cascades(RootShape::Destroy, origin, true) {
+        if origin == WriteOrigin::Replace {
             return Ok(vec![own.clone()]);
         }
         let mut descendants = Vec::new();
