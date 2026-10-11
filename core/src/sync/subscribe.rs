@@ -129,15 +129,16 @@ impl Feed {
             return;
         }
         match self.try_apply(items, current) {
-            Ok(true) => {
-                let _ = self.inner.invalidate_model(&self.def.model).await;
+            Ok(stale) => {
+                for model in stale {
+                    let _ = self.inner.invalidate_model(&model).await;
+                }
             }
-            Ok(false) => {}
             Err(_) => locked(&self.status).rejected += 1,
         }
     }
 
-    fn try_apply(&self, items: Vec<Pending>, generation: Generation) -> Result<bool, SyncError> {
+    fn try_apply(&self, items: Vec<Pending>, generation: Generation) -> Result<Vec<String>, SyncError> {
         let db = &self.inner.db;
         let model = self.def.model.as_str();
         let spec = db.spec(model)?;
@@ -199,17 +200,21 @@ impl Feed {
             }
             Ok::<_, SyncError>(Some(envelope))
         });
-        match committed {
-            Ok(_) => {}
+        let followed = match committed {
+            Ok((_, followed)) => followed,
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
-        }
+        };
         db.shared.files.discard(&held_files);
         for id in &announced {
             db.set_ephemeral(model, id, self.def.set.clone())?;
         }
         locked(&self.status).applied += count;
-        Ok(created)
+        let mut stale: Vec<String> = followed.absent.iter().map(ToString::to_string).collect();
+        if created {
+            stale.push(model.to_string());
+        }
+        Ok(stale)
     }
 
     async fn pump(&self, connection: &mut Subscription, retry: &mut SubscriptionRetry) -> Option<SubscriptionFailureKind> {

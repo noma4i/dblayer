@@ -4,7 +4,8 @@ use super::rig::*;
 use crate::db::Db;
 use crate::pacing::ManualClock;
 use crate::query::Query;
-use crate::schema::{AssociationKind, AssociationSpec, Dependent};
+use crate::schema::{AssociationKind, AssociationSpec, Dependent, FieldSpec};
+use crate::value::ScalarKind;
 use crate::sync::{Sync, SyncConfig};
 use crate::transport::MockTransport;
 use crate::transport::{EventSpec, Response, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind};
@@ -313,4 +314,23 @@ async fn upsert_event_touches_the_parent_that_asks_for_it() {
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "t", "userId": "u1"})));
     settle().await;
     assert!(rig.db.find("users", &user).unwrap().unwrap().revision > before);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_event_for_a_child_whose_parent_is_not_stored_reloads_the_watched_lists_of_the_parent() {
+    let mut users = users_spec();
+    users.fields.push(FieldSpec::scalar("lastMomentId", ScalarKind::Id).nullable().optional());
+    let mut moments = moments_spec();
+    moments.associations[0].sets = [("lastMomentId".to_string(), "id".to_string())].into();
+    let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+    for _ in 0..2 {
+        rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));
+    }
+    let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
+    rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": "u9"})));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(rig.transport.call_count("CurrentUser"), 2);
 }
