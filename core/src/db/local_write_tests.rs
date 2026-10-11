@@ -1,8 +1,9 @@
 use super::fixtures::*;
 use super::*;
-use crate::commit::{CommitEnvelope, ScopeOp, ScopeRef, WriteOrigin};
+use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{ModelKey, ScopeKey};
 use crate::query::Query;
+use crate::syncstate::{FailureKind, OperationFailure};
 use crate::schema::{Coverage, PageDirection, RelationSpec, RemoteShape, RemoteSpec, VariableSource};
 use crate::value::relation_scope_key;
 use serde_json::json;
@@ -39,6 +40,43 @@ fn create_touches_the_resident_parent() {
     let after = db.find("chats", &rid("c1")).unwrap().unwrap();
     assert!(after.revision > before);
     assert_eq!(after.text("title"), Some("t"));
+}
+
+const OLD: &str = "2026-01-01T00:00:00.000Z";
+const NEW: &str = "2026-01-02T00:00:00.000Z";
+
+fn chat_pointer(db: &Db) -> (Option<String>, Option<String>) {
+    let chat = db.find("chats", &rid("c1")).unwrap().unwrap();
+    (chat.text("lastMessageId").map(str::to_string), chat.text("lastMessageAt").map(str::to_string))
+}
+
+#[test]
+fn create_sets_the_parent_fields_when_the_child_is_newer() {
+    let db = booted();
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m0", "lastMessageAt": OLD}));
+    let message = db.create("messages", obj(json!({"chatId": "c1", "body": "yo", "createdAt": NEW}))).unwrap();
+    assert_eq!(chat_pointer(&db), (Some(message.id.to_string()), Some(NEW.to_string())));
+}
+
+#[test]
+fn create_keeps_the_parent_fields_when_the_parent_is_newer() {
+    let db = booted();
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m9", "lastMessageAt": NEW}));
+    db.create("messages", obj(json!({"chatId": "c1", "body": "late", "createdAt": OLD}))).unwrap();
+    assert_eq!(chat_pointer(&db), (Some("m9".to_string()), Some(NEW.to_string())));
+}
+
+#[test]
+fn discarding_the_create_gives_the_parent_fields_back() {
+    let db = booted();
+    put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m0", "lastMessageAt": OLD}));
+    let message = db.create("messages", obj(json!({"chatId": "c1", "body": "yo", "createdAt": NEW}))).unwrap();
+    let seq = db.outbox().unwrap()[0].operation.id.0;
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Response, db.generation());
+    envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: OperationFailure::new(FailureKind::Rejected, "no") });
+    db.shared.store.commit(envelope).unwrap();
+    db.discard("messages", &message.id).unwrap();
+    assert_eq!(chat_pointer(&db), (Some("m0".to_string()), Some(OLD.to_string())));
 }
 
 #[test]

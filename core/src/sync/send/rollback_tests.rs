@@ -8,7 +8,7 @@ use crate::transport::{MockTransport, Reply};
 use crate::value::ScalarKind;
 
 use super::super::rig::*;
-use super::super::SyncConfig;
+use super::super::{OperationDef, SyncConfig};
 
 const LARGE: usize = 300 * 1024;
 
@@ -131,4 +131,40 @@ async fn replacing_a_temp_parent_id_rewrites_the_rows_held_by_a_queued_destroy()
     rig.sync.flush().await.unwrap();
     let held = rig.db.outbox().unwrap().into_iter().find(|entry| entry.operation.action_key == "notes:destroy").unwrap();
     assert!(held.rollback.unwrap().to_string().contains("\"momentId\":\"m1\""));
+}
+
+fn with_chat_pointer() -> Vec<ModelSpec> {
+    let mut chats = ModelSpec::new(
+        "chats",
+        vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("lastMessageId", ScalarKind::Id).nullable().optional().indexed(), FieldSpec::scalar("lastMessageAt", ScalarKind::Date).nullable().optional()],
+    );
+    chats.associations.push(AssociationSpec::new("lastMessage", AssociationKind::BelongsTo, "messages", "lastMessageId"));
+    let mut messages = ModelSpec::new(
+        "messages",
+        vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("chatId", ScalarKind::Id).indexed(), FieldSpec::scalar("createdAt", ScalarKind::Date).optional()],
+    );
+    let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "chats", "chatId");
+    chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "createdAt")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
+    messages.associations.push(chat);
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.mutation = Some("CreateMessage".to_string());
+    create.has_optimistic = true;
+    create.has_temp_row_retention = true;
+    create.variables.insert("chatId".to_string(), "chatId".to_string());
+    messages.actions.push(create);
+    vec![chats, messages]
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_server_answer_moves_the_chat_pointer_from_the_temp_id_to_the_real_one() {
+    let rig = rig_on(Db::open_in_memory(with_chat_pointer(), None).unwrap(), MockTransport::new(), SyncConfig::default());
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
+    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("chats"), id: rid("c1"), row: params(json!({"id": "c1"})) });
+    rig.db.land(envelope).unwrap();
+    rig.sync.register(OperationDef::new("CreateMessage", "operation CreateMessage { x }", "createMessage"));
+    rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": {"id": "m7", "chatId": "c1", "createdAt": "2026-01-02T00:00:00.000Z"}})));
+    let message = rig.db.create("messages", params(json!({"chatId": "c1", "createdAt": "2026-01-02T00:00:00.000Z"}))).unwrap();
+    assert_eq!(rig.db.find("chats", &rid("c1")).unwrap().unwrap().text("lastMessageId"), Some(message.id.as_str()));
+    rig.sync.flush().await.unwrap();
+    assert_eq!(rig.db.find("chats", &rid("c1")).unwrap().unwrap().text("lastMessageId"), Some("m7"));
 }

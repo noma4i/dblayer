@@ -126,6 +126,28 @@ fn unsent_operations(reader: &Reader<'_>, id: &RowId, destroyed: &[RowRef]) -> R
     Ok((!touching.is_empty() && touching.iter().all(unsent)).then_some(touching))
 }
 
+fn parent_sets(reader: &Reader<'_>, spec: &ModelSpec, data: &Map<String, Value>) -> Result<Vec<(RowRef, Map<String, Value>, Map<String, Value>)>, DbError> {
+    let mut changes = Vec::new();
+    for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && !association.sets.is_empty()) {
+        let Some(parent_id) = data.get(&association.foreign_key).and_then(read_id) else { continue };
+        let Some(current) = reader.point(association.target.as_str(), parent_id.as_str())? else { continue };
+        if let Some(newer) = &association.newer {
+            let Some(child) = data.get(&newer.child).and_then(Value::as_str) else { continue };
+            if current.get(&newer.parent).and_then(Value::as_str).is_some_and(|parent| parent >= child) {
+                continue;
+            }
+        }
+        let mut merged = current.clone();
+        for (parent_field, child_field) in &association.sets {
+            merged.insert(parent_field.clone(), data.get(child_field).cloned().unwrap_or(Value::Null));
+        }
+        if merged != current {
+            changes.push((RowRef::new(association.target.clone(), parent_id), current, merged));
+        }
+    }
+    Ok(changes)
+}
+
 fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool, DbError> {
     let sql = format!("SELECT 1 FROM {} WHERE id = ?1", table_name(model.as_str()));
     let found: Option<i64> = reader.connection().query_row(&sql, [id.as_str()], |row| row.get(0)).optional()?;
@@ -170,10 +192,19 @@ impl Db {
             if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
                 return Err(DbError::AlreadyExists { model: model.to_string(), id: id.to_string() });
             }
-            queued.rollback = Some(Prior { rows: vec![PriorRow::Created { model: model.to_string(), id: id.to_string() }] }.to_value());
+            let mut prior = vec![PriorRow::Created { model: model.to_string(), id: id.to_string() }];
             queued.scope_ops = local_scope_ops(reader, spec, &id, &data)?;
             plan.upsert(key.clone(), vec![data.clone()]);
-            Ok(Some(self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?))
+            let mut written: Vec<RowRef> = Vec::new();
+            for (parent, current, merged) in parent_sets(reader, spec, &data)? {
+                prior.push(PriorRow::edited(reader, parent.model.as_str(), parent.id.as_str(), &current, &merged)?);
+                written.push(parent.clone());
+                plan.update(parent.model, parent.id, merged);
+            }
+            queued.rollback = Some(Prior { rows: prior }.to_value());
+            let mut touches = self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?;
+            touches.retain(|op| !matches!(op, EntityOp::Touch { model, id } if written.contains(&RowRef::new(model.clone(), id.clone()))));
+            Ok(Some(touches))
         })?;
         Ok(id)
     }
