@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use rusqlite::{params_from_iter, OptionalExtension};
+use rusqlite::params_from_iter;
 use time::macros::format_description;
 use time::OffsetDateTime;
 
@@ -71,15 +71,5 @@ impl Store {
             .collect();
         let result = self.commit(envelope)?;
         Ok(MaintenanceReport { tombstone_drops, temp_rows_dropped: ids.len(), commit: Some(result) })
-    }
-
-    pub fn row_exists(&self, model: &str, id: &str) -> Result<bool, StoreError> {
-        let inner = self.lock();
-        let info = inner.model(model)?;
-        let found: Option<i64> = inner
-            .connection
-            .query_row(&format!("SELECT 1 FROM {} WHERE id = ?1", info.table), [id], |row| row.get(0))
-            .optional()?;
-        Ok(found.is_some())
     }
 }

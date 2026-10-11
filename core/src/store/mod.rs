@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use rusqlite::Connection;
 
-use crate::ddl::{column_name, column_type, table_name, ColumnType, RECORD_VERSION};
+use crate::ddl::{column_name, column_type, table_name, ColumnType};
 use crate::identity::Generation;
 use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::ModelSpec;
@@ -12,11 +11,8 @@ use crate::schema::ModelSpec;
 mod admission;
 mod apply;
 mod boot;
-mod diagnostics;
 mod error;
 mod file_ops;
-mod intake;
-mod location;
 mod maintenance;
 mod membership;
 mod open;
@@ -26,24 +22,17 @@ mod scopes;
 mod tombstones;
 mod windows;
 
-pub use admission::{
-    admit_destroy, admit_patch, admit_upsert, admitted, drop_count, dropped, next_revision, DestroyAdmission,
-    PatchAdmission, RevisionVerdict, RowRevision, UpsertAdmission,
-};
+pub use admission::{admit_upsert, UpsertAdmission};
 pub use apply::PlanCommitError;
 pub use boot::BootReport;
-pub use diagnostics::{sync_tags, SyncContext, SyncFault};
 pub use error::StoreError;
-pub use intake::{accepted_rows, row_intake, tombstone_drop_count, IntakeOutcome, IntakeReason, RowPatch};
-pub use location::StoreLocation;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
 pub use membership::{MembershipChange, MembershipPlan};
-pub use rows::{HydrationVerdict, Reader, ScopeRowsResult, StoredRow};
+pub use rows::{HydrationVerdict, Reader, StoredRow};
+#[cfg(test)]
+pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;
-pub use windows::{
-    family_prefix, window_key, InvalidationRequest, InvalidationScope, PageInfo, Pagination, QueryWindow,
-    WindowFreshness, WindowRecord,
-};
+pub use windows::{family_prefix, window_key, PageInfo, WindowFreshness, WindowRecord};
 
 pub(crate) struct Promoted {
     pub field: String,
@@ -122,12 +111,11 @@ pub type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
 
 pub struct Store {
     inner: Mutex<Inner>,
-    path: Option<PathBuf>,
     hook: OnceLock<StoreHook>,
 }
 
 impl Store {
-    pub(crate) fn from_connection(connection: Connection, path: Option<PathBuf>) -> Self {
+    pub(crate) fn from_connection(connection: Connection) -> Self {
         let inner = Inner {
             connection,
             models: BTreeMap::new(),
@@ -138,7 +126,7 @@ impl Store {
             data_version: None,
             counters: Counters::default(),
         };
-        Self { inner: Mutex::new(inner), path, hook: OnceLock::new() }
+        Self { inner: Mutex::new(inner), hook: OnceLock::new() }
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -155,14 +143,11 @@ impl Store {
         }
     }
 
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
-    }
-
     pub fn generation(&self) -> Generation {
         self.lock().generation
     }
 
+    #[cfg(test)]
     pub fn is_ready(&self) -> bool {
         self.lock().ready
     }
@@ -175,12 +160,9 @@ impl Store {
         self.lock().counters.clone()
     }
 
+    #[cfg(test)]
     pub fn apply_failure(&self) -> Option<String> {
         self.lock().poison.clone()
-    }
-
-    pub fn record_version(&self) -> i64 {
-        RECORD_VERSION
     }
 
     pub fn read<T>(&self, run: impl FnOnce(&Reader<'_>) -> Result<T, StoreError>) -> Result<T, StoreError> {
@@ -203,13 +185,7 @@ mod apply_tests;
 #[cfg(test)]
 mod boot_tests;
 #[cfg(test)]
-mod diagnostics_tests;
-#[cfg(test)]
 mod file_ops_tests;
-#[cfg(test)]
-mod intake_tests;
-#[cfg(test)]
-mod location_tests;
 #[cfg(test)]
 mod maintenance_tests;
 #[cfg(test)]
@@ -222,8 +198,6 @@ mod open_tests;
 mod reset_tests;
 #[cfg(test)]
 mod rows_tests;
-#[cfg(test)]
-mod scopes_tests;
 #[cfg(test)]
 mod tombstones_tests;
 #[cfg(test)]

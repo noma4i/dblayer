@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+#[cfg(test)]
+use std::collections::BTreeSet;
+use std::collections::{BTreeMap, HashSet};
 
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
@@ -8,7 +10,9 @@ use crate::ddl::{manifest_read, ColumnType, RECORD_VERSION, REVISION_SEQ_KEY};
 use crate::identity::RowId;
 use crate::value::fractional_between;
 
-use super::{ModelInfo, Store, StoreError};
+#[cfg(test)]
+use super::Store;
+use super::{ModelInfo, StoreError};
 
 pub(crate) const CHUNK: usize = 500;
 
@@ -21,16 +25,9 @@ pub enum HydrationVerdict {
 }
 
 impl HydrationVerdict {
+    #[cfg(test)]
     pub fn is_silent_drop(self) -> bool {
         self == HydrationVerdict::StaleVersion
-    }
-
-    pub fn counter_name(self) -> Option<&'static str> {
-        match self {
-            HydrationVerdict::StaleVersion => Some("stale_version_drops"),
-            HydrationVerdict::IdentityMismatch | HydrationVerdict::Unreadable => Some("rejected_records"),
-            HydrationVerdict::Accepted => None,
-        }
     }
 }
 
@@ -82,6 +79,7 @@ pub struct StoredRow {
     pub row: Option<Map<String, Value>>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ScopeRowsResult {
     pub rows: Vec<Map<String, Value>>,
@@ -153,34 +151,13 @@ impl<'a> Reader<'a> {
         Ok(self.stored_row(model, id)?.and_then(|stored| stored.row))
     }
 
-    pub fn rows_by_ids(&self, model: &str, ids: &[RowId]) -> Result<Vec<Map<String, Value>>, StoreError> {
-        let names: Vec<String> = ids.iter().map(|id| id.as_str().to_string()).collect();
-        let mut stored = self.stored_rows(model, &names)?;
-        Ok(names.iter().filter_map(|name| stored.remove(name)).filter_map(|stored| stored.row).collect())
-    }
-
-    pub fn all_rows(&self, model: &str) -> Result<Vec<Map<String, Value>>, StoreError> {
-        let info = self.model(model)?;
-        let sql = format!("SELECT id, record_version, payload FROM {} ORDER BY rowid", info.table);
-        let mut statement = self.connection.prepare_cached(&sql)?;
-        let rows = statement.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?))
-        })?;
-        let mut collected = Vec::new();
-        for item in rows {
-            let (id, record_version, payload) = item?;
-            if let (_, Some(row)) = hydrate(record_version, &payload, &id) {
-                collected.push(row);
-            }
-        }
-        Ok(collected)
-    }
-
+    #[cfg(test)]
     pub fn row_count(&self, model: &str) -> Result<i64, StoreError> {
         let info = self.model(model)?;
         Ok(self.connection.query_row(&format!("SELECT COUNT(*) FROM {}", info.table), [], |row| row.get(0))?)
     }
 
+    #[cfg(test)]
     pub fn scope_rows(&self, model: &str, scope_key: &str, limit: Option<usize>) -> Result<ScopeRowsResult, StoreError> {
         let info = self.model(model)?;
         let sql = format!(
@@ -254,6 +231,7 @@ impl<'a> Reader<'a> {
         Ok(keys.collect::<Result<_, _>>()?)
     }
 
+    #[cfg(test)]
     pub fn count_members(&self, model: &str, scope_key: &str) -> Result<i64, StoreError> {
         Ok(self.connection.query_row(
             "SELECT COUNT(*) FROM scope_member WHERE model = ?1 AND scope_key = ?2",
@@ -269,6 +247,7 @@ impl<'a> Reader<'a> {
             .optional()?)
     }
 
+    #[cfg(test)]
     pub fn tombstones(&self, model: &str, ids: &[String]) -> Result<BTreeMap<String, i64>, StoreError> {
         let mut found = BTreeMap::new();
         for chunk in ids.chunks(CHUNK) {
@@ -284,15 +263,18 @@ impl<'a> Reader<'a> {
         Ok(found)
     }
 
+    #[cfg(test)]
     pub fn tombstoned_ids(&self, model: &str, ids: &[String]) -> Result<BTreeSet<String>, StoreError> {
         Ok(self.tombstones(model, ids)?.into_keys().collect())
     }
 
+    #[cfg(test)]
     pub fn is_tombstoned(&self, model: &str, id: &str) -> Result<bool, StoreError> {
         Ok(self.tombstone_seq(model, id)?.is_some())
     }
 }
 
+#[cfg(test)]
 impl Store {
     pub fn point(&self, model: &str, id: &str) -> Result<Option<Map<String, Value>>, StoreError> {
         let stored = self.read(|reader| reader.stored_row(model, id))?;

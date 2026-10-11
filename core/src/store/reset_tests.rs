@@ -117,36 +117,6 @@ fn writes_work_again_after_reset() {
 }
 
 #[test]
-fn logout_removes_database_files_and_marker() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("user-1.sqlite");
-    let store = Store::open(&path).unwrap();
-    store.boot(&[messages_spec()], None).unwrap();
-    store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
-    assert!(path.exists());
-    store.logout().unwrap();
-    assert!(!path.exists());
-    assert!(!directory.path().join("user-1.sqlite-wal").exists());
-    assert!(!directory.path().join("user-1.sqlite.reset").exists());
-}
-
-#[test]
-fn open_completes_interrupted_logout() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("user-1.sqlite");
-    {
-        let store = Store::open(&path).unwrap();
-        store.boot(&[messages_spec()], None).unwrap();
-        store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
-    }
-    std::fs::write(directory.path().join("user-1.sqlite.reset"), b"logout").unwrap();
-    let reopened = Store::open(&path).unwrap();
-    reopened.boot(&[messages_spec()], None).unwrap();
-    assert_eq!(reopened.row_count("messages").unwrap(), 0);
-    assert!(!directory.path().join("user-1.sqlite.reset").exists());
-}
-
-#[test]
 fn resets_advance_the_revision_and_tell_the_hook() {
     use std::sync::{Arc, Mutex};
     let (store, _) = booted_store();

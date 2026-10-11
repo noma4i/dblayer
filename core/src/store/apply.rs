@@ -174,9 +174,6 @@ fn visible_scope_ops(operations: &[ScopeOp], hidden: &HiddenRows) -> Vec<ScopeOp
         .iter()
         .filter_map(|operation| match operation {
             ScopeOp::Append { scope, row, .. } | ScopeOp::Move { scope, row, .. } if is_hidden(scope, row) => None,
-            ScopeOp::ReplaceAll { scope, members } => {
-                Some(ScopeOp::ReplaceAll { scope: scope.clone(), members: members.iter().filter(|(row, _)| !is_hidden(scope, row)).cloned().collect() })
-            }
             other => Some(other.clone()),
         })
         .collect()
@@ -472,19 +469,6 @@ fn apply_scope_ops(
                 "DELETE FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3",
                 params![scope.model.as_str(), scope.key.as_str(), row.as_str()],
             )?,
-            ScopeOp::ReplaceAll { scope, members } => {
-                let mut changed = connection.execute(
-                    "DELETE FROM scope_member WHERE model = ?1 AND scope_key = ?2",
-                    params![scope.model.as_str(), scope.key.as_str()],
-                )?;
-                for (row, order_key) in members {
-                    changed += connection.execute(
-                        "INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES (?1, ?2, ?3, ?4)",
-                        params![scope.model.as_str(), scope.key.as_str(), row.as_str(), order_key],
-                    )?;
-                }
-                changed
-            }
         };
         if changed > 0 {
             wrote = true;

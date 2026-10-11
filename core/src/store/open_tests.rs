@@ -10,7 +10,6 @@ fn in_memory_store_has_empty_manifest_and_core_tables() {
     }
     assert_ne!(store.journal_mode().unwrap().to_lowercase(), "delete");
     assert!(!store.is_ready());
-    assert!(store.path().is_none());
 }
 
 #[test]
@@ -20,7 +19,6 @@ fn open_creates_file_and_parent_directory_without_model_tables() {
     let store = Store::open(&path).unwrap();
     assert!(path.exists());
     assert!(!store.table_exists("row_messages").unwrap());
-    assert_eq!(store.path(), Some(path.as_path()));
     assert_eq!(store.journal_mode().unwrap().to_lowercase(), "wal");
 }
 

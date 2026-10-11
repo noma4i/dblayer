@@ -264,20 +264,6 @@ fn matching_record_version_skips_the_sweep() {
 }
 
 #[test]
-fn drop_stale_versions_removes_only_old_versions() {
-    let (store, _) = booted_store();
-    store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
-    assert_eq!(store.drop_stale_versions("messages").unwrap(), 0);
-    assert!(store.point("messages", "m1").unwrap().is_some());
-    exec(
-        &store,
-        "INSERT INTO row_messages (id, revision, born_rev, field_rev, record_version, payload) VALUES ('m2', 0, 0, x'7b7d', 0, x'7b7d')",
-    );
-    assert_eq!(store.drop_stale_versions("messages").unwrap(), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
-}
-
-#[test]
 fn boot_prunes_expired_tombstones() {
     let (store, clock) = booted_store();
     store.mark_tombstone("messages", "old", 1, 0).unwrap();
