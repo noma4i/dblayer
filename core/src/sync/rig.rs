@@ -69,6 +69,7 @@ pub fn moments_spec() -> ModelSpec {
     spec.relations.extend([feed, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
     spec.listens = vec![UpdatesSpec { subscription: "MomentListen".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None },
         UpdatesSpec { subscription: "MomentWrapped".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: Some("momentWrapped.wrapped".to_string()), id: Some("key".to_string()) },
+        UpdatesSpec { subscription: "MomentDebounced".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: Some("300.milliseconds".to_string()), root: None, id: None },
     ];
     spec.actions = vec![
         bound("create", RootShape::Upsert, "CreateMoment"),
@@ -150,6 +151,7 @@ pub fn register_operations(sync: &Sync) {
         ("MomentsSearch", "moments"),
         ("MomentListen", "momentListen"),
         ("MomentWrapped", "momentWrapped"),
+        ("MomentDebounced", "momentDebounced"),
         ("MomentsByMood", "moments"),
         ("MomentsPulse", "feed"),
         ("CurrentUser", "me"),

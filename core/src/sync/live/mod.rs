@@ -67,7 +67,7 @@ impl Inner {
         let task = runtime.spawn(async move {
             let mut event = EventSpec::new(updates.subscription.as_str());
             if let Some(interval) = updates.debounce.as_deref().and_then(parse_duration) {
-                event = event.debounced(interval);
+                event = event.debounced(interval).merged_by_row();
             }
             let effect = if updates.removes { EventEffect::Destroy } else { EventEffect::Upsert };
             let mut def = SubscriptionDef::new(event, &updates.subscription, &model, effect);

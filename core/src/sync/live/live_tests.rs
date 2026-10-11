@@ -134,3 +134,15 @@ async fn event_root_and_id_paths_find_the_row_in_a_wrapped_payload() {
     settle().await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("from wrapper".to_string()));
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_debounced_listen_subscribes_and_lands_its_frame_after_the_interval() {
+    let rig = rig();
+    rig.sync.listen();
+    settle().await;
+    assert_eq!(rig.transport.call_count("MomentDebounced"), 1);
+    rig.transport.emit("MomentDebounced", SubscriptionEvent::Next(Response::data(json!({"momentDebounced": {"id": "m7", "text": "later", "userId": null}}))));
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    settle().await;
+    assert_eq!(text_of(&rig, "moments", "m7"), Some("later".to_string()));
+}
