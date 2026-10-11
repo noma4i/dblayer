@@ -5,7 +5,8 @@ use std::hash::Hash;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use time::macros::format_description;
-use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::identity::{RowId, ScopeKey};
 
@@ -134,7 +135,7 @@ pub fn read_bool(value: &Value) -> Option<bool> {
 
 pub fn read_date(value: &Value) -> Option<String> {
     match value {
-        Value::String(text) => Some(text.clone()),
+        Value::String(text) => Some(canonical_date(text)),
         Value::Number(number) => iso_from_milliseconds(number.as_f64()?),
         _ => None,
     }
@@ -178,15 +179,20 @@ pub fn require<T>(
     read(value).ok_or_else(|| ScalarError::RejectedValue { context: context.to_string() })
 }
 
+fn canonical_iso(moment: OffsetDateTime) -> Option<String> {
+    moment.to_offset(UtcOffset::UTC).format(format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z")).ok()
+}
+
+fn canonical_date(text: &str) -> String {
+    OffsetDateTime::parse(text, &Rfc3339).ok().and_then(canonical_iso).unwrap_or_else(|| text.to_string())
+}
+
 fn iso_from_milliseconds(milliseconds: f64) -> Option<String> {
     if !milliseconds.is_finite() {
         return None;
     }
     let nanoseconds = (milliseconds.floor() as i128).checked_mul(1_000_000)?;
-    OffsetDateTime::from_unix_timestamp_nanos(nanoseconds)
-        .ok()?
-        .format(format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"))
-        .ok()
+    canonical_iso(OffsetDateTime::from_unix_timestamp_nanos(nanoseconds).ok()?)
 }
 
 fn compare_numbers(left: &Number, right: &Number) -> Option<Ordering> {

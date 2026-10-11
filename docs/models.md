@@ -34,7 +34,7 @@ Fields and indexes live only inside `schema do ... end`. A field outside it is a
 
 | Word | Type |
 | ---- | ---- |
-| `string`, `num`, `int`, `bool`, `date`, `id` | scalars (`id` accepts a string or a number and stores a string) |
+| `string`, `num`, `int`, `bool`, `date`, `id` | scalars (`id` accepts a string or a number and stores a string, `date` accepts an ISO 8601 text or milliseconds and stores UTC text with milliseconds, `2026-01-03T00:00:05Z` becomes `2026-01-03T00:00:05.000Z`, so text order is time order) |
 | `enum :name, values: [:a, :b]` | one of the listed values |
 | `object`, `array`, `raw` | JSON values |
 | `list :name, of: :string` | array of scalars |

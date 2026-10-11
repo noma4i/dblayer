@@ -26,9 +26,22 @@ fn scalar_kinds_convert_supported_values_only() {
     assert_eq!(read_bool(&json!("true")), Some(true));
     assert_eq!(read_bool(&json!("yes")), None);
     assert_eq!(read_bool(&json!(1)), None);
-    assert_eq!(read_date(&json!("2021-05-05T10:00:00Z")), Some("2021-05-05T10:00:00Z".to_string()));
     assert_eq!(read_date(&json!(0)), Some("1970-01-01T00:00:00.000Z".to_string()));
     assert_eq!(read_date(&json!(true)), None);
+}
+
+#[test]
+fn a_date_is_stored_as_utc_with_milliseconds_so_text_order_is_time_order() {
+    let cases = [
+        ("2021-05-05T10:00:00Z", "2021-05-05T10:00:00.000Z"),
+        ("2021-05-05T10:00:00.9Z", "2021-05-05T10:00:00.900Z"),
+        ("2021-05-05T10:00:00.123456Z", "2021-05-05T10:00:00.123Z"),
+        ("2021-05-05T21:00:00+11:00", "2021-05-05T10:00:00.000Z"),
+        ("2021-05-05T10:00:00.000Z", "2021-05-05T10:00:00.000Z"),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(read_date(&json!(input)), Some(expected.to_string()), "{input}");
+    }
 }
 
 #[test]
@@ -287,7 +300,7 @@ fn relation_values_normalize_to_equal_params_and_keys() {
     let text = BTreeMap::from([("q".to_string(), ScalarKind::Str), ("at".to_string(), ScalarKind::Date)]);
     let both = normalize_relation_params(&object(json!({"q": "hi", "at": "2021-01-01T00:00:00Z"})), &text).unwrap();
     assert_eq!(both["q"], "hi");
-    assert_eq!(both["at"], "2021-01-01T00:00:00Z");
+    assert_eq!(both["at"], "2021-01-01T00:00:00.000Z");
     let from_string_key = relation_scope_key_from_values("message", "thread", &object(json!({"chatId": "42"})), &kinds).unwrap();
     let from_number_key = relation_scope_key_from_values("message", "thread", &object(json!({"chatId": 42})), &kinds).unwrap();
     assert_eq!(from_string_key, from_number_key);

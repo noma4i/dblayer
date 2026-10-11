@@ -81,6 +81,18 @@ fn landed_older_message_keeps_the_chat_pointer() {
     assert_eq!(chat_pointer(&db), (Some("m9".to_string()), Some(NEW.to_string())));
 }
 
+#[test]
+fn a_message_later_in_the_same_second_moves_a_pointer_that_the_server_wrote_in_whole_seconds() {
+    let db = booted();
+    let server_row = |model: &str, row: serde_json::Value| db.spec(model).unwrap().patch(&obj(row));
+    put(&db, "chats", serde_json::Value::Object(server_row("chats", json!({"id": "c1", "title": "t", "lastMessageId": "m1", "lastMessageAt": "2026-01-03T00:00:05Z"}))));
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    let row = server_row("messages", json!({"id": "m2", "chatId": "c1", "createdAt": "2026-01-03T00:00:05.900Z"}));
+    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("messages"), id: rid("m2"), row });
+    db.land(envelope).unwrap();
+    assert_eq!(chat_pointer(&db).0.as_deref(), Some("m2"));
+}
+
 fn destroy_envelope(db: &Db, id: &str) -> CommitEnvelope {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("messages"), id: rid(id), reason: crate::commit::DestroyReason::Server });
