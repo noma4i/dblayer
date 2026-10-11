@@ -16,6 +16,7 @@ pub struct Counters {
     pub cache_misses: usize,
     pub cache_evictions: usize,
     pub transport_calls: usize,
+    pub lost_outcomes: usize,
 }
 
 impl Counters {
@@ -51,6 +52,7 @@ impl Add for Counters {
             cache_misses: self.cache_misses + other.cache_misses,
             cache_evictions: self.cache_evictions + other.cache_evictions,
             transport_calls: self.transport_calls + other.transport_calls,
+            lost_outcomes: self.lost_outcomes + other.lost_outcomes,
         }
     }
 }

@@ -92,7 +92,7 @@ pub(crate) struct Inner {
     pub connectivity: Connectivity,
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
     pub replaced: Mutex<HashMap<String, String>>,
-    pub outcomes: Mutex<HashMap<i64, send::SendResult>>,
+    pub outcomes: Mutex<send::Outcomes>,
 }
 
 impl Inner {
@@ -133,7 +133,7 @@ impl Sync {
             connectivity: Connectivity::new(),
             wake: Mutex::new(None),
             replaced: Mutex::new(HashMap::new()),
-            outcomes: Mutex::new(HashMap::new()),
+            outcomes: Mutex::new(send::Outcomes::default()),
         };
         Self { inner: Arc::new(inner) }
     }
@@ -143,7 +143,9 @@ impl Sync {
     }
 
     pub fn counters(&self) -> Counters {
-        locked(&self.inner.counters).clone()
+        let mut counters = locked(&self.inner.counters).clone();
+        counters.lost_outcomes = locked(&self.inner.outcomes).lost();
+        counters
     }
 }
 

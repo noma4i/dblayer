@@ -233,4 +233,28 @@ struct BridgeProbeTests {
     try await older.value
     list.stop()
   }
+
+  @Test
+  func aRefusalAnsweredBeforeSettledStartedIsStillThrownOnce() async throws {
+    let transport = MockTransport()
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id uuid likedByMe media createdAt } }"}]"#)
+    let local = try await Moment.create(text: "hello", media: nil)
+    try await local.settled()
+    let moment = try #require(await Moment.find(try await local.confirmedId()).current())
+
+    transport.enqueue("LikeMoment", reply: #"{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}"#)
+    let liked = try await moment.like()
+    #expect(liked.likedByMe)
+    var attempts = 0
+    while await Moment.find(moment.id).current()?.likedByMe != false, attempts < 400 {
+      attempts += 1
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await Moment.find(moment.id).current()?.likedByMe == false)
+
+    await #expect(throws: (any Error).self) { try await liked.settled() }
+    try await liked.settled()
+  }
 }

@@ -49,6 +49,8 @@ user.update(name = name)
 user.settled()
 ```
 
+A refusal is kept until `settled()` or `confirmedId()` reads it, even when the server answered before you called them, and each refusal is reported once. Kept refusals live in memory: after a restart the row state (`failed`, `needsAttention`) is what remains. At most 2048 unread refusals are kept, the oldest is dropped past that and counted in the core counter `lost_outcomes`.
+
 To wait for the server id, for example to open the screen of the record you just created, call `confirmedId()`. It returns the real id once the queued `create` is answered and throws if the server refuses it or the device is offline:
 
 ```swift

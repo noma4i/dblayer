@@ -503,6 +503,56 @@ async fn settled_fails_with_the_refusal() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn settled_reports_a_refusal_answered_before_it_started_and_reports_it_once() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
+    rig.sync.flush().await.unwrap();
+    assert!(rig.db.outbox().unwrap().is_empty());
+    let error = rig.sync.settled("moments", &rid("m1")).await.unwrap_err();
+    assert!(error.to_string().contains("not allowed"));
+    rig.sync.settled("moments", &rid("m1")).await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn confirmed_reports_a_create_refused_before_it_started() {
+    let rig = rig();
+    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    rig.transport.enqueue("CreateMoment", Reply::graphql_error("nope", "FORBIDDEN"));
+    rig.sync.flush().await.unwrap();
+    assert!(rig.sync.confirmed("moments", &local.id).await.unwrap_err().to_string().contains("nope"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn settled_reports_a_destroy_and_a_kept_update_refused_before_it_started() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.db.destroy("moments", &rid("m1")).unwrap();
+    rig.transport.enqueue("DeleteMoment", Reply::graphql_error("no destroy", "FORBIDDEN"));
+    rig.sync.flush().await.unwrap();
+    assert!(rig.sync.settled("moments", &rid("m1")).await.unwrap_err().to_string().contains("no destroy"));
+    let keeping = keeping_rig();
+    put(&keeping, "moments", moment("m2", "t"));
+    keeping.db.update("moments", &rid("m2"), params(json!({"text": "new"}))).unwrap();
+    keeping.transport.enqueue("UpdateMoment", Reply::graphql_error("kept", "FORBIDDEN"));
+    keeping.sync.flush().await.unwrap();
+    assert!(keeping.sync.settled("moments", &rid("m2")).await.unwrap_err().to_string().contains("kept"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn settled_forgets_a_refusal_that_a_retry_has_since_committed() {
+    let rig = rig_without_operations(crate::db::Db::open_in_memory(specs(), None).unwrap(), crate::transport::MockTransport::new(), crate::sync::SyncConfig::default());
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.sync.flush().await.unwrap();
+    rig.sync.register(crate::sync::OperationDef::new("UpdateMoment", "operation UpdateMoment { x }", "updateMoment"));
+    rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
+    rig.sync.retry("moments", &rid("m1")).await.unwrap();
+    rig.sync.settled("moments", &rid("m1")).await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
 async fn update_whose_mutation_is_not_registered_fails_visibly_and_sends_after_registering() {
     let rig = rig_without_operations(crate::db::Db::open_in_memory(specs(), None).unwrap(), crate::transport::MockTransport::new(), crate::sync::SyncConfig::default());
     put(&rig, "moments", moment("m1", "old"));

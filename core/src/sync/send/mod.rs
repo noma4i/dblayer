@@ -1,10 +1,12 @@
 mod flush;
+mod outcomes;
 mod pause;
 mod report;
 mod settle;
 mod variables;
 
 pub(crate) use flush::{Delivery, Sending};
+pub(crate) use outcomes::Outcomes;
 pub use report::{FlushReport, SendResult, SentOperation, SkipReason};
 
 use crate::commit::OperationStatus;
@@ -27,24 +29,18 @@ impl Sync {
                 .collect())
         };
         let mut pending = waiting(id)?;
+        if let Some(failure) = locked(&self.inner.outcomes).failure_of(model, id, &pending) {
+            return Err(failure);
+        }
         while !pending.is_empty() {
             if !self.inner.connectivity.is_online() {
                 return Err(SyncError::Offline);
             }
             self.flush().await?;
-            let failure = {
-                let outcomes = locked(&self.inner.outcomes);
-                pending.iter().find_map(|sequence| match outcomes.get(sequence) {
-                    Some(SendResult::Rejected(message)) => Some(SyncError::Graphql(message.clone())),
-                    Some(SendResult::DeliveryUnknown | SendResult::Quarantined) => Some(SyncError::Store(format!("{model} {id}: the answer is unknown"))),
-                    Some(SendResult::Discarded) => Some(SyncError::Cancelled),
-                    _ => None,
-                })
-            };
-            if let Some(failure) = failure {
+            pending = waiting(id)?;
+            if let Some(failure) = locked(&self.inner.outcomes).failure_of(model, id, &pending) {
                 return Err(failure);
             }
-            pending = waiting(id)?;
             if !pending.is_empty() {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
@@ -103,6 +99,8 @@ mod follower_tests;
 mod network_tests;
 #[cfg(test)]
 mod order_tests;
+#[cfg(test)]
+mod outcomes_tests;
 #[cfg(test)]
 mod pass_tests;
 #[cfg(test)]

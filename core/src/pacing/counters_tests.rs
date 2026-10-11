@@ -17,6 +17,7 @@ fn new_counters_have_zero_values() {
         cache_evictions: 0,
         observation_ticks: 0,
         transport_calls: 0,
+        lost_outcomes: 0,
     });
 }
 

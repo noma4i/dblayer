@@ -81,21 +81,16 @@ impl Inner {
         while let Some(entry) = self.next_ready(&mut attempted, &mut report)? {
             attempted.insert(entry.operation.id.0);
             let result = self.send(&entry).await?;
-            self.record_outcome(entry.operation.id.0, &result);
+            self.record_outcome(&entry, &result);
             report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key.clone(), result });
         }
         Ok(report)
     }
 
-    fn record_outcome(&self, sequence: i64, result: &SendResult) {
-        if matches!(result, SendResult::Deferred | SendResult::Skipped(_)) {
-            return;
-        }
-        let mut outcomes = locked(&self.outcomes);
-        if outcomes.len() > 2048 {
-            outcomes.clear();
-        }
-        outcomes.insert(sequence, result.clone());
+    fn record_outcome(&self, entry: &OutboxOperation, result: &SendResult) {
+        let Some((model, _)) = Operation::split_action_key(&entry.operation.action_key) else { return };
+        let rows = entry.operation.row_ids.iter().cloned().chain(entry.operation.temp_id.clone()).collect();
+        locked(&self.outcomes).keep(entry.operation.id.0, &model, rows, result);
     }
 
     fn next_ready(&self, attempted: &mut HashSet<i64>, report: &mut FlushReport) -> Result<Option<OutboxOperation>, SyncError> {
