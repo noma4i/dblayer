@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
-use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, FileOp, OperationTransition, WriteOrigin};
+use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, FileOp, OperationTransition, ScopeOp, WriteOrigin};
 use crate::db::{read_outbox, Prior};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::pacing::Debounce;
@@ -16,7 +16,7 @@ use crate::transport::{
     EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFault,
     SubscriptionRetry, TransportError, RETRY_BACKOFF,
 };
-use crate::value::read_id;
+use crate::value::{fractional_between, read_id};
 
 use super::error::SyncError;
 use super::extract::root_value;
@@ -145,6 +145,7 @@ impl Feed {
         let committed = db.commit_following_report(generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
+            let mut joins: Vec<ScopeOp> = Vec::new();
             let mut destroyed: BTreeSet<(String, String)> = BTreeSet::new();
             for item in items {
                 let key = (model.to_string(), item.id.as_str().to_string());
@@ -175,12 +176,16 @@ impl Feed {
                         let id = RowId::new(&related_id).map_err(|error| SyncError::Event(error.to_string()))?;
                         operations.insert((related_model.clone(), related_id), EntityOp::Upsert { model: ModelKey::new(&related_model), id, row });
                     }
+                    if stored.is_none() {
+                        joins.extend(self.inner.joins_of(reader, model, &item.id, &row)?);
+                    }
                     operations.insert(key, EntityOp::Upsert { model: ModelKey::new(model), id: item.id, row });
                 }
                 count += 1;
             }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
             envelope.entity_ops = operations.into_values().chain(touches).collect();
+            envelope.scope_ops = joins;
             if !destroyed.is_empty() {
                 for entry in read_outbox(reader)? {
                     let keys = operation_keys(&entry.operation.action_key, &entry.operation.row_ids, entry.operation.temp_id.as_ref());
@@ -324,5 +329,31 @@ impl Sync {
         let feed = Feed { inner: self.inner.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone() };
         let task = tokio::spawn(feed.run(request, first));
         Ok(EventSubscription { abort: task.abort_handle(), status })
+    }
+}
+
+impl Inner {
+    fn joins_of(&self, reader: &crate::store::Reader<'_>, model: &str, id: &RowId, row: &Map<String, Value>) -> Result<Vec<ScopeOp>, SyncError> {
+        let spec = self.db.spec(model)?;
+        let mut joins = Vec::new();
+        for relation in spec.relations.iter().filter(|relation| relation.joins_events && relation.remote.is_some() && relation.text_params.is_empty()) {
+            let params: Map<String, Value> = relation.by_columns.iter().filter_map(|column| row.get(column).filter(|value| !value.is_null()).map(|value| (column.clone(), value.clone()))).collect();
+            if params.len() != relation.by_columns.len() {
+                continue;
+            }
+            let Ok(resolved) = self.resolve(model, &relation.name, &params) else { continue };
+            let loaded = rusqlite::OptionalExtension::optional(reader.connection().query_row("SELECT 1 FROM query_window WHERE key = ?1", [&resolved.window_key], |row| row.get::<_, i64>(0)))
+                .map_err(|error| SyncError::Event(error.to_string()))?;
+            if loaded.is_none() {
+                continue;
+            }
+            let members = reader.scope_members(model, resolved.scope.key.as_str())?;
+            if members.iter().any(|(member, _)| member == id.as_str()) {
+                continue;
+            }
+            let order_key = fractional_between(members.last().map(|(_, key)| key.as_str()), None).map_err(|error| SyncError::Event(error.to_string()))?;
+            joins.push(ScopeOp::Append { scope: resolved.scope, row: id.clone(), order_key });
+        }
+        Ok(joins)
     }
 }

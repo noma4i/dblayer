@@ -27,7 +27,7 @@ impl Inner {
 
     pub(crate) async fn invalidate_model(&self, model: &str) -> Result<(), SyncError> {
         let spec = self.db.spec(model)?;
-        let names = spec.relations.iter().filter(|relation| relation.remote.is_some()).map(|relation| relation.name.clone()).collect();
+        let names = spec.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
         self.mark_and_reload(model, &names).await
     }
 

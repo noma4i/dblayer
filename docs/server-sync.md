@@ -77,6 +77,8 @@ end
 
 Use `on_absent :destroy` when the same data is also read with a query on the table (`Moment.where(Moment.userId == id)`), so that rows deleted on the server disappear there too.
 
+A row that arrives by an event and that was not stored before is reported to the lists of its model as new: they are marked stale and the watched ones are loaded again. For a relation that lists every row of its params (`remote :thread, params: [:chatId], joins: :events do ... end`) this reload is not needed: the new row is appended to the list that its param values name, when that list is loaded, in the same commit as the event, and the list is neither marked stale nor loaded again. Declare `joins: :events` only for a relation without server-side filters (`variables`), because the library cannot tell from the row whether the server would have listed it.
+
 `refresh(replace: true)` replaces the whole list with the response (unconfirmed records still stay). It is meant for small lists where the server is the only authority.
 
 ## Mutations

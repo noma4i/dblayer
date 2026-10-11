@@ -533,6 +533,8 @@ pub struct RelationSpec {
     pub is_global: bool,
     #[serde(default)]
     pub sort: Sort,
+    #[serde(default)]
+    pub joins_events: bool,
 }
 
 impl RelationSpec {
@@ -544,6 +546,7 @@ impl RelationSpec {
             remote: None,
             is_global: false,
             sort: Sort::ServerOrder,
+            joins_events: false,
         }
     }
 

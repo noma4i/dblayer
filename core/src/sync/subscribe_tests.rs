@@ -259,6 +259,25 @@ async fn event_that_creates_a_row_refreshes_the_watched_lists_of_its_model() {
     assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()), ["m1", "m2"]);
 }
 
+fn user_list(ids: &[&str]) -> crate::transport::Reply {
+    crate::transport::Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()}))
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_event_row_joins_the_loaded_list_that_declares_it_and_does_not_reload_it() {
+    let rig = rig_with_subscription();
+    let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();
+    rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
+    rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
+    let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
+    rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": "u1"})));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(member_ids(&rig, "moments", "by_user", &params), ["m1", "m2"]);
+    assert_eq!(rig.transport.call_count("MomentsByUser"), 1);
+}
+
 struct RefusingFirstSubscribe {
     inner: MockTransport,
     refusals: std::sync::atomic::AtomicUsize,

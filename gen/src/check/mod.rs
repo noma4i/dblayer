@@ -101,7 +101,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
     let free = || Some(Word { shape: Shape::Nothing, keys: vec![], block: false, free_keys: true });
     match (context, word) {
         (Context::Model, "schema") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
-        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("text", Want::Symbols, false), key("order", Want::Hash, false)], block: true, free_keys: false }),
+        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("text", Want::Symbols, false), key("order", Want::Hash, false), key("joins", Want::Symbol, false)], block: true, free_keys: false }),
         (Context::Model, "action") => Some(Word { shape: Shape::Name, keys: vec![key("mutation", Want::Operation, false), key("optimistic", Want::Hash, false)], block: true, free_keys: false }),
         (Context::Model, "create" | "update") => {
             plain(

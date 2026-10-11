@@ -50,6 +50,7 @@ pub fn moments_spec() -> ModelSpec {
     history.remote = Some(remote("MomentsHistory", backward, "5.minutes"));
     let mut by_user = RelationSpec::new("by_user", &["userId"]);
     by_user.remote = Some(remote("MomentsByUser", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
+    by_user.joins_events = true;
     let mut by_mood = RelationSpec::new("by_mood", &["mood"]);
     by_mood.remote = Some(remote("MomentsByMood", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
     let mut search = RelationSpec::new("search", &[]);

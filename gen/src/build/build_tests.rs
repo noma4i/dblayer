@@ -189,6 +189,13 @@ fn action_block_collects_mutation_input_optimistic_and_refetch() {
 }
 
 #[test]
+fn remote_joins_events_marks_the_relation() {
+    let model = build_one("  remote :mine, params: [:ownerId], joins: :events do\n    query Mine\n  end\n  remote :other, params: [:ownerId] do\n    query Other\n  end");
+    let flags: Vec<bool> = model.relations.iter().map(|relation| relation.joins_events).collect();
+    assert_eq!(flags, [true, false]);
+}
+
+#[test]
 fn keyed_optimistic_builds_an_op_that_names_its_args() {
     let model = build_one("  action :tag do\n    mutation TagSample\n    args label: :string\n    optimistic ownerId: { by: :ownerId, element: { ownerId: :label, createdAt: nil } }\n  end");
     assert_eq!(model.actions[0].optimistic.get("ownerId"), Some(&json!({"$keyed": {"by": "ownerId", "element": {"ownerId": {"$arg": "label"}, "createdAt": null}}})));
