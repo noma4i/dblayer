@@ -17,22 +17,22 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     self.init(endpoint: endpoint, headers: { headers })
   }
 
-  public func query(request: TransportRequest) async throws -> String { try await post(request) }
-  public func mutate(request: TransportRequest) async throws -> String { try await post(request) }
+  public func query(request: TransportRequest) async throws -> String { try await post(request, kind: .query) }
+  public func mutate(request: TransportRequest) async throws -> String { try await post(request, kind: .mutation) }
 
   private func body(_ request: TransportRequest) -> [String: Any] {
     let variables = (try? JSONSerialization.jsonObject(with: Data(request.variablesJson.utf8))) ?? [String: Any]()
     return ["query": request.document, "operationName": request.operationName, "variables": variables]
   }
 
-  private func post(_ request: TransportRequest) async throws -> String {
+  private func post(_ request: TransportRequest, kind: GraphQLOperationKind) async throws -> String {
     var urlRequest = URLRequest(url: endpoint)
     urlRequest.httpMethod = "POST"
     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
     headers().forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
     urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body(request))
     let data: Data, response: URLResponse
-    do { (data, response) = try await session.data(for: urlRequest) } catch { throw Self.failure(error) }
+    do { (data, response) = try await session.data(for: urlRequest) } catch { throw TransportFailure.classify(error, kind: kind) }
     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
       throw DbError.Http(status: UInt16(http.statusCode), detail: String(decoding: data, as: UTF8.self))
     }

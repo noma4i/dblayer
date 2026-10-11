@@ -74,12 +74,8 @@ public final class DatabaseTransport: Transport, @unchecked Sendable {
     do {
       let data = try await run().send(operationName: request.operationName, document: request.document, variables: JSONValue.parse(request.variablesJson), kind: kind)
       return String(decoding: data, as: UTF8.self)
-    } catch let error as GraphQLTransportError {
-      throw DbError.Network(detail: String(describing: error))
-    } catch let error as URLError {
-      throw DbError.Network(detail: error.localizedDescription)
     } catch {
-      throw DbError.Network(detail: String(describing: error))
+      throw TransportFailure.classify(error, kind: kind)
     }
   }
 }

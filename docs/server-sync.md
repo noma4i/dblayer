@@ -40,6 +40,7 @@ Moment.feed.refresh()            // pull to refresh, replaces in one commit
 - Fresh data is not requested again. `fresh_for` sets how long data counts as fresh.
 - Identical parallel loads become one request.
 - Network and server errors of a load are retried within a budget; fatal errors are returned. Mutations are never retried by themselves, see [sync state](sync-state.md).
+- The built-in transports tell the core whether the server answered. A GraphQL error, a 401 or a 5xx answer reaches the core as an HTTP error: a mutation is rejected (answers below 500) or delivery unknown (5xx) and is never sent again by itself, a load retries a 5xx. A request that never left the device (offline, host not found, connection refused) is a network error and is retried. A timeout or a lost connection after the request was sent is a network error for a load and delivery unknown for a mutation.
 - A response older than the data already stored never overwrites it.
 - A row that another response stored while this one was in flight keeps its stored data and still joins the list this response names.
 - `max_pages` limits how many pages one load takes.

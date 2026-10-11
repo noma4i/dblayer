@@ -121,7 +121,7 @@ class DatabaseTransport(
     } catch (error: CancellationException) {
         throw error
     } catch (error: Exception) {
-        throw DbException.Network(error.message ?: error.toString())
+        throw classifyTransportFailure(error, kind)
     }
 }
 
@@ -139,11 +139,11 @@ class OkHttpTransport(
         put("variables", parseJson(request.variablesJson))
     }.toString()
 
-    private suspend fun post(request: TransportRequest): String {
+    private suspend fun post(request: TransportRequest, kind: GraphQLOperationKind): String {
         val http = Request.Builder().url(endpoint).post(body(request).toRequestBody("application/json".toMediaType())).apply {
             headers().forEach { (field, value) -> header(field, value) }
         }.build()
-        val response = try { client.newCall(http).await() } catch (error: java.io.IOException) { throw DbException.Network(error.message ?: error.toString()) }
+        val response = try { client.newCall(http).await() } catch (error: java.io.IOException) { throw classifyTransportFailure(error, kind) }
         response.use {
             val text = it.body?.string().orEmpty()
             if (it.code !in 200..299) throw DbException.Http(it.code.toUShort(), text)
@@ -151,9 +151,9 @@ class OkHttpTransport(
         }
     }
 
-    override suspend fun query(request: TransportRequest): String = post(request)
+    override suspend fun query(request: TransportRequest): String = post(request, GraphQLOperationKind.Query)
 
-    override suspend fun mutate(request: TransportRequest): String = post(request)
+    override suspend fun mutate(request: TransportRequest): String = post(request, GraphQLOperationKind.Mutation)
 
     override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink): String {
         val token = UUID.randomUUID().toString()
