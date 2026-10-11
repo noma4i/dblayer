@@ -4,7 +4,7 @@ use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
 
 use crate::commit::{
-    CommitEnvelope, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition, ScopeOp, ScopeRef, WriteOrigin,
+    CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition, ScopeOp, ScopeRef, WriteOrigin,
 };
 use crate::ddl::table_name;
 use crate::files::references_of_row;
@@ -25,6 +25,12 @@ use super::error::DbError;
 use super::open::Db;
 use super::prior::{Prior, PriorRow};
 use super::row::Row;
+
+#[derive(Debug, Clone)]
+pub struct Acted {
+    pub row: Row,
+    pub operation: i64,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutboxOperation {
@@ -218,7 +224,7 @@ impl Db {
         let mut input = patch.clone();
         input.insert("id".to_string(), Value::String(id.to_string()));
         let mut queued = Queued { action: Action::Update, row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
-        let committed = self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
+        let committed = !self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
@@ -228,7 +234,8 @@ impl Db {
             queued.rollback = Some(Prior { rows: vec![PriorRow::edited(reader, model, id.as_str(), &current, &merged)?] }.to_value());
             plan.update(key.clone(), id.clone(), merged.clone());
             Ok(Some(self.touch_ops(reader, spec, &[&merged, &current], &own)?))
-        })?;
+        })?
+        .is_noop();
         if !committed {
             let current = self.find(model, id)?;
             return current.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() });
@@ -236,7 +243,7 @@ impl Db {
         self.find(model, id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
     }
 
-    pub fn act(&self, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+    pub fn act(&self, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Acted, DbError> {
         let spec = self.shared.spec(model)?;
         let patch = spec.patch(&patch);
         let key = ModelKey::new(model);
@@ -244,7 +251,7 @@ impl Db {
         let mut input = args;
         input.insert("id".to_string(), Value::String(id.to_string()));
         let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
-        self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
+        let committed = self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
@@ -252,7 +259,9 @@ impl Db {
             plan.update(key.clone(), id.clone(), merged.clone());
             Ok(Some(self.touch_ops(reader, spec, &[&merged, &current], &own)?))
         })?;
-        self.find(model, id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
+        let operation = committed.operations.first().copied().ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+        let row = self.find(model, id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+        Ok(Acted { row, operation })
     }
 
     pub fn destroy(&self, model: &str, id: &RowId) -> Result<Vec<RowRef>, DbError> {
@@ -308,7 +317,7 @@ impl Db {
         spec: &ModelSpec,
         queued: &mut Queued,
         build: impl FnOnce(&Reader<'_>, &mut WritePlan, &mut Queued) -> Result<Option<Vec<EntityOp>>, DbError>,
-    ) -> Result<bool, DbError> {
+    ) -> Result<CommitResult, DbError> {
         let generation = self.generation();
         let created_at = self.shared.store.lock().now_ms();
         let result = self
@@ -324,7 +333,7 @@ impl Db {
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
-        Ok(!result.is_noop())
+        Ok(result)
     }
 
     fn begin(&self, reader: &Reader<'_>, spec: &ModelSpec, queued: &Queued, created_at: i64) -> Result<OperationTransition, DbError> {

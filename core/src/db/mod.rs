@@ -23,7 +23,7 @@ mod watch;
 
 pub use diff::Diff;
 pub use error::DbError;
-pub use local_write::OutboxOperation;
+pub use local_write::{Acted, OutboxOperation};
 pub use observe::ObserverHandle;
 pub use open::{Db, DbConfig};
 pub use replace::{OnAbsent, ReplaceRequest};

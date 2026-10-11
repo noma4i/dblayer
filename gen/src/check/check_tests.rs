@@ -160,6 +160,7 @@ fn action_block_rules() {
     assert_eq!(failure_in("  action :x do\n    mutation M\n    bogus 1\n  end"), (9, "unknown word `bogus`".to_string()));
     assert_eq!(failure_in("  action :x do\n    mutation M\n    optimistic ghost: true\n  end"), (9, "`optimistic` names unknown field `ghost`".to_string()));
     assert_eq!(failure_in("  action :x do\n    mutation M\n    refetch :ghost\n  end"), (9, "`refetch` names `ghost`, which is not a `remote`".to_string()));
+    assert_eq!(failure_in("  action :x do\n    mutation M\n    result note: :ids\n  end"), (9, "result type must be :bool, :int, :num, :string or :id".to_string()));
     assert_eq!(failure_in("  scope :x\n  action :x do\n    mutation M\n  end"), (8, "name `x` is declared twice".to_string()));
 }
 

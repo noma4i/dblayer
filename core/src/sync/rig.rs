@@ -99,6 +99,8 @@ fn wrapped_action() -> ActionDeclaration {
     action.wrap = Some("input".to_string());
     action.root = Some("starMoment.moment".to_string());
     action.lands.push(ActionLanding { model: "users".to_string(), root: "starMoment.viewer".to_string() });
+    action.result.insert("successMessage".to_string(), "string".to_string());
+    action.result.insert("copies".to_string(), "int".to_string());
     action
 }
 

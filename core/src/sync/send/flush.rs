@@ -64,6 +64,15 @@ impl Drop for InFlight<'_> {
     }
 }
 
+fn answer_kind_matches(kind: &str, value: &Value) -> bool {
+    match kind {
+        "int" => value.is_i64() || value.is_u64(),
+        "num" => value.is_number(),
+        "bool" => value.is_boolean(),
+        _ => value.is_string(),
+    }
+}
+
 fn row_of(entry: &OutboxOperation) -> Option<RowRef> {
     let (model, _) = Operation::split_action_key(&entry.operation.action_key)?;
     Some(RowRef::new(ModelKey::new(&model), entry.operation.row_ids.first()?.clone()))
@@ -337,8 +346,22 @@ impl Inner {
             locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string());
         }
         self.db.shared.files.discard(&held.iter().map(|file| file.id.clone()).collect::<Vec<_>>());
+        self.keep_answer(sending, operation, &data);
         self.invalidate_after(&sending.model, &sending.action).await?;
         Ok(SendResult::Committed)
+    }
+
+    fn keep_answer(&self, sending: &Sending<'_>, operation: &OperationDef, data: &Value) {
+        let Some(declared) = self.db.spec(&sending.model).ok().and_then(|spec| spec.actions.iter().find(|declared| declared.name == sending.action).cloned()) else { return };
+        if declared.result.is_empty() {
+            return;
+        }
+        let root = declared.root.as_deref().unwrap_or(&operation.root_path);
+        let payload = data.get(root.split('.').next().unwrap_or(root));
+        let fields = declared.result.iter().map(|(name, kind)| (name.clone(), payload.and_then(|payload| payload.get(name)).filter(|value| answer_kind_matches(kind, value)).cloned().unwrap_or(Value::Null)));
+        let entry = sending.entry;
+        let rows = entry.operation.row_ids.iter().cloned().chain(entry.operation.temp_id.clone()).collect();
+        locked(&self.outcomes).answered(entry.operation.id.0, &sending.model, rows, Value::Object(fields.collect()));
     }
 
     fn read_response(&self, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> Normalized {

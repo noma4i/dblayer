@@ -113,7 +113,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Action, "wrap" | "response") => plain(Shape::Name, vec![]),
         (Context::Action, "root") => plain(Shape::Const, vec![]),
         (Context::Action, "lands") => plain(Shape::Const, vec![key("root", Want::Any, true)]),
-        (Context::Action, "input" | "optimistic" | "args") => free(),
+        (Context::Action, "input" | "optimistic" | "args" | "result") => free(),
         (Context::Remote, "variables") => free(),
         (Context::Action, "refetch_of") => plain(Shape::Const, vec![key("relation", Want::Symbol, true)]),
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
@@ -306,6 +306,11 @@ fn check_action_line(call: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str
         "args" => {
             for pair in call.options.iter().filter(|pair| !matches!(&pair.value.item, Value::Symbol(kind) if ["bool", "int", "num", "string", "id", "ids"].contains(&kind.as_str()))) {
                 report(pair.value.line, pair.value.column, "arg type must be :bool, :int, :num, :string, :id or :ids".to_string());
+            }
+        }
+        "result" => {
+            for pair in call.options.iter().filter(|pair| !matches!(&pair.value.item, Value::Symbol(kind) if ["bool", "int", "num", "string", "id"].contains(&kind.as_str()))) {
+                report(pair.value.line, pair.value.column, "result type must be :bool, :int, :num, :string or :id".to_string());
             }
         }
         "on_failure" => {

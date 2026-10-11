@@ -23,7 +23,11 @@ extension DBModel {
     try Self.decode(try DB.database.update(model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text))
   }
   public func act(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> Self {
-    try Self.decode(try DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+    try Self.decode(try DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text).rowJson)
+  }
+  public func actAnswering<Answer: Decodable & Sendable>(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> ActionAnswer<Self, Answer> {
+    let queued = try DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text)
+    return ActionAnswer(model: try Self.decode(queued.rowJson), operation: queued.operation)
   }
   public func set(values: [String: JSONValue]) async throws {
     try DB.database.setEphemeral(model: Self.modelName, rowId: id, valuesJson: JSONValue.object(values).text)
@@ -44,4 +48,15 @@ extension DBModel {
   }
 
   static func decode(_ json: String) throws -> Self { try JSONDecoder().decode(Self.self, from: Data(json.utf8)) }
+}
+
+/// The optimistic record of a queued action and, once the server answers, the `result` fields the action declares.
+public struct ActionAnswer<Model: DBModel, Answer: Decodable & Sendable>: Sendable {
+  public let model: Model
+  let operation: Int64
+
+  /// Waits until the server answers the action, throws on a refusal or when offline. The answer is read once.
+  public func answer() async throws -> Answer {
+    try JSONDecoder().decode(Answer.self, from: Data(try await DB.database.answer(model: Model.modelName, operation: operation).utf8))
+  }
 }

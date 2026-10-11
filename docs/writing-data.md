@@ -130,6 +130,33 @@ try await chat.mute(mute: true)
 chat.mute(mute = true)
 ```
 
+## What the server answered
+
+`result` declares the scalar fields of the mutation payload that the app needs, for example the text a server shows after a send (`:string`, `:int`, `:num`, `:bool` or `:id`). The payload is the object the mutation field returns, the first part of `root`. An action with `result` returns an answer handle instead of the model: `model` is the optimistic record, `answer()` waits for the server and returns a generated type with one optional property per declared field.
+
+```ruby
+action :send_gift do
+  mutation GiftSend
+  args     giftId: :string
+  input    userId: :id, giftId: :giftId
+  wrap     :input
+  root     "giftSend.user"
+  result   successMessage: :string
+end
+```
+
+```swift
+let sent = try await user.sendGift(giftId: "g1")
+let text = try await sent.answer().successMessage
+```
+
+```kotlin
+val sent = user.sendGift(giftId = "g1")
+val text = sent.answer().successMessage
+```
+
+`answer()` throws when the server refuses, even if the refusal came before the call, and when the device is offline. A field the server left out, or typed differently, is `nil` (`null` in Kotlin). The answer is read once and lives in memory like a kept refusal, so after a restart only the stored record remains.
+
 `optimistic` is applied locally at once and rolled back if the server refuses. `refetch` marks the listed relations stale after success. See [server sync](server-sync.md).
 
 ## Replacing data

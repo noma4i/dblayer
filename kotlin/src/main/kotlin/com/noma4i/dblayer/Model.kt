@@ -81,7 +81,24 @@ suspend fun DBModel.settled() { DBlayer.database.settled(modelName, id) }
 suspend fun DBModel.confirmedId(): String = DBlayer.database.confirmed(modelName, id)
 
 suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, serializer: KSerializer<Model>): Model =
-    dbJson.decodeFromString(serializer, DBlayer.database.act(modelName, id, action, values.toString(), args.toString()))
+    dbJson.decodeFromString(serializer, DBlayer.database.act(modelName, id, action, values.toString(), args.toString()).rowJson)
+
+suspend fun <Model : DBModel, Answer> Model.actAnswering(
+    action: String,
+    values: kotlinx.serialization.json.JsonObject,
+    args: kotlinx.serialization.json.JsonObject,
+    serializer: KSerializer<Model>,
+    answerSerializer: KSerializer<Answer>,
+): ActionAnswer<Model, Answer> {
+    val queued = DBlayer.database.act(modelName, id, action, values.toString(), args.toString())
+    return ActionAnswer(dbJson.decodeFromString(serializer, queued.rowJson), queued.operation, answerSerializer)
+}
+
+/** The optimistic record of a queued action and, once the server answers, the `result` fields the action declares. */
+class ActionAnswer<Model : DBModel, Answer>(val model: Model, private val operation: Long, private val serializer: KSerializer<Answer>) {
+    /** Waits until the server answers the action, throws on a refusal or when offline. The answer is read once. */
+    suspend fun answer(): Answer = dbJson.decodeFromString(serializer, DBlayer.database.answer(model.modelName, operation))
+}
 
 fun <Target : DBModel> DBModel.related(name: String, serializer: KSerializer<Target>): LiveSource<List<Target>> {
     val model = modelName

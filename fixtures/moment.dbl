@@ -33,4 +33,11 @@ model Moment do
     optimistic likedByMe: true
     refetch    :feed
   end
+
+  action :share do
+    mutation ShareMoment
+    input    momentId: :id
+    root     "shareMoment.moment"
+    result   successMessage: :string, copies: :int
+  end
 end

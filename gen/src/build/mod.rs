@@ -279,6 +279,7 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
             "optimistic" => action.optimistic = line.options.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
             "on_failure" => action.on_failure = on_failure_of(&first_name(line)),
             "args" => action.args = line.options.iter().filter_map(variable_binding).collect(),
+            "result" => action.result = line.options.iter().filter_map(variable_binding).collect(),
             "response" => action.ignore_response = first_name(line) == "ignore",
             "wrap" => action.wrap = Some(first_name(line)),
             "root" => action.root = Some(first_name(line)),

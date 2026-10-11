@@ -8,6 +8,12 @@ fn name(text: &str) -> String {
     chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()
 }
 
+fn result_type(class: &str, action: &str) -> String {
+    let method = name(action);
+    let mut chars = method.chars();
+    format!("{class}{}{}Result", chars.next().map(|first| first.to_uppercase().collect::<String>()).unwrap_or_default(), chars.as_str())
+}
+
 fn scalar(kind: ScalarKind, swift: bool) -> &'static str {
     match (kind, swift) {
         (ScalarKind::Bool, _) => "Bool",
@@ -147,13 +153,19 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
         for action in model.actions.iter().filter(|action| !["create", "update", "destroy"].contains(&action.name.as_str())) {
             let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}", arg_type(kind, true))).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
-            writeln!(out, "    public func {}({params}) async throws -> Self {{", name(&action.name)).unwrap();
+            let returns = if action.result.is_empty() { "Self".to_string() } else { format!("ActionAnswer<Self, {}>", result_type(class, &action.name)) };
+            writeln!(out, "    public func {}({params}) async throws -> {returns} {{", name(&action.name)).unwrap();
             writeln!(out, "        {} values = JSONValue.parse(#\"{}\"#).objectValue", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
             for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        values[\"{field}\"] = JSONValue.encode({arg})").unwrap(); } }
             let args = action.args.keys().map(|arg| format!("\"{arg}\": JSONValue.encode({arg})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "        return try await act(\"{}\", values: values, args: [{}])\n    }}", action.name, if args.is_empty() { ":" } else { &args }).unwrap();
+            writeln!(out, "        return try await {}(\"{}\", values: values, args: [{}])\n    }}", if action.result.is_empty() { "act" } else { "actAnswering" }, action.name, if args.is_empty() { ":" } else { &args }).unwrap();
         }
         out.push_str("}\n\n");
+        for action in model.actions.iter().filter(|action| !action.result.is_empty()) {
+            writeln!(out, "public struct {}: Codable, Sendable {{", result_type(class, &action.name)).unwrap();
+            for (field, kind) in &action.result { writeln!(out, "    public let {field}: {}?", arg_type(kind, true)).unwrap(); }
+            out.push_str("}\n\n");
+        }
     }
     writeln!(out, "public let modelsJSON = #\"{}\"#", serde_json::to_string(models).unwrap()).unwrap();
     out
@@ -213,10 +225,20 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let from_args = action.optimistic.iter().filter_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({arg})"))).collect::<Vec<_>>().join(", ");
             let args = action.args.keys().map(|arg| format!("\"{arg}\" to jsonValue({arg})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "    suspend fun {}({params}): {class} = act(\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args})), serializer())", name(&action.name), action.name, serde_json::to_string(&literals).unwrap()).unwrap();
+            let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args})), serializer()", action.name, serde_json::to_string(&literals).unwrap());
+            if action.result.is_empty() {
+                writeln!(out, "    suspend fun {}({params}): {class} = act({call})", name(&action.name)).unwrap();
+            } else {
+                let result = result_type(class, &action.name);
+                writeln!(out, "    suspend fun {}({params}): ActionAnswer<{class}, {result}> = actAnswering({call}, {result}.serializer())", name(&action.name)).unwrap();
+            }
         }
         for association in &model.associations { writeln!(out, "    val {} get() = related(\"{}\", {}.serializer())", association.name, association.name, association.target).unwrap(); }
         out.push_str("}\n\n");
+        for action in model.actions.iter().filter(|action| !action.result.is_empty()) {
+            let fields = action.result.iter().map(|(field, kind)| format!("val {field}: {}? = null", arg_type(kind, false))).collect::<Vec<_>>().join(", ");
+            writeln!(out, "@Serializable\ndata class {}({fields})\n", result_type(class, &action.name)).unwrap();
+        }
     }
     writeln!(out, "val modelsJSON = \"\"\"{}\"\"\"", serde_json::to_string(models).unwrap()).unwrap();
     out

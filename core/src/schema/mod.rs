@@ -675,6 +675,8 @@ pub struct ActionDeclaration {
     pub root: Option<String>,
     #[serde(default)]
     pub lands: Vec<ActionLanding>,
+    #[serde(default)]
+    pub result: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -705,6 +707,7 @@ impl ActionDeclaration {
             wrap: None,
             root: None,
             lands: Vec::new(),
+            result: BTreeMap::new(),
         }
     }
 

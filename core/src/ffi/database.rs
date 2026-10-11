@@ -24,6 +24,9 @@ async fn on_executor<T: Send + 'static>(work: impl std::future::Future<Output = 
 #[derive(uniffi::Record)]
 pub struct Config { pub path: Option<String>, pub data_version: Option<String>, pub cache_rows: u32 }
 
+#[derive(uniffi::Record)]
+pub struct QueuedAction { pub row_json: String, pub operation: i64 }
+
 #[derive(uniffi::Object)]
 pub struct Database { db: Db, sync: Option<Sync> }
 
@@ -85,10 +88,10 @@ impl Database {
         self.send_writes();
         Ok(row_json(&row))
     }
-    pub fn act(&self, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<String, DbError> {
-        let row = self.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
+    pub fn act(&self, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
+        let acted = self.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
         self.send_writes();
-        Ok(row_json(&row))
+        Ok(QueuedAction { row_json: row_json(&acted.row), operation: acted.operation })
     }
     pub fn destroy(&self, model: String, row_id: String) -> Result<(), DbError> {
         self.db.destroy(&model, &id(&row_id)?)?;
@@ -195,6 +198,11 @@ impl Database {
         let row = id(&row_id)?;
         on_executor(async move { sync.settled(&model, &row).await }).await?;
         Ok(())
+    }
+    pub async fn answer(&self, model: String, operation: i64) -> Result<String, DbError> {
+        let sync = self.sync()?.clone();
+        let answer = on_executor(async move { sync.answer(&model, operation).await }).await?;
+        Ok(answer.to_string())
     }
     pub async fn cancel_upload(&self, model: String, row_id: String) -> Result<bool, DbError> {
         let sync = self.sync()?.clone();

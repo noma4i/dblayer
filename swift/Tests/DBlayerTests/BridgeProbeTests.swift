@@ -257,4 +257,37 @@ struct BridgeProbeTests {
     await #expect(throws: (any Error).self) { try await liked.settled() }
     try await liked.settled()
   }
+
+  private func openWithAMoment(_ transport: MockTransport) async throws -> Moment {
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment($momentId: ID!) { shareMoment(momentId: $momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]"#)
+    let local = try await Moment.create(text: "hello", media: nil)
+    try await local.settled()
+    return try #require(await Moment.find(try await local.confirmedId()).current())
+  }
+
+  @Test
+  func anActionAnswersWithTheDeclaredFieldsOfThePayloadAndRefusesWhenTheServerRefuses() async throws {
+    let transport = MockTransport()
+    let moment = try await openWithAMoment(transport)
+
+    transport.enqueue("ShareMoment", reply: #"{"data":{"shareMoment":{"moment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"},"successMessage":"Shared","copies":3,"other":"x"}}}"#)
+    let shared = try await moment.share()
+    #expect(shared.model.id == "m77")
+    let answer = try await shared.answer()
+    #expect(answer.successMessage == "Shared")
+    #expect(answer.copies == 3)
+    await #expect(throws: (any Error).self) { try await shared.answer() }
+
+    transport.enqueue("ShareMoment", reply: #"{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}"#)
+    let refused = try await moment.share()
+    var attempts = 0
+    while transport.calls.filter({ $0.operationName == "ShareMoment" }).count < 2, attempts < 400 {
+      attempts += 1
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try await Task.sleep(for: .milliseconds(100))
+    await #expect(throws: (any Error).self) { try await refused.answer() }
+  }
 }

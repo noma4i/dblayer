@@ -48,6 +48,21 @@ impl Sync {
         Ok(())
     }
 
+    /// Waits until the queued action is answered and returns the declared `result` fields of its payload. Fails with the refusal. An answer is read once.
+    pub async fn answer(&self, model: &str, operation: i64) -> Result<serde_json::Value, SyncError> {
+        let waiting = || -> Result<bool, SyncError> { Ok(self.inner.db.outbox()?.iter().any(|entry| entry.operation.status == OperationStatus::Pending && entry.operation.id.0 == operation)) };
+        while waiting()? {
+            if !self.inner.connectivity.is_online() {
+                return Err(SyncError::Offline);
+            }
+            self.flush().await?;
+            if waiting()? {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }
+        locked(&self.inner.outcomes).take(model, operation)
+    }
+
     /// The server id of a record created locally. Waits for the queued `create` to be answered.
     pub async fn confirmed(&self, model: &str, id: &RowId) -> Result<RowId, SyncError> {
         if !id.is_temp() {
@@ -89,6 +104,8 @@ impl Sync {
     }
 }
 
+#[cfg(test)]
+mod answer_tests;
 #[cfg(test)]
 mod failure_tests;
 #[cfg(test)]
