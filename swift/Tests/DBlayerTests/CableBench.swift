@@ -75,6 +75,10 @@ final class ManualCableClock: @unchecked Sendable {
     lock.withLock { skew += seconds }
   }
 
+  func pendingDues() -> [TimeInterval] {
+    lock.withLock { sleepers.map(\.due) }
+  }
+
   func pendingSeconds() -> [TimeInterval] {
     lock.withLock { sleepers.map(\.seconds) }
   }

@@ -32,6 +32,7 @@ class TestCableSocket(frames: List<String>) : CableSocket {
     override suspend fun receive(): String = incoming.receiveCatching().getOrNull() ?: throw CableSocketException(CableSocketException.Reason.Closed)
 
     fun deliver(text: String) { incoming.trySend(text) }
+    val isClosed: Boolean get() = closed
     fun texts(): List<String> = recorded.toList()
     suspend fun waitForRecordedCount(count: Int) {
         if (recorded.size >= count) return

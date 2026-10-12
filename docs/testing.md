@@ -45,6 +45,8 @@ Typical scenarios to cover:
 | No test waits without a bound | `bash scripts/check_waits.sh` |
 | No cable line that no test runs | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
 
+The coverage reports cost time: the Swift lane with coverage takes about the same as without, the Kotlin lane roughly doubles because of the coverage report task. The rule covers the cable code only.
+
 Test conventions:
 
 - A test waits only through `eventually` or `Cursor` (Swift, `Waiting.swift`) and `bounded` or `eventually` (Kotlin, `TestWaiting.kt`). Each wait has a timeout and its failure names the condition. `check_waits.sh` rejects loops, raw iterators and `runBlocking` in tests.

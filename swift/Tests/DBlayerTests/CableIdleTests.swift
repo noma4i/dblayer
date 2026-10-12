@@ -49,7 +49,12 @@ struct CableIdleTests {
     await eventually("the open that succeeds") { await connection.state == .open }
     bench.sockets.last?.deliver("{\"type\":\"welcome\"}")
     await eventually("the welcome frame") { await connection.lastFrameAt != nil }
-    #expect(bench.clock.pendingSeconds() == [CableHeartbeat.staleAfter])
+    await eventually("the stale deadline after the welcome") { bench.clock.pendingSeconds() == [CableHeartbeat.staleAfter] }
+
+    bench.sockets.last?.fail()
+    await eventually("the closed socket") { await connection.state == .closed }
+    await eventually("the reconnect deadline") { bench.clock.pendingSeconds().count == 1 }
+    #expect(bench.clock.pendingSeconds() == [CableHeartbeat.pollInterval(attempts: 0, jitter: 0)])
     await connection.close()
   }
 
@@ -58,8 +63,12 @@ struct CableIdleTests {
     let bench = CableBench()
     let connection = bench.makeConnection()
     await connection.open()
+    await bench.clock.advance(by: 1)
     bench.sockets[0].deliver("{\"type\":\"welcome\"}")
     await eventually("the welcome frame") { await connection.lastFrameAt != nil }
+    let opened = CableHeartbeat.staleAfter
+    #expect(!bench.clock.pendingDues().contains(opened))
+    await eventually("the deadline of the frame") { bench.clock.pendingDues() == [1 + CableHeartbeat.staleAfter] }
     bench.clock.skewWallClock(by: -100)
 
     await bench.clock.advance(by: CableHeartbeat.staleAfter)

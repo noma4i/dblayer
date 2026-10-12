@@ -191,8 +191,8 @@ public actor CableConnection {
         guard current == generation, let frame = CableFrame(json: text) else {
           continue
         }
-        lastFrameAt = timers.now()
         armWatchdog()
+        lastFrameAt = timers.now()
         if frame == .welcome {
           attempts = 0
         }

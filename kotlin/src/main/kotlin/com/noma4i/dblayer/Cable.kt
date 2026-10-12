@@ -262,8 +262,8 @@ class CableConnection(
                 val text = from.receive()
                 val frame = if (current == generation) CableFrame.parse(text) else null
                 if (frame == null) continue
-                lastFrameAt = timers.now()
                 armWatchdog()
+                lastFrameAt = timers.now()
                 if (frame == CableFrame.Welcome) attempts = 0
                 stream.trySend(frame)
             }
