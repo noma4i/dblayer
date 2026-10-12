@@ -47,7 +47,7 @@ Moment.feed.refresh()            // pull to refresh, replaces in one commit
 
 ## Refresh merges, it does not replace
 
-`refresh()` works on one list with its parameters. Only that list changes: other lists keep their content, and nothing is deleted just to be written again.
+`load()` reads the list only when it is stale and keeps no subscription, see [live data](live-data.md). `refresh()` works on one list with its parameters. Only that list changes: other lists keep their content, and nothing is deleted just to be written again.
 
 ```swift
 try await Moment.feed.refresh()

@@ -75,6 +75,32 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() = runBlocking {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+        val before = DBlayer.subscriptionCensus()
+
+        Moment.feed.load()
+        Moment.feed.load()
+
+        assertEquals(1, transport.calls.size)
+        val after = DBlayer.subscriptionCensus()
+        assertEquals(before.subscriptions to before.observedQueries, after.subscriptions to after.observedQueries)
+    }
+
+    @Test
+    fun aFailedLoadThrowsLikeRefresh() = runBlocking {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", DbException.Network("offline"))
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+
+        assertEquals(true, runCatching { Moment.feed.load() }.exceptionOrNull() is DbException)
+    }
+
+    @Test
     fun aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() = runBlocking {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", DbException.Network("offline"))

@@ -101,6 +101,7 @@ class Query<Model : DBModel>(
 
     val state: LiveSource<LoadState> get() = stateSource(modelName, relation.orEmpty(), params.toString())
 
+    suspend fun load() = DBlayer.database.load(modelName, relation.orEmpty(), params.toString())
     suspend fun refresh() = DBlayer.database.refresh(modelName, relation.orEmpty(), params.toString())
     suspend fun loadMore(): Boolean = DBlayer.database.loadMore(modelName, relation.orEmpty(), params.toString())
 }

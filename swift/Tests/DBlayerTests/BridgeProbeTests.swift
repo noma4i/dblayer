@@ -71,6 +71,36 @@ struct BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+    let before = DB.subscriptionCensus()
+
+    try await Moment.feed.load()
+    try await Moment.feed.load()
+
+    #expect(transport.calls.count == 1)
+    #expect(DB.subscriptionCensus().subscriptions == before.subscriptions && DB.subscriptionCensus().observedQueries == before.observedQueries)
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aFailedLoadThrowsLikeRefresh() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", failure: .Network(detail: "offline"))
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+
+    do {
+      try await Moment.feed.load()
+      Issue.record("the failed load did not throw")
+    } catch is DbError {}
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Network(detail: "offline"))

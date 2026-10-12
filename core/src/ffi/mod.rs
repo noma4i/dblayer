@@ -48,3 +48,6 @@ fn row_json(row: &crate::db::Row) -> String {
     data.insert("upload".into(), serde_json::to_value(&row.sync.upload).expect("upload serializes"));
     serde_json::Value::Object(data).to_string()
 }
+
+#[cfg(test)]
+mod load_tests;

@@ -32,7 +32,7 @@ pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u6
 pub struct QueuedAction { pub row_json: String, pub operation: i64 }
 
 #[derive(uniffi::Object)]
-pub struct Database { db: Db, sync: Option<Sync> }
+pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync> }
 
 fn id(value: &str) -> Result<RowId, DbError> {
     RowId::new(value).map_err(|error| DbError::Invalid { detail: error.to_string() })
@@ -129,6 +129,12 @@ impl Database {
         }
         Ok(())
     }
+    pub async fn load(&self, model: String, relation: String, params_json: String) -> Result<(), DbError> {
+        let sync = self.sync()?.clone();
+        let params = serde_json::from_str(&params_json)?;
+        on_executor(async move { sync.load(&model, &relation, &params, LoadOptions::default()).await }).await?;
+        Ok(())
+    }
     pub async fn refresh(&self, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let params = serde_json::from_str(&params_json)?;
@@ -216,7 +222,7 @@ impl Database {
 }
 
 impl Database {
-    fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "transport is required for server operations".into() }) }
+    pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "transport is required for server operations".into() }) }
     fn send_writes(&self) {
         if let Some(sync) = self.sync.clone() { executor().spawn(async move { let _ = sync.flush().await; }); }
     }

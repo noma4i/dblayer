@@ -73,6 +73,7 @@ public struct Query<Model: DBModel>: Sendable {
     LiveSource(initial: nil) { listener in try DB.database.liveFind(model: Model.modelName, rowId: id, listener: listener) } map: { $0.decodeRows().first }
   }
 
+  public func load() async throws { try await DB.database.load(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
   public func refresh() async throws { try await DB.database.refresh(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
   @discardableResult public func loadMore() async throws -> Bool { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
 

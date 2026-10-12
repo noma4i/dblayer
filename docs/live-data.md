@@ -190,6 +190,24 @@ Null handling follows one rule: a row with a null field matches `!(field == valu
 
 Connecting to a relation that has a `remote` block loads it when its data is stale, keeps it fresh through its `updates` subscription while someone reads it, and lets go a while after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.
 
+Three calls read a remote relation, each for one need:
+
+| Call | Request | Keeps a subscription | Use it for |
+| ---- | ------- | -------------------- | ---------- |
+| live (`live`, `LiveList`, `@Live`) | when stale | yes, while read | a screen that shows the relation |
+| `load()` | when stale, none when fresh | no | rows that need their relation once: 45 rows of a list, each loads its own relation |
+| `refresh()` | always | no | a user gesture (pull to refresh) |
+
+`load()` makes the same decision as connecting a live read: no request when the window is fresh and not invalidated, exactly 1 request when it is stale or never loaded. N parallel loads of one relation make 1 request, shared with a live connect and with `refresh()`. A failed load throws like `refresh()`. Cancelling the caller stops only its own wait: the load goes on for the other readers.
+
+```swift
+try await Moment.byUser(userId: 5).load()
+```
+
+```kotlin
+Moment.byUser(userId = 5).load()
+```
+
 A row that does not fit the generated model is skipped and logged as `Row of <Model> failed to decode` (Swift: `os` subsystem `DBlayer`, category `decode`; Kotlin: the JVM logger named `DBlayer`). An empty list with this line in the log means the model and the server schema disagree.
 
 See [server sync](server-sync.md) and [threading](threading.md).
