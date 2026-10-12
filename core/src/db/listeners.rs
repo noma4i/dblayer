@@ -8,6 +8,7 @@ use super::row::Row;
 use crate::pacing::Counters;
 
 use super::open::locked;
+use super::DbError;
 use super::diff::Diff;
 use super::dispatch::{mark_core_thread, Busy};
 use super::watch::{changed_rows, Body, Change, CountChange, Loaded, Related, RowsBody, Version};
@@ -212,11 +213,19 @@ pub(crate) struct Executor {
     queue: Mutex<Queue>,
     wake: Condvar,
     busy: Arc<Busy>,
+    #[cfg(test)]
+    pub(crate) refuse_spawn: AtomicBool,
 }
 
 impl Executor {
     pub(crate) fn new(busy: Arc<Busy>) -> Arc<Self> {
-        Arc::new(Self { queue: Mutex::new(Queue::default()), wake: Condvar::new(), busy })
+        Arc::new(Self {
+            queue: Mutex::new(Queue::default()),
+            wake: Condvar::new(),
+            busy,
+            #[cfg(test)]
+            refuse_spawn: AtomicBool::new(false),
+        })
     }
 
     pub(crate) fn schedule(self: &Arc<Self>, subscriber: Arc<dyn Runnable>) {
@@ -226,10 +235,30 @@ impl Executor {
         if queue.ready.len() > queue.idle && queue.workers < MAX_WORKERS {
             queue.workers += 1;
             let executor = self.clone();
-            std::thread::Builder::new().name("dblayer-listener".to_string()).spawn(move || executor.work()).expect("listener thread starts");
+            if self.spawn_worker(executor).is_err() {
+                queue.workers -= 1;
+                if queue.workers == 0 {
+                    let stranded = queue.ready.pop_back();
+                    drop(queue);
+                    if let Some(subscriber) = stranded {
+                        subscriber.run();
+                        self.busy.leave(1);
+                    }
+                } else {
+                    self.wake.notify_one();
+                }
+            }
         } else {
             self.wake.notify_one();
         }
+    }
+
+    fn spawn_worker(&self, executor: Arc<Self>) -> Result<(), DbError> {
+        #[cfg(test)]
+        if self.refuse_spawn.load(Ordering::SeqCst) {
+            return Err(DbError::ThreadSpawn { name: "dblayer-listener", detail: "refused by the test".into() });
+        }
+        super::threads::spawn_named("dblayer-listener", move || executor.work())
     }
 
     fn work(&self) {

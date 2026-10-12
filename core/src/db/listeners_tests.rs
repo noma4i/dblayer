@@ -30,3 +30,16 @@ fn a_mailbox_asks_for_a_new_run_only_when_it_is_not_scheduled() {
     mailbox.finish();
     assert!(mailbox.push(version(3), &[], Loaded::default()));
 }
+
+#[test]
+fn inv_panic_01_a_listener_worker_that_cannot_start_still_delivers_and_releases_the_busy_count() {
+    use super::fixtures::{booted, calls, recorder};
+    use crate::query::Query;
+    use std::sync::atomic::Ordering;
+    let db = booted();
+    db.shared.executor.refuse_spawn.store(true, Ordering::SeqCst);
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("moments"), callback).unwrap();
+    db.settle();
+    assert_eq!(calls(&log), vec![0]);
+}
