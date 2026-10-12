@@ -354,3 +354,41 @@ struct BridgeProbeTests {
     await #expect(throws: (any Error).self) { try await refused.answer() }
   }
 }
+
+final class EntityCollector: EntityListener, @unchecked Sendable {
+  private let lock = NSLock()
+  private var received: [EntityDelivery] = []
+  func changed(delivery: EntityDelivery) { lock.withLock { received.append(delivery) } }
+  var deliveries: [EntityDelivery] { lock.withLock { received } }
+  func wait(for count: Int) async throws -> [EntityDelivery] {
+    for _ in 0 ..< 300 where deliveries.count < count { try await Task.sleep(for: .milliseconds(10)) }
+    return deliveries
+  }
+}
+
+extension BridgeProbeTests {
+  @Test
+  func retainedRowsReachTheBridgeAsChangedRowsAndReleasedRowsStayQuiet() async throws {
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let first = try await Moment.create(text: "one")
+    let second = try await Moment.create(text: "two")
+    let collector = EntityCollector()
+    let entities = try DB.database.liveEntities(model: Moment.modelName, listener: collector)
+    try entities.retain(ids: [first.id, second.id])
+    #expect(try await collector.wait(for: 1).first?.rows.count == 2)
+
+    _ = try await first.update(text: "edited")
+    let changed = try await collector.wait(for: 2)
+    #expect(changed.count == 2 && changed[1].rows.count == 1 && changed[1].rows[0].contains("edited"))
+
+    try entities.release(ids: [first.id])
+    _ = try await first.update(text: "unseen")
+    _ = try await second.update(text: "seen")
+    let last = try await collector.wait(for: 3)
+    #expect(last.count == 3 && last[2].rows.count == 1 && last[2].rows[0].contains("seen"))
+
+    try await second.destroy()
+    let removed = try await collector.wait(for: 4)
+    #expect(removed.last?.removed == [second.id])
+  }
+}

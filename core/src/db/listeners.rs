@@ -83,6 +83,10 @@ impl Mailbox {
     }
 }
 
+pub(crate) trait Runnable: Send + Sync {
+    fn run(&self);
+}
+
 pub(crate) enum Listener {
     Rows(Box<dyn Fn(&Change) + Send + Sync>),
     Count(Box<dyn Fn(&CountChange) + Send + Sync>),
@@ -93,6 +97,12 @@ pub(crate) struct Subscriber {
     mailbox: Mutex<Mailbox>,
     listener: Listener,
     counters: Arc<Mutex<Counters>>,
+}
+
+impl Runnable for Subscriber {
+    fn run(&self) {
+        self.run_deliveries();
+    }
 }
 
 impl Subscriber {
@@ -111,7 +121,7 @@ impl Subscriber {
         }
     }
 
-    fn run(&self) {
+    fn run_deliveries(&self) {
         loop {
             let taken = {
                 let mut mailbox = held(&self.mailbox);
@@ -175,7 +185,7 @@ impl Subscriber {
 
 #[derive(Default)]
 struct Queue {
-    ready: VecDeque<Arc<Subscriber>>,
+    ready: VecDeque<Arc<dyn Runnable>>,
     idle: usize,
     workers: usize,
     closed: bool,
@@ -192,7 +202,7 @@ impl Executor {
         Arc::new(Self { queue: Mutex::new(Queue::default()), wake: Condvar::new(), busy })
     }
 
-    fn schedule(self: &Arc<Self>, subscriber: Arc<Subscriber>) {
+    pub(crate) fn schedule(self: &Arc<Self>, subscriber: Arc<dyn Runnable>) {
         self.busy.enter();
         let mut queue = held(&self.queue);
         queue.ready.push_back(subscriber);

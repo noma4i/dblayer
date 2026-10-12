@@ -9,7 +9,7 @@ use crate::pacing::ManualClock;
 use crate::schema::{ActionDeclaration, RootShape, AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec, Newer};
 use crate::value::ScalarKind;
 
-use super::{Change, Db};
+use super::{Change, Db, EntityChange};
 
 pub fn users_spec() -> ModelSpec {
     let mut spec = ModelSpec::new(
@@ -152,4 +152,12 @@ impl Db {
     pub fn execute_for_test(&self, sql: &str) {
         self.shared.store.lock().connection.execute_batch(sql).unwrap();
     }
+}
+
+pub type EntityLog = Arc<Mutex<Vec<EntityChange>>>;
+
+pub fn entity_recorder() -> (EntityLog, impl Fn(&EntityChange) + Send + Sync + 'static) {
+    let log: EntityLog = Arc::new(Mutex::new(Vec::new()));
+    let sink = log.clone();
+    (log, move |change: &EntityChange| sink.lock().unwrap().push(change.clone()))
 }

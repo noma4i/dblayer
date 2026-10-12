@@ -314,3 +314,20 @@ fn a_query_pinned_to_an_id_sees_the_write_and_the_reset_of_its_row() {
     assert_eq!(seen[1].rows[0].get("typing").cloned(), Some(json!(true)));
     assert_eq!(seen[2].rows[0].get("typing").cloned(), Some(json!(false)));
 }
+
+#[test]
+fn a_retained_row_receives_the_write_and_the_reset_of_its_ephemeral_value() {
+    let (db, clock) = rig();
+    let (log, callback) = entity_recorder();
+    let observer = db.observe_entities("people", callback).unwrap();
+    observer.retain(&[rid("p1")]).unwrap();
+    db.settle();
+    typing(&db, true);
+    clock.advance(seconds(6));
+    db.expire_ephemeral().unwrap();
+    db.settle();
+    let seen = log.lock().unwrap().clone();
+    assert_eq!(seen.len(), 3);
+    assert_eq!(seen[1].rows[0].get("typing").cloned(), Some(json!(true)));
+    assert_eq!(seen[2].rows[0].get("typing").cloned(), Some(json!(false)));
+}

@@ -6,6 +6,7 @@ use crate::identity::ModelKey;
 use crate::query::Query;
 
 use super::dispatch::Event;
+use super::entities::{EntityGroup, EntitySubscriber};
 use super::error::DbError;
 use super::listeners::{Listener, Subscriber};
 use super::open::{locked, Db, Shared};
@@ -31,12 +32,44 @@ pub(crate) struct Observers {
     next_id: u64,
     groups: HashMap<String, Group>,
     by_row: HashMap<RowRef, BTreeSet<String>>,
+    pub(crate) entities: HashMap<String, EntityGroup>,
 }
 
 impl Observers {
     #[cfg(test)]
     pub(crate) fn keyed_rows(&self) -> usize {
         self.by_row.len()
+    }
+
+    pub(crate) fn add_entities(&mut self, model: ModelKey, subscriber: Arc<EntitySubscriber>) -> String {
+        let key = format!("entities:{}", self.next_id);
+        self.next_id += 1;
+        self.entities.insert(key.clone(), EntityGroup::new(model, subscriber));
+        key
+    }
+
+    pub(crate) fn index_rows<'a>(&mut self, key: &str, model: &ModelKey, ids: impl Iterator<Item = &'a RowId>) {
+        for id in ids {
+            self.by_row.entry(RowRef::new(model.clone(), id.clone())).or_default().insert(key.to_string());
+        }
+    }
+
+    pub(crate) fn unindex_rows<'a>(&mut self, key: &str, model: &ModelKey, ids: impl Iterator<Item = &'a RowId>) {
+        for id in ids {
+            let row = RowRef::new(model.clone(), id.clone());
+            if let Some(keys) = self.by_row.get_mut(&row) {
+                keys.remove(key);
+                if keys.is_empty() {
+                    self.by_row.remove(&row);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn remove_entities(&mut self, key: &str) {
+        let Some(group) = self.entities.remove(key) else { return };
+        let ids: Vec<RowId> = group.ids().cloned().collect();
+        self.unindex_rows(key, group.model(), ids.iter());
     }
 
     fn add_group(&mut self, key: &str, group: Group) {
@@ -73,6 +106,7 @@ impl Observers {
             }
             if event.reset_all || !event.reset_models.is_empty() {
                 keys.extend(self.groups.iter().filter(|(_, group)| group.deps.keyed() && group.deps.hit(event)).map(|(key, _)| key.clone()));
+                keys.extend(self.entities.iter().filter(|(_, group)| group.resets(event)).map(|(key, _)| key.clone()));
             }
         }
         for (key, group) in &self.groups {
@@ -88,7 +122,7 @@ impl Observers {
     }
 
     pub(crate) fn subscription_count(&self) -> usize {
-        self.groups.values().map(|group| group.subscribers.len()).sum()
+        self.groups.values().map(|group| group.subscribers.len()).sum::<usize>() + self.entities.len()
     }
 }
 
@@ -114,15 +148,25 @@ impl Drop for ObserverHandle {
 
 impl Shared {
     pub(crate) fn refresh_groups(&self, batch: &[Event]) {
-        let due: Vec<(String, Subject, i64, Arc<Version>)> = {
+        let (due, touched): (Vec<(String, Subject, i64, Arc<Version>)>, Vec<(String, ModelKey, BTreeSet<RowId>)>) = {
             let observers = locked(&self.observers);
             let keys = observers.candidates(batch);
-            keys.into_iter()
+            let touched = keys
+                .iter()
+                .filter_map(|key| observers.entities.get(key).map(|group| (key.clone(), group.model().clone(), group.touched(batch))))
+                .filter(|(_, _, ids)| !ids.is_empty())
+                .collect();
+            let due = keys
+                .into_iter()
                 .filter_map(|key| observers.groups.get(&key).map(|group| (key, group)))
                 .filter(|(_, group)| batch.iter().any(|event| (event.revision > group.at || event.epoch > group.epoch) && group.deps.hit(event)))
                 .map(|(key, group)| (key, group.subject.clone(), group.at, group.version.clone()))
-                .collect()
+                .collect();
+            (due, touched)
         };
+        for (key, model, ids) in touched {
+            self.refresh_entities(&key, &model, ids);
+        }
         for (key, subject, at, previous) in due {
             let replaced: Vec<(RowId, RowId)> = batch.iter().filter(|event| event.revision > at).flat_map(|event| event.replaced.iter().cloned()).collect();
             self.publish_group(&key, &subject, &previous, &replaced);

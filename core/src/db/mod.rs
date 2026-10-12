@@ -4,6 +4,7 @@ mod correlate;
 mod diff;
 mod dispatch;
 mod ephemeral;
+mod entities;
 mod error;
 mod files;
 mod land;
@@ -26,6 +27,7 @@ mod swap;
 mod watch;
 
 pub use diff::Diff;
+pub use entities::{EntityChange, EntityObserver};
 pub use error::DbError;
 pub use local_write::{Acted, OutboxOperation};
 pub use observe::ObserverHandle;
@@ -42,6 +44,8 @@ mod fixtures;
 mod invariants;
 #[cfg(test)]
 mod entity_pin_tests;
+#[cfg(test)]
+mod entities_tests;
 #[cfg(test)]
 mod ephemeral_tests;
 #[cfg(test)]

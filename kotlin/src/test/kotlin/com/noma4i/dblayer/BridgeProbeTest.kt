@@ -222,3 +222,40 @@ class BridgeProbeTest {
         list.stop()
     }
 }
+
+class EntityBridgeTest {
+    private class Collector : EntityListener {
+        val received = java.util.concurrent.CopyOnWriteArrayList<EntityDelivery>()
+        override fun changed(delivery: EntityDelivery) { received.add(delivery) }
+        suspend fun wait(count: Int): List<EntityDelivery> = withTimeout(5000) {
+            while (received.size < count) delay(10)
+            received.toList()
+        }
+    }
+
+    @Test
+    fun retainedRowsReachTheBridgeAsChangedRowsAndReleasedRowsStayQuiet() = runBlocking {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        val first = Moment.create(text = "one")
+        val second = Moment.create(text = "two")
+        val collector = Collector()
+        val entities = DBlayer.database.liveEntities(first.modelName, collector)
+        entities.retain(listOf(first.id, second.id))
+        assertEquals(2, collector.wait(1)[0].rows.size)
+
+        first.update(text = "edited")
+        val changed = collector.wait(2)
+        assertEquals(1, changed[1].rows.size)
+        assertEquals(true, changed[1].rows[0].contains("edited"))
+
+        entities.release(listOf(first.id))
+        first.update(text = "unseen")
+        second.update(text = "seen")
+        val last = collector.wait(3)
+        assertEquals(3, last.size)
+        assertEquals(true, last[2].rows[0].contains("seen"))
+
+        second.destroy()
+        assertEquals(listOf(second.id), collector.wait(4).last().removed)
+    }
+}

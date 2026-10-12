@@ -207,3 +207,18 @@ fn a_state_change_of_an_included_row_reaches_the_parent_observer() {
     let last = changes(&log).pop().unwrap();
     assert_eq!(last.diff.updated, vec![rid("m1")]);
 }
+
+#[test]
+fn a_retained_row_receives_a_change_of_its_sync_state() {
+    let db = booted();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
+    db.update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
+    let (log, callback) = entity_recorder();
+    let observer = db.observe_entities("moments", callback).unwrap();
+    observer.retain(&[rid("m1")]).unwrap();
+    db.settle();
+    apply(&db, OperationTransition::Start { seq: only_seq(&db) });
+    db.settle();
+    let seen = log.lock().unwrap().clone();
+    assert_eq!((seen.len(), seen[1].rows[0].sync.state), (2, SyncState::Sending));
+}

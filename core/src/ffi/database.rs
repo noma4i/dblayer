@@ -8,6 +8,7 @@ use crate::pacing::SystemClock;
 use crate::query::{Query, Where};
 use crate::schema::ModelSpec;
 use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
+use super::entities::{self, EntityListener, LiveEntities};
 use super::live::LiveHandles;
 use super::transport::ForeignTransport;
 use super::{row_json, DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, RelationStateChange, StateListener, StateSubscription, Transport};
@@ -47,6 +48,9 @@ impl Database {
     pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         let row_id = id(&row_id)?;
         self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, listener)
+    }
+    pub fn live_entities(&self, model: String, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
+        entities::open(&self.db, &model, listener)
     }
     pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.connect_json(&query_json, false, listener)
