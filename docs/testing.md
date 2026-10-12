@@ -43,6 +43,7 @@ Typical scenarios to cover:
 | Duplicate mechanisms and names | `bash scripts/check_zoo.sh` |
 | Docs reference real paths | `bash scripts/check_docs.sh` |
 | No test waits without a bound | `bash scripts/check_waits.sh` |
+| No cable line that no test runs | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
 
 Test conventions:
 

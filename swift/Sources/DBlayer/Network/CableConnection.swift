@@ -23,7 +23,6 @@ public actor CableConnection {
   private var requestedAt = Date.distantPast
   private var attemptStartedAt = Date.distantPast
   private var openedAt: Date?
-  private var closedAt: Date?
   private var isStopped = false
 
   private(set) var state = CableConnectionState.idle
@@ -169,6 +168,7 @@ public actor CableConnection {
         close()
       } else {
         markClosed()
+        attempts += 1
       }
       return false
     }
@@ -212,7 +212,6 @@ public actor CableConnection {
 
   private func markClosed() {
     state = .closed
-    closedAt = timers.now()
     armWatchdog()
     continuation.yield(.closed)
   }
@@ -244,20 +243,15 @@ public actor CableConnection {
     guard !isStopped else {
       return
     }
-    await reopenIfStale()
+    if state != .connecting {
+      await reopen()
+    }
     if watchdogTask == nil {
       armWatchdog()
     }
   }
 
-  private func reopenIfStale() async {
-    guard state != .connecting, isStale() else {
-      return
-    }
-    if let closedAt, timers.now().timeIntervalSince(closedAt) < CableHeartbeat.staleAfter {
-      attempts += 1
-      return
-    }
+  private func reopen() async {
     drops += 1
     closeSocket()
     await timers.sleep(CableHeartbeat.reopenDelay)

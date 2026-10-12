@@ -19,9 +19,10 @@ final class ManualCableClock: @unchecked Sendable {
   private var sleepers: [Sleeper] = []
   private var nextId = 0
   private var fired = 0
+  private var skew: TimeInterval = 0
 
   func now() -> Date {
-    lock.withLock { Date(timeIntervalSince1970: elapsed) }
+    lock.withLock { Date(timeIntervalSince1970: elapsed + skew) }
   }
 
   func sleep(_ seconds: TimeInterval) async {
@@ -70,6 +71,14 @@ final class ManualCableClock: @unchecked Sendable {
   func sleeperDueTimes(before limit: TimeInterval) -> [TimeInterval] {
     lock.withLock { sleepers.map(\.due).filter { $0 < limit } }
   }
+  func skewWallClock(by seconds: TimeInterval) {
+    lock.withLock { skew += seconds }
+  }
+
+  func pendingSeconds() -> [TimeInterval] {
+    lock.withLock { sleepers.map(\.seconds) }
+  }
+
   var firedSleeps: Int {
     lock.withLock { fired }
   }

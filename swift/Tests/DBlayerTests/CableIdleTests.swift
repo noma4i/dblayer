@@ -27,4 +27,48 @@ struct CableIdleTests {
     #expect(bench.sockets.count == 2)
     await connection.close()
   }
+
+  @Test
+  func failedOpensBackOffByTheFormulaAndAWelcomeResetsIt() async {
+    let bench = CableBench()
+    bench.failOpens = 3
+    let connection = bench.makeConnection()
+    await connection.open()
+
+    var waits: [TimeInterval] = []
+    for _ in 0 ..< 3 {
+      await eventually("the next reconnect deadline") { bench.clock.pendingSeconds().contains { $0 != CableHeartbeat.reopenDelay } }
+      let wait = bench.clock.pendingSeconds().first { $0 != CableHeartbeat.reopenDelay } ?? 0
+      waits.append(wait)
+      await bench.clock.advance(by: wait)
+      await bench.clock.waitForSleepers(1, requestedSeconds: CableHeartbeat.reopenDelay)
+      await bench.clock.advance(by: CableHeartbeat.reopenDelay)
+    }
+
+    #expect(waits == (0 ..< 3).map { CableHeartbeat.pollInterval(attempts: $0, jitter: 0) })
+    await eventually("the open that succeeds") { await connection.state == .open }
+    bench.sockets.last?.deliver("{\"type\":\"welcome\"}")
+    await eventually("the welcome frame") { await connection.lastFrameAt != nil }
+    #expect(bench.clock.pendingSeconds() == [CableHeartbeat.staleAfter])
+    await connection.close()
+  }
+
+  @Test
+  func aWallClockThatMovedBackDoesNotHideSilence() async {
+    let bench = CableBench()
+    let connection = bench.makeConnection()
+    await connection.open()
+    bench.sockets[0].deliver("{\"type\":\"welcome\"}")
+    await eventually("the welcome frame") { await connection.lastFrameAt != nil }
+    bench.clock.skewWallClock(by: -100)
+
+    await bench.clock.advance(by: CableHeartbeat.staleAfter)
+    await bench.clock.waitForSleepers(1, requestedSeconds: CableHeartbeat.reopenDelay)
+    await bench.clock.advance(by: CableHeartbeat.reopenDelay)
+    await eventually("the reopen after silence") { bench.sockets.count == 2 }
+
+    #expect(bench.clock.firedSleeps == 2)
+    #expect(bench.clock.pendingSeconds() == [CableHeartbeat.staleAfter])
+    await connection.close()
+  }
 }

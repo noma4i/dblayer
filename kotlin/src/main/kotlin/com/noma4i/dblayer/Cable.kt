@@ -117,7 +117,6 @@ class CableConnection(
     private var requestedAt = Double.NEGATIVE_INFINITY
     private var attemptStartedAt = Double.NEGATIVE_INFINITY
     private var openedAt: Double? = null
-    private var closedAt: Double? = null
     private var isStopped = false
 
     var state = CableConnectionState.Idle
@@ -222,7 +221,12 @@ class CableConnection(
             throw error
         } catch (error: Exception) {
             if (current != generation) return false
-            if (error is CableSocketException && error.reason == CableSocketException.Reason.UnsupportedFrame) closeAll() else markClosed()
+            if (error is CableSocketException && error.reason == CableSocketException.Reason.UnsupportedFrame) {
+                closeAll()
+            } else {
+                markClosed()
+                attempts += 1
+            }
             return false
         }
         if (current != generation || isStopped) {
@@ -277,7 +281,6 @@ class CableConnection(
 
     private fun markClosed() {
         state = CableConnectionState.Closed
-        closedAt = timers.now()
         armWatchdog()
         stream.trySend(CableFrame.Closed)
     }
@@ -296,17 +299,11 @@ class CableConnection(
     private suspend fun watchdogFired() {
         watchdogJob = null
         if (isStopped) return
-        reopenIfStale()
+        if (state != CableConnectionState.Connecting) reopen()
         if (watchdogJob == null) armWatchdog()
     }
 
-    private suspend fun reopenIfStale() {
-        if (state == CableConnectionState.Connecting || !isStale()) return
-        val closed = closedAt
-        if (closed != null && timers.now() - closed < CableHeartbeat.STALE_AFTER) {
-            attempts += 1
-            return
-        }
+    private suspend fun reopen() {
         drops += 1
         closeSocketNow()
         timers.sleep(CableHeartbeat.REOPEN_DELAY)

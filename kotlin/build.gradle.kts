@@ -15,6 +15,12 @@ android {
     }
   }
 
+  buildTypes {
+    debug {
+      enableUnitTestCoverage = true
+    }
+  }
+
   testOptions {
     unitTests.all {
       it.systemProperty("jna.library.path", file("../target/debug").absolutePath)

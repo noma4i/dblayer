@@ -22,19 +22,22 @@ step cargo test --manifest-path "$root/Cargo.toml" -p dblayer-gen
 
 echo "== ios: xcframework, swift test, iOS simulator compile"
 step bash "$root/scripts/build_ios.sh"
-test_step swift test --package-path "$root/swift"
+test_step swift test --package-path "$root/swift" --enable-code-coverage
 step bash -c 'cd -- "$1/swift" && exec xcodebuild build -scheme DBlayer -destination "generic/platform=iOS Simulator" -derivedDataPath "$1/target/dd-swift" -quiet' _ "$root"
 
 echo "== kotlin: libs for 4 Android ABI, bindings, gradle unit tests"
 step bash "$root/scripts/build_kotlin.sh"
 step bash "$root/scripts/check_android_artifacts.sh"
-test_step "$gradle" -p "$root/kotlin" testDebugUnitTest --no-watch-fs --console=plain
+test_step "$gradle" -p "$root/kotlin" testDebugUnitTest createDebugUnitTestCoverageReport --no-watch-fs --console=plain
 
 echo "== fixtures: generated models match fixtures/*.dbl"
 step bash "$root/scripts/gen_fixtures.sh" --check
 
 echo "== zoo: one mechanism per question"
 step bash "$root/scripts/check_zoo.sh"
+
+echo "== coverage: no cable line that no test runs"
+step bash "$root/scripts/check_coverage.sh"
 
 echo "== waits: no unbounded wait in the swift and kotlin tests"
 step bash "$root/scripts/check_waits_test.sh"
