@@ -7,14 +7,13 @@ import Testing
 struct BridgeProbeTests {
   /// Waits for the event that the relation failed, not for a time.
   static func failedState(of query: Query<Moment>) async -> LoadState {
-    for await state in await query.state.stream() where state.phase == .failed { return state }
-    return LoadState()
+    await Cursor(await query.state.stream()).first("the relation to fail") { $0.phase == .failed } ?? LoadState()
   }
 
   @Test
   func writesReachTypedLiveRows() async throws {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    var changes = await Moment.recent.live.stream().makeAsyncIterator()
+    let changes = Cursor(await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.create(text: "m")
     #expect(await changes.next()?.first?.text == "m")
@@ -30,16 +29,16 @@ struct BridgeProbeTests {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let first = try await Moment.create(text: "one")
     var entity: Entity<Moment>? = Moment.entity(first.id)
-    for _ in 0 ..< 200 where entity?.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (entity?.value == nil)"#) { !(entity?.value == nil) }
     #expect(entity?.value?.text == "one")
 
     _ = try await first.update(text: "edited")
-    for _ in 0 ..< 200 where entity?.value?.text != "edited" { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (entity?.value?.text != "edited")"#) { !(entity?.value?.text != "edited") }
     #expect(entity?.value?.text == "edited")
 
     #expect(DB.subscriptionCensus().subscriptions == 1)
     entity = nil
-    for _ in 0 ..< 200 where Entities<Moment>.shared.liveCount > 0 { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (Entities<Moment>.shared.liveCount > 0)"#) { !(Entities<Moment>.shared.liveCount > 0) }
     #expect(Entities<Moment>.shared.liveCount == 0)
   }
 
@@ -61,10 +60,10 @@ struct BridgeProbeTests {
 
     try await Moment.feed.refresh()
 
-    var changes = await Moment.feed.live.stream().makeAsyncIterator()
+    let changes = Cursor(await Moment.feed.live.stream())
     #expect(await changes.next()?.first?.uuid == "a")
     #expect(transport.calls.first?.operationName == "MomentsFeed")
-    var states = await Moment.feed.state.stream().makeAsyncIterator()
+    let states = Cursor(await Moment.feed.state.stream())
     let state = await states.next()
     #expect(state?.phase == .idle && state?.hasMore == false && state?.loadedAt != nil)
   }
@@ -152,13 +151,13 @@ struct BridgeProbeTests {
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
     let list = LiveList(Moment.feed)
-    for _ in 0 ..< 200 where list.rows.isEmpty || list.state.loadedAt == nil { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (list.rows.isEmpty || list.state.loadedAt == nil)"#) { !(list.rows.isEmpty || list.state.loadedAt == nil) }
 
     #expect(list.rows.first?.uuid == "a")
     #expect(list.state.hasMore && list.state.phase == .idle)
     #expect(list.state.total == 9)
     let entity = Moment.entity("1")
-    for _ in 0 ..< 200 where entity.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (entity.value == nil)"#) { !(entity.value == nil) }
     #expect(entity.value?.uuid == "a")
   }
 
@@ -170,7 +169,7 @@ struct BridgeProbeTests {
 
     let local = try await Moment.create(text: "hello", media: nil)
     let entity = Moment.entity(local.id)
-    for _ in 0 ..< 200 where entity.value?.sync.state != .failed { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (entity.value?.sync.state != .failed)"#) { !(entity.value?.sync.state != .failed) }
     let failed = entity.value
     #expect(failed?.sync.state == .failed)
     #expect(failed?.needsAttention == true)
@@ -203,14 +202,11 @@ struct BridgeProbeTests {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    var snapshots = await Moment.recent.snapshots.stream().makeAsyncIterator()
+    let snapshots = Cursor(await Moment.recent.snapshots.stream())
     _ = await snapshots.next()
 
     let local = try await Moment.create(text: "hello", media: nil)
-    var replaced: String?
-    while replaced == nil, let snapshot = await snapshots.next() {
-      replaced = snapshot.replaced["m77"]
-    }
+    let replaced = await snapshots.first("the snapshot that carries the replaced id") { $0.replaced["m77"] != nil }?.replaced["m77"]
 
     #expect(replaced == local.id)
   }
@@ -221,10 +217,10 @@ struct BridgeProbeTests {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let message = try await Message.create(chatId: "c", authorId: "u1", text: "hi")
     let entity = Message.entity(message.id)
-    for _ in 0 ..< 100 where entity.value == nil { try await Task.sleep(for: .milliseconds(20)) }
+    await eventually(#"not (entity.value == nil)"#) { !(entity.value == nil) }
     #expect(entity.value?.text == "hi")
     try await message.destroy()
-    for _ in 0 ..< 100 where entity.value != nil { try await Task.sleep(for: .milliseconds(20)) }
+    await eventually(#"not (entity.value != nil)"#) { !(entity.value != nil) }
     #expect(entity.value == nil)
   }
 
@@ -248,7 +244,7 @@ struct BridgeProbeTests {
     }
 
     let list = LiveList(Moment.recent, snapshots: snapshots, state: state)
-    while list.replaced.isEmpty { await Task.yield() }
+    await eventually("the replacement reaches the list") { !list.replaced.isEmpty }
 
     #expect(seen.mainThread == [false, false])
   }
@@ -302,13 +298,13 @@ struct BridgeProbeTests {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let list = LiveList(Moment.feed)
-    for _ in 0 ..< 200 where list.state.loadedAt == nil { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (list.state.loadedAt == nil)"#) { !(list.state.loadedAt == nil) }
     let older = Task { try await list.refresh() }
-    for _ in 0 ..< 200 where transport.calls.filter({ $0.operationName == "MomentsFeed" }).count < 2 { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (transport.calls.filter({ $0.operationName == "MomentsFeed" }).count < 2)"#) { !(transport.calls.filter({ $0.operationName == "MomentsFeed" }).count < 2) }
 
     let local = try await Moment.create(text: "hello", media: nil)
     try await local.settled()
-    for _ in 0 ..< 400 where list.rows.map(\.id) != ["m77"] { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (list.rows.map(\.id) != ["m77"])"#) { !(list.rows.map(\.id) != ["m77"]) }
 
     #expect(list.rows.map(\.id) == ["m77"])
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3)
@@ -328,11 +324,7 @@ struct BridgeProbeTests {
     transport.enqueue("LikeMoment", reply: #"{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}"#)
     let liked = try await moment.like()
     #expect(liked.likedByMe)
-    var attempts = 0
-    while await Moment.find(moment.id).current()?.likedByMe != false, attempts < 400 {
-      attempts += 1
-      try await Task.sleep(for: .milliseconds(10))
-    }
+    await eventually("the refused like rolls back") { await Moment.find(moment.id).current()?.likedByMe == false }
     #expect(await Moment.find(moment.id).current()?.likedByMe == false)
 
     await #expect(throws: (any Error).self) { try await liked.settled() }
@@ -363,11 +355,7 @@ struct BridgeProbeTests {
 
     transport.enqueue("ShareMoment", reply: #"{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}"#)
     let refused = try await moment.share()
-    var attempts = 0
-    while transport.calls.filter({ $0.operationName == "ShareMoment" }).count < 2, attempts < 400 {
-      attempts += 1
-      try await Task.sleep(for: .milliseconds(10))
-    }
+    await eventually("the second ShareMoment call") { transport.calls.filter { $0.operationName == "ShareMoment" }.count >= 2 }
     try await Task.sleep(for: .milliseconds(100))
     await #expect(throws: (any Error).self) { try await refused.answer() }
   }
@@ -378,8 +366,8 @@ final class EntityCollector: EntityListener, @unchecked Sendable {
   private var received: [EntityDelivery] = []
   func changed(delivery: EntityDelivery) { lock.withLock { received.append(delivery) } }
   var deliveries: [EntityDelivery] { lock.withLock { received } }
-  func wait(for count: Int) async throws -> [EntityDelivery] {
-    for _ in 0 ..< 300 where deliveries.count < count { try await Task.sleep(for: .milliseconds(10)) }
+  func wait(for count: Int) async -> [EntityDelivery] {
+    await eventually("\(count) entity deliveries") { deliveries.count >= count }
     return deliveries
   }
 }
@@ -393,20 +381,20 @@ extension BridgeProbeTests {
     let collector = EntityCollector()
     let entities = try DB.database.liveEntities(model: Moment.modelName, listener: collector)
     try entities.retain(ids: [first.id, second.id])
-    #expect(try await collector.wait(for: 1).first?.rows.count == 2)
+    #expect(await collector.wait(for: 1).first?.rows.count == 2)
 
     _ = try await first.update(text: "edited")
-    let changed = try await collector.wait(for: 2)
+    let changed = await collector.wait(for: 2)
     #expect(changed.count == 2 && changed[1].rows.count == 1 && changed[1].rows[0].contains("edited"))
 
     try entities.release(ids: [first.id])
     _ = try await first.update(text: "unseen")
     _ = try await second.update(text: "seen")
-    let last = try await collector.wait(for: 3)
+    let last = await collector.wait(for: 3)
     #expect(last.count == 3 && last[2].rows.count == 1 && last[2].rows[0].contains("seen"))
 
     try await second.destroy()
-    let removed = try await collector.wait(for: 4)
+    let removed = await collector.wait(for: 4)
     #expect(removed.last?.removed == [second.id])
   }
 
@@ -417,7 +405,7 @@ extension BridgeProbeTests {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let moment = try await Moment.create(text: "old")
     let old = Moment.entity(moment.id)
-    for _ in 0 ..< 200 where old.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (old.value == nil)"#) { !(old.value == nil) }
     #expect(old.value?.text == "old")
 
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
@@ -426,7 +414,7 @@ extension BridgeProbeTests {
     #expect(old.value == nil && fresh.value == nil && fresh !== old)
     let created = try await Moment.create(text: "new")
     let again = Moment.entity(created.id)
-    for _ in 0 ..< 200 where again.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+    await eventually(#"not (again.value == nil)"#) { !(again.value == nil) }
     #expect(again.value?.text == "new")
   }
 }

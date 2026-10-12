@@ -307,7 +307,6 @@ final class TestCableClientSocket: CableSocket, @unchecked Sendable {
   private var recordedText: [String] = []
   private var closed = false
   private var pendingReceive: CheckedContinuation<String, any Error>?
-  private var pendingRecordedWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
   init(frames: [String]) {
     self.frames = frames
@@ -326,20 +325,11 @@ final class TestCableClientSocket: CableSocket, @unchecked Sendable {
   }
 
   func send(_ text: String) async throws {
-    let result = lock.withLock { () -> Result<[CheckedContinuation<Void, Never>], CableSocketError> in
+    try lock.withLock {
       guard !closed else {
-        return .failure(.closed)
+        throw CableSocketError.closed
       }
       recordedText.append(text)
-      let waiters = pendingRecordedWaiters.filter { $0.0 <= recordedText.count }.map(\.1)
-      pendingRecordedWaiters.removeAll { $0.0 <= recordedText.count }
-      return .success(waiters)
-    }
-    switch result {
-    case let .success(waiters):
-      waiters.forEach { $0.resume() }
-    case let .failure(error):
-      throw error
     }
   }
 
@@ -366,17 +356,6 @@ final class TestCableClientSocket: CableSocket, @unchecked Sendable {
   }
 
   func waitForRecordedCount(_ count: Int) async {
-    await withCheckedContinuation { continuation in
-      let resumeNow = lock.withLock {
-        if recordedText.count >= count {
-          return true
-        }
-        pendingRecordedWaiters.append((count, continuation))
-        return false
-      }
-      if resumeNow {
-        continuation.resume()
-      }
-    }
+    await eventually("\(count) recorded frames") { recordedTexts().count >= count }
   }
 }

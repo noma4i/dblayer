@@ -1,6 +1,5 @@
 package com.noma4i.dblayer
 
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonObject
@@ -58,7 +57,7 @@ class HttpPipelineTest {
     }
 
     @Test
-    fun queryDecodesDataAndNullData() = runBlocking {
+    fun queryDecodesDataAndNullData() = bounded {
         server.enqueue(reply(200, """{"data":{"id":"7"}}"""))
         server.enqueue(reply(200, """{"data":null}"""))
         assertEquals("7", transport().query(ProbeQuery, Unit).data?.id)
@@ -66,27 +65,27 @@ class HttpPipelineTest {
     }
 
     @Test
-    fun queryReportsGraphQLErrorsFromEveryStatus() = runBlocking {
+    fun queryReportsGraphQLErrorsFromEveryStatus() = bounded {
         for (status in listOf(200, 201, 400, 403, 422)) {
             server.enqueue(reply(status, """{"errors":[{"message":"Rejected","extensions":{"code":"REGISTRATION_REQUIRED"}}]}"""))
-            val error = assertThrows(GraphQLTransportError::class.java) { runBlocking { transport().query(ProbeQuery, Unit) } }
+            val error = assertThrows(GraphQLTransportError::class.java) { bounded { transport().query(ProbeQuery, Unit) } }
             assertEquals(GraphQLTransportError.GraphQL(listOf("Rejected")), error)
         }
     }
 
     @Test
-    fun mutationReturnsDataAndErrors() = runBlocking {
+    fun mutationReturnsDataAndErrors() = bounded {
         server.enqueue(reply(200, """{"data":{"id":"7"},"errors":[{"message":"Rejected","extensions":{"code":"BAD_INPUT"}}]}"""))
         val response = transport().mutate(ProbeMutation, Unit)
         assertEquals("7", response.data?.id)
         assertEquals(listOf("Rejected"), response.errors.map { it.message })
         assertEquals(listOf("BAD_INPUT"), response.errors.map { it.code })
         server.enqueue(reply(401, """{"data":null,"errors":[{"message":"Rejected"}]}"""))
-        assertEquals(GraphQLTransportError.Unauthenticated, assertThrows(GraphQLTransportError::class.java) { runBlocking { transport().mutate(ProbeMutation, Unit) } })
+        assertEquals(GraphQLTransportError.Unauthenticated, assertThrows(GraphQLTransportError::class.java) { bounded { transport().mutate(ProbeMutation, Unit) } })
     }
 
     @Test
-    fun requestIsSignedEncryptedAndIdentifiesThePersistedQuery() = runBlocking {
+    fun requestIsSignedEncryptedAndIdentifiesThePersistedQuery() = bounded {
         server.enqueue(reply(200, """{"data":{"id":"7"}}"""))
         transport().query(ProbeQuery, Unit)
         val request = server.takeRequest()
@@ -103,7 +102,7 @@ class HttpPipelineTest {
     }
 
     @Test
-    fun tokenSupplierReadsTheCurrentTokenOncePerRequest() = runBlocking {
+    fun tokenSupplierReadsTheCurrentTokenOncePerRequest() = bounded {
         val tokens = listOf("token-1", "token-2")
         var reads = 0
         val run = OperationRun(
@@ -129,7 +128,7 @@ class HttpPipelineTest {
     }
 
     @Test
-    fun unknownPersistedQueryIsSentAgainWithTheDocument() = runBlocking {
+    fun unknownPersistedQueryIsSentAgainWithTheDocument() = bounded {
         server.enqueue(reply(200, """{"errors":[{"message":"PersistedQueryNotFound"}]}"""))
         server.enqueue(reply(200, """{"data":{"id":"7"}}"""))
         assertEquals("7", transport().query(ProbeQuery, Unit).data?.id)
@@ -138,7 +137,7 @@ class HttpPipelineTest {
     }
 
     @Test
-    fun encryptedResponseIsOpened() = runBlocking {
+    fun encryptedResponseIsOpened() = bounded {
         val sealed = signer.payloadCipher().seal("""{"data":{"id":"9"}}""".toByteArray())
         val wire = dbJson.encodeToString(EnvelopeWire.serializer(), EnvelopeWire(sealed.envelopeVersion, sealed.iv, sealed.ciphertext, sealed.tag))
         server.enqueue(reply(200, wire).setHeader("x-payload-encryption", "1"))
@@ -146,10 +145,10 @@ class HttpPipelineTest {
     }
 
     @Test
-    fun failuresAreReportedOnce() = runBlocking {
+    fun failuresAreReportedOnce() = bounded {
         val failures = mutableListOf<RequestFailure>()
         server.enqueue(reply(502, ""))
-        assertThrows(GraphQLTransportError::class.java) { runBlocking { transport(makeRun { failures.add(it) }).query(ProbeQuery, Unit) } }
+        assertThrows(GraphQLTransportError::class.java) { bounded { transport(makeRun { failures.add(it) }).query(ProbeQuery, Unit) } }
         assertEquals(listOf(RequestFailure("Probe", 502, "server")), failures)
     }
 }

@@ -7,7 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -32,9 +31,7 @@ class EntityRegistryTest {
     private fun registry(source: EntitySource = CountingSource(), maxAge: Long = 120_000, maxCount: Int = 200, now: () -> Long = { 0 }) =
         Entities("Moment", Moment.serializer(), maxAge, maxCount, now, source)
 
-    private fun collectGarbage(until: () -> Boolean) {
-        repeat(100) { if (!until()) { System.gc(); Thread.sleep(20) } }
-    }
+    private fun collectGarbage(until: () -> Boolean) = eventuallyBlocking("the garbage collector frees the readers") { System.gc(); until() }
 
     /** REL-01 */
     @Test
@@ -82,7 +79,7 @@ class EntityRegistryTest {
 
     /** REL-09 */
     @Test
-    fun oneChangedIdInvalidatesOnlyItsReaders() = runBlocking {
+    fun oneChangedIdInvalidatesOnlyItsReaders() = bounded {
         val registry = registry()
         val entities = List(10) { registry.entity("$it") }
         registry.apply(delivery(1, List(10) { moment("$it", "first") }))
@@ -148,7 +145,7 @@ class EntityRegistryTest {
 
     /** Addendum 3a: a cancelled attach leaves no subscription, at each of the 3 timings. */
     @Test
-    fun attachCancelledAtAnyMomentLeavesNoSubscription() = runBlocking {
+    fun attachCancelledAtAnyMomentLeavesNoSubscription() = bounded {
         val active = AtomicInteger()
         val gate = CountDownLatch(1)
         val blocking = LiveSource(0) { emit: (Int) -> Unit ->
@@ -164,7 +161,7 @@ class EntityRegistryTest {
         assertEquals(0, active.get())
 
         val during = launch { blocking.flow.collect { } }
-        withTimeout(5000) { while (active.get() == 0) delay(10) }
+        eventually("not (active.get() == 0)", 5000) { !(active.get() == 0) }
         during.cancel()
         gate.countDown()
         during.join()
@@ -177,12 +174,12 @@ class EntityRegistryTest {
             cancel
         }
         assertEquals(1, immediate.flow.first())
-        withTimeout(5000) { while (active.get() != 0) delay(10) }
+        eventually("not (active.get() != 0)", 5000) { !(active.get() != 0) }
     }
 
     /** PERF-16: a slow reader gets one pending result that holds every replacement pair of the burst. */
     @Test
-    fun slowConsumerStreamKeepsOnePendingResultAndEveryReplacementPair() = runBlocking {
+    fun slowConsumerStreamKeepsOnePendingResultAndEveryReplacementPair() = bounded {
         for (burst in listOf(10, 100, 1000)) {
             val latest = Latest<Snapshot<Moment>> { older, newer -> Snapshot.merging(older, newer) }
             repeat(burst) { step -> latest.put(Snapshot(emptyList(), mapOf("real$step" to "temp$step"))) }
@@ -193,7 +190,7 @@ class EntityRegistryTest {
 
     /** A chain of replacements across missed deliveries reads as one pair from the first id to the last. */
     @Test
-    fun aChainOfReplacementsAcrossMissedDeliveriesReadsAsOnePair() = runBlocking {
+    fun aChainOfReplacementsAcrossMissedDeliveriesReadsAsOnePair() = bounded {
         val source = LiveSource(Snapshot<Moment>(emptyList(), emptyMap()), { older, newer -> Snapshot.merging(older, newer) }) { emit ->
             repeat(1000) { step -> emit(Snapshot(emptyList(), mapOf("id${step + 1}" to "id$step"))) }
             val cancel: () -> Unit = {}
@@ -204,7 +201,7 @@ class EntityRegistryTest {
 
     /** REL-24: a newly opened database starts with no entity of the old one. */
     @Test
-    fun aNewDatabaseStartsWithNoEntityOfTheOldOne() = runBlocking {
+    fun aNewDatabaseStartsWithNoEntityOfTheOldOne() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val moment = Moment.create(text = "old")
         val old = Moment.entity(moment.id)

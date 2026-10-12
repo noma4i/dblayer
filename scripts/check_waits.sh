@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# INV-WAIT-04: a test never waits without a bound. Swift waits through eventually and Cursor (Waiting.swift), Kotlin through bounded and eventually (TestWaiting.kt).
+set -euo pipefail
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+swift_dir="${CHECK_WAITS_SWIFT:-$root/swift/Tests}"
+kotlin_dir="${CHECK_WAITS_KOTLIN:-$root/kotlin/src/test}"
+found=0
+
+report() {
+  local rule="$1" hits="$2"
+  if [ -n "$hits" ]; then
+    echo "check_waits: $rule" >&2
+    echo "$hits" >&2
+    found=1
+  fi
+}
+
+swift_hits() {
+  rg -n --no-heading -g '*.swift' -g '!Waiting.swift' "$1" "$swift_dir" || true
+}
+
+kotlin_hits() {
+  rg -n --no-heading -g '*.kt' -g '!TestWaiting.kt' "$1" "$kotlin_dir" || true
+}
+
+report "swift: a while loop in a test (use eventually or Cursor)" "$(swift_hits '^\s*while\b')"
+report "swift: a hand-written poll (use eventually)" "$(swift_hits 'for _ in 0 ?\.\.< ?\w+ where')"
+report "swift: an unbounded stream read (use Cursor)" "$(swift_hits 'makeAsyncIterator\(\)|\bfor await\b')"
+report "kotlin: runBlocking without a bound (use bounded)" "$(kotlin_hits '\brunBlocking\b')"
+report "kotlin: a while loop with a delay or a sleep (use eventually)" "$(kotlin_hits '\bwhile \(.*\bdelay\(|Thread\.sleep.*while|while.*Thread\.sleep')"
+
+if [ "$found" -eq 1 ]; then
+  exit 1
+fi
+echo "check_waits: ok"

@@ -178,7 +178,7 @@ struct NetworkTransportTests {
       onError: { failure in continuation.yield(.error(failure)) }
     )
     let startTask = Task { await cable.start() }
-    var iterator = callbacks.makeAsyncIterator()
+    let iterator = Cursor(callbacks)
 
     let ready = await iterator.next()
     let receivedPayload = await iterator.next()
@@ -256,7 +256,7 @@ struct NetworkTransportTests {
       onError: { failure in continuation.yield(.error(failure)) }
     )
     let startTask = Task { await cable.start() }
-    var iterator = callbacks.makeAsyncIterator()
+    let iterator = Cursor(callbacks)
 
     var callback = await iterator.next()
     if callback == .ready {

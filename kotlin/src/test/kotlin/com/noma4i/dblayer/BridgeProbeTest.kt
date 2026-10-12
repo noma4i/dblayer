@@ -7,12 +7,10 @@ import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -20,7 +18,7 @@ import org.junit.Test
 
 class BridgeProbeTest {
     @Test
-    fun anEntityFollowsAnEditAndLetsGoOfTheRecordWhenItIsDropped() = runBlocking {
+    fun anEntityFollowsAnEditAndLetsGoOfTheRecordWhenItIsDropped() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val first = Moment.create(text = "one")
         var entity: Entity<Moment>? = Moment.entity(first.id)
@@ -29,12 +27,12 @@ class BridgeProbeTest {
         assertEquals("edited", withTimeout(5000) { entity!!.value.first { it?.text == "edited" } }?.text)
         assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
         entity = null
-        withTimeout(10000) { while (EntityRegistries.of("Moment", Moment.serializer()).liveCount > 0) { System.gc(); delay(50) } }
+        eventually("the registry lets go of the record", 10_000) { System.gc(); EntityRegistries.of("Moment", Moment.serializer()).liveCount == 0 }
         assertEquals(0, EntityRegistries.of("Moment", Moment.serializer()).liveCount)
     }
 
     @Test
-    fun anEntityOfARecordThatAnotherRecordRefersToFollowsItsCreateAndDestroy() = runBlocking {
+    fun anEntityOfARecordThatAnotherRecordRefersToFollowsItsCreateAndDestroy() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val message = Message.create(chatId = "c", authorId = "u1", text = "hi")
         val entity = Message.entity(message.id)
@@ -45,7 +43,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun writesReachTypedLiveRows() = runBlocking {
+    fun writesReachTypedLiveRows() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val live = Moment.recent.live.flow
         assertEquals(emptyList<Moment>(), withTimeout(5000) { live.first() })
@@ -58,7 +56,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun feedLoadsFromTheTransportIntoLiveRows() = runBlocking {
+    fun feedLoadsFromTheTransportIntoLiveRows() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
@@ -75,7 +73,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() = runBlocking {
+    fun loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
@@ -91,7 +89,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aFailedLoadThrowsLikeRefresh() = runBlocking {
+    fun aFailedLoadThrowsLikeRefresh() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", DbException.Network("offline"))
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
@@ -101,7 +99,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() = runBlocking {
+    fun aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", DbException.Network("offline"))
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
@@ -115,7 +113,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun liveListLoadsTheRelationAndReportsItsState() = runBlocking {
+    fun liveListLoadsTheRelationAndReportsItsState() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"totalCount":9}}}""")
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
@@ -136,7 +134,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndSendsAfterRegisteringAndRetrying() = runBlocking {
+    fun aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndSendsAfterRegisteringAndRetrying() = bounded {
         val transport = MockTransport()
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
 
@@ -154,7 +152,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun confirmedIdWaitsForTheServerIdOfALocalCreate() = runBlocking {
+    fun confirmedIdWaitsForTheServerIdOfALocalCreate() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
@@ -167,7 +165,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() = runBlocking {
+    fun aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
@@ -184,7 +182,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() = runBlocking {
+    fun aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://s3/x","headers":{},"signedId":"sid","blobId":"b1"}}}""")
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
@@ -206,7 +204,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() = runBlocking {
+    fun resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
@@ -223,7 +221,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aReloadAfterACommitReadsTheServerAfterTheLoadThatWasInFlight() = runBlocking {
+    fun aReloadAfterACommitReadsTheServerAfterTheLoadThatWasInFlight() = bounded {
         val transport = MockTransport()
         val empty = """{"data":{"feed":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"""
         transport.enqueue("MomentsFeed", empty)
@@ -236,7 +234,7 @@ class BridgeProbeTest {
         val list = LiveList(Moment.feed, listScope)
         withTimeout(5000) { list.state.first { it.phase == LoadPhase.Idle && it.loadedAt != null } }
         val older = launch { list.refresh() }
-        withTimeout(5000) { while (transport.calls.count { it.operationName == "MomentsFeed" } < 2) delay(10) }
+        eventually("not (transport.calls.count { it.operationName == \"MomentsFeed\" } < 2)", 5000) { !(transport.calls.count { it.operationName == "MomentsFeed" } < 2) }
 
         val local = Moment.create(text = "hello", media = null)
         withTimeout(5000) { local.settled() }
@@ -253,14 +251,14 @@ class EntityBridgeTest {
     private class Collector : EntityListener {
         val received = java.util.concurrent.CopyOnWriteArrayList<EntityDelivery>()
         override fun changed(delivery: EntityDelivery) { received.add(delivery) }
-        suspend fun wait(count: Int): List<EntityDelivery> = withTimeout(5000) {
-            while (received.size < count) delay(10)
-            received.toList()
+        suspend fun wait(count: Int): List<EntityDelivery> {
+            eventually("$count entity deliveries") { received.size >= count }
+            return received.toList()
         }
     }
 
     @Test
-    fun retainedRowsReachTheBridgeAsChangedRowsAndReleasedRowsStayQuiet() = runBlocking {
+    fun retainedRowsReachTheBridgeAsChangedRowsAndReleasedRowsStayQuiet() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val first = Moment.create(text = "one")
         val second = Moment.create(text = "two")

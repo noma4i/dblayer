@@ -62,8 +62,9 @@ async fn inv_wait_02_a_waiting_caller_returns_offline_when_the_connection_drops(
         tokio::time::sleep(Duration::from_secs(1)).await;
         rig.sync.set_online(false);
     };
-    let (settled, ()) = tokio::join!(rig.sync.settled("moments", &id), going_offline);
-    assert!(matches!(settled, Err(crate::sync::SyncError::Offline)));
+    let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.settled("moments", &id));
+    let (settled, ()) = tokio::join!(bounded, going_offline);
+    assert!(matches!(settled, Ok(Err(crate::sync::SyncError::Offline))), "settled did not return Offline within 60 s of going offline");
 }
 
 #[test]
@@ -79,5 +80,14 @@ fn inv_wait_03_the_send_sources_hold_no_timer() {
         for word in ["sleep(", "interval(", "sleep_until("] {
             assert!(!source.contains(word), "{name} holds a timer: {word}");
         }
+    }
+}
+
+#[test]
+fn inv_wait_04_no_test_of_the_wrappers_waits_without_a_bound() {
+    let scripts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts");
+    for script in ["check_waits_test.sh", "check_waits.sh"] {
+        let output = std::process::Command::new("bash").arg(scripts.join(script)).output().unwrap();
+        assert!(output.status.success(), "{script}: {}", String::from_utf8_lossy(&output.stderr));
     }
 }

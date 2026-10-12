@@ -60,13 +60,8 @@ struct CableConnectionTests {
   ) async throws -> [CableFrame] {
     let stream = await connection.frames
     await connection.open()
-    var frames: [CableFrame] = []
-    for await frame in stream {
-      frames.append(frame)
-      if frames.count == count {
-        await connection.close()
-      }
-    }
+    let frames = await Cursor(stream).collect(count, "\(count) cable frames")
+    await connection.close()
     return frames
   }
 }

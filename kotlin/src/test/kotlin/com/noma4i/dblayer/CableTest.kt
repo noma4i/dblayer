@@ -7,7 +7,6 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -129,7 +128,7 @@ class CableClientTest {
         withTimeout(5000) { stream.let { if (ignoringFailure) it.catch { } else it }.toList() }
 
     @Test
-    fun sendsExecuteAfterConfirmation() = runBlocking {
+    fun sendsExecuteAfterConfirmation() = bounded {
         val socket = TestCableSocket(listOf(WELCOME, confirmation(identifier)))
         val client = client(socket)
         val stream = client.subscribeGraphQL(document, "X")
@@ -142,7 +141,7 @@ class CableClientTest {
     }
 
     @Test
-    fun runsManySubscriptionsOnOneChannelAndRoutesBySubscriptionId() = runBlocking {
+    fun runsManySubscriptionsOnOneChannelAndRoutesBySubscriptionId() = bounded {
         val shared = GraphQLChannel.identifier("shared")
         val socket = TestCableSocket(
             listOf(
@@ -185,7 +184,7 @@ class CableClientTest {
     }
 
     @Test
-    fun emitsReadyOnceThenPayloadEvents() = runBlocking {
+    fun emitsReadyOnceThenPayloadEvents() = bounded {
         val ready = """{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionId":"s1","subscriptionReady":true}"""
         val payload = """{"result":{"data":{"chatUpdated":{"id":"1"}}},"more":true,"subscriptionId":"s1"}"""
         val socket = TestCableSocket(listOf(WELCOME, confirmation(identifier), message(identifier, ready), message(identifier, ready), message(identifier, payload), rejection(identifier)))
@@ -199,7 +198,7 @@ class CableClientTest {
     }
 
     @Test
-    fun finishesOnReject() = runBlocking {
+    fun finishesOnReject() = bounded {
         val socket = TestCableSocket(listOf(WELCOME, rejection(identifier)))
         val client = client(socket)
         val stream = client.subscribeGraphQL(document, "X")
@@ -212,7 +211,7 @@ class CableClientTest {
     }
 
     @Test
-    fun finishesAndUnsubscribesOnMoreFalse() = runBlocking {
+    fun finishesAndUnsubscribesOnMoreFalse() = bounded {
         val socket = TestCableSocket(
             listOf(
                 WELCOME,
@@ -232,7 +231,7 @@ class CableClientTest {
     }
 
     @Test
-    fun subscribesPresenceAfterWelcomeAndPingsOnConfirmation() = runBlocking {
+    fun subscribesPresenceAfterWelcomeAndPingsOnConfirmation() = bounded {
         val presence = OnlineChannel.identifier("54")
         val socket = TestCableSocket(listOf(WELCOME, confirmation(presence)))
         val client = CableClient("/test", "token", { _, _ -> socket }, { "abc" }, pingInterval = 0.01)
@@ -247,7 +246,7 @@ class CableClientTest {
     }
 
     @Test
-    fun resubscribesAfterSecondWelcome() = runBlocking {
+    fun resubscribesAfterSecondWelcome() = bounded {
         val socket = TestCableSocket(listOf(WELCOME, confirmation(identifier), WELCOME, confirmation(identifier)))
         val client = client(socket)
         val stream = client.subscribeGraphQL(document, "X")

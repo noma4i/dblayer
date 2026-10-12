@@ -42,9 +42,11 @@ Typical scenarios to cover:
 | Everything, including Swift and Kotlin | `bash scripts/check_dblayer.sh` |
 | Duplicate mechanisms and names | `bash scripts/check_zoo.sh` |
 | Docs reference real paths | `bash scripts/check_docs.sh` |
+| No test waits without a bound | `bash scripts/check_waits.sh` |
 
 Test conventions:
 
+- A test waits only through `eventually` or `Cursor` (Swift, `Waiting.swift`) and `bounded` or `eventually` (Kotlin, `TestWaiting.kt`). Each wait has a timeout and its failure names the condition. `check_waits.sh` rejects loops, raw iterators and `runBlocking` in tests.
 - Tests are never embedded in source files. A module is a directory with `mod.rs`, and the tests of `x.rs` are in `x_tests.rs` next to it.
 - Every behavior test is written first and seen failing.
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.

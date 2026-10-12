@@ -21,11 +21,6 @@ extension BridgeProbeTests {
     try await User.profile.refresh()
   }
 
-  @MainActor
-  static func waitFor(_ done: () -> Bool) async throws {
-    for _ in 0 ..< 300 where !done() { try await Task.sleep(for: .milliseconds(10)) }
-  }
-
   /// REL-01 for the singleton and REL-08: 10 readers share 1 object, 1 value and 1 core subscription.
   @MainActor
   @Test
@@ -34,7 +29,7 @@ extension BridgeProbeTests {
     let readers = (0 ..< 10).map { _ in User.entity() }
     let feed = Entities<User>.shared.singleFeed
     try await Self.login(transport, "1", "Ann")
-    try await Self.waitFor { readers[0].value != nil }
+    await eventually(#"readers[0].value != nil"#) { readers[0].value != nil }
     #expect(Set(readers.map(ObjectIdentifier.init)).count == 1)
     #expect(readers.allSatisfy { $0.value?.name == "Ann" && $0.id == readers[0].value?.id })
     #expect(feed != nil && feed === Entities<User>.shared.singleFeed)
@@ -51,7 +46,7 @@ extension BridgeProbeTests {
     let told = Counter()
     withObservationTracking { _ = entity.value } onChange: { told.add() }
     try await Self.login(transport, "1", "Ann")
-    try await Self.waitFor { entity.value != nil }
+    await eventually(#"entity.value != nil"#) { entity.value != nil }
     #expect(entity.value?.name == "Ann" && told.value == 1)
   }
 
@@ -62,7 +57,7 @@ extension BridgeProbeTests {
     let transport = try Self.openSingletonRig()
     let entity = User.entity()
     try await Self.login(transport, "1", "Ann")
-    try await Self.waitFor { entity.value != nil }
+    await eventually(#"entity.value != nil"#) { entity.value != nil }
     let seen = Counter()
     try DB.logout()
     #expect(entity.value == nil && entity.id.isEmpty)
@@ -70,7 +65,7 @@ extension BridgeProbeTests {
     try await Task.sleep(for: .milliseconds(200))
     #expect(entity.value == nil)
     try await Self.login(transport, "2", "Bob")
-    try await Self.waitFor { entity.value != nil }
+    await eventually(#"entity.value != nil"#) { entity.value != nil }
     #expect(entity.value?.name == "Bob" && DB.subscriptionCensus().observedQueries == 1)
   }
 
@@ -83,13 +78,13 @@ extension BridgeProbeTests {
     let registry = Entities<User>.shared
     let old = try #require(registry.singleFeed)
     try await Self.login(transport, "1", "Ann")
-    try await Self.waitFor { entity.value != nil }
+    await eventually(#"entity.value != nil"#) { entity.value != nil }
     let second = try Self.openSingletonRig()
     #expect(User.entity() === entity && entity.value == nil)
     registry.receive(from: old, revision: Int64.max, row: entity.value ?? User(id: "9", name: "Late"))
     #expect(entity.value == nil)
     try await Self.login(second, "2", "Bob")
-    try await Self.waitFor { entity.value != nil }
+    await eventually(#"entity.value != nil"#) { entity.value != nil }
     #expect(entity.value?.name == "Bob")
   }
 
@@ -100,7 +95,7 @@ extension BridgeProbeTests {
     let transport = try Self.openSingletonRig()
     let entity = User.entity()
     try await Self.login(transport, "1", "Ann")
-    try await Self.waitFor { entity.value != nil }
+    await eventually(#"entity.value != nil"#) { entity.value != nil }
     let feed = try #require(Entities<User>.shared.singleFeed)
     let before = (feed.delivered, DB.subscriptionCensus().observedQueries)
     try await Task.sleep(for: .seconds(10))

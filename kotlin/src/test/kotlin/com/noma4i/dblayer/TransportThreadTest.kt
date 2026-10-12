@@ -1,7 +1,6 @@
 package com.noma4i.dblayer
 
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -52,7 +51,7 @@ class TransportThreadTest {
     }
 
     @Test
-    fun theGraphQLTransportReadsTheResponseBodyOffTheCallerThread() = runBlocking {
+    fun theGraphQLTransportReadsTheResponseBodyOffTheCallerThread() = bounded {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"7"}}"""))
         val transport = GraphQLHttpTransport(server.url("/graphql").toString(), client, RequestSigner("secret"), ServerClock(), "1.0", "1", "device-1") { "token" }
 
@@ -63,7 +62,7 @@ class TransportThreadTest {
     }
 
     @Test
-    fun theHttpTransportReadsTheResponseBodyOffTheCallerThread() = runBlocking {
+    fun theHttpTransportReadsTheResponseBodyOffTheCallerThread() = bounded {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"7"}}"""))
         val transport = OkHttpTransport(server.url("/graphql").toString(), client = client)
 

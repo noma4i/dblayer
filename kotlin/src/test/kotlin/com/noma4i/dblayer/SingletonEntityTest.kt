@@ -4,7 +4,6 @@ import com.noma4i.dblayer.models.User
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -32,7 +31,7 @@ class SingletonEntityTest {
 
     /** REL-01 for the singleton and REL-08: 10 readers share 1 object, 1 value and 1 core subscription. */
     @Test
-    fun tenReadersCostOneSubscriptionAndSeeOneValue() = runBlocking {
+    fun tenReadersCostOneSubscriptionAndSeeOneValue() = bounded {
         open()
         val readers = List(10) { User.entity() }
         val feed = registry.currentSingleFeed
@@ -46,7 +45,7 @@ class SingletonEntityTest {
 
     /** The value is null before the first load and a collector is told when it loads. */
     @Test
-    fun emptyUntilTheRowLoadsAndTheReaderIsTold() = runBlocking {
+    fun emptyUntilTheRowLoadsAndTheReaderIsTold() = bounded {
         open()
         val entity = User.entity()
         assertTrue(entity.value.value == null && entity.id.isEmpty() && !entity.isStale)
@@ -56,7 +55,7 @@ class SingletonEntityTest {
 
     /** REL-24: logout empties the entity at once, and the next login loads the new user without the old one showing. */
     @Test
-    fun logoutEmptiesItAndALaterLoginLoadsTheNewUser() = runBlocking {
+    fun logoutEmptiesItAndALaterLoginLoadsTheNewUser() = bounded {
         open()
         val entity = User.entity()
         login("1", "Ann")
@@ -72,7 +71,7 @@ class SingletonEntityTest {
 
     /** A delivery of a feed that a newly opened database replaced writes nothing. */
     @Test
-    fun aDeliveryOfAReplacedFeedNeverWrites() = runBlocking {
+    fun aDeliveryOfAReplacedFeedNeverWrites() = bounded {
         open()
         val entity = User.entity()
         val old = registry.currentSingleFeed!!
@@ -88,7 +87,7 @@ class SingletonEntityTest {
 
     /** REL-27: 10 seconds without an event add no delivery and no subscription. */
     @Test
-    fun idleTenSecondsCreatesNoWork() = runBlocking {
+    fun idleTenSecondsCreatesNoWork() = bounded {
         open()
         val entity = User.entity()
         login("1", "Ann")

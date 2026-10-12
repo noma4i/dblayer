@@ -184,7 +184,7 @@ struct EntityRegistryTests {
       emit(1)
       return { active.add(-1) }
     }
-    let after = Task { for await _ in await immediate.stream() { break } }
+    let after = Task { _ = await Cursor(await immediate.stream()).next("the first element") }
     await after.value
     try await Task.sleep(for: .milliseconds(200))
     #expect(active.value == 0)
@@ -198,7 +198,7 @@ struct EntityRegistryTests {
       return {}
     }
     let stream = await source.stream()
-    var iterator = stream.makeAsyncIterator()
+    let iterator = Cursor(stream)
     let merged = await iterator.next()
     #expect(merged?.replaced.count == burst)
     #expect(!stream.latest.hasPending)
@@ -211,7 +211,7 @@ struct EntityRegistryTests {
       for step in 0 ..< 1000 { emit(Snapshot(rows: [], replaced: ["id\(step + 1)": "id\(step)"])) }
       return {}
     }
-    var iterator = await source.stream().makeAsyncIterator()
+    let iterator = Cursor(await source.stream())
     #expect(await iterator.next()?.replaced == ["id1000": "id0"])
   }
 }

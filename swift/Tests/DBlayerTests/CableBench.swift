@@ -2,15 +2,6 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-func eventually(_ condition: @Sendable () async -> Bool) async {
-  for _ in 0 ..< 400 {
-    if await condition() {
-      return
-    }
-    try? await Task.sleep(for: .milliseconds(5))
-  }
-}
-
 func settle() async {
   try? await Task.sleep(for: .milliseconds(50))
 }
