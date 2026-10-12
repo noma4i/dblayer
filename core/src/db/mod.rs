@@ -47,6 +47,8 @@ mod entity_pin_tests;
 #[cfg(test)]
 mod entity_delta_tests;
 #[cfg(test)]
+mod entity_race_tests;
+#[cfg(test)]
 mod ephemeral_tests;
 #[cfg(test)]
 mod cache_tests;

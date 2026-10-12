@@ -53,3 +53,5 @@ Every delivery carries the revision of the database. An entity ignores a deliver
 ## Cost
 
 A commit of one record costs one read and one delivery per observer of the model, and one decode per changed row. A record nobody holds costs nothing. Idle entities cost no timers and no requests. `DB.subscriptionCensus()` and `DBlayer.subscriptionCensus()` report the live subscriptions, so a test can assert how many a screen opens.
+
+A database that cannot read tells nothing until a reset ends the failure. The reset tells every held id as removed. The counters `entity_facts_told`, `entity_position_skips` and `entity_reads_failed` of the core show how many facts were told, skipped because the read was not newer, and lost to a failed read.

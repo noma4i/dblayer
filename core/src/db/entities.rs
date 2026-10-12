@@ -68,6 +68,7 @@ impl EntityGroup {
         for id in ids {
             let Some(known) = self.known.get_mut(&id) else { continue };
             if position <= known.position {
+                locked(&self.subscriber.counters).entity_position_skips += 1;
                 continue;
             }
             known.position = position;
@@ -155,7 +156,9 @@ impl Runnable for EntitySubscriber {
             }
             let delivered = catch_unwind(AssertUnwindSafe(|| (self.listener)(&change)));
             if delivered.is_ok() {
-                locked(&self.counters).observer_calls += 1;
+                let mut counters = locked(&self.counters);
+                counters.observer_calls += 1;
+                counters.entity_facts_told += change.rows.len() + change.removed.len();
             }
         }
     }
@@ -218,7 +221,10 @@ impl Shared {
 
     pub(crate) fn refresh_entities(&self, key: &str, model: &ModelKey, ids: BTreeSet<RowId>) {
         locked(&self.counters).observation_reads += 1;
-        let Ok((position, loaded)) = self.read_entities(model, ids.iter()) else { return };
+        let Ok((position, loaded)) = self.read_entities(model, ids.iter()) else {
+            locked(&self.counters).entity_reads_failed += 1;
+            return;
+        };
         let mut observers = locked(&self.observers);
         let Some(group) = observers.entities.get_mut(key) else { return };
         let changes = group.settle(position, &loaded, ids.into_iter());
