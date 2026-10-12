@@ -93,7 +93,7 @@ fn inv_observe_19_a_refresh_that_cannot_read_is_counted_and_a_reset_tells_every_
     let key = locked(&db.shared.observers).entities.keys().next().cloned().unwrap();
     db.shared.refresh_entities(&key, &crate::identity::ModelKey::new("users"), [rid("u1")].into_iter().collect());
     db.settle();
-    assert_eq!((db.counters().entity_reads_failed, log.lock().unwrap().len()), (1 + super::entities::MAX_READ_RETRIES as usize, 1), "the failed read and its bounded retries are counted and tell nothing");
+    assert_eq!((db.counters().entity_reads_failed, log.lock().unwrap().len()), (1, 1), "the failed read is counted and tells nothing");
     db.reset(&["users"]).unwrap();
     db.settle();
     let mut removed: Vec<String> = log.lock().unwrap().iter().flat_map(|change| change.removed.iter().map(ToString::to_string)).collect();
@@ -101,11 +101,9 @@ fn inv_observe_19_a_refresh_that_cannot_read_is_counted_and_a_reset_tells_every_
     assert_eq!(removed, ["u0", "u1", "u2"], "the reset that ends the poison tells every retained row");
 }
 
-#[test]
-fn inv_observe_19_a_destroy_whose_read_failed_once_is_told_by_the_retry() {
-    let db = booted();
-    put(&db, "users", json!({"id": "a", "name": "one"}));
-    put(&db, "users", json!({"id": "b", "name": "two"}));
+fn failed_destroy_of_b(db: &Db) -> (EntityLog, EntityObserver) {
+    put(db, "users", json!({"id": "a", "name": "one"}));
+    put(db, "users", json!({"id": "b", "name": "two"}));
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("users", callback).unwrap();
     observer.retain(&[rid("a"), rid("b")]).unwrap();
@@ -113,8 +111,29 @@ fn inv_observe_19_a_destroy_whose_read_failed_once_is_told_by_the_retry() {
     db.shared.store.fail_next_entity_reads(1);
     db.destroy("users", &rid("b")).unwrap();
     db.settle();
-    let removed: Vec<_> = log.lock().unwrap().iter().flat_map(|change| change.removed.iter().cloned()).collect();
-    assert_eq!((removed, db.counters().entity_reads_failed), (vec![rid("b")], 1));
+    assert_eq!((told_removed(&log), db.counters().entity_reads_failed), (vec![], 1), "the read failed once, the destroy is dirty and told nothing");
+    (log, observer)
+}
+
+fn told_removed(log: &EntityLog) -> Vec<crate::identity::RowId> {
+    log.lock().unwrap().iter().flat_map(|change| change.removed.iter().cloned()).collect()
+}
+
+#[test]
+fn inv_observe_19_a_dirty_destroy_is_told_by_the_next_batch_of_another_model() {
+    let db = booted();
+    let (log, _observer) = failed_destroy_of_b(&db);
+    put(&db, "moments", json!({"id": "m0", "text": "x"}));
+    assert_eq!(told_removed(&log), vec![rid("b")], "the first batch of another model re-reads the dirty id");
+}
+
+#[test]
+fn inv_observe_19_a_dirty_destroy_is_told_by_the_next_change_of_the_same_group() {
+    let db = booted();
+    let (log, _observer) = failed_destroy_of_b(&db);
+    db.update("users", &rid("a"), obj(json!({"name": "edited"}))).unwrap();
+    db.settle();
+    assert_eq!(told_removed(&log), vec![rid("b")], "a change of the same group re-reads the dirty id");
 }
 
 #[test]

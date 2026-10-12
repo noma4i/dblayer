@@ -145,7 +145,7 @@ impl Store {
     pub(crate) fn injected_entity_read_failure(&self) -> Option<StoreError> {
         use std::sync::atomic::Ordering;
         self.failing_entity_reads
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
             .ok()
             .map(|_| StoreError::Sqlite(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR), None)))
     }

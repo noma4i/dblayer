@@ -179,9 +179,11 @@ impl Shared {
         let (due, touched): (Vec<Due>, Vec<(String, ModelKey, BTreeSet<RowId>)>) = {
             let observers = locked(&self.observers);
             let keys = observers.candidates(batch);
-            let touched = keys
+            let touched = observers
+                .entities
                 .iter()
-                .filter_map(|key| observers.entities.get(key).map(|group| (key.clone(), group.model().clone(), group.touched(batch))))
+                .filter(|(key, group)| keys.contains(*key) || !group.dirty.is_empty())
+                .map(|(key, group)| (key.clone(), group.model().clone(), group.touched(batch)))
                 .filter(|(_, _, ids)| !ids.is_empty())
                 .collect();
             let due = keys

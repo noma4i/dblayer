@@ -3,7 +3,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
-use crate::identity::{ModelKey, RowId, RowRef};
+use crate::identity::{ModelKey, RowId};
 use crate::pacing::Counters;
 
 use super::diff::Stamp;
@@ -14,8 +14,6 @@ use super::open::{locked, Db, Shared};
 use super::row::Row;
 
 type Position = (i64, u64);
-
-pub(crate) const MAX_READ_RETRIES: u32 = 3;
 
 #[derive(Debug, Clone)]
 pub struct EntityChange {
@@ -33,8 +31,7 @@ struct Known {
 pub(crate) struct EntityGroup {
     model: ModelKey,
     known: HashMap<RowId, Known>,
-    dirty: BTreeSet<RowId>,
-    failed_reads: u32,
+    pub(crate) dirty: BTreeSet<RowId>,
     subscriber: Arc<EntitySubscriber>,
 }
 
@@ -60,7 +57,7 @@ impl EntityGroup {
     }
 
     pub(crate) fn new(model: ModelKey, subscriber: Arc<EntitySubscriber>) -> Self {
-        Self { model, known: HashMap::new(), dirty: BTreeSet::new(), failed_reads: 0, subscriber }
+        Self { model, known: HashMap::new(), dirty: BTreeSet::new(), subscriber }
     }
 
     pub(crate) fn ids(&self) -> impl Iterator<Item = &RowId> {
@@ -240,15 +237,8 @@ impl Shared {
         let Some(group) = observers.entities.get_mut(key) else { return };
         let Ok((position, loaded)) = read else {
             group.dirty.extend(ids.iter().filter(|id| group.known.contains_key(*id)).cloned());
-            group.failed_reads += 1;
-            if group.failed_reads <= MAX_READ_RETRIES {
-                let rows = group.dirty.iter().map(|id| RowRef::new(model.clone(), id.clone())).collect();
-                drop(observers);
-                self.dispatch.push(Event { rows, ..Event::default() });
-            }
             return;
         };
-        group.failed_reads = 0;
         group.dirty.retain(|id| !ids.contains(id));
         let changes = group.settle(position, &loaded, ids.into_iter());
         group.subscriber.clone().post(&self.executor, changes);
