@@ -194,7 +194,6 @@ When a response row has no value for a column the relation groups by, the param 
 | `max_pages 5` | page limit per load | none |
 | `variables statusFilter: :status, includeGifts: false` | name the GraphQL variables: a symbol takes the value of a relation param, any other value is sent as written | every param under its own name |
 | `updates Subscription, deleted_by: :field` | keep the relation current with a subscription. Write the line again for each subscription. `removes: true` makes every event delete its row, `debounce: 300.milliseconds` merges bursts | none |
-| `on_absent :detach` or `:destroy` | what happens to rows missing from a refreshed response | `:detach` |
 
 An operation name is a constant like `MomentsFeed`, or a string like `"feed"` when the GraphQL name starts with a lowercase letter.
 

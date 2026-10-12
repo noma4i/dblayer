@@ -64,18 +64,8 @@ What a refresh does, in one commit:
 - Rows from the response are merged field by field. Rows that did not change keep their revision and are not reported as updated.
 - Records that the server has not confirmed yet (a message being sent, a failed one waiting for retry) stay in the list where they are.
 - For a paged list the response is the first page. The last row of the response is looked up in the old list. If it is found, the new first page is followed by the old rows that came after it, so a long list that the user scrolled does not jump. If it is not found, the old tail is dropped and `loadMore()` loads the next pages again.
-- Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`deleted_by`, a null node, a delete event), or when the relation says `on_absent :destroy`.
+- Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`deleted_by`, a null node, a delete event).
 - A failed request changes nothing.
-
-```ruby
-remote :by_user do
-  query MomentsByUser
-  fresh_for 5.minutes
-  on_absent :destroy   # rows missing from a complete response are deleted, unconfirmed ones stay
-end
-```
-
-Use `on_absent :destroy` when the same data is also read with a query on the table (`Moment.where(Moment.userId == id)`), so that rows deleted on the server disappear there too.
 
 A row that arrives by an event and that was not stored before is reported to the lists of its model as new: they are marked stale and the watched ones are loaded again. For a relation that lists every row of its params (`remote :thread, params: [:chatId], joins: :events do ... end`) this reload is not needed: the new row is appended to the list that its param values name, when that list is loaded, in the same commit as the event, and the list is neither marked stale nor loaded again. Declare `joins: :events` only for a relation without server-side filters (`variables`), because the library cannot tell from the row whether the server would have listed it.
 
