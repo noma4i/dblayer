@@ -13,11 +13,16 @@ pub struct Counters {
     pub cache_evictions: usize,
     pub transport_calls: usize,
     pub lost_outcomes: usize,
+    pub settle_parks: usize,
 }
 
 impl Counters {
     pub fn record_transport_call(&mut self) {
         self.transport_calls += 1;
+    }
+
+    pub fn record_settle_park(&mut self) {
+        self.settle_parks += 1;
     }
 
     pub fn record_stale_version_drops(&mut self, count: usize) {
@@ -41,6 +46,7 @@ impl Add for Counters {
             cache_evictions: self.cache_evictions + other.cache_evictions,
             transport_calls: self.transport_calls + other.transport_calls,
             lost_outcomes: self.lost_outcomes + other.lost_outcomes,
+            settle_parks: self.settle_parks + other.settle_parks,
         }
     }
 }

@@ -282,6 +282,11 @@ impl Db {
         Ok(destroyed)
     }
 
+    /// The version of the outbox: it grows on every commit that touches an operation and on every reset.
+    pub fn outbox_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.shared.outbox_changes.subscribe()
+    }
+
     pub fn outbox(&self) -> Result<Vec<OutboxOperation>, DbError> {
         self.shared.read(|reader| Ok(read_outbox(reader)?))
     }

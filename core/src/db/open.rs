@@ -41,6 +41,7 @@ pub(crate) struct Shared {
     pub observers: Mutex<Observers>,
     pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
+    pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub ephemeral: Arc<Ephemerals>,
     pub executor: Arc<Executor>,
     pub files: FileDirectories,
@@ -112,7 +113,8 @@ impl Db {
         let specs = models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect();
         let cache = Arc::new(Mutex::new(RowCache::new(config.cache_rows)));
         let dispatch = Arc::new(Dispatch::new());
-        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone()));
+        let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
+        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone()));
         let shared = Arc::new(Shared {
             store,
             specs,
@@ -122,6 +124,7 @@ impl Db {
             counters: Arc::new(Mutex::new(Counters::default())),
             executor: Executor::new(dispatch.busy.clone()),
             dispatch: dispatch.clone(),
+            outbox_changes,
             ephemeral: ephemeral.clone(),
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
             files_gate: Mutex::new(()),
@@ -169,7 +172,7 @@ impl Db {
     }
 }
 
-fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>) -> crate::store::StoreHook {
+fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>, outbox_changes: Arc<tokio::sync::watch::Sender<u64>>) -> crate::store::StoreHook {
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             {
@@ -192,6 +195,9 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
                     }
                 }
             }
+            if !result.operations.is_empty() {
+                outbox_changes.send_modify(|version| *version += 1);
+            }
             ephemeral.nudge();
             dispatch.push(Event::of_commit(result));
         }
@@ -204,6 +210,7 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
                 }
             }
             ephemeral.lock().clear(models.as_deref());
+            outbox_changes.send_modify(|version| *version += 1);
             dispatch.push(Event::of_reset(revision, models.as_deref()));
         }
     })

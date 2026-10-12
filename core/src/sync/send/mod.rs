@@ -28,6 +28,7 @@ impl Sync {
                 .map(|entry| entry.operation.id.0)
                 .collect())
         };
+        let mut changes = self.inner.db.outbox_changes();
         let mut pending = waiting(id)?;
         if let Some(failure) = locked(&self.inner.outcomes).failure_of(model, id, &pending) {
             return Err(failure);
@@ -37,12 +38,13 @@ impl Sync {
                 return Err(SyncError::Offline);
             }
             self.flush().await?;
+            changes.borrow_and_update();
             pending = waiting(id)?;
             if let Some(failure) = locked(&self.inner.outcomes).failure_of(model, id, &pending) {
                 return Err(failure);
             }
             if !pending.is_empty() {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                self.park(&mut changes).await;
             }
         }
         Ok(())
@@ -51,16 +53,26 @@ impl Sync {
     /// Waits until the queued action is answered and returns the declared `result` fields of its payload. Fails with the refusal. An answer is read once.
     pub async fn answer(&self, model: &str, operation: i64) -> Result<serde_json::Value, SyncError> {
         let waiting = || -> Result<bool, SyncError> { Ok(self.inner.db.outbox()?.iter().any(|entry| entry.operation.status == OperationStatus::Pending && entry.operation.id.0 == operation)) };
+        let mut changes = self.inner.db.outbox_changes();
         while waiting()? {
             if !self.inner.connectivity.is_online() {
                 return Err(SyncError::Offline);
             }
             self.flush().await?;
+            changes.borrow_and_update();
             if waiting()? {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                self.park(&mut changes).await;
             }
         }
         locked(&self.inner.outcomes).take(model, operation)
+    }
+
+    async fn park(&self, changes: &mut tokio::sync::watch::Receiver<u64>) {
+        locked(&self.inner.counters).record_settle_park();
+        tokio::select! {
+            _ = changes.changed() => {}
+            () = self.inner.connectivity.offline() => {}
+        }
     }
 
     /// The server id of a record created locally. Waits for the queued `create` to be answered.
@@ -124,6 +136,8 @@ mod outcomes_tests;
 mod pass_tests;
 #[cfg(test)]
 mod reset_tests;
+#[cfg(test)]
+mod settle_wait_tests;
 #[cfg(test)]
 mod rollback_tests;
 #[cfg(test)]

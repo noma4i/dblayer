@@ -14,6 +14,7 @@ fn new_counters_have_zero_values() {
         cache_evictions: 0,
         transport_calls: 0,
         lost_outcomes: 0,
+        settle_parks: 0,
     });
 }
 
