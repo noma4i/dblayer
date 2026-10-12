@@ -11,6 +11,7 @@ DBlayer never makes your threads wait. Loading data, writing, parsing responses 
 - Listener callbacks never run under the store lock.
 - Listeners are called from library threads, never from the main thread. Move to the main thread in your UI code.
 - Each listener has its own queue where the latest state wins. A slow listener does not delay others and does not build up a backlog.
+- Entities never block either: `entity(id)` answers at once from memory, and the calls into the database for a batch of new ids run on one background queue (Swift) or thread (Kotlin), in order.
 - Frequent changes are merged: a listener gets one change per dispatch cycle, and the last state always arrives.
 - Cancelling or dropping a subscription stops its work at once without leaking tasks.
 - Queues are bounded. A full queue makes the caller wait asynchronously. Data is never dropped.

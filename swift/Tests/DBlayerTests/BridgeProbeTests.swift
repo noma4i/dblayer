@@ -8,7 +8,7 @@ struct BridgeProbeTests {
   @Test
   func writesReachTypedLiveRows() async throws {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    var changes = Moment.recent.live.stream.makeAsyncIterator()
+    var changes = await Moment.recent.live.stream().makeAsyncIterator()
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.create(text: "m")
     #expect(await changes.next()?.first?.text == "m")
@@ -20,23 +20,21 @@ struct BridgeProbeTests {
 
   @MainActor
   @Test
-  func liveRowsFollowAnEditAndDropRowsWhenTheTrackedIdsChange() async throws {
+  func anEntityFollowsAnEditAndLetsGoOfTheRecordWhenItIsDropped() async throws {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let first = try await Moment.create(text: "one")
-    let second = try await Moment.create(text: "two")
-    let rows = LiveRows<Moment>()
-    rows.track([first.id])
-    for _ in 0 ..< 200 where rows.byId[first.id] == nil { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(rows.byId[first.id]?.text == "one")
+    var entity: Entity<Moment>? = Moment.entity(first.id)
+    for _ in 0 ..< 200 where entity?.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(entity?.value?.text == "one")
 
     _ = try await first.update(text: "edited")
-    for _ in 0 ..< 200 where rows.byId[first.id]?.text != "edited" { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(rows.byId[first.id]?.text == "edited")
+    for _ in 0 ..< 200 where entity?.value?.text != "edited" { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(entity?.value?.text == "edited")
 
-    rows.track([second.id])
-    for _ in 0 ..< 200 where rows.byId[second.id] == nil { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(Set(rows.byId.keys) == [second.id])
-    rows.stop()
+    #expect(DB.subscriptionCensus().subscriptions == 1)
+    entity = nil
+    for _ in 0 ..< 200 where Entities<Moment>.shared.liveCount > 0 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(Entities<Moment>.shared.liveCount == 0)
   }
 
   @Test
@@ -57,10 +55,10 @@ struct BridgeProbeTests {
 
     try await Moment.feed.refresh()
 
-    var changes = Moment.feed.live.stream.makeAsyncIterator()
+    var changes = await Moment.feed.live.stream().makeAsyncIterator()
     #expect(await changes.next()?.first?.uuid == "a")
     #expect(transport.calls.first?.operationName == "MomentsFeed")
-    var states = Moment.feed.state.stream.makeAsyncIterator()
+    var states = await Moment.feed.state.stream().makeAsyncIterator()
     let state = await states.next()
     #expect(state?.phase == .idle && state?.hasMore == false && state?.loadedAt != nil)
   }
@@ -85,7 +83,6 @@ struct BridgeProbeTests {
 
     #expect(list.state.phase == .failed)
     #expect(list.state.errorKind != nil)
-    list.stop()
   }
 
   @MainActor
@@ -108,7 +105,6 @@ struct BridgeProbeTests {
 
     #expect(list.state.phase == .failed)
     #expect(list.state.errorKind != nil)
-    list.stop()
   }
 
   @MainActor
@@ -125,12 +121,9 @@ struct BridgeProbeTests {
     #expect(list.rows.first?.uuid == "a")
     #expect(list.state.hasMore && list.state.phase == .idle)
     #expect(list.state.total == 9)
-    let rows = LiveRows<Moment>()
-    rows.track(list.rows.map(\.id))
-    for _ in 0 ..< 200 where rows.byId.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(rows.byId["1"]?.uuid == "a")
-    rows.stop()
-    list.stop()
+    let entity = Moment.entity("1")
+    for _ in 0 ..< 200 where entity.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(entity.value?.uuid == "a")
   }
 
   @MainActor
@@ -140,10 +133,9 @@ struct BridgeProbeTests {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
 
     let local = try await Moment.create(text: "hello", media: nil)
-    let rows = LiveRows<Moment>()
-    rows.track([local.id])
-    for _ in 0 ..< 200 where rows.byId[local.id]?.sync.state != .failed { try await Task.sleep(for: .milliseconds(10)) }
-    let failed = rows.byId[local.id]
+    let entity = Moment.entity(local.id)
+    for _ in 0 ..< 200 where entity.value?.sync.state != .failed { try await Task.sleep(for: .milliseconds(10)) }
+    let failed = entity.value
     #expect(failed?.sync.state == .failed)
     #expect(failed?.needsAttention == true)
     #expect(failed?.sync.error?.message == "operation CreateMoment is not registered")
@@ -153,7 +145,6 @@ struct BridgeProbeTests {
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     try await DB.database.retry(model: "Moment", rowId: local.id)
     #expect(try await local.confirmedId() == "m77")
-    rows.stop()
   }
 
   @Test
@@ -176,7 +167,7 @@ struct BridgeProbeTests {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    var snapshots = Moment.recent.snapshots.stream.makeAsyncIterator()
+    var snapshots = await Moment.recent.snapshots.stream().makeAsyncIterator()
     _ = await snapshots.next()
 
     let local = try await Moment.create(text: "hello", media: nil)
@@ -190,21 +181,15 @@ struct BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func aListFollowsTheRowsThatItsRowsRefer() async throws {
+  func anEntityOfARecordThatAnotherRecordRefersToFollowsItsCreateAndDestroy() async throws {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let list = LiveList(Chat.recent)
-    let lastMessages = list.refs(Message.self) { $0.lastMessageId.map { [$0] } ?? [] }
-    #expect(lastMessages.byId.isEmpty)
-
     let message = try await Message.create(chatId: "c", authorId: "u1", text: "hi")
-    let chat = try await Chat.create(title: "t", lastMessageId: message.id)
-    for _ in 0 ..< 100 where lastMessages.byId[message.id] == nil { try await Task.sleep(for: .milliseconds(20)) }
-
-    #expect(lastMessages.byId[message.id]?.text == "hi")
-    try await chat.destroy()
-    for _ in 0 ..< 100 where lastMessages.byId[message.id] != nil { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(lastMessages.byId.isEmpty)
-    list.stop()
+    let entity = Message.entity(message.id)
+    for _ in 0 ..< 100 where entity.value == nil { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(entity.value?.text == "hi")
+    try await message.destroy()
+    for _ in 0 ..< 100 where entity.value != nil { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(entity.value == nil)
   }
 
   @MainActor
@@ -230,7 +215,6 @@ struct BridgeProbeTests {
     while list.replaced.isEmpty { await Task.yield() }
 
     #expect(seen.mainThread == [false, false])
-    list.stop()
   }
 
   @Test
@@ -268,7 +252,6 @@ struct BridgeProbeTests {
     try await DB.resume()
 
     #expect(transport.calls.count > before)
-    list.stop()
   }
 
   @MainActor
@@ -294,7 +277,6 @@ struct BridgeProbeTests {
     #expect(list.rows.map(\.id) == ["m77"])
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3)
     try await older.value
-    list.stop()
   }
 
   @Test
@@ -390,5 +372,25 @@ extension BridgeProbeTests {
     try await second.destroy()
     let removed = try await collector.wait(for: 4)
     #expect(removed.last?.removed == [second.id])
+  }
+
+  /// REL-24: a newly opened database starts with no entity of the old one.
+  @MainActor
+  @Test
+  func aNewDatabaseStartsWithNoEntityOfTheOldOne() async throws {
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let moment = try await Moment.create(text: "old")
+    let old = Moment.entity(moment.id)
+    for _ in 0 ..< 200 where old.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(old.value?.text == "old")
+
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let fresh = Moment.entity(moment.id)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(old.value == nil && fresh.value == nil && fresh !== old)
+    let created = try await Moment.create(text: "new")
+    let again = Moment.entity(created.id)
+    for _ in 0 ..< 200 where again.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(again.value?.text == "new")
   }
 }

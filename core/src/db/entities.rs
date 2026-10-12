@@ -25,6 +25,7 @@ pub struct EntityChange {
 struct Known {
     position: Position,
     stamp: Option<Stamp>,
+    told: bool,
 }
 
 pub(crate) struct EntityGroup {
@@ -72,14 +73,12 @@ impl EntityGroup {
             known.position = position;
             let row = loaded.get(id.as_str()).cloned();
             let stamp = row.as_ref().map(|row| Stamp::of(row, Vec::new()));
-            if stamp == known.stamp {
+            if known.told && stamp == known.stamp {
                 continue;
             }
-            let was_present = known.stamp.is_some();
+            known.told = true;
             known.stamp = stamp;
-            if row.is_some() || was_present {
-                changes.push((id, position, row));
-            }
+            changes.push((id, position, row));
         }
         changes
     }
@@ -181,7 +180,7 @@ impl EntityObserver {
         let (position, loaded) = shared.read_entities(&model, fresh.iter())?;
         let group = observers.entities.get_mut(&self.key).expect("group checked above");
         for id in &fresh {
-            group.known.insert(id.clone(), Known { position: (i64::MIN, 0), stamp: None });
+            group.known.insert(id.clone(), Known { position: (i64::MIN, 0), stamp: None, told: false });
         }
         let changes = group.settle(position, &loaded, fresh.iter().cloned());
         let subscriber = group.subscriber.clone();

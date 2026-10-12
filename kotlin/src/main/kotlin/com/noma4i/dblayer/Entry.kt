@@ -11,7 +11,17 @@ object DBlayer {
     /** Reloads the stale relations that have readers. Call it when the app returns to the foreground. */
     suspend fun resume() = database.resume()
 
+    /** Ends the session: clears the stored data and drops every entity, lease and retained value. */
+    fun logout() {
+        database.logout()
+        EntityRegistries.resetAll()
+    }
+
+    /** The live subscriptions of the database: observed queries and subscriptions, for probes of how many a screen opens. */
+    fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
+
     lateinit var database: Database
+    internal val databaseOrNull: Database? get() = if (::database.isInitialized) database else null
 
     fun open(endpoint: String, headers: Map<String, String> = emptyMap(), modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList()) =
         open(OkHttpTransport(endpoint, { headers }), modelsJson, path, operations)

@@ -54,7 +54,7 @@ The binding applies only when the result can never contain a row outside the id 
 - Everything in `sync` is something the query reads: a change of `state`, `actions`, `dirtyFields`, `error` or the upload progress of a row is a delivery. The same holds for an included row: when its `sync` changes, the parent is in `diff.updated`.
 - A memory row that was written again after its lifetime ran out is not deleted. The new write wins.
 - After a write call returns, any new read sees the write.
-- Dropping the subscription stops delivery at once.
+- Dropping the subscription stops delivery at once. A slow reader never builds a backlog: it gets the newest result, and the replaced ids of the results it missed are merged into it, so no pair is lost.
 - Listeners are called from library threads. Hop to your main thread yourself.
 
 ## In your UI
@@ -87,7 +87,7 @@ struct ProfileView: View {
 **Loading state.** A remote relation reports `idle`, `loading` or `failed`, whether another page exists, when it last loaded and the `total` the server reports for the whole list (`totalCount` of the connection, nil when the document does not select it):
 
 ```swift
-for await state in Moment.feed.state.stream { if state.isLoading { showSpinner() } }
+for await state in await Moment.feed.state.stream() { if state.isLoading { showSpinner() } }
 ```
 
 ```kotlin
@@ -106,7 +106,7 @@ let thread = LiveList(Message.thread(chatId))   // thread.rows, thread.replaced
 val thread = LiveList(Message.thread(chatId), viewModelScope)   // thread.rows, thread.replaced are StateFlow
 ```
 
-**View models.** `LiveList` keeps the rows and the state of a query and moves the relation. Creating one is cheap on the main thread: the subscription and the first read run on a background task (Swift) or on `Dispatchers.Default` (Kotlin), and `rows` stay empty until the first delivery arrives:
+**View models.** `LiveList` keeps the rows and the state of a query and moves the relation. It ends with its owner: there is nothing to start or stop. Creating one is cheap on the main thread: the subscription and the first read run on a background task (Swift) or on `Dispatchers.Default` (Kotlin), and `rows` stay empty until the first delivery arrives:
 
 ```swift
 let feed = LiveList(Moment.feed)      // feed.rows, feed.state are observable
@@ -114,34 +114,12 @@ try await feed.refresh()
 try await feed.loadMore()
 ```
 
-A list often shows records that its rows refer to by id (the users of a chat, the last message of a chat). `list.refs(User.self) { $0.userIds }` returns live rows of those records that follow the list: when the rows of the list change, the tracked ids change with them, and there is no second subscription to write.
-
-```swift
-let chats = LiveList(Chat.list("primary"))
-let users = chats.refs(User.self) { $0.userIds }          // users.byId
-let lastMessages = chats.refs(Message.self) { $0.lastMessageId.map { [$0] } ?? [] }
-```
-
-```kotlin
-val users = chats.refs(User.Companion::ids) { it.userIds }   // users.byId is a StateFlow
-```
+A list often shows records that its rows refer to by id (the users of a chat, the last message of a chat). Read those through [entities](entities.md): one live value per id, no second subscription to write.
 
 ```kotlin
 val feed = LiveList(Moment.feed, viewModelScope)   // feed.rows, feed.state are StateFlow
 feed.refresh()
 feed.loadMore()
-```
-
-`LiveRows` follows the rows a list points at, such as the authors of moments. Call `track(ids)` whenever the list changes. It keeps one live query for the ids and exposes `byId`:
-
-```swift
-let authors = LiveRows<User>()
-authors.track(feed.rows.compactMap(\.userId))   // authors.byId["u1"]
-```
-
-```kotlin
-val authors = LiveRows(User.Companion::ids, viewModelScope)
-authors.track(feed.rows.value.mapNotNull { it.userId })   // authors.byId is a StateFlow
 ```
 
 **UIKit and Android views.** Apply the diff to a diffable data source or a collection view. The diff already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:

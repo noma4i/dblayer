@@ -4,6 +4,15 @@ public enum DB {
   static let reachability = Reachability()
   public nonisolated(unsafe) static var database: Database!
 
+  /// Ends the session: clears the stored data and drops every entity, lease and retained value.
+  @MainActor public static func logout() throws {
+    try database.logout()
+    EntityRegistries.resetAll()
+  }
+
+  /// The live subscriptions of the database, for probes of how many a screen opens.
+  public static func subscriptionCensus() -> SubscriptionCensus { database.subscriptionCensus() }
+
   /// Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`.
   public static func listen() throws { try database.listen() }
   public static func unlisten() throws { try database.unlisten() }

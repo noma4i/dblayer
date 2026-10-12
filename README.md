@@ -22,6 +22,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - [Getting started](docs/getting-started.md)
 - [Describing models](docs/models.md)
 - [Live data and queries](docs/live-data.md)
+- [Entities: one live value per record](docs/entities.md)
 - [Writing data](docs/writing-data.md)
 - [Sync state of a record](docs/sync-state.md)
 - [Server sync](docs/server-sync.md)

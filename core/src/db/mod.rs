@@ -45,7 +45,7 @@ mod invariants;
 #[cfg(test)]
 mod entity_pin_tests;
 #[cfg(test)]
-mod entities_tests;
+mod entity_delta_tests;
 #[cfg(test)]
 mod ephemeral_tests;
 #[cfg(test)]

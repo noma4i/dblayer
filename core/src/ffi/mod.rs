@@ -4,7 +4,7 @@ mod live;
 mod state;
 mod transport;
 
-pub use database::{Config, Database};
+pub use database::{Config, Database, SubscriptionCensus};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
 pub use live::{LiveChange, LiveSubscription, QueryListener};
 pub use state::{RelationStateChange, StateListener, StateSubscription};

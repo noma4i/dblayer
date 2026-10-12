@@ -21,6 +21,7 @@ data class Chat(
         fun find(id: String) = Query("Chat", serializer()).find(id)
         fun where(condition: Condition) = Query("Chat", serializer()).where(condition)
         fun ids(ids: List<String>) = idsQuery("Chat", serializer(), ids)
+        fun entity(id: String) = entityOf("Chat", serializer(), id)
         val recent: Query<Chat> get() {
             var built = Query("Chat", serializer(), relation = "recent", params = buildJsonObject {  })
             built = built.order(Order("lastMessageAt", "desc"))
@@ -66,6 +67,7 @@ data class Message(
         fun find(id: String) = Query("Message", serializer()).find(id)
         fun where(condition: Condition) = Query("Message", serializer()).where(condition)
         fun ids(ids: List<String>) = idsQuery("Message", serializer(), ids)
+        fun entity(id: String) = entityOf("Message", serializer(), id)
         fun byChat(chatId: String): Query<Message> {
             var built = Query("Message", serializer(), relation = "by_chat", params = buildJsonObject { put("chatId", jsonValue(chatId)) })
             built = built.where(Condition.equal("chatId", jsonValue(chatId)))
@@ -120,6 +122,7 @@ data class Moment(
         fun find(id: String) = Query("Moment", serializer()).find(id)
         fun where(condition: Condition) = Query("Moment", serializer()).where(condition)
         fun ids(ids: List<String>) = idsQuery("Moment", serializer(), ids)
+        fun entity(id: String) = entityOf("Moment", serializer(), id)
         val recent: Query<Moment> get() {
             var built = Query("Moment", serializer(), relation = "recent", params = buildJsonObject {  })
             built = built.order(Order("createdAt", "desc"))
@@ -178,6 +181,7 @@ data class Presence(
         fun find(id: String) = Query("Presence", serializer()).find(id)
         fun where(condition: Condition) = Query("Presence", serializer()).where(condition)
         fun ids(ids: List<String>) = idsQuery("Presence", serializer(), ids)
+        fun entity(id: String) = entityOf("Presence", serializer(), id)
         fun forUser(userId: String): Query<Presence> {
             var built = Query("Presence", serializer(), relation = "for_user", params = buildJsonObject { put("userId", jsonValue(userId)) })
             built = built.where(Condition.equal("userId", jsonValue(userId)))
@@ -224,6 +228,7 @@ data class User(
         fun find(id: String) = Query("User", serializer()).find(id)
         fun where(condition: Condition) = Query("User", serializer()).where(condition)
         fun ids(ids: List<String>) = idsQuery("User", serializer(), ids)
+        fun entity(id: String) = entityOf("User", serializer(), id)
         val profile: Query<User> get() {
             var built = Query("User", serializer(), relation = "profile", params = buildJsonObject {  })
             return built
@@ -270,6 +275,7 @@ data class Vibe(
         fun find(id: String) = Query("Vibe", serializer()).find(id)
         fun where(condition: Condition) = Query("Vibe", serializer()).where(condition)
         fun ids(ids: List<String>) = idsQuery("Vibe", serializer(), ids)
+        fun entity(id: String) = entityOf("Vibe", serializer(), id)
         suspend fun create(momentId: String, userId: String, kind: String): Vibe {
             val values = buildJsonObject {
                 put("momentId", jsonValue(momentId))

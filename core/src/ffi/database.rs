@@ -26,6 +26,9 @@ async fn on_executor<T: Send + 'static>(work: impl std::future::Future<Output = 
 pub struct Config { pub path: Option<String>, pub data_version: Option<String>, pub cache_rows: u32 }
 
 #[derive(uniffi::Record)]
+pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64 }
+
+#[derive(uniffi::Record)]
 pub struct QueuedAction { pub row_json: String, pub operation: i64 }
 
 #[derive(uniffi::Object)]
@@ -48,6 +51,10 @@ impl Database {
     pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         let row_id = id(&row_id)?;
         self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, listener)
+    }
+    pub fn subscription_census(&self) -> SubscriptionCensus {
+        let census = self.db.observer_census();
+        SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64 }
     }
     pub fn live_entities(&self, model: String, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
         entities::open(&self.db, &model, listener)

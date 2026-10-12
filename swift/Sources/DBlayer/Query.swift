@@ -78,7 +78,7 @@ public struct Query<Model: DBModel>: Sendable {
 
   /// The rows with the ids that the delivery replaced: a created record answered by the server (or matched by `correlate`) arrives under its real id.
   public var snapshots: LiveSource<Snapshot<Model>> {
-    LiveSource(initial: Snapshot(rows: [], replaced: [:])) { listener in try DB.database.liveQuery(queryJson: json, listener: listener) } map: {
+    LiveSource(initial: Snapshot(rows: [], replaced: [:]), merge: { Snapshot.merging($0, $1) }) { listener in try DB.database.liveQuery(queryJson: json, listener: listener) } map: {
       Snapshot(rows: $0.decodeRows(), replaced: $0.replacedIds)
     }
   }
@@ -96,6 +96,16 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public let rows: [Model]
   /// Real id of a row that replaced a temporary one in this delivery, to the temporary id.
   public let replaced: [String: String]
+
+  /// The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost.
+  static func merging(_ older: Snapshot, _ newer: Snapshot) -> Snapshot {
+    var replaced = older.replaced
+    for (real, temporary) in newer.replaced {
+      replaced[real] = older.replaced[temporary] ?? temporary
+      if older.replaced[temporary] != nil { replaced[temporary] = nil }
+    }
+    return Snapshot(rows: newer.rows, replaced: replaced)
+  }
 }
 
 extension LiveChange {

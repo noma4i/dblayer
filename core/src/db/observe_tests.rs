@@ -265,3 +265,23 @@ fn late_observer_of_a_shared_query_sees_the_write_that_preceded_it() {
         assert_eq!(texts(&changes(&log)[0]), vec![text], "round {round}");
     }
 }
+
+#[test]
+fn attach_cancelled_at_any_moment_leaves_no_subscription() {
+    let db = booted();
+    drop(db.observe(Query::new("users"), |_: &Change| {}).unwrap());
+    let settled = db.observe(Query::new("users"), |_: &Change| {}).unwrap();
+    db.settle();
+    drop(settled);
+    let (log, callback) = recorder();
+    let after_first = db.observe(Query::new("users"), callback).unwrap();
+    db.settle();
+    assert_eq!(calls(&log).len(), 1);
+    drop(after_first);
+    let entities = db.observe_entities("users", |_| {}).unwrap();
+    entities.retain(&[rid("u1")]).unwrap();
+    drop(entities);
+    db.settle();
+    let census = db.observer_census();
+    assert_eq!((census.observed_queries, census.subscriptions), (0, 0));
+}

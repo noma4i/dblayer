@@ -87,7 +87,11 @@ class Query<Model : DBModel>(
         get() = LiveSource(emptyList(), { listener -> DBlayer.database.liveQuery(json, listener) }) { change -> change.decode(serializer) }
 
     val snapshots: LiveSource<Snapshot<Model>>
-        get() = LiveSource(Snapshot(emptyList(), emptyMap()), { listener -> DBlayer.database.liveQuery(json, listener) }) { change -> Snapshot(change.decode(serializer), change.replacedIds()) }
+        get() = LiveSource(Snapshot(emptyList(), emptyMap()), { older, newer -> Snapshot.merging(older, newer) }) { emit ->
+            val subscription = DBlayer.database.liveQuery(json, ChangeListener { change -> emit(Snapshot(change.decode(serializer), change.replacedIds())) })
+            val cancel: () -> Unit = { subscription.cancel() }
+            cancel
+        }
 
     val count: LiveSource<Long>
         get() = LiveSource(0L, { listener -> DBlayer.database.liveCount(json, listener) }) { change -> change.count ?: 0L }

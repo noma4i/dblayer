@@ -3,6 +3,7 @@ package com.noma4i.dblayer
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
@@ -11,7 +12,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-private class ChangeListener(private val body: (LiveChange) -> Unit) : QueryListener {
+internal class ChangeListener(private val body: (LiveChange) -> Unit) : QueryListener {
     override fun changed(change: LiveChange) = body(change)
 }
 
@@ -24,28 +25,78 @@ internal fun <Model> LiveChange.decode(serializer: KSerializer<Model>): List<Mod
             .getOrNull()
     }
 
+/** The newest value waits for a slow reader. Values that arrive meanwhile are merged into it, so nothing queues up. */
+internal class Latest<Value>(private val merge: ((Value, Value) -> Value)?) {
+    private val lock = Any()
+    private var pending: Value? = null
+    private var has = false
+    private val wake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+    val hasPending: Boolean get() = synchronized(lock) { has }
+
+    fun put(value: Value) {
+        synchronized(lock) {
+            @Suppress("UNCHECKED_CAST")
+            pending = if (has && merge != null) merge.invoke(pending as Value, value) else value
+            has = true
+        }
+        wake.trySend(Unit)
+    }
+
+    suspend fun next(): Value {
+        while (true) {
+            synchronized(lock) {
+                if (has) {
+                    has = false
+                    @Suppress("UNCHECKED_CAST")
+                    return (pending as Value).also { pending = null }
+                }
+            }
+            wake.receive()
+        }
+    }
+}
+
 class LiveSource<Value>(
     val initial: Value,
+    private val merge: ((Value, Value) -> Value)? = null,
     private val subscribe: ((Value) -> Unit) -> () -> Unit,
 ) {
-    constructor(initial: Value, attach: (QueryListener) -> LiveSubscription, map: (LiveChange) -> Value) : this(initial, { emit ->
+    constructor(initial: Value, attach: (QueryListener) -> LiveSubscription, map: (LiveChange) -> Value) : this(initial, null, { emit ->
         val subscription = attach(ChangeListener { emit(map(it)) })
         val cancel: () -> Unit = { subscription.cancel() }
         cancel
     })
 
+    /** The one way to read a live value. It attaches off the caller's thread when collected, and leaves no subscription when the collector is cancelled before, during or after the attach. A slow collector gets the newest value, merged with the ones it missed. */
     val flow: Flow<Value>
-        get() = callbackFlow {
-            val cancel = runCatching { subscribe { trySend(it) } }.getOrNull()
-            if (cancel == null) close()
-            awaitClose { cancel?.invoke() }
+        get() = flow {
+            val latest = Latest(merge)
+            val cancel = runCatching { subscribe(latest::put) }.getOrNull() ?: return@flow
+            try {
+                while (true) emit(latest.next())
+            } finally {
+                cancel()
+            }
         }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     suspend fun current(): Value = flow.firstOrNull() ?: initial
 }
 
 /** The rows of a delivery with the ids it replaced: the real id of a row that replaced a temporary one, to the temporary id. */
-data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, String>)
+data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, String>) {
+    internal companion object {
+        /** The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost. */
+        fun <Model> merging(older: Snapshot<Model>, newer: Snapshot<Model>): Snapshot<Model> {
+            val replaced = older.replaced.toMutableMap()
+            for ((real, temporary) in newer.replaced) {
+                replaced[real] = older.replaced[temporary] ?: temporary
+                if (older.replaced.containsKey(temporary)) replaced.remove(temporary)
+            }
+            return Snapshot(newer.rows, replaced)
+        }
+    }
+}
 
 internal fun LiveChange.replacedIds(): Map<String, String> =
     runCatching {
@@ -90,57 +141,22 @@ internal fun stateSource(model: String, relation: String, paramsJson: String): L
         cancel
     }
 
-/** A live query for view models: the rows, the load state of the relation, and the calls that move them. */
-class LiveList<Model : DBModel>(private val query: Query<Model>, private val scope: kotlinx.coroutines.CoroutineScope) {
-    private val followers = mutableListOf<(List<Model>) -> Unit>()
+/** A live query for view models: the rows, the load state of the relation, and the calls that move them. The scope of the owner ends it. */
+class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope) {
     private val mutableRows = kotlinx.coroutines.flow.MutableStateFlow<List<Model>>(emptyList())
     private val mutableReplaced = kotlinx.coroutines.flow.MutableStateFlow<Map<String, String>>(emptyMap())
     private val mutableState = kotlinx.coroutines.flow.MutableStateFlow(LoadState())
-    private val jobs = listOf(
-        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableRows.value = it.rows; followers.toList().forEach { follow -> follow(it.rows) } } },
-        scope.launch { query.state.flow.collect { mutableState.value = it } },
-    )
+
+    init {
+        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableRows.value = it.rows } }
+        scope.launch { query.state.flow.collect { mutableState.value = it } }
+    }
 
     val rows: kotlinx.coroutines.flow.StateFlow<List<Model>> get() = mutableRows
     /** The ids that the last delivery of `rows` replaced: real id to temporary id. */
     val replaced: kotlinx.coroutines.flow.StateFlow<Map<String, String>> get() = mutableReplaced
     val state: kotlinx.coroutines.flow.StateFlow<LoadState> get() = mutableState
 
-    /** The live rows of another model that the rows of this list refer to by id (authors, last messages). */
-    fun <Ref : DBModel> refs(idsQuery: (List<String>) -> Query<Ref>, ids: (Model) -> List<String>): LiveRows<Ref> {
-        val linked = LiveRows(idsQuery, scope)
-        followers += { rows -> linked.track(rows.flatMap(ids)) }
-        linked.track(mutableRows.value.flatMap(ids))
-        return linked
-    }
-
     suspend fun refresh() = query.refresh()
     suspend fun loadMore(): Boolean = query.loadMore()
-    fun stop() = jobs.forEach { it.cancel() }
-}
-
-/** Live rows of one model looked up by id, for the records a list refers to (authors, last messages). */
-class LiveRows<Model : DBModel>(private val idsQuery: (List<String>) -> Query<Model>, private val scope: kotlinx.coroutines.CoroutineScope) {
-    private val mutableById = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Model>>(emptyMap())
-    private var ids: List<String> = emptyList()
-    private var job: kotlinx.coroutines.Job? = null
-
-    val byId: kotlinx.coroutines.flow.StateFlow<Map<String, Model>> get() = mutableById
-
-    fun track(nextIds: List<String>) {
-        val unique = nextIds.toSet().sorted()
-        if (unique == ids) return
-        ids = unique
-        job?.cancel()
-        if (unique.isEmpty()) {
-            mutableById.value = emptyMap()
-            return
-        }
-        job = scope.launch { idsQuery(unique).live.flow.collect { rows -> mutableById.value = rows.associateBy { it.id } } }
-    }
-
-    fun stop() {
-        job?.cancel()
-        job = null
-    }
 }

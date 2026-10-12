@@ -25,35 +25,112 @@ extension LiveChange {
   }
 }
 
+/// The newest value waits for a slow reader. Values that arrive meanwhile are merged into it, so the queue never grows.
+final class Latest<Value: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var pending: Value?
+  private var waiter: CheckedContinuation<Value?, Never>?
+  private var closed = false
+  private let merge: (@Sendable (Value, Value) -> Value)?
+
+  init(merge: (@Sendable (Value, Value) -> Value)?) { self.merge = merge }
+
+  var hasPending: Bool { lock.withLock { pending != nil } }
+
+  func put(_ value: Value) {
+    let waiting: CheckedContinuation<Value?, Never>? = lock.withLock {
+      guard !closed else { return nil }
+      if let waiter { self.waiter = nil; return waiter }
+      pending = pending.flatMap { older in merge.map { $0(older, value) } } ?? value
+      return nil
+    }
+    waiting?.resume(returning: value)
+  }
+
+  func next() async -> Value? {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Value?, Never>) in
+      let ready: Value?? = lock.withLock {
+        if let value = pending { pending = nil; return .some(value) }
+        if closed { return .some(nil) }
+        waiter = continuation
+        return nil
+      }
+      if let ready { continuation.resume(returning: ready) }
+    }
+  }
+
+  func close() {
+    let waiting = lock.withLock { () -> CheckedContinuation<Value?, Never>? in
+      closed = true
+      pending = nil
+      defer { waiter = nil }
+      return waiter
+    }
+    waiting?.resume(returning: nil)
+  }
+}
+
+/// Cancels the core subscription when the stream is dropped, read to its end or cancelled.
+final class Attachment: @unchecked Sendable {
+  private let lock = NSLock()
+  private var cancelAction: (@Sendable () -> Void)?
+  init(_ cancel: @escaping @Sendable () -> Void) { cancelAction = cancel }
+  func cancel() { lock.withLock { let action = cancelAction; cancelAction = nil; return action }?() }
+  deinit { cancel() }
+}
+
+/// The values of a live source in order. The subscription ends when the stream and its iterators are dropped or the reading task is cancelled.
+public struct LiveStream<Value: Sendable>: AsyncSequence, Sendable {
+  public typealias Element = Value
+  let latest: Latest<Value>
+  let attachment: Attachment?
+
+  static var ended: LiveStream {
+    let latest = Latest<Value>(merge: nil)
+    latest.close()
+    return LiveStream(latest: latest, attachment: nil)
+  }
+
+  public struct AsyncIterator: AsyncIteratorProtocol {
+    let latest: Latest<Value>
+    let attachment: Attachment?
+    public mutating func next() async -> Value? {
+      await withTaskCancellationHandler { await latest.next() } onCancel: { latest.close(); attachment?.cancel() }
+    }
+  }
+
+  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(latest: latest, attachment: attachment) }
+}
+
 public struct LiveSource<Value: Sendable>: Sendable {
   public let initial: Value
   let subscribe: @Sendable (@escaping @Sendable (Value) -> Void) throws -> @Sendable () -> Void
+  let merge: (@Sendable (Value, Value) -> Value)?
 
-  init(initial: Value, subscribe: @escaping @Sendable (@escaping @Sendable (Value) -> Void) throws -> @Sendable () -> Void) {
-    self.initial = initial; self.subscribe = subscribe
+  init(initial: Value, merge: (@Sendable (Value, Value) -> Value)? = nil, subscribe: @escaping @Sendable (@escaping @Sendable (Value) -> Void) throws -> @Sendable () -> Void) {
+    self.initial = initial; self.merge = merge; self.subscribe = subscribe
   }
 
-  init(initial: Value, attach: @escaping @Sendable (QueryListener) throws -> LiveSubscription, map: @escaping @Sendable (LiveChange) -> Value) {
-    self.init(initial: initial) { emit in
+  init(initial: Value, merge: (@Sendable (Value, Value) -> Value)? = nil, attach: @escaping @Sendable (QueryListener) throws -> LiveSubscription, map: @escaping @Sendable (LiveChange) -> Value) {
+    self.init(initial: initial, merge: merge) { emit in
       let subscription = try attach(ChangeListener { emit(map($0)) })
       return { subscription.cancel() }
     }
   }
 
-  public var stream: AsyncStream<Value> {
-    AsyncStream { continuation in
-      guard let cancel = try? subscribe({ continuation.yield($0) }) else { return continuation.finish() }
-      continuation.onTermination = { _ in cancel() }
-    }
-  }
-
-  /// The stream attached on a background task: the subscription and its first read do not run on the caller's actor.
-  public func attachedStream() async -> AsyncStream<Value> {
-    await Task.detached(priority: .userInitiated) { self.stream }.value
+  /// The one way to read a live value. The subscription and its first read run off the caller's thread. Cancelling the caller before, during or after the attach leaves no subscription. A slow reader gets the newest value, merged with the ones it missed.
+  public func stream() async -> LiveStream<Value> {
+    guard !Task.isCancelled else { return .ended }
+    let latest = Latest<Value>(merge: merge)
+    let attached = await Task.detached(priority: .userInitiated) { [subscribe] in try? subscribe { latest.put($0) } }.value
+    guard let attached else { return .ended }
+    let attachment = Attachment(attached)
+    guard !Task.isCancelled else { attachment.cancel(); return .ended }
+    return LiveStream(latest: latest, attachment: attachment)
   }
 
   public func current() async -> Value {
-    for await value in await attachedStream() { return value }
+    for await value in await stream() { return value }
     return initial
   }
 }
@@ -66,7 +143,7 @@ final class LiveBox<Value: Sendable>: ObservableObject {
   init(_ source: LiveSource<Value>) {
     value = source.initial
     task = Task { [weak self] in
-      for await next in await source.attachedStream() { self?.value = next }
+      for await next in await source.stream() { self?.value = next }
     }
   }
 
@@ -107,7 +184,6 @@ public final class LiveList<Model: DBModel> {
   public private(set) var state = LoadState()
   @ObservationIgnored private let query: Query<Model>
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
-  @ObservationIgnored private var followers: [([Model]) -> Void] = []
 
   public convenience init(_ query: Query<Model>) {
     self.init(query, snapshots: query.snapshots, state: query.state)
@@ -117,24 +193,15 @@ public final class LiveList<Model: DBModel> {
     self.query = query
     tasks = [
       Task { [weak self] in
-        for await next in await snapshots.attachedStream() {
+        for await next in await snapshots.stream() {
           self?.replaced = next.replaced
           self?.rows = next.rows
-          self?.followers.forEach { $0(next.rows) }
         }
       },
       Task { [weak self] in
-        for await next in await state.attachedStream() { self?.state = next }
+        for await next in await state.stream() { self?.state = next }
       }
     ]
-  }
-
-  /// The live rows of another model that the rows of this list refer to by id (authors, last messages).
-  public func refs<Ref: DBModel>(_ type: Ref.Type, ids: @escaping (Model) -> [String]) -> LiveRows<Ref> {
-    let linked = LiveRows<Ref>()
-    followers.append { rows in linked.track(rows.flatMap(ids)) }
-    linked.track(rows.flatMap(ids))
-    return linked
   }
 
   public func refresh() async throws { try await query.refresh() }
@@ -142,46 +209,5 @@ public final class LiveList<Model: DBModel> {
   @discardableResult
   public func loadMore() async throws -> Bool { try await query.loadMore() }
 
-  public func stop() {
-    tasks.forEach { $0.cancel() }
-    tasks = []
-  }
-
-  isolated deinit { stop() }
-}
-
-/// Live rows of one model looked up by id, for the records a list refers to (authors, last messages).
-@MainActor
-@Observable
-public final class LiveRows<Model: DBModel> {
-  public private(set) var byId: [String: Model] = [:]
-  @ObservationIgnored private var ids: [String] = []
-  @ObservationIgnored private var task: Task<Void, Never>?
-
-  public init() {}
-
-  public func track(_ nextIds: [String]) {
-    let unique = Array(Set(nextIds)).sorted()
-    guard unique != ids else { return }
-
-    ids = unique
-    task?.cancel()
-    guard !unique.isEmpty else {
-      byId = [:]
-      return
-    }
-
-    task = Task { [weak self] in
-      for await rows in await Model.ids(unique).live.attachedStream() {
-        self?.byId = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-      }
-    }
-  }
-
-  public func stop() {
-    task?.cancel()
-    task = nil
-  }
-
-  isolated deinit { stop() }
+  isolated deinit { tasks.forEach { $0.cancel() } }
 }
