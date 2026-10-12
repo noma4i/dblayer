@@ -1,5 +1,7 @@
 package com.noma4i.dblayer
 
+import com.noma4i.dblayer.models.Chat
+import com.noma4i.dblayer.models.Message
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.delay
@@ -13,6 +15,19 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class BridgeProbeTest {
+    @Test
+    fun aListFollowsTheRowsThatItsRowsRefer() = runBlocking {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        val list = LiveList(Chat.recent, this)
+        val lastMessages = list.refs(Message.Companion::ids) { listOfNotNull(it.lastMessageId) }
+        assertEquals(emptyMap<String, Message>(), lastMessages.byId.value)
+        val message = Message.create(chatId = "c", authorId = "u1", text = "hi")
+        Chat.create(title = "t", lastMessageId = message.id)
+        assertEquals("hi", withTimeout(5000) { lastMessages.byId.first { it[message.id] != null } }[message.id]?.text)
+        list.stop()
+        lastMessages.stop()
+    }
+
     @Test
     fun liveRowsFollowAnEditAndDropRowsWhenTheTrackedIdsChange() = runBlocking {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-@Suite(.serialized)
+extension BridgeProbeTests {
 struct ParentSetsTests {
   @Test
   func aLocalMessageMovesTheChatPointerAndDiscardingItGivesThePointerBack() async throws {
@@ -19,4 +19,5 @@ struct ParentSetsTests {
     #expect(restored?.lastMessageId == nil)
     #expect(restored?.lastMessageAt == nil)
   }
+}
 }

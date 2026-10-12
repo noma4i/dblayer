@@ -190,6 +190,25 @@ struct BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func aListFollowsTheRowsThatItsRowsRefer() async throws {
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let list = LiveList(Chat.recent)
+    let lastMessages = list.refs(Message.self) { $0.lastMessageId.map { [$0] } ?? [] }
+    #expect(lastMessages.byId.isEmpty)
+
+    let message = try await Message.create(chatId: "c", authorId: "u1", text: "hi")
+    let chat = try await Chat.create(title: "t", lastMessageId: message.id)
+    for _ in 0 ..< 100 where lastMessages.byId[message.id] == nil { try await Task.sleep(for: .milliseconds(20)) }
+
+    #expect(lastMessages.byId[message.id]?.text == "hi")
+    try await chat.destroy()
+    for _ in 0 ..< 100 where lastMessages.byId[message.id] != nil { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(lastMessages.byId.isEmpty)
+    list.stop()
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func aLiveListAttachesItsStreamsOffTheMainThread() async throws {
     final class Seen: @unchecked Sendable {
       let lock = NSLock()

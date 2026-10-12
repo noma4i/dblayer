@@ -107,6 +107,7 @@ public final class LiveList<Model: DBModel> {
   public private(set) var state = LoadState()
   @ObservationIgnored private let query: Query<Model>
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
+  @ObservationIgnored private var followers: [([Model]) -> Void] = []
 
   public convenience init(_ query: Query<Model>) {
     self.init(query, snapshots: query.snapshots, state: query.state)
@@ -119,12 +120,21 @@ public final class LiveList<Model: DBModel> {
         for await next in await snapshots.attachedStream() {
           self?.replaced = next.replaced
           self?.rows = next.rows
+          self?.followers.forEach { $0(next.rows) }
         }
       },
       Task { [weak self] in
         for await next in await state.attachedStream() { self?.state = next }
       }
     ]
+  }
+
+  /// The live rows of another model that the rows of this list refer to by id (authors, last messages).
+  public func refs<Ref: DBModel>(_ type: Ref.Type, ids: @escaping (Model) -> [String]) -> LiveRows<Ref> {
+    let linked = LiveRows<Ref>()
+    followers.append { rows in linked.track(rows.flatMap(ids)) }
+    linked.track(rows.flatMap(ids))
+    return linked
   }
 
   public func refresh() async throws { try await query.refresh() }

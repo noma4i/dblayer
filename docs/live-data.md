@@ -108,6 +108,18 @@ try await feed.refresh()
 try await feed.loadMore()
 ```
 
+A list often shows records that its rows refer to by id (the users of a chat, the last message of a chat). `list.refs(User.self) { $0.userIds }` returns live rows of those records that follow the list: when the rows of the list change, the tracked ids change with them, and there is no second subscription to write.
+
+```swift
+let chats = LiveList(Chat.list("primary"))
+let users = chats.refs(User.self) { $0.userIds }          // users.byId
+let lastMessages = chats.refs(Message.self) { $0.lastMessageId.map { [$0] } ?? [] }
+```
+
+```kotlin
+val users = chats.refs(User.Companion::ids) { it.userIds }   // users.byId is a StateFlow
+```
+
 ```kotlin
 val feed = LiveList(Moment.feed, viewModelScope)   // feed.rows, feed.state are StateFlow
 feed.refresh()

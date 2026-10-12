@@ -91,12 +91,13 @@ internal fun stateSource(model: String, relation: String, paramsJson: String): L
     }
 
 /** A live query for view models: the rows, the load state of the relation, and the calls that move them. */
-class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope) {
+class LiveList<Model : DBModel>(private val query: Query<Model>, private val scope: kotlinx.coroutines.CoroutineScope) {
+    private val followers = mutableListOf<(List<Model>) -> Unit>()
     private val mutableRows = kotlinx.coroutines.flow.MutableStateFlow<List<Model>>(emptyList())
     private val mutableReplaced = kotlinx.coroutines.flow.MutableStateFlow<Map<String, String>>(emptyMap())
     private val mutableState = kotlinx.coroutines.flow.MutableStateFlow(LoadState())
     private val jobs = listOf(
-        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableRows.value = it.rows } },
+        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableRows.value = it.rows; followers.toList().forEach { follow -> follow(it.rows) } } },
         scope.launch { query.state.flow.collect { mutableState.value = it } },
     )
 
@@ -104,6 +105,14 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     /** The ids that the last delivery of `rows` replaced: real id to temporary id. */
     val replaced: kotlinx.coroutines.flow.StateFlow<Map<String, String>> get() = mutableReplaced
     val state: kotlinx.coroutines.flow.StateFlow<LoadState> get() = mutableState
+
+    /** The live rows of another model that the rows of this list refer to by id (authors, last messages). */
+    fun <Ref : DBModel> refs(idsQuery: (List<String>) -> Query<Ref>, ids: (Model) -> List<String>): LiveRows<Ref> {
+        val linked = LiveRows(idsQuery, scope)
+        followers += { rows -> linked.track(rows.flatMap(ids)) }
+        linked.track(mutableRows.value.flatMap(ids))
+        return linked
+    }
 
     suspend fun refresh() = query.refresh()
     suspend fun loadMore(): Boolean = query.loadMore()
