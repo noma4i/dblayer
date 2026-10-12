@@ -4,12 +4,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use crate::identity::RowId;
+use super::row::Row;
 use crate::pacing::Counters;
 
 use super::open::locked;
 use super::diff::Diff;
 use super::dispatch::{mark_core_thread, Busy};
-use super::watch::{Body, Change, CountChange, Version};
+use super::watch::{changed_rows, Body, Change, CountChange, Loaded, Related, RowsBody, Version};
 
 const MAX_WORKERS: usize = 64;
 pub(crate) const MAX_REPLACED_PAIRS: usize = 10_000;
@@ -24,11 +25,13 @@ pub(crate) struct Taken {
     pub replaced: Vec<(RowId, RowId)>,
     pub overflowed: bool,
     pub steps: usize,
+    pub loaded: Loaded,
 }
 
 #[derive(Default)]
 pub(crate) struct Mailbox {
     latest: Option<Arc<Version>>,
+    loaded: Loaded,
     replaced: Vec<(RowId, RowId)>,
     overflowed: bool,
     steps: usize,
@@ -37,8 +40,12 @@ pub(crate) struct Mailbox {
 }
 
 impl Mailbox {
-    pub(crate) fn push(&mut self, version: Arc<Version>, replaced: &[(RowId, RowId)]) -> bool {
+    pub(crate) fn push(&mut self, version: Arc<Version>, replaced: &[(RowId, RowId)], loaded: Loaded) -> bool {
         self.latest = Some(version);
+        self.loaded.rows.extend(loaded.rows);
+        for (name, parents) in loaded.related {
+            self.loaded.related.entry(name).or_default().extend(parents);
+        }
         for (from, to) in replaced {
             self.record_replacement(from, to);
         }
@@ -68,6 +75,7 @@ impl Mailbox {
             replaced: std::mem::take(&mut self.replaced),
             overflowed: std::mem::take(&mut self.overflowed),
             steps: std::mem::take(&mut self.steps),
+            loaded: std::mem::take(&mut self.loaded),
         })
     }
 
@@ -80,6 +88,7 @@ impl Mailbox {
         self.replaced.clear();
         self.overflowed = false;
         self.steps = 0;
+        self.loaded = Loaded::default();
     }
 }
 
@@ -114,8 +123,8 @@ impl Subscriber {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
-    pub(crate) fn post(self: &Arc<Self>, executor: &Arc<Executor>, version: Arc<Version>, replaced: &[(RowId, RowId)]) {
-        let needs_run = held(&self.mailbox).push(version, replaced);
+    pub(crate) fn post(self: &Arc<Self>, executor: &Arc<Executor>, version: Arc<Version>, replaced: &[(RowId, RowId)], loaded: Loaded) {
+        let needs_run = held(&self.mailbox).push(version, replaced, loaded);
         if needs_run {
             executor.schedule(self.clone());
         }
@@ -123,7 +132,7 @@ impl Subscriber {
 
     fn run_deliveries(&self) {
         loop {
-            let taken = {
+            let mut taken = {
                 let mut mailbox = held(&self.mailbox);
                 match mailbox.take() {
                     Some(taken) => taken,
@@ -139,20 +148,23 @@ impl Subscriber {
                 mailbox.finish();
                 return;
             }
-            self.deliver(&taken);
+            self.deliver(&mut taken);
             held(&self.mailbox).delivered = Some(taken.latest);
         }
     }
 
-    fn deliver(&self, taken: &Taken) {
+    fn deliver(&self, taken: &mut Taken) {
         let outcome = match (&self.listener, &taken.latest.body) {
             (Listener::Rows(call), Body::Rows(body)) => {
+                let first = taken.delivered.is_none();
                 let diff = match &taken.delivered {
                     None => Some(Diff::inserting(&body.entries)),
-                    Some(previous) => self.rows_diff(previous, taken),
+                    Some(previous) => self.rows_diff(previous, taken, body),
                 };
                 diff.map(|diff| {
-                    let change = Change { revision: taken.latest.revision, rows: body.rows.clone(), related: body.related.clone(), diff };
+                    let (rows, related) = if first { whole_rows(body, &mut taken.loaded) } else { changed_rows(&diff, &mut taken.loaded.rows, &mut taken.loaded.related) };
+                    locked(&self.counters).rows_delivered += rows.len();
+                    let change = Change { revision: taken.latest.revision, rows, related, diff, full: first };
                     catch_unwind(AssertUnwindSafe(|| call(&change)))
                 })
             }
@@ -170,8 +182,8 @@ impl Subscriber {
         }
     }
 
-    fn rows_diff(&self, previous: &Version, taken: &Taken) -> Option<Diff> {
-        let (Body::Rows(old), Body::Rows(new)) = (&previous.body, &taken.latest.body) else { return None };
+    fn rows_diff(&self, previous: &Version, taken: &Taken, new: &RowsBody) -> Option<Diff> {
+        let Body::Rows(old) = &previous.body else { return None };
         if previous.position() >= taken.latest.position() {
             return None;
         }
@@ -181,6 +193,11 @@ impl Subscriber {
         };
         (!diff.is_empty()).then_some(diff)
     }
+}
+
+fn whole_rows(body: &RowsBody, loaded: &mut Loaded) -> (Vec<Row>, Related) {
+    let rows = body.entries.iter().filter_map(|entry| loaded.rows.remove(entry.id.as_str())).collect();
+    (rows, std::mem::take(&mut loaded.related))
 }
 
 #[derive(Default)]

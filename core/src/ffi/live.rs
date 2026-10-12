@@ -3,30 +3,64 @@ use tokio::sync::watch;
 use crate::db::{Change, ObserverHandle};
 use super::row_json;
 
+/// An id that is new or changed its place, and the index it has in the new list.
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct Placement {
+    pub id: String,
+    pub index: u32,
+}
+
+/// A temporary id that the server answered with the real one.
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct Replacement {
+    pub from: String,
+    pub to: String,
+}
+
+/// One delivery of a live list.
+///
+/// With `full` the `rows` are the whole list in order. Otherwise they are the rows that were inserted, updated or replaced, `row_indexes` holds the final index of each, and the wrapper rebuilds its array in this order:
+/// 1. rename every `replaced.from` to its `to`, 2. drop `removed`, 3. take every `placed` id that is in the array out of it, then insert the placed rows in ascending index, each at its index (a row that was in the array keeps its value, a new one comes from `rows`), 4. put every changed row at its row index.
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct LiveChange {
     pub revision: i64,
+    pub full: bool,
     pub rows: Vec<String>,
+    pub row_indexes: Vec<u32>,
+    pub removed: Vec<String>,
+    pub placed: Vec<Placement>,
+    pub replaced: Vec<Replacement>,
     pub count: Option<i64>,
-    pub diff_json: String,
-    pub related_json: String,
     pub error: Option<String>,
 }
 
 impl LiveChange {
     pub(super) fn rows(change: &Change) -> Self {
-        let related: serde_json::Map<String, serde_json::Value> = change.related.iter().map(|(name, parents)| {
-            let values: serde_json::Map<String, serde_json::Value> = parents.iter().map(|(id, rows)| {
-                (id.to_string(), serde_json::json!(rows.iter().map(row_json).collect::<Vec<_>>()))
-            }).collect();
-            (name.clone(), serde_json::Value::Object(values))
-        }).collect();
+        let diff = &change.diff;
+        let row_indexes = if change.full { Vec::new() } else { change.rows.iter().map(|row| diff.at[&row.id] as u32).collect() };
         Self {
-            revision: change.revision, rows: change.rows.iter().map(row_json).collect(), count: None,
-            diff_json: serde_json::json!({ "inserted": change.diff.inserted, "removed": change.diff.removed,
-                "updated": change.diff.updated, "moved": change.diff.moved, "replaced": change.diff.replaced }).to_string(),
-            related_json: serde_json::Value::Object(related).to_string(), error: None,
+            revision: change.revision, full: change.full, rows: change.rows.iter().map(row_json).collect(), row_indexes,
+            removed: diff.removed.iter().map(ToString::to_string).collect(),
+            placed: diff.placed().into_iter().map(|(id, index)| Placement { id: id.to_string(), index: index as u32 }).collect(),
+            replaced: diff.replaced.iter().map(|(from, to)| Replacement { from: from.to_string(), to: to.to_string() }).collect(),
+            count: None, error: None,
         }
+    }
+
+    fn empty(revision: i64) -> Self {
+        Self { revision, full: false, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), count: None, error: None }
+    }
+
+    pub(super) fn whole(revision: i64, rows: Vec<String>) -> Self {
+        Self { full: true, rows, ..Self::empty(revision) }
+    }
+
+    pub(super) fn counted(revision: i64, count: i64) -> Self {
+        Self { count: Some(count), ..Self::empty(revision) }
+    }
+
+    pub(super) fn failed(revision: i64, error: String) -> Self {
+        Self { error: Some(error), ..Self::empty(revision) }
     }
 }
 

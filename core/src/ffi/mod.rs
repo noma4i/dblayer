@@ -51,3 +51,5 @@ fn row_json(row: &crate::db::Row) -> String {
 
 #[cfg(test)]
 mod load_tests;
+#[cfg(test)]
+mod live_tests;

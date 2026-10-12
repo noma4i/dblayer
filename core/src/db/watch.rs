@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
@@ -12,18 +13,50 @@ use crate::value::{read_id, SortDirection};
 use super::diff::{Diff, Entry, Stamp};
 use super::dispatch::Event;
 use super::error::DbError;
-use super::open::Shared;
+use super::open::{locked, Shared};
 use super::row::Row;
 
 pub type Related = BTreeMap<String, BTreeMap<RowId, Vec<Row>>>;
 type ParentStamps = HashMap<RowId, Vec<(RowRef, Stamp)>>;
 
+/// One delivery of a list. After the first one (`full`) `rows` holds only the rows that were inserted, updated or replaced, with their final indexes in `diff.at`.
 #[derive(Debug, Clone)]
 pub struct Change {
     pub revision: i64,
     pub rows: Vec<Row>,
     pub related: Related,
     pub diff: Diff,
+    pub full: bool,
+}
+
+impl Change {
+    /// The reference way to rebuild a list from deliveries: the wrappers do the same steps on their arrays.
+    pub fn apply_to(&self, rows: &mut Vec<Row>) {
+        if self.full {
+            rows.clone_from(&self.rows);
+            return;
+        }
+        for (from, to) in &self.diff.replaced {
+            if let (Some(at), Some(row)) = (rows.iter().position(|row| row.id == *from), self.rows.iter().find(|row| row.id == *to)) {
+                rows[at] = row.clone();
+            }
+        }
+        rows.retain(|row| !self.diff.removed.contains(&row.id));
+        let placed = self.diff.placed();
+        let mut taken: HashMap<&RowId, Row> = HashMap::new();
+        for (id, _) in &placed {
+            if let Some(at) = rows.iter().position(|row| row.id == *id) {
+                taken.insert(id, rows.remove(at));
+            }
+        }
+        for (id, index) in &placed {
+            let row = taken.remove(id).or_else(|| self.rows.iter().find(|row| row.id == *id).cloned()).expect("a placed row is known");
+            rows.insert(*index, row);
+        }
+        for row in &self.rows {
+            rows[self.diff.at[&row.id]] = row.clone();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,18 +68,36 @@ pub struct CountChange {
 pub(crate) struct Step {
     pub from: (i64, u64),
     pub diff: Diff,
+    pub rows: Vec<Row>,
+    pub related: Related,
+}
+
+impl Step {
+    pub(crate) fn supply(&self) -> Loaded {
+        Loaded { rows: self.rows.iter().map(|row| (row.id.to_string(), row.clone())).collect(), related: self.related.clone() }
+    }
 }
 
 pub(crate) struct RowsBody {
-    pub entries: Vec<Entry>,
-    pub rows: Vec<Row>,
-    pub related: Related,
+    pub entries: Vec<Arc<Entry>>,
     pub step: Option<Step>,
 }
 
 pub(crate) enum Body {
     Rows(RowsBody),
     Count(i64),
+}
+
+/// The rows that one evaluation read: every row of the list, or only the new and touched ones.
+#[derive(Default, Clone)]
+pub(crate) struct Loaded {
+    pub rows: HashMap<String, Row>,
+    pub related: Related,
+}
+
+pub(crate) struct Evaluated {
+    pub version: Version,
+    pub loaded: Loaded,
 }
 
 pub(crate) struct Version {
@@ -60,16 +111,39 @@ impl Version {
         (self.revision, self.epoch)
     }
 
-    pub(crate) fn succeeding(self, previous: &Version, replaced: &[(RowId, RowId)]) -> Option<Version> {
+    pub(crate) fn succeeding(self, previous: &Version, replaced: &[(RowId, RowId)], mut loaded: Loaded) -> Option<Version> {
         match (&previous.body, self.body) {
             (Body::Rows(old), Body::Rows(new)) => {
                 let diff = Diff::between(&old.entries, &new.entries, replaced);
-                (!diff.is_empty()).then(|| Version { revision: self.revision, epoch: self.epoch, body: Body::Rows(RowsBody { step: Some(Step { from: previous.position(), diff }), ..new }) })
+                if diff.is_empty() {
+                    return None;
+                }
+                let (rows, related) = changed_rows(&diff, &mut loaded.rows, &mut loaded.related);
+                let step = Step { from: previous.position(), diff, rows, related };
+                Some(Version { revision: self.revision, epoch: self.epoch, body: Body::Rows(RowsBody { step: Some(step), ..new }) })
             }
             (Body::Count(old), Body::Count(new)) => (*old != new).then_some(Version { revision: self.revision, epoch: self.epoch, body: Body::Count(new) }),
             _ => None,
         }
     }
+}
+
+/// The rows a diff delivers (inserted, updated and the new side of replaced pairs) in final order, with the related rows of their parents.
+pub(crate) fn changed_rows(diff: &Diff, rows: &mut HashMap<String, Row>, related: &mut Related) -> (Vec<Row>, Related) {
+    let replaced_to = diff.replaced.iter().map(|(_, to)| to);
+    let mut ids: Vec<&RowId> = diff.inserted.iter().chain(&diff.updated).chain(replaced_to).collect();
+    ids.sort_by_key(|id| diff.at.get(*id).copied().unwrap_or(usize::MAX));
+    let picked: Vec<Row> = ids.iter().filter_map(|id| rows.remove(id.as_str())).collect();
+    (picked, related_of(&ids, related))
+}
+
+pub(crate) fn related_of(parents: &[&RowId], related: &Related) -> Related {
+    let wanted: HashSet<&RowId> = parents.iter().copied().collect();
+    related
+        .iter()
+        .map(|(name, per_parent)| (name.clone(), per_parent.iter().filter(|(parent, _)| wanted.contains(parent)).map(|(parent, found)| (parent.clone(), found.clone())).collect::<BTreeMap<_, _>>()))
+        .filter(|(_, per_parent)| !per_parent.is_empty())
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -167,11 +241,12 @@ impl Shared {
         }
     }
 
-    pub(crate) fn evaluate(&self, subject: &Subject) -> Result<Version, DbError> {
+    /// Reads the whole list: every row, its related rows and one entry per row.
+    pub(crate) fn evaluate(&self, subject: &Subject) -> Result<Evaluated, DbError> {
         let epoch = self.ephemeral.lock().epoch;
         self.read(|reader| {
             let revision = reader.revision_seq()?;
-            let body = match subject {
+            let (body, loaded) = match subject {
                 Subject::Rows(query) => {
                     let keys = self.query_keys(reader, query)?;
                     let rows = self.rows_for_keys(reader, query.model.as_str(), &keys)?;
@@ -184,21 +259,71 @@ impl Shared {
                 }
                 Subject::Count(query) => {
                     let statement = compile_count(query, self.spec(query.model.as_str())?)?;
-                    Body::Count(fetch_count(reader.connection(), &statement)?)
+                    (Body::Count(fetch_count(reader.connection(), &statement)?), Loaded::default())
                 }
             };
-            Ok(Version { revision, epoch, body })
+            Ok(Evaluated { version: Version { revision, epoch, body }, loaded })
         })
     }
 
-    fn rows_body(&self, reader: &Reader<'_>, query: &Query, rows: Vec<Row>) -> Result<Body, DbError> {
+    /// Reads the ordered keys of the list once and loads only the rows that are new, changed their revision or were touched. The entries of every other row are reused.
+    pub(crate) fn evaluate_step(&self, query: &Query, previous: &Version, touched: &HashSet<String>) -> Result<Evaluated, DbError> {
+        let Body::Rows(old) = &previous.body else { return self.evaluate(&Subject::Rows(query.clone())) };
+        let epoch = self.ephemeral.lock().epoch;
+        self.read(|reader| {
+            let revision = reader.revision_seq()?;
+            let keys = self.query_keys(reader, query)?;
+            let prior: HashMap<&str, &Arc<Entry>> = old.entries.iter().map(|entry| (entry.id.as_str(), entry)).collect();
+            let mut wanted = Vec::new();
+            let slots: Vec<Option<Arc<Entry>>> = keys
+                .iter()
+                .map(|(id, key_revision)| match prior.get(id.as_str()) {
+                    Some(entry) if entry.stamp.revision == *key_revision && !touched.contains(id) => Some((*entry).clone()),
+                    _ => {
+                        wanted.push((id.clone(), *key_revision));
+                        None
+                    }
+                })
+                .collect();
+            let rows = self.rows_for_keys(reader, query.model.as_str(), &wanted)?;
+            locked(&self.counters).rows_loaded += rows.len();
+            let loaded: HashMap<String, Row> = rows.into_iter().map(|row| (row.id.to_string(), row)).collect();
+            let entries = slots
+                .into_iter()
+                .zip(&keys)
+                .filter_map(|(slot, (id, _))| slot.or_else(|| loaded.get(id).map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, Vec::new()) }))))
+                .collect();
+            Ok(Evaluated { version: Version { revision, epoch, body: Body::Rows(RowsBody { entries, step: None }) }, loaded: Loaded { rows: loaded, related: Related::new() } })
+        })
+    }
+
+    /// The rows and related rows of a list that is already known by its entries, for a subscriber that joins it.
+    pub(crate) fn load_whole(&self, subject: &Subject, version: &Version) -> Result<Loaded, DbError> {
+        let Body::Rows(body) = &version.body else { return Ok(Loaded::default()) };
+        let (model, include) = match subject {
+            Subject::Rows(query) => (query.model.clone(), query.include.clone()),
+            Subject::Row(row) => (row.model.clone(), Vec::new()),
+            Subject::Count(_) => return Ok(Loaded::default()),
+        };
+        let keys: Vec<(String, i64)> = body.entries.iter().map(|entry| (entry.id.to_string(), entry.stamp.revision)).collect();
+        self.read(|reader| {
+            let rows = self.rows_for_keys(reader, model.as_str(), &keys)?;
+            locked(&self.counters).rows_loaded += rows.len();
+            let related = self.related_rows(reader, self.spec(model.as_str())?, &include, &rows)?.0;
+            Ok(Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related })
+        })
+    }
+
+    fn rows_body(&self, reader: &Reader<'_>, query: &Query, rows: Vec<Row>) -> Result<(Body, Loaded), DbError> {
         let spec = self.spec(query.model.as_str())?;
         let (related, mut stamps) = self.related_rows(reader, spec, &query.include, &rows)?;
+        locked(&self.counters).rows_loaded += rows.len();
         let entries = rows
             .iter()
-            .map(|row| Entry { id: row.id.clone(), stamp: Stamp::of(row, stamps.remove(&row.id).unwrap_or_default()) })
+            .map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, stamps.remove(&row.id).unwrap_or_default()) }))
             .collect();
-        Ok(Body::Rows(RowsBody { entries, rows, related, step: None }))
+        let loaded = Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related };
+        Ok((Body::Rows(RowsBody { entries, step: None }), loaded))
     }
 
     fn related_rows(

@@ -9,6 +9,8 @@ fn new_counters_have_zero_values() {
         unknown_operation_acks: 0,
         observation_reads: 0,
         observer_calls: 0,
+        rows_delivered: 0,
+        rows_loaded: 0,
         cache_hits: 0,
         cache_misses: 0,
         cache_evictions: 0,

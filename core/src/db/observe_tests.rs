@@ -82,7 +82,7 @@ fn observer_is_not_called_when_the_result_set_is_unchanged() {
     let reads = db.counters().observation_reads;
     put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "other"}));
     assert_eq!(calls(&log), vec![1]);
-    assert_eq!(db.counters().observation_reads, reads + 1);
+    assert_eq!(db.counters().observation_reads, reads, "a row that is outside the list and fails its filter costs no read of the list");
 }
 
 #[test]

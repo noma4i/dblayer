@@ -9,7 +9,7 @@ use crate::pacing::ManualClock;
 use crate::schema::{ActionDeclaration, RootShape, AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec, Newer};
 use crate::value::ScalarKind;
 
-use super::{Change, Db, EntityChange};
+use super::{Change, Db, EntityChange, Row};
 
 pub fn users_spec() -> ModelSpec {
     let mut spec = ModelSpec::new(
@@ -117,10 +117,24 @@ pub fn put(db: &Db, model: &str, value: Value) {
 
 pub type ChangeLog = Arc<Mutex<Vec<Change>>>;
 
+/// The list that a reader rebuilds from the deliveries.
+#[derive(Default)]
+pub struct Whole(Mutex<Vec<Row>>);
+
+impl Whole {
+    pub fn of(&self, change: &Change) -> Vec<Row> {
+        let mut rows = self.0.lock().unwrap();
+        change.apply_to(&mut rows);
+        rows.clone()
+    }
+}
+
+/// Records every delivery with its rows rebuilt to the whole list, so a test reads the list the way a reader of the library sees it.
 pub fn recorder() -> (ChangeLog, impl Fn(&Change) + Send + Sync + 'static) {
     let log: ChangeLog = Arc::new(Mutex::new(Vec::new()));
     let sink = log.clone();
-    (log, move |change: &Change| sink.lock().unwrap().push(change.clone()))
+    let whole = Whole::default();
+    (log, move |change: &Change| sink.lock().unwrap().push(Change { rows: whole.of(change), full: true, ..change.clone() }))
 }
 
 pub fn calls(log: &ChangeLog) -> Vec<usize> {

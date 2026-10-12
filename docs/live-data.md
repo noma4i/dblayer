@@ -7,12 +7,15 @@ Every read of a model is live. A read gives you the current value and a stream o
 | Field | Meaning |
 | ----- | ------- |
 | `revision` | Commit revision the state reflects. It only grows for one observer |
-| `rows` | Full current result |
+| `rows` | The first delivery: the whole list in order. Later deliveries: only the rows that were inserted, updated or replaced |
 | `diff.inserted`, `removed`, `updated`, `moved` | Row identities that changed |
-| `rows[i].sync` | Sync state of every row, see [sync state](sync-state.md) |
+| `diff.at` | The final index of every inserted, updated, moved and replaced id. Swift and Kotlin read it from `placed` and `row_indexes` |
+| `rows[i].sync` | Sync state of the row, see [sync state](sync-state.md) |
 | `diff.replaced` | Pairs `(old id, new id)`, for example a temporary id replaced by the server id, so a UI can keep the same element |
 
-The first delivery contains every row as `inserted`.
+The first delivery contains every row as `inserted`. After it a commit of 1 row on a list of 2000 delivers 1 row, whatever the size of the list. Swift and Kotlin keep the array and apply each delivery in 4 steps: rename the `replaced` ids, drop `removed`, take the `placed` ids out of the array and insert them again by ascending index, then put each delivered row at its index. `Change::apply_to` is the reference of these steps.
+
+A commit of a row that is outside the list and fails the filter of a query on a whole model does not read the list and does not deliver.
 
 ## Ephemeral values
 
@@ -99,11 +102,13 @@ While a load runs the state also tells which load it is: `isInitialLoading` (the
 **Replaced ids.** A record created offline is shown under a temporary id until the server answers (or a row that matches it lands first, see `correlate` in [writing data](writing-data.md)). The delivery that swaps the ids tells it: `query.snapshots` yields the rows with `replaced`, a map from the real id to the temporary id that it replaced, and `LiveList` keeps the map of its last delivery. A list that animates insertions uses it to move the existing row instead of removing one and inserting another.
 
 ```swift
-let thread = LiveList(Message.thread(chatId))   // thread.rows, thread.replaced
+let thread = LiveList(Message.thread(chatId))   // thread.rows, thread.replaced, thread.ids
 ```
 
+`ids` changes only when a delivery inserts, removes, moves or replaces a row, and not when a row is updated. A view that reads `ids` and gets each row from its [entity](entities.md) redraws on those deliveries only.
+
 ```kotlin
-val thread = LiveList(Message.thread(chatId), viewModelScope)   // thread.rows, thread.replaced are StateFlow
+val thread = LiveList(Message.thread(chatId), viewModelScope)   // thread.rows, thread.replaced, thread.ids are StateFlow
 ```
 
 **View models.** `LiveList` keeps the rows and the state of a query and moves the relation. It ends with its owner: there is nothing to start or stop. Creating one is cheap on the main thread: the subscription and the first read run on a background task (Swift) or on `Dispatchers.Default` (Kotlin), and `rows` stay empty until the first delivery arrives:

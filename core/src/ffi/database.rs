@@ -247,7 +247,7 @@ impl Database {
         let callback = listener.clone();
         let observer = if count {
             self.db.observe_count(query.clone(), move |change| {
-                let value = LiveChange { revision: change.revision, rows: vec![], count: Some(change.count), diff_json: "{}".into(), related_json: "{}".into(), error: None };
+                let value = LiveChange::counted(change.revision, change.count);
                 post.send_replace(Some(value.clone())); callback.changed(value);
             })?
         } else {
@@ -261,8 +261,10 @@ impl Database {
                 let errors = latest.clone();
                 let task = executor().spawn(async move {
                     if let Err(error) = sync.load(&model, &relation, &params, LoadOptions::default()).await {
-                        let previous = errors.borrow().clone();
-                        if let Some(mut change) = previous { change.error = Some(error.to_string()); errors.send_replace(Some(change.clone())); listener.changed(change); }
+                        let revision = errors.borrow().as_ref().map_or(0, |change| change.revision);
+                        let change = LiveChange::failed(revision, error.to_string());
+                        errors.send_replace(Some(change.clone()));
+                        listener.changed(change);
                     }
                 });
                 (Some(watch), Some(task.abort_handle()))
@@ -278,8 +280,7 @@ impl Database {
         let query = Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))).including(&[&name]);
         let observer = self.db.observe(query, move |change| {
             let rows = change.related.get(&name).and_then(|parents| parents.get(&row_id)).cloned().unwrap_or_default();
-            let mut value = LiveChange::rows(change);
-            value.rows = rows.iter().map(row_json).collect();
+            let value = LiveChange::whole(change.revision, rows.iter().map(row_json).collect());
             post.send_replace(Some(value.clone())); listener.changed(value);
         })?;
         Ok(Arc::new(LiveSubscription { latest, handles: Mutex::new(Some(LiveHandles { _observer: observer, _watch: None, load: None })) }))

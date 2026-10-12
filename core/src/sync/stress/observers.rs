@@ -18,6 +18,7 @@ enum Target {
 }
 
 struct RowsTape {
+    /// The newest delivery with its rows rebuilt to the whole list.
     last: Option<Change>,
     seen: u64,
 }
@@ -81,6 +82,9 @@ impl Watcher {
         let watcher = self.clone();
         move |change: &Change| {
             let mut tape = watcher.rows.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut rows = tape.last.as_ref().map(|last| last.rows.clone()).unwrap_or_default();
+            change.apply_to(&mut rows);
+            let change = &Change { rows, full: true, ..change.clone() };
             check_step(&watcher.name, tape.last.as_ref(), change, &findings);
             let mut seen = universe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             for row in &change.rows {

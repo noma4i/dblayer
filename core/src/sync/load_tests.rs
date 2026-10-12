@@ -315,10 +315,11 @@ async fn forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery()
     type Seen = Vec<(Vec<String>, usize)>;
     let seen: std::sync::Arc<std::sync::Mutex<Seen>> = Default::default();
     let sink = seen.clone();
+    let whole = crate::db::fixtures::Whole::default();
     let _subscription = rig
         .db
         .observe(crate::query::Query::new("moments").in_scope(scope), move |change| {
-            sink.lock().unwrap().push((change.rows.iter().map(|row| row.id.to_string()).collect(), change.diff.removed.len()));
+            sink.lock().unwrap().push((whole.of(change).iter().map(|row| row.id.to_string()).collect(), change.diff.removed.len()));
         })
         .unwrap();
     rig.db.settle();

@@ -39,7 +39,7 @@ pub(crate) use prior::Prior;
 pub use watch::{Change, CountChange, Related};
 
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 #[cfg(test)]
 mod invariants;
 #[cfg(test)]
@@ -58,6 +58,8 @@ mod files_tests;
 mod land_tests;
 #[cfg(test)]
 mod listeners_tests;
+#[cfg(test)]
+mod list_delta_tests;
 #[cfg(test)]
 mod local_write_tests;
 #[cfg(test)]

@@ -246,17 +246,20 @@ fn a_slow_listener_does_not_hold_back_the_others_and_gets_the_latest_state() {
     let released = Mutex::new(released);
     let slow_log = Arc::new(Mutex::new(Vec::new()));
     let slow_sink = slow_log.clone();
+    let slow_whole = Whole::default();
     let _slow = db
         .observe(Query::new("moments"), move |change| {
-            slow_sink.lock().unwrap().push(change.rows.len());
-            if change.rows.len() == 1 {
+            let size = slow_whole.of(change).len();
+            slow_sink.lock().unwrap().push(size);
+            if size == 1 {
                 entered_sender.send(()).unwrap();
                 released.lock().unwrap().recv_timeout(WAIT).unwrap();
             }
         })
         .unwrap();
     let (fast_sender, fast) = mpsc::channel();
-    let _fast = db.observe(Query::new("moments"), move |change| fast_sender.send(change.rows.len()).unwrap()).unwrap();
+    let fast_whole = Whole::default();
+    let _fast = db.observe(Query::new("moments"), move |change| fast_sender.send(fast_whole.of(change).len()).unwrap()).unwrap();
     for number in 0..3 {
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{number}")), row: obj(json!({"id": format!("m{number}"), "userId": "u1", "text": "t"})) });
