@@ -66,6 +66,13 @@ for path in files:
     if re.search(r"Replaced \{ by:", path.read_text()):
         findings.append(f"Z9 a temp row is replaced in db/swap.rs only: {relative}")
 
+for path in files:
+    relative = str(path.relative_to(root))
+    if "/sync/invalidate/" in relative:
+        continue
+    if re.search(r"\binvalidate_model\(", path.read_text()):
+        findings.append(f"Z10 lists are marked stale and reloaded in sync/invalidate only: {relative}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

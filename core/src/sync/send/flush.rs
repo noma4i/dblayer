@@ -229,7 +229,7 @@ impl Inner {
             let message = failure.message.clone();
             let result = self.fail(sending, OperationStatus::Failed, failure, SendResult::Rejected(message))?;
             if sending.action == "destroy" && result != SendResult::Discarded {
-                self.invalidate_model(&sending.model).await?;
+                self.reload_lists_after_refused_destroy(&sending.model).await?;
             }
             return Ok(result);
         }

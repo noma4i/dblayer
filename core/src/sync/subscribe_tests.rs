@@ -247,7 +247,7 @@ async fn destroy_event_removes_the_dependent_children() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn event_that_creates_a_row_refreshes_the_watched_lists_of_its_model() {
+async fn event_that_creates_a_row_does_not_reload_the_watched_lists_of_its_model() {
     let rig = rig_with_subscription();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2"));
@@ -256,7 +256,8 @@ async fn event_that_creates_a_row_refreshes_the_watched_lists_of_its_model() {
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": null})));
     tokio::time::sleep(Duration::from_secs(3)).await;
-    assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()), ["m1", "m2"]);
+    assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()), ["m1"]);
+    assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
 }
 
 fn user_list(ids: &[&str]) -> crate::transport::Reply {

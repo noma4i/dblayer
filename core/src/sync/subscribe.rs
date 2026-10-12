@@ -128,7 +128,7 @@ impl Feed {
         match self.try_apply(items, current) {
             Ok(stale) => {
                 for model in stale {
-                    let _ = self.inner.invalidate_model(&model).await;
+                    let _ = self.inner.reload_lists_of_absent_parent(&model).await;
                 }
             }
             Err(_) => locked(&self.status).rejected += 1,
@@ -139,7 +139,7 @@ impl Feed {
         let db = &self.inner.db;
         let model = self.def.model.as_str();
         let spec = db.spec(model)?;
-        let (mut count, mut created) = (0, false);
+        let mut count = 0;
         let mut announced: Vec<RowId> = Vec::new();
         let mut held_files: Vec<String> = Vec::new();
         let committed = db.commit_following_report(generation, |reader| {
@@ -167,7 +167,6 @@ impl Feed {
                     let mut related = Related::new();
                     let Some(patch) = normalize_node(db, model, &item.node, &mut related)? else { continue };
                     let Some(row) = db.merged(model, stored.as_ref(), &patch)? else { continue };
-                    created |= stored.is_none();
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
                     let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();
                     touches.extend(db.touch_ops(reader, spec, &seen, &own)?);
@@ -212,10 +211,7 @@ impl Feed {
             db.set_ephemeral(model, id, self.def.set.clone())?;
         }
         locked(&self.status).applied += count;
-        let mut stale: Vec<String> = followed.absent.iter().map(ToString::to_string).collect();
-        if created {
-            stale.push(model.to_string());
-        }
+        let stale: Vec<String> = followed.absent.iter().map(ToString::to_string).collect();
         Ok(stale)
     }
 

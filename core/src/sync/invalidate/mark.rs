@@ -25,7 +25,15 @@ impl Inner {
         self.mark_and_reload(model, &names).await
     }
 
-    pub(crate) async fn invalidate_model(&self, model: &str) -> Result<(), SyncError> {
+    pub(crate) async fn reload_lists_of_absent_parent(&self, model: &str) -> Result<(), SyncError> {
+        self.invalidate_model(model).await
+    }
+
+    pub(crate) async fn reload_lists_after_refused_destroy(&self, model: &str) -> Result<(), SyncError> {
+        self.invalidate_model(model).await
+    }
+
+    async fn invalidate_model(&self, model: &str) -> Result<(), SyncError> {
         let spec = self.db.spec(model)?;
         let names = spec.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
         self.mark_and_reload(model, &names).await
