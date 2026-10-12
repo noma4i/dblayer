@@ -130,8 +130,8 @@ impl Db {
             files_gate: Mutex::new(()),
             expiry_gate: Mutex::new(()),
         });
-        Dispatch::start(dispatch, Arc::downgrade(&shared));
-        Ephemerals::start(ephemeral, Arc::downgrade(&shared));
+        Dispatch::start(dispatch, Arc::downgrade(&shared))?;
+        Ephemerals::start(ephemeral, Arc::downgrade(&shared))?;
         Ok(Db { shared })
     }
 

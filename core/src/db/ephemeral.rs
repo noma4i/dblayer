@@ -180,16 +180,13 @@ impl Ephemerals {
         self.wake.notify_all();
     }
 
-    pub(crate) fn start(ephemerals: Arc<Ephemerals>, shared: Weak<Shared>) {
-        std::thread::Builder::new()
-            .name("dblayer-ephemeral".to_string())
-            .spawn(move || {
+    pub(crate) fn start(ephemerals: Arc<Ephemerals>, shared: Weak<Shared>) -> Result<(), DbError> {
+        super::threads::spawn_named("dblayer-ephemeral", move || {
                 while ephemerals.wait_for_due() {
                     let Some(shared) = shared.upgrade() else { return };
                     let _ = Db { shared }.expire_ephemeral();
                 }
             })
-            .expect("ephemeral thread starts");
     }
 
     fn wait_for_due(&self) -> bool {

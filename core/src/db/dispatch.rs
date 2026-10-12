@@ -5,6 +5,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use crate::commit::{CommitResult, ScopeRef};
 use crate::identity::{ModelKey, RowId, RowRef};
 
+use super::error::DbError;
 use super::open::{Db, Shared};
 
 pub(crate) const MAX_PENDING: usize = 256;
@@ -146,10 +147,8 @@ impl Dispatch {
         self.wake.notify_all();
     }
 
-    pub(crate) fn start(dispatch: Arc<Dispatch>, shared: Weak<Shared>) {
-        std::thread::Builder::new()
-            .name("dblayer-dispatch".to_string())
-            .spawn(move || {
+    pub(crate) fn start(dispatch: Arc<Dispatch>, shared: Weak<Shared>) -> Result<(), DbError> {
+        super::threads::spawn_named("dblayer-dispatch", move || {
                 mark_core_thread();
                 while let Some(batch) = dispatch.next_batch() {
                     let units = batch.len();
@@ -159,7 +158,6 @@ impl Dispatch {
                     dispatch.busy.leave(units);
                 }
             })
-            .expect("dispatch thread starts");
     }
 }
 

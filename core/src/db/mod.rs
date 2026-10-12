@@ -24,6 +24,7 @@ mod reset;
 mod roll_back;
 mod row;
 mod swap;
+mod threads;
 mod watch;
 
 pub use diff::Diff;
@@ -35,6 +36,7 @@ pub use open::{Db, DbConfig};
 pub use replace::{OnAbsent, ReplaceRequest};
 pub use row::{Record, Row};
 pub(crate) use local_write::read_outbox;
+pub(crate) use open::locked;
 pub(crate) use prior::Prior;
 pub use watch::{Change, CountChange, Related};
 

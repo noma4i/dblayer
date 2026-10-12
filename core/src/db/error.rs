@@ -36,6 +36,8 @@ pub enum DbError {
     InFlight { model: String, id: String },
     #[error("operation {0} is not in the outbox")]
     UnknownOperation(i64),
+    #[error("thread {name} did not start: {detail}")]
+    ThreadSpawn { name: &'static str, detail: String },
     #[error(transparent)]
     Landing(#[from] crate::read::LandingError),
 }
