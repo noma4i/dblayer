@@ -251,6 +251,7 @@ impl Db {
     }
 
     pub fn expire_ephemeral(&self) -> Result<usize, DbError> {
+        let _gate = locked(&self.shared.expiry_gate);
         let (due, epoch) = {
             let mut state = self.shared.ephemeral.lock();
             let due = state.take_due();

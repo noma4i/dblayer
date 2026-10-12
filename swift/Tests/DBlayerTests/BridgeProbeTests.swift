@@ -5,6 +5,12 @@ import Testing
 
 @Suite(.serialized)
 struct BridgeProbeTests {
+  /// Waits for the event that the relation failed, not for a time.
+  static func failedState(of query: Query<Moment>) async -> LoadState {
+    for await state in await query.state.stream() where state.phase == .failed { return state }
+    return LoadState()
+  }
+
   @Test
   func writesReachTypedLiveRows() async throws {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
@@ -64,7 +70,7 @@ struct BridgeProbeTests {
   }
 
   @MainActor
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Network(detail: "offline"))
@@ -79,14 +85,14 @@ struct BridgeProbeTests {
     } catch {
       Issue.record("the failed load surfaced as \(error), not as a database error")
     }
-    for _ in 0 ..< 200 where list.state.phase != .failed { try await Task.sleep(for: .milliseconds(10)) }
+    let failed = await Self.failedState(of: Moment.feed)
 
-    #expect(list.state.phase == .failed)
-    #expect(list.state.errorKind != nil)
+    #expect(failed.phase == .failed)
+    #expect(failed.errorKind != nil)
   }
 
   @MainActor
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func aFatalFailureMarksTheRelationFailedWithoutAnyRetry() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
@@ -101,10 +107,10 @@ struct BridgeProbeTests {
     } catch {
       Issue.record("the failed load surfaced as \(error), not as a database error")
     }
-    for _ in 0 ..< 200 where list.state.phase != .failed { try await Task.sleep(for: .milliseconds(10)) }
+    let failed = await Self.failedState(of: Moment.feed)
 
-    #expect(list.state.phase == .failed)
-    #expect(list.state.errorKind != nil)
+    #expect(failed.phase == .failed)
+    #expect(failed.errorKind != nil)
   }
 
   @MainActor
@@ -239,14 +245,14 @@ struct BridgeProbeTests {
   }
 
   @MainActor
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
-    for _ in 0 ..< 200 where list.state.phase != .failed { try await Task.sleep(for: .milliseconds(10)) }
+    _ = await Self.failedState(of: Moment.feed)
     let before = transport.calls.count
 
     try await DB.resume()

@@ -45,6 +45,7 @@ pub(crate) struct Shared {
     pub executor: Arc<Executor>,
     pub files: FileDirectories,
     pub files_gate: Mutex<()>,
+    pub expiry_gate: Mutex<()>,
 }
 
 pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -124,6 +125,7 @@ impl Db {
             ephemeral: ephemeral.clone(),
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
             files_gate: Mutex::new(()),
+            expiry_gate: Mutex::new(()),
         });
         Dispatch::start(dispatch, Arc::downgrade(&shared));
         Ephemerals::start(ephemeral, Arc::downgrade(&shared));
