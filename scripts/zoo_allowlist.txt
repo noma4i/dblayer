@@ -20,4 +20,5 @@ panic:core/src/syncstate/table.rs:expect("upload serializes")   # own Serialize 
 panic:core/src/operation/table.rs:expect("row ids serialize")   # a list of ids always serializes
 panic:core/src/ddl/mod.rs:expect("fingerprint serializes")   # own Serialize type, string keys
 panic:core/src/ffi/mod.rs:expect("upload serializes")   # own Serialize type, string keys
+panic:core/src/ffi/live.rs:expect("first delivery")   # wait_for(is_some) returned, so the value is Some
 panic:core/src/ffi/live.rs:expect("live owns sender")   # the object owns the watch sender, so wait_for never sees a closed channel; the second expect holds because wait_for(is_some) returned
