@@ -129,8 +129,8 @@ class CableConnection(
 
     suspend fun open() = withContext(confined) {
         isStopped = false
-        if (watchdogJob == null) watchdogJob = scope.launch { watch() }
         openSocket()
+        if (watchdogJob == null) armWatchdog()
         Unit
     }
 
@@ -232,6 +232,7 @@ class CableConnection(
         socket = candidate
         state = CableConnectionState.Open
         openedAt = timers.now()
+        armWatchdog()
         readJob = scope.launch { readFrames(candidate, current) }
         return true
     }
@@ -258,6 +259,7 @@ class CableConnection(
                 val frame = if (current == generation) CableFrame.parse(text) else null
                 if (frame == null) continue
                 lastFrameAt = timers.now()
+                armWatchdog()
                 if (frame == CableFrame.Welcome) attempts = 0
                 stream.trySend(frame)
             }
@@ -276,16 +278,26 @@ class CableConnection(
     private fun markClosed() {
         state = CableConnectionState.Closed
         closedAt = timers.now()
+        armWatchdog()
         stream.trySend(CableFrame.Closed)
     }
 
-    private suspend fun watch() {
-        while (kotlin.coroutines.coroutineContext.isActive && !isStopped) {
-            val bound = CableHeartbeat.jitterBound(attempts)
-            timers.sleep(CableHeartbeat.pollInterval(attempts, timers.jitter(bound)))
-            if (!kotlin.coroutines.coroutineContext.isActive || isStopped) return
-            reopenIfStale()
+    private fun armWatchdog() {
+        if (isStopped) return
+        val wait = if (socket != null && state == CableConnectionState.Open) CableHeartbeat.STALE_AFTER
+        else CableHeartbeat.pollInterval(attempts, timers.jitter(CableHeartbeat.jitterBound(attempts)))
+        watchdogJob?.cancel()
+        watchdogJob = scope.launch {
+            timers.sleep(wait)
+            watchdogFired()
         }
+    }
+
+    private suspend fun watchdogFired() {
+        watchdogJob = null
+        if (isStopped) return
+        reopenIfStale()
+        if (watchdogJob == null) armWatchdog()
     }
 
     private suspend fun reopenIfStale() {

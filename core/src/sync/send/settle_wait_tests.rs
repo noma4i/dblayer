@@ -22,8 +22,9 @@ fn postponed_create(rig: &Rig) -> crate::identity::RowId {
 async fn inv_wait_01_settled_parks_once_per_outbox_change_while_a_retry_waits_for_its_backoff() {
     let rig = rig();
     let id = postponed_create(&rig);
-    let (settled, ()) = tokio::join!(rig.sync.settled("moments", &id), the_backoff_passes(&rig));
-    settled.unwrap();
+    let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.settled("moments", &id));
+    let (settled, ()) = tokio::join!(bounded, the_backoff_passes(&rig));
+    settled.expect("settled did not return within 60 s").unwrap();
     let parks = rig.sync.counters().settle_parks;
     assert!(parks <= 3, "settled parked {parks} times for 1 postponed retry");
 }
@@ -36,8 +37,9 @@ async fn inv_wait_01_answer_parks_once_per_outbox_change_while_a_retry_waits_for
     let acted = rig.db.act("moments", "star", &id, params(json!({})), params(json!({}))).unwrap();
     rig.transport.enqueue("StarMoment", Reply::fail(TransportError::Network("down".to_string())));
     rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"moment": {"id": "m1", "text": "t", "userId": null}}})));
-    let (answered, ()) = tokio::join!(rig.sync.answer("moments", acted.operation), the_backoff_passes(&rig));
-    answered.unwrap();
+    let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.answer("moments", acted.operation));
+    let (answered, ()) = tokio::join!(bounded, the_backoff_passes(&rig));
+    answered.expect("answer did not return within 60 s").unwrap();
     let parks = rig.sync.counters().settle_parks;
     assert!(parks <= 3, "answer parked {parks} times for 1 postponed retry");
 }
@@ -89,5 +91,15 @@ fn inv_wait_04_no_test_of_the_wrappers_waits_without_a_bound() {
     for script in ["check_waits_test.sh", "check_waits.sh"] {
         let output = std::process::Command::new("bash").arg(scripts.join(script)).output().unwrap();
         assert!(output.status.success(), "{script}: {}", String::from_utf8_lossy(&output.stderr));
+    }
+}
+
+#[test]
+fn inv_wait_05_the_cable_stale_check_is_armed_by_frames_and_not_polled() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    for (file, poll) in [("swift/Sources/DBlayer/Network/CableConnection.swift", "func watch("), ("kotlin/src/main/kotlin/com/noma4i/dblayer/Cable.kt", "fun watch(")] {
+        let source = std::fs::read_to_string(root.join(file)).unwrap();
+        assert!(source.contains("armWatchdog()"), "{file} does not arm the stale check");
+        assert!(!source.contains(poll), "{file} polls the stale check");
     }
 }

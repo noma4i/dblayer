@@ -128,6 +128,9 @@ struct BridgeProbeTests {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
+    let connectLoad = await Cursor(await Moment.feed.state.stream()).first("the live connect's load to fail") { $0.phase == .failed }
+    #expect(connectLoad?.phase == .failed)
+    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
 
     do {
       try await list.refresh()
@@ -140,6 +143,7 @@ struct BridgeProbeTests {
 
     #expect(failed.phase == .failed)
     #expect(failed.errorKind != nil)
+    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 2)
   }
 
   @MainActor

@@ -50,10 +50,10 @@ public actor CableConnection {
 
   public func open() async {
     isStopped = false
-    if watchdogTask == nil {
-      watchdogTask = Task { await watch() }
-    }
     _ = await openSocket()
+    if watchdogTask == nil {
+      armWatchdog()
+    }
   }
 
   public func closeSocket() {
@@ -179,6 +179,7 @@ public actor CableConnection {
     socket = candidate
     state = .open
     openedAt = timers.now()
+    armWatchdog()
     readTask = Task { await readFrames(from: candidate, generation: current) }
     return true
   }
@@ -191,6 +192,7 @@ public actor CableConnection {
           continue
         }
         lastFrameAt = timers.now()
+        armWatchdog()
         if frame == .welcome {
           attempts = 0
         }
@@ -211,17 +213,40 @@ public actor CableConnection {
   private func markClosed() {
     state = .closed
     closedAt = timers.now()
+    armWatchdog()
     continuation.yield(.closed)
   }
 
-  private func watch() async {
-    while !Task.isCancelled, !isStopped {
+  private func armWatchdog() {
+    guard !isStopped else {
+      return
+    }
+    let wait: TimeInterval
+    if socket != nil, state == .open {
+      wait = CableHeartbeat.staleAfter
+    } else {
       let bound = CableHeartbeat.jitterBound(attempts: attempts)
-      await timers.sleep(CableHeartbeat.pollInterval(attempts: attempts, jitter: timers.jitter(bound)))
-      guard !Task.isCancelled, !isStopped else {
+      wait = CableHeartbeat.pollInterval(attempts: attempts, jitter: timers.jitter(bound))
+    }
+    let timers = timers
+    watchdogTask?.cancel()
+    watchdogTask = Task {
+      await timers.sleep(wait)
+      guard !Task.isCancelled else {
         return
       }
-      await reopenIfStale()
+      await watchdogFired()
+    }
+  }
+
+  private func watchdogFired() async {
+    watchdogTask = nil
+    guard !isStopped else {
+      return
+    }
+    await reopenIfStale()
+    if watchdogTask == nil {
+      armWatchdog()
     }
   }
 

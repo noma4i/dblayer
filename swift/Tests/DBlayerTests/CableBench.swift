@@ -18,6 +18,7 @@ final class ManualCableClock: @unchecked Sendable {
   private var elapsed: TimeInterval = 0
   private var sleepers: [Sleeper] = []
   private var nextId = 0
+  private var fired = 0
 
   func now() -> Date {
     lock.withLock { Date(timeIntervalSince1970: elapsed) }
@@ -55,6 +56,7 @@ final class ManualCableClock: @unchecked Sendable {
       elapsed += seconds
       let due = sleepers.filter { $0.due <= elapsed }
       sleepers.removeAll { $0.due <= elapsed }
+      fired += due.count
       return due
     }
     due.forEach { $0.continuation.resume() }
@@ -67,6 +69,9 @@ final class ManualCableClock: @unchecked Sendable {
 
   func sleeperDueTimes(before limit: TimeInterval) -> [TimeInterval] {
     lock.withLock { sleepers.map(\.due).filter { $0 < limit } }
+  }
+  var firedSleeps: Int {
+    lock.withLock { fired }
   }
 
   func sleeperCount(requestedSeconds: TimeInterval) -> Int {
