@@ -92,7 +92,7 @@ class DatabaseTransport(
                         GraphQLSubscriptionEvent.Ready -> sink.ready()
                         is GraphQLSubscriptionEvent.Payload -> {
                             onEvent(request.operationName, event.value.toString())
-                            sink.event(event.value.toString())
+                            sink.event(JsonObject(mapOf("data" to event.value)).toString())
                         }
                         is GraphQLSubscriptionEvent.Errors -> sink.failed("graphql", event.messages.joinToString("\n"))
                         GraphQLSubscriptionEvent.Completed -> Unit
