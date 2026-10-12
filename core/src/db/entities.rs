@@ -3,7 +3,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
-use crate::identity::{ModelKey, RowId};
+use crate::identity::{ModelKey, RowId, RowRef};
 use crate::pacing::Counters;
 
 use super::diff::Stamp;
@@ -14,6 +14,8 @@ use super::open::{locked, Db, Shared};
 use super::row::Row;
 
 type Position = (i64, u64);
+
+pub(crate) const MAX_READ_RETRIES: u32 = 3;
 
 #[derive(Debug, Clone)]
 pub struct EntityChange {
@@ -31,6 +33,8 @@ struct Known {
 pub(crate) struct EntityGroup {
     model: ModelKey,
     known: HashMap<RowId, Known>,
+    dirty: BTreeSet<RowId>,
+    failed_reads: u32,
     subscriber: Arc<EntitySubscriber>,
 }
 
@@ -40,7 +44,7 @@ impl EntityGroup {
     }
 
     pub(crate) fn touched(&self, batch: &[Event]) -> BTreeSet<RowId> {
-        let mut ids = BTreeSet::new();
+        let mut ids = self.dirty.clone();
         for event in batch {
             if self.resets(event) {
                 ids.extend(self.known.keys().cloned());
@@ -56,7 +60,7 @@ impl EntityGroup {
     }
 
     pub(crate) fn new(model: ModelKey, subscriber: Arc<EntitySubscriber>) -> Self {
-        Self { model, known: HashMap::new(), subscriber }
+        Self { model, known: HashMap::new(), dirty: BTreeSet::new(), failed_reads: 0, subscriber }
     }
 
     pub(crate) fn ids(&self) -> impl Iterator<Item = &RowId> {
@@ -198,6 +202,9 @@ impl EntityObserver {
         let Some(group) = observers.entities.get_mut(&self.key) else { return };
         let model = group.model.clone();
         let gone: Vec<RowId> = ids.iter().filter(|id| group.known.remove(*id).is_some()).cloned().collect();
+        for id in &gone {
+            group.dirty.remove(id);
+        }
         let subscriber = group.subscriber.clone();
         observers.unindex_rows(&self.key, &model, gone.iter());
         subscriber.discard(&gone);
@@ -214,6 +221,10 @@ impl Drop for EntityObserver {
 
 impl Shared {
     fn read_entities<'a>(&self, model: &ModelKey, ids: impl Iterator<Item = &'a RowId>) -> Result<(Position, HashMap<String, Row>), DbError> {
+        #[cfg(test)]
+        if let Some(error) = self.store.injected_entity_read_failure() {
+            return Err(error.into());
+        }
         let wanted: Vec<String> = ids.map(RowId::to_string).collect();
         let epoch = self.ephemeral.lock().epoch;
         self.read(|reader| Ok(((reader.revision_seq()?, epoch), self.load(reader, model.as_str(), &wanted)?)))
@@ -221,12 +232,24 @@ impl Shared {
 
     pub(crate) fn refresh_entities(&self, key: &str, model: &ModelKey, ids: BTreeSet<RowId>) {
         locked(&self.counters).observation_reads += 1;
-        let Ok((position, loaded)) = self.read_entities(model, ids.iter()) else {
+        let read = self.read_entities(model, ids.iter());
+        if read.is_err() {
             locked(&self.counters).entity_reads_failed += 1;
-            return;
-        };
+        }
         let mut observers = locked(&self.observers);
         let Some(group) = observers.entities.get_mut(key) else { return };
+        let Ok((position, loaded)) = read else {
+            group.dirty.extend(ids.iter().filter(|id| group.known.contains_key(*id)).cloned());
+            group.failed_reads += 1;
+            if group.failed_reads <= MAX_READ_RETRIES {
+                let rows = group.dirty.iter().map(|id| RowRef::new(model.clone(), id.clone())).collect();
+                drop(observers);
+                self.dispatch.push(Event { rows, ..Event::default() });
+            }
+            return;
+        };
+        group.failed_reads = 0;
+        group.dirty.retain(|id| !ids.contains(id));
         let changes = group.settle(position, &loaded, ids.into_iter());
         group.subscriber.clone().post(&self.executor, changes);
     }

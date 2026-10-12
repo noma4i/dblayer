@@ -93,10 +93,93 @@ fn inv_observe_19_a_refresh_that_cannot_read_is_counted_and_a_reset_tells_every_
     let key = locked(&db.shared.observers).entities.keys().next().cloned().unwrap();
     db.shared.refresh_entities(&key, &crate::identity::ModelKey::new("users"), [rid("u1")].into_iter().collect());
     db.settle();
-    assert_eq!((db.counters().entity_reads_failed, log.lock().unwrap().len()), (1, 1), "the failed read is counted and tells nothing");
+    assert_eq!((db.counters().entity_reads_failed, log.lock().unwrap().len()), (1 + super::entities::MAX_READ_RETRIES as usize, 1), "the failed read and its bounded retries are counted and tell nothing");
     db.reset(&["users"]).unwrap();
     db.settle();
     let mut removed: Vec<String> = log.lock().unwrap().iter().flat_map(|change| change.removed.iter().map(ToString::to_string)).collect();
     removed.sort();
     assert_eq!(removed, ["u0", "u1", "u2"], "the reset that ends the poison tells every retained row");
+}
+
+#[test]
+fn inv_observe_19_a_destroy_whose_read_failed_once_is_told_by_the_retry() {
+    let db = booted();
+    put(&db, "users", json!({"id": "a", "name": "one"}));
+    put(&db, "users", json!({"id": "b", "name": "two"}));
+    let (log, callback) = entity_recorder();
+    let observer = db.observe_entities("users", callback).unwrap();
+    observer.retain(&[rid("a"), rid("b")]).unwrap();
+    db.settle();
+    db.shared.store.fail_next_entity_reads(1);
+    db.destroy("users", &rid("b")).unwrap();
+    db.settle();
+    let removed: Vec<_> = log.lock().unwrap().iter().flat_map(|change| change.removed.iter().cloned()).collect();
+    assert_eq!((removed, db.counters().entity_reads_failed), (vec![rid("b")], 1));
+}
+
+#[test]
+fn inv_observe_19_a_row_is_never_in_rows_and_removed_of_one_delivery() {
+    let db = booted();
+    put(&db, "users", json!({"id": "a", "name": "one"}));
+    put(&db, "users", json!({"id": "b", "name": "two"}));
+    let (log, listener, open, entered) = gated();
+    let observer = db.observe_entities("users", listener).unwrap();
+    observer.retain(&[rid("a"), rid("b")]).unwrap();
+    entered.recv().unwrap();
+    db.update("users", &rid("b"), obj(json!({"name": "seen"}))).unwrap();
+    refresh(&db, "b");
+    db.destroy("users", &rid("b")).unwrap();
+    refresh(&db, "b");
+    open.send(()).unwrap();
+    db.settle();
+    let after_destroy = log.lock().unwrap().clone();
+    assert!(after_destroy.iter().skip(1).all(|change| change.rows.is_empty() && change.removed == vec![rid("b")]), "update then destroy while busy: {after_destroy:?}");
+    assert_eq!(after_destroy.len(), 2);
+}
+
+#[test]
+fn inv_observe_19_an_absent_id_that_appears_while_busy_is_told_as_a_row_and_not_as_removed() {
+    let db = booted();
+    put(&db, "users", json!({"id": "a", "name": "one"}));
+    let (log, listener, open, entered) = gated();
+    let observer = db.observe_entities("users", listener).unwrap();
+    observer.retain(&[rid("a")]).unwrap();
+    entered.recv().unwrap();
+    observer.retain(&[rid("late")]).unwrap();
+    put_without_settle(&db, "users", json!({"id": "late", "name": "here"}));
+    refresh(&db, "late");
+    open.send(()).unwrap();
+    db.settle();
+    let seen = log.lock().unwrap().clone();
+    let told: Vec<_> = seen.iter().skip(1).collect();
+    assert!(told.iter().all(|change| change.removed.is_empty()), "absent then present while busy: {seen:?}");
+    assert_eq!(told.iter().flat_map(|change| change.rows.iter().map(|row| row.id.to_string())).collect::<Vec<_>>(), ["late"]);
+}
+
+fn refresh(db: &Db, id: &str) {
+    let key = locked(&db.shared.observers).entities.keys().next().cloned().unwrap();
+    db.shared.refresh_entities(&key, &crate::identity::ModelKey::new("users"), [rid(id)].into_iter().collect());
+}
+
+fn put_without_settle(db: &Db, model: &str, value: serde_json::Value) {
+    let row = obj(value);
+    let id = rid(row["id"].as_str().unwrap());
+    let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, db.generation());
+    envelope.entity_ops.push(crate::commit::EntityOp::Upsert { model: crate::identity::ModelKey::new(model), id, row });
+    db.land(envelope).unwrap();
+}
+
+#[test]
+fn inv_observe_19_a_retain_whose_read_failed_reports_it_and_leaves_no_dirty_id() {
+    let db = booted();
+    put(&db, "users", json!({"id": "u1", "name": "one"}));
+    let (log, callback) = entity_recorder();
+    let observer = db.observe_entities("users", callback).unwrap();
+    db.shared.store.fail_next_entity_reads(1);
+    assert!(observer.retain(&[rid("u1")]).is_err());
+    db.settle();
+    assert_eq!((log.lock().unwrap().len(), db.keyed_rows()), (0, 0), "nothing told and the id never entered the index");
+    observer.retain(&[rid("u1")]).unwrap();
+    db.settle();
+    assert_eq!(log.lock().unwrap().len(), 1, "the next retain tells the row");
 }

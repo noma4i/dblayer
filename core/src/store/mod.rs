@@ -112,6 +112,8 @@ pub type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
 pub struct Store {
     inner: Mutex<Inner>,
     hook: OnceLock<StoreHook>,
+    #[cfg(test)]
+    failing_entity_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl Store {
@@ -126,7 +128,26 @@ impl Store {
             data_version: None,
             counters: Counters::default(),
         };
-        Self { inner: Mutex::new(inner), hook: OnceLock::new() }
+        Self {
+            inner: Mutex::new(inner),
+            hook: OnceLock::new(),
+            #[cfg(test)]
+            failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_entity_reads(&self, count: usize) {
+        self.failing_entity_reads.store(count, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn injected_entity_read_failure(&self) -> Option<StoreError> {
+        use std::sync::atomic::Ordering;
+        self.failing_entity_reads
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+            .ok()
+            .map(|_| StoreError::Sqlite(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR), None)))
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<'_, Inner> {
