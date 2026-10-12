@@ -188,6 +188,32 @@ struct BridgeProbeTests {
     #expect(replaced == local.id)
   }
 
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aLiveListAttachesItsStreamsOffTheMainThread() async throws {
+    final class Seen: @unchecked Sendable {
+      let lock = NSLock()
+      var mainThread: [Bool] = []
+      func note() { lock.lock(); mainThread.append(Thread.isMainThread); lock.unlock() }
+    }
+    let seen = Seen()
+    let snapshots = LiveSource<Snapshot<Moment>>(initial: Snapshot(rows: [], replaced: [:])) { emit in
+      seen.note()
+      emit(Snapshot(rows: [], replaced: ["a": "b"]))
+      return {}
+    }
+    let state = LiveSource<LoadState>(initial: LoadState()) { _ in
+      seen.note()
+      return {}
+    }
+
+    let list = LiveList(Moment.recent, snapshots: snapshots, state: state)
+    while list.replaced.isEmpty { await Task.yield() }
+
+    #expect(seen.mainThread == [false, false])
+    list.stop()
+  }
+
   @Test
   func aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() async throws {
     let transport = MockTransport()

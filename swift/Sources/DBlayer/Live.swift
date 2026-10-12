@@ -47,8 +47,13 @@ public struct LiveSource<Value: Sendable>: Sendable {
     }
   }
 
+  /// The stream attached on a background task: the subscription and its first read do not run on the caller's actor.
+  public func attachedStream() async -> AsyncStream<Value> {
+    await Task.detached(priority: .userInitiated) { self.stream }.value
+  }
+
   public func current() async -> Value {
-    for await value in stream { return value }
+    for await value in await attachedStream() { return value }
     return initial
   }
 }
@@ -61,7 +66,7 @@ final class LiveBox<Value: Sendable>: ObservableObject {
   init(_ source: LiveSource<Value>) {
     value = source.initial
     task = Task { [weak self] in
-      for await next in source.stream { self?.value = next }
+      for await next in await source.attachedStream() { self?.value = next }
     }
   }
 
@@ -103,17 +108,21 @@ public final class LiveList<Model: DBModel> {
   @ObservationIgnored private let query: Query<Model>
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
 
-  public init(_ query: Query<Model>) {
+  public convenience init(_ query: Query<Model>) {
+    self.init(query, snapshots: query.snapshots, state: query.state)
+  }
+
+  init(_ query: Query<Model>, snapshots: LiveSource<Snapshot<Model>>, state: LiveSource<LoadState>) {
     self.query = query
     tasks = [
       Task { [weak self] in
-        for await next in query.snapshots.stream {
+        for await next in await snapshots.attachedStream() {
           self?.replaced = next.replaced
           self?.rows = next.rows
         }
       },
       Task { [weak self] in
-        for await next in query.state.stream { self?.state = next }
+        for await next in await state.attachedStream() { self?.state = next }
       }
     ]
   }
@@ -153,7 +162,7 @@ public final class LiveRows<Model: DBModel> {
     }
 
     task = Task { [weak self] in
-      for await rows in Model.ids(unique).live.stream {
+      for await rows in await Model.ids(unique).live.attachedStream() {
         self?.byId = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
       }
     }

@@ -3,6 +3,7 @@ package com.noma4i.dblayer
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.KSerializer
@@ -38,7 +39,7 @@ class LiveSource<Value>(
             val cancel = runCatching { subscribe { trySend(it) } }.getOrNull()
             if (cancel == null) close()
             awaitClose { cancel?.invoke() }
-        }
+        }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     suspend fun current(): Value = flow.firstOrNull() ?: initial
 }

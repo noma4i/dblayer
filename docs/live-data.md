@@ -100,7 +100,7 @@ let thread = LiveList(Message.thread(chatId))   // thread.rows, thread.replaced
 val thread = LiveList(Message.thread(chatId), viewModelScope)   // thread.rows, thread.replaced are StateFlow
 ```
 
-**View models.** `LiveList` keeps the rows and the state of a query and moves the relation:
+**View models.** `LiveList` keeps the rows and the state of a query and moves the relation. Creating one is cheap on the main thread: the subscription and the first read run on a background task (Swift) or on `Dispatchers.Default` (Kotlin), and `rows` stay empty until the first delivery arrives:
 
 ```swift
 let feed = LiveList(Moment.feed)      // feed.rows, feed.state are observable
