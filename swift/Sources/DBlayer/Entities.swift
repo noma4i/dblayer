@@ -330,10 +330,10 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   func start(deliver: @escaping @Sendable (Int64, Model?) -> Void) {
     Task.detached(priority: .userInitiated) { [self] in
       guard let database = DB.database else { return }
+      let feed = ListFeed<Model>()
       let listener = ChangeListener { change in
         self.lock.withLock { self.count += 1 }
-        let rows: [Model] = change.decodeRows()
-        deliver(change.revision, rows.first)
+        deliver(change.revision, feed.apply(change).rows.first)
       }
       guard let made = try? database.liveQuery(queryJson: queryJson, listener: listener) else { return }
       let keep = lock.withLock { () -> Bool in

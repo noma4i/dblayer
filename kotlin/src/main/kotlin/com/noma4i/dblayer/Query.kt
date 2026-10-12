@@ -84,20 +84,19 @@ class Query<Model : DBModel>(
         }.toString()
 
     val live: LiveSource<List<Model>>
-        get() = LiveSource(emptyList(), { listener -> DBlayer.database.liveQuery(json, listener) }) { change -> change.decode(serializer) }
+        get() = listSource(emptyList(), serializer, open = { listener -> DBlayer.database.liveQuery(json, listener) }) { feed, change -> feed.apply(change).rows }
 
     val snapshots: LiveSource<Snapshot<Model>>
-        get() = LiveSource(Snapshot(emptyList(), emptyMap()), { older, newer -> Snapshot.merging(older, newer) }) { emit ->
-            val subscription = DBlayer.database.liveQuery(json, ChangeListener { change -> emit(Snapshot(change.decode(serializer), change.replacedIds())) })
-            val cancel: () -> Unit = { subscription.cancel() }
-            cancel
+        get() = listSource(Snapshot(emptyList(), emptyMap()), serializer, { older, newer -> Snapshot.merging(older, newer) }, { listener -> DBlayer.database.liveQuery(json, listener) }) { feed, change ->
+            val next = feed.apply(change)
+            Snapshot(next.rows, change.replacedIds(), next.reordered)
         }
 
     val count: LiveSource<Long>
         get() = LiveSource(0L, { listener -> DBlayer.database.liveCount(json, listener) }) { change -> change.count ?: 0L }
 
     fun find(id: String): LiveSource<Model?> =
-        LiveSource<Model?>(null, { listener -> DBlayer.database.liveFind(modelName, id, listener) }) { change -> change.decode(serializer).firstOrNull() }
+        listSource<Model, Model?>(null, serializer, open = { listener -> DBlayer.database.liveFind(modelName, id, listener) }) { feed, change -> feed.apply(change).rows.firstOrNull() }
 
     val state: LiveSource<LoadState> get() = stateSource(modelName, relation.orEmpty(), params.toString())
 

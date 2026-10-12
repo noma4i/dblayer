@@ -44,7 +44,7 @@ extension DBModel {
 
   public func related<Target: DBModel>(_ name: String, as _: Target.Type) -> LiveSource<[Target]> {
     let model = Self.modelName, rowId = id
-    return LiveSource(initial: []) { listener in try DB.database.liveHasMany(model: model, rowId: rowId, name: name, listener: listener) } map: { $0.decodeRows() }
+    return listSource(initial: [], open: { listener in try DB.database.liveHasMany(model: model, rowId: rowId, name: name, listener: listener) }) { (feed: ListFeed<Target>, change) in feed.apply(change).rows }
   }
 
   static func decode(_ json: String) throws -> Self { try JSONDecoder().decode(Self.self, from: Data(json.utf8)) }

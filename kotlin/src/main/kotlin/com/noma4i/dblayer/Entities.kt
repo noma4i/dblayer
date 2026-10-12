@@ -264,7 +264,8 @@ internal class SingletonFeed<Model : DBModel>(
 
     fun attach() {
         val database = DBlayer.databaseOrNull ?: return
-        val made = runCatching { database.liveQuery(query.json, ChangeListener { change -> count.incrementAndGet(); deliver(this, change.revision, change.decode(serializer).firstOrNull()) }) }.getOrNull() ?: return
+        val feed = ListFeed(serializer)
+        val made = runCatching { database.liveQuery(query.json, ChangeListener { change -> count.incrementAndGet(); deliver(this, change.revision, feed.apply(change).rows.firstOrNull()) }) }.getOrNull() ?: return
         val keep = synchronized(this) { if (cancelled) false else { subscription = made; true } }
         if (!keep) made.cancel()
     }

@@ -7,23 +7,10 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 internal class ChangeListener(private val body: (LiveChange) -> Unit) : QueryListener {
     override fun changed(change: LiveChange) = body(change)
 }
-
-private val decodeLog = java.util.logging.Logger.getLogger("DBlayer")
-
-internal fun <Model> LiveChange.decode(serializer: KSerializer<Model>): List<Model> =
-    rows.mapNotNull { row ->
-        runCatching { dbJson.decodeFromString(serializer, row) }
-            .onFailure { decodeLog.severe("Row of ${serializer.descriptor.serialName} failed to decode: $it") }
-            .getOrNull()
-    }
 
 /** The newest value waits for a slow reader. Values that arrive meanwhile are merged into it, so nothing queues up. */
 internal class Latest<Value>(private val merge: ((Value, Value) -> Value)?) {
@@ -84,7 +71,7 @@ class LiveSource<Value>(
 }
 
 /** The rows of a delivery with the ids it replaced: the real id of a row that replaced a temporary one, to the temporary id. */
-data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, String>) {
+data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, String>, val reordered: Boolean = false) {
     internal companion object {
         /** The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost. */
         fun <Model> merging(older: Snapshot<Model>, newer: Snapshot<Model>): Snapshot<Model> {
@@ -93,16 +80,10 @@ data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, Stri
                 replaced[real] = older.replaced[temporary] ?: temporary
                 if (older.replaced.containsKey(temporary)) replaced.remove(temporary)
             }
-            return Snapshot(newer.rows, replaced)
+            return Snapshot(newer.rows, replaced, older.reordered || newer.reordered)
         }
     }
 }
-
-internal fun LiveChange.replacedIds(): Map<String, String> =
-    runCatching {
-        dbJson.parseToJsonElement(diffJson).jsonObject["replaced"]?.jsonArray
-            ?.associate { pair -> pair.jsonArray[1].jsonPrimitive.content to pair.jsonArray[0].jsonPrimitive.content }
-    }.getOrNull() ?: emptyMap()
 
 enum class LoadPhase { Idle, Loading, Failed }
 
@@ -144,15 +125,18 @@ internal fun stateSource(model: String, relation: String, paramsJson: String): L
 /** A live query for view models: the rows, the load state of the relation, and the calls that move them. The scope of the owner ends it. */
 class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope) {
     private val mutableRows = kotlinx.coroutines.flow.MutableStateFlow<List<Model>>(emptyList())
+    private val mutableIds = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
     private val mutableReplaced = kotlinx.coroutines.flow.MutableStateFlow<Map<String, String>>(emptyMap())
     private val mutableState = kotlinx.coroutines.flow.MutableStateFlow(LoadState())
 
     init {
-        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableRows.value = it.rows } }
+        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableRows.value = it.rows; if (it.reordered) mutableIds.value = it.rows.map { row -> row.id } } }
         scope.launch { query.state.flow.collect { mutableState.value = it } }
     }
 
     val rows: kotlinx.coroutines.flow.StateFlow<List<Model>> get() = mutableRows
+    /** The ids of `rows` in order. They change only when a delivery inserts, removes, moves or replaces a row. */
+    val ids: kotlinx.coroutines.flow.StateFlow<List<String>> get() = mutableIds
     /** The ids that the last delivery of `rows` replaced: real id to temporary id. */
     val replaced: kotlinx.coroutines.flow.StateFlow<Map<String, String>> get() = mutableReplaced
     val state: kotlinx.coroutines.flow.StateFlow<LoadState> get() = mutableState

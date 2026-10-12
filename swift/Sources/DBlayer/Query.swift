@@ -40,6 +40,19 @@ public struct Column<Model: DBModel, Value: Encodable & Sendable>: Sendable {
   public static func >= (column: Column, value: Value) -> Condition { .compare(column.name, "greater_or_equal", .encode(value)) }
 }
 
+/// A live source of the values that one list produces: each delivery of the core is applied to the rows of the list, and `map` reads what it needs from them.
+func listSource<Model: DBModel, Value: Sendable>(
+  initial: Value, merge: (@Sendable (Value, Value) -> Value)? = nil,
+  open: @escaping @Sendable (QueryListener) throws -> LiveSubscription,
+  map: @escaping @Sendable (ListFeed<Model>, LiveChange) -> Value
+) -> LiveSource<Value> {
+  LiveSource(initial: initial, merge: merge) { emit in
+    let feed = ListFeed<Model>()
+    let subscription = try open(ChangeListener { emit(map(feed, $0)) })
+    return { subscription.cancel() }
+  }
+}
+
 public struct Query<Model: DBModel>: Sendable {
   var condition: Condition?
   var orders: [Order] = []
@@ -67,10 +80,10 @@ public struct Query<Model: DBModel>: Sendable {
     return JSONValue.object(object).text
   }
 
-  public var live: LiveSource<[Model]> { LiveSource(initial: []) { listener in try DB.database.liveQuery(queryJson: json, listener: listener) } map: { $0.decodeRows() } }
+  public var live: LiveSource<[Model]> { listSource(initial: [], open: { listener in try DB.database.liveQuery(queryJson: json, listener: listener) }) { (feed: ListFeed<Model>, change) in feed.apply(change).rows } }
   public var count: LiveSource<Int> { LiveSource(initial: 0) { listener in try DB.database.liveCount(queryJson: json, listener: listener) } map: { Int($0.count ?? 0) } }
   public func find(_ id: String) -> LiveSource<Model?> {
-    LiveSource(initial: nil) { listener in try DB.database.liveFind(model: Model.modelName, rowId: id, listener: listener) } map: { $0.decodeRows().first }
+    listSource(initial: nil, open: { listener in try DB.database.liveFind(model: Model.modelName, rowId: id, listener: listener) }) { (feed: ListFeed<Model>, change) in feed.apply(change).rows.first }
   }
 
   public func load() async throws { try await DB.database.load(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
@@ -79,8 +92,9 @@ public struct Query<Model: DBModel>: Sendable {
 
   /// The rows with the ids that the delivery replaced: a created record answered by the server (or matched by `correlate`) arrives under its real id.
   public var snapshots: LiveSource<Snapshot<Model>> {
-    LiveSource(initial: Snapshot(rows: [], replaced: [:]), merge: { Snapshot.merging($0, $1) }) { listener in try DB.database.liveQuery(queryJson: json, listener: listener) } map: {
-      Snapshot(rows: $0.decodeRows(), replaced: $0.replacedIds)
+    listSource(initial: Snapshot(rows: [], replaced: [:], reordered: false), merge: { Snapshot.merging($0, $1) }, open: { listener in try DB.database.liveQuery(queryJson: json, listener: listener) }) { (feed: ListFeed<Model>, change) in
+      let next = feed.apply(change)
+      return Snapshot(rows: next.rows, replaced: change.replacedIds, reordered: next.reordered)
     }
   }
 
@@ -97,6 +111,14 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public let rows: [Model]
   /// Real id of a row that replaced a temporary one in this delivery, to the temporary id.
   public let replaced: [String: String]
+  /// A row was inserted, removed, moved or replaced since the previous snapshot that was read.
+  public let reordered: Bool
+
+  public init(rows: [Model], replaced: [String: String], reordered: Bool = false) {
+    self.rows = rows
+    self.replaced = replaced
+    self.reordered = reordered
+  }
 
   /// The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost.
   static func merging(_ older: Snapshot, _ newer: Snapshot) -> Snapshot {
@@ -105,15 +127,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
       replaced[real] = older.replaced[temporary] ?? temporary
       if older.replaced[temporary] != nil { replaced[temporary] = nil }
     }
-    return Snapshot(rows: newer.rows, replaced: replaced)
-  }
-}
-
-extension LiveChange {
-  var replacedIds: [String: String] {
-    struct Delivery: Decodable { let replaced: [[String]] }
-    guard let delivery = try? JSONDecoder().decode(Delivery.self, from: Data(diffJson.utf8)) else { return [:] }
-    return Dictionary(delivery.replaced.compactMap { $0.count == 2 ? ($0[1], $0[0]) : nil }, uniquingKeysWith: { first, _ in first })
+    return Snapshot(rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered)
   }
 }
 

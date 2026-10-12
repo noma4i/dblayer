@@ -1,28 +1,11 @@
 import Foundation
 import Observation
-import os
 import SwiftUI
-
-private let decodeLog = Logger(subsystem: "DBlayer", category: "decode")
 
 final class ChangeListener: QueryListener, @unchecked Sendable {
   let body: @Sendable (LiveChange) -> Void
   init(_ body: @escaping @Sendable (LiveChange) -> Void) { self.body = body }
   func changed(change: LiveChange) { body(change) }
-}
-
-extension LiveChange {
-  func decodeRows<Model: DBModel>() -> [Model] {
-    let decoder = JSONDecoder()
-    return rows.compactMap { row in
-      do {
-        return try decoder.decode(Model.self, from: Data(row.utf8))
-      } catch {
-        decodeLog.error("Row of \(Model.modelName, privacy: .public) failed to decode: \(String(describing: error), privacy: .public)")
-        return nil
-      }
-    }
-  }
 }
 
 /// The newest value waits for a slow reader. Values that arrive meanwhile are merged into it, so the queue never grows.
@@ -179,6 +162,8 @@ public struct LiveView<Value: Sendable, Content: View>: View {
 @Observable
 public final class LiveList<Model: DBModel> {
   public private(set) var rows: [Model] = []
+  /// The ids of `rows` in order. It changes only when a delivery inserts, removes, moves or replaces a row, so a view that reads the ids and gets each row from its entity redraws on those and not on every update.
+  public private(set) var ids: [String] = []
   /// The ids that the last delivery of `rows` replaced: real id to temporary id.
   public private(set) var replaced: [String: String] = [:]
   public private(set) var state = LoadState()
@@ -194,8 +179,10 @@ public final class LiveList<Model: DBModel> {
     tasks = [
       Task { [weak self] in
         for await next in await snapshots.stream() {
-          self?.replaced = next.replaced
-          self?.rows = next.rows
+          guard let self else { return }
+          replaced = next.replaced
+          rows = next.rows
+          if next.reordered { ids = next.rows.map(\.id) }
         }
       },
       Task { [weak self] in
