@@ -4,9 +4,9 @@ import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Test
 
 class ListDeltaTest {
@@ -26,7 +26,7 @@ class ListDeltaTest {
     }
 
     @Test
-    fun inv_observe_17_an_update_of_one_row_decodes_one_row_at_every_list_size() = runBlocking {
+    fun inv_observe_17_an_update_of_one_row_decodes_one_row_at_every_list_size() = bounded {
         val decoded = listOf(20, 200, 2000).map { count ->
             open()
             val created = (0 until count).map { Moment.create(text = "t%05d".format(it)) }
@@ -45,7 +45,7 @@ class ListDeltaTest {
     }
 
     @Test
-    fun inv_observe_15_the_feed_rebuilds_the_list_that_a_fresh_query_returns() = runBlocking {
+    fun inv_observe_15_the_feed_rebuilds_the_list_that_a_fresh_query_returns() = bounded {
         open()
         val feed = ListFeed(Moment.serializer())
         val changes = watching(byText, feed)
@@ -98,7 +98,9 @@ class ListDeltaTest {
         assertEquals(true, feed.apply(change(size = 3, placed = listOf(Placement("zz", 0u)))).desynced)
         assertEquals(true, feed.apply(change(size = 2, rows = listOf(moment("a", "1")), indexes = listOf(5u))).desynced)
         assertEquals(true, feed.apply(change(size = 9, rows = listOf(moment("a", "1")), indexes = listOf(0u))).desynced)
-        assertEquals(3, feed.desyncs)
+        assertEquals(true, feed.apply(change(size = 2, removed = listOf("a"), placed = listOf(Placement("zz", 0u)))).desynced)
+        assertEquals(listOf("a", "b"), feed.rows.map { it.id })
+        assertEquals(4, feed.desyncs)
     }
 
     @Test
@@ -116,5 +118,68 @@ class ListDeltaTest {
         assertEquals(listOf("a", "b", "c"), values.poll(5, java.util.concurrent.TimeUnit.SECONDS))
         assertEquals(1, session.desyncs)
         assertEquals(1, session.reopened)
+    }
+
+    private fun poll(queue: java.util.concurrent.LinkedBlockingQueue<*>) = queue.poll(10, java.util.concurrent.TimeUnit.SECONDS)
+
+    private class Rig(opens: (Int) -> Unit = {}) {
+        val listeners = java.util.concurrent.LinkedBlockingQueue<QueryListener>()
+        val values = java.util.concurrent.LinkedBlockingQueue<Snapshot<Moment>>()
+        private val count = AtomicInteger()
+        val session = ListSession<Moment, Snapshot<Moment>>(
+            Moment.serializer(),
+            { listener -> opens(count.getAndIncrement()); listeners.put(listener); val cancel: () -> Unit = {}; cancel },
+            { values.put(it) },
+            { applied, _ -> Snapshot(applied.rows, emptyMap(), applied.reordered, applied.failure) },
+        )
+    }
+
+    @Test
+    fun inv_observe_15_a_row_that_does_not_decode_keeps_its_slot_and_never_reopens_the_subscription() {
+        val rig = Rig()
+        rig.session.start()
+        val listener = poll(rig.listeners) as QueryListener
+        listener.changed(LiveChange(1L, true, 3u, listOf(json(moment("a", "1")), """{"id":"b"}""", json(moment("c", "3"))), emptyList(), emptyList(), emptyList(), emptyList(), null, null))
+        assertEquals(listOf("a", "c"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
+        repeat(3) {
+            listener.changed(change(size = 3, rows = listOf(moment("c", "3")), indexes = listOf(2u)))
+            assertEquals(listOf("a", "c"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
+        }
+        assertEquals(0, rig.session.reopened)
+        assertEquals(0, rig.session.desyncs)
+    }
+
+    @Test
+    fun inv_observe_15_a_subscription_that_keeps_desyncing_stops_after_two_reopens_and_says_why() {
+        val rig = Rig()
+        rig.session.start()
+        var current = poll(rig.listeners) as QueryListener
+        repeat(2) {
+            current.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
+            poll(rig.values)
+            current.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
+            current = poll(rig.listeners) as QueryListener
+        }
+        current.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
+        poll(rig.values)
+        current.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
+        val stopped = poll(rig.values) as Snapshot<*>
+        assertEquals(true, stopped.failure != null)
+        assertEquals(listOf("a"), stopped.rows.map { (it as Moment).id })
+        assertEquals(2, rig.session.reopened)
+        assertEquals(true, rig.session.isStalled)
+    }
+
+    @Test
+    fun inv_observe_15_a_reopen_that_cannot_open_the_subscription_reports_the_failure() {
+        val rig = Rig { number -> if (number > 0) throw java.io.IOException("offline") }
+        rig.session.start()
+        val first = poll(rig.listeners) as QueryListener
+        first.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
+        poll(rig.values)
+        first.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
+        val stopped = poll(rig.values) as Snapshot<*>
+        assertEquals(true, stopped.failure != null)
+        assertEquals(true, rig.session.isStalled)
     }
 }

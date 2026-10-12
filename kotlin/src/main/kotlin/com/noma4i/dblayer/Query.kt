@@ -88,7 +88,7 @@ class Query<Model : DBModel>(
 
     val snapshots: LiveSource<Snapshot<Model>>
         get() = listSource(Snapshot(emptyList(), emptyMap()), serializer, { older, newer -> Snapshot.merging(older, newer) }, { listener -> DBlayer.database.liveQuery(json, listener) }) { applied, change ->
-            Snapshot(applied.rows, change.replacedIds(), applied.reordered)
+            Snapshot(applied.rows, change.replacedIds(), applied.reordered, applied.failure)
         }
 
     val count: LiveSource<Long>

@@ -9,11 +9,14 @@ Every read of a model is live. A read gives you the current value and a stream o
 | `revision` | Commit revision the state reflects. It only grows for one observer |
 | `rows` | The first delivery: the whole list in order. Later deliveries: only the rows that were inserted, updated or replaced |
 | `diff.inserted`, `removed`, `updated`, `moved` | Row identities that changed |
+| `size` | The rows of the core's list after the delivery, before any decode failure of the Swift or Kotlin side. A delivery that does not give this size on the rebuilt list is refused |
 | `diff.at` | The final index of every inserted, updated, moved and replaced id. Swift and Kotlin read it from `placed` and `row_indexes` |
 | `rows[i].sync` | Sync state of the row, see [sync state](sync-state.md) |
 | `diff.replaced` | Pairs `(old id, new id)`, for example a temporary id replaced by the server id, so a UI can keep the same element |
 
 The first delivery contains every row as `inserted`. After it a commit of 1 row on a list of 2000 delivers 1 row, whatever the size of the list. Swift and Kotlin keep the array and apply each delivery in 4 steps: rename the `replaced` ids, drop `removed`, take the `placed` ids out of the array and insert them again by ascending index, then put each delivered row at its index. `Change::apply_to` is the reference of these steps.
+
+A delivery that does not fit the rows of the reader (unknown id, index out of range, wrong `size`) is refused and counted. The reader opens the subscription again and its first delivery is the whole list. After 2 reopens in a row without a good delivery in between, or when a reopen fails, the reader stops, keeps the last good rows and reports `failure` (`Snapshot.failure`, `LiveList.failure`). A row that does not decode keeps its place in the list and is left out of the rows that the reader sees.
 
 A commit of a row that is outside the list and fails the filter of a query on a whole model does not read the list and does not deliver.
 

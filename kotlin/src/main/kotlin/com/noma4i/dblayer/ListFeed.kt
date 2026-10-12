@@ -1,81 +1,91 @@
 package com.noma4i.dblayer
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.atomic.AtomicInteger
 
 private val decodeLog = java.util.logging.Logger.getLogger("DBlayer")
+private val reopening = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-internal class ListState<Model>(val rows: List<Model>, val reordered: Boolean, val desynced: Boolean = false)
+internal class ListState<Model>(val rows: List<Model>, val reordered: Boolean, val desynced: Boolean = false, val failure: String? = null)
 
 internal class ListFeed<Model : DBModel>(private val serializer: KSerializer<Model>) {
-    private val rows = ArrayList<Model>()
+    private class Slot<Model>(val id: String, val row: Model?)
+
+    private val slots = ArrayList<Slot<Model>>()
     private val decoded = AtomicInteger()
+    private val undecodable = AtomicInteger()
     private val desynced = AtomicInteger()
-    private var dropped = 0
 
     val decodedRows: Int get() = decoded.get()
+    val undecodableRows: Int get() = undecodable.get()
     val desyncs: Int get() = desynced.get()
 
-    @Synchronized
-    fun reset() {
-        rows.clear()
-        dropped = 0
-    }
+    @get:Synchronized
+    val rows: List<Model> get() = slots.mapNotNull { it.row }
 
     @Synchronized
     fun apply(change: LiveChange): ListState<Model> {
-        if (change.error != null) return ListState(rows.toList(), false)
-        var failed = 0
-        val carried = change.rows.mapIndexedNotNull { position, text ->
+        if (change.error != null) return ListState(rows, false)
+        val carried = change.rows.mapIndexed { position, text ->
             decoded.incrementAndGet()
+            val index = if (change.full) position else change.rowIndexes[position].toInt()
             val row = runCatching { dbJson.decodeFromString(serializer, text) }
-                .onFailure { failed++; decodeLog.severe("Row of ${serializer.descriptor.serialName} failed to decode: $it") }
+                .onFailure { undecodable.incrementAndGet(); decodeLog.severe("Row of ${serializer.descriptor.serialName} failed to decode: $it") }
                 .getOrNull()
-            row?.let { it to if (change.full) position else change.rowIndexes[position].toInt() }
+            val id = row?.id ?: runCatching { dbJson.parseToJsonElement(text).jsonObject["id"]!!.jsonPrimitive.content }.getOrDefault("undecodable-$position")
+            Slot(id, row) to index
         }
         if (change.full) {
-            rows.clear()
-            rows.addAll(carried.map { it.first })
-            dropped = failed
-            return ListState(rows.toList(), true)
+            slots.clear()
+            slots.addAll(carried.map { it.first })
+            return ListState(rows, true)
         }
         val reordered = change.removed.isNotEmpty() || change.placed.isNotEmpty() || change.replaced.isNotEmpty()
-        if (failed > 0 || !applyDelta(change, carried)) {
+        val next = ArrayList(slots)
+        if (!applyDelta(change, carried, next)) {
             desynced.incrementAndGet()
-            return ListState(rows.toList(), reordered, desynced = true)
+            return ListState(rows, reordered, desynced = true)
         }
-        return ListState(rows.toList(), reordered)
+        slots.clear()
+        slots.addAll(next)
+        return ListState(rows, reordered)
     }
 
-    private fun applyDelta(change: LiveChange, carried: List<Pair<Model, Int>>): Boolean {
+    private fun applyDelta(change: LiveChange, carried: List<Pair<Slot<Model>, Int>>, slots: ArrayList<Slot<Model>>): Boolean {
         val byId = carried.associate { it.first.id to it.first }
         for (pair in change.replaced) {
-            val at = rows.indexOfFirst { it.id == pair.from }
-            val row = byId[pair.to]
-            if (at < 0 || row == null) return false
-            rows[at] = row
+            val at = slots.indexOfFirst { it.id == pair.from }
+            val slot = byId[pair.to]
+            if (at < 0 || slot == null) return false
+            slots[at] = slot
         }
         if (change.removed.isNotEmpty()) {
             val gone = change.removed.toSet()
-            val before = rows.size
-            rows.removeAll { it.id in gone }
-            if (before - rows.size != gone.size) return false
+            val before = slots.size
+            slots.removeAll { it.id in gone }
+            if (before - slots.size != gone.size) return false
         }
-        val taken = HashMap<String, Model>()
+        val taken = HashMap<String, Slot<Model>>()
         for (place in change.placed) {
-            val at = rows.indexOfFirst { it.id == place.id }
-            if (at >= 0) taken[place.id] = rows.removeAt(at)
+            val at = slots.indexOfFirst { it.id == place.id }
+            if (at >= 0) taken[place.id] = slots.removeAt(at)
         }
         for (place in change.placed) {
-            val row = taken[place.id] ?: byId[place.id]
-            if (row == null || place.index.toInt() > rows.size) return false
-            rows.add(place.index.toInt(), row)
+            val slot = taken[place.id] ?: byId[place.id]
+            if (slot == null || place.index.toInt() > slots.size) return false
+            slots.add(place.index.toInt(), slot)
         }
-        for ((row, index) in carried) {
-            if (index >= rows.size) return false
-            rows[index] = row
+        for ((slot, index) in carried) {
+            if (index >= slots.size) return false
+            slots[index] = slot
         }
-        return rows.size == change.size.toInt() - dropped
+        return slots.size == change.size.toInt()
     }
 }
 
@@ -84,20 +94,24 @@ internal class ListSession<Model : DBModel, Value>(
     private val open: (QueryListener) -> () -> Unit,
     private val emit: (Value) -> Unit,
     private val map: (ListState<Model>, LiveChange) -> Value,
+    private val maxReopens: Int = 2,
 ) {
     private val feed = ListFeed(serializer)
     private var cancelSubscription: (() -> Unit)? = null
     private var cancelled = false
+    private var stalled = false
     private var generation = 0
+    private var reopensInRow = 0
     private val reopens = AtomicInteger()
 
     val reopened: Int get() = reopens.get()
     val desyncs: Int get() = feed.desyncs
+    val isStalled: Boolean get() = synchronized(this) { stalled }
 
     fun start() {
         val current = synchronized(this) { generation }
         val made = open(ChangeListener { receive(it, current) })
-        val keep = synchronized(this) { if (cancelled || generation != current) false else { cancelSubscription = made; true } }
+        val keep = synchronized(this) { if (cancelled || stalled || generation != current) false else { cancelSubscription = made; true } }
         if (!keep) made()
     }
 
@@ -107,21 +121,44 @@ internal class ListSession<Model : DBModel, Value>(
     }
 
     private fun receive(change: LiveChange, current: Int) {
-        if (synchronized(this) { cancelled || generation != current }) return
+        if (synchronized(this) { cancelled || stalled || generation != current }) return
         val applied = feed.apply(change)
-        if (applied.desynced) reopen(current) else emit(map(applied, change))
+        if (applied.desynced) { reopen(current); return }
+        if (!change.full) synchronized(this) { reopensInRow = 0 }
+        emit(map(applied, change))
     }
 
     private fun reopen(current: Int) {
-        val old = synchronized(this) {
-            if (cancelled || generation != current) return
-            generation++
-            reopens.incrementAndGet()
-            cancelSubscription.also { cancelSubscription = null }
+        var old: (() -> Unit)? = null
+        var stall = false
+        synchronized(this) {
+            if (cancelled || stalled || generation != current) return
+            if (reopensInRow >= maxReopens) stall = true else {
+                generation++
+                reopens.incrementAndGet()
+                reopensInRow++
+                old = cancelSubscription
+                cancelSubscription = null
+            }
         }
-        feed.reset()
+        if (stall) { stall("the list is out of sync with the database and a new subscription did not fix it"); return }
         old?.invoke()
-        kotlin.concurrent.thread(isDaemon = true) { runCatching { start() } }
+        reopening.launch { restart() }
+    }
+
+    private fun restart() {
+        while (true) {
+            val failure = runCatching { start() }.exceptionOrNull() ?: return
+            val again = synchronized(this) { if (cancelled || stalled || reopensInRow >= maxReopens) false else { reopensInRow++; true } }
+            if (!again) { stall("the subscription could not be opened again: $failure"); return }
+        }
+    }
+
+    private fun stall(reason: String) {
+        val current = synchronized(this) { if (cancelled || stalled) return; stalled = true; cancelSubscription.also { cancelSubscription = null } }
+        current?.invoke()
+        decodeLog.severe("List stopped: $reason")
+        emit(map(ListState(feed.rows, false, failure = reason), LiveChange(0L, false, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, reason)))
     }
 }
 

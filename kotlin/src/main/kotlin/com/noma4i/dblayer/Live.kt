@@ -71,7 +71,7 @@ class LiveSource<Value>(
 }
 
 /** The rows of a delivery with the ids it replaced: the real id of a row that replaced a temporary one, to the temporary id. */
-data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, String>, val reordered: Boolean = false) {
+data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, String>, val reordered: Boolean = false, val failure: String? = null) {
     internal companion object {
         /** The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost. */
         fun <Model> merging(older: Snapshot<Model>, newer: Snapshot<Model>): Snapshot<Model> {
@@ -80,7 +80,7 @@ data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, Stri
                 replaced[real] = older.replaced[temporary] ?: temporary
                 if (older.replaced.containsKey(temporary)) replaced.remove(temporary)
             }
-            return Snapshot(newer.rows, replaced, older.reordered || newer.reordered)
+            return Snapshot(newer.rows, replaced, older.reordered || newer.reordered, newer.failure ?: older.failure)
         }
     }
 }
@@ -126,11 +126,12 @@ internal fun stateSource(model: String, relation: String, paramsJson: String): L
 class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope) {
     private val mutableRows = kotlinx.coroutines.flow.MutableStateFlow<List<Model>>(emptyList())
     private val mutableIds = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
+    private val mutableFailure = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     private val mutableReplaced = kotlinx.coroutines.flow.MutableStateFlow<Map<String, String>>(emptyMap())
     private val mutableState = kotlinx.coroutines.flow.MutableStateFlow(LoadState())
 
     init {
-        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableRows.value = it.rows; if (it.reordered) mutableIds.value = it.rows.map { row -> row.id } } }
+        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableFailure.value = it.failure; mutableRows.value = it.rows; if (it.reordered) mutableIds.value = it.rows.map { row -> row.id } } }
         scope.launch { query.state.flow.collect { mutableState.value = it } }
     }
 
@@ -138,6 +139,7 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     val ids: kotlinx.coroutines.flow.StateFlow<List<String>> get() = mutableIds
     /** The ids that the last delivery of `rows` replaced: real id to temporary id. */
     val replaced: kotlinx.coroutines.flow.StateFlow<Map<String, String>> get() = mutableReplaced
+    val failure: kotlinx.coroutines.flow.StateFlow<String?> get() = mutableFailure
     val state: kotlinx.coroutines.flow.StateFlow<LoadState> get() = mutableState
 
     suspend fun refresh() = query.refresh()

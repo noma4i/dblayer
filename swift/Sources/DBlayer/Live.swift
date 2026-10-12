@@ -166,6 +166,7 @@ public final class LiveList<Model: DBModel> {
   /// The ids that the last delivery of `rows` replaced: real id to temporary id.
   public private(set) var replaced: [String: String] = [:]
   public private(set) var state = LoadState()
+  public private(set) var failure: String?
   @ObservationIgnored private let query: Query<Model>
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
 
@@ -180,6 +181,7 @@ public final class LiveList<Model: DBModel> {
         for await next in await snapshots.stream() {
           guard let self else { return }
           replaced = next.replaced
+          if next.failure != failure { failure = next.failure }
           rows = next.rows
           if next.reordered { ids = next.rows.map(\.id) }
         }

@@ -7,75 +7,85 @@ struct ListApplied<Model: DBModel> {
   let rows: [Model]
   let reordered: Bool
   let desynced: Bool
+  var failure: String?
 }
 
+private struct IdOnly: Decodable { let id: String }
+
 final class ListFeed<Model: DBModel>: @unchecked Sendable {
+  private struct Slot {
+    let id: String
+    let row: Model?
+  }
+
   private let lock = NSLock()
   private let decoder = JSONDecoder()
-  private var rows: [Model] = []
+  private var slots: [Slot] = []
   private var decoded = 0
-  private var dropped = 0
+  private var undecodable = 0
   private var desynced = 0
 
   var decodedRows: Int { lock.withLock { decoded } }
+  var undecodableRows: Int { lock.withLock { undecodable } }
   var desyncs: Int { lock.withLock { desynced } }
-
-  func reset() { lock.withLock { rows = []; dropped = 0 } }
+  var rows: [Model] { lock.withLock { slots.compactMap(\.row) } }
 
   func apply(_ change: LiveChange) -> ListApplied<Model> {
     lock.withLock {
-      if change.error != nil { return ListApplied(rows: rows, reordered: false, desynced: false) }
-      var failed = 0
-      let carried: [(row: Model, index: Int)] = change.rows.enumerated().compactMap { position, text in
+      if change.error != nil { return ListApplied(rows: slots.compactMap(\.row), reordered: false, desynced: false) }
+      let carried: [(slot: Slot, index: Int)] = change.rows.enumerated().map { position, text in
         decoded += 1
+        let index = change.full ? position : Int(change.rowIndexes[position])
         do {
           let row = try decoder.decode(Model.self, from: Data(text.utf8))
-          return (row, change.full ? position : Int(change.rowIndexes[position]))
+          return (Slot(id: row.id, row: row), index)
         } catch {
-          failed += 1
+          undecodable += 1
           decodeLog.error("Row of \(Model.modelName, privacy: .public) failed to decode: \(String(describing: error), privacy: .public)")
-          return nil
+          let id = (try? decoder.decode(IdOnly.self, from: Data(text.utf8)))?.id ?? "undecodable-\(position)"
+          return (Slot(id: id, row: nil), index)
         }
       }
       if change.full {
-        rows = carried.map(\.row)
-        dropped = failed
-        return ListApplied(rows: rows, reordered: true, desynced: false)
+        slots = carried.map(\.slot)
+        return ListApplied(rows: slots.compactMap(\.row), reordered: true, desynced: false)
       }
       let reordered = !change.removed.isEmpty || !change.placed.isEmpty || !change.replaced.isEmpty
-      guard failed == 0, applyDelta(change, carried) else {
+      var next = slots
+      guard applyDelta(change, carried, to: &next) else {
         desynced += 1
-        return ListApplied(rows: rows, reordered: reordered, desynced: true)
+        return ListApplied(rows: slots.compactMap(\.row), reordered: reordered, desynced: true)
       }
-      return ListApplied(rows: rows, reordered: reordered, desynced: false)
+      slots = next
+      return ListApplied(rows: slots.compactMap(\.row), reordered: reordered, desynced: false)
     }
   }
 
-  private func applyDelta(_ change: LiveChange, _ carried: [(row: Model, index: Int)]) -> Bool {
-    let byId = Dictionary(carried.map { ($0.row.id, $0.row) }, uniquingKeysWith: { _, newer in newer })
+  private func applyDelta(_ change: LiveChange, _ carried: [(slot: Slot, index: Int)], to slots: inout [Slot]) -> Bool {
+    let byId = Dictionary(carried.map { ($0.slot.id, $0.slot) }, uniquingKeysWith: { _, newer in newer })
     for pair in change.replaced {
-      guard let at = rows.firstIndex(where: { $0.id == pair.from }), let row = byId[pair.to] else { return false }
-      rows[at] = row
+      guard let at = slots.firstIndex(where: { $0.id == pair.from }), let slot = byId[pair.to] else { return false }
+      slots[at] = slot
     }
-    let before = rows.count
     if !change.removed.isEmpty {
       let gone = Set(change.removed)
-      rows.removeAll { gone.contains($0.id) }
-      if before - rows.count != gone.count { return false }
+      let before = slots.count
+      slots.removeAll { gone.contains($0.id) }
+      if before - slots.count != gone.count { return false }
     }
-    var taken: [String: Model] = [:]
+    var taken: [String: Slot] = [:]
     for place in change.placed {
-      if let at = rows.firstIndex(where: { $0.id == place.id }) { taken[place.id] = rows.remove(at: at) }
+      if let at = slots.firstIndex(where: { $0.id == place.id }) { taken[place.id] = slots.remove(at: at) }
     }
     for place in change.placed {
-      guard let row = taken[place.id] ?? byId[place.id], Int(place.index) <= rows.count else { return false }
-      rows.insert(row, at: Int(place.index))
+      guard let slot = taken[place.id] ?? byId[place.id], Int(place.index) <= slots.count else { return false }
+      slots.insert(slot, at: Int(place.index))
     }
-    for (row, index) in carried {
-      guard index < rows.count else { return false }
-      rows[index] = row
+    for (slot, index) in carried {
+      guard index < slots.count else { return false }
+      slots[index] = slot
     }
-    return rows.count == Int(change.size) - dropped
+    return slots.count == Int(change.size)
   }
 }
 
@@ -85,27 +95,32 @@ final class ListSession<Model: DBModel, Value: Sendable>: @unchecked Sendable {
   private let open: @Sendable (QueryListener) throws -> @Sendable () -> Void
   private let emit: @Sendable (Value) -> Void
   private let map: @Sendable (ListApplied<Model>, LiveChange) -> Value
+  private let maxReopens: Int
   private var cancelSubscription: (@Sendable () -> Void)?
   private var cancelled = false
+  private var stalled = false
   private var generation = 0
   private var reopens = 0
+  private var reopensInRow = 0
 
   var reopened: Int { lock.withLock { reopens } }
   var desyncs: Int { feed.desyncs }
+  var isStalled: Bool { lock.withLock { stalled } }
 
   init(
+    maxReopens: Int = 2,
     open: @escaping @Sendable (QueryListener) throws -> @Sendable () -> Void,
     emit: @escaping @Sendable (Value) -> Void,
     map: @escaping @Sendable (ListApplied<Model>, LiveChange) -> Value
   ) {
-    self.open = open; self.emit = emit; self.map = map
+    self.maxReopens = maxReopens; self.open = open; self.emit = emit; self.map = map
   }
 
   func start() throws {
     let current = lock.withLock { generation }
     let made = try open(ChangeListener { [weak self] change in self?.receive(change, generation: current) })
     let keep = lock.withLock { () -> Bool in
-      guard !cancelled, generation == current else { return false }
+      guard !cancelled, !stalled, generation == current else { return false }
       cancelSubscription = made
       return true
     }
@@ -122,24 +137,62 @@ final class ListSession<Model: DBModel, Value: Sendable>: @unchecked Sendable {
   }
 
   private func receive(_ change: LiveChange, generation current: Int) {
-    guard lock.withLock({ !cancelled && generation == current }) else { return }
+    guard lock.withLock({ !cancelled && !stalled && generation == current }) else { return }
     let applied = feed.apply(change)
     if applied.desynced { reopen(from: current); return }
+    if !change.full { lock.withLock { reopensInRow = 0 } }
     emit(map(applied, change))
   }
 
+  private enum Step {
+    case ignore
+    case stall
+    case restart((@Sendable () -> Void)?)
+  }
+
   private func reopen(from current: Int) {
-    let old = lock.withLock { () -> (@Sendable () -> Void)?? in
-      guard !cancelled, generation == current else { return nil }
+    let step = lock.withLock { () -> Step in
+      guard !cancelled, !stalled, generation == current else { return .ignore }
+      guard reopensInRow < maxReopens else { return .stall }
       generation += 1
       reopens += 1
+      reopensInRow += 1
       defer { cancelSubscription = nil }
-      return .some(cancelSubscription)
+      return .restart(cancelSubscription)
     }
-    guard let old else { return }
-    feed.reset()
-    old?()
-    Task.detached(priority: .userInitiated) { [self] in try? start() }
+    switch step {
+    case .ignore: return
+    case .stall: stall("the list is out of sync with the database and a new subscription did not fix it")
+    case .restart(let old):
+      old?()
+      Task.detached(priority: .userInitiated) { [self] in await restart() }
+    }
+  }
+
+  private func restart() async {
+    while true {
+      do { try start(); return } catch {
+        let again = lock.withLock { () -> Bool in
+          guard !cancelled, !stalled, reopensInRow < maxReopens else { return false }
+          reopensInRow += 1
+          return true
+        }
+        if !again { stall("the subscription could not be opened again: \(error)"); return }
+      }
+    }
+  }
+
+  private func stall(_ reason: String) {
+    let current = lock.withLock { () -> (@Sendable () -> Void)? in
+      guard !cancelled, !stalled else { return nil }
+      stalled = true
+      defer { cancelSubscription = nil }
+      return cancelSubscription
+    }
+    current?()
+    decodeLog.error("List of \(Model.modelName, privacy: .public) stopped: \(reason, privacy: .public)")
+    let applied = ListApplied<Model>(rows: feed.rows, reordered: false, desynced: false, failure: reason)
+    emit(map(applied, LiveChange(revision: 0, full: false, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], count: nil, error: reason)))
   }
 }
 
