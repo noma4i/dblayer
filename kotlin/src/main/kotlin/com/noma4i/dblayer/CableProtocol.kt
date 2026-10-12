@@ -125,7 +125,6 @@ object GraphQLChannel {
 object OnlineChannel {
     const val CHANNEL_NAME = "OnlineChannel"
     const val PING_INTERVAL = 30.0
-    const val LEASE_SECONDS = 90.0
 
     enum class PresenceState { Online, Offline }
 
@@ -161,39 +160,6 @@ object CableReconnect {
     }
 }
 
-enum class PresenceStep { SendPing, SkipPing, StopPing }
-
-object PresenceSchedule {
-    fun step(isForeground: Boolean, hasConsumer: Boolean, isReconnecting: Boolean): PresenceStep {
-        if (!isForeground) return PresenceStep.StopPing
-        return if (!hasConsumer || isReconnecting) PresenceStep.SkipPing else PresenceStep.SendPing
-    }
-
-    fun nextPingDelay(lastPingAt: Double?, now: Double): Double =
-        if (lastPingAt == null) 0.0 else maxOf(0.0, OnlineChannel.PING_INTERVAL - (now - lastPingAt))
-
-    fun leaseExpired(lastPingAt: Double, now: Double) = now - lastPingAt > OnlineChannel.LEASE_SECONDS
-
-    fun keepsLeaseOnUnsubscribe() = true
-}
-
-enum class SubscriptionLifecycle { Requested, Ready, Receiving, Failed, Cancelled }
-
-enum class SubscriptionLifecycleEvent { ServerAck, Payload, Failure, Cancel }
-
-object SubscriptionRules {
-    fun next(stage: SubscriptionLifecycle, event: SubscriptionLifecycleEvent): SubscriptionLifecycle = when (event) {
-        SubscriptionLifecycleEvent.ServerAck -> if (stage == SubscriptionLifecycle.Requested) SubscriptionLifecycle.Ready else stage
-        SubscriptionLifecycleEvent.Payload -> if (stage == SubscriptionLifecycle.Ready || stage == SubscriptionLifecycle.Receiving) SubscriptionLifecycle.Receiving else stage
-        SubscriptionLifecycleEvent.Failure -> SubscriptionLifecycle.Failed
-        SubscriptionLifecycleEvent.Cancel -> SubscriptionLifecycle.Cancelled
-    }
-
-    fun deliversReady(stage: SubscriptionLifecycle) = stage == SubscriptionLifecycle.Ready
-
-    fun acceptsPayload(stage: SubscriptionLifecycle) = stage == SubscriptionLifecycle.Ready || stage == SubscriptionLifecycle.Receiving
-}
-
 enum class SubscriptionReport(val wire: String) { Silent("silent"), Degraded("subscription-degraded"), Permanent("subscription-permanent") }
 
 object SubscriptionRetry {
@@ -208,26 +174,4 @@ object SubscriptionRetry {
         isEnabled && isAuthenticated && !hasSuccessContext && registrationCompleted
 
     fun resetsAttempts(onServerAck: Boolean) = onServerAck
-}
-
-data class SessionState(val preloadFinished: Boolean, val isAuthenticated: Boolean, val hasPendingAuthRoute: Boolean, val registrationCompleted: Boolean)
-
-object SubscriptionActivation {
-    fun isActive(state: SessionState) = state.preloadFinished && state.isAuthenticated && !state.hasPendingAuthRoute && state.registrationCompleted
-
-    fun blockingReason(state: SessionState): String? = when {
-        !state.preloadFinished -> "preload"
-        !state.isAuthenticated -> "auth"
-        state.hasPendingAuthRoute -> "auth-route"
-        !state.registrationCompleted -> "registration"
-        else -> null
-    }
-
-    fun transition(previous: Boolean, next: Boolean) = when {
-        !previous && next -> "subscribe"
-        previous && !next -> "unsubscribe"
-        else -> "keep"
-    }
-
-    fun documentsToOpen(state: SessionState, catalog: List<String>) = if (isActive(state)) catalog else emptyList()
 }

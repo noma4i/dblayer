@@ -70,9 +70,16 @@ class CableIdleTest {
         val sockets = mutableListOf<TestCableSocket>()
         val connection = CableConnection("/test", "token", { _, _ -> TestCableSocket(emptyList()).also { sockets.add(it) } }, clock.timers)
         connection.open()
+        eventually("the deadline of the open") { clock.pendingDues() == listOf(CableHeartbeat.STALE_AFTER) }
         clock.advance(1.0)
+        val seenAtPublish = java.util.concurrent.CopyOnWriteArrayList<List<Double>>()
+        clock.nowHook = { seenAtPublish.add(clock.pendingDues()) }
         sockets[0].deliver("""{"type":"welcome"}""")
         eventually("the welcome frame") { connection.lastFrameAt != null }
+        clock.nowHook = null
+        assertEquals(0, clock.fired)
+        assertEquals(true, seenAtPublish.isNotEmpty())
+        assertEquals(emptyList<List<Double>>(), seenAtPublish.filter { it.contains(CableHeartbeat.STALE_AFTER) })
         eventually("the deadline of the frame") { clock.pendingDues() == listOf(1.0 + CableHeartbeat.STALE_AFTER) }
         clock.skewWallClock(-100.0)
 
@@ -82,7 +89,7 @@ class CableIdleTest {
         eventually("the reopen after silence") { sockets.size == 2 }
 
         assertEquals(2, clock.fired)
-        assertEquals(listOf(CableHeartbeat.STALE_AFTER), clock.pendingSeconds())
+        eventually("the deadline of the new socket") { clock.pendingSeconds() == listOf(CableHeartbeat.STALE_AFTER) }
         connection.close()
         Unit
     }

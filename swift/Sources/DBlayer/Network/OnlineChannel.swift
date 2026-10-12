@@ -3,7 +3,6 @@ import Foundation
 public enum OnlineChannel: Sendable {
   public static let channelName = "OnlineChannel"
   public static let pingInterval: TimeInterval = 30
-  public static let leaseSeconds: TimeInterval = 90
 
   public enum PresenceState: String, Sendable {
     case online

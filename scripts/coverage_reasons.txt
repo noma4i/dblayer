@@ -4,7 +4,7 @@ Cable.kt	^CableConnection\.(closeAll|openSocket)$	dblayer	shutdown on an unsuppo
 Cable.kt	^(CableConnection\.(closeSocket|replaceToken)|CableClient\.replaceToken|CableSubscription\.rekey)$	dblayer	token replacement: no Kotlin test (Swift covers it in CableLifecycleTests.tokenChangeRecreatesConnectionWithNewHeader)
 Cable.kt	^CableClient\.(activate|handle)$	dblayer	shared channel guards and the ping frame branch: the Kotlin tests never send a second subscribe or a ping frame
 Cable.kt	^(CableConnection|NetworkRestore)\.\?$	dblayer	class body field or default argument that every test overrides
-CableProtocol.kt	^(SubscriptionRules|SubscriptionRetry|SubscriptionActivation|SubscriptionReport|PresenceSchedule)\.	dblayer	rule helper that no test runs: dead-code candidate, delete it or wire it to a caller
+CableProtocol.kt	^(SubscriptionRetry|SubscriptionReport)\.	dblayer	no Kotlin caller yet: the Android app is not started, V3 calls the Swift twin (LiveEventGate, LiveEventSubscribe)
 CableProtocol.kt	^CableFrame\.disconnect$	dblayer	malformed disconnect frame rejection: no Kotlin test feeds one (the Swift CableFrame tests do not either)
 Network/CableSocket.swift	^(URLSessionCableSocket|CableSocketDelegate)\.	dblayer	real URLSession WebSocket: runs only against a live ActionCable server, no unit test can drive it
 Network/DatabaseTransport.swift	^DatabaseTransport\.	dblayer	relay of core transport requests to HTTP and Cable: only the event path has a unit test (DatabaseTransportEventTests); query, mutate, put and subscribe run in the app against a server
@@ -12,10 +12,7 @@ Network/CableClient.swift	^CableClient\.	dblayer	shared channel guards, message 
 Network/CableConnection.swift	^CableConnection\.	dblayer	stop and cancellation guards and the unsupported-frame close: reached only when a timer fires after close or a socket speaks an unsupported protocol
 Network/CableFrame.swift	^CableFrame\.	dblayer	malformed frame rejections (guard returns nil): no test feeds a malformed field
 Network/GraphQLChannel.swift	^GraphQLChannel\.	dblayer	encoder and decoder branches for payload shapes the tests never send (unsubscribe_subscription, malformed errors)
-Network/SubscriptionRules.swift	^SubscriptionRules\.	dblayer	rule helper that no test runs: dead-code candidate, delete it or wire it to a caller
 Network/SubscriptionRetry.swift	^SubscriptionRetry\.	dblayer	retry delay branch that no test runs
-Network/SubscriptionActivation.swift	^SubscriptionActivation\.	dblayer	blocking reason branch that no test runs
-Network/PresenceSchedule.swift	^PresenceSchedule\.	dblayer	rule helper that no test runs: dead-code candidate, delete it or wire it to a caller
 Network/PayloadCipher.swift	^PayloadCipher\.	dblayer	failure branches of seal and open: no test feeds a bad key or a bad envelope
 Network/OperationRun.swift	^OperationRun\.	dblayer	HTTP post path: runs only with a live server
 Network/NetworkTransport.swift	^NetworkResponseBody\.	dblayer	response body decoding branch that no test runs

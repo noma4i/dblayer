@@ -63,6 +63,7 @@ struct CableIdleTests {
     let bench = CableBench()
     let connection = bench.makeConnection()
     await connection.open()
+    await eventually("the deadline of the open") { bench.clock.pendingDues() == [CableHeartbeat.staleAfter] }
     await bench.clock.advance(by: 1)
     bench.sockets[0].deliver("{\"type\":\"welcome\"}")
     await eventually("the welcome frame") { await connection.lastFrameAt != nil }
@@ -77,7 +78,7 @@ struct CableIdleTests {
     await eventually("the reopen after silence") { bench.sockets.count == 2 }
 
     #expect(bench.clock.firedSleeps == 2)
-    #expect(bench.clock.pendingSeconds() == [CableHeartbeat.staleAfter])
+    await eventually("the deadline of the new socket") { bench.clock.pendingSeconds() == [CableHeartbeat.staleAfter] }
     await connection.close()
   }
 }
