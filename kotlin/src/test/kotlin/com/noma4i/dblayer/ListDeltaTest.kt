@@ -73,8 +73,8 @@ class ListDeltaTest {
 
     private fun change(
         size: Int, full: Boolean = false, rows: List<Moment> = emptyList(), indexes: List<UInt> = emptyList(), removed: List<String> = emptyList(),
-        placed: List<Placement> = emptyList(), replaced: List<Replacement> = emptyList(),
-    ) = LiveChange(1L, full, size.toUInt(), rows.map(::json), indexes, removed, placed, replaced, null, null)
+        placed: List<Placement> = emptyList(), replaced: List<Replacement> = emptyList(), renamed: List<Replacement> = emptyList(),
+    ) = LiveChange(1L, full, size.toUInt(), rows.map(::json), indexes, removed, placed, replaced, renamed, null, null)
 
     @Test
     fun inv_observe_15_the_feed_applies_each_kind_of_delta_in_order() {
@@ -139,7 +139,7 @@ class ListDeltaTest {
         val rig = Rig()
         rig.session.start()
         val listener = poll(rig.listeners) as QueryListener
-        listener.changed(LiveChange(1L, true, 3u, listOf(json(moment("a", "1")), """{"id":"b"}""", json(moment("c", "3"))), emptyList(), emptyList(), emptyList(), emptyList(), null, null))
+        listener.changed(LiveChange(1L, true, 3u, listOf(json(moment("a", "1")), """{"id":"b"}""", json(moment("c", "3"))), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, null))
         assertEquals(listOf("a", "c"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
         repeat(3) {
             listener.changed(change(size = 3, rows = listOf(moment("c", "3")), indexes = listOf(2u)))
@@ -168,6 +168,67 @@ class ListDeltaTest {
         assertEquals(listOf("a"), stopped.rows.map { (it as Moment).id })
         assertEquals(2, rig.session.reopened)
         assertEquals(true, rig.session.isStalled)
+    }
+
+    @Test
+    fun inv_observe_18_a_delivery_that_inserts_the_real_row_names_the_temporary_id_it_replaced() {
+        val feed = ListFeed(Moment.serializer())
+        assertEquals(false, feed.apply(change(size = 1, full = true, rows = listOf(moment("a", "1")))).desynced)
+        val named = change(size = 2, rows = listOf(moment("m77", "2")), indexes = listOf(1u), placed = listOf(Placement("m77", 1u)), renamed = listOf(Replacement("tmp-1", "m77")))
+        assertEquals(false, feed.apply(named).desynced)
+        assertEquals(mapOf("m77" to "tmp-1"), named.replacedIds())
+    }
+
+    @Test
+    fun inv_observe_18_a_snapshot_names_the_replaced_id_when_the_temporary_row_was_never_delivered() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val deliveries = AtomicInteger()
+        val values = java.util.concurrent.LinkedBlockingQueue<Snapshot<Moment>>()
+        val json = Query("Moment", Moment.serializer()).order(Order("createdAt", "desc")).json
+        val session = ListSession<Moment, Snapshot<Moment>>(
+            Moment.serializer(),
+            { listener ->
+                val subscription = DBlayer.database.liveQuery(json, ChangeListener { change ->
+                    val held = deliveries.getAndIncrement() == 0
+                    listener.changed(change)
+                    if (held) gate.await(30, java.util.concurrent.TimeUnit.SECONDS)
+                })
+                val cancel: () -> Unit = { subscription.cancel() }
+                cancel
+            },
+            { values.put(it) },
+            { applied, change -> Snapshot(applied.rows, change.replacedIds(), applied.reordered) },
+        )
+        session.start()
+        assertEquals(true, (poll(values) as Snapshot<*>).rows.isEmpty())
+        val local = Moment.create(text = "hello", media = null)
+        withTimeout(5000) { local.settled() }
+        gate.countDown()
+        var found: Snapshot<*>? = null
+        repeat(5) { if (found == null) (poll(values) as Snapshot<*>?)?.let { if (it.replaced.containsKey("m77")) found = it } }
+        assertEquals(local.id, found?.replaced?.get("m77"))
+        session.cancel()
+    }
+
+    @Test
+    fun inv_observe_15_a_good_delta_resets_the_count_of_reopens_in_a_row() {
+        val rig = Rig()
+        rig.session.start()
+        var current = poll(rig.listeners) as QueryListener
+        repeat(3) {
+            current.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
+            poll(rig.values)
+            current.changed(change(size = 1, rows = listOf(moment("a", "1")), indexes = listOf(0u)))
+            poll(rig.values)
+            current.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
+            current = poll(rig.listeners) as QueryListener
+        }
+        assertEquals(3, rig.session.reopened)
+        assertEquals(false, rig.session.isStalled)
     }
 
     @Test

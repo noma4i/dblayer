@@ -192,12 +192,12 @@ final class ListSession<Model: DBModel, Value: Sendable>: @unchecked Sendable {
     current?()
     decodeLog.error("List of \(Model.modelName, privacy: .public) stopped: \(reason, privacy: .public)")
     let applied = ListApplied<Model>(rows: feed.rows, reordered: false, desynced: false, failure: reason)
-    emit(map(applied, LiveChange(revision: 0, full: false, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], count: nil, error: reason)))
+    emit(map(applied, LiveChange(revision: 0, full: false, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: reason)))
   }
 }
 
 extension LiveChange {
   var replacedIds: [String: String] {
-    Dictionary(replaced.map { ($0.to, $0.from) }, uniquingKeysWith: { first, _ in first })
+    Dictionary(renamed.map { ($0.to, $0.from) }, uniquingKeysWith: { first, _ in first })
   }
 }

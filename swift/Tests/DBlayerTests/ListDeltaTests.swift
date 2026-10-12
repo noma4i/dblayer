@@ -1,3 +1,4 @@
+import DBlayerTesting
 import Foundation
 import Testing
 @testable import DBlayer
@@ -82,8 +83,8 @@ extension BridgeProbeTests {
     return String(decoding: (try? JSONEncoder().encode(row)) ?? Data(), as: UTF8.self)
   }
 
-  fileprivate static func wire(full: Bool = false, size: UInt32, rows: [String] = [], indexes: [UInt32] = [], removed: [String] = [], placed: [Placement] = [], error: String? = nil) -> LiveChange {
-    LiveChange(revision: 1, full: full, size: size, rows: rows, rowIndexes: indexes, removed: removed, placed: placed, replaced: [], count: nil, error: error)
+  fileprivate static func wire(full: Bool = false, size: UInt32, rows: [String] = [], indexes: [UInt32] = [], removed: [String] = [], placed: [Placement] = [], renamed: [Replacement] = [], error: String? = nil) -> LiveChange {
+    LiveChange(revision: 1, full: full, size: size, rows: rows, rowIndexes: indexes, removed: removed, placed: placed, replaced: [], renamed: renamed, count: nil, error: error)
   }
 
   fileprivate static func session(
@@ -162,6 +163,64 @@ extension BridgeProbeTests {
     let stopped = await rig.values.next("the failure")
     #expect(stopped?.failure != nil && stopped?.rows.map(\.id) == ["a"])
     #expect(rig.session.reopened == 2 && rig.session.isStalled)
+  }
+
+  @Test
+  func inv_observe_18_aDeliveryThatInsertsTheRealRowNamesTheTemporaryIdItReplaced() {
+    let feed = ListFeed<Moment>()
+    #expect(feed.apply(Self.wire(full: true, size: 1, rows: [Self.moment("a")])).desynced == false)
+    let change = Self.wire(size: 2, rows: [Self.moment("m77")], indexes: [1], placed: [Placement(id: "m77", index: 1)], renamed: [Replacement(from: "tmp-1", to: "m77")])
+    #expect(feed.apply(change).desynced == false)
+    #expect(change.replacedIds == ["m77": "tmp-1"])
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func inv_observe_18_aSnapshotNamesTheReplacedIdWhenTheTemporaryRowWasNeverDelivered() async throws {
+    let transport = MockTransport()
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
+    let gate = DispatchSemaphore(value: 0)
+    let deliveries = OpenCounter()
+    let json = Moment.recent.json
+    let (values, sink) = AsyncStream<Snapshot<Moment>>.makeStream()
+    let session = ListSession<Moment, Snapshot<Moment>>(
+      open: { listener in
+        let subscription = try DB.database.liveQuery(queryJson: json, listener: ChangeListener { change in
+          let held = deliveries.next() == 0
+          listener.changed(change: change)
+          if held { gate.wait() }
+        })
+        return { subscription.cancel() }
+      },
+      emit: { sink.yield($0) },
+      map: { applied, change in Snapshot(rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered) }
+    )
+    try session.start()
+    let snapshots = Cursor(values)
+    #expect(await snapshots.next("the empty list")?.rows.isEmpty == true)
+    let local = try await Moment.create(text: "hello", media: nil)
+    try await local.settled()
+    gate.signal()
+    let replaced = await snapshots.first("the snapshot that names the replaced id") { $0.replaced["m77"] != nil }?.replaced["m77"]
+    #expect(replaced == local.id)
+    session.cancel()
+  }
+
+  @Test
+  func inv_observe_15_aGoodDeltaResetsTheCountOfReopensInARow() async throws {
+    let rig = Self.session()
+    try rig.session.start()
+    var current = try #require(await rig.listeners.next("the first subscription"))
+    for round in 0 ..< 3 {
+      current.changed(change: Self.wire(full: true, size: 1, rows: [Self.moment("a")]))
+      #expect(await rig.values.next("the list of round \(round)")?.rows.map(\.id) == ["a"])
+      current.changed(change: Self.wire(size: 1, rows: [Self.moment("a")], indexes: [0]))
+      #expect(await rig.values.next("the good delta of round \(round)")?.rows.map(\.id) == ["a"])
+      current.changed(change: Self.wire(size: 2, placed: [Placement(id: "zz", index: 0)]))
+      current = try #require(await rig.listeners.next("the subscription after round \(round)"))
+    }
+    #expect(rig.session.reopened == 3 && !rig.session.isStalled)
   }
 
   @Test

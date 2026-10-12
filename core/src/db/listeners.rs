@@ -158,7 +158,7 @@ impl Subscriber {
             (Listener::Rows(call), Body::Rows(body)) => {
                 let first = taken.delivered.is_none();
                 let diff = match &taken.delivered {
-                    None => Some(Diff::inserting(&body.entries)),
+                    None => Some(Diff::inserting(&body.entries, if taken.overflowed { &[] } else { &taken.replaced })),
                     Some(previous) => self.rows_diff(previous, taken, body),
                 };
                 diff.map(|diff| {

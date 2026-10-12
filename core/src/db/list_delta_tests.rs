@@ -137,3 +137,34 @@ fn inv_observe_16_a_row_that_cannot_enter_the_list_costs_no_read_and_no_delivery
     assert_eq!(cost(&|| put(&db, "users", json!({"id": "u2", "name": "gone"}))), (1, 1), "a row of the list that stops passing it leaves");
     assert_eq!(ids(changes(&log).last().unwrap()), vec!["u1"]);
 }
+
+#[test]
+fn inv_observe_18_a_replaced_pair_reaches_a_reader_that_never_saw_the_temporary_row() {
+    let db = booted();
+    let (entered_sender, entered) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let first = Mutex::new(true);
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = log.clone();
+    let _observer = db
+        .observe(Query::new("moments"), move |change| {
+            sink.lock().unwrap().push(change.clone());
+            if std::mem::replace(&mut *first.lock().unwrap(), false) {
+                entered_sender.send(()).unwrap();
+                released.lock().unwrap().recv_timeout(WAIT).unwrap();
+            }
+        })
+        .unwrap();
+    entered.recv_timeout(WAIT).unwrap();
+    let temp = db.create("moments", obj(json!({"text": "new"}))).unwrap();
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
+    envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: crate::commit::DestroyReason::Replaced { by: rid("m7") } });
+    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
+    db.land(envelope).unwrap();
+    release.send(()).unwrap();
+    db.settle();
+    let seen = log.lock().unwrap().clone();
+    let last = seen.last().unwrap();
+    assert_eq!((ids(last), last.diff.renamed.clone()), (vec!["m7".to_string()], vec![(temp.id.clone(), rid("m7"))]));
+}

@@ -158,7 +158,7 @@ internal class ListSession<Model : DBModel, Value>(
         val current = synchronized(this) { if (cancelled || stalled) return; stalled = true; cancelSubscription.also { cancelSubscription = null } }
         current?.invoke()
         decodeLog.severe("List stopped: $reason")
-        emit(map(ListState(feed.rows, false, failure = reason), LiveChange(0L, false, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, reason)))
+        emit(map(ListState(feed.rows, false, failure = reason), LiveChange(0L, false, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, reason)))
     }
 }
 
@@ -175,4 +175,4 @@ internal fun <Model : DBModel, Value> listSource(
     cancel
 }
 
-internal fun LiveChange.replacedIds(): Map<String, String> = replaced.associate { it.to to it.from }
+internal fun LiveChange.replacedIds(): Map<String, String> = renamed.associate { it.to to it.from }

@@ -27,6 +27,7 @@ pub struct LiveChange {
     pub removed: Vec<String>,
     pub placed: Vec<Placement>,
     pub replaced: Vec<Replacement>,
+    pub renamed: Vec<Replacement>,
     pub count: Option<i64>,
     pub error: Option<String>,
 }
@@ -40,12 +41,13 @@ impl LiveChange {
             removed: diff.removed.iter().map(ToString::to_string).collect(),
             placed: diff.placed().into_iter().map(|(id, index)| Placement { id: id.to_string(), index: index as u32 }).collect(),
             replaced: diff.replaced.iter().map(|(from, to)| Replacement { from: from.to_string(), to: to.to_string() }).collect(),
+            renamed: diff.renamed.iter().map(|(from, to)| Replacement { from: from.to_string(), to: to.to_string() }).collect(),
             count: None, error: None,
         }
     }
 
     fn empty(revision: i64) -> Self {
-        Self { revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), count: None, error: None }
+        Self { revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None }
     }
 
     pub(super) fn whole(revision: i64, rows: Vec<String>) -> Self {

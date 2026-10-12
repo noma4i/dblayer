@@ -32,6 +32,7 @@ pub struct Diff {
     pub updated: Vec<RowId>,
     pub moved: Vec<RowId>,
     pub replaced: Vec<(RowId, RowId)>,
+    pub renamed: Vec<(RowId, RowId)>,
     pub at: BTreeMap<RowId, usize>,
 }
 
@@ -40,10 +41,11 @@ impl Diff {
         self.inserted.is_empty() && self.removed.is_empty() && self.updated.is_empty() && self.moved.is_empty() && self.replaced.is_empty()
     }
 
-    pub fn inserting<E: Borrow<Entry>>(entries: &[E]) -> Self {
+    pub fn inserting<E: Borrow<Entry>>(entries: &[E], replaced: &[(RowId, RowId)]) -> Self {
         let inserted: Vec<RowId> = entries.iter().map(|entry| entry_of(entry).id.clone()).collect();
-        let at = inserted.iter().cloned().enumerate().map(|(index, id)| (id, index)).collect();
-        Self { inserted, at, ..Self::default() }
+        let at: BTreeMap<RowId, usize> = inserted.iter().cloned().enumerate().map(|(index, id)| (id, index)).collect();
+        let renamed = replaced.iter().filter(|(from, to)| at.contains_key(to) && !at.contains_key(from)).cloned().collect();
+        Self { inserted, at, renamed, ..Self::default() }
     }
 
     pub fn placed(&self) -> Vec<(RowId, usize)> {
@@ -74,7 +76,9 @@ impl Diff {
             .collect();
         let canonical = |id: &RowId| -> RowId { aliases.get(id).map_or_else(|| id.clone(), |to| (*to).clone()) };
         let old_canonical: HashSet<RowId> = old.iter().map(|entry| canonical(&entry_of(entry).id)).collect();
+        let renamed = replaced.iter().filter(|(from, to)| new_position.contains_key(to) && !old_ids.contains(to) && !new_position.contains_key(from)).cloned().collect();
         let mut diff = Diff {
+            renamed,
             replaced: old.iter().filter_map(|entry| aliases.get(&entry_of(entry).id).map(|to| (entry_of(entry).id.clone(), (*to).clone()))).collect(),
             inserted: new.iter().filter(|&entry| !old_canonical.contains(&entry_of(entry).id)).map(|entry| entry_of(entry).id.clone()).collect(),
             removed: old.iter().filter(|&entry| !new_position.contains_key(&canonical(&entry_of(entry).id))).map(|entry| entry_of(entry).id.clone()).collect(),
