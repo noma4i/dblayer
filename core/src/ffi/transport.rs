@@ -52,12 +52,12 @@ impl SubscriptionSink {
         };
         self.send(core::SubscriptionEvent::Failed(core::SubscriptionFailure::new(kind, detail)));
     }
-    pub fn closed(&self) { self.sender.lock().expect("subscription sender").take(); }
+    pub fn closed(&self) { crate::db::locked(&self.sender).take(); }
 }
 
 impl SubscriptionSink {
     fn send(&self, event: core::SubscriptionEvent) {
-        if let Some(sender) = self.sender.lock().expect("subscription sender").as_ref() { let _ = sender.send(event); }
+        if let Some(sender) = crate::db::locked(&self.sender).as_ref() { let _ = sender.send(event); }
     }
 }
 
@@ -79,7 +79,8 @@ pub struct OnlineSink { pub(crate) sync: crate::sync::Sync }
 #[uniffi::export]
 impl OnlineSink {
     pub fn set_online(&self, online: bool) {
-        let _entered = super::database::executor().enter();
+        let Ok(executor) = super::database::executor() else { return };
+        let _entered = executor.enter();
         self.sync.set_online(online);
     }
 }

@@ -14,13 +14,21 @@ use super::live::LiveHandles;
 use super::transport::ForeignTransport;
 use super::{row_json, DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, RelationStateChange, StateListener, StateSubscription, Transport};
 
-pub(super) fn executor() -> &'static Runtime {
+pub(super) fn executor() -> Result<&'static Runtime, DbError> {
     static EXECUTOR: OnceLock<Runtime> = OnceLock::new();
-    EXECUTOR.get_or_init(|| tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("database executor"))
+    started(&EXECUTOR, || tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build())
+}
+
+pub(super) fn started(slot: &OnceLock<Runtime>, build: impl FnOnce() -> std::io::Result<Runtime>) -> Result<&Runtime, DbError> {
+    if let Some(runtime) = slot.get() {
+        return Ok(runtime);
+    }
+    let runtime = build().map_err(|error| DbError::Database { detail: format!("the database executor did not start: {error}") })?;
+    Ok(slot.get_or_init(|| runtime))
 }
 
 async fn on_executor<T: Send + 'static>(work: impl std::future::Future<Output = Result<T, crate::sync::SyncError>> + Send + 'static) -> Result<T, DbError> {
-    executor().spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(DbError::from)
+    executor()?.spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(DbError::from)
 }
 
 #[derive(uniffi::Record)]
@@ -91,7 +99,7 @@ impl Database {
     pub fn live_state(&self, model: String, relation: String, params_json: String, listener: Arc<dyn StateListener>) -> Result<Arc<StateSubscription>, DbError> {
         let params: Map<String, Value> = serde_json::from_str(&params_json)?;
         let mut receiver = self.sync()?.relation_state(&model, &relation, &params)?;
-        let task = executor().spawn(async move {
+        let task = executor()?.spawn(async move {
             loop {
                 let change = RelationStateChange::of(&receiver.borrow_and_update());
                 listener.changed(change);
@@ -170,12 +178,12 @@ impl Database {
         Ok(on_executor(async move { sync.load_more(&model, &relation, &params).await }).await?.has_next)
     }
     pub fn listen(&self) -> Result<(), DbError> {
-        let _entered = executor().enter();
+        let _entered = executor()?.enter();
         self.sync()?.listen();
         Ok(())
     }
     pub fn unlisten(&self) -> Result<(), DbError> {
-        let _entered = executor().enter();
+        let _entered = executor()?.enter();
         self.sync()?.unlisten();
         Ok(())
     }
@@ -247,7 +255,7 @@ impl Database {
 impl Database {
     pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "transport is required for server operations".into() }) }
     fn send_writes(&self) {
-        if let Some(sync) = self.sync.clone() { executor().spawn(async move { let _ = sync.flush().await; }); }
+        if let (Some(sync), Ok(executor)) = (self.sync.clone(), executor()) { executor.spawn(async move { let _ = sync.flush().await; }); }
     }
     fn connect_json(&self, json: &str, count: bool, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         let description: Value = serde_json::from_str(json)?;
@@ -264,7 +272,7 @@ impl Database {
         self.connect(query, remote, count, listener)
     }
     fn connect(&self, query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        let _entered = executor().enter();
+        let _entered = executor()?.enter();
         let (latest, _) = tokio::sync::watch::channel(None);
         let post = latest.clone();
         let callback = listener.clone();
@@ -282,7 +290,7 @@ impl Database {
                 let watch = sync.watch(query.model.as_str(), &relation, &params)?;
                 let model = query.model.to_string();
                 let errors = latest.clone();
-                let task = executor().spawn(async move {
+                let task = executor()?.spawn(async move {
                     if let Err(error) = sync.load(&model, &relation, &params, LoadOptions::default()).await {
                         let revision = errors.borrow().as_ref().map_or(0, |change| change.revision);
                         let change = LiveChange::failed(revision, error.to_string());

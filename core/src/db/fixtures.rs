@@ -98,6 +98,16 @@ pub fn booted() -> Db {
     db
 }
 
+pub fn poison<T: Send>(mutex: &Mutex<T>) {
+    std::thread::scope(|scope| {
+        let _ = scope.spawn(|| {
+            let _held = mutex.lock().unwrap();
+            panic!("poisoning the lock on purpose");
+        }).join();
+    });
+    assert!(mutex.is_poisoned());
+}
+
 pub fn obj(value: Value) -> Map<String, Value> {
     value.as_object().unwrap().clone()
 }

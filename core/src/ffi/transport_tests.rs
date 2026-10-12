@@ -24,3 +24,12 @@ fn a_frame_without_data_fails_the_subscription_as_internal_and_an_enveloped_fram
     sink.event(r#"{"data":{"messageCreated":{"message":{"id":"9"}}}}"#.to_string()).unwrap();
     assert!(matches!(receiver.try_recv(), Ok(SubscriptionEvent::Next(_))));
 }
+
+#[test]
+fn inv_panic_01_a_subscription_sink_survives_a_poisoned_lock() {
+    let (sink, mut receiver) = sink();
+    crate::db::fixtures::poison(&sink.sender);
+    sink.ready();
+    assert!(matches!(receiver.try_recv(), Ok(SubscriptionEvent::Ready)));
+    sink.closed();
+}
