@@ -161,3 +161,16 @@ end
     assert!(!internal.contains("public "));
     assert!(internal.contains("let built = Query<Self>(relation: \"search\""));
 }
+
+#[test]
+fn model_with_one_single_record_relation_gets_a_singleton_entity() {
+    let single = "model Me do\n  schema do\n    string :name\n  end\n  remote :profile do\n    query MyProfile\n  end\nend\n";
+    let list = "model Me do\n  schema do\n    string :name\n  end\n  remote :feed do\n    list\n  end\nend\n";
+    let two = "model Me do\n  schema do\n    string :name\n  end\n  remote :profile do\n    query MyProfile\n  end\n  remote :settings do\n    query MySettings\n  end\nend\n";
+    for (source, singleton) in [(single, true), (list, false), (two, false)] {
+        let models = parse_models(source).unwrap();
+        let (swift, kotlin) = (emit_swift(&models), emit_kotlin(&models));
+        assert_eq!(swift.contains("struct Me: DBSingleton") && swift.contains("static var singleton: Query<Self> { profile }"), singleton, "{swift}");
+        assert_eq!(kotlin.contains("fun entity() = singletonEntityOf(\"Me\", serializer(), profile)"), singleton, "{kotlin}");
+    }
+}

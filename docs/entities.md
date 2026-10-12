@@ -18,6 +18,22 @@ val name by author.value.collectAsState()
 
 `value` is the newest known state of the record. It is empty until the first delivery and when the record does not exist. Reading is synchronous. A second reader of an id that is already live gets the value at once and opens no new subscription.
 
+## The one row of an account
+
+A model that holds one row for the whole account, such as the current user, has an entity without an id. The generator declares it for a model that has exactly one global relation answered as a single record.
+
+```swift
+let me = CurrentUser.entity()   // no id: the app does not know it before the row has loaded
+Text(me.value?.fullName ?? "")
+```
+
+```kotlin
+val me = CurrentUser.entity()   // no id: the app does not know it before the row has loaded
+val name by me.value.collectAsState()
+```
+
+There is one such entity per process and one core subscription for it, however many screens read it. `value` is empty until the row has loaded. `id` is empty until then and holds the id of the row after. The entity is not leased: it lives as long as the database handle and never reaches the retention rules below, so no reader can drop its subscription. A newly opened database and `logout()` empty it at once, tell its readers and open the subscription again. A delivery of the old subscription that arrives later writes nothing. The subscription is the relation that holds the row, so `resume()` keeps reloading it while the app runs.
+
 ## Lifetime
 
 Nothing to start, stop or release. The library keeps the record current as long as the entity object is alive and lets go of it when the last holder drops it (Swift: when the object is freed; Kotlin: when it is no longer reachable). A delivery that was already on its way when the entity was dropped is ignored.
@@ -32,7 +48,7 @@ Every delivery carries the revision of the database. An entity ignores a deliver
 
 ## Ending a session
 
-`DB.logout()` (Swift) and `DBlayer.logout()` (Kotlin) clear the data and drop every entity, lease and kept value of every model.
+`DB.logout()` (Swift) and `DBlayer.logout()` (Kotlin) clear the data and drop every entity, lease and kept value of every model. The entity of an account row stays the same object and goes back to empty.
 
 ## Cost
 

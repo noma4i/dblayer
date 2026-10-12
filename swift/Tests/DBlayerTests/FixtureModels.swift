@@ -225,7 +225,7 @@ public struct Presence: DBModel {
     public var user: LiveSource<[User]> { related("user", as: User.self) }
 }
 
-public struct User: DBModel {
+public struct User: DBSingleton {
     public static let modelName = "User"
     public let id: String
     public let name: String
@@ -256,6 +256,7 @@ public struct User: DBModel {
         let built = Query<Self>(relation: "profile", params: [:])
         return built
     }
+    public static var singleton: Query<Self> { profile }
     public static func create(name: String, avatar: JSONValue? = nil, birthday: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["name"] = JSONValue.encode(name)

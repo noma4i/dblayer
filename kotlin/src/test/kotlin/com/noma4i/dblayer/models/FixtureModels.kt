@@ -233,6 +233,7 @@ data class User(
             var built = Query("User", serializer(), relation = "profile", params = buildJsonObject {  })
             return built
         }
+        fun entity() = singletonEntityOf("User", serializer(), profile)
         suspend fun create(name: String, avatar: JsonElement? = null, birthday: String? = null): User {
             val values = buildJsonObject {
                 put("name", jsonValue(name))

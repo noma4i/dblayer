@@ -5,7 +5,8 @@ import Observation
 @MainActor
 @Observable
 public final class Entity<Model: DBModel> {
-  public let id: String
+  /// The id of the record. A singleton has no id until its row has loaded.
+  public private(set) var id: String
   /// The newest value, nil while none has arrived or when the record does not exist.
   public private(set) var value: Model?
   /// The value comes from the retention of a released entity and no fresh delivery has replaced it yet.
@@ -13,6 +14,7 @@ public final class Entity<Model: DBModel> {
   @ObservationIgnored private(set) var revision: Int64
   @ObservationIgnored private let registry: Entities<Model>
   @ObservationIgnored private let epoch: Int
+  @ObservationIgnored private let isSingleton: Bool
 
   fileprivate init(id: String, seed: Retained<Model>?, registry: Entities<Model>) {
     self.id = id
@@ -21,6 +23,17 @@ public final class Entity<Model: DBModel> {
     isStale = seed != nil
     self.registry = registry
     epoch = registry.epoch
+    isSingleton = false
+  }
+
+  fileprivate init(singletonOf registry: Entities<Model>) {
+    id = ""
+    value = nil
+    revision = Int64.min
+    isStale = false
+    self.registry = registry
+    epoch = registry.epoch
+    isSingleton = true
   }
 
   fileprivate func accept(_ next: Model?, revision incoming: Int64) {
@@ -28,11 +41,21 @@ public final class Entity<Model: DBModel> {
     revision = incoming
     isStale = false
     if next != value { value = next }
+    if isSingleton, id != (next?.id ?? "") { id = next?.id ?? "" }
   }
 
-  fileprivate func detach() { value = nil }
+  fileprivate func detach() {
+    value = nil
+    guard isSingleton else { return }
+    id = ""
+    revision = Int64.min
+    isStale = false
+  }
 
-  isolated deinit { registry.released(id: id, value: value, revision: revision, epoch: epoch) }
+  isolated deinit {
+    guard !isSingleton else { return }
+    registry.released(id: id, value: value, revision: revision, epoch: epoch)
+  }
 }
 
 struct Retained<Model: DBModel> {
@@ -71,6 +94,9 @@ public final class Entities<Model: DBModel> {
   private let maxCount: Int
 
   private let core: CoreEntitySource<Model>
+  private var single: Entity<Model>?
+  private var singleQuery: Query<Model>?
+  private(set) var singleFeed: SingletonFeed<Model>?
 
   init(maxAge: TimeInterval = Entities.retentionAge, maxCount: Int = Entities.retentionCount, now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, source: (any EntitySource)? = nil) {
     self.maxAge = maxAge
@@ -104,11 +130,38 @@ public final class Entities<Model: DBModel> {
   /// A newly opened database starts with no entity of the old one.
   private func follow(_ current: Database?) {
     guard followsDatabase, database !== current else { return }
-    if database != nil { reset() }
+    if database != nil || single != nil { reset() }
     database = current
   }
 
   public func entities(_ ids: [String]) -> [Entity<Model>] { ids.map(entity) }
+
+  /// The entity of the one row of a model that has one. It lives as long as the database handle, holds no lease and has no id until the row has loaded.
+  public func singleton(_ query: Query<Model>) -> Entity<Model> {
+    follow(DB.database)
+    if let single { return single }
+    let made = Entity<Model>(singletonOf: self)
+    single = made
+    singleQuery = query
+    startSingleton()
+    return made
+  }
+
+  private func startSingleton() {
+    guard let singleQuery else { return }
+    singleFeed?.cancel()
+    let feed = SingletonFeed<Model>(query: singleQuery)
+    singleFeed = feed
+    feed.start { [weak self, weak feed] revision, row in
+      DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.receive(from: feed, revision: revision, row: row) } } }
+    }
+  }
+
+  /// A delivery of a feed that was replaced by a reset or a newly opened database writes nothing.
+  func receive(from feed: SingletonFeed<Model>, revision: Int64, row: Model?) {
+    guard singleFeed === feed else { return }
+    single?.accept(row, revision: revision)
+  }
 
   /// Drops every entity, lease and retained value. Called when the account ends.
   public func reset() {
@@ -119,6 +172,10 @@ public final class Entities<Model: DBModel> {
     kept = [:]
     steps = Dictionary(uniqueKeysWithValues: all.map { ($0, Step.release) })
     scheduleFlush()
+    if let single {
+      single.detach()
+      startSingleton()
+    }
   }
 
   var retainedCount: Int {
@@ -193,6 +250,17 @@ extension DBModel {
   @MainActor public static func entities(_ ids: [String]) -> [Entity<Self>] { Entities<Self>.shared.entities(ids) }
 }
 
+/// A model with one row for the whole account, such as the current user. The generator declares it for a model that has one global relation answered as a single record.
+public protocol DBSingleton: DBModel {
+  /// The relation that holds the one row.
+  static var singleton: Query<Self> { get }
+}
+
+extension DBSingleton {
+  /// The live entity of the one row. Empty until the row has loaded and again after `DB.logout()`. Hold it as long as the value is shown.
+  @MainActor public static func entity() -> Entity<Self> { Entities<Self>.shared.singleton(singleton) }
+}
+
 enum EntityDecoding {
   struct Decoded<Model: DBModel> {
     let revision: Int64
@@ -243,5 +311,46 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, EntityListener, @unc
     let rows = delivery.rows.compactMap { try? decoder.decode(Model.self, from: Data($0.utf8)) }
     lock.withLock { total += rows.count }
     deliver?(EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed))
+  }
+}
+
+/// The one relation subscription of a singleton. It belongs to one database and one reset: a replaced feed writes nothing.
+final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
+  private let lock = NSLock()
+  private let queryJson: String
+  private var subscription: LiveSubscription?
+  private var cancelled = false
+  private var count = 0
+
+  /// Deliveries made so far.
+  var delivered: Int { lock.withLock { count } }
+
+  init(query: Query<Model>) { queryJson = query.json }
+
+  func start(deliver: @escaping @Sendable (Int64, Model?) -> Void) {
+    Task.detached(priority: .userInitiated) { [self] in
+      guard let database = DB.database else { return }
+      let listener = ChangeListener { change in
+        self.lock.withLock { self.count += 1 }
+        let rows: [Model] = change.decodeRows()
+        deliver(change.revision, rows.first)
+      }
+      guard let made = try? database.liveQuery(queryJson: queryJson, listener: listener) else { return }
+      let keep = lock.withLock { () -> Bool in
+        guard !cancelled else { return false }
+        subscription = made
+        return true
+      }
+      if !keep { made.cancel() }
+    }
+  }
+
+  func cancel() {
+    let current = lock.withLock { () -> LiveSubscription? in
+      cancelled = true
+      defer { subscription = nil }
+      return subscription
+    }
+    current?.cancel()
   }
 }

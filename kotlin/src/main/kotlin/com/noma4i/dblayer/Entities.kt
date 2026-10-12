@@ -22,10 +22,19 @@ internal class EntityCell<Model : DBModel> {
         stale = false
         value.value = next
     }
+
+    @Synchronized
+    fun clear() {
+        value.value = null
+        revision = Long.MIN_VALUE
+        stale = false
+    }
 }
 
 /** The live value of one record. The library keeps it current while the object is reachable and lets go of the record when it is not. */
-class Entity<Model : DBModel> internal constructor(val id: String, internal val cell: EntityCell<Model>) {
+class Entity<Model : DBModel> internal constructor(private val fixedId: String?, internal val cell: EntityCell<Model>) {
+    /** The id of the record. A singleton has no id until its row has loaded. */
+    val id: String get() = fixedId ?: cell.value.value?.id.orEmpty()
     /** The newest value, null while none has arrived or when the record does not exist. */
     val value: StateFlow<Model?> get() = cell.value
     /** The value comes from the retention of a released entity and no fresh delivery has replaced it yet. */
@@ -64,6 +73,9 @@ class Entities<Model : DBModel> internal constructor(
     private var database: Database? = null
     private val followsDatabase = source == null
     private var epoch = 0
+    private var single: Entity<Model>? = null
+    private var singleQuery: Query<Model>? = null
+    private var singleFeed: SingletonFeed<Model>? = null
     private val core = CoreEntitySource(modelName, serializer) { delivery -> apply(delivery) }
     private val source: EntitySource = source ?: core
 
@@ -89,11 +101,37 @@ class Entities<Model : DBModel> internal constructor(
     /** A newly opened database starts with no entity of the old one. */
     private fun follow(current: Database?) {
         if (!followsDatabase || database === current) return
-        if (database != null) reset()
+        if (database != null || single != null) reset()
         database = current
     }
 
     fun entities(ids: List<String>): List<Entity<Model>> = ids.map(::entity)
+
+    /** The entity of the one row of a model that has one. It lives as long as the database handle, holds no lease and has no id until the row has loaded. */
+    fun singleton(query: Query<Model>): Entity<Model> = synchronized(lock) {
+        follow(DBlayer.databaseOrNull)
+        single?.let { return it }
+        val made = Entity(null, EntityCell<Model>())
+        single = made
+        singleQuery = query
+        startSingleton()
+        made
+    }
+
+    private fun startSingleton() {
+        val query = singleQuery ?: return
+        singleFeed?.cancel()
+        val feed = SingletonFeed(query, serializer) { from, revision, row -> receive(from, revision, row) }
+        singleFeed = feed
+        flusher.execute { feed.attach() }
+    }
+
+    /** A delivery of a feed that was replaced by a reset or a newly opened database writes nothing. */
+    internal fun receive(feed: SingletonFeed<Model>, revision: Long, row: Model?) = synchronized(lock) {
+        if (singleFeed === feed) single?.cell?.accept(row, revision)
+    }
+
+    internal val currentSingleFeed: SingletonFeed<Model>? get() = synchronized(lock) { singleFeed }
 
     /** Drops every entity, lease and retained value. Called when the account ends. */
     fun reset() = synchronized(lock) {
@@ -104,6 +142,10 @@ class Entities<Model : DBModel> internal constructor(
         kept.clear()
         all.forEach { steps[it] = Step.Release }
         scheduleFlush()
+        single?.let {
+            it.cell.clear()
+            startSingleton()
+        }
     }
 
     internal val retainedCount: Int get() = synchronized(lock) { drain(); purge(); kept.size }
@@ -207,6 +249,32 @@ internal class CoreEntitySource<Model : DBModel>(
     }
 }
 
+/** The one relation subscription of a singleton. It belongs to one database and one reset: a replaced feed writes nothing. */
+internal class SingletonFeed<Model : DBModel>(
+    private val query: Query<Model>,
+    private val serializer: KSerializer<Model>,
+    private val deliver: (SingletonFeed<Model>, Long, Model?) -> Unit,
+) {
+    private var subscription: LiveSubscription? = null
+    private var cancelled = false
+    private val count = AtomicInteger()
+
+    /** Deliveries made so far. */
+    val delivered: Int get() = count.get()
+
+    fun attach() {
+        val database = DBlayer.databaseOrNull ?: return
+        val made = runCatching { database.liveQuery(query.json, ChangeListener { change -> count.incrementAndGet(); deliver(this, change.revision, change.decode(serializer).firstOrNull()) }) }.getOrNull() ?: return
+        val keep = synchronized(this) { if (cancelled) false else { subscription = made; true } }
+        if (!keep) made.cancel()
+    }
+
+    fun cancel() {
+        val current = synchronized(this) { cancelled = true; subscription.also { subscription = null } }
+        current?.cancel()
+    }
+}
+
 internal object EntityRegistries {
     private val registries = ConcurrentHashMap<String, Entities<*>>()
 
@@ -220,3 +288,7 @@ internal object EntityRegistries {
 /** The live entity of a record by id. */
 fun <Model : DBModel> entityOf(modelName: String, serializer: KSerializer<Model>, id: String): Entity<Model> =
     EntityRegistries.of(modelName, serializer).entity(id)
+
+/** The live entity of the one row of a model that has one. */
+fun <Model : DBModel> singletonEntityOf(modelName: String, serializer: KSerializer<Model>, query: Query<Model>): Entity<Model> =
+    EntityRegistries.of(modelName, serializer).singleton(query)

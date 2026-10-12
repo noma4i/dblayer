@@ -1,6 +1,13 @@
-use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, Sort};
+use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, RemoteShape, RelationSpec, Sort};
 use dblayer::value::ScalarKind;
 use std::fmt::Write;
+
+/// The relation that holds the one row of a model: the only global relation answered as a single record.
+fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
+    let mut found = model.relations.iter().filter(|relation| relation.is_global && relation.remote.as_ref().is_some_and(|remote| remote.shape == RemoteShape::Single));
+    let relation = found.next()?;
+    found.next().is_none().then_some(relation)
+}
 
 fn name(text: &str) -> String {
     let upper = crate::build::camel(text);
@@ -88,7 +95,7 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
     for model in models {
         let class = model.key.as_str();
-        writeln!(out, "public struct {class}: DBModel {{\n    public static let modelName = \"{class}\"").unwrap();
+        writeln!(out, "public struct {class}: {} {{\n    public static let modelName = \"{class}\"", if singleton_relation(model).is_some() { "DBSingleton" } else { "DBModel" }).unwrap();
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    public let {}: {}", field.name, field_type(field, true)).unwrap();
         }
@@ -122,6 +129,7 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             }
             out.push_str("        return built\n    }\n");
         }
+        if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var singleton: Query<Self> {{ {} }}", name(&relation.name)).unwrap(); }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id").collect();
         let create_fields = create_fields(model, &fields);
         let params = create_fields.iter().map(|field| {
@@ -196,6 +204,7 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             }
             out.push_str("            return built\n        }\n");
         }
+        if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", serializer(), {})", name(&relation.name)).unwrap(); }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id").collect();
         let create_fields = create_fields(model, &fields);
         let params = create_fields.iter().map(|field| {
