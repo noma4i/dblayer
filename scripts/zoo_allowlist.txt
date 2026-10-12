@@ -2,3 +2,22 @@ type:DbError        # the ffi error mirrors core errors for the foreign bindings
 type:PutReply       # the ffi reply is the foreign-binding form of the core reply
 type:Transport      # the ffi trait is implemented by Swift and Kotlin, the core trait by the mock
 commit:core/src/db/open.rs   # rows rebuilt from the queue at open run before any Db exists
+
+panic:core/src/db/dispatch.rs:pending.events.pop_front().expect("queue is not empty")   # the queue holds more than MAX_PENDING (256) events, checked on the line above
+panic:core/src/db/dispatch.rs:pending.events.pop_front().expect("queue holds two events")   # same check, MAX_PENDING is at least 2
+panic:core/src/db/watch.rs:expect("a placed row is known")   # the id was placed from the same row list one step earlier
+panic:core/src/db/watch.rs:serde_json::to_string(query).expect("query serializes")   # Query is a plain Serialize tree with string keys
+panic:core/src/db/entities.rs:expect("group checked above")   # the group key is looked up under the same lock a few lines above
+panic:core/src/db/cache.rs:expect("capacity is positive")   # capacity.max(1) is never zero
+panic:core/src/db/open.rs:outcome.expect("read ran")   # Store::read returns Ok only after it ran the closure
+panic:core/src/value/mod.rs:value.unwrap(), expected.unwrap()   # the match arm proves both options are Some
+panic:core/src/value/mod.rs:expect("alphabet is ascii")   # the alphabet is a constant ascii list
+panic:core/src/value/mod.rs:expect("string map serializes")   # a map of strings always serializes
+panic:core/src/syncstate/table.rs:expect("failure serializes")   # own Serialize type, string keys
+panic:core/src/syncstate/table.rs:expect("actions serialize")   # own Serialize type, string keys
+panic:core/src/syncstate/table.rs:expect("fields serialize")   # own Serialize type, string keys
+panic:core/src/syncstate/table.rs:expect("upload serializes")   # own Serialize type, string keys
+panic:core/src/operation/table.rs:expect("row ids serialize")   # a list of ids always serializes
+panic:core/src/ddl/mod.rs:expect("fingerprint serializes")   # own Serialize type, string keys
+panic:core/src/ffi/mod.rs:expect("upload serializes")   # own Serialize type, string keys
+panic:core/src/ffi/live.rs:expect("live owns sender")   # the object owns the watch sender, so wait_for never sees a closed channel; the second expect holds because wait_for(is_some) returned

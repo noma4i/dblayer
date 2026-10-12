@@ -73,6 +73,20 @@ for path in files:
     if re.search(r"\binvalidate_model\(", path.read_text()):
         findings.append(f"Z10 lists are marked stale and reloaded in sync/invalidate only: {relative}")
 
+test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/")
+panic_call = re.compile(r"\.(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")
+panic_allowed = [entry[len("panic:"):] for entry in allowed if entry.startswith("panic:")]
+for path in files:
+    relative = str(path.relative_to(root))
+    if any(marker in "/" + relative for marker in test_only):
+        continue
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if not panic_call.search(line):
+            continue
+        if any(line_file == relative and fragment in line for line_file, fragment in (entry.split(":", 1) for entry in panic_allowed)):
+            continue
+        findings.append(f"Z11 a phone library never panics on the environment, return an error or a degraded answer: {relative}:{number}: {line.strip()}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:
