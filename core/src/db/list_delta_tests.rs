@@ -166,5 +166,6 @@ fn inv_observe_18_a_replaced_pair_reaches_a_reader_that_never_saw_the_temporary_
     db.settle();
     let seen = log.lock().unwrap().clone();
     let last = seen.last().unwrap();
-    assert_eq!((ids(last), last.diff.renamed.clone()), (vec!["m7".to_string()], vec![(temp.id.clone(), rid("m7"))]));
+    let told: Vec<_> = seen.iter().map(|change| (ids(change), change.diff.replaced.clone(), change.diff.renamed.clone(), change.revision)).collect();
+    assert_eq!((ids(last), last.diff.renamed.clone()), (vec!["m7".to_string()], vec![(temp.id.clone(), rid("m7"))]), "deliveries (ids, replaced, renamed, revision): {told:?}");
 }
