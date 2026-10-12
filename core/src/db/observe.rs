@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Weak};
 
 use crate::identity::{RowId, RowRef};
@@ -30,9 +30,59 @@ pub struct ObserverCensus {
 pub(crate) struct Observers {
     next_id: u64,
     groups: HashMap<String, Group>,
+    by_row: HashMap<RowRef, BTreeSet<String>>,
 }
 
 impl Observers {
+    #[cfg(test)]
+    pub(crate) fn keyed_rows(&self) -> usize {
+        self.by_row.len()
+    }
+
+    fn add_group(&mut self, key: &str, group: Group) {
+        if group.deps.keyed() {
+            for row in &group.deps.rows {
+                self.by_row.entry(row.clone()).or_default().insert(key.to_string());
+            }
+        }
+        self.groups.insert(key.to_string(), group);
+    }
+
+    fn remove_group(&mut self, key: &str) {
+        let Some(group) = self.groups.remove(key) else { return };
+        if !group.deps.keyed() {
+            return;
+        }
+        for row in &group.deps.rows {
+            if let Some(keys) = self.by_row.get_mut(row) {
+                keys.remove(key);
+                if keys.is_empty() {
+                    self.by_row.remove(row);
+                }
+            }
+        }
+    }
+
+    fn candidates(&self, batch: &[Event]) -> BTreeSet<String> {
+        let mut keys: BTreeSet<String> = BTreeSet::new();
+        for event in batch {
+            for row in &event.rows {
+                if let Some(found) = self.by_row.get(row) {
+                    keys.extend(found.iter().cloned());
+                }
+            }
+            if event.reset_all || !event.reset_models.is_empty() {
+                keys.extend(self.groups.iter().filter(|(_, group)| group.deps.keyed() && group.deps.hit(event)).map(|(key, _)| key.clone()));
+            }
+        }
+        for (key, group) in &self.groups {
+            if !group.deps.keyed() {
+                keys.insert(key.clone());
+            }
+        }
+        keys
+    }
+
     pub(crate) fn query_count(&self) -> usize {
         self.groups.len()
     }
@@ -57,7 +107,7 @@ impl Drop for ObserverHandle {
         let Some(group) = observers.groups.get_mut(&self.group) else { return };
         group.subscribers.retain(|(id, _)| *id != self.id);
         if group.subscribers.is_empty() {
-            observers.groups.remove(&self.group);
+            observers.remove_group(&self.group);
         }
     }
 }
@@ -66,11 +116,11 @@ impl Shared {
     pub(crate) fn refresh_groups(&self, batch: &[Event]) {
         let due: Vec<(String, Subject, i64, Arc<Version>)> = {
             let observers = locked(&self.observers);
-            observers
-                .groups
-                .iter()
+            let keys = observers.candidates(batch);
+            keys.into_iter()
+                .filter_map(|key| observers.groups.get(&key).map(|group| (key, group)))
                 .filter(|(_, group)| batch.iter().any(|event| (event.revision > group.at || event.epoch > group.epoch) && group.deps.hit(event)))
-                .map(|(key, group)| (key.clone(), group.subject.clone(), group.at, group.version.clone()))
+                .map(|(key, group)| (key, group.subject.clone(), group.at, group.version.clone()))
                 .collect()
         };
         for (key, subject, at, previous) in due {
@@ -120,7 +170,7 @@ impl Db {
                 locked(&self.shared.counters).observation_reads += 1;
                 let version = Arc::new(self.shared.evaluate(&subject)?);
                 let group = Group { subject, deps, at: version.revision, epoch: version.epoch, version: version.clone(), subscribers: vec![(id, subscriber.clone())] };
-                observers.groups.insert(key.clone(), group);
+                observers.add_group(&key, group);
                 version
             }
         };

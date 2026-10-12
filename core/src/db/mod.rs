@@ -41,6 +41,8 @@ mod fixtures;
 #[cfg(test)]
 mod invariants;
 #[cfg(test)]
+mod entity_pin_tests;
+#[cfg(test)]
 mod ephemeral_tests;
 #[cfg(test)]
 mod cache_tests;

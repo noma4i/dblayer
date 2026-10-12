@@ -156,6 +156,11 @@ impl Db {
         self.shared.store.counters() + locked(&self.shared.counters).clone() + locked(&self.shared.cache).counters()
     }
 
+    #[cfg(test)]
+    pub(crate) fn keyed_rows(&self) -> usize {
+        locked(&self.shared.observers).keyed_rows()
+    }
+
     pub fn observer_census(&self) -> ObserverCensus {
         let observers = locked(&self.shared.observers);
         ObserverCensus { observed_queries: observers.query_count(), subscriptions: observers.subscription_count() }

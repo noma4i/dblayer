@@ -298,3 +298,19 @@ fn an_ephemeral_change_of_an_included_row_updates_the_parent_observer() {
     assert_eq!(seen[1].diff.updated, vec![rid("n1")]);
     assert_eq!(seen[1].related["author"][&rid("n1")][0].get("typing"), Some(&json!(true)));
 }
+
+#[test]
+fn a_query_pinned_to_an_id_sees_the_write_and_the_reset_of_its_row() {
+    let (db, clock) = rig();
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("people").filtered(Where::equal("id", json!("p1"))), callback).unwrap();
+    db.settle();
+    typing(&db, true);
+    clock.advance(seconds(6));
+    db.expire_ephemeral().unwrap();
+    db.settle();
+    let seen = changes(&log);
+    assert_eq!(seen.len(), 3);
+    assert_eq!(seen[1].rows[0].get("typing").cloned(), Some(json!(true)));
+    assert_eq!(seen[2].rows[0].get("typing").cloned(), Some(json!(false)));
+}

@@ -40,6 +40,12 @@ val chat by Chat.find(chatId).collectAsLive()
 // chat.author.typing changes -> the chat row is in diff.updated
 ```
 
+## What a query depends on
+
+A query depends on its model, so a commit of any row of the model makes the library check it. One shape is cheaper: a query for a known set of ids is bound to those rows, not to the model. A commit of any other row does not read it and does not wake it.
+
+The binding applies only when the result can never contain a row outside the id set: a top-level `id` equal or `id` in a list, alone or inside all-of, without a scope and without includes. Every other shape (any-of, not, not-in-list, a scope, includes, counts) depends on the model. A row that does not exist yet, or leaves a narrower filter, still reaches a bound query.
+
 ## Guarantees
 
 - One commit is one visible transition: a parent with its cascade-deleted children, a replaced list and an id swap appear together.

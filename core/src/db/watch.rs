@@ -98,6 +98,10 @@ pub(crate) struct Deps {
 }
 
 impl Deps {
+    pub(crate) fn keyed(&self) -> bool {
+        self.models.is_empty() && self.scopes.is_empty() && !self.rows.is_empty()
+    }
+
     pub(crate) fn hit(&self, event: &Event) -> bool {
         event.reset_all
             || !self.reset_models.is_disjoint(&event.reset_models)
@@ -105,6 +109,21 @@ impl Deps {
             || !self.scopes.is_disjoint(&event.scopes)
             || !self.rows.is_disjoint(&event.rows)
     }
+}
+
+fn pinned_ids(query: &Query) -> Option<Vec<RowId>> {
+    if query.scope.is_some() || !query.include.is_empty() {
+        return None;
+    }
+    fn of(clause: &Where) -> Option<Vec<RowId>> {
+        match clause {
+            Where::Equal { field, value } if field == "id" => RowId::new(value.as_str()?).ok().map(|id| vec![id]),
+            Where::InList { field, values } if field == "id" => values.iter().map(|value| RowId::new(value.as_str()?).ok()).collect(),
+            Where::AllOf { clauses } => clauses.iter().find_map(of),
+            _ => None,
+        }
+    }
+    query.r#where.as_ref().and_then(of).filter(|ids| !ids.is_empty())
 }
 
 fn association<'a>(spec: &'a ModelSpec, name: &str) -> Result<&'a AssociationSpec, DbError> {
@@ -124,6 +143,10 @@ impl Shared {
             Subject::Rows(query) | Subject::Count(query) => {
                 let spec = self.spec(query.model.as_str())?;
                 let mut deps = Deps { reset_models: BTreeSet::from([query.model.clone()]), ..Deps::default() };
+                if let (Subject::Rows(_), Some(ids)) = (subject, pinned_ids(query)) {
+                    deps.rows = ids.into_iter().map(|id| RowRef::new(query.model.clone(), id)).collect();
+                    return Ok(deps);
+                }
                 match &query.scope {
                     Some(key) => {
                         deps.scopes.insert(ScopeRef::new(query.model.clone(), key.clone()));
