@@ -54,6 +54,8 @@ Typical scenarios to cover:
 | ----- | ------- |
 | Rust core and generator | `cargo test` |
 | Everything, including Swift and Kotlin | `bash scripts/check_dblayer.sh` |
+| Touched directories only | `bash scripts/check_dblayer.sh --fast` |
+| Every invariant has a test with an assertion | `bash scripts/check_invariants.sh` |
 | Duplicate mechanisms and names | `bash scripts/check_zoo.sh` |
 | Docs reference real paths | `bash scripts/check_docs.sh` |
 | No test waits without a bound | `bash scripts/check_waits.sh` |
@@ -98,7 +100,5 @@ Checks while the run goes and at the end:
 - A step that runs longer than 30 s fails with a dump of the queue. A blocked thread ends the run after 60 s with the dump of every worker.
 
 A failing run prints the findings, the command to repeat it and, for one thread, the smallest `--ops` that still fails. With several threads the same seed repeats the choices, not the interleaving, so a race may need several runs.
-
-`scripts/check_dblayer.sh` runs 3 fixed single-thread seeds (deterministic, blocking) and 3 four-thread seeds of 5 s (report only while open races remain).
 
 Example models for tests are in `fixtures/` (`User`, `Moment`, `Vibe`, `Chat`, `Message`).

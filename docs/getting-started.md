@@ -21,7 +21,11 @@ export PATH=/opt/homebrew/opt/rustup/bin:$PATH
 bash scripts/check_dblayer.sh
 ```
 
-It runs, in order: Rust tests, the iOS framework build, Swift tests, an iOS simulator compile, Android libraries for 4 ABIs, Kotlin unit tests and the consistency check.
+It runs the cheap checks first (generated models, duplicate mechanisms, docs, invariants and their self test) and stops there on a failure. Then 4 lanes run one after another (never 2 build slot commands at once, the first red lane stops the run): Rust tests, Swift tests on the macOS and arm64 simulator slices with an iOS simulator compile, Kotlin unit tests, and the ship lane (Android libraries for 4 ABIs, compile check of the iOS device and x86_64 simulator targets). Every step has a time limit and its process group is killed past it.
+
+`specs/` is not in git: the invariants check reads `specs/invariants.md` of the main tree, or the file named by `SPEC=<file>`. The summary line counts CPU seconds of waited children plus the CPU of the processes below a java process (the single-use Gradle daemon and its test executors).
+
+`bash scripts/check_dblayer.sh --fast` runs the cheap checks and only the steps of the touched directories (`core/`, `gen/`, `swift/`, `kotlin/`). `--list` prints the steps, `--only <lane>` runs one lane. Run the full check before a merge.
 
 Single steps:
 

@@ -7,6 +7,12 @@ export IPHONEOS_DEPLOYMENT_TARGET=17.0
 bridge="$root/swift"
 build="$root/target/ios-build"
 targets=(aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios)
+case "${1:-}" in
+  --check) targets=(aarch64-apple-darwin aarch64-apple-ios-sim) ;;
+  "") ;;
+  *) echo "usage: build_ios.sh [--check]" >&2; exit 2 ;;
+esac
+check=$([ "${1:-}" = --check ] && echo 1 || echo 0)
 
 for target in "${targets[@]}"; do
   cargo build --release --manifest-path "$root/core/Cargo.toml" --target "$target"
@@ -24,11 +30,17 @@ cp "$build/swift/dblayerFFI.modulemap" "$build/headers/module.modulemap"
 cp "$build/swift/dblayer.swift" "$bridge/Sources/DBlayer/dblayer.swift"
 
 mkdir -p "$build/simulator"
-lipo -create "$root/target/aarch64-apple-ios-sim/release/libdblayer.a" "$root/target/x86_64-apple-ios/release/libdblayer.a" \
-  -output "$build/simulator/libdblayer.a"
+if [ "$check" = 1 ]; then
+  cp "$root/target/aarch64-apple-ios-sim/release/libdblayer.a" "$build/simulator/libdblayer.a"
+  libraries=("$root/target/aarch64-apple-darwin/release/libdblayer.a" "$build/simulator/libdblayer.a")
+else
+  lipo -create "$root/target/aarch64-apple-ios-sim/release/libdblayer.a" "$root/target/x86_64-apple-ios/release/libdblayer.a" \
+    -output "$build/simulator/libdblayer.a"
+  libraries=("$root/target/aarch64-apple-darwin/release/libdblayer.a" "$root/target/aarch64-apple-ios/release/libdblayer.a" "$build/simulator/libdblayer.a")
+fi
 
 arguments=()
-for library in "$root/target/aarch64-apple-darwin/release/libdblayer.a" "$root/target/aarch64-apple-ios/release/libdblayer.a" "$build/simulator/libdblayer.a"; do
+for library in "${libraries[@]}"; do
   arguments+=(-library "$library" -headers "$build/headers")
 done
 xcodebuild -create-xcframework "${arguments[@]}" -output "$bridge/DBlayerFFI.xcframework"

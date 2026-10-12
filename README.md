@@ -117,7 +117,7 @@ Requirements: Xcode, Android SDK with NDK, Homebrew `rustup` with the iOS and An
 
 ```sh
 export PATH=/opt/homebrew/opt/rustup/bin:$PATH
-bash scripts/check_dblayer.sh      # Rust tests, Swift tests, iOS simulator build, Kotlin tests, Android libraries
+bash scripts/check_dblayer.sh      # cheap checks, then the Rust, Swift, Kotlin and Android lanes one after another (--fast: touched directories only)
 cargo test                         # Rust core and generator only
 ```
 
