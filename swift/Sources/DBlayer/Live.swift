@@ -162,7 +162,6 @@ public struct LiveView<Value: Sendable, Content: View>: View {
 @Observable
 public final class LiveList<Model: DBModel> {
   public private(set) var rows: [Model] = []
-  /// The ids of `rows` in order. It changes only when a delivery inserts, removes, moves or replaces a row, so a view that reads the ids and gets each row from its entity redraws on those and not on every update.
   public private(set) var ids: [String] = []
   /// The ids that the last delivery of `rows` replaced: real id to temporary id.
   public private(set) var replaced: [String: String] = [:]

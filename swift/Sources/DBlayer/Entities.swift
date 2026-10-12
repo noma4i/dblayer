@@ -318,7 +318,7 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, EntityListener, @unc
 final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   private let lock = NSLock()
   private let queryJson: String
-  private var subscription: LiveSubscription?
+  private var session: ListSession<Model, (Int64, Model?)>?
   private var cancelled = false
   private var count = 0
 
@@ -330,26 +330,28 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   func start(deliver: @escaping @Sendable (Int64, Model?) -> Void) {
     Task.detached(priority: .userInitiated) { [self] in
       guard let database = DB.database else { return }
-      let feed = ListFeed<Model>()
-      let listener = ChangeListener { change in
-        self.lock.withLock { self.count += 1 }
-        deliver(change.revision, feed.apply(change).rows.first)
-      }
-      guard let made = try? database.liveQuery(queryJson: queryJson, listener: listener) else { return }
+      let made = ListSession<Model, (Int64, Model?)>(
+        open: { [queryJson] listener in let subscription = try database.liveQuery(queryJson: queryJson, listener: listener); return { subscription.cancel() } },
+        emit: { value in
+          self.lock.withLock { self.count += 1 }
+          deliver(value.0, value.1)
+        },
+        map: { applied, change in (change.revision, applied.rows.first) }
+      )
       let keep = lock.withLock { () -> Bool in
         guard !cancelled else { return false }
-        subscription = made
+        session = made
         return true
       }
-      if !keep { made.cancel() }
+      if keep { try? made.start() }
     }
   }
 
   func cancel() {
-    let current = lock.withLock { () -> LiveSubscription? in
+    let current = lock.withLock { () -> ListSession<Model, (Int64, Model?)>? in
       cancelled = true
-      defer { subscription = nil }
-      return subscription
+      defer { session = nil }
+      return session
     }
     current?.cancel()
   }

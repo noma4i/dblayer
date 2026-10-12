@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-/// Runs inside the serialized bridge suite: every test here replaces the global database.
 extension BridgeProbeTests {
   fileprivate static let byText = Query<Moment>().order(Order(field: "text", direction: "asc"))
 
@@ -10,7 +9,6 @@ extension BridgeProbeTests {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
   }
 
-  /// The list of a query as the wrapper keeps it, read through the same feed that `Query.live` uses.
   fileprivate static func watching(_ query: Query<Moment>, feed: ListFeed<Moment>) async -> LiveStream<[Moment]> {
     let json = query.json
     let source = LiveSource<[Moment]>(initial: []) { emit in
@@ -61,7 +59,10 @@ extension BridgeProbeTests {
       }
       let fresh = await Self.byText.live.current()
       var seen = await changes.next() ?? []
-      while seen != fresh { seen = await changes.next() ?? [] }
+      for _ in 0 ..< 50 where seen != fresh {
+        guard let next = await changes.next() else { break }
+        seen = next
+      }
       #expect(seen.map(\.id) == fresh.map(\.id), "step \(step)")
     }
   }
@@ -79,5 +80,46 @@ extension BridgeProbeTests {
     _ = try await first.update(text: "z")
     let moved = await snapshots.next()
     #expect(moved?.reordered == true && moved?.rows.map(\.text) == ["b", "z"])
+  }
+
+  private static func moment(_ id: String) -> String {
+    let row = Moment(id: id, uuid: id, text: id, media: .object([:]), createdAt: "x")
+    return String(decoding: (try? JSONEncoder().encode(row)) ?? Data(), as: UTF8.self)
+  }
+
+  private static func wire(full: Bool = false, size: UInt32, rows: [String] = [], indexes: [UInt32] = [], removed: [String] = [], placed: [Placement] = []) -> LiveChange {
+    LiveChange(revision: 1, full: full, size: size, rows: rows.map(moment), rowIndexes: indexes, removed: removed, placed: placed, replaced: [], count: nil, error: nil)
+  }
+
+  @Test
+  func inv_observe_15_aDeliveryThatDoesNotFitTheRowsIsRefusedAndTheFeedCountsIt() {
+    let feed = ListFeed<Moment>()
+    #expect(feed.apply(Self.wire(full: true, size: 2, rows: ["a", "b"])).desynced == false)
+    #expect(feed.apply(Self.wire(size: 3, placed: [Placement(id: "zz", index: 0)])).desynced)
+    #expect(feed.apply(Self.wire(size: 2, rows: ["a"], indexes: [5])).desynced)
+    #expect(feed.apply(Self.wire(size: 9, rows: ["a"], indexes: [0])).desynced)
+    #expect(feed.desyncs == 3)
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func inv_observe_15_aDeliveryThatDoesNotFitOpensTheSubscriptionAgainForTheWholeList() async throws {
+    let (listeners, openings) = AsyncStream<QueryListener>.makeStream()
+    let (values, sink) = AsyncStream<[String]>.makeStream()
+    let session = ListSession<Moment, [String]>(
+      open: { listener in openings.yield(listener); return {} },
+      emit: { sink.yield($0) },
+      map: { applied, _ in applied.rows.map(\.id) }
+    )
+    try session.start()
+    var opened = listeners.makeAsyncIterator()
+    var seen = values.makeAsyncIterator()
+    let first = try #require(await opened.next())
+    first.changed(change: Self.wire(full: true, size: 2, rows: ["a", "b"]))
+    #expect(await seen.next() == ["a", "b"])
+    first.changed(change: Self.wire(size: 3, placed: [Placement(id: "zz", index: 0)]))
+    let second = try #require(await opened.next())
+    second.changed(change: Self.wire(full: true, size: 3, rows: ["a", "b", "c"]))
+    #expect(await seen.next() == ["a", "b", "c"])
+    #expect(session.desyncs == 1 && session.reopened == 1)
   }
 }

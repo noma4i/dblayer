@@ -32,7 +32,6 @@ pub struct Diff {
     pub updated: Vec<RowId>,
     pub moved: Vec<RowId>,
     pub replaced: Vec<(RowId, RowId)>,
-    /// The final index of every inserted, updated and moved id and of the new id of every replaced one.
     pub at: BTreeMap<RowId, usize>,
 }
 
@@ -47,7 +46,6 @@ impl Diff {
         Self { inserted, at, ..Self::default() }
     }
 
-    /// The ids that are new or changed their place, with their final index, ascending.
     pub fn placed(&self) -> Vec<(RowId, usize)> {
         let mut placed: Vec<(RowId, usize)> = self.inserted.iter().chain(&self.moved).map(|id| (id.clone(), self.at[id])).collect();
         placed.sort_by_key(|(_, index)| *index);

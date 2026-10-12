@@ -72,22 +72,49 @@ class ListDeltaTest {
     private fun json(row: Moment) = dbJson.encodeToString(Moment.serializer(), row)
 
     private fun change(
-        full: Boolean = false, rows: List<Moment> = emptyList(), indexes: List<UInt> = emptyList(), removed: List<String> = emptyList(),
+        size: Int, full: Boolean = false, rows: List<Moment> = emptyList(), indexes: List<UInt> = emptyList(), removed: List<String> = emptyList(),
         placed: List<Placement> = emptyList(), replaced: List<Replacement> = emptyList(),
-    ) = LiveChange(1L, full, rows.map(::json), indexes, removed, placed, replaced, null, null)
+    ) = LiveChange(1L, full, size.toUInt(), rows.map(::json), indexes, removed, placed, replaced, null, null)
 
     @Test
     fun inv_observe_15_the_feed_applies_each_kind_of_delta_in_order() {
         val feed = ListFeed(Moment.serializer())
-        val first = feed.apply(change(full = true, rows = listOf(moment("a", "1"), moment("b", "2"), moment("c", "3"), moment("d", "4"))))
+        val first = feed.apply(change(size = 4, full = true, rows = listOf(moment("a", "1"), moment("b", "2"), moment("c", "3"), moment("d", "4"))))
         assertEquals(listOf("a", "b", "c", "d"), first.rows.map { it.id })
-        val updated = feed.apply(change(rows = listOf(moment("b", "2x")), indexes = listOf(1u)))
+        val updated = feed.apply(change(size = 4, rows = listOf(moment("b", "2x")), indexes = listOf(1u)))
         assertEquals(false, updated.reordered)
         assertEquals(listOf("1", "2x", "3", "4"), updated.rows.map { it.text })
-        val moved = feed.apply(change(placed = listOf(Placement("d", 0u))))
+        val moved = feed.apply(change(size = 4, placed = listOf(Placement("d", 0u))))
         assertEquals(true, moved.reordered)
         assertEquals(listOf("d", "a", "b", "c"), moved.rows.map { it.id })
-        val mixed = feed.apply(change(rows = listOf(moment("e", "5"), moment("r", "6")), indexes = listOf(1u, 2u), removed = listOf("a"), placed = listOf(Placement("e", 1u), Placement("c", 3u)), replaced = listOf(Replacement("b", "r"))))
+        val mixed = feed.apply(change(size = 4, rows = listOf(moment("e", "5"), moment("r", "6")), indexes = listOf(1u, 2u), removed = listOf("a"), placed = listOf(Placement("e", 1u), Placement("c", 3u)), replaced = listOf(Replacement("b", "r"))))
         assertEquals(listOf("d", "e", "r", "c"), mixed.rows.map { it.id })
+    }
+
+    @Test
+    fun inv_observe_15_a_delivery_that_does_not_fit_the_rows_is_refused_and_the_feed_counts_it() {
+        val feed = ListFeed(Moment.serializer())
+        assertEquals(false, feed.apply(change(size = 2, full = true, rows = listOf(moment("a", "1"), moment("b", "2")))).desynced)
+        assertEquals(true, feed.apply(change(size = 3, placed = listOf(Placement("zz", 0u)))).desynced)
+        assertEquals(true, feed.apply(change(size = 2, rows = listOf(moment("a", "1")), indexes = listOf(5u))).desynced)
+        assertEquals(true, feed.apply(change(size = 9, rows = listOf(moment("a", "1")), indexes = listOf(0u))).desynced)
+        assertEquals(3, feed.desyncs)
+    }
+
+    @Test
+    fun inv_observe_15_a_delivery_that_does_not_fit_opens_the_subscription_again_for_the_whole_list() {
+        val listeners = java.util.concurrent.LinkedBlockingQueue<QueryListener>()
+        val values = java.util.concurrent.LinkedBlockingQueue<List<String>>()
+        val session = ListSession<Moment, List<String>>(Moment.serializer(), { listener -> listeners.put(listener); val cancel: () -> Unit = {}; cancel }, { values.put(it) }, { applied, _ -> applied.rows.map { it.id } })
+        session.start()
+        val first = listeners.poll(5, java.util.concurrent.TimeUnit.SECONDS)!!
+        first.changed(change(size = 2, full = true, rows = listOf(moment("a", "1"), moment("b", "2"))))
+        assertEquals(listOf("a", "b"), values.poll(5, java.util.concurrent.TimeUnit.SECONDS))
+        first.changed(change(size = 3, placed = listOf(Placement("zz", 0u))))
+        val second = listeners.poll(5, java.util.concurrent.TimeUnit.SECONDS)!!
+        second.changed(change(size = 3, full = true, rows = listOf(moment("a", "1"), moment("b", "2"), moment("c", "3"))))
+        assertEquals(listOf("a", "b", "c"), values.poll(5, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals(1, session.desyncs)
+        assertEquals(1, session.reopened)
     }
 }

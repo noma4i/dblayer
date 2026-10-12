@@ -18,7 +18,6 @@ enum Target {
 }
 
 struct RowsTape {
-    /// The newest delivery with its rows rebuilt to the whole list.
     last: Option<Change>,
     seen: u64,
 }

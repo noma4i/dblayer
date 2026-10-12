@@ -171,7 +171,6 @@ struct Due {
     version: Arc<Version>,
     touched: Option<HashSet<String>>,
     replaced: Vec<(RowId, RowId)>,
-    /// The position of the newest commit of the batch, when no ephemeral overlay is part of it.
     reached: Option<(i64, u64)>,
 }
 
@@ -208,7 +207,6 @@ impl Shared {
         }
     }
 
-    /// A batch cannot have changed the list when every touched row is outside it and fails the filter of the query.
     fn cannot_enter(&self, query: &Query, previous: &Version, touched: &HashSet<String>) -> Result<bool, DbError> {
         let Body::Rows(body) = &previous.body else { return Ok(false) };
         let plain = query.include.is_empty() && query.scope.is_none() && query.limit.is_none() && query.offset.is_none();

@@ -117,7 +117,6 @@ pub fn put(db: &Db, model: &str, value: Value) {
 
 pub type ChangeLog = Arc<Mutex<Vec<Change>>>;
 
-/// The list that a reader rebuilds from the deliveries.
 #[derive(Default)]
 pub struct Whole(Mutex<Vec<Row>>);
 
@@ -129,7 +128,6 @@ impl Whole {
     }
 }
 
-/// Records every delivery with its rows rebuilt to the whole list, so a test reads the list the way a reader of the library sees it.
 pub fn recorder() -> (ChangeLog, impl Fn(&Change) + Send + Sync + 'static) {
     let log: ChangeLog = Arc::new(Mutex::new(Vec::new()));
     let sink = log.clone();

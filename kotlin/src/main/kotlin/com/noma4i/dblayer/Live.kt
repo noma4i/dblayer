@@ -135,7 +135,6 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     }
 
     val rows: kotlinx.coroutines.flow.StateFlow<List<Model>> get() = mutableRows
-    /** The ids of `rows` in order. They change only when a delivery inserts, removes, moves or replaces a row. */
     val ids: kotlinx.coroutines.flow.StateFlow<List<String>> get() = mutableIds
     /** The ids that the last delivery of `rows` replaced: real id to temporary id. */
     val replaced: kotlinx.coroutines.flow.StateFlow<Map<String, String>> get() = mutableReplaced

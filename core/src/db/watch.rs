@@ -19,7 +19,6 @@ use super::row::Row;
 pub type Related = BTreeMap<String, BTreeMap<RowId, Vec<Row>>>;
 type ParentStamps = HashMap<RowId, Vec<(RowRef, Stamp)>>;
 
-/// One delivery of a list. After the first one (`full`) `rows` holds only the rows that were inserted, updated or replaced, with their final indexes in `diff.at`.
 #[derive(Debug, Clone)]
 pub struct Change {
     pub revision: i64,
@@ -27,10 +26,10 @@ pub struct Change {
     pub related: Related,
     pub diff: Diff,
     pub full: bool,
+    pub size: usize,
 }
 
 impl Change {
-    /// The reference way to rebuild a list from deliveries: the wrappers do the same steps on their arrays.
     pub fn apply_to(&self, rows: &mut Vec<Row>) {
         if self.full {
             rows.clone_from(&self.rows);
@@ -88,7 +87,6 @@ pub(crate) enum Body {
     Count(i64),
 }
 
-/// The rows that one evaluation read: every row of the list, or only the new and touched ones.
 #[derive(Default, Clone)]
 pub(crate) struct Loaded {
     pub rows: HashMap<String, Row>,
@@ -128,7 +126,6 @@ impl Version {
     }
 }
 
-/// The rows a diff delivers (inserted, updated and the new side of replaced pairs) in final order, with the related rows of their parents.
 pub(crate) fn changed_rows(diff: &Diff, rows: &mut HashMap<String, Row>, related: &mut Related) -> (Vec<Row>, Related) {
     let replaced_to = diff.replaced.iter().map(|(_, to)| to);
     let mut ids: Vec<&RowId> = diff.inserted.iter().chain(&diff.updated).chain(replaced_to).collect();
@@ -241,7 +238,6 @@ impl Shared {
         }
     }
 
-    /// Reads the whole list: every row, its related rows and one entry per row.
     pub(crate) fn evaluate(&self, subject: &Subject) -> Result<Evaluated, DbError> {
         let epoch = self.ephemeral.lock().epoch;
         self.read(|reader| {
@@ -266,7 +262,6 @@ impl Shared {
         })
     }
 
-    /// Reads the ordered keys of the list once and loads only the rows that are new, changed their revision or were touched. The entries of every other row are reused.
     pub(crate) fn evaluate_step(&self, query: &Query, previous: &Version, touched: &HashSet<String>) -> Result<Evaluated, DbError> {
         let Body::Rows(old) = &previous.body else { return self.evaluate(&Subject::Rows(query.clone())) };
         let epoch = self.ephemeral.lock().epoch;
@@ -297,7 +292,6 @@ impl Shared {
         })
     }
 
-    /// The rows and related rows of a list that is already known by its entries, for a subscriber that joins it.
     pub(crate) fn load_whole(&self, subject: &Subject, version: &Version) -> Result<Loaded, DbError> {
         let Body::Rows(body) = &version.body else { return Ok(Loaded::default()) };
         let (model, include) = match subject {

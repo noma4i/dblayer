@@ -164,7 +164,7 @@ impl Subscriber {
                 diff.map(|diff| {
                     let (rows, related) = if first { whole_rows(body, &mut taken.loaded) } else { changed_rows(&diff, &mut taken.loaded.rows, &mut taken.loaded.related) };
                     locked(&self.counters).rows_delivered += rows.len();
-                    let change = Change { revision: taken.latest.revision, rows, related, diff, full: first };
+                    let change = Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.entries.len() };
                     catch_unwind(AssertUnwindSafe(|| call(&change)))
                 })
             }

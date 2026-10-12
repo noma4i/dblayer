@@ -103,5 +103,5 @@ class ActionAnswer<Model : DBModel, Answer>(val model: Model, private val operat
 fun <Target : DBModel> DBModel.related(name: String, serializer: KSerializer<Target>): LiveSource<List<Target>> {
     val model = modelName
     val rowId = id
-    return listSource(emptyList(), serializer, open = { listener -> DBlayer.database.liveHasMany(model, rowId, name, listener) }) { feed, change -> feed.apply(change).rows }
+    return listSource(emptyList(), serializer, open = { listener -> DBlayer.database.liveHasMany(model, rowId, name, listener) }) { applied, _ -> applied.rows }
 }

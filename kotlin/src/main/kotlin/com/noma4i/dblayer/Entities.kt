@@ -255,7 +255,7 @@ internal class SingletonFeed<Model : DBModel>(
     private val serializer: KSerializer<Model>,
     private val deliver: (SingletonFeed<Model>, Long, Model?) -> Unit,
 ) {
-    private var subscription: LiveSubscription? = null
+    private var session: ListSession<Model, Pair<Long, Model?>>? = null
     private var cancelled = false
     private val count = AtomicInteger()
 
@@ -264,14 +264,18 @@ internal class SingletonFeed<Model : DBModel>(
 
     fun attach() {
         val database = DBlayer.databaseOrNull ?: return
-        val feed = ListFeed(serializer)
-        val made = runCatching { database.liveQuery(query.json, ChangeListener { change -> count.incrementAndGet(); deliver(this, change.revision, feed.apply(change).rows.firstOrNull()) }) }.getOrNull() ?: return
-        val keep = synchronized(this) { if (cancelled) false else { subscription = made; true } }
-        if (!keep) made.cancel()
+        val made = ListSession<Model, Pair<Long, Model?>>(
+            serializer,
+            { listener -> val subscription = database.liveQuery(query.json, listener); val cancel: () -> Unit = { subscription.cancel() }; cancel },
+            { value -> count.incrementAndGet(); deliver(this, value.first, value.second) },
+            { applied, change -> change.revision to applied.rows.firstOrNull() },
+        )
+        val keep = synchronized(this) { if (cancelled) false else { session = made; true } }
+        if (keep) runCatching { made.start() }
     }
 
     fun cancel() {
-        val current = synchronized(this) { cancelled = true; subscription.also { subscription = null } }
+        val current = synchronized(this) { cancelled = true; session.also { session = null } }
         current?.cancel()
     }
 }
