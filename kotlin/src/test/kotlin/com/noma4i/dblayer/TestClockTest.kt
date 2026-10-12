@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+@OptIn(DBlayerTestingApi::class)
 class TestClockTest {
     private fun loadAfter(advanceMillis: Long): Int = runBlocking {
         val transport = MockTransport()
