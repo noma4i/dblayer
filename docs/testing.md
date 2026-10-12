@@ -45,7 +45,7 @@ Typical scenarios to cover:
 | No test waits without a bound | `bash scripts/check_waits.sh` |
 | No cable line that no test runs | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
 
-The coverage reports cost time: the Swift lane with coverage takes about the same as without, the Kotlin lane roughly doubles because of the coverage report task. The rule covers the cable code only.
+The coverage reports cost time: the Swift lane with coverage takes about the same as without, the Kotlin lane roughly doubles because of the coverage report task. The rule covers the cable code only. The Swift lane counts with atomic profile counters, because plain counters lose increments when suites run in parallel and report an executed line as never run.
 
 Test conventions:
 

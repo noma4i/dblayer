@@ -1,6 +1,6 @@
 #!/bin/bash
 # INV-WAIT-05: a production line of the cable code that no test runs is a defect or dead code.
-# Reads the coverage of the test runs the lane already did: swift test --enable-code-coverage, and the AGP unit test coverage report of testDebugUnitTest.
+# Reads the coverage of the test runs the lane already did: swift test --enable-code-coverage with atomic counters (-Xswiftc -Xllvm -Xswiftc -instrprof-atomic-counter-update-all), and the AGP unit test coverage report of testDebugUnitTest.
 # Lines that stay at 0 executions are listed in scripts/coverage_allowlist.txt (file, count, line text, owner, reason).
 # A new never-executed line fails. An allowed line that a test now runs fails too, so the list only shrinks.
 # check_coverage.sh --write-baseline prints the allowlist for the current coverage. The owner and the reason of an entry come

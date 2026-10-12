@@ -22,7 +22,7 @@ step cargo test --manifest-path "$root/Cargo.toml" -p dblayer-gen
 
 echo "== ios: xcframework, swift test, iOS simulator compile"
 step bash "$root/scripts/build_ios.sh"
-test_step swift test --package-path "$root/swift" --enable-code-coverage
+test_step swift test --package-path "$root/swift" --enable-code-coverage -Xswiftc -Xllvm -Xswiftc -instrprof-atomic-counter-update-all
 step bash -c 'cd -- "$1/swift" && exec xcodebuild build -scheme DBlayer -destination "generic/platform=iOS Simulator" -derivedDataPath "$1/target/dd-swift" -quiet' _ "$root"
 
 echo "== kotlin: libs for 4 Android ABI, bindings, gradle unit tests"
