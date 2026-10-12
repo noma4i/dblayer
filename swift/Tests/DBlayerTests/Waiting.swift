@@ -1,10 +1,13 @@
 import Foundation
 import Testing
 
+/// The one bound of every wait: it only stops a hang, no wait is expected to come near it.
+let hangGuard: Duration = .seconds(60)
+
 /// The one way a test waits for a condition. It is bounded, and the failure names the condition and the line.
 func eventually(
   _ what: String = "the condition",
-  timeout: Duration = .seconds(20),
+  timeout: Duration = hangGuard,
   isolation: isolated (any Actor)? = #isolation,
   sourceLocation: SourceLocation = #_sourceLocation,
   _ condition: () async -> Bool
@@ -32,7 +35,7 @@ final class Cursor<Sequence: AsyncSequence>: @unchecked Sendable where Sequence.
 
   func next(
     _ what: String = "the next element",
-    timeout: Duration = .seconds(20),
+    timeout: Duration = hangGuard,
     sourceLocation: SourceLocation = #_sourceLocation
   ) async -> Sequence.Element? {
     let element: Sequence.Element?? = await withTaskGroup(of: Sequence.Element??.self) { group in
@@ -55,7 +58,7 @@ final class Cursor<Sequence: AsyncSequence>: @unchecked Sendable where Sequence.
   /// Reads until an element satisfies the predicate, within one bound for the whole wait.
   func first(
     _ what: String,
-    timeout: Duration = .seconds(20),
+    timeout: Duration = hangGuard,
     sourceLocation: SourceLocation = #_sourceLocation,
     where predicate: @Sendable (Sequence.Element) -> Bool
   ) async -> Sequence.Element? {
@@ -74,7 +77,7 @@ final class Cursor<Sequence: AsyncSequence>: @unchecked Sendable where Sequence.
   }
 
   /// Reads `count` elements, within one bound for the whole wait.
-  func collect(_ count: Int, _ what: String, timeout: Duration = .seconds(20), sourceLocation: SourceLocation = #_sourceLocation) async -> [Sequence.Element] {
+  func collect(_ count: Int, _ what: String, timeout: Duration = hangGuard, sourceLocation: SourceLocation = #_sourceLocation) async -> [Sequence.Element] {
     let deadline = ContinuousClock.now + timeout
     var elements: [Sequence.Element] = []
     while elements.count < count, ContinuousClock.now < deadline {

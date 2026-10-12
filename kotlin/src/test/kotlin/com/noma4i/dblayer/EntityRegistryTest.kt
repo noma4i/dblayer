@@ -31,7 +31,7 @@ class EntityRegistryTest {
     private fun registry(source: EntitySource = CountingSource(), maxAge: Long = 120_000, maxCount: Int = 200, now: () -> Long = { 0 }) =
         Entities("Moment", Moment.serializer(), maxAge, maxCount, now, source)
 
-    private fun collectGarbage(until: () -> Boolean) = eventuallyBlocking("the garbage collector frees the readers") { System.gc(); until() }
+    private fun collectGarbage(until: () -> Boolean) = eventuallyBlocking("the garbage collector frees the readers") { until() || run { System.gc(); false } }
 
     /** REL-01 */
     @Test
