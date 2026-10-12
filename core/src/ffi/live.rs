@@ -89,5 +89,5 @@ impl LiveSubscription {
         let value = receiver.wait_for(Option::is_some).await.expect("live owns sender").as_ref().expect("first delivery").clone();
         value
     }
-    pub fn cancel(&self) { self.handles.lock().expect("live handles").take(); }
+    pub fn cancel(&self) { crate::db::locked(&self.handles).take(); }
 }

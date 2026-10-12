@@ -39,3 +39,14 @@ fn inv_observe_17_a_live_change_of_one_changed_row_carries_one_row_at_every_list
         .collect();
     assert_eq!(sizes, vec![(1, false); 3], "(rows on the wire, full) after 1 update at 20, 200, 2000 rows");
 }
+
+#[test]
+fn inv_panic_01_live_and_state_subscriptions_cancel_after_a_poisoned_lock() {
+    let (latest, _) = tokio::sync::watch::channel(None);
+    let live = super::LiveSubscription { latest, handles: Mutex::new(None) };
+    crate::db::fixtures::poison(&live.handles);
+    live.cancel();
+    let state = super::StateSubscription { task: Mutex::new(None) };
+    crate::db::fixtures::poison(&state.task);
+    state.cancel();
+}

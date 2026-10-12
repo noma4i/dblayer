@@ -16,7 +16,7 @@ impl Clock for SystemClock {
 
 #[derive(Debug, Clone, Default)]
 pub struct ManualClock {
-    now: Arc<Mutex<Duration>>,
+    pub(crate) now: Arc<Mutex<Duration>>,
 }
 
 impl ManualClock {
@@ -25,17 +25,17 @@ impl ManualClock {
     }
 
     pub fn advance(&self, by: Duration) {
-        *self.now.lock().expect("manual clock") += by;
+        *crate::db::locked(&self.now) += by;
     }
 
     #[cfg(test)]
     pub fn set(&self, now: Duration) {
-        *self.now.lock().expect("manual clock") = now;
+        *crate::db::locked(&self.now) = now;
     }
 }
 
 impl Clock for ManualClock {
     fn now(&self) -> Duration {
-        *self.now.lock().expect("manual clock")
+        *crate::db::locked(&self.now)
     }
 }

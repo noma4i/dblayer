@@ -49,7 +49,7 @@ pub struct StateSubscription {
 #[uniffi::export]
 impl StateSubscription {
     pub fn cancel(&self) {
-        if let Some(task) = self.task.lock().expect("state task").take() { task.abort(); }
+        if let Some(task) = crate::db::locked(&self.task).take() { task.abort(); }
     }
 }
 

@@ -21,3 +21,12 @@ fn clocks_work_as_dyn_clock() {
     let clock: std::sync::Arc<dyn Clock> = std::sync::Arc::new(ManualClock::new(Duration::from_secs(3)));
     assert_eq!(clock.now(), Duration::from_secs(3));
 }
+
+#[test]
+fn inv_panic_01_a_manual_clock_survives_a_poisoned_lock() {
+    let clock = ManualClock::new(Duration::from_secs(10));
+    crate::db::fixtures::poison(&clock.now);
+    clock.advance(Duration::from_secs(5));
+    clock.set(Duration::from_secs(20));
+    assert_eq!(clock.now(), Duration::from_secs(20));
+}
