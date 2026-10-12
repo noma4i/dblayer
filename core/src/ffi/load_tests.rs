@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde_json::{Map, Value};
 use tokio::sync::Notify;
 
-use super::{Config, Database, DbError, LiveChange, QueryListener, Transport};
+use super::{Config, Database, DbError, LiveChange, QueryListener, TestClock, Transport};
 use crate::identity::RowId;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
@@ -45,12 +45,30 @@ fn relation(name: &str, stale: &str) -> RelationSpec {
 }
 
 fn rig(delay: Duration) -> (Arc<Database>, Arc<Counting>) {
+    let (db, transport, _) = open_rig(delay, None);
+    (db, transport)
+}
+
+fn rig_with_clock() -> (Arc<Database>, Arc<Counting>, Arc<TestClock>) {
+    let clock = TestClock::new(1_000_000);
+    let (db, transport, _) = open_rig(Duration::ZERO, Some(clock.clone()));
+    (db, transport, clock)
+}
+
+fn open_rig(delay: Duration, clock: Option<Arc<TestClock>>) -> (Arc<Database>, Arc<Counting>, Option<Arc<TestClock>>) {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     model.relations.extend([relation("feed", "5.minutes"), relation("quick", "200.milliseconds")]);
     let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), delay });
-    let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone() as Arc<dyn Transport>)).unwrap();
+    let config = Config { path: None, data_version: None, cache_rows: 8 };
+    let models = serde_json::to_string(&vec![model]).unwrap();
+    let transport_handle = Some(transport.clone() as Arc<dyn Transport>);
+    let db = match &clock {
+        Some(clock) => Database::open_with_clock(config, models, transport_handle, clock.clone()),
+        None => Database::open(config, models, transport_handle),
+    }
+    .unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();
-    (db, transport)
+    (db, transport, clock)
 }
 
 async fn load(db: &Database, relation: &str) -> Result<(), DbError> { db.load("Moment".into(), relation.into(), "{}".into()).await }
@@ -119,4 +137,15 @@ async fn inv_fresh_13_a_cancelled_caller_does_not_cancel_the_load_another_waits_
     waiter.await.unwrap().unwrap();
     assert_eq!(queries(&transport), 1);
     assert!(stored(&db));
+}
+
+#[tokio::test]
+async fn inv_fresh_15_a_test_clock_moves_fresh_for_without_sleeping() {
+    for (advance_ms, expected) in [(5 * 60_000 + 1_000, 2), (5 * 60_000 - 1_000, 1)] {
+        let (db, transport, clock) = rig_with_clock();
+        load(&db, "feed").await.unwrap();
+        clock.advance(advance_ms);
+        load(&db, "feed").await.unwrap();
+        assert_eq!(queries(&transport), expected, "advanced by {advance_ms} ms");
+    }
 }

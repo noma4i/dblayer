@@ -24,7 +24,10 @@ public enum DB {
   }
 
   public static func open(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
-    let database = try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport)
+    try install(try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport), transport: transport, operations: operations)
+  }
+
+  @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) throws {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     if transport != nil { try database.registerOperations(defsJson: JSONValue.array(definitions).text) }
     reachability.start(try database.onlineSink())

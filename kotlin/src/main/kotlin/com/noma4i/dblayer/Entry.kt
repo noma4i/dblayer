@@ -27,7 +27,10 @@ object DBlayer {
         open(OkHttpTransport(endpoint, { headers }), modelsJson, path, operations)
 
     fun open(transport: Transport?, modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList()) {
-        val opened = Database.open(Config(path, null, 2000u), modelsJson, transport)
+        install(Database.open(Config(path, null, 2000u), modelsJson, transport), transport, operations)
+    }
+
+    internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
         if (transport != null) opened.registerOperations(JsonArray(definitions).toString())
         database = opened

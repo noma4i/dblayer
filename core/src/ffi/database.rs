@@ -1,10 +1,11 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 use serde_json::{Map, Value};
 use tokio::runtime::Runtime;
 use crate::db::{Db, DbConfig};
 use crate::identity::RowId;
-use crate::pacing::SystemClock;
+use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::query::{Query, Where};
 use crate::schema::ModelSpec;
 use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
@@ -32,7 +33,27 @@ pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u6
 pub struct QueuedAction { pub row_json: String, pub operation: i64 }
 
 #[derive(uniffi::Object)]
+pub struct TestClock { clock: Arc<ManualClock> }
+
+#[uniffi::export]
+impl TestClock {
+    #[uniffi::constructor]
+    pub fn new(start_millis: u64) -> Arc<Self> { Arc::new(Self { clock: Arc::new(ManualClock::new(Duration::from_millis(start_millis))) }) }
+    pub fn advance(&self, millis: u64) { self.clock.advance(Duration::from_millis(millis)) }
+}
+
+#[derive(uniffi::Object)]
 pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync> }
+
+impl Database {
+    fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
+        let models: Vec<ModelSpec> = serde_json::from_str(&models_json)?;
+        let db = Db::open_with(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), DbConfig { cache_rows: config.cache_rows as usize })?;
+        db.set_clock(clock.clone());
+        let sync = transport.map(|transport| Sync::new(db.clone(), Arc::new(ForeignTransport(transport)), clock, SyncConfig::default()));
+        Ok(Arc::new(Self { db, sync }))
+    }
+}
 
 fn id(value: &str) -> Result<RowId, DbError> {
     RowId::new(value).map_err(|error| DbError::Invalid { detail: error.to_string() })
@@ -42,10 +63,12 @@ fn id(value: &str) -> Result<RowId, DbError> {
 impl Database {
     #[uniffi::constructor]
     pub fn open(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>) -> Result<Arc<Self>, DbError> {
-        let models: Vec<ModelSpec> = serde_json::from_str(&models_json)?;
-        let db = Db::open_with(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), DbConfig { cache_rows: config.cache_rows as usize })?;
-        let sync = transport.map(|transport| Sync::new(db.clone(), Arc::new(ForeignTransport(transport)), Arc::new(SystemClock), SyncConfig::default()));
-        Ok(Arc::new(Self { db, sync }))
+        Self::start(config, models_json, transport, Arc::new(SystemClock))
+    }
+
+    #[uniffi::constructor]
+    pub fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<TestClock>) -> Result<Arc<Self>, DbError> {
+        Self::start(config, models_json, transport, clock.clock.clone())
     }
 
     pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {

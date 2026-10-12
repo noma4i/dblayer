@@ -208,6 +208,8 @@ Three calls read a remote relation, each for one need:
 
 `load()` makes the same decision as connecting a live read: no request when the window is fresh and not invalidated, exactly 1 request when it is stale or never loaded. N parallel loads of one relation make 1 request, shared with a live connect and with `refresh()`. A failed load throws like `refresh()`. Cancelling the caller stops only its own wait: the load goes on for the other readers.
 
+To test the 24 h or 5 minute windows, open the database with the test clock and `advance` it past `fresh_for`: the next `load()` requests again, and 1 second before the limit it does not. See [testing](testing.md).
+
 ```swift
 try await Moment.byUser(userId: 5).load()
 ```

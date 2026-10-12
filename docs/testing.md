@@ -22,7 +22,21 @@ DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
 
 A live query loads by itself when something subscribes, and an explicit refresh can add a second request. Queue 2 or 3 replies per operation and assert the content of `transport.calls`, not their exact count.
 
-Use a manual clock to test freshness and load retries without sleeping.
+Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. The production `open` has no clock parameter.
+
+```swift
+let clock = try DB.openTesting(transport: transport, modelsJSON: modelsJSON)
+try await Moment.feed.load()
+clock.advance(by: 5 * 60 + 1)   // 1 second past fresh_for
+try await Moment.feed.load()    // requests again
+```
+
+```kotlin
+val clock = DBlayer.openTesting(transport, modelsJSON)
+Moment.feed.load()
+clock.advance(5 * 60_000L + 1_000)
+Moment.feed.load()
+```
 
 Typical scenarios to cover:
 
