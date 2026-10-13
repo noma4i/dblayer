@@ -111,6 +111,8 @@ action :like do
 end
 ```
 
+Every action declares its local effect: `optimistic` fields, or `local_effect :none, reason: "..."` when the server alone owns the result. The generator refuses an action with neither. `UNDECLARED_ACTIONS` in `gen/src/check/mod.rs` lists the existing actions that still declare neither; the list only shrinks.
+
 An action can take arguments. `args` declares them (`:bool`, `:int`, `:num`, `:string`, `:id`). `input` and `optimistic` can use an argument by name:
 
 ```ruby

@@ -23,7 +23,7 @@ fn remote(lines: &str) -> String {
 }
 
 fn action(lines: &str) -> String {
-    sample("", &format!("  action :like do\n    mutation Like\n{lines}\n  end"))
+    sample("", &format!("  action :like do\n    mutation Like\n    local_effect :none, reason: \"test\"\n{lines}\n  end"))
 }
 
 fn rows() -> Vec<(&'static str, String, String)> {

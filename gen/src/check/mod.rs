@@ -15,6 +15,24 @@ const FIELD_WORDS: [&str; 12] =
 const EPHEMERAL_WORDS: [&str; 11] = ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list"];
 const ASSOCIATION_WORDS: [&str; 4] = ["belongs_to", "has_many", "has_one", "references"];
 
+const UNDECLARED_ACTIONS: [&str; 15] = [
+    "Chat.leave",
+    "Chat.add_members",
+    "Chat.remove_members",
+    "Message.upload",
+    "Message.forward",
+    "Message.open_gift",
+    "Moment.set_quality_score",
+    "Moment.set_ai_score",
+    "Moment.set_content_kind",
+    "Moment.reanalyze",
+    "User.send_gift",
+    "User.send_gift_with_note",
+    "User.send_intro",
+    "User.block",
+    "User.unblock",
+];
+
 #[derive(Clone, Copy, PartialEq)]
 enum Context {
     Model,
@@ -113,6 +131,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
             plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false)])
         }
         (Context::Action, "mutation") => plain(Shape::Const, vec![]),
+        (Context::Action, "local_effect") => plain(Shape::Name, vec![key("reason", Want::Any, false)]),
         (Context::Action, "on_failure") => plain(Shape::Name, vec![]),
         (Context::Action, "wrap" | "response") => plain(Shape::Name, vec![]),
         (Context::Action, "root") => plain(Shape::Const, vec![]),
@@ -241,7 +260,7 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
             check_standard_input(call, &fields, &mut report);
         }
         if call.word == "action" {
-            check_action(call, &fields, &remotes, &mut report);
+            check_action(call, &node.name, &fields, &remotes, &mut report);
         }
     }
     for schema in node.body.iter().filter(|call| call.word == "schema") {
@@ -276,7 +295,7 @@ fn check_standard_input(call: &Call, fields: &HashSet<&str>, report: &mut impl F
     }
 }
 
-fn check_action(action: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
+fn check_action(action: &Call, model: &str, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
     let lines: Vec<&Call> = action.block.iter().flatten().collect();
     let mut seen = HashSet::new();
     for call in &lines {
@@ -288,6 +307,23 @@ fn check_action(action: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, 
     }
     if action.block.is_some() && !seen.contains("mutation") {
         report(action.line, action.column, "`action` needs a `mutation` line".to_string());
+    }
+    check_local_effect(action, model, &seen, report);
+}
+
+fn check_local_effect(action: &Call, model: &str, seen: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
+    let Some(block) = &action.block else { return };
+    let name = symbol_name(action.args.first()).unwrap_or_default();
+    if let Some(effect) = block.iter().find(|call| call.word == "local_effect") {
+        let reason = effect.options.iter().find(|pair| pair.key == "reason").map(|pair| &pair.value.item);
+        if symbol_name(effect.args.first()) != Some("none") {
+            report(effect.line, effect.column, "`local_effect` must be `:none`".to_string());
+        }
+        if !matches!(reason, Some(Value::Str(text)) if !text.trim().is_empty()) {
+            report(effect.line, effect.column, "`local_effect :none` needs a non-empty `reason:` string".to_string());
+        }
+    } else if !seen.contains("optimistic") && !action.options.iter().any(|pair| pair.key == "optimistic") && !UNDECLARED_ACTIONS.contains(&format!("{model}.{name}").as_str()) {
+        report(action.line, action.column, format!("`action :{name}` must declare `optimistic` or `local_effect :none, reason: \"...\"`"));
     }
 }
 

@@ -154,22 +154,22 @@ fn standard_action_rules() {
 
 #[test]
 fn action_correlate_takes_fields_and_dotted_paths() {
-    let source = |line: &str| format!("model Sample do\n  schema do\n    string :name, index: true\n    object :media, null: true\n  end\n\n  action :x do\n    mutation M\n    {line}\n  end\nend\n");
+    let source = |line: &str| format!("model Sample do\n  schema do\n    string :name, index: true\n    object :media, null: true\n  end\n\n  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    {line}\n  end\nend\n");
     assert!(parse_models(&source("correlate :name, \"media.blobId\"")).is_ok());
-    assert_eq!(failure(&source("correlate 1")), (9, "`correlate` needs 1 or more names like `:a, \"media.blobId\"`".to_string()));
+    assert_eq!(failure(&source("correlate 1")), (10, "`correlate` needs 1 or more names like `:a, \"media.blobId\"`".to_string()));
 }
 
 #[test]
 fn action_block_rules() {
-    assert_eq!(failure_in("  action :x do\n    input a: :id\n  end"), (7, "`action` needs a `mutation` line".to_string()));
+    assert_eq!(failure_in("  action :x do\n    input a: :id\n    local_effect :none, reason: \"test\"\n  end"), (7, "`action` needs a `mutation` line".to_string()));
     assert_eq!(failure_in("  action :x\n"), (7, "`action` needs a `do ... end` block".to_string()));
-    assert_eq!(failure_in("  action :x do\n    mutation M\n    mutation N\n  end"), (9, "`mutation` is declared twice".to_string()));
-    assert_eq!(failure_in("  action :x do\n    mutation M\n    bogus 1\n  end"), (9, "unknown word `bogus`".to_string()));
+    assert_eq!(failure_in("  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    mutation N\n  end"), (10, "`mutation` is declared twice".to_string()));
+    assert_eq!(failure_in("  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    bogus 1\n  end"), (10, "unknown word `bogus`".to_string()));
     assert_eq!(failure_in("  action :x do\n    mutation M\n    optimistic ghost: true\n  end"), (9, "`optimistic` names unknown field `ghost`".to_string()));
     assert_eq!(failure_in("  action :x do\n    mutation M\n    optimistic name: { by: :ghost, element: { name: :a } }\n  end").1, "optimistic hash must be `{ by: :key, element: { key: :arg, ... } }` with the key among the element fields");
-    assert_eq!(failure_in("  action :x do\n    mutation M\n    refetch :ghost\n  end"), (9, "`refetch` names `ghost`, which is not a `remote`".to_string()));
-    assert_eq!(failure_in("  action :x do\n    mutation M\n    result note: :ids\n  end"), (9, "result type must be :bool, :int, :num, :string or :id".to_string()));
-    assert_eq!(failure_in("  scope :x\n  action :x do\n    mutation M\n  end"), (8, "name `x` is declared twice".to_string()));
+    assert_eq!(failure_in("  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    refetch :ghost\n  end"), (10, "`refetch` names `ghost`, which is not a `remote`".to_string()));
+    assert_eq!(failure_in("  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    result note: :ids\n  end"), (10, "result type must be :bool, :int, :num, :string or :id".to_string()));
+    assert_eq!(failure_in("  scope :x\n  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n  end"), (8, "name `x` is declared twice".to_string()));
 }
 
 #[test]
@@ -184,9 +184,9 @@ fn on_failure_accepts_keep_and_rollback_only() {
     let message = "`on_failure` must be `:keep` or `:rollback`".to_string();
     assert_eq!(failure_in("  create with: A, on_failure: :ghost"), (7, message.clone()));
     assert_eq!(failure_in("  update with: A, on_failure: 1"), (7, message.clone()));
-    assert_eq!(failure_in("  action :x do\n    mutation M\n    on_failure :ghost\n  end"), (9, message.clone()));
-    assert_eq!(failure_in("  action :x do\n    mutation M\n    on_failure :keep\n    on_failure :keep\n  end"), (10, "`on_failure` is declared twice".to_string()));
-    let valid = "model Sample do\n  schema do\n    string :name\n  end\n  create with: A, on_failure: :keep\n  action :x do\n    mutation M\n    on_failure :rollback\n  end\nend\n";
+    assert_eq!(failure_in("  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    on_failure :ghost\n  end"), (10, message.clone()));
+    assert_eq!(failure_in("  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    on_failure :keep\n    on_failure :keep\n  end"), (11, "`on_failure` is declared twice".to_string()));
+    let valid = "model Sample do\n  schema do\n    string :name\n  end\n  create with: A, on_failure: :keep\n  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    on_failure :rollback\n  end\nend\n";
     assert!(parse_models(valid).is_ok());
 }
 
@@ -264,4 +264,15 @@ fn a_merge_rule_must_be_a_known_word_a_list_of_tiers_or_a_hash_of_those() {
     assert_eq!(field_failure("object :a, merge: :newest"), (3, message.to_string()));
     assert_eq!(field_failure("object :a, merge: { width: { deep: :positive } }"), (3, message.to_string()));
     assert_eq!(field_failure("enum :a, values: [:x], merge: [:x]"), (3, message.to_string()));
+}
+
+#[test]
+fn an_action_declares_its_local_effect() {
+    let action = |lines: &str| format!("model Sample do\n  schema do\n    string :name\n  end\n\n  action :x do\n    mutation M\n{lines}  end\nend\n");
+    assert!(parse_models(&action("    optimistic name: :a\n")).is_ok());
+    assert!(parse_models(&action("    local_effect :none, reason: \"the server owns the result\"\n")).is_ok());
+    assert_eq!(failure(&action("")), (6, "`action :x` must declare `optimistic` or `local_effect :none, reason: \"...\"`".to_string()));
+    assert_eq!(failure(&action("    local_effect :none\n")).1, "`local_effect :none` needs a non-empty `reason:` string");
+    assert_eq!(failure(&action("    local_effect :none, reason: \"\"\n")).1, "`local_effect :none` needs a non-empty `reason:` string");
+    assert_eq!(failure(&action("    local_effect :some, reason: \"r\"\n")).1, "`local_effect` must be `:none`");
 }

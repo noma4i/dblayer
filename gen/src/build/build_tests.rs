@@ -212,7 +212,7 @@ fn remote_updates_line_builds_updates_spec() {
 #[test]
 fn on_failure_defaults_to_rollback_and_reads_keep_from_standard_and_block_actions() {
     let model = build_one(
-        "  create with: CreateSample, on_failure: :keep\n  update with: UpdateSample\n  destroy with: DeleteSample\n  action :like do\n    mutation LikeSample\n    on_failure :keep\n  end\n  action :poke do\n    mutation PokeSample\n  end",
+        "  create with: CreateSample, on_failure: :keep\n  update with: UpdateSample\n  destroy with: DeleteSample\n  action :like do\n    mutation LikeSample\n    local_effect :none, reason: \"test\"\n    on_failure :keep\n  end\n  action :poke do\n    mutation PokeSample\n    local_effect :none, reason: \"test\"\n  end",
     );
     let policies: Vec<(&str, OnFailure)> = model.actions.iter().map(|action| (action.name.as_str(), action.on_failure)).collect();
     assert_eq!(
@@ -321,7 +321,7 @@ fn a_field_merge_rule_keeps_its_words_tiers_and_keys() {
 
 #[test]
 fn a_create_and_an_action_keep_their_correlation_paths() {
-    let models = parse_models("model Sample do\n  schema do\n    string :body\n    object :media, null: true\n  end\n  create with: CreateSample, correlate: [:body, \"media.blobId\"]\n  action :upload do\n    mutation Upload\n    correlate :body\n  end\nend\n").unwrap();
+    let models = parse_models("model Sample do\n  schema do\n    string :body\n    object :media, null: true\n  end\n  create with: CreateSample, correlate: [:body, \"media.blobId\"]\n  action :upload do\n    mutation Upload\n    local_effect :none, reason: \"test\"\n    correlate :body\n  end\nend\n").unwrap();
     let actions = &models[0].actions;
     assert_eq!(actions.iter().find(|action| action.name == "create").unwrap().correlate, ["body", "media.blobId"]);
     assert_eq!(actions.iter().find(|action| action.name == "upload").unwrap().correlate, ["body"]);

@@ -36,6 +36,7 @@ model Moment do
 
   action :share do
     mutation ShareMoment
+    local_effect :none, reason: "the server answers with the share counters"
     input    momentId: :id
     root     "shareMoment.moment"
     result   successMessage: :string, copies: :int
