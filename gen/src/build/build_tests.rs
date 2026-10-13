@@ -196,6 +196,13 @@ fn remote_joins_events_marks_the_relation() {
 }
 
 #[test]
+fn remote_joins_created_marks_only_the_relation_that_names_it() {
+    let model = build_one("  remote :mine, joins: :created do\n    query Mine\n  end\n  remote :other do\n    query Other\n  end");
+    let flags: Vec<(bool, bool)> = model.relations.iter().map(|relation| (relation.joins_created, relation.joins_events)).collect();
+    assert_eq!(flags, [(true, false), (false, false)]);
+}
+
+#[test]
 fn keyed_optimistic_builds_an_op_that_names_its_args() {
     let model = build_one("  action :tag do\n    mutation TagSample\n    args label: :string\n    optimistic ownerId: { by: :ownerId, element: { ownerId: :label, createdAt: nil } }\n  end");
     assert_eq!(model.actions[0].optimistic.get("ownerId"), Some(&json!({"$keyed": {"by": "ownerId", "element": {"ownerId": {"$arg": "label"}, "createdAt": null}}})));

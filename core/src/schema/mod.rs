@@ -535,6 +535,8 @@ pub struct RelationSpec {
     pub sort: Sort,
     #[serde(default)]
     pub joins_events: bool,
+    #[serde(default)]
+    pub joins_created: bool,
 }
 
 impl RelationSpec {
@@ -547,6 +549,7 @@ impl RelationSpec {
             is_global: false,
             sort: Sort::ServerOrder,
             joins_events: false,
+            joins_created: false,
         }
     }
 
@@ -557,6 +560,10 @@ impl RelationSpec {
     #[cfg(test)]
     pub fn is_local(&self) -> bool {
         self.remote.is_none()
+    }
+
+    pub fn takes_created_rows(&self) -> bool {
+        self.joins_created && self.remote.is_some() && self.by_columns.is_empty() && self.text_params.is_empty()
     }
 
     pub fn lists_every_row_of_its_params(&self) -> bool {
@@ -799,7 +806,7 @@ impl ModelSpec {
     pub fn list_scopes(&self, row: &Map<String, Value>) -> Vec<ScopeKey> {
         self.relations
             .iter()
-            .filter(|relation| relation.lists_every_row_of_its_params())
+            .filter(|relation| relation.lists_every_row_of_its_params() || relation.takes_created_rows())
             .filter_map(|relation| {
                 let mut params = Map::new();
                 let mut kinds = BTreeMap::new();

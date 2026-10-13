@@ -142,3 +142,5 @@ mod settle_wait_tests;
 mod rollback_tests;
 #[cfg(test)]
 mod variables_tests;
+#[cfg(test)]
+mod created_rows_tests;

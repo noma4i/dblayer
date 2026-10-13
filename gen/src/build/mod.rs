@@ -247,7 +247,9 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
     if let Some(Value::Hash(pairs)) = option(call, "order").map(|pair| &pair.value.item) {
         relation.sort = Sort::Fields(pairs.iter().map(sort_field).collect());
     }
-    relation.joins_events = matches!(option(call, "joins").and_then(|pair| text_of(&pair.value.item)).as_deref(), Some("events"));
+    let joins = option(call, "joins").and_then(|pair| text_of(&pair.value.item));
+    relation.joins_events = joins.as_deref() == Some("events");
+    relation.joins_created = joins.as_deref() == Some("created");
     relation.remote = Some(remote);
     relation
 }
