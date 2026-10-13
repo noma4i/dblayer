@@ -65,13 +65,13 @@ fn cache_only_clears_one_model_keeps_operations_and_clears_intent() {
 }
 
 #[test]
-fn incompatible_clears_all_cache_tables_and_keeps_user_tables() {
+fn incompatible_clears_all_cache_tables_and_the_outbox_and_keeps_the_other_user_tables() {
     let (store, _) = booted_store();
     seed_two_models(&store);
     user_tables(&store);
     store.reset_incompatible().unwrap();
     assert_eq!(cache_counts(&store), vec![0, 0, 0, 0, 0, 0, 0]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op_once"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);

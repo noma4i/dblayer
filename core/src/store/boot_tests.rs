@@ -210,7 +210,7 @@ fn interrupted_incompatible_reset_is_completed_idempotently() {
     let (store, report) = reopen(&path, &models, None);
     assert!(report.finished_interrupted_reset);
     assert_eq!(store.row_count("items").unwrap(), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
     assert_eq!(store.reset_intent().unwrap(), None);
 }
 

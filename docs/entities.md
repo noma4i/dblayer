@@ -48,7 +48,7 @@ Every delivery carries the revision of the database. An entity ignores a deliver
 
 ## Ending a session
 
-`DB.logout()` (Swift) and `DBlayer.logout()` (Kotlin) clear the data and drop every entity, lease and kept value of every model. The entity of an account row stays the same object and goes back to empty.
+`DB.logout()` (Swift) and `DBlayer.logout()` (Kotlin) clear the data and drop every entity, lease and kept value of every model. The entity of an account row stays the same object and goes back to empty. `logout()` also deletes every queued, refused and unconfirmed operation, so no operation of the old session blocks or reaches the server for the next one.
 
 ## Cost
 

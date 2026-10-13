@@ -141,6 +141,7 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
         }
         _ => {
             wipe_all_cache(&transaction, true)?;
+            retire_operations(&transaction, None, None)?;
             let data_version = inner.data_version.clone();
             manifest_stamp(&transaction, data_version.as_deref(), &current_fingerprints(inner))?;
         }
@@ -180,6 +181,7 @@ impl Store {
         write_intent(&inner.connection, "incompatible", &[], now)?;
         let transaction = inner.connection.unchecked_transaction()?;
         wipe_all_cache(&transaction, false)?;
+        retire_operations(&transaction, None, None)?;
         manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner))?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;

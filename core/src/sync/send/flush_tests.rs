@@ -320,6 +320,24 @@ async fn kept_update_stays_failed_with_the_error_and_blocks_only_its_own_record(
     assert_eq!(statuses(&rig), [OperationStatus::Failed, OperationStatus::Pending]);
 }
 
+// mutation: drop the retire_operations call from Store::reset_incompatible
+#[tokio::test(start_paused = true)]
+async fn logout_leaves_no_refused_operation_able_to_block_the_next_one_of_the_row() {
+    let rig = keeping_rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
+    rig.transport.enqueue("UpdateMoment", updated("m1", "later"));
+    rig.sync.flush().await.unwrap();
+    assert_eq!(statuses(&rig), [OperationStatus::Failed]);
+    rig.db.reset_all().unwrap();
+    assert!(rig.db.outbox().unwrap().is_empty());
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "later"}))).unwrap();
+    assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
+}
+
 #[tokio::test(start_paused = true)]
 async fn retry_of_a_kept_failure_resets_attempts_and_confirms_on_success() {
     let rig = keeping_rig();
