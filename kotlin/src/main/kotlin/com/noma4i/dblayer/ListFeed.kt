@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,6 +30,7 @@ internal class ListFeed<Model : DBModel>(private val serializer: KSerializer<Mod
     @get:Synchronized
     val rows: List<Model> get() = slots.mapNotNull { it.row }
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Synchronized
     fun apply(change: LiveChange): ListState<Model> {
         if (change.error != null) return ListState(rows, false)
