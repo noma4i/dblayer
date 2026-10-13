@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tokio::task::JoinSet;
 
 use crate::syncstate::{FailureKind, OperationFailure};
-use crate::upload::{parse_headers, part_count, part_range, UploadPart, UploadStage};
+use crate::upload::{md5_base64, parse_headers, part_count, part_range, UploadPart, UploadStage};
 
 use super::run::{stop_of, Runner};
 use super::steps::{fatal, text, Stop, EXPIRED_MESSAGE};
@@ -25,7 +25,9 @@ impl Runner {
         let config = &self.inner.config.upload;
         if self.snapshot().upload_id.is_none() {
             self.save(|state| state.stage = UploadStage::Init)?;
-            let variables = json!({"filename": self.file_name(), "contentType": self.content_type(), "byteSize": total});
+            let checksum = md5_base64(std::path::Path::new(&self.input.path))
+                .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
+            let variables = json!({"filename": self.file_name(), "contentType": self.content_type(), "byteSize": total, "checksum": checksum});
             let data = self.retrying(|| self.graphql(&steps.init, variables.clone(), true)).await?;
             let (key, upload_id) = (text(&data, "key").map_err(stop_of)?, text(&data, "uploadId").map_err(stop_of)?);
             self.save(|state| {

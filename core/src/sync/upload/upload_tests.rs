@@ -169,7 +169,8 @@ async fn multipart_runs_init_presign_parts_and_complete_in_part_order() {
     let source = file(TWELVE);
     rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
     rig.sync.wait_uploads().await;
-    assert_eq!(variables(&rig, "InitMultipart").len(), 1);
+    let init_calls = variables(&rig, "InitMultipart");
+    assert_eq!((init_calls.len(), &init_calls[0]["checksum"]), (1, &json!("tgxSv0hJBn8LV8i9MJhUZg==")));
     assert_eq!(variables(&rig, "PresignParts"), [json!({"key": "k1", "uploadId": "u1", "partNumbers": [1, 2, 3]})]);
     let mut bodies: Vec<_> = rig.transport.put_calls().into_iter().map(|call| (call.url, call.body)).collect();
     bodies.sort();
