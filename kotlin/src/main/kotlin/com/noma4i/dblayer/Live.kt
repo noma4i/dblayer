@@ -47,7 +47,7 @@ internal class Latest<Value>(private val merge: ((Value, Value) -> Value)?) {
 class LiveSource<Value>(
     val initial: Value,
     private val merge: ((Value, Value) -> Value)? = null,
-    private val subscribe: ((Value) -> Unit) -> () -> Unit,
+    internal val subscribe: ((Value) -> Unit) -> () -> Unit,
 ) {
     constructor(initial: Value, attach: (QueryListener) -> LiveSubscription, map: (LiveChange) -> Value) : this(initial, null, { emit ->
         val subscription = attach(ChangeListener { emit(map(it)) })
@@ -122,6 +122,15 @@ internal fun stateSource(model: String, relation: String, paramsJson: String): L
         cancel
     }
 
+internal class ListUpdate<Model : DBModel>(val snapshot: Snapshot<Model>? = null, val state: LoadState? = null) {
+    companion object {
+        fun <Model : DBModel> merging(older: ListUpdate<Model>, newer: ListUpdate<Model>) = ListUpdate(
+            older.snapshot?.let { old -> newer.snapshot?.let { Snapshot.merging(old, it) } ?: old } ?: newer.snapshot,
+            newer.state ?: older.state,
+        )
+    }
+}
+
 /** A live query for view models: the rows, the load state of the relation, and the calls that move them. The scope of the owner ends it. */
 class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope) {
     private val mutableRows = kotlinx.coroutines.flow.MutableStateFlow<List<Model>>(emptyList())
@@ -131,8 +140,20 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     private val mutableState = kotlinx.coroutines.flow.MutableStateFlow(LoadState())
 
     init {
-        scope.launch { query.snapshots.flow.collect { mutableReplaced.value = it.replaced; mutableFailure.value = it.failure; mutableRows.value = it.rows; if (it.reordered) mutableIds.value = it.rows.map { row -> row.id } } }
-        scope.launch { query.state.flow.collect { mutableState.value = it } }
+        val snapshots = query.snapshots
+        val state = query.state
+        val source = LiveSource(ListUpdate<Model>(), { older, newer -> ListUpdate.merging(older, newer) }) { emit ->
+            val rows = snapshots.subscribe { emit(ListUpdate(snapshot = it)) }
+            val load = runCatching { state.subscribe { emit(ListUpdate(state = it)) } }.getOrNull()
+            val cancel: () -> Unit = { rows(); load?.invoke() }
+            cancel
+        }
+        scope.launch {
+            source.flow.collect { update ->
+                update.snapshot?.let { mutableReplaced.value = it.replaced; mutableFailure.value = it.failure; mutableRows.value = it.rows; if (it.reordered) mutableIds.value = it.rows.map { row -> row.id } }
+                update.state?.let { mutableState.value = it }
+            }
+        }
     }
 
     val rows: kotlinx.coroutines.flow.StateFlow<List<Model>> get() = mutableRows

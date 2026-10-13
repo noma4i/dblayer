@@ -99,9 +99,12 @@ impl Database {
     pub fn live_state(&self, model: String, relation: String, params_json: String, listener: Arc<dyn StateListener>) -> Result<Arc<StateSubscription>, DbError> {
         let params: Map<String, Value> = serde_json::from_str(&params_json)?;
         let mut receiver = self.sync()?.relation_state(&model, &relation, &params)?;
+        let db = self.db.clone();
         let task = executor()?.spawn(async move {
             loop {
                 let change = RelationStateChange::of(&receiver.borrow_and_update());
+                let db = db.clone();
+                if tokio::task::spawn_blocking(move || db.settle()).await.is_err() { return; }
                 listener.changed(change);
                 if receiver.changed().await.is_err() { return; }
             }

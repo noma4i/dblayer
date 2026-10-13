@@ -157,6 +157,15 @@ public struct LiveView<Value: Sendable, Content: View>: View {
   public var body: some View { content(value) }
 }
 
+struct ListUpdate<Model: DBModel>: Sendable {
+  var snapshot: Snapshot<Model>?
+  var state: LoadState?
+
+  static func merging(_ older: ListUpdate, _ newer: ListUpdate) -> ListUpdate {
+    ListUpdate(snapshot: older.snapshot.flatMap { old in newer.snapshot.map { Snapshot.merging(old, $0) } ?? old } ?? newer.snapshot, state: newer.state ?? older.state)
+  }
+}
+
 /// A live query for view models: the rows, the load state of the relation, and the calls that move them.
 @MainActor
 @Observable
@@ -176,18 +185,23 @@ public final class LiveList<Model: DBModel> {
 
   init(_ query: Query<Model>, snapshots: LiveSource<Snapshot<Model>>, state: LiveSource<LoadState>) {
     self.query = query
+    let source = LiveSource<ListUpdate<Model>>(initial: ListUpdate(), merge: { ListUpdate.merging($0, $1) }) { emit in
+      let rows = try snapshots.subscribe { emit(ListUpdate(snapshot: $0)) }
+      let load = try? state.subscribe { emit(ListUpdate(state: $0)) }
+      return { rows(); load?() }
+    }
     tasks = [
       Task { [weak self] in
-        for await next in await snapshots.stream() {
+        for await next in await source.stream() {
           guard let self else { return }
-          replaced = next.replaced
-          if next.failure != failure { failure = next.failure }
-          rows = next.rows
-          if next.reordered { ids = next.rows.map(\.id) }
+          if let snapshot = next.snapshot {
+            replaced = snapshot.replaced
+            if snapshot.failure != failure { failure = snapshot.failure }
+            rows = snapshot.rows
+            if snapshot.reordered { ids = snapshot.rows.map(\.id) }
+          }
+          if let loaded = next.state { self.state = loaded }
         }
-      },
-      Task { [weak self] in
-        for await next in await state.stream() { self?.state = next }
       }
     ]
   }

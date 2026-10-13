@@ -149,3 +149,40 @@ async fn inv_fresh_15_a_test_clock_moves_fresh_for_without_sleeping() {
         assert_eq!(queries(&transport), expected, "advanced by {advance_ms} ms");
     }
 }
+
+#[derive(Debug, PartialEq)]
+enum Heard {
+    Rows(usize),
+    State { settled: bool },
+}
+
+struct SlowRows(Arc<std::sync::Mutex<Vec<Heard>>>);
+impl QueryListener for SlowRows {
+    fn changed(&self, change: LiveChange) {
+        if !change.rows.is_empty() { std::thread::sleep(Duration::from_millis(200)); }
+        self.0.lock().unwrap().push(Heard::Rows(change.rows.len()));
+    }
+}
+
+struct StateTape(Arc<std::sync::Mutex<Vec<Heard>>>);
+impl super::StateListener for StateTape {
+    fn changed(&self, state: super::RelationStateChange) {
+        self.0.lock().unwrap().push(Heard::State { settled: state.loaded_at.is_some() });
+    }
+}
+
+#[tokio::test]
+async fn inv_observe_20_a_settled_state_follows_the_rows_that_the_load_wrote() {
+    let (db, _) = rig(Duration::ZERO);
+    let tape = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let query = r#"{"model":"Moment","relation":"feed","params":{}}"#;
+    let _rows = db.live_query(query.into(), Arc::new(SlowRows(tape.clone()))).unwrap();
+    let _state = db.live_state("Moment".into(), "feed".into(), "{}".into(), Arc::new(StateTape(tape.clone()))).unwrap();
+    for _ in 0..100 {
+        if tape.lock().unwrap().contains(&Heard::State { settled: true }) { break; }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let heard = tape.lock().unwrap();
+    let settled = heard.iter().position(|item| *item == Heard::State { settled: true }).expect("the state settled");
+    assert!(heard[..settled].contains(&Heard::Rows(1)), "the state settled before the rows of the load were delivered: {heard:?}");
+}
