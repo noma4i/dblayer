@@ -41,11 +41,16 @@ pub enum Storage {
     #[default]
     Disk,
     Memory,
+    Local,
 }
 
 impl ModelSpec {
     pub fn is_memory(&self) -> bool {
         self.storage == Storage::Memory
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.storage == Storage::Local
     }
 
     pub fn expire_window(&self) -> Option<Duration> {

@@ -274,7 +274,9 @@ impl Db {
                     scope_ops: Vec::new(),
                     upload: None,
                 };
-                envelope.operation_transitions.push(self.begin(reader, spec, &queued, created_at)?);
+                if !spec.is_local() {
+                    envelope.operation_transitions.push(self.begin(reader, spec, &queued, created_at)?);
+                }
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
@@ -307,7 +309,9 @@ impl Db {
                 envelope.scope_ops.extend(std::mem::take(&mut queued.scope_ops));
                 let followed = self.follow_parent_pointers(reader, &mut envelope)?;
                 queued.rollback = queued.rollback.take().map(|rollback| Prior::with_edits(rollback, reader, &followed.edits)).transpose()?;
-                envelope.operation_transitions.push(self.begin(reader, spec, queued, created_at)?);
+                if !spec.is_local() {
+                    envelope.operation_transitions.push(self.begin(reader, spec, queued, created_at)?);
+                }
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;

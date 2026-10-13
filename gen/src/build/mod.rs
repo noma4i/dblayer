@@ -30,7 +30,11 @@ pub fn build(nodes: &[ModelNode]) -> Vec<ModelSpec> {
 fn build_model(node: &ModelNode) -> ModelSpec {
     let mut model = ModelSpec::new(&node.name, vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     if let Some(Value::Symbol(storage)) = node.options.iter().find(|pair| pair.key == "storage").map(|pair| &pair.value.item) {
-        model.storage = if storage == "memory" { Storage::Memory } else { Storage::Disk };
+        model.storage = match storage.as_str() {
+            "memory" => Storage::Memory,
+            "local" => Storage::Local,
+            _ => Storage::Disk,
+        };
     }
     model.expire_after = node.options.iter().find(|pair| pair.key == "expire_after").and_then(|pair| text_of(&pair.value.item));
     for call in &node.body {

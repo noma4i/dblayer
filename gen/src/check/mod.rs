@@ -271,8 +271,8 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
 fn check_model_options(node: &ModelNode, report: &mut impl FnMut(usize, usize, String)) {
     for pair in &node.options {
         match pair.key.as_str() {
-            "storage" if !matches!(&pair.value.item, Value::Symbol(name) if name == "memory" || name == "disk") => {
-                report(pair.value.line, pair.value.column, "`storage` must be `:memory` or `:disk`".to_string())
+            "storage" if !matches!(&pair.value.item, Value::Symbol(name) if name == "memory" || name == "disk" || name == "local") => {
+                report(pair.value.line, pair.value.column, "`storage` must be `:memory`, `:disk` or `:local`".to_string())
             }
             "storage" => {}
             "expire_after" => check_value(pair, Want::Duration, report),

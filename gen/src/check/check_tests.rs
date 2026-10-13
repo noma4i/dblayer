@@ -229,7 +229,7 @@ fn ephemeral_fields_are_not_allowed_in_indexes_scopes_or_inputs() {
 #[test]
 fn memory_model_line_checks_storage_and_expire_after() {
     assert!(parse_models("model Presence, storage: :memory, expire_after: 30.seconds do\n  schema do\n    string :room\n  end\nend\n").is_ok());
-    assert_eq!(failure("model P, storage: :cloud do\n  schema do\n    string :a\n  end\nend\n"), (1, "`storage` must be `:memory` or `:disk`".to_string()));
+    assert_eq!(failure("model P, storage: :cloud do\n  schema do\n    string :a\n  end\nend\n"), (1, "`storage` must be `:memory`, `:disk` or `:local`".to_string()));
     assert_eq!(failure("model P, expire_after: 30 do\n  schema do\n    string :a\n  end\nend\n"), (1, "`expire_after` must be a duration like `5.minutes`".to_string()));
     assert_eq!(failure("model P, bogus: 1 do\n  schema do\n    string :a\n  end\nend\n"), (1, "unknown key `bogus` for `model`".to_string()));
     assert_eq!(
