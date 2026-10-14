@@ -2,12 +2,13 @@ mod build;
 mod check;
 mod lexer;
 mod parser;
+mod schema_check;
 mod emit;
 pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
 
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use dblayer::schema::ModelSpec;
 
@@ -47,6 +48,24 @@ pub fn parse_models(source: &str) -> Result<Vec<ModelSpec>, Vec<ParseError>> {
 }
 
 pub fn parse_files(paths: &[impl AsRef<Path>]) -> Result<Vec<ModelSpec>, Vec<FileError>> {
+    let (names, sources) = read_sources(paths)?;
+    let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+    parse_sources(&sources).map_err(|found| {
+        found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect()
+    })
+}
+
+pub fn check_models_against_schema(schema: &Path, operations: &[PathBuf], paths: &[impl AsRef<Path>]) -> Result<Vec<String>, Vec<FileError>> {
+    parse_files(paths)?;
+    let (names, sources) = read_sources(paths)?;
+    let mut nodes = Vec::new();
+    for (file, source) in sources.iter().enumerate() {
+        nodes.extend(lexer::lex(source).and_then(|tokens| parser::parse(&tokens, file)).expect("sources parsed above"));
+    }
+    schema_check::check_schema(schema, operations, &names, &nodes).map(|outcome| outcome.notes)
+}
+
+fn read_sources(paths: &[impl AsRef<Path>]) -> Result<(Vec<String>, Vec<String>), Vec<FileError>> {
     let names: Vec<String> = paths.iter().map(|path| path.as_ref().display().to_string()).collect();
     let mut sources = Vec::new();
     let mut errors = Vec::new();
@@ -56,13 +75,7 @@ pub fn parse_files(paths: &[impl AsRef<Path>]) -> Result<Vec<ModelSpec>, Vec<Fil
             Err(error) => errors.push(FileError { file: name.clone(), error: ParseError::new(0, 0, error.to_string()) }),
         }
     }
-    if !errors.is_empty() {
-        return Err(errors);
-    }
-    let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
-    parse_sources(&sources).map_err(|found| {
-        found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect()
-    })
+    if errors.is_empty() { Ok((names, sources)) } else { Err(errors) }
 }
 
 fn parse_sources(sources: &[&str]) -> Result<Vec<ModelSpec>, Vec<(usize, ParseError)>> {

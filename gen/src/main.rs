@@ -1,16 +1,74 @@
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use dblayer_gen::{parse_files, emit_swift_with, emit_kotlin, Access};
+use dblayer_gen::{check_models_against_schema, parse_files, emit_swift_with, emit_kotlin, Access};
+
+const USAGE: &str = "usage: dblayer-gen [--internal] [--schema <schema.graphql> [--operations <path>]...] [<spec|swift|kotlin>] <file.dbl>...";
+
+struct Options {
+    access: Access,
+    schema: Option<PathBuf>,
+    operations: Vec<PathBuf>,
+    rest: Vec<String>,
+}
+
+fn options() -> Option<Options> {
+    let mut found = Options { access: Access::Public, schema: None, operations: Vec::new(), rest: Vec::new() };
+    let mut arguments = std::env::args().skip(1);
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--internal" => found.access = Access::Internal,
+            "--schema" => found.schema = Some(PathBuf::from(arguments.next()?)),
+            "--operations" => found.operations.push(PathBuf::from(arguments.next()?)),
+            _ => found.rest.push(argument),
+        }
+    }
+    Some(found)
+}
 
 fn main() -> ExitCode {
-    let mut arguments: Vec<String> = std::env::args().skip(1).collect();
-    let access = if arguments.iter().any(|argument| argument == "--internal") { Access::Internal } else { Access::Public };
-    arguments.retain(|argument| argument != "--internal");
-    match arguments.split_first() {
-        Some((command, files)) if ["spec", "swift", "kotlin"].contains(&command.as_str()) && !files.is_empty() => generate(command, files, access),
-        _ => {
-            eprintln!("usage: dblayer-gen [--internal] <spec|swift|kotlin> <file.dbl>...");
-            ExitCode::from(2)
+    let Some(options) = options() else { return usage() };
+    let (command, files) = match options.rest.split_first() {
+        Some((command, files)) if ["spec", "swift", "kotlin"].contains(&command.as_str()) => (Some(command.as_str()), files),
+        _ => (None, options.rest.as_slice()),
+    };
+    if files.is_empty() || (command.is_none() && options.schema.is_none()) {
+        return usage();
+    }
+    if let Some(schema) = &options.schema {
+        let code = check_schema(schema, options.operations, files);
+        if code != ExitCode::SUCCESS || command.is_none() {
+            return code;
+        }
+    }
+    match command {
+        Some(command) => generate(command, files, options.access),
+        None => usage(),
+    }
+}
+
+fn usage() -> ExitCode {
+    eprintln!("{USAGE}");
+    ExitCode::from(2)
+}
+
+fn check_schema(schema: &std::path::Path, mut operations: Vec<PathBuf>, files: &[String]) -> ExitCode {
+    let beside = schema.parent().map(|parent| parent.join("queries"));
+    if let Some(beside) = beside.filter(|beside| operations.is_empty() && beside.is_dir()) {
+        operations.push(beside);
+    }
+    match check_models_against_schema(schema, &operations, files) {
+        Ok(notes) => {
+            for note in notes {
+                println!("note: {note}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(errors) => {
+            for error in errors {
+                eprintln!("{error}");
+            }
+            ExitCode::from(1)
         }
     }
 }

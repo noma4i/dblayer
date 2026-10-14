@@ -295,6 +295,23 @@ cargo run -p dblayer-gen -- spec fixtures/*.dbl     # print the model specificat
 
 Example models live in `fixtures/`.
 
+## Check against the server schema
+
+`dblayer-gen --schema schema.graphql models/*.dbl` checks the declarations against the GraphQL schema of the server. It prints nothing but notes when every check passes, and exits with code 1 and a file and line for each mismatch.
+
+For each `remote`, the check finds the operation named by `query`, takes its first field (the alias when there is one) and follows `root:` from there, through connections (`nodes` or `edges { node }`) to the type that holds the rows. Operations are read from the `queries` directory next to the schema file, or from every `--operations <file or directory>` you pass. Without operation documents the operation name is read as the schema field.
+
+Every field of the model, every `from:` path, every `id_from:` and every field of a nested type must exist on that type. The check reports:
+
+- a field or path the schema does not have;
+- a list declared as a single value, or the reverse;
+- a nullable schema field declared without `null: true`, `optional: true` or `default:`;
+- a scalar, enum or object that does not fit the schema type, and an `enum` value the schema enum lacks;
+- a `remote` that paginates, lists or returns one row against a schema field of another shape;
+- an association `from:` path of the wrong shape.
+
+Fields marked `local: true`, `file` fields and models with `storage: :local` are skipped. Schema fields that the model leaves out are listed as notes, because a model may select a subset.
+
 ## Access level
 
 `dblayer-gen --internal swift ...` emits models and their generated value types without `public`, for an app that generates them into its own module.
