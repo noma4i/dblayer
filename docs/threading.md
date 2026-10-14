@@ -5,6 +5,7 @@ DBlayer never makes your threads wait. Loading data, writing, parsing responses 
 ## What you can rely on
 
 - Public calls are asynchronous (`async` in Swift, `suspend` in Kotlin) and cheap: they enqueue work and return.
+- Calls that read or write files (`attach`, `file`, `read`, `url`, `detach`, `maintain`) run on a background thread of the library, never on the caller thread.
 - The transports on both platforms do the whole network exchange, including reading the response body, off the caller thread: Kotlin on `Dispatchers.IO`, Swift through the async `URLSession` API. You can call them from the main thread.
 - The database runs in WAL mode. Reads and the single writer share one SQLite connection under one lock, so a read waits while a commit runs. There is no reader pool.
 - Parsing, normalization and planning are done before the writer runs, so the writer only executes ready statements.

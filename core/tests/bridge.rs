@@ -23,8 +23,8 @@ async fn bridge_writes_reach_live_rows_and_files() {
     let id = row["id"].as_str().unwrap().to_string();
     let found = db.live_find("Moment".into(), id.clone(), Arc::new(Listener)).unwrap();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&found.current().await.rows[0]).unwrap()["text"], "hello");
-    db.attach("Moment".into(), id.clone(), "media".into(), b"abc".to_vec(), "a.txt".into(), "text/plain".into()).unwrap();
-    assert_eq!(db.read("Moment".into(), id.clone(), "media".into()).unwrap(), Some(b"abc".to_vec()));
+    db.attach("Moment".into(), id.clone(), "media".into(), b"abc".to_vec(), "a.txt".into(), "text/plain".into()).await.unwrap();
+    assert_eq!(db.read("Moment".into(), id.clone(), "media".into()).await.unwrap(), Some(b"abc".to_vec()));
     db.update("Moment".into(), id.clone(), r#"{"text":"edited"}"#.into()).unwrap();
     let edited = db.live_find("Moment".into(), id.clone(), Arc::new(Listener)).unwrap();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&edited.current().await.rows[0]).unwrap()["text"], "edited");

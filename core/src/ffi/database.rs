@@ -31,6 +31,10 @@ async fn on_executor<T: Send + 'static>(work: impl std::future::Future<Output = 
     executor()?.spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(DbError::from)
 }
 
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, crate::db::DbError> + Send + 'static) -> Result<T, DbError> {
+    executor()?.spawn_blocking(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(DbError::from)
+}
+
 #[derive(uniffi::Record)]
 pub struct Config { pub path: Option<String>, pub data_version: Option<String>, pub cache_rows: u32 }
 
@@ -141,17 +145,26 @@ impl Database {
     pub fn set_ephemeral(&self, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
         Ok(self.db.set_ephemeral(&model, &id(&row_id)?, serde_json::from_str(&values_json)?)?)
     }
-    pub fn attach(&self, model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String) -> Result<String, DbError> {
-        Ok(self.db.attach(&model, &id(&row_id)?, &field, &bytes, &name, &mime)?.to_value().to_string())
+    pub async fn attach(&self, model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String) -> Result<String, DbError> {
+        let (db, row_id) = (self.db.clone(), id(&row_id)?);
+        blocking(move || Ok(db.attach(&model, &row_id, &field, &bytes, &name, &mime)?.to_value().to_string())).await
     }
-    pub fn file(&self, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
-        Ok(self.db.file(&model, &id(&row_id)?, &field)?.map(|file| file.to_value().to_string()))
+    pub async fn file(&self, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
+        let (db, row_id) = (self.db.clone(), id(&row_id)?);
+        blocking(move || Ok(db.file(&model, &row_id, &field)?.map(|file| file.to_value().to_string()))).await
     }
-    pub fn read(&self, model: String, row_id: String, field: String) -> Result<Option<Vec<u8>>, DbError> { Ok(self.db.read(&model, &id(&row_id)?, &field)?) }
-    pub fn url(&self, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
-        Ok(self.db.url(&model, &id(&row_id)?, &field)?.map(|path| path.to_string_lossy().into_owned()))
+    pub async fn read(&self, model: String, row_id: String, field: String) -> Result<Option<Vec<u8>>, DbError> {
+        let (db, row_id) = (self.db.clone(), id(&row_id)?);
+        blocking(move || db.read(&model, &row_id, &field)).await
     }
-    pub fn detach(&self, model: String, row_id: String, field: String) -> Result<bool, DbError> { Ok(self.db.detach(&model, &id(&row_id)?, &field)?) }
+    pub async fn url(&self, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
+        let (db, row_id) = (self.db.clone(), id(&row_id)?);
+        blocking(move || Ok(db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
+    }
+    pub async fn detach(&self, model: String, row_id: String, field: String) -> Result<bool, DbError> {
+        let (db, row_id) = (self.db.clone(), id(&row_id)?);
+        blocking(move || db.detach(&model, &row_id, &field)).await
+    }
     pub fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         let defs: Vec<Value> = serde_json::from_str(&defs_json)?;
         let sync = self.sync()?;
@@ -255,7 +268,10 @@ impl Database {
         let row = id(&row_id)?;
         on_executor(async move { sync.cancel_upload(&model, &row).await }).await
     }
-    pub fn maintain(&self) -> Result<(), DbError> { self.db.maintain(&[])?; Ok(()) }
+    pub async fn maintain(&self) -> Result<(), DbError> {
+        let db = self.db.clone();
+        blocking(move || db.maintain(&[]).map(|_| ())).await
+    }
     pub fn logout(&self) -> Result<(), DbError> { self.db.reset_all()?; Ok(()) }
 }
 
