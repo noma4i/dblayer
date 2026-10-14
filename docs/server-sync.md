@@ -150,10 +150,29 @@ println(code.url)
 
 - `mutation` or `query` names the operation. Pass the operation type to `DB.open` (Swift) or `DBlayer.open` (Kotlin) like any other operation.
 - `args` are the variables, with the same kinds as the args of `create`. A trailing `?` makes one optional and an omitted one is not sent. `wrap :input` sends them as `{ input: { ... } }`.
-- `result` lists the fields to read from the root field of the answer, all optional. Without `result` the call returns nothing.
+- `result` lists the fields to read from the root field of the answer, all optional. Without `result` the call returns nothing. A field is a scalar (`:bool`, `:int`, `:num`, `:string`, `:id`), `:ids` or `[:string]` for a list of scalars, `:json` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), `{ a: :int }` for an object, or `[{ a: :int }]` for a list of objects. Each object becomes its own type named after the call and the field (`PricingLoadResultGifts`). An `:id` field accepts a number or a string and arrives as a string.
 - An arg can also name an input object of the server schema, written as a symbol: `args input: :StickerInput`. The generator reads the object and every object it nests from the schema file (`--schema`, see [models](models.md)) and writes one struct (Swift) or one `@Serializable` data class (Kotlin) for each. A field the schema marks `!` is required, any other field is optional and a nil field is not sent. Lists keep their element nullability. Enums and custom scalars are strings.
 - The call is sent at once. It is not queued, stored or retried, and it fails when the device is offline, when the transport fails or when the answer carries errors. The error text holds every message.
 - Do not use it for a row of a model. The row is written by `create`, `update` or an `action`, which keep the queue, the retries and the rollback.
+
+An operation that reads lists, objects and raw JSON from the answer:
+
+```ruby
+operation :pricing_load do
+  query  Pricing
+  result gifts: [{ id: :id, name: :string, price: :int }], videoIntro: { enabled: :bool }, tags: [:string], spec: :json
+end
+```
+
+```swift
+let pricing = try await Operations.pricingLoad()
+let names = pricing.gifts?.compactMap(\.name) ?? []
+```
+
+```kotlin
+val pricing = Operations.pricingLoad()
+val names = pricing.gifts?.mapNotNull { it.name }.orEmpty()
+```
 
 An operation that takes a schema input object:
 

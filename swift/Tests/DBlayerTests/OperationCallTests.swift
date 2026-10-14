@@ -38,4 +38,19 @@ extension BridgeProbeTests {
     let expected = #"{"input":{"name":"wave","tags":["a","b"],"notes":["n",null],"pinned":true,"owner":{"id":"7"},"helpers":[{"id":"8","nickname":"ann"}]}}"#
     #expect(JSONValue.parse(sent) == JSONValue.parse(expected), "variables sent: \(sent)")
   }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aResultWithListsObjectsAndRawJsonIsDecodedIntoGeneratedTypes() async throws {
+    _ = try Self.openOperationRig("Pricing", document: "query Pricing { pricing { gifts { id name price } videoIntro { enabled } tags spec } }", reply: #"{"data":{"pricing":{"gifts":[{"id":7,"name":"rose","price":5},{"id":"8","name":"ring"}],"videoIntro":{"enabled":true},"tags":["a","b"],"spec":{"k":[1,2]}}}}"#)
+
+    let result = try await Operations.pricingLoad()
+
+    #expect(result.gifts?.compactMap(\.id) == ["7", "8"])
+    #expect(result.gifts?.first?.price == 5)
+    #expect(result.gifts?.last?.price == nil)
+    #expect(result.videoIntro?.enabled == true)
+    #expect(result.tags == ["a", "b"])
+    #expect(result.spec == JSONValue.parse(#"{"k":[1,2]}"#))
+  }
 }

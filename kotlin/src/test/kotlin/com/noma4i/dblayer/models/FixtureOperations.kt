@@ -16,10 +16,34 @@ data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVE
 data class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: String? = null)
 
 @Serializable
-data class QrCodeCreateResult(val url: String? = null)
+data class QrCodeCreateResult(
+    val url: String? = null,
+)
 
 @Serializable
-data class StickerSendResult(val id: String? = null)
+data class StickerSendResult(
+    val id: String? = null,
+)
+
+@Serializable
+data class PricingLoadResult(
+    val gifts: List<PricingLoadResultGifts>? = null,
+    val videoIntro: PricingLoadResultVideoIntro? = null,
+    val tags: List<String>? = null,
+    val spec: JsonElement? = null,
+)
+
+@Serializable
+data class PricingLoadResultGifts(
+    @Serializable(with = IDText::class) val id: String? = null,
+    val name: String? = null,
+    val price: Long? = null,
+)
+
+@Serializable
+data class PricingLoadResultVideoIntro(
+    val enabled: Boolean? = null,
+)
 
 object Operations {
     suspend fun qrCodeCreate(kind: String, size: Int? = null): QrCodeCreateResult {
@@ -36,5 +60,9 @@ object Operations {
         val variables = mutableMapOf<String, JsonElement>()
         variables["input"] = jsonValue(input)
         return DBlayer.run("StickerSend", JsonObject(variables), StickerSendResult.serializer())
+    }
+    suspend fun pricingLoad(): PricingLoadResult {
+        val variables = mutableMapOf<String, JsonElement>()
+        return DBlayer.run("Pricing", JsonObject(variables), PricingLoadResult.serializer())
     }
 }

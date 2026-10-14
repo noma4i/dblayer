@@ -9,7 +9,7 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
     assert!(!emit_swift(&declared.models, &declared.operations, &[]).contains("modelsJSON") && !emit_kotlin(&declared.models, &declared.operations, &[]).contains("modelsJSON"), "a file without models has no models constant");
     let swift = emit_swift(&declared.models, &declared.operations, &[]);
     for line in [
-        "public struct QrCodeCreateResult: Codable, Sendable {\n    public let url: String?\n}",
+        "public struct QrCodeCreateResult: Codable, Sendable, Equatable {\n    public let url: String?",
         "public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {",
         "if let value = size { variables[\"size\"] = JSONValue.encode(value) }",
         "return try await DB.run(\"QrCodeCreate\", variables: [\"input\": JSONValue.object(variables)], as: QrCodeCreateResult.self)",
@@ -20,7 +20,7 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &[]);
     for line in [
-        "data class QrCodeCreateResult(val url: String? = null)",
+        "data class QrCodeCreateResult(\n    val url: String? = null,\n)",
         "suspend fun qrCodeCreate(kind: String, size: Int? = null): QrCodeCreateResult {",
         "if (size != null) variables[\"size\"] = jsonValue(size)",
         "return DBlayer.run(\"QrCodeCreate\", JsonObject(mapOf(\"input\" to JsonObject(variables))), QrCodeCreateResult.serializer())",
@@ -37,7 +37,7 @@ fn a_wrong_operation_declaration_is_named_with_its_line() {
         ("operation :a do\n  args x: :id\nend\n", "needs exactly one `mutation` or `query` line"),
         ("operation :a do\n  mutation A\n  query B\nend\n", "needs exactly one `mutation` or `query` line"),
         ("operation :a do\n  mutation A\n  args x: :uuid\nend\n", "or the name of a schema input object like :QrCodeInput"),
-        ("operation :a do\n  mutation A\n  result x: :QrCodeInput\nend\n", "type must be :bool, :int, :num, :string, :id or :ids, each optionally followed by ?"),
+        ("operation :a do\n  mutation A\n  result x: :QrCodeInput\nend\n", "type must be :bool, :int, :num, :string, :id, :ids or :json"),
         ("operation :a do\n  mutation A\n  frob :x\nend\n", "unknown line `frob`"),
         ("operation :a do\n  mutation A\nend\noperation :a do\n  mutation B\nend\n", "operation `a` is declared twice"),
         ("operation :a\n", "needs a `do ... end` block"),

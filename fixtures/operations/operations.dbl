@@ -14,3 +14,8 @@ operation :sticker_send do
   args input: :StickerInput
   result id: :string
 end
+
+operation :pricing_load do
+  query Pricing
+  result gifts: [{ id: :id, name: :string, price: :int }], videoIntro: { enabled: :bool }, tags: [:string], spec: :json
+end
