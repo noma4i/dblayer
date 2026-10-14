@@ -47,3 +47,31 @@ fn a_wrong_operation_declaration_is_named_with_its_line() {
         assert!(errors.iter().any(|(_, error)| error.message.contains(message)), "{source}: {errors:?}");
     }
 }
+
+const GIPHY: &str = "operation :giphy_load do\n  query Giphy\n  list\n  args type: :string, limit: :int?\n  result id: :id, url: :string\nend\n";
+
+#[test]
+fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
+    let declared = parse_all(&[GIPHY]).unwrap();
+    let swift = emit_swift(&declared.models, &declared.operations, &[]);
+    for line in [
+        "public struct GiphyLoadResult: Codable, Sendable, Equatable {",
+        "public static func giphyLoad(type: String, limit: Int? = nil) async throws -> [GiphyLoadResult] {",
+        "return try await DB.run(\"Giphy\", variables: variables, as: [GiphyLoadResult].self)",
+    ] {
+        assert!(swift.contains(line), "swift lacks {line}\n{swift}");
+    }
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &[]);
+    for line in [
+        "suspend fun giphyLoad(type: String, limit: Int? = null): List<GiphyLoadResult> {",
+        "return DBlayer.run(\"Giphy\", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()))",
+    ] {
+        assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
+    }
+}
+
+#[test]
+fn a_list_line_without_a_result_is_named_with_its_line() {
+    let errors = parse_all(&["operation :a do\n  query A\n  list\nend\n"]).err().expect("accepted");
+    assert!(errors.iter().any(|(_, error)| error.message.contains("`list` needs a `result` line")), "{errors:?}");
+}

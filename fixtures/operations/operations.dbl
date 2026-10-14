@@ -25,3 +25,10 @@ operation :moment_create do
   args input: :MomentInput
   result moment: { id: :id }
 end
+
+operation :giphy_load do
+  query Giphy
+  list
+  args type: :string, limit: :int?
+  result id: :id, url: :string, isSticker: :bool
+end

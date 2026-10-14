@@ -202,6 +202,31 @@ public struct MomentCreateResultMoment: Codable, Sendable, Equatable {
     }
 }
 
+public struct GiphyLoadResult: Codable, Sendable, Equatable {
+    public let id: String?
+    public let url: String?
+    public let isSticker: Bool?
+
+    public init(id: String? = nil, url: String? = nil, isSticker: Bool? = nil) {
+        self.id = id
+        self.url = url
+        self.isSticker = isSticker
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case url = "url"
+        case isSticker = "isSticker"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+        isSticker = try container.decodeIfPresent(Bool.self, forKey: .isSticker)
+    }
+}
+
 public enum Operations {
     public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {
         var variables: [String: JSONValue] = [:]
@@ -226,5 +251,11 @@ public enum Operations {
         var variables: [String: JSONValue] = [:]
         variables["input"] = JSONValue.encode(input)
         return try await DB.run("MomentCreate", variables: variables, as: MomentCreateResult.self)
+    }
+    public static func giphyLoad(type: String, limit: Int? = nil) async throws -> [GiphyLoadResult] {
+        var variables: [String: JSONValue] = [:]
+        variables["type"] = JSONValue.encode(type)
+        if let value = limit { variables["limit"] = JSONValue.encode(value) }
+        return try await DB.run("Giphy", variables: variables, as: [GiphyLoadResult].self)
     }
 }

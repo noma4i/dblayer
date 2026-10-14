@@ -26,6 +26,14 @@ fn result_name(operation: &OperationCall) -> &str {
     operation.result.as_ref().and_then(|root| root.app_type.as_deref()).unwrap_or_default()
 }
 
+fn returned(operation: &OperationCall, swift: bool) -> String {
+    match (operation.list, swift) {
+        (true, true) => format!("[{}]", result_name(operation)),
+        (true, false) => format!("List<{}>", result_name(operation)),
+        (false, _) => result_name(operation).to_string(),
+    }
+}
+
 pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCall]) {
     if operations.is_empty() { return; }
     for operation in operations {
@@ -37,7 +45,7 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
     for operation in operations {
         let method = name(&operation.name);
         let params = operation.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", param_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
-        let returns = if operation.result.is_none() { String::new() } else { format!(" -> {}", result_name(operation)) };
+        let returns = if operation.result.is_none() { String::new() } else { format!(" -> {}", returned(operation, true)) };
         writeln!(out, "    public static func {method}({params}) async throws{returns} {{\n        var variables: [String: JSONValue] = [:]").unwrap();
         for (arg, kind) in &operation.args {
             if kind.ends_with('?') { writeln!(out, "        if let value = {arg} {{ variables[\"{arg}\"] = JSONValue.encode(value) }}").unwrap(); }
@@ -45,7 +53,7 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
         }
         let sent = operation.wrap.as_ref().map_or("variables".to_string(), |wrap| format!("[\"{wrap}\": JSONValue.object(variables)]"));
         if operation.result.is_none() { writeln!(out, "        try await DB.run(\"{}\", variables: {sent})\n    }}", operation.operation).unwrap(); }
-        else { writeln!(out, "        return try await DB.run(\"{}\", variables: {sent}, as: {}.self)\n    }}", operation.operation, result_name(operation)).unwrap(); }
+        else { writeln!(out, "        return try await DB.run(\"{}\", variables: {sent}, as: {}.self)\n    }}", operation.operation, returned(operation, true)).unwrap(); }
     }
     writeln!(out, "}}\n").unwrap();
 }
@@ -61,7 +69,7 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
     for operation in operations {
         let method = name(&operation.name);
         let params = operation.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", param_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
-        let returns = if operation.result.is_none() { String::new() } else { format!(": {}", result_name(operation)) };
+        let returns = if operation.result.is_none() { String::new() } else { format!(": {}", returned(operation, false)) };
         writeln!(out, "    suspend fun {method}({params}){returns} {{\n        val variables = mutableMapOf<String, JsonElement>()").unwrap();
         for (arg, kind) in &operation.args {
             if kind.ends_with('?') { writeln!(out, "        if ({arg} != null) variables[\"{arg}\"] = jsonValue({arg})").unwrap(); }
@@ -69,6 +77,7 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
         }
         let sent = operation.wrap.as_ref().map_or("JsonObject(variables)".to_string(), |wrap| format!("JsonObject(mapOf(\"{wrap}\" to JsonObject(variables)))"));
         if operation.result.is_none() { writeln!(out, "        DBlayer.run(\"{}\", {sent})\n    }}", operation.operation).unwrap(); }
+        else if operation.list { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, kotlinx.serialization.builtins.ListSerializer({}.serializer()))\n    }}", operation.operation, result_name(operation)).unwrap(); }
         else { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, {}.serializer())\n    }}", operation.operation, result_name(operation)).unwrap(); }
     }
     writeln!(out, "}}\n").unwrap();

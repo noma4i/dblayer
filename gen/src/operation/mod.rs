@@ -10,7 +10,7 @@ use crate::ParseError;
 type Found = (usize, ParseError);
 
 const ARG_KINDS: [&str; 6] = ["bool", "int", "num", "string", "id", "ids"];
-const WORDS: [&str; 5] = ["mutation", "query", "wrap", "args", "result"];
+const WORDS: [&str; 6] = ["mutation", "query", "wrap", "args", "result", "list"];
 
 /// A server operation that no model owns: a typed call that sends it and reads the declared fields of its answer.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,6 +20,7 @@ pub struct OperationCall {
     pub wrap: Option<String>,
     pub args: Vec<(String, String)>,
     pub result: Option<FieldSpec>,
+    pub list: bool,
 }
 
 fn symbol(value: Option<&Node<Value>>) -> Option<&str> {
@@ -118,8 +119,9 @@ pub(crate) fn build(nodes: &[OperationNode], errors: &mut Vec<Found>) -> Vec<Ope
         if !seen.insert(node.name.as_str()) {
             errors.push(fail(node.line, node.column, format!("operation `{}` is declared twice", node.name)));
         }
-        let mut call = OperationCall { name: node.name.clone(), operation: String::new(), wrap: None, args: Vec::new(), result: None };
+        let mut call = OperationCall { name: node.name.clone(), operation: String::new(), wrap: None, args: Vec::new(), result: None, list: false };
         let mut named = 0;
+        let mut list_line = None;
         for line in &node.body {
             match line.word.as_str() {
                 "mutation" | "query" => {
@@ -135,11 +137,18 @@ pub(crate) fn build(nodes: &[OperationNode], errors: &mut Vec<Found>) -> Vec<Ope
                 },
                 "args" => call.args = kinds(line, node.file, errors),
                 "result" => call.result = result_root(line, &call.name, node.file, errors),
+                "list" => {
+                    call.list = true;
+                    list_line = Some((line.line, line.column));
+                }
                 other => errors.push(fail(line.line, line.column, format!("unknown line `{other}` in an operation, expected one of {}", WORDS.join(", ")))),
             }
         }
         if named != 1 {
             errors.push(fail(node.line, node.column, format!("operation `{}` needs exactly one `mutation` or `query` line", node.name)));
+        }
+        if let (true, None, Some((line, column))) = (call.list, &call.result, list_line) {
+            errors.push(fail(line, column, "`list` needs a `result` line that describes one element".to_string()));
         }
         built.push(call);
     }

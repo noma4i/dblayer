@@ -67,6 +67,13 @@ data class MomentCreateResultMoment(
     @Serializable(with = IDText::class) val id: String? = null,
 )
 
+@Serializable
+data class GiphyLoadResult(
+    @Serializable(with = IDText::class) val id: String? = null,
+    val url: String? = null,
+    val isSticker: Boolean? = null,
+)
+
 object Operations {
     suspend fun qrCodeCreate(kind: String, size: Int? = null): QrCodeCreateResult {
         val variables = mutableMapOf<String, JsonElement>()
@@ -91,5 +98,11 @@ object Operations {
         val variables = mutableMapOf<String, JsonElement>()
         variables["input"] = jsonValue(input)
         return DBlayer.run("MomentCreate", JsonObject(variables), MomentCreateResult.serializer())
+    }
+    suspend fun giphyLoad(type: String, limit: Int? = null): List<GiphyLoadResult> {
+        val variables = mutableMapOf<String, JsonElement>()
+        variables["type"] = jsonValue(type)
+        if (limit != null) variables["limit"] = jsonValue(limit)
+        return DBlayer.run("Giphy", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()))
     }
 }

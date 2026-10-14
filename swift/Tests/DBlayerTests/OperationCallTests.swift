@@ -92,6 +92,18 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func aListOperationReturnsOneGeneratedResultPerElementOfTheRootList() async throws {
+    _ = try Self.openOperationRig("Giphy", document: "query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { id url isSticker } }", reply: #"{"data":{"giphy":[{"id":1,"url":"u1","isSticker":true},{"id":"2"}]}}"#)
+
+    let result = try await Operations.giphyLoad(type: "gif")
+
+    #expect(result.map(\.id) == ["1", "2"])
+    #expect(result.map(\.url) == ["u1", nil])
+    #expect(result.map(\.isSticker) == [true, nil])
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func aJsonScalarOfAnInputObjectIsSentAsAnObjectAndAnOmittedListIsNotSent() async throws {
     let transport = try Self.openOperationRig("MomentCreate", document: "mutation MomentCreate($input: MomentInput!) { momentCreate(input: $input) { moment { id } } }", reply: #"{"data":{"momentCreate":{"moment":{"id":9}}}}"#)
     let widget = WidgetInput(kind: "EMOJI", settings: SettingsInput(itemProps: .object(["emoji": "fire", "size": 3, "tags": .array(["a"])]), rotate: 1.5))

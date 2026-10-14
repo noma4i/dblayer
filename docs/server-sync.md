@@ -195,6 +195,29 @@ val pricing = Operations.pricingLoad()
 val names = pricing.gifts?.mapNotNull { it.name }.orEmpty()
 ```
 
+An operation whose root field is a list, such as a search that returns the matching items, declares `list`. `result` then describes one element and the call returns a list of it:
+
+```ruby
+operation :giphy_load do
+  query  Giphy
+  list
+  args   type: :string, limit: :int?
+  result id: :id, url: :string, isSticker: :bool
+end
+```
+
+```swift
+let found = try await Operations.giphyLoad(type: "gif", limit: 20)
+let urls = found.compactMap(\.url)
+```
+
+```kotlin
+val found = Operations.giphyLoad(type = "gif", limit = 20)
+val urls = found.mapNotNull { it.url }
+```
+
+`list` needs a `result` line.
+
 An operation that takes a schema input object:
 
 ```ruby

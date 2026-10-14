@@ -85,6 +85,17 @@ class OperationCallTest {
     }
 
     @Test
+    fun aListOperationReturnsOneGeneratedResultPerElementOfTheRootList() = bounded {
+        rig("Giphy", "query Giphy(${'$'}type: String!, ${'$'}limit: Int) { giphy(type: ${'$'}type, limit: ${'$'}limit) { id url isSticker } }", """{"data":{"giphy":[{"id":1,"url":"u1","isSticker":true},{"id":"2"}]}}""")
+
+        val result = withTimeout(5000) { Operations.giphyLoad(type = "gif") }
+
+        assertEquals(listOf("1", "2"), result.map { it.id })
+        assertEquals(listOf("u1", null), result.map { it.url })
+        assertEquals(listOf(true, null), result.map { it.isSticker })
+    }
+
+    @Test
     fun aJsonScalarOfAnInputObjectIsSentAsAnObjectAndAnOmittedListIsNotSent() = bounded {
         val transport = rig("MomentCreate", "mutation MomentCreate(${'$'}input: MomentInput!) { momentCreate(input: ${'$'}input) { moment { id } } }", """{"data":{"momentCreate":{"moment":{"id":9}}}}""")
         val props = JsonObject(mapOf("emoji" to JsonPrimitive("fire"), "size" to JsonPrimitive(3), "tags" to JsonArray(listOf(JsonPrimitive("a")))))
