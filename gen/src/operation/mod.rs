@@ -25,12 +25,30 @@ fn symbol(value: Option<&Node<Value>>) -> Option<&str> {
     }
 }
 
-fn kinds(call: &Call, file: usize, errors: &mut Vec<Found>) -> Vec<(String, String)> {
+pub(crate) fn is_input_object(kind: &str) -> bool {
+    kind.trim_end_matches('?').chars().next().is_some_and(char::is_uppercase)
+}
+
+pub(crate) fn input_object_names(operations: &[OperationCall]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for (_, kind) in operations.iter().flat_map(|operation| &operation.args).filter(|(_, kind)| is_input_object(kind)) {
+        let name = kind.trim_end_matches('?').to_string();
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn kinds(call: &Call, file: usize, errors: &mut Vec<Found>, objects: bool) -> Vec<(String, String)> {
     let mut found = Vec::new();
     for pair in &call.options {
         match &pair.value.item {
-            Value::Symbol(kind) if ARG_KINDS.contains(&kind.trim_end_matches('?')) => found.push((pair.key.clone(), kind.clone())),
-            _ => errors.push((file, ParseError::new(pair.line, pair.column, "type must be :bool, :int, :num, :string, :id or :ids, each optionally followed by ?"))),
+            Value::Symbol(kind) if ARG_KINDS.contains(&kind.trim_end_matches('?')) || (objects && is_input_object(kind)) => found.push((pair.key.clone(), kind.clone())),
+            _ => {
+                let message = if objects { "type must be :bool, :int, :num, :string, :id, :ids or the name of a schema input object like :QrCodeInput, each optionally followed by ?" } else { "type must be :bool, :int, :num, :string, :id or :ids, each optionally followed by ?" };
+                errors.push((file, ParseError::new(pair.line, pair.column, message)));
+            }
         }
     }
     found
@@ -59,8 +77,8 @@ pub(crate) fn build(nodes: &[OperationNode], errors: &mut Vec<Found>) -> Vec<Ope
                     Some(name) => call.wrap = Some(name.to_string()),
                     None => errors.push(fail(line.line, line.column, "`wrap` needs a variable name like `:input`".to_string())),
                 },
-                "args" => call.args = kinds(line, node.file, errors),
-                "result" => call.result = kinds(line, node.file, errors),
+                "args" => call.args = kinds(line, node.file, errors, true),
+                "result" => call.result = kinds(line, node.file, errors, false),
                 other => errors.push(fail(line.line, line.column, format!("unknown line `{other}` in an operation, expected one of {}", WORDS.join(", ")))),
             }
         }

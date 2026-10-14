@@ -151,8 +151,29 @@ println(code.url)
 - `mutation` or `query` names the operation. Pass the operation type to `DB.open` (Swift) or `DBlayer.open` (Kotlin) like any other operation.
 - `args` are the variables, with the same kinds as the args of `create`. A trailing `?` makes one optional and an omitted one is not sent. `wrap :input` sends them as `{ input: { ... } }`.
 - `result` lists the fields to read from the root field of the answer, all optional. Without `result` the call returns nothing.
+- An arg can also name an input object of the server schema, written as a symbol: `args input: :StickerInput`. The generator reads the object and every object it nests from the schema file (`--schema`, see [models](models.md)) and writes one struct (Swift) or one `@Serializable` data class (Kotlin) for each. A field the schema marks `!` is required, any other field is optional and a nil field is not sent. Lists keep their element nullability. Enums and custom scalars are strings.
 - The call is sent at once. It is not queued, stored or retried, and it fails when the device is offline, when the transport fails or when the answer carries errors. The error text holds every message.
 - Do not use it for a row of a model. The row is written by `create`, `update` or an `action`, which keep the queue, the retries and the rollback.
+
+An operation that takes a schema input object:
+
+```ruby
+operation :sticker_send do
+  mutation StickerSend
+  args     input: :StickerInput
+  result   id: :string
+end
+```
+
+```swift
+let sent = try await Operations.stickerSend(input: StickerInput(name: "wave", tags: ["a"], pinned: true, owner: OwnerInput(id: "7")))
+print(sent.id)
+```
+
+```kotlin
+val sent = Operations.stickerSend(StickerInput(name = "wave", tags = listOf("a"), pinned = true, owner = OwnerInput(id = "7")))
+println(sent.id)
+```
 
 ## Subscriptions
 

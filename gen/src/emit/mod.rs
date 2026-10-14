@@ -3,10 +3,13 @@ use dblayer::value::ScalarKind;
 use std::fmt::Write;
 
 mod nested;
+mod inputs;
 mod operations;
 use nested::{emit_kotlin_type, emit_swift_type};
+use inputs::{emit_kotlin_inputs, emit_swift_inputs};
 use operations::{emit_kotlin_operations, emit_swift_operations};
 use crate::operation::OperationCall;
+use crate::schema_check::InputObject;
 
 /// The relation that holds the one row of a model: the only global relation answered as a single record.
 fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
@@ -131,8 +134,8 @@ pub enum Access {
 }
 
 /// Swift source for the models. `Internal` drops `public` for apps that generate the models into their own module.
-pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], access: Access) -> String {
-    let source = emit_swift(models, operations);
+pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], inputs: &[InputObject], access: Access) -> String {
+    let source = emit_swift(models, operations, inputs);
     if access == Access::Public {
         return source;
     }
@@ -145,7 +148,7 @@ pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], acces
     }).collect::<Vec<_>>().join("\n") + "\n"
 }
 
-pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall]) -> String {
+pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], inputs: &[InputObject]) -> String {
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
     for model in models {
         let class = model.key.as_str();
@@ -243,13 +246,15 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall]) -> String 
     }
     let types = declared_types(models);
     for declaration in &types { emit_swift_type(&mut out, declaration, &types); }
+    emit_swift_inputs(&mut out, inputs);
     emit_swift_operations(&mut out, operations);
-    writeln!(out, "public let modelsJSON = #\"{}\"#", serde_json::to_string(models).unwrap()).unwrap();
+    if !models.is_empty() { writeln!(out, "public let modelsJSON = #\"{}\"#", serde_json::to_string(models).unwrap()).unwrap(); }
     out
 }
 
-pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall]) -> String {
-    let mut out = "package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\nimport kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n".to_string();
+pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &[InputObject]) -> String {
+    let encoding = if inputs.is_empty() { "" } else { "import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n" };
+    let mut out = format!("package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\n{encoding}import kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n");
     for model in models {
         let class = model.key.as_str();
         let values = local_name(model, "values");
@@ -340,8 +345,9 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall]) -> String
     }
     let types = declared_types(models);
     for declaration in &types { emit_kotlin_type(&mut out, declaration, &types); }
+    emit_kotlin_inputs(&mut out, inputs);
     emit_kotlin_operations(&mut out, operations);
     let models_json = serde_json::to_string(models).unwrap().replace('$', "${'$'}");
-    writeln!(out, "val modelsJSON = \"\"\"{models_json}\"\"\"").unwrap();
+    if !models.is_empty() { writeln!(out, "val modelsJSON = \"\"\"{models_json}\"\"\"").unwrap(); }
     out
 }

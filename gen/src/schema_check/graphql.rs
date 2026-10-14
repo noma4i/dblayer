@@ -12,14 +12,18 @@ pub struct Ty {
     pub name: String,
     pub list: bool,
     pub nullable: bool,
+    pub item_nullable: bool,
 }
 
 impl Ty {
     fn of(declared: &Type<'_, String>) -> Self {
         match declared {
             Type::NonNullType(inner) => Self { nullable: false, ..Self::of(inner) },
-            Type::ListType(inner) => Self { name: Self::of(inner).name, list: true, nullable: true },
-            Type::NamedType(name) => Self { name: name.clone(), list: false, nullable: true },
+            Type::ListType(inner) => {
+                let item = Self::of(inner);
+                Self { name: item.name, list: true, nullable: true, item_nullable: item.nullable }
+            }
+            Type::NamedType(name) => Self { name: name.clone(), list: false, nullable: true, item_nullable: false },
         }
     }
 
@@ -35,7 +39,7 @@ pub enum TypeKind {
     Enum(Vec<String>),
     Union,
     Scalar,
-    Input(HashMap<String, Ty>),
+    Input(Vec<(String, Ty)>),
 }
 
 #[derive(Debug, Default)]
@@ -87,7 +91,11 @@ impl Schema {
         }
     }
 
-    pub fn input_fields(&self, owner: &str) -> Option<&HashMap<String, Ty>> {
+    pub fn input_fields(&self, owner: &str) -> Option<HashMap<String, Ty>> {
+        self.input_fields_in_order(owner).map(|fields| fields.iter().cloned().collect())
+    }
+
+    pub fn input_fields_in_order(&self, owner: &str) -> Option<&[(String, Ty)]> {
         match self.types.get(owner) {
             Some(TypeKind::Input(fields)) => Some(fields),
             _ => None,

@@ -1,0 +1,40 @@
+package com.noma4i.dblayer.models
+
+import com.noma4i.dblayer.*
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.*
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: String? = null, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: List<String?>? = null, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: Int? = null, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: List<OwnerInput>? = null)
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: String? = null)
+
+@Serializable
+data class QrCodeCreateResult(val url: String? = null)
+
+@Serializable
+data class StickerSendResult(val id: String? = null)
+
+object Operations {
+    suspend fun qrCodeCreate(kind: String, size: Int? = null): QrCodeCreateResult {
+        val variables = mutableMapOf<String, JsonElement>()
+        variables["kind"] = jsonValue(kind)
+        if (size != null) variables["size"] = jsonValue(size)
+        return DBlayer.run("QrCodeCreate", JsonObject(mapOf("input" to JsonObject(variables))), QrCodeCreateResult.serializer())
+    }
+    suspend fun signOut() {
+        val variables = mutableMapOf<String, JsonElement>()
+        DBlayer.run("SignOut", JsonObject(variables))
+    }
+    suspend fun stickerSend(input: StickerInput): StickerSendResult {
+        val variables = mutableMapOf<String, JsonElement>()
+        variables["input"] = jsonValue(input)
+        return DBlayer.run("StickerSend", JsonObject(variables), StickerSendResult.serializer())
+    }
+}

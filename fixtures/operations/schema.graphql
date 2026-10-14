@@ -1,0 +1,9 @@
+type Query { ping: Int }
+type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker }
+type QrCode { url: String }
+type Sticker { id: ID }
+input CreateQrCodeInput { kind: String!, size: Int }
+scalar DateTime
+enum Mood { HAPPY SAD }
+input StickerInput { name: String!, mood: Mood, tags: [String!]!, notes: [String], size: Int, pinned: Boolean!, owner: OwnerInput!, helpers: [OwnerInput!] }
+input OwnerInput { id: ID!, nickname: String }

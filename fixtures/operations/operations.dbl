@@ -8,3 +8,9 @@ end
 operation :sign_out do
   mutation SignOut
 end
+
+operation :sticker_send do
+  mutation StickerSend
+  args input: :StickerInput
+  result id: :string
+end

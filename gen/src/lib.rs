@@ -7,6 +7,7 @@ mod schema_check;
 mod emit;
 pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
 pub use operation::OperationCall;
+pub use schema_check::{InputField, InputObject};
 
 use std::fmt;
 use std::fs;
@@ -64,6 +65,15 @@ pub fn parse_declarations(paths: &[impl AsRef<Path>]) -> Result<Declarations, Ve
     parse_all(&sources).map_err(|found| {
         found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect()
     })
+}
+
+pub fn load_input_objects(schema: Option<&Path>, operations: &[OperationCall]) -> Result<Vec<InputObject>, String> {
+    let wanted = operation::input_object_names(operations);
+    match (schema, wanted.first()) {
+        (_, None) => Ok(Vec::new()),
+        (None, Some(name)) => Err(format!("an operation names the input object `{name}`: pass --schema <schema.graphql> so the generator can read it")),
+        (Some(schema), Some(_)) => schema_check::load_input_objects(schema, &wanted),
+    }
 }
 
 pub fn check_models_against_schema(schema: &Path, operations: &[PathBuf], paths: &[impl AsRef<Path>]) -> Result<Vec<String>, Vec<FileError>> {
@@ -137,3 +147,6 @@ mod args_tests;
 
 #[cfg(test)]
 mod operation_tests;
+
+#[cfg(test)]
+mod input_tests;

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use dblayer_gen::{check_models_against_schema, parse_declarations, emit_swift_with, emit_kotlin, Access, Declarations};
+use dblayer_gen::{check_models_against_schema, load_input_objects, parse_declarations, emit_swift_with, emit_kotlin, Access, Declarations};
 
 const USAGE: &str = "usage: dblayer-gen [--internal] [--schema <schema.graphql> [--operations <path>]...] [<spec|swift|kotlin>] <file.dbl>...";
 
@@ -42,7 +42,7 @@ fn main() -> ExitCode {
         }
     }
     match command {
-        Some(command) => generate(command, files, options.access),
+        Some(command) => generate(command, files, options.access, options.schema.as_deref()),
         None => usage(),
     }
 }
@@ -73,12 +73,19 @@ fn check_schema(schema: &std::path::Path, mut operations: Vec<PathBuf>, files: &
     }
 }
 
-fn generate(command: &str, files: &[String], access: Access) -> ExitCode {
+fn generate(command: &str, files: &[String], access: Access, schema: Option<&std::path::Path>) -> ExitCode {
     match parse_declarations(files) {
         Ok(Declarations { models, operations }) => {
+            let inputs = match load_input_objects(schema, &operations) {
+                Ok(inputs) => inputs,
+                Err(message) => {
+                    eprintln!("{message}");
+                    return ExitCode::from(1);
+                }
+            };
             let output = match command {
-                "swift" => emit_swift_with(&models, &operations, access),
-                "kotlin" => emit_kotlin(&models, &operations),
+                "swift" => emit_swift_with(&models, &operations, &inputs, access),
+                "kotlin" => emit_kotlin(&models, &operations, &inputs),
                 _ => serde_json::to_string_pretty(&models).expect("specs serialize"),
             };
             println!("{output}");

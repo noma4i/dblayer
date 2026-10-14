@@ -326,3 +326,27 @@ Fields marked `local: true`, `file` fields and models with `storage: :local` are
 ## Access level
 
 `dblayer-gen --internal swift ...` emits models and their generated value types without `public`, for an app that generates them into its own module.
+
+## Input objects of the schema
+
+An `operation` block can take an input object of the server schema as an arg (`args input: :StickerInput`, see [server sync](server-sync.md)). `dblayer-gen swift|kotlin` needs the schema to write it:
+
+`dblayer-gen --schema schema.graphql swift models/*.dbl` checks the models as above and also writes the input objects. The same flag does both, so the schema file must satisfy the check.
+
+The generator writes every input object that an operation names, and every input object those fields use, once each, after the models. A name that the schema does not have, a name that is not an input object, or an operation that names one without a schema file stops the run with code 1 and a message.
+
+| Schema field | Swift | Kotlin |
+| ------------ | ----- | ------ |
+| `String`, `ID`, an enum, a custom scalar | `String` | `String` |
+| `Int`, `Float`, `Boolean` | `Int`, `Double`, `Bool` | `Int`, `Double`, `Boolean` |
+| `[T!]!`, `[T]` | `[T]`, `[T?]?` | `List<T>`, `List<T?>?` |
+| another input object | its struct | its data class |
+| a field without `!` | optional, not sent when nil | nullable with default `null`, not sent when null |
+
+```swift
+let input = StickerInput(name: "wave", tags: ["a"], pinned: true, owner: OwnerInput(id: "7"))
+```
+
+```kotlin
+val input = StickerInput(name = "wave", tags = listOf("a"), pinned = true, owner = OwnerInput(id = "7"))
+```

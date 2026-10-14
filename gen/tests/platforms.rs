@@ -31,8 +31,8 @@ end
     assert!(moment.is_indexed("userId") && moment.is_indexed("createdAt"));
     assert_eq!(moment.actions[0].variables["momentId"], "id");
     assert_eq!(moment.relations[1].remote.as_ref().unwrap().operation, "MomentsFeed");
-    let swift = emit_swift(&models, &[]);
-    let kotlin = emit_kotlin(&models, &[]);
+    let swift = emit_swift(&models, &[], &[]);
+    let kotlin = emit_kotlin(&models, &[], &[]);
     for token in ["struct Moment", "DBModel", "func create(", "func set(", "static var recent", "static var feed", "func like("] {
         assert!(swift.contains(token), "missing Swift {token}");
     }
@@ -44,11 +44,11 @@ end
 #[test]
 fn object_fields_generate_the_types_they_decode_to() {
     let models = parse_models("model Moment do\n  schema do\n    object :media, as: MomentMedia, null: true do\n      string :url\n    end\n    array :widgets, as: MomentWidget do\n      string :kind\n    end\n  end\nend\n").unwrap();
-    let swift = emit_swift(&models, &[]);
+    let swift = emit_swift(&models, &[], &[]);
     assert!(swift.contains("public let media: MomentMedia?"), "{swift}");
     assert!(swift.contains("public let widgets: [MomentWidget]"), "{swift}");
     assert!(swift.contains("Column<Moment, MomentMedia?>(\"media\")"), "{swift}");
-    let kotlin = emit_kotlin(&models, &[]);
+    let kotlin = emit_kotlin(&models, &[], &[]);
     assert!(kotlin.contains("val media: MomentMedia?"), "{kotlin}");
     assert!(kotlin.contains("val widgets: List<MomentWidget>"), "{kotlin}");
 }
@@ -68,7 +68,7 @@ model Moment do
   end
 end
 "#).unwrap();
-    let kotlin = emit_kotlin(&models, &[]);
+    let kotlin = emit_kotlin(&models, &[], &[]);
     assert!(kotlin.contains(r#"${'$'}arg"#), "{kotlin}");
     let unescaped = kotlin.replace("${'$'}", "");
     assert!(!unescaped.contains("$arg"), "{unescaped}");
@@ -77,7 +77,7 @@ end
 #[test]
 fn swift_models_can_be_built_directly_with_defaults_for_sync_state() {
     let models = parse_models("model Moment do\n  schema do\n    string :uuid\n    string :text, null: true\n    bool :liked, default: false\n    int :count, default: 3\n  end\nend\n").unwrap();
-    let swift = emit_swift(&models, &[]);
+    let swift = emit_swift(&models, &[], &[]);
     assert!(swift.contains("public init(id: String, uuid: String, text: String? = nil, liked: Bool = false, count: Int = 3, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil)"), "{swift}");
     assert!(swift.contains("self.liked = liked"), "{swift}");
 }
@@ -94,8 +94,8 @@ model Hit do
   end
 end
 "#).unwrap();
-    let swift = emit_swift(&models, &[]);
-    let kotlin = emit_kotlin(&models, &[]);
+    let swift = emit_swift(&models, &[], &[]);
+    let kotlin = emit_kotlin(&models, &[], &[]);
     assert!(swift.contains("static func search(_ query: String) -> Query<Self>"));
     assert!(swift.contains("params: [\"query\": JSONValue.encode(query)]"));
     assert!(!swift.contains("var query ="));
@@ -124,8 +124,8 @@ end
     assert_eq!(action.args["mute"], "bool");
     assert_eq!(action.wrap.as_deref(), Some("input"));
     assert_eq!(action.root.as_deref(), Some("chatMute.chat"));
-    let swift = emit_swift(&models, &[]);
-    let kotlin = emit_kotlin(&models, &[]);
+    let swift = emit_swift(&models, &[], &[]);
+    let kotlin = emit_kotlin(&models, &[], &[]);
     assert!(swift.contains("public func mute(mute: Bool) async throws -> Self"));
     assert!(swift.contains("values[\"muted\"] = JSONValue.encode(mute)"));
     assert!(swift.contains("args: [\"mute\": JSONValue.encode(mute)]"));
@@ -145,8 +145,8 @@ model Chat do
   create with: ChatGroupCreate, input: { name: :name }, local: [:unreadCount]
 end
 "#).unwrap();
-    let swift = emit_swift(&models, &[]);
-    let kotlin = emit_kotlin(&models, &[]);
+    let swift = emit_swift(&models, &[], &[]);
+    let kotlin = emit_kotlin(&models, &[], &[]);
     assert!(swift.contains("public static func create(name: String? = nil, unreadCount: Int) async throws -> Self"));
     assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long): Chat"));
 }
@@ -180,7 +180,7 @@ model Hit do
   end
 end
 "#).unwrap();
-    let internal = dblayer_gen::emit_swift_with(&models, &[], dblayer_gen::Access::Internal);
+    let internal = dblayer_gen::emit_swift_with(&models, &[], &[], dblayer_gen::Access::Internal);
     assert!(internal.contains("struct Hit: DBModel"));
     assert!(!internal.contains("public "));
     assert!(internal.contains("let built = Query<Self>(relation: \"search\""));
@@ -193,7 +193,7 @@ fn model_with_one_single_record_relation_gets_a_singleton_entity() {
     let two = "model Me do\n  schema do\n    string :name\n  end\n  remote :profile do\n    query MyProfile\n  end\n  remote :settings do\n    query MySettings\n  end\nend\n";
     for (source, singleton) in [(single, true), (list, false), (two, false)] {
         let models = parse_models(source).unwrap();
-        let (swift, kotlin) = (emit_swift(&models, &[]), emit_kotlin(&models, &[]));
+        let (swift, kotlin) = (emit_swift(&models, &[], &[]), emit_kotlin(&models, &[], &[]));
         assert_eq!(swift.contains("struct Me: DBSingleton") && swift.contains("static var singleton: Query<Self> { profile }"), singleton, "{swift}");
         assert_eq!(kotlin.contains("fun entity() = singletonEntityOf(\"Me\", serializer(), profile)"), singleton, "{kotlin}");
     }
@@ -202,8 +202,8 @@ fn model_with_one_single_record_relation_gets_a_singleton_entity() {
 #[test]
 fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
     let models = parse_models("model Moment do\n  schema do\n    string :text\n    string :tone, optional: true, local: true\n  end\nend\n").unwrap();
-    let swift = emit_swift(&models, &[]);
-    let kotlin = emit_kotlin(&models, &[]);
+    let swift = emit_swift(&models, &[], &[]);
+    let kotlin = emit_kotlin(&models, &[], &[]);
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
     assert!(swift.contains("public static func create(text: String)") && swift.contains("public func update(text: String? = nil)"), "{swift}");
     assert!(kotlin.contains("suspend fun create(text: String)") && kotlin.contains("suspend fun update(text: String? = null)"), "{kotlin}");

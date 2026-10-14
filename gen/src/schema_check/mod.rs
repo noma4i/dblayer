@@ -6,6 +6,10 @@ use crate::parser::{Call, ModelNode, Node, Pair, Value};
 use crate::{FileError, ParseError};
 
 mod graphql;
+mod inputs;
+
+pub use inputs::{InputField, InputObject};
+pub(crate) use inputs::load_input_objects;
 
 use graphql::{Operations, Schema, Ty, TypeKind};
 
@@ -170,7 +174,7 @@ impl<'a> Run<'a> {
                     self.fail(file, call.line, call.column, format!("variable `${key}` of `{mutation}` is `{}`, not an input type", wrapper.describe()));
                     return;
                 };
-                (format!("`{}`", wrapper.name), fields.clone())
+                (format!("`{}`", wrapper.name), fields)
             }
         };
         for arg in args {
