@@ -22,6 +22,15 @@ public enum DB {
   /// Reloads the stale relations that have readers. Call it when the app returns to the foreground.
   public static func resume() async throws { try await database.resume() }
 
+  /// Sends one registered operation that no model owns and decodes the value at its root field. The generated `Operations` calls use it.
+  public static func run<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type) async throws -> Answer {
+    try JSONDecoder().decode(Answer.self, from: Data(try await database.run(operation: operation, variablesJson: JSONValue.object(variables).text).utf8))
+  }
+
+  public static func run(_ operation: String, variables: [String: JSONValue]) async throws {
+    _ = try await database.run(operation: operation, variablesJson: JSONValue.object(variables).text)
+  }
+
   public static func open(endpoint: URL, headers: [String: String] = [:], modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
     try open(transport: UrlSessionTransport(endpoint: endpoint, headers: headers), modelsJSON: modelsJSON, path: path, operations: operations)
   }

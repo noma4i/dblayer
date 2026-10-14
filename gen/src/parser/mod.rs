@@ -50,6 +50,20 @@ pub struct ModelNode {
     pub body: Vec<Call>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperationNode {
+    pub name: String,
+    pub line: usize,
+    pub column: usize,
+    pub file: usize,
+    pub body: Vec<Call>,
+}
+
+pub struct Parsed {
+    pub models: Vec<ModelNode>,
+    pub operations: Vec<OperationNode>,
+}
+
 struct Reader<'a> {
     tokens: &'a [Token],
     index: usize,
@@ -119,23 +133,39 @@ fn describe(kind: &Kind) -> String {
     }
 }
 
-pub fn parse(tokens: &[Token], file: usize) -> Result<Vec<ModelNode>, ParseError> {
+pub fn parse(tokens: &[Token], file: usize) -> Result<Parsed, ParseError> {
     let mut reader = Reader { tokens, index: 0 };
-    let mut models = Vec::new();
+    let mut parsed = Parsed { models: Vec::new(), operations: Vec::new() };
     loop {
         reader.skip_newlines();
         if reader.peek().is_none() {
-            return Ok(models);
+            return Ok(parsed);
         }
         let call = parse_call(&mut reader)?;
-        models.push(model_from(call, file)?);
+        if call.word == "operation" {
+            parsed.operations.push(operation_from(call, file)?);
+        } else {
+            parsed.models.push(model_from(call, file)?);
+        }
     }
+}
+
+fn operation_from(call: Call, file: usize) -> Result<OperationNode, ParseError> {
+    let at = |message: String| ParseError::new(call.line, call.column, message);
+    let name = match call.args.as_slice() {
+        [Node { item: Value::Symbol(name), .. }] => name.clone(),
+        _ => return Err(at("operation needs a name like `operation :qr_code_create do`".to_string())),
+    };
+    let Some(body) = call.block else {
+        return Err(at(format!("operation {name} needs a `do ... end` block")));
+    };
+    Ok(OperationNode { name, line: call.line, column: call.column, file, body })
 }
 
 fn model_from(call: Call, file: usize) -> Result<ModelNode, ParseError> {
     let at = |message: String| ParseError::new(call.line, call.column, message);
     if call.word != "model" {
-        return Err(at(format!("expected `model`, found `{}`", call.word)));
+        return Err(at(format!("expected `model` or `operation`, found `{}`", call.word)));
     }
     let name = match call.args.as_slice() {
         [Node { item: Value::Const(name), .. }] => name.clone(),

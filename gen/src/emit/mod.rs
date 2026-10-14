@@ -3,7 +3,10 @@ use dblayer::value::ScalarKind;
 use std::fmt::Write;
 
 mod nested;
+mod operations;
 use nested::{emit_kotlin_type, emit_swift_type};
+use operations::{emit_kotlin_operations, emit_swift_operations};
+use crate::operation::OperationCall;
 
 /// The relation that holds the one row of a model: the only global relation answered as a single record.
 fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
@@ -128,8 +131,8 @@ pub enum Access {
 }
 
 /// Swift source for the models. `Internal` drops `public` for apps that generate the models into their own module.
-pub fn emit_swift_with(models: &[ModelSpec], access: Access) -> String {
-    let source = emit_swift(models);
+pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], access: Access) -> String {
+    let source = emit_swift(models, operations);
     if access == Access::Public {
         return source;
     }
@@ -142,7 +145,7 @@ pub fn emit_swift_with(models: &[ModelSpec], access: Access) -> String {
     }).collect::<Vec<_>>().join("\n") + "\n"
 }
 
-pub fn emit_swift(models: &[ModelSpec]) -> String {
+pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall]) -> String {
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
     for model in models {
         let class = model.key.as_str();
@@ -240,11 +243,12 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
     }
     let types = declared_types(models);
     for declaration in &types { emit_swift_type(&mut out, declaration, &types); }
+    emit_swift_operations(&mut out, operations);
     writeln!(out, "public let modelsJSON = #\"{}\"#", serde_json::to_string(models).unwrap()).unwrap();
     out
 }
 
-pub fn emit_kotlin(models: &[ModelSpec]) -> String {
+pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall]) -> String {
     let mut out = "package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\nimport kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n".to_string();
     for model in models {
         let class = model.key.as_str();
@@ -336,6 +340,7 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
     }
     let types = declared_types(models);
     for declaration in &types { emit_kotlin_type(&mut out, declaration, &types); }
+    emit_kotlin_operations(&mut out, operations);
     let models_json = serde_json::to_string(models).unwrap().replace('$', "${'$'}");
     writeln!(out, "val modelsJSON = \"\"\"{models_json}\"\"\"").unwrap();
     out

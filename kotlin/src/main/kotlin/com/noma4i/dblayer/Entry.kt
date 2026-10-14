@@ -1,5 +1,6 @@
 package com.noma4i.dblayer
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -22,6 +23,14 @@ object DBlayer {
 
     /** What the open discarded: the reason the database file was recreated, and the models whose rows a schema change cleared. Empty when nothing was discarded. */
     fun openReport(): OpenReport = database.openReport()
+
+    /** Sends one registered operation that no model owns and decodes the value at its root field. The generated `Operations` calls use it. */
+    suspend fun <Answer> run(operation: String, variables: JsonObject, serializer: KSerializer<Answer>): Answer =
+        dbJson.decodeFromString(serializer, database.run(operation, variables.toString()))
+
+    suspend fun run(operation: String, variables: JsonObject) {
+        database.run(operation, variables.toString())
+    }
 
     lateinit var database: Database
     internal val databaseOrNull: Database? get() = if (::database.isInitialized) database else null

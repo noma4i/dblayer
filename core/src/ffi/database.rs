@@ -192,6 +192,11 @@ impl Database {
         }
         Ok(())
     }
+    pub async fn run(&self, operation: String, variables_json: String) -> Result<String, DbError> {
+        let sync = self.sync()?.clone();
+        let variables: Value = serde_json::from_str(&variables_json)?;
+        Ok(on_executor(async move { sync.run(&operation, variables).await }).await?.to_string())
+    }
     pub async fn load(&self, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let params = serde_json::from_str(&params_json)?;

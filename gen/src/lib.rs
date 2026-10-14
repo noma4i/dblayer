@@ -1,10 +1,12 @@
 mod build;
 mod check;
 mod lexer;
+mod operation;
 mod parser;
 mod schema_check;
 mod emit;
 pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
+pub use operation::OperationCall;
 
 use std::fmt;
 use std::fs;
@@ -47,10 +49,19 @@ pub fn parse_models(source: &str) -> Result<Vec<ModelSpec>, Vec<ParseError>> {
     parse_sources(&[source]).map_err(|errors| errors.into_iter().map(|(_, error)| error).collect())
 }
 
+pub struct Declarations {
+    pub models: Vec<ModelSpec>,
+    pub operations: Vec<OperationCall>,
+}
+
 pub fn parse_files(paths: &[impl AsRef<Path>]) -> Result<Vec<ModelSpec>, Vec<FileError>> {
+    parse_declarations(paths).map(|declarations| declarations.models)
+}
+
+pub fn parse_declarations(paths: &[impl AsRef<Path>]) -> Result<Declarations, Vec<FileError>> {
     let (names, sources) = read_sources(paths)?;
     let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
-    parse_sources(&sources).map_err(|found| {
+    parse_all(&sources).map_err(|found| {
         found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect()
     })
 }
@@ -60,7 +71,7 @@ pub fn check_models_against_schema(schema: &Path, operations: &[PathBuf], paths:
     let (names, sources) = read_sources(paths)?;
     let mut nodes = Vec::new();
     for (file, source) in sources.iter().enumerate() {
-        nodes.extend(lexer::lex(source).and_then(|tokens| parser::parse(&tokens, file)).expect("sources parsed above"));
+        nodes.extend(lexer::lex(source).and_then(|tokens| parser::parse(&tokens, file)).expect("sources parsed above").models);
     }
     schema_check::check_schema(schema, operations, &names, &nodes).map(|outcome| outcome.notes)
 }
@@ -79,18 +90,34 @@ fn read_sources(paths: &[impl AsRef<Path>]) -> Result<(Vec<String>, Vec<String>)
 }
 
 fn parse_sources(sources: &[&str]) -> Result<Vec<ModelSpec>, Vec<(usize, ParseError)>> {
+    parse_all(sources).map(|declarations| declarations.models)
+}
+
+fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>> {
     let mut nodes = Vec::new();
+    let mut operation_nodes = Vec::new();
     let mut errors = Vec::new();
     for (file, source) in sources.iter().enumerate() {
         match lexer::lex(source).and_then(|tokens| parser::parse(&tokens, file)) {
-            Ok(models) => nodes.extend(models),
+            Ok(parsed) => {
+                nodes.extend(parsed.models);
+                operation_nodes.extend(parsed.operations);
+            }
             Err(error) => errors.push((file, error)),
         }
     }
     if !errors.is_empty() {
         return Err(errors);
     }
-    check::check(&nodes)
+    let operations = operation::build(&operation_nodes, &mut errors);
+    let models = match check::check(&nodes) {
+        Ok(models) => models,
+        Err(found) => {
+            errors.extend(found);
+            return Err(errors);
+        }
+    };
+    if errors.is_empty() { Ok(Declarations { models, operations }) } else { Err(errors) }
 }
 
 #[cfg(test)]
@@ -107,3 +134,6 @@ mod storage_tests;
 
 #[cfg(test)]
 mod args_tests;
+
+#[cfg(test)]
+mod operation_tests;

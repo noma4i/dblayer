@@ -1,0 +1,10 @@
+operation :qr_code_create do
+  mutation QrCodeCreate
+  wrap :input
+  args kind: :string, size: :int?
+  result url: :string
+end
+
+operation :sign_out do
+  mutation SignOut
+end

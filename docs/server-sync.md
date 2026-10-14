@@ -125,6 +125,35 @@ end
 
 `create`, `update` and `destroy` call the named mutation. `input:` maps row fields to variables (same names by default). `args:` on `create` and `update` declares values that are sent but not stored (see [writing data](writing-data.md)). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
 
+## Operations without a model
+
+Sign-in, sign-out, a QR code or a price list belong to no row. Declare each one with an `operation` block. The generator writes a typed call for Swift and Kotlin, and the call sends the operation and reads the fields you name in `result`:
+
+```ruby
+operation :qr_code_create do
+  mutation QrCodeCreate
+  wrap     :input
+  args     kind: :string, size: :int?
+  result   url: :string
+end
+```
+
+```swift
+let code = try await Operations.qrCodeCreate(kind: "chat", size: 3)
+print(code.url)
+```
+
+```kotlin
+val code = Operations.qrCodeCreate(kind = "chat", size = 3)
+println(code.url)
+```
+
+- `mutation` or `query` names the operation. Pass the operation type to `DB.open` (Swift) or `DBlayer.open` (Kotlin) like any other operation.
+- `args` are the variables, with the same kinds as the args of `create`. A trailing `?` makes one optional and an omitted one is not sent. `wrap :input` sends them as `{ input: { ... } }`.
+- `result` lists the fields to read from the root field of the answer, all optional. Without `result` the call returns nothing.
+- The call is sent at once. It is not queued, stored or retried, and it fails when the device is offline, when the transport fails or when the answer carries errors. The error text holds every message.
+- Do not use it for a row of a model. The row is written by `create`, `update` or an `action`, which keep the queue, the retries and the rollback.
+
 ## Subscriptions
 
 ```ruby

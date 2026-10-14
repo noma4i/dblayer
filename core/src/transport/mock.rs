@@ -46,6 +46,11 @@ impl Reply {
         Self { delay: Duration::ZERO, result: Ok(Response { data: None, errors: vec![error] }) }
     }
 
+    pub fn graphql_messages(messages: &[&str]) -> Self {
+        let errors = messages.iter().map(|message| GraphQLError { message: (*message).to_string(), path: None, extensions: None }).collect();
+        Self { delay: Duration::ZERO, result: Ok(Response { data: None, errors }) }
+    }
+
     pub fn fail(error: TransportError) -> Self {
         Self { delay: Duration::ZERO, result: Err(error) }
     }

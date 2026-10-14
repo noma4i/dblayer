@@ -14,6 +14,7 @@ mod state_tests;
 #[cfg(test)]
 mod registry_tests;
 mod resume;
+mod run;
 mod send;
 mod subscribe;
 mod upload;
@@ -172,6 +173,8 @@ mod merge_tests;
 mod normalize_tests;
 #[cfg(test)]
 mod resume_tests;
+#[cfg(test)]
+mod run_tests;
 #[cfg(test)]
 mod subscribe_tests;
 #[cfg(test)]

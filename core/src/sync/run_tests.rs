@@ -1,0 +1,41 @@
+use serde_json::json;
+
+use crate::transport::{CallKind, Reply};
+
+use super::rig::*;
+use super::{OperationDef, SyncError};
+
+fn registered() -> Rig {
+    let rig = rig();
+    rig.sync.register(OperationDef::new("QrCodeCreate", "mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }", "qrCodeCreate"));
+    rig.sync.register(OperationDef::new("Pricing", "query Pricing { pricing { plan } }", "pricing"));
+    rig
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_run_sends_the_variables_and_returns_the_value_at_the_root() {
+    let rig = registered();
+    rig.transport.enqueue("QrCodeCreate", Reply::data(json!({"qrCodeCreate": {"url": "https://q"}})));
+    let value = rig.sync.run("QrCodeCreate", json!({"input": {"kind": "chat"}})).await.unwrap();
+    assert_eq!(value, json!({"url": "https://q"}));
+    let calls = rig.transport.calls();
+    assert_eq!(calls.last().unwrap().variables, json!({"input": {"kind": "chat"}}));
+    assert_eq!(calls.last().unwrap().kind, CallKind::Mutation);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_run_of_a_query_uses_the_query_call_and_an_unknown_name_fails() {
+    let rig = registered();
+    rig.transport.enqueue("Pricing", Reply::data(json!({"pricing": {"plan": "gold"}})));
+    assert_eq!(rig.sync.run("Pricing", json!({})).await.unwrap(), json!({"plan": "gold"}));
+    assert_eq!(rig.transport.calls().last().unwrap().kind, CallKind::Query);
+    assert!(matches!(rig.sync.run("Nope", json!({})).await, Err(SyncError::UnknownOperation(_))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_run_answered_with_errors_fails_with_every_message() {
+    let rig = registered();
+    rig.transport.enqueue("QrCodeCreate", Reply::graphql_messages(&["first", "second"]));
+    let error = rig.sync.run("QrCodeCreate", json!({})).await.unwrap_err();
+    assert_eq!(error.to_string(), "graphql: first\nsecond");
+}

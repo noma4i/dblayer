@@ -2,7 +2,7 @@ use super::*;
 use crate::lexer::lex;
 
 fn parse_source(source: &str) -> Result<Vec<ModelNode>, ParseError> {
-    parse(&lex(source).unwrap(), 0)
+    parse(&lex(source).unwrap(), 0).map(|parsed| parsed.models)
 }
 
 fn symbol(text: &str) -> Value {
@@ -69,11 +69,11 @@ fn bare_and_empty_literals() {
 #[test]
 fn malformed_sources_fail_with_a_line_and_a_message() {
     let cases: [(&str, &str, Option<usize>, Option<&str>); 8] = [
-        ("top level word other than model", "\nstring :name\n", Some(2), Some("expected `model`, found `string`")),
+        ("top level word other than model", "\nstring :name\n", Some(2), Some("expected `model` or `operation`, found `string`")),
         ("model without name", "model do\nend", Some(1), Some("model needs a constant name, for example `model User do`")),
         ("model without block", "model User\n", Some(1), Some("model User needs a `do ... end` block")),
         ("unclosed block", "model User do\n  schema do\n    string :a\nend\n", Some(1), Some("`model` block is not closed with `end`")),
-        ("stray end", "model A do\nend\nend", Some(3), Some("expected `model`, found `end`")),
+        ("stray end", "model A do\nend\nend", Some(3), Some("expected `model` or `operation`, found `end`")),
         ("trailing comma", "model A do\n  index :a,", None, Some("unexpected end of file")),
         ("unexpected token", "model A do\n  index :a :b\nend", Some(2), Some("unexpected `:b`")),
         ("unclosed array", "model A do\n  scope :a, params: [:x\nend", Some(3), None),

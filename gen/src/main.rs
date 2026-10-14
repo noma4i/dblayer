@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use dblayer_gen::{check_models_against_schema, parse_files, emit_swift_with, emit_kotlin, Access};
+use dblayer_gen::{check_models_against_schema, parse_declarations, emit_swift_with, emit_kotlin, Access, Declarations};
 
 const USAGE: &str = "usage: dblayer-gen [--internal] [--schema <schema.graphql> [--operations <path>]...] [<spec|swift|kotlin>] <file.dbl>...";
 
@@ -74,11 +74,11 @@ fn check_schema(schema: &std::path::Path, mut operations: Vec<PathBuf>, files: &
 }
 
 fn generate(command: &str, files: &[String], access: Access) -> ExitCode {
-    match parse_files(files) {
-        Ok(models) => {
+    match parse_declarations(files) {
+        Ok(Declarations { models, operations }) => {
             let output = match command {
-                "swift" => emit_swift_with(&models, access),
-                "kotlin" => emit_kotlin(&models),
+                "swift" => emit_swift_with(&models, &operations, access),
+                "kotlin" => emit_kotlin(&models, &operations),
                 _ => serde_json::to_string_pretty(&models).expect("specs serialize"),
             };
             println!("{output}");
