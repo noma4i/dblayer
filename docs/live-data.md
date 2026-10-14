@@ -190,7 +190,7 @@ moment.vibes                        // has_many
 moment.vibes.count                  // counted by SQLite, no cache field
 ```
 
-Query description is plain data (`model`, `where`, `order`, `limit`, `offset`); the core compiles it to SQL. Indexed fields compare as real columns, other fields through JSON extraction.
+Query description is plain data (`model`, `where`, `order`, `limit`, `offset`); the core compiles it to SQL. Every scalar and enum field compares as its own SQLite column; an index makes the comparison fast.
 
 Null handling follows one rule: a row with a null field matches `!(field == value)`, like a person would expect.
 

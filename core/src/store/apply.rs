@@ -7,12 +7,12 @@ use crate::commit::{
     CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition,
     RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
-use crate::ddl::{manifest_write, RECORD_VERSION, REVISION_SEQ_KEY};
+use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
 use crate::syncstate::{operation_keys, recompute_sync, SyncKey};
 
 use super::file_ops::{apply_file_ops, release_files};
-use super::rows::{column_value, encode_row, hydrate, placeholders, Reader, CHUNK};
+use super::rows::{column_value, placeholders, select_list, read_stored, Reader, CHUNK};
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
 use super::{Inner, ModelInfo, Store, StoreError};
@@ -194,6 +194,10 @@ fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id:
     Ok(())
 }
 
+fn without_nulls(row: &Map<String, Value>) -> Map<String, Value> {
+    row.iter().filter(|(_, value)| !value.is_null()).map(|(key, value)| (key.clone(), value.clone())).collect()
+}
+
 fn apply_upsert(
     connection: &Connection,
     info: &ModelInfo,
@@ -205,66 +209,81 @@ fn apply_upsert(
     result: &mut RowChanges,
     moves: &mut Vec<ScopeOp>,
 ) -> Result<(), StoreError> {
-    let Some((id, payload)) = encode_row(row)? else { return Ok(()) };
+    let Some(id) = row.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_string) else { return Ok(()) };
     if hidden.contains(&(model.to_string(), id.clone())) {
         return Ok(());
     }
-    let existing: Option<(i64, Vec<u8>, i64, Vec<u8>)> = connection
-        .query_row(
-            &format!("SELECT born_rev, field_rev, record_version, payload FROM {} WHERE id = ?1", info.table),
-            params![id],
-            |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?, record.get(3)?)),
-        )
+    let existing = connection
+        .query_row(&format!("SELECT {} FROM {} WHERE id = ?1", select_list(info), info.table), params![id], |record| read_stored(record, info))
         .optional()?;
-    let old_row = existing.as_ref().and_then(|(_, _, version, stored)| match hydrate(*version, stored, &id) {
-        (_, Some(old)) => Some(old),
-        _ => None,
-    });
-    let folds = keeps_local && info.spec.has_local();
-    let folded;
-    let row = if folds {
-        let mut next = row.clone();
-        match (&existing, &old_row) {
-            (_, Some(old)) => info.spec.keep_local(old, &mut next),
-            (None, None) => take_pending(connection, info, model, &id, &mut next)?,
-            (Some(_), None) => {}
+    let old_row = existing.as_ref().map(|stored| &stored.row);
+    let mut next = without_nulls(row);
+    if keeps_local && info.spec.has_local() {
+        match old_row {
+            Some(old) => info.spec.keep_local(old, &mut next),
+            None => take_pending(connection, info, model, &id, &mut next)?,
         }
-        folded = next;
-        &folded
-    } else {
-        row
-    };
-    let payload = if folds { json_bytes(row)? } else { payload };
-    let (born_rev, mut field_rev, changed, kind) = match (&existing, &old_row) {
-        (Some((born, field_rev, _, _)), Some(old)) => {
-            let changed = diff_fields(old, row);
+    }
+    let row = &next;
+    let (born_rev, mut field_rev, changed, kind) = match &existing {
+        Some(stored) => {
+            let changed = diff_fields(&stored.row, row);
             if changed.is_empty() {
                 return Ok(());
             }
-            let field_rev: BTreeMap<String, i64> = serde_json::from_slice(field_rev).unwrap_or_default();
-            (*born, field_rev, changed, RowChangeKind::Updated)
+            (stored.born_rev, stored.field_rev.clone(), changed, RowChangeKind::Updated)
         }
-        (Some(_), None) => (revision, BTreeMap::new(), row.keys().cloned().collect(), RowChangeKind::Updated),
-        (None, _) => (revision, BTreeMap::new(), row.keys().cloned().collect(), RowChangeKind::Inserted),
+        None => (revision, BTreeMap::new(), row.keys().cloned().collect(), RowChangeKind::Inserted),
     };
     for field in &changed {
         field_rev.insert(field.clone(), revision);
     }
     field_rev.retain(|field, _| row.contains_key(field));
-    let mut values: Vec<rusqlite::types::Value> = vec![
-        id.clone().into(),
-        revision.into(),
-        born_rev.into(),
-        json_bytes(&field_rev)?.into(),
-        RECORD_VERSION.into(),
-        payload.into(),
-    ];
-    values.extend(info.promoted.iter().map(|column| column_value(column.kind, row.get(&column.field))));
-    connection.execute(&info.upsert_sql, params_from_iter(values))?;
-    if let Some(old) = &old_row {
+    write_row(connection, info, &id, row, existing.is_some(), &changed, &field_rev, revision, born_rev)?;
+    if let Some(old) = old_row {
         moves.extend(membership_moves(connection, info, model, &id, old, row)?);
     }
     result.push(model, &id, kind, changed);
+    Ok(())
+}
+
+fn write_row(
+    connection: &Connection,
+    info: &ModelInfo,
+    id: &str,
+    row: &Map<String, Value>,
+    exists: bool,
+    changed: &BTreeSet<String>,
+    field_rev: &BTreeMap<String, i64>,
+    revision: i64,
+    born_rev: i64,
+) -> Result<(), StoreError> {
+    let mut names: Vec<String> = vec!["revision".into()];
+    let mut values: Vec<rusqlite::types::Value> = vec![revision.into()];
+    let writes = |field: &str| !exists || changed.contains(field);
+    for column in info.columns.iter().filter(|column| writes(&column.field)) {
+        names.push(column.column.clone());
+        values.push(column_value(column.kind, row.get(&column.field)));
+    }
+    // TEMPORARY: JSON bytes of the fields without a column yet.
+    if info.rest.iter().any(|field| writes(field)) {
+        let rest: Map<String, Value> = info.rest.iter().filter_map(|field| row.get(field).map(|value| (field.clone(), value.clone()))).collect();
+        names.push("rest".into());
+        values.push(if rest.is_empty() { rusqlite::types::Value::Null } else { json_bytes(&rest)?.into() });
+    }
+    for (field, column) in info.rev_columns.iter().filter(|(field, _)| writes(field)) {
+        names.push(column.clone());
+        values.push(field_rev.get(field).map_or(rusqlite::types::Value::Null, |stamp| (*stamp).into()));
+    }
+    if exists {
+        let assignments: Vec<String> = names.iter().map(|name| format!("{name} = ?")).collect();
+        values.push(id.to_string().into());
+        connection.prepare_cached(&format!("UPDATE {} SET {} WHERE id = ?", info.table, assignments.join(", ")))?.execute(params_from_iter(values))?;
+    } else {
+        names.splice(0..0, ["id".to_string(), "born_rev".to_string()]);
+        values.splice(0..0, [id.to_string().into(), born_rev.into()]);
+        connection.prepare_cached(&format!("INSERT INTO {} ({}) VALUES ({})", info.table, names.join(", "), placeholders(names.len())))?.execute(params_from_iter(values))?;
+    }
     Ok(())
 }
 
@@ -548,10 +567,10 @@ fn stamp_confirmed_rows(
 }
 
 fn stamp_owned_fields(connection: &Connection, info: &ModelInfo, id: &str, owned: &Map<String, Value>, revision: i64) -> Result<(), StoreError> {
-    let stored: Option<Vec<u8>> = connection.query_row(&format!("SELECT field_rev FROM {} WHERE id = ?1", info.table), params![id], |row| row.get(0)).optional()?;
-    let Some(mut field_rev) = stored.and_then(|bytes| serde_json::from_slice::<BTreeMap<String, i64>>(&bytes).ok()) else { return Ok(()) };
-    field_rev.iter_mut().filter(|(field, _)| owned.contains_key(*field)).for_each(|(_, stamp)| *stamp = revision);
-    connection.execute(&format!("UPDATE {} SET field_rev = ?1 WHERE id = ?2", info.table), params![json_bytes(&field_rev)?, id])?;
+    for (field, column) in info.rev_columns.iter().filter(|(field, _)| owned.contains_key(field)) {
+        let _ = field;
+        connection.prepare_cached(&format!("UPDATE {} SET {column} = ?1 WHERE id = ?2 AND {column} IS NOT NULL", info.table))?.execute(params![revision, id])?;
+    }
     Ok(())
 }
 

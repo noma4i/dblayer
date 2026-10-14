@@ -142,7 +142,7 @@ fn model_reports_invalid_key_fields_and_names() {
 #[test]
 fn indexed_fields_must_be_scalar_and_map_to_distinct_columns() {
     let object_index = model(vec![FieldSpec::object("media").indexed()]);
-    let service_column = model(vec![FieldSpec::scalar("payload", ScalarKind::Str).indexed()]);
+    let service_column = model(vec![FieldSpec::scalar("rest", ScalarKind::Str).indexed()]);
     let id_column = model(vec![FieldSpec::scalar("id", ScalarKind::Id).indexed()]);
     let same_column = model(vec![
         FieldSpec::scalar("chatId", ScalarKind::Id).indexed(),
@@ -151,7 +151,7 @@ fn indexed_fields_must_be_scalar_and_map_to_distinct_columns() {
     let fine = model(vec![FieldSpec::scalar("chatId", ScalarKind::Id).indexed(), FieldSpec::enumeration("kind", &["a"]).indexed()]);
 
     assert_eq!(object_index.validate(&[]), Err(DeclarationError::IndexedFieldNotScalar("media".into())));
-    assert_eq!(service_column.validate(&[]), Err(DeclarationError::ColumnCollision("payload".into())));
+    assert_eq!(service_column.validate(&[]), Err(DeclarationError::ColumnCollision("rest".into())));
     assert_eq!(id_column.validate(&[]), Err(DeclarationError::ColumnCollision("id".into())));
     assert_eq!(same_column.validate(&[]), Err(DeclarationError::ColumnCollision("chat_id".into())));
     assert_eq!(fine.validate(&[]), Ok(()));

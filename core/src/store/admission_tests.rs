@@ -1,6 +1,5 @@
 use super::*;
 use crate::identity::RowId;
-use crate::store::rows::HydrationVerdict;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
@@ -18,8 +17,7 @@ fn stored(born: i64, revision: i64, fields: &[(&str, i64)], row: Value) -> Store
         revision,
         born_rev: born,
         field_rev: fields.iter().map(|(field, rev)| (field.to_string(), *rev)).collect::<BTreeMap<_, _>>(),
-        verdict: HydrationVerdict::Accepted,
-        row: Some(map(row)),
+        row: map(row),
     }
 }
 

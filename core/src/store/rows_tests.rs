@@ -3,7 +3,7 @@ use super::*;
 use rusqlite::types::Value as SqlValue;
 use serde_json::json;
 
-use super::rows::{column_value, encode_row, hydrate};
+use super::rows::column_value;
 use crate::ddl::ColumnType;
 
 fn seed(store: &Store, ids: &[(&str, &str)]) {
@@ -27,30 +27,7 @@ fn column_value_maps_scalars_and_absent_cases() {
 }
 
 #[test]
-fn encode_rejects_missing_non_string_and_blank_ids() {
-    assert!(encode_row(&row(json!({"chatId": "c1"}))).unwrap().is_none());
-    assert!(encode_row(&row(json!({"id": 1}))).unwrap().is_none());
-    assert!(encode_row(&row(json!({"id": ""}))).unwrap().is_none());
-    let (row_id, payload) = encode_row(&row(json!({"id": "m1", "chatId": "c1"}))).unwrap().unwrap();
-    assert_eq!(row_id, "m1");
-    let (verdict, decoded) = hydrate(1, &payload, "m1");
-    assert_eq!(verdict, HydrationVerdict::Accepted);
-    assert_eq!(decoded.unwrap().len(), 2);
-    assert_eq!(hydrate(1, &payload, "m2").0, HydrationVerdict::IdentityMismatch);
-}
-
-#[test]
-fn hydration_verdict_follows_version_identity_and_readability() {
-    let payload = br#"{"id":"m1"}"#;
-    assert_eq!(hydrate(1, payload, "m1").0, HydrationVerdict::Accepted);
-    assert_eq!(hydrate(0, payload, "m1").0, HydrationVerdict::StaleVersion);
-    assert_eq!(hydrate(1, payload, "m2").0, HydrationVerdict::IdentityMismatch);
-    assert_eq!(hydrate(1, b"not json", "m1").0, HydrationVerdict::Unreadable);
-    assert!(hydrate(0, payload, "m1").1.is_none());
-}
-
-#[test]
-fn point_returns_payload_or_none() {
+fn point_returns_the_row_or_none() {
     let (store, _) = booted_store();
     seed(&store, &[("m1", "c1")]);
     assert_eq!(store.point("messages", "m1").unwrap().unwrap()["chatId"], json!("c1"));
@@ -100,48 +77,6 @@ fn dangling_membership_is_skipped_and_counted() {
     assert_eq!(result.rows.len(), 1);
     assert_eq!(result.dangling_members, 1);
     assert_eq!(store.counters().membership_missing_entity, 1);
-}
-
-#[test]
-fn stale_version_row_is_dropped_silently_with_its_membership() {
-    let (store, _) = booted_store();
-    let thread = scope("messages", "thread");
-    store
-        .commit(envelope(
-            &store,
-            vec![upsert("messages", message("m1", "c1")), upsert("messages", message("m2", "c1"))],
-            vec![append(&thread, "m1", "a"), append(&thread, "m2", "b")],
-        ))
-        .unwrap();
-    exec(&store, "UPDATE row_messages SET record_version = 0 WHERE id = 'm2'");
-    let result = store.scope_rows("messages", thread.key.as_str(), None).unwrap();
-    assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.stale_version_drops, 1);
-    assert_eq!(result.rejected_records, 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 1);
-    assert_eq!(store.counters().stale_version_drops, 1);
-    assert_eq!(store.counters().rejected_records, 0);
-}
-
-#[test]
-fn corrupt_row_is_removed_alone_and_neighbours_survive() {
-    let (store, _) = booted_store();
-    seed(&store, &[("m1", "c1"), ("m2", "c1")]);
-    exec(&store, "UPDATE row_messages SET payload = x'7b' WHERE id = 'm2'");
-    assert!(store.point("messages", "m2").unwrap().is_none());
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
-    assert!(store.point("messages", "m1").unwrap().is_some());
-    assert_eq!(store.counters().rejected_records, 1);
-}
-
-#[test]
-fn payload_identity_must_equal_row_key() {
-    let (store, _) = booted_store();
-    seed(&store, &[("m1", "c1")]);
-    exec(&store, "UPDATE row_messages SET payload = CAST('{\"id\":\"other\"}' AS BLOB) WHERE id = 'm1'");
-    assert!(store.point("messages", "m1").unwrap().is_none());
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 0);
 }
 
 #[test]

@@ -122,8 +122,6 @@ impl Query {
     }
 }
 
-#[cfg(test)]
-const ROW_COLUMNS: &str = "r.id, r.record_version, r.payload";
 const KEY_COLUMNS: &str = "r.id, r.revision";
 
 fn check_model(query: &Query, model: &ModelSpec) -> Result<(), QueryError> {
@@ -204,11 +202,6 @@ fn compile_columns(query: &Query, model: &ModelSpec, columns: &str) -> Result<Co
     Ok(CompiledStatement { sql, bindings })
 }
 
-#[cfg(test)]
-pub fn compile(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
-    compile_columns(query, model, ROW_COLUMNS)
-}
-
 pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
     compile_columns(query, model, KEY_COLUMNS)
 }
@@ -237,7 +230,7 @@ fn scope_bindings(model: &ModelKey, scope: &ScopeKey) -> Vec<SqlValue> {
 #[cfg(test)]
 pub fn scope_statement(model: &ModelKey, scope: &ScopeKey, limit: Option<usize>) -> CompiledStatement {
     let mut bindings = scope_bindings(model, scope);
-    let mut sql = format!("SELECT {ROW_COLUMNS} {} ORDER BY m.order_key, m.row_id", scope_join(model));
+    let mut sql = format!("SELECT {KEY_COLUMNS} {} ORDER BY m.order_key, m.row_id", scope_join(model));
     if let Some(limit) = limit {
         sql.push_str(" LIMIT ?");
         bindings.push(SqlValue::Integer(i64::try_from(limit).unwrap_or(i64::MAX)));

@@ -123,14 +123,15 @@ fn row_table_matches_spec_columns() {
     assert_eq!(found["id"], ("TEXT".to_string(), true));
     assert_eq!(found["revision"], ("INTEGER".to_string(), true));
     assert_eq!(found["born_rev"], ("INTEGER".to_string(), true));
-    assert_eq!(found["field_rev"], ("BLOB".to_string(), true));
-    assert_eq!(found["record_version"], ("INTEGER".to_string(), true));
-    assert_eq!(found["payload"], ("BLOB".to_string(), true));
+    assert_eq!(found["rest"], ("BLOB".to_string(), false));
     assert_eq!(found["chat_id"], ("TEXT".to_string(), false));
     assert_eq!(found["sequence_number"], ("INTEGER".to_string(), false));
     assert_eq!(found["score"], ("REAL".to_string(), false));
     assert_eq!(found["created_at"], ("TEXT".to_string(), false));
-    assert_eq!(found.len(), 10);
+    for rev in ["rev__chat_id", "rev__sequence_number", "rev__score", "rev__created_at", "rev__media"] {
+        assert_eq!(found[rev], ("INTEGER".to_string(), false), "{rev}");
+    }
+    assert_eq!(found.len(), 13);
 }
 
 #[test]
@@ -140,7 +141,7 @@ fn integer_lands_in_an_indexed_column() {
 
     connection
         .execute(
-            "insert into row_messages (id, revision, born_rev, field_rev, record_version, payload, sequence_number) values (?1, 1, 1, x'7b7d', 1, x'7b7d', ?2)",
+            "insert into row_messages (id, revision, born_rev, sequence_number) values (?1, 1, 1, ?2)",
             rusqlite::params!["row-1", 7],
         )
         .unwrap();
@@ -159,7 +160,7 @@ fn strict_row_table_rejects_wrong_column_type() {
     create_model_tables(&connection, &[messages()]).unwrap();
 
     let result = connection.execute(
-        "insert into row_messages (id, revision, born_rev, field_rev, record_version, payload, sequence_number) values ('r', 1, 1, x'00', 1, x'00', 'abc')",
+        "insert into row_messages (id, revision, born_rev, sequence_number) values ('r', 1, 1, 'abc')",
         [],
     );
 
@@ -418,7 +419,6 @@ fn stamp_makes_matching_manifest_compatible() {
 
     assert_eq!(manifest_verify(&connection, Some("v1"), &fingerprints).unwrap(), ManifestVerdict::Compatible);
     assert_eq!(manifest_verify(&connection, Some("v2"), &fingerprints).unwrap(), ManifestVerdict::Incompatible);
-    assert_eq!(manifest_read(&connection, RECORD_VERSION_KEY).unwrap(), Some(RECORD_VERSION.to_string()));
 }
 
 #[test]

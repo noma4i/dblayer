@@ -38,7 +38,7 @@ pub fn admit_upsert(
             continue;
         }
         dropped_fields.push(key.clone());
-        match existing.row.as_ref().and_then(|stored| stored.get(&key)) {
+        match existing.row.get(&key) {
             Some(value) => {
                 row.insert(key, value.clone());
             }

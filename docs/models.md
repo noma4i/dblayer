@@ -43,7 +43,7 @@ Field options:
 | `null: true` | value may be null |
 | `optional: true` | key may be absent in server responses |
 | `default: value` | default value, also stored when the server answers null for a field without `null: true` |
-| `index: true` | indexed column (not allowed for `object`, `array`, `raw`, `list`, `file`) |
+| `index: true` | SQLite index on the field column (not allowed for `object`, `array`, `raw`, `list`, `file`) |
 | `id_from: :parent` | take the id from a nested parent object, also when the same object is a `belongs_to` association |
 | `as: MomentMedia` | for `object` and `array`: name a generated value type, declared by a field block in the input files |
 | `from: "location.lat"` | read the value from a nested path of the response when the field name itself is absent |
@@ -51,6 +51,8 @@ Field options:
 | `local: true` | the server never sends the field and a refresh never replaces or clears it, see [local fields](#local-fields) (needs `optional: true` or `null: true`) |
 
 `index :a, :b` inside `schema` declares a composite index over fields that are already indexed.
+
+Every scalar and enum field is its own typed SQLite column, indexed or not. An update writes only the columns of the fields that changed. A null value and an absent value are stored the same way (SQL `NULL`), so a field read back is either present or missing, never `null`.
 
 ### Nested objects and lists
 

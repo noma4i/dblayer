@@ -7,7 +7,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use crate::query::{Order, Query, Where};
 use crate::schema::{AssociationKind, AssociationSpec};
 use crate::store::Reader;
-use crate::value::{read_id, SortDirection};
+use crate::value::{read_id, same_fields, SortDirection};
 
 use super::error::DbError;
 use super::open::Db;
@@ -108,7 +108,7 @@ impl Db {
             for (parent_field, child_field) in &association.sets {
                 merged.insert(parent_field.clone(), row.get(child_field).cloned().unwrap_or(Value::Null));
             }
-            if merged != current {
+            if !same_fields(&merged, &current) {
                 ops.set(parents, parent, current, merged);
             }
         }
@@ -150,7 +150,7 @@ impl Db {
             for (parent_field, child_field) in &association.sets {
                 merged.insert(parent_field.clone(), previous.as_ref().and_then(|row| row.get(child_field).cloned()).unwrap_or(Value::Null));
             }
-            if merged != current {
+            if !same_fields(&merged, &current) {
                 ops.set(parents, parent, current, merged);
             }
         }

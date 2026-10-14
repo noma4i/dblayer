@@ -3,10 +3,11 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use rusqlite::Connection;
 
-use crate::ddl::{column_name, column_type, table_name, ColumnType, RecreateReason};
+use crate::ddl::{column_fields, column_name, rest_fields, rev_column, table_name, ColumnType, RecreateReason};
 use crate::identity::Generation;
 use crate::pacing::{Clock, Counters, SystemClock};
-use crate::schema::ModelSpec;
+use crate::schema::{FieldKind, ModelSpec};
+use crate::value::ScalarKind;
 
 mod admission;
 mod apply;
@@ -28,49 +29,43 @@ pub use boot::BootReport;
 pub use error::StoreError;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
 pub use membership::{MembershipChange, MembershipPlan};
-pub use rows::{HydrationVerdict, Reader, StoredRow};
+pub use rows::{Reader, StoredRow};
 #[cfg(test)]
 pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;
 pub use windows::{family_prefix, window_key, PageInfo, WindowFreshness, WindowRecord};
 
-pub(crate) struct Promoted {
+pub(crate) struct FieldColumn {
     pub field: String,
     pub column: String,
     pub kind: ColumnType,
+    pub is_bool: bool,
 }
 
 pub(crate) struct ModelInfo {
     pub table: String,
-    pub promoted: Vec<Promoted>,
-    pub upsert_sql: String,
+    pub columns: Vec<FieldColumn>,
+    pub rest: Vec<String>,
+    pub rev_columns: Vec<(String, String)>,
     pub spec: ModelSpec,
 }
 
 impl ModelInfo {
     pub(crate) fn new(spec: &ModelSpec) -> Self {
-        let table = table_name(spec.key.as_str());
-        let promoted: Vec<Promoted> = spec
-            .fields
-            .iter()
-            .filter(|field| field.indexed)
-            .filter_map(|field| {
-                column_type(&field.kind).map(|kind| Promoted {
-                    field: field.name.clone(),
-                    column: column_name(&field.name),
-                    kind,
-                })
+        let columns = column_fields(spec)
+            .map(|(field, kind)| {
+                let column = column_name(&field.name);
+                FieldColumn { field: field.name.clone(), column, kind, is_bool: field.kind == FieldKind::Scalar { kind: ScalarKind::Bool } }
             })
             .collect();
-        let mut columns = vec!["id", "revision", "born_rev", "field_rev", "record_version", "payload"];
-        columns.extend(promoted.iter().map(|column| column.column.as_str()));
-        let placeholders: Vec<String> = (1..=columns.len()).map(|index| format!("?{index}")).collect();
-        let upsert_sql = format!(
-            "INSERT OR REPLACE INTO {table} ({}) VALUES ({})",
-            columns.join(", "),
-            placeholders.join(", ")
-        );
-        Self { table, promoted, upsert_sql, spec: spec.clone() }
+        let rest = rest_fields(spec).map(|field| field.name.clone()).collect();
+        let rev_columns = spec
+            .fields
+            .iter()
+            .filter(|field| field.name != "id")
+            .map(|field| (field.name.clone(), rev_column(&column_name(&field.name))))
+            .collect();
+        Self { table: table_name(spec.key.as_str()), columns, rest, rev_columns, spec: spec.clone() }
     }
 }
 

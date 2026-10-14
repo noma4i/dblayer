@@ -53,20 +53,20 @@ pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64
                 let mut dropped = !dropped_fields.is_empty();
                 for field in unconfirmed.get(&(model.to_string(), id.to_string())).into_iter().flatten() {
                     dropped |= row.contains_key(field);
-                    match stored.as_ref().and_then(|stored| stored.row.as_ref()).and_then(|stored| stored.get(field)) {
+                    match stored.as_ref().and_then(|stored| stored.row.get(field)) {
                         Some(value) => row.insert(field.clone(), value.clone()),
                         None => row.remove(field),
                     };
                 }
                 *drops += usize::from(dropped);
-                match db.merged(model, stored.as_ref().and_then(|stored| stored.row.as_ref()), &row)? {
+                match db.merged(model, stored.as_ref().map(|stored| &stored.row), &row)? {
                     Some(merged) => admitted.rows.push(merged),
                     None => admitted.invalid += 1,
                 }
             }
             UpsertAdmission::DropExistence => {
                 *drops += 1;
-                admitted.rows.extend(stored.and_then(|stored| stored.row));
+                admitted.rows.extend(stored.map(|stored| stored.row));
             }
         }
     }

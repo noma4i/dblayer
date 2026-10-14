@@ -189,10 +189,11 @@ pub(super) fn column_sql(model: &ModelSpec, field: &str) -> Result<String, Query
         return Err(QueryError::EphemeralField(field.to_string()));
     }
     let spec = model.field(field).ok_or_else(|| QueryError::UnknownField(field.to_string()))?;
-    if spec.indexed && column_type(&spec.kind).is_some() {
+    if column_type(&spec.kind).is_some() {
         Ok(format!("r.{}", column_name(field)))
     } else {
-        Ok(format!("json_extract(r.payload, '$.{field}')"))
+        // TEMPORARY: fields without a column are read from the JSON bytes of `rest`.
+        Ok(format!("json_extract(r.rest, '$.{field}')"))
     }
 }
 

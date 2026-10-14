@@ -4,7 +4,6 @@ use super::*;
 fn new_counters_have_zero_values() {
     assert_eq!(Counters::default(), Counters {
         stale_version_drops: 0,
-        rejected_records: 0,
         membership_missing_entity: 0,
         unknown_operation_acks: 0,
         observation_reads: 0,
@@ -35,7 +34,7 @@ fn record_methods_increment_matching_counters() {
 
 #[test]
 fn adding_counters_sums_every_field() {
-    let left = Counters { cache_hits: 1, observer_calls: 2, rejected_records: 3, ..Counters::default() };
+    let left = Counters { cache_hits: 1, observer_calls: 2, rows_loaded: 3, ..Counters::default() };
     let right = Counters { cache_hits: 4, transport_calls: 5, ..Counters::default() };
-    assert_eq!(left + right, Counters { cache_hits: 5, observer_calls: 2, rejected_records: 3, transport_calls: 5, ..Counters::default() });
+    assert_eq!(left + right, Counters { cache_hits: 5, observer_calls: 2, rows_loaded: 3, transport_calls: 5, ..Counters::default() });
 }

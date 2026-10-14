@@ -23,14 +23,6 @@ fn commit_inserts_row_with_promoted_column_and_payload() {
 }
 
 #[test]
-fn payload_is_stored_with_sorted_keys() {
-    let (store, _) = booted_store();
-    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b"}))], vec![]);
-    let stored = text(&store, "SELECT CAST(payload AS TEXT) FROM row_messages WHERE id = 'm1'").unwrap();
-    assert_eq!(stored, r#"{"body":"b","chatId":"c1","id":"m1"}"#);
-}
-
-#[test]
 fn booleans_promote_to_integer_columns() {
     let (store, _) = booted_store();
     commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "seen": true}))], vec![]);
@@ -70,7 +62,7 @@ fn removed_field_leaves_field_revisions() {
     commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
     let stored = store.read(|reader| reader.stored_row("messages", "m1")).unwrap().unwrap();
     assert!(!stored.field_rev.contains_key("body"));
-    assert!(stored.row.unwrap().get("body").is_none());
+    assert!(stored.row.get("body").is_none());
 }
 
 #[test]
@@ -298,7 +290,7 @@ fn commit_with_plans_against_the_snapshot_of_the_same_transaction() {
         .commit_with(store.generation(), |reader| {
             let seen = reader.stored_row("messages", "m1").unwrap().unwrap();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Patch, store_generation());
-            envelope.entity_ops = vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": format!("{}!", seen.row.unwrap()["body"].as_str().unwrap())}))];
+            envelope.entity_ops = vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": format!("{}!", seen.row["body"].as_str().unwrap())}))];
             Ok::<_, ()>(Some(envelope))
         })
         .unwrap();
@@ -572,4 +564,45 @@ fn row_sync_change_reaches_the_scopes_that_hold_the_row() {
     moved.temp_id = None;
     let result = transitions(&store, vec![OperationTransition::Begin(moved)]);
     assert_eq!(result.scopes, [scope("messages", "thread")].into());
+}
+
+#[test]
+fn every_scalar_field_is_a_column_and_no_blob_holds_the_row() {
+    let (store, _) = booted_store();
+    let names: Vec<String> = {
+        let inner = store.lock();
+        let mut statement = inner.connection.prepare("SELECT name FROM pragma_table_info('row_messages')").unwrap();
+        statement.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect()
+    };
+    for wanted in ["id", "revision", "born_rev", "chat_id", "body", "seen", "rev__chat_id", "rev__body", "rev__seen"] {
+        assert!(names.iter().any(|name| name == wanted), "missing column {wanted} in {names:?}");
+    }
+    for gone in ["payload", "record_version", "field_rev"] {
+        assert!(!names.iter().any(|name| name == gone), "column {gone} must not exist");
+    }
+}
+
+#[test]
+fn an_update_writes_only_the_changed_field_and_its_revision() {
+    let (store, _) = booted_store();
+    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b1"}))], vec![]);
+    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b2"}))], vec![]);
+    assert_eq!(text(&store, "SELECT body FROM row_messages WHERE id = 'm1'"), Some("b2".into()));
+    assert_eq!(count(&store, "SELECT rev__body FROM row_messages WHERE id = 'm1'"), 2);
+    assert_eq!(count(&store, "SELECT rev__chat_id FROM row_messages WHERE id = 'm1'"), 1);
+    assert_eq!(count(&store, "SELECT revision FROM row_messages WHERE id = 'm1'"), 2);
+}
+
+#[test]
+fn an_update_does_not_touch_the_columns_of_unchanged_fields() {
+    let (store, _) = booted_store();
+    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b1"}))], vec![]);
+    exec(
+        &store,
+        "CREATE TEMP TABLE touched (column_name TEXT);
+         CREATE TEMP TRIGGER touch_chat AFTER UPDATE OF chat_id ON row_messages BEGIN INSERT INTO touched VALUES ('chat_id'); END;
+         CREATE TEMP TRIGGER touch_body AFTER UPDATE OF body ON row_messages BEGIN INSERT INTO touched VALUES ('body'); END;",
+    );
+    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b2"}))], vec![]);
+    assert_eq!(text(&store, "SELECT group_concat(column_name) FROM touched"), Some("body".into()));
 }

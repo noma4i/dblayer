@@ -229,40 +229,6 @@ fn corrupt_reset_intent_goes_to_quarantine_and_is_cleared() {
 }
 
 #[test]
-fn stale_record_versions_are_swept_with_membership_when_manifest_version_differs() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("a.sqlite");
-    let models = [messages_spec()];
-    {
-        let (store, _) = reopen(&path, &models, None);
-        store
-            .commit(envelope(
-                &store,
-                vec![upsert("messages", message("m1", "c1")), upsert("messages", message("m2", "c1"))],
-                vec![append(&scope("messages", "thread"), "m1", "a"), append(&scope("messages", "thread"), "m2", "b")],
-            ))
-            .unwrap();
-        exec(&store, "UPDATE row_messages SET record_version = 0 WHERE id = 'm2'; UPDATE manifest SET value = '0' WHERE key = 'record_version'");
-    }
-    let (store, report) = reopen(&path, &models, None);
-    assert_eq!(report.stale_version_drops, 1);
-    assert_eq!(store.row_count("messages").unwrap(), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 1);
-    assert_eq!(store.counters().stale_version_drops, 1);
-    assert_eq!(store.counters().rejected_records, 0);
-}
-
-#[test]
-fn matching_record_version_skips_the_sweep() {
-    let (store, _) = booted_store();
-    store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
-    exec(&store, "UPDATE row_messages SET record_version = 0");
-    let report = store.boot(&[messages_spec(), items_spec()], None).unwrap();
-    assert_eq!(report.stale_version_drops, 0);
-    assert_eq!(store.row_count("messages").unwrap(), 1);
-}
-
-#[test]
 fn boot_prunes_expired_tombstones() {
     let (store, clock) = booted_store();
     store.mark_tombstone("messages", "old", 1, 0).unwrap();

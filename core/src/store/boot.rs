@@ -1,12 +1,8 @@
 use std::collections::BTreeMap;
 
-use rusqlite::{params, Connection};
+use rusqlite::params;
 
-use crate::ddl::{
-    create_model_tables, fingerprint_key, manifest_read, manifest_stamp, manifest_verify, rebuild_cache_tables,
-    stale_version_delete,
-    table_name, ManifestVerdict, RECORD_VERSION, RECORD_VERSION_KEY,
-};
+use crate::ddl::{create_model_tables, fingerprint_key, manifest_stamp, manifest_verify, rebuild_cache_tables, table_name, ManifestVerdict};
 use crate::operation::QuarantineReason;
 use crate::schema::ModelSpec;
 
@@ -20,17 +16,7 @@ use super::{ModelInfo, Store, StoreError};
 pub struct BootReport {
     pub verdict: ManifestVerdict,
     pub finished_interrupted_reset: bool,
-    pub stale_version_drops: usize,
     pub tombstone_drops: usize,
-}
-
-fn drop_stale_versions(connection: &Connection, model: &str) -> Result<usize, StoreError> {
-    let table = table_name(model);
-    connection.execute(
-        &format!("DELETE FROM scope_member WHERE model = ?1 AND row_id IN (SELECT id FROM {table} WHERE record_version <> ?2)"),
-        params![model, RECORD_VERSION],
-    )?;
-    Ok(connection.execute(&stale_version_delete(model), [])?)
 }
 
 impl Store {
@@ -43,7 +29,6 @@ impl Store {
         let finished_interrupted_reset = finish_interrupted_reset(&mut inner)?;
         let fingerprints: BTreeMap<String, String> = current_fingerprints(&inner);
         let verdict = manifest_verify(&inner.connection, data_version, &fingerprints)?;
-        let stored_record_version = manifest_read(&inner.connection, RECORD_VERSION_KEY)?;
         let now = inner.now_ms();
 
         match &verdict {
@@ -96,19 +81,7 @@ impl Store {
             transaction.commit()?;
         }
 
-        let mut stale_version_drops = 0;
-        let version_text = RECORD_VERSION.to_string();
-        let sweeps = matches!(verdict, ManifestVerdict::Compatible | ManifestVerdict::CacheOnly { .. })
-            && stored_record_version.as_deref().is_some_and(|stored| stored != version_text);
-        if sweeps {
-            for model in inner.models.keys().cloned().collect::<Vec<_>>() {
-                let transaction = inner.connection.unchecked_transaction()?;
-                stale_version_drops += drop_stale_versions(&transaction, &model)?;
-                transaction.commit()?;
-            }
-        }
-        inner.counters.stale_version_drops += stale_version_drops;
         let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT)?;
-        Ok(BootReport { verdict, finished_interrupted_reset, stale_version_drops, tombstone_drops })
+        Ok(BootReport { verdict, finished_interrupted_reset, tombstone_drops })
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::ddl::{create_model_tables, migrate_core, RECORD_VERSION};
+use crate::ddl::{create_model_tables, migrate_core};
 use crate::identity::{ModelKey, ScopeKey};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::{null_compare, null_equals, null_is_in, null_is_not_in, null_not_equals, ScalarKind, SortDirection};
@@ -27,55 +27,51 @@ fn database() -> Connection {
     connection
 }
 
-fn put_versioned(connection: &Connection, row: Value, record_version: i64, payload_id: &str) {
-    let mut payload = row.as_object().unwrap().clone();
-    let id = payload["id"].as_str().unwrap().to_string();
-    payload.insert("id".into(), json!(payload_id));
-    let text = |name: &str| payload.get(name).and_then(Value::as_str).map(str::to_string);
+fn put(connection: &Connection, row: Value) {
+    let text = |name: &str| row.get(name).and_then(Value::as_str).map(str::to_string);
     connection
         .execute(
-            "INSERT INTO row_people (id, revision, born_rev, field_rev, record_version, payload, status, age, enabled, created_at) \
-             VALUES (?1, 1, 1, x'', ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO row_people (id, revision, born_rev, status, age, enabled, created_at, kind) VALUES (?1, 1, 1, ?2, ?3, ?4, ?5, ?6)",
             params![
-                id,
-                record_version,
-                serde_json::to_vec(&payload).unwrap(),
+                text("id"),
                 text("status"),
-                payload.get("age").and_then(Value::as_i64),
-                payload.get("enabled").and_then(Value::as_bool),
+                row.get("age").and_then(Value::as_i64),
+                row.get("enabled").and_then(Value::as_bool),
                 text("createdAt"),
+                text("kind"),
             ],
         )
         .unwrap();
-}
-
-fn put(connection: &Connection, row: Value) {
-    let id = row["id"].as_str().unwrap().to_string();
-    put_versioned(connection, row, RECORD_VERSION, &id);
 }
 
 fn sample(id: &str, status: Value, age: Value, enabled: Value, kind: Value, created: &str) -> Value {
     json!({"id": id, "status": status, "age": age, "enabled": enabled, "kind": kind, "createdAt": created})
 }
 
+fn samples() -> Vec<Value> {
+    vec![
+        sample("p1", json!("active"), json!(30), json!(true), json!("chat"), "2024-01-01"),
+        sample("p2", json!("active"), json!(17), json!(false), json!("call"), "2024-01-03"),
+        sample("p3", json!("banned"), json!(null), json!(null), json!(null), "2024-01-02"),
+        sample("p4", json!(null), json!(18), json!(true), json!("chat"), "2024-01-05"),
+        sample("p5", json!("idle"), json!(45), json!(false), json!("note"), "2024-01-04"),
+        sample("p6", json!(null), json!(null), json!(null), json!(null), "2024-01-06"),
+    ]
+}
+
 fn seeded() -> Connection {
     let connection = database();
-    put(&connection, sample("p1", json!("active"), json!(30), json!(true), json!("chat"), "2024-01-01"));
-    put(&connection, sample("p2", json!("active"), json!(17), json!(false), json!("call"), "2024-01-03"));
-    put(&connection, sample("p3", json!("banned"), json!(null), json!(null), json!(null), "2024-01-02"));
-    put(&connection, sample("p4", json!(null), json!(18), json!(true), json!("chat"), "2024-01-05"));
-    put(&connection, sample("p5", json!("idle"), json!(45), json!(false), json!("note"), "2024-01-04"));
-    put(&connection, sample("p6", json!(null), json!(null), json!(null), json!(null), "2024-01-06"));
+    samples().into_iter().for_each(|row| put(&connection, row));
     connection
 }
 
-fn ids(read: &RowsRead) -> Vec<String> {
-    read.rows.iter().map(|row| row["id"].as_str().unwrap().to_string()).collect()
+fn ids(keys: &[(String, i64)]) -> Vec<String> {
+    keys.iter().map(|(id, _)| id.clone()).collect()
 }
 
 fn query_ids(connection: &Connection, query: &Query) -> Vec<String> {
-    let statement = compile(query, &people()).unwrap();
-    ids(&fetch_rows(connection, &statement).unwrap())
+    let statement = compile_keys(query, &people()).unwrap();
+    ids(&fetch_keys(connection, &statement).unwrap())
 }
 
 fn matches(clause: &Where, row: &Map<String, Value>) -> bool {
@@ -139,11 +135,10 @@ fn clauses() -> Vec<Where> {
 #[test]
 fn sql_selects_the_same_rows_as_the_row_predicate() {
     let connection = seeded();
-    let everything = fetch_rows(&connection, &compile(&Query::new("people"), &people()).unwrap()).unwrap();
+    let rows: Vec<Map<String, Value>> = samples().iter().map(|row| row.as_object().unwrap().clone()).collect();
     let mut dividing = 0;
     for clause in clauses() {
-        let expected: Vec<String> = everything
-            .rows
+        let expected: Vec<String> = rows
             .iter()
             .filter(|row| matches(&clause, row))
             .map(|row| row["id"].as_str().unwrap().to_string())
@@ -153,7 +148,7 @@ fn sql_selects_the_same_rows_as_the_row_predicate() {
         let mut expected_sorted = expected.clone();
         expected_sorted.sort();
         assert_eq!(actual, expected_sorted, "clause {clause:?}");
-        if !expected.is_empty() && expected.len() < everything.rows.len() {
+        if !expected.is_empty() && expected.len() < rows.len() {
             dividing += 1;
         }
     }
@@ -161,7 +156,7 @@ fn sql_selects_the_same_rows_as_the_row_predicate() {
 }
 
 #[test]
-fn json_extract_reads_the_blob_payload() {
+fn plain_fields_filter_on_their_column() {
     let connection = seeded();
     let query = Query::new("people").filtered(Where::equal("kind", json!("chat")));
     assert_eq!(query_ids(&connection, &query).len(), 2);
@@ -170,7 +165,7 @@ fn json_extract_reads_the_blob_payload() {
 #[test]
 fn promoted_comparison_uses_the_column_index() {
     let connection = seeded();
-    let statement = compile(&Query::new("people").filtered(Where::equal("status", json!("active"))), &people()).unwrap();
+    let statement = compile_keys(&Query::new("people").filtered(Where::equal("status", json!("active"))), &people()).unwrap();
     let plan: String = connection
         .query_row(&format!("EXPLAIN QUERY PLAN {}", statement.sql), rusqlite::params_from_iter(statement.bindings.iter()), |row| {
             row.get(3)
@@ -204,17 +199,6 @@ fn count_ignores_limit_and_offset() {
     assert_eq!(fetch_count(&connection, &compile_count(&Query::new("people"), &people()).unwrap()).unwrap(), 6);
 }
 
-#[test]
-fn stale_and_unreadable_records_are_counted_not_returned() {
-    let connection = database();
-    put(&connection, sample("ok", json!("a"), json!(1), json!(true), json!("k"), "2024-01-01"));
-    put_versioned(&connection, sample("old", json!("a"), json!(1), json!(true), json!("k"), "2024-01-02"), RECORD_VERSION + 1, "old");
-    put_versioned(&connection, sample("liar", json!("a"), json!(1), json!(true), json!("k"), "2024-01-03"), RECORD_VERSION, "other");
-    let read = fetch_rows(&connection, &compile(&Query::new("people"), &people()).unwrap()).unwrap();
-    assert_eq!(ids(&read), ["ok"]);
-    assert_eq!((read.stale_version_drops, read.rejected_records), (1, 1));
-}
-
 fn member(connection: &Connection, scope: &str, id: &str, order_key: &str) {
     connection
         .execute("INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES ('people', ?1, ?2, ?3)", params![scope, id, order_key])
@@ -231,9 +215,9 @@ fn scope_read_follows_order_key_and_skips_dangling_members() {
     member(&connection, "other", "p4", "a");
     let model = ModelKey::new("people");
     let scope = ScopeKey::from_raw("inbox");
-    let all = fetch_rows(&connection, &scope_statement(&model, &scope, None)).unwrap();
+    let all = fetch_keys(&connection, &scope_statement(&model, &scope, None)).unwrap();
     assert_eq!(ids(&all), ["p2", "p1", "p3"]);
-    let windowed = fetch_rows(&connection, &scope_statement(&model, &scope, Some(2))).unwrap();
+    let windowed = fetch_keys(&connection, &scope_statement(&model, &scope, Some(2))).unwrap();
     assert_eq!(ids(&windowed), ["p2", "p1"]);
     assert_eq!(fetch_count(&connection, &scope_count_statement(&model, &scope)).unwrap(), 3);
 }

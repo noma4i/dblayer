@@ -6,50 +6,15 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
-use crate::ddl::{manifest_read, ColumnType, RECORD_VERSION, REVISION_SEQ_KEY};
+use crate::ddl::{manifest_read, ColumnType, REVISION_SEQ_KEY};
 use crate::identity::RowId;
 use crate::value::fractional_between;
 
 #[cfg(test)]
 use super::Store;
-use super::{ModelInfo, StoreError};
+use super::{FieldColumn, ModelInfo, StoreError};
 
 pub(crate) const CHUNK: usize = 500;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HydrationVerdict {
-    Accepted,
-    StaleVersion,
-    IdentityMismatch,
-    Unreadable,
-}
-
-impl HydrationVerdict {
-    #[cfg(test)]
-    pub fn is_silent_drop(self) -> bool {
-        self == HydrationVerdict::StaleVersion
-    }
-}
-
-pub(crate) fn hydrate(record_version: i64, payload: &[u8], expected_id: &str) -> (HydrationVerdict, Option<Map<String, Value>>) {
-    if record_version != RECORD_VERSION {
-        return (HydrationVerdict::StaleVersion, None);
-    }
-    match serde_json::from_slice::<Value>(payload) {
-        Ok(Value::Object(row)) if row.get("id").and_then(Value::as_str) == Some(expected_id) => {
-            (HydrationVerdict::Accepted, Some(row))
-        }
-        Ok(Value::Object(_)) => (HydrationVerdict::IdentityMismatch, None),
-        _ => (HydrationVerdict::Unreadable, None),
-    }
-}
-
-pub(crate) fn encode_row(row: &Map<String, Value>) -> Result<Option<(String, Vec<u8>)>, serde_json::Error> {
-    let Some(id) = row.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()) else {
-        return Ok(None);
-    };
-    Ok(Some((id.to_string(), serde_json::to_vec(row)?)))
-}
 
 pub(crate) fn column_value(kind: ColumnType, value: Option<&Value>) -> SqlValue {
     let Some(value) = value else { return SqlValue::Null };
@@ -65,6 +30,57 @@ pub(crate) fn column_value(kind: ColumnType, value: Option<&Value>) -> SqlValue 
     }
 }
 
+pub(crate) fn select_list(info: &ModelInfo) -> String {
+    let mut names = vec!["id".to_string(), "revision".to_string(), "born_rev".to_string()];
+    names.extend(info.columns.iter().map(|column| column.column.clone()));
+    if !info.rest.is_empty() {
+        names.push("rest".to_string());
+    }
+    names.extend(info.rev_columns.iter().map(|(_, column)| column.clone()));
+    names.join(", ")
+}
+
+fn cell(column: &FieldColumn, value: rusqlite::types::ValueRef<'_>) -> Option<Value> {
+    use rusqlite::types::ValueRef;
+    match (value, column.is_bool) {
+        (ValueRef::Text(text), _) => Some(Value::String(String::from_utf8_lossy(text).into_owned())),
+        (ValueRef::Integer(number), true) => Some(Value::Bool(number != 0)),
+        (ValueRef::Integer(number), false) => Some(Value::from(number)),
+        (ValueRef::Real(number), _) => serde_json::Number::from_f64(number).map(Value::Number),
+        _ => None,
+    }
+}
+
+pub(crate) fn read_stored(row: &rusqlite::Row<'_>, info: &ModelInfo) -> rusqlite::Result<StoredRow> {
+    let id: String = row.get(0)?;
+    let mut data = Map::new();
+    data.insert("id".to_string(), Value::String(id.clone()));
+    let mut next = 3;
+    for column in &info.columns {
+        if let Some(value) = cell(column, row.get_ref(next)?) {
+            data.insert(column.field.clone(), value);
+        }
+        next += 1;
+    }
+    if !info.rest.is_empty() {
+        let rest: Option<Vec<u8>> = row.get(next)?;
+        next += 1;
+        // TEMPORARY: JSON bytes of the fields without a column yet.
+        if let Some(Value::Object(fields)) = rest.and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
+            data.extend(fields);
+        }
+    }
+    let mut field_rev = BTreeMap::new();
+    for (field, _) in &info.rev_columns {
+        if let Some(revision) = row.get::<_, Option<i64>>(next)? {
+            field_rev.insert(field.clone(), revision);
+        }
+        next += 1;
+    }
+    let row_id = RowId::new(&id).map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))?;
+    Ok(StoredRow { id: row_id, revision: row.get(1)?, born_rev: row.get(2)?, field_rev, row: data })
+}
+
 pub(crate) fn placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
 }
@@ -75,18 +91,14 @@ pub struct StoredRow {
     pub revision: i64,
     pub born_rev: i64,
     pub field_rev: BTreeMap<String, i64>,
-    pub verdict: HydrationVerdict,
-    pub row: Option<Map<String, Value>>,
+    pub row: Map<String, Value>,
 }
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ScopeRowsResult {
     pub rows: Vec<Map<String, Value>>,
-    pub stale_version_drops: usize,
-    pub rejected_records: usize,
     pub dangling_members: usize,
-    pub bad_ids: Vec<String>,
 }
 
 pub struct Reader<'a> {
@@ -120,35 +132,19 @@ impl<'a> Reader<'a> {
         let info = self.model(model)?;
         let mut found = BTreeMap::new();
         for chunk in ids.chunks(CHUNK) {
-            let sql = format!(
-                "SELECT id, revision, born_rev, field_rev, record_version, payload FROM {} WHERE id IN ({})",
-                info.table,
-                placeholders(chunk.len())
-            );
+            let sql = format!("SELECT {} FROM {} WHERE id IN ({})", select_list(info), info.table, placeholders(chunk.len()));
             let mut statement = self.connection.prepare_cached(&sql)?;
-            let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, Vec<u8>>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, Vec<u8>>(5)?,
-                ))
-            })?;
+            let rows = statement.query_map(params_from_iter(chunk.iter()), |row| read_stored(row, info))?;
             for item in rows {
-                let (id, revision, born_rev, field_rev, record_version, payload) = item?;
-                let (verdict, row) = hydrate(record_version, &payload, &id);
-                let field_rev: BTreeMap<String, i64> = serde_json::from_slice(&field_rev).unwrap_or_default();
-                let Ok(row_id) = RowId::new(&id) else { continue };
-                found.insert(id, StoredRow { id: row_id, revision, born_rev, field_rev, verdict, row });
+                let stored = item?;
+                found.insert(stored.id.to_string(), stored);
             }
         }
         Ok(found)
     }
 
     pub fn point(&self, model: &str, id: &str) -> Result<Option<Map<String, Value>>, StoreError> {
-        Ok(self.stored_row(model, id)?.and_then(|stored| stored.row))
+        Ok(self.stored_row(model, id)?.map(|stored| stored.row))
     }
 
     #[cfg(test)]
@@ -159,39 +155,14 @@ impl<'a> Reader<'a> {
 
     #[cfg(test)]
     pub fn scope_rows(&self, model: &str, scope_key: &str, limit: Option<usize>) -> Result<ScopeRowsResult, StoreError> {
-        let info = self.model(model)?;
-        let sql = format!(
-            "SELECT m.row_id, r.id, r.record_version, r.payload FROM scope_member m \
-             LEFT JOIN {} r ON r.id = m.row_id \
-             WHERE m.model = ?1 AND m.scope_key = ?2 ORDER BY m.order_key, m.row_id",
-            info.table
-        );
-        let mut statement = self.connection.prepare_cached(&sql)?;
-        let rows = statement.query_map(params![model, scope_key], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-                row.get::<_, Option<Vec<u8>>>(3)?,
-            ))
-        })?;
+        let members = self.scope_members(model, scope_key)?;
+        let ids: Vec<String> = members.into_iter().map(|(id, _)| id).collect();
+        let mut stored = self.stored_rows(model, &ids)?;
         let mut result = ScopeRowsResult::default();
-        for item in rows {
-            let (member, present, record_version, payload) = item?;
-            let (Some(_), Some(record_version), Some(payload)) = (present, record_version, payload) else {
-                result.dangling_members += 1;
-                continue;
-            };
-            match hydrate(record_version, &payload, &member) {
-                (HydrationVerdict::Accepted, Some(row)) => result.rows.push(row),
-                (HydrationVerdict::StaleVersion, _) => {
-                    result.stale_version_drops += 1;
-                    result.bad_ids.push(member);
-                }
-                _ => {
-                    result.rejected_records += 1;
-                    result.bad_ids.push(member);
-                }
+        for id in ids {
+            match stored.remove(&id) {
+                Some(row) => result.rows.push(row.row),
+                None => result.dangling_members += 1,
             }
         }
         if let Some(limit) = limit {
@@ -277,72 +248,22 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 impl Store {
     pub fn point(&self, model: &str, id: &str) -> Result<Option<Map<String, Value>>, StoreError> {
-        let stored = self.read(|reader| reader.stored_row(model, id))?;
-        let Some(stored) = stored else { return Ok(None) };
-        if stored.verdict != HydrationVerdict::Accepted {
-            self.drop_bad_rows(model, &[id.to_string()], &[stored.verdict])?;
-        }
-        Ok(stored.row)
+        self.read(|reader| reader.point(model, id))
     }
 
     pub fn rows_by_ids(&self, model: &str, ids: &[RowId]) -> Result<Vec<Map<String, Value>>, StoreError> {
         let names: Vec<String> = ids.iter().map(|id| id.as_str().to_string()).collect();
         let mut stored = self.read(|reader| reader.stored_rows(model, &names))?;
-        let bad: Vec<(String, HydrationVerdict)> = stored
-            .iter()
-            .filter(|(_, row)| row.verdict != HydrationVerdict::Accepted)
-            .map(|(id, row)| (id.clone(), row.verdict))
-            .collect();
-        let bad_ids: Vec<String> = bad.iter().map(|(id, _)| id.clone()).collect();
-        let verdicts: Vec<HydrationVerdict> = bad.iter().map(|(_, verdict)| *verdict).collect();
-        self.drop_bad_rows(model, &bad_ids, &verdicts)?;
-        Ok(names.iter().filter_map(|name| stored.remove(name)).filter_map(|row| row.row).collect())
+        Ok(names.iter().filter_map(|name| stored.remove(name)).map(|row| row.row).collect())
     }
 
     pub fn scope_rows(&self, model: &str, scope_key: &str, limit: Option<usize>) -> Result<ScopeRowsResult, StoreError> {
         let result = self.read(|reader| reader.scope_rows(model, scope_key, limit))?;
-        {
-            let mut inner = self.lock();
-            inner.counters.membership_missing_entity += result.dangling_members;
-        }
-        if !result.bad_ids.is_empty() {
-            let verdicts: Vec<HydrationVerdict> = result.bad_ids.iter().map(|_| HydrationVerdict::Unreadable).collect();
-            self.drop_bad_rows_counted(model, &result.bad_ids, &verdicts, result.stale_version_drops, result.rejected_records)?;
-        }
+        self.lock().counters.membership_missing_entity += result.dangling_members;
         Ok(result)
     }
 
     pub fn row_count(&self, model: &str) -> Result<i64, StoreError> {
         self.read(|reader| reader.row_count(model))
-    }
-
-    fn drop_bad_rows(&self, model: &str, ids: &[String], verdicts: &[HydrationVerdict]) -> Result<(), StoreError> {
-        let stale = verdicts.iter().filter(|verdict| verdict.is_silent_drop()).count();
-        let rejected = verdicts.len() - stale;
-        self.drop_bad_rows_counted(model, ids, verdicts, stale, rejected)
-    }
-
-    fn drop_bad_rows_counted(
-        &self,
-        model: &str,
-        ids: &[String],
-        _verdicts: &[HydrationVerdict],
-        stale: usize,
-        rejected: usize,
-    ) -> Result<(), StoreError> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-        let mut inner = self.lock();
-        let table = inner.model(model)?.table.clone();
-        let transaction = inner.connection.unchecked_transaction()?;
-        for id in ids {
-            transaction.execute(&format!("DELETE FROM {table} WHERE id = ?1"), params![id])?;
-            transaction.execute("DELETE FROM scope_member WHERE model = ?1 AND row_id = ?2", params![model, id])?;
-        }
-        transaction.commit()?;
-        inner.counters.stale_version_drops += stale;
-        inner.counters.rejected_records += rejected;
-        Ok(())
     }
 }

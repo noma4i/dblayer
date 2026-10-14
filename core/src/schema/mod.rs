@@ -954,6 +954,8 @@ impl ModelSpec {
             if column_type(&field.kind).is_none() {
                 return Err(DeclarationError::IndexedFieldNotScalar(field.name.clone()));
             }
+        }
+        for field in self.fields.iter().filter(|field| field.name != "id" || field.indexed) {
             if !columns.insert(column_name(&field.name)) {
                 return Err(DeclarationError::ColumnCollision(field.name.clone()));
             }

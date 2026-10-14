@@ -3,7 +3,6 @@ use std::ops::Add;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Counters {
     pub stale_version_drops: usize,
-    pub rejected_records: usize,
     pub membership_missing_entity: usize,
     pub unknown_operation_acks: usize,
     pub observation_reads: usize,
@@ -41,7 +40,6 @@ impl Add for Counters {
     fn add(self, other: Counters) -> Counters {
         Counters {
             stale_version_drops: self.stale_version_drops + other.stale_version_drops,
-            rejected_records: self.rejected_records + other.rejected_records,
             membership_missing_entity: self.membership_missing_entity + other.membership_missing_entity,
             unknown_operation_acks: self.unknown_operation_acks + other.unknown_operation_acks,
             observation_reads: self.observation_reads + other.observation_reads,

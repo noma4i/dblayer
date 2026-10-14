@@ -7,16 +7,14 @@ use sha2::{Digest, Sha256};
 use crate::schema::{FieldKind, FieldSpec, ModelSpec, Sort};
 use crate::value::ScalarKind;
 
-pub const RECORD_VERSION: i64 = 1;
 pub const SCHEMA_VERSION: i64 = 1;
 
 pub const FORMAT_VERSION_KEY: &str = "format_version";
-pub const RECORD_VERSION_KEY: &str = "record_version";
 pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub const RESET_INTENT_KEY: &str = "reset_intent";
 
-pub const SERVICE_COLUMNS: [&str; 6] = ["id", "revision", "born_rev", "field_rev", "record_version", "payload"];
+pub const SERVICE_COLUMNS: [&str; 4] = ["id", "revision", "born_rev", "rest"];
 
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
 const CACHE_TABLES: [&str; 3] = ["scope_member", "tombstone", "query_window"];
@@ -196,12 +194,20 @@ pub fn column_type(kind: &FieldKind) -> Option<ColumnType> {
     }
 }
 
+pub fn rev_column(column: &str) -> String {
+    format!("rev__{column}")
+}
+
+pub fn column_fields(model: &ModelSpec) -> impl Iterator<Item = (&FieldSpec, ColumnType)> + '_ {
+    model.fields.iter().filter(|field| field.name != "id").filter_map(|field| column_type(&field.kind).map(|column| (field, column)))
+}
+
+pub fn rest_fields(model: &ModelSpec) -> impl Iterator<Item = &FieldSpec> + '_ {
+    model.fields.iter().filter(|field| field.name != "id" && column_type(&field.kind).is_none())
+}
+
 fn promoted_columns(model: &ModelSpec) -> impl Iterator<Item = (String, ColumnType)> + '_ {
-    model
-        .fields
-        .iter()
-        .filter(|field| field.indexed)
-        .filter_map(|field| column_type(&field.kind).map(|column| (column_name(&field.name), column)))
+    column_fields(model).filter(|(field, _)| field.indexed).map(|(field, column)| (column_name(&field.name), column))
 }
 
 pub fn create_table_statement(model: &ModelSpec) -> String {
@@ -209,11 +215,13 @@ pub fn create_table_statement(model: &ModelSpec) -> String {
         "id TEXT PRIMARY KEY NOT NULL".to_string(),
         "revision INTEGER NOT NULL".to_string(),
         "born_rev INTEGER NOT NULL".to_string(),
-        "field_rev BLOB NOT NULL".to_string(),
-        "record_version INTEGER NOT NULL".to_string(),
-        "payload BLOB NOT NULL".to_string(),
     ];
-    definitions.extend(promoted_columns(model).map(|(name, column)| format!("{name} {}", column.as_sql())));
+    definitions.extend(column_fields(model).map(|(field, column)| format!("{} {}", column_name(&field.name), column.as_sql())));
+    // TEMPORARY: JSON bytes of the fields without a column yet (lists, arrays, raw, objects, files); removed by the child-table and node-table steps.
+    if rest_fields(model).next().is_some() {
+        definitions.push("rest BLOB".to_string());
+    }
+    definitions.extend(model.fields.iter().filter(|field| field.name != "id").map(|field| format!("{} INTEGER", rev_column(&column_name(&field.name)))));
     let kind = if model.is_memory() { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
     format!(
         "{kind} IF NOT EXISTS {} (\n  {}\n) STRICT",
@@ -241,10 +249,6 @@ pub fn model_statements(model: &ModelSpec) -> Vec<String> {
 
 pub fn models_statements(models: &[ModelSpec]) -> Vec<String> {
     models.iter().flat_map(model_statements).collect()
-}
-
-pub fn stale_version_delete(model: &str) -> String {
-    format!("DELETE FROM {} WHERE record_version <> {RECORD_VERSION}", table_name(model))
 }
 
 pub fn prepare_connection(connection: &Connection) -> Result<(), DdlError> {
@@ -276,7 +280,7 @@ pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>
     Ok(None)
 }
 
-const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds";
+const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds; rows are typed columns with rev__ columns";
 
 pub fn format_version() -> String {
     let text = [CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice(), &[STORED_VALUE_FORMAT]].concat().join("\n");
@@ -359,7 +363,6 @@ pub fn manifest_stamp(
     fingerprints: &BTreeMap<String, String>,
 ) -> Result<(), DdlError> {
     manifest_write(connection, FORMAT_VERSION_KEY, &format_version())?;
-    manifest_write(connection, RECORD_VERSION_KEY, &RECORD_VERSION.to_string())?;
     manifest_write(connection, DATA_VERSION_KEY, data_version.unwrap_or(""))?;
     for (model, fingerprint) in fingerprints {
         manifest_write(connection, &fingerprint_key(model), fingerprint)?;

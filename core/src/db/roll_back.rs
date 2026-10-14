@@ -145,7 +145,7 @@ fn restore_edit(
     plan: &mut Restore,
 ) -> Result<(), StoreError> {
     let stored = reader.stored_row(model, id)?;
-    let current = stored.as_ref().and_then(|stored| stored.row.clone());
+    let current = stored.as_ref().map(|stored| stored.row.clone());
     let mut restored = current.clone().unwrap_or_default();
     for (field, owned_at) in owned {
         let value = before.get(field).cloned().unwrap_or(Value::Null);

@@ -9,7 +9,7 @@ use crate::commit::{
 use crate::ddl::table_name;
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::value::fractional_between;
+use crate::value::{fractional_between, same_fields};
 use crate::operation::Operation;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec};
@@ -196,7 +196,7 @@ impl Db {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
-            if merged == current {
+            if same_fields(&merged, &current) {
                 return Ok(None);
             }
             queued.rollback = Some(Prior { rows: vec![PriorRow::edited(reader, model, id.as_str(), &current, &merged)?] }.to_value());

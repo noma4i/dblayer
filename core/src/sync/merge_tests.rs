@@ -81,13 +81,13 @@ async fn a_nested_row_of_an_event_keeps_the_fields_its_fragment_does_not_select(
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_field_selected_as_null_becomes_null_and_the_others_stay() {
+async fn a_field_selected_as_null_becomes_absent_and_the_others_stay() {
     let rig = rig();
     enqueue_pages(&rig, vec![json!({"id": "m1", "text": "first", "userId": "u1"}), json!({"id": "m1", "userId": null})]);
     load_page(&rig).await;
     load_page(&rig).await;
     let stored = row(&rig, "moments", "m1");
-    assert_eq!((stored.get("userId"), stored.get("text")), (Some(&Value::Null), Some(&json!("first"))));
+    assert_eq!((stored.get("userId"), stored.get("text")), (None, Some(&json!("first"))));
 }
 
 #[tokio::test(start_paused = true)]

@@ -84,7 +84,7 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
     Ok(operations)
 }
 
-pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], row_tables: &[(String, String)]) -> rusqlite::Result<usize> {
+pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], orphans: &Orphans) -> rusqlite::Result<usize> {
     let transaction = connection.unchecked_transaction()?;
     let mut applied = 0;
     for action in actions {
@@ -94,7 +94,7 @@ pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], row_tables: &
                 applied += 1;
             }
             FsckAction::QuarantineOrphan(id) => {
-                if quarantine_row(&transaction, id, row_tables)? {
+                if quarantine_row(&transaction, id, orphans)? {
                     applied += 1;
                 }
             }
@@ -105,17 +105,20 @@ pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], row_tables: &
     Ok(applied)
 }
 
-fn quarantine_row(connection: &Connection, id: &RowId, row_tables: &[(String, String)]) -> rusqlite::Result<bool> {
-    for (model, table) in row_tables {
-        let payload: Option<Vec<u8>> =
-            connection.query_row(&format!("SELECT payload FROM {table} WHERE id = ?"), [id.as_str()], |row| row.get(0)).optional()?;
-        let Some(payload) = payload else { continue };
-        quarantine_add(connection, model, &payload, QuarantineReason::OrphanTempRow)?;
-        connection.execute(&format!("DELETE FROM {table} WHERE id = ?"), [id.as_str()])?;
-        connection.execute("DELETE FROM scope_member WHERE model = ? AND row_id = ?", params![model, id.as_str()])?;
-        return Ok(true);
-    }
-    Ok(false)
+pub struct Orphan {
+    pub model: String,
+    pub table: String,
+    pub payload: Vec<u8>,
+}
+
+pub type Orphans = std::collections::HashMap<RowId, Orphan>;
+
+fn quarantine_row(connection: &Connection, id: &RowId, orphans: &Orphans) -> rusqlite::Result<bool> {
+    let Some(orphan) = orphans.get(id) else { return Ok(false) };
+    quarantine_add(connection, &orphan.model, &orphan.payload, QuarantineReason::OrphanTempRow)?;
+    connection.execute(&format!("DELETE FROM {} WHERE id = ?", orphan.table), [id.as_str()])?;
+    connection.execute("DELETE FROM scope_member WHERE model = ? AND row_id = ?", params![orphan.model, id.as_str()])?;
+    Ok(true)
 }
 
 #[derive(Debug, Clone, PartialEq)]

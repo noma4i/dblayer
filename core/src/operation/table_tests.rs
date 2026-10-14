@@ -69,12 +69,12 @@ fn input_is_stored_and_read_back() {
 #[test]
 fn apply_fsck_counts_only_status_actions() {
     let connection = database();
-    assert_eq!(apply_fsck(&connection, &[], &[]).unwrap(), 0);
+    assert_eq!(apply_fsck(&connection, &[], &Orphans::new()).unwrap(), 0);
     let seq = append_operation(&connection, &operation("row-1", OperationStatus::Pending), b"{}").unwrap();
     let skipped = [FsckAction::Keep(OperationId(seq)), FsckAction::QuarantineOrphan(RowId::new("orphan-1").unwrap())];
-    assert_eq!(apply_fsck(&connection, &skipped, &[]).unwrap(), 0);
+    assert_eq!(apply_fsck(&connection, &skipped, &Orphans::new()).unwrap(), 0);
     assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Pending);
-    assert_eq!(apply_fsck(&connection, &[FsckAction::SetStatus(OperationId(seq), OperationStatus::Failed)], &[]).unwrap(), 1);
+    assert_eq!(apply_fsck(&connection, &[FsckAction::SetStatus(OperationId(seq), OperationStatus::Failed)], &Orphans::new()).unwrap(), 1);
     assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Failed);
 }
 
@@ -102,15 +102,18 @@ fn with_messages_table() -> Connection {
 fn insert_message(connection: &Connection, id: &str) {
     connection
         .execute(
-            "INSERT INTO row_messages (id, revision, born_rev, field_rev, record_version, payload) VALUES (?1, 1, 1, x'7b7d', 1, ?2)",
-            rusqlite::params![id, format!("{{\"id\":\"{id}\"}}").into_bytes()],
+            "INSERT INTO row_messages (id, revision, born_rev) VALUES (?1, 1, 1)",
+            rusqlite::params![id],
         )
         .unwrap();
     connection.execute("INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES ('messages', 'list', ?1, ?1)", [id]).unwrap();
 }
 
-fn tables() -> Vec<(String, String)> {
-    vec![("messages".to_string(), "row_messages".to_string())]
+fn orphans() -> Orphans {
+    ["temp-orphan", "temp-kept"]
+        .iter()
+        .map(|id| (RowId::new(id).unwrap(), Orphan { model: "messages".into(), table: "row_messages".into(), payload: format!("{{\"id\":\"{id}\"}}").into_bytes() }))
+        .collect()
 }
 
 #[test]
@@ -119,7 +122,7 @@ fn apply_fsck_quarantines_and_removes_orphan_temp_rows() {
     insert_message(&connection, "temp-orphan");
     insert_message(&connection, "temp-kept");
     let actions = [FsckAction::QuarantineOrphan(RowId::new("temp-orphan").unwrap()), FsckAction::QuarantineOrphan(RowId::new("temp-unknown").unwrap())];
-    assert_eq!(apply_fsck(&connection, &actions, &tables()).unwrap(), 1);
+    assert_eq!(apply_fsck(&connection, &actions, &orphans()).unwrap(), 1);
     let left: Vec<String> = connection.prepare("SELECT id FROM row_messages").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
     assert_eq!(left, vec!["temp-kept"]);
     let members: i64 = connection.query_row("SELECT COUNT(*) FROM scope_member WHERE row_id = 'temp-orphan'", [], |r| r.get(0)).unwrap();

@@ -21,11 +21,11 @@ fn query() -> Query {
     Query::new("people")
 }
 
-const HEAD: &str = "SELECT r.id, r.record_version, r.payload FROM row_people AS r";
+const HEAD: &str = "SELECT r.id, r.revision FROM row_people AS r";
 
 #[test]
 fn bare_query_reads_the_whole_table() {
-    let statement = compile(&query(), &people()).unwrap();
+    let statement = compile_keys(&query(), &people()).unwrap();
     assert_eq!(statement.sql, HEAD);
     assert!(statement.bindings.is_empty());
 }
@@ -37,7 +37,7 @@ fn query_composes_where_order_limit_and_offset() {
         .ordered(vec![Order::new("createdAt", SortDirection::Desc)])
         .limited(25)
         .offset_by(50);
-    let statement = compile(&query, &people()).unwrap();
+    let statement = compile_keys(&query, &people()).unwrap();
     assert_eq!(
         statement.sql,
         format!("{HEAD} WHERE r.status = ? ORDER BY r.created_at DESC, r.id LIMIT ? OFFSET ?")
@@ -51,28 +51,28 @@ fn query_composes_where_order_limit_and_offset() {
 
 #[test]
 fn offset_without_limit_reads_to_the_end() {
-    let statement = compile(&query().offset_by(4), &people()).unwrap();
+    let statement = compile_keys(&query().offset_by(4), &people()).unwrap();
     assert_eq!(statement.sql, format!("{HEAD} LIMIT -1 OFFSET ?"));
     assert_eq!(statement.bindings, vec![SqlValue::Integer(4)]);
 }
 
 #[test]
 fn id_order_is_not_repeated_as_tie_break() {
-    let statement = compile(&query().ordered(vec![Order::new("id", SortDirection::Desc)]), &people()).unwrap();
+    let statement = compile_keys(&query().ordered(vec![Order::new("id", SortDirection::Desc)]), &people()).unwrap();
     assert_eq!(statement.sql, format!("{HEAD} ORDER BY r.id DESC"));
 }
 
 #[test]
-fn unpromoted_order_uses_json_extract() {
-    let statement = compile(&query().ordered(vec![Order::new("kind", SortDirection::Asc)]), &people()).unwrap();
-    assert_eq!(statement.sql, format!("{HEAD} ORDER BY json_extract(r.payload, '$.kind') ASC, r.id"));
+fn plain_order_uses_its_column() {
+    let statement = compile_keys(&query().ordered(vec![Order::new("kind", SortDirection::Asc)]), &people()).unwrap();
+    assert_eq!(statement.sql, format!("{HEAD} ORDER BY r.kind ASC, r.id"));
 }
 
 #[test]
 fn unknown_order_field_and_foreign_model_are_rejected() {
-    let unknown = compile(&query().ordered(vec![Order::new("nope", SortDirection::Asc)]), &people());
+    let unknown = compile_keys(&query().ordered(vec![Order::new("nope", SortDirection::Asc)]), &people());
     assert_eq!(unknown.unwrap_err(), QueryError::UnknownField("nope".into()));
-    let foreign = compile(&Query::new("groups"), &people());
+    let foreign = compile_keys(&Query::new("groups"), &people());
     assert_eq!(foreign.unwrap_err(), QueryError::ModelMismatch { query: "groups".into(), model: "people".into() });
 }
 

@@ -7,7 +7,7 @@ use crate::files::FileDirectories;
 use crate::identity::{Generation, RowId};
 use crate::commit::{CommitEnvelope, EntityOp, RowChangeKind, WriteOrigin};
 use crate::identity::ModelKey;
-use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, OutboxQueue};
+use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
 use crate::syncstate::rebuild_sync;
 use crate::pacing::{Clock, Counters};
 use crate::schema::{validate_models, AssociationKind, AssociationSpec, ModelSpec};
@@ -242,7 +242,6 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
         let queue = OutboxQueue::new(operations.clone());
         let mut temp_rows: HashSet<RowId> = HashSet::new();
         let mut open_row_ids: HashSet<RowId> = HashSet::new();
-        let mut tables: Vec<(String, String)> = Vec::new();
         for spec in models {
             let table = table_name(spec.key.as_str());
             let mut statement = inner.connection.prepare(&format!("SELECT id FROM {table} WHERE id LIKE 'temp-%'"))?;
@@ -251,10 +250,20 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
                 temp_rows.extend(RowId::new(&id?).ok());
             }
             open_row_ids.extend(queue.open_row_ids(&spec.key));
-            tables.push((spec.key.as_str().to_string(), table));
         }
         let plan = fsck_plan(&operations, &known, &temp_rows, &temp_rows, &open_row_ids);
-        apply_fsck(&inner.connection, &plan, &tables)?;
+        let reader = Reader::new(&inner.connection, &inner.models);
+        let mut orphans = Orphans::new();
+        for id in plan.iter().filter_map(|action| match action { FsckAction::QuarantineOrphan(id) => Some(id), _ => None }) {
+            for spec in models {
+                if let Some(stored) = reader.stored_row(spec.key.as_str(), id.as_str())? {
+                    let payload = serde_json::to_vec(&stored.row).map_err(StoreError::from)?;
+                    orphans.insert(id.clone(), Orphan { model: spec.key.as_str().to_string(), table: table_name(spec.key.as_str()), payload });
+                    break;
+                }
+            }
+        }
+        apply_fsck(&inner.connection, &plan, &orphans)?;
         rebuild_sync(&inner.connection)?;
         rebuilt_rows(&inner.connection, &plan, &operations, &known)?
     };

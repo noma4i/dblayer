@@ -61,8 +61,14 @@ fn rows_read_with_defaults_and_written_values_but_store_nothing() {
     assert_eq!((found.get("typing"), found.get("mood")), (Some(&json!(true)), Some(&json!("happy"))));
     assert_eq!(db.query(&Query::new("people")).unwrap()[0].get("typing"), Some(&json!(true)));
     assert_eq!(db.find_many("people", &[rid("p1")]).unwrap()[0].get("typing"), Some(&json!(true)));
-    let stored: String = db.shared.store.lock().connection.query_row("SELECT CAST(payload AS TEXT) FROM row_people", [], |row| row.get(0)).unwrap();
-    assert!(!stored.contains("typing") && !stored.contains("mood"));
+    let stored: i64 = db
+        .shared
+        .store
+        .lock()
+        .connection
+        .query_row("SELECT COUNT(*) FROM pragma_table_info('row_people') WHERE name LIKE '%typing%' OR name LIKE '%mood%'", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(stored, 0);
 }
 
 #[test]
