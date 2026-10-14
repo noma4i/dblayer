@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::parser::{Call, ModelNode, Pair, Value};
+use crate::parser::{Call, ModelNode, Node, Pair, Value};
 use crate::{FileError, ParseError};
 
 mod graphql;
@@ -123,6 +123,85 @@ impl<'a> Run<'a> {
             self.check_fields(node, &fields, &element, &Scope { file: node.file, keys, top: true, lists: false }, &mut covered, &mut Vec::new());
             self.check_associations(node, &element);
             self.list_unmodeled(node, remote, &element, &covered);
+        }
+        self.check_mutation_args(node);
+    }
+
+    fn check_mutation_args(&mut self, node: &'a ModelNode) {
+        for call in &node.body {
+            match call.word.as_str() {
+                "create" | "update" => {
+                    let pairs = |key: &str| match option(call, key) {
+                        Some(Pair { value: Node { item: Value::Hash(pairs), .. }, .. }) => pairs.as_slice(),
+                        _ => &[],
+                    };
+                    self.check_args_of(node.file, call, option_text(call, "with"), option_text(call, "wrap"), pairs("args"), pairs("input"));
+                }
+                "action" => {
+                    let lines = call.block.as_deref().unwrap_or_default();
+                    let line = |word: &str| lines.iter().find(|candidate| candidate.word == word);
+                    let name = line("mutation").map(name_of).or_else(|| option_text(call, "mutation"));
+                    let wrap = line("wrap").map(name_of);
+                    let pairs = |word: &str| line(word).map_or(&[][..], |found| found.options.as_slice());
+                    self.check_args_of(node.file, call, name, wrap, pairs("args"), pairs("input"));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn check_args_of(&mut self, file: usize, call: &Call, mutation: Option<&str>, wrap: Option<&str>, args: &[Pair], input: &[Pair]) {
+        let Some(mutation) = mutation.filter(|_| !args.is_empty()) else { return };
+        if self.operations.roots.is_empty() && self.operations.mutations.is_empty() {
+            return;
+        }
+        let Some(variables) = self.operations.mutations.get(mutation) else {
+            self.fail(file, call.line, call.column, format!("operation `{mutation}` is not in the operation documents"));
+            return;
+        };
+        let (owner, accepted) = match wrap {
+            None => (format!("operation `{mutation}`"), variables.clone()),
+            Some(key) => {
+                let Some(wrapper) = variables.get(key) else {
+                    self.fail(file, call.line, call.column, format!("operation `{mutation}` has no variable `${key}`"));
+                    return;
+                };
+                let Some(fields) = self.schema.input_fields(&wrapper.name) else {
+                    self.fail(file, call.line, call.column, format!("variable `${key}` of `{mutation}` is `{}`, not an input type", wrapper.describe()));
+                    return;
+                };
+                (format!("`{}`", wrapper.name), fields.clone())
+            }
+        };
+        for arg in args {
+            let Value::Symbol(kind) = &arg.value.item else { continue };
+            let Some(variable) = input.iter().find(|pair| matches!(&pair.value.item, Value::Symbol(source) if *source == arg.key)).map(|pair| pair.key.as_str()) else { continue };
+            let Some(declared) = accepted.get(variable) else {
+                self.fail(file, call.line, call.column, format!("`{variable}` is not an input of {owner}"));
+                continue;
+            };
+            let base = kind.trim_end_matches('?');
+            if !self.arg_fits(base, declared) {
+                self.fail(file, call.line, call.column, format!("arg `{}` of kind `:{base}` does not fit `{variable}: {}`", arg.key, declared.describe()));
+            } else if kind.ends_with('?') && !declared.nullable {
+                self.fail(file, call.line, call.column, format!("arg `{}` may be nil but `{variable}: {}` is required", arg.key, declared.describe()));
+            }
+        }
+    }
+
+    fn arg_fits(&self, kind: &str, declared: &Ty) -> bool {
+        let named = declared.name.as_str();
+        let custom = matches!(self.schema.types.get(named), Some(TypeKind::Scalar));
+        let enumerated = matches!(self.schema.types.get(named), Some(TypeKind::Enum(_)));
+        match kind {
+            "ids" => declared.list && (matches!(named, "ID" | "String" | "Int") || custom),
+            _ if declared.list => false,
+            "string" => matches!(named, "String" | "ID") || custom || enumerated,
+            "id" => matches!(named, "ID" | "String" | "Int") || custom,
+            "int" => named == "Int" || custom,
+            "num" => matches!(named, "Float" | "Int") || custom,
+            "bool" => named == "Boolean",
+            _ => true,
         }
     }
 

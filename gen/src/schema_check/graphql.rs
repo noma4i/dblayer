@@ -35,7 +35,7 @@ pub enum TypeKind {
     Enum(Vec<String>),
     Union,
     Scalar,
-    Input,
+    Input(HashMap<String, Ty>),
 }
 
 #[derive(Debug, Default)]
@@ -70,7 +70,7 @@ impl Schema {
             TypeDefinition::Enum(declared) => (&declared.name, TypeKind::Enum(declared.values.iter().map(|value| value.name.clone()).collect())),
             TypeDefinition::Union(union) => (&union.name, TypeKind::Union),
             TypeDefinition::Scalar(scalar) => (&scalar.name, TypeKind::Scalar),
-            TypeDefinition::InputObject(input) => (&input.name, TypeKind::Input),
+            TypeDefinition::InputObject(input) => (&input.name, TypeKind::Input(input.fields.iter().map(|field| (field.name.clone(), Ty { nullable: field.default_value.is_some() || Ty::of(&field.value_type).nullable, ..Ty::of(&field.value_type) })).collect())),
         };
         self.types.insert(name.clone(), kind);
     }
@@ -84,6 +84,13 @@ impl Schema {
             Some(TypeKind::Fields(fields)) => fields.get(name).cloned().ok_or_else(|| format!("type `{owner}` has no field `{name}`")),
             Some(_) => Err(format!("type `{owner}` has no fields to look up `{name}`")),
             None => Err(format!("type `{owner}` is not in the schema")),
+        }
+    }
+
+    pub fn input_fields(&self, owner: &str) -> Option<&HashMap<String, Ty>> {
+        match self.types.get(owner) {
+            Some(TypeKind::Input(fields)) => Some(fields),
+            _ => None,
         }
     }
 
@@ -108,6 +115,7 @@ pub struct Root {
 #[derive(Debug, Default)]
 pub struct Operations {
     pub roots: HashMap<String, Root>,
+    pub mutations: HashMap<String, HashMap<String, Ty>>,
 }
 
 impl Operations {
@@ -115,6 +123,13 @@ impl Operations {
         let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
         let document = query::parse_query::<String>(&text).map_err(|error| error.to_string())?;
         for definition in &document.definitions {
+            if let QueryDefinition::Operation(OperationDefinition::Mutation(mutation)) = definition {
+                if let Some(name) = &mutation.name {
+                    let variables = mutation.variable_definitions.iter().map(|variable| (variable.name.clone(), Ty { nullable: variable.default_value.is_some() || Ty::of(&variable.var_type).nullable, ..Ty::of(&variable.var_type) })).collect();
+                    self.mutations.insert(name.clone(), variables);
+                }
+                continue;
+            }
             let QueryDefinition::Operation(OperationDefinition::Query(operation)) = definition else { continue };
             let Some(name) = &operation.name else { continue };
             let first = operation.selection_set.items.iter().find_map(|selection| match selection {

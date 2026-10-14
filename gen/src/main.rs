@@ -53,9 +53,9 @@ fn usage() -> ExitCode {
 }
 
 fn check_schema(schema: &std::path::Path, mut operations: Vec<PathBuf>, files: &[String]) -> ExitCode {
-    let beside = schema.parent().map(|parent| parent.join("queries"));
-    if let Some(beside) = beside.filter(|beside| operations.is_empty() && beside.is_dir()) {
-        operations.push(beside);
+    if operations.is_empty() {
+        let beside = ["queries", "mutations"].map(|name| schema.parent().map(|parent| parent.join(name)));
+        operations.extend(beside.into_iter().flatten().filter(|beside| beside.is_dir()));
     }
     match check_models_against_schema(schema, &operations, files) {
         Ok(notes) => {
