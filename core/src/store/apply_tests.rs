@@ -512,10 +512,10 @@ fn start_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_row() {
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
     let failed = transitions(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() }]);
     assert_eq!((sync_row(&store, "temp-1"), synced_rows(&failed).len()), (Some("delivery_unknown:1".into()), 1));
-    assert_eq!(text(&store, "SELECT CAST(error AS TEXT) FROM row_sync WHERE row_id = 'temp-1'"), Some(serde_json::to_string(&failure).unwrap()));
+    assert_eq!(text(&store, "SELECT error_kind || ':' || error_message FROM row_sync WHERE row_id = 'temp-1'"), Some("server:http 503".to_string()));
     transitions(&store, vec![OperationTransition::Retry { seq }]);
     assert_eq!(sync_row(&store, "temp-1"), Some("pending:0".into()));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error IS NULL AND transport_started = 0 AND status = 'pending'"), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NULL AND transport_started = 0 AND status = 'pending'"), 1);
 }
 
 #[test]

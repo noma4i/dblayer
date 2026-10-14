@@ -5,6 +5,7 @@ use crate::value::ScalarKind;
 use std::collections::HashSet;
 use crate::identity::RowId;
 use rusqlite::Connection;
+use serde_json::json;
 
 fn database() -> Connection {
     let connection = Connection::open_in_memory().unwrap();
@@ -27,8 +28,8 @@ fn stored(connection: &Connection, seq: i64) -> Option<(String, String, i64)> {
 #[test]
 fn append_stores_action_and_status_then_status_applies() {
     let connection = database();
-    let first = append_operation(&connection, &operation("m1", OperationStatus::Pending), b"{}").unwrap();
-    let second = append_operation(&connection, &operation("m2", OperationStatus::Pending), b"{}").unwrap();
+    let first = append_operation(&connection, &operation("m1", OperationStatus::Pending), &json!({})).unwrap();
+    let second = append_operation(&connection, &operation("m2", OperationStatus::Pending), &json!({})).unwrap();
     assert_eq!((first, second), (1, 2));
     assert_eq!(stored(&connection, first), Some(("messages.send".into(), "pending".into(), 0)));
     set_status(&connection, first, OperationStatus::Committed).unwrap();
@@ -49,7 +50,7 @@ fn open_operations_restores_pending_operation_and_excludes_committed() {
     pending.dedupe_key = Some("k".into());
     pending.created_at = 9;
     pending.since = 9;
-    let seq = append_operation(&connection, &pending, b"{}").unwrap();
+    let seq = append_operation(&connection, &pending, &json!({})).unwrap();
     let loaded = open_operations(&connection).unwrap();
     assert_eq!(loaded.len(), 1);
     pending.id = OperationId(seq);
@@ -61,8 +62,8 @@ fn open_operations_restores_pending_operation_and_excludes_committed() {
 #[test]
 fn input_is_stored_and_read_back() {
     let connection = database();
-    let seq = append_operation(&connection, &operation("1", OperationStatus::Pending), b"{\"a\":1}").unwrap();
-    assert_eq!(operation_input(&connection, seq).unwrap(), Some(b"{\"a\":1}".to_vec()));
+    let seq = append_operation(&connection, &operation("1", OperationStatus::Pending), &json!({"a": 1})).unwrap();
+    assert_eq!(operation_input(&connection, seq).unwrap(), Some(json!({"a": 1})));
     assert_eq!(operation_input(&connection, 99).unwrap(), None);
 }
 
@@ -70,7 +71,7 @@ fn input_is_stored_and_read_back() {
 fn apply_fsck_counts_only_status_actions() {
     let connection = database();
     assert_eq!(apply_fsck(&connection, &[], &Orphans::new()).unwrap(), 0);
-    let seq = append_operation(&connection, &operation("row-1", OperationStatus::Pending), b"{}").unwrap();
+    let seq = append_operation(&connection, &operation("row-1", OperationStatus::Pending), &json!({})).unwrap();
     let skipped = [FsckAction::Keep(OperationId(seq)), FsckAction::QuarantineOrphan(RowId::new("orphan-1").unwrap())];
     assert_eq!(apply_fsck(&connection, &skipped, &Orphans::new()).unwrap(), 0);
     assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Pending);
@@ -86,10 +87,19 @@ fn op_columns_match_spec_and_nullability() {
     let names: Vec<&str> = columns.iter().map(|c| c.0.as_str()).collect();
     assert_eq!(
         names,
-        ["seq", "action_key", "status", "row_ids", "temp_id", "input", "transport_started", "base_revision", "created_at", "dedupe_key", "rollback", "attempts", "error", "since", "upload"]
+        [
+            "seq", "action_key", "status", "temp_id", "transport_started", "base_revision", "created_at", "dedupe_key", "attempts", "since", "error_kind", "error_message", "up_phase", "up_stage",
+            "up_scenario", "up_total", "up_sent", "up_retries", "up_key", "up_upload_id", "up_signed_id", "up_blob_id"
+        ]
     );
     let nullable: Vec<&str> = columns.iter().filter(|c| c.1).map(|c| c.0.as_str()).collect();
-    assert_eq!(nullable, ["temp_id", "base_revision", "dedupe_key", "rollback", "error", "upload"]);
+    assert_eq!(
+        nullable,
+        [
+            "temp_id", "base_revision", "dedupe_key", "error_kind", "error_message", "up_phase", "up_stage", "up_scenario", "up_total", "up_sent", "up_retries", "up_key", "up_upload_id", "up_signed_id",
+            "up_blob_id"
+        ]
+    );
 }
 
 fn with_messages_table() -> Connection {
@@ -112,7 +122,7 @@ fn insert_message(connection: &Connection, id: &str) {
 fn orphans() -> Orphans {
     ["temp-orphan", "temp-kept"]
         .iter()
-        .map(|id| (RowId::new(id).unwrap(), Orphan { model: "messages".into(), tables: vec!["row_messages".into()], payload: format!("{{\"id\":\"{id}\"}}").into_bytes() }))
+        .map(|id| (RowId::new(id).unwrap(), Orphan { model: "messages".into(), tables: vec!["row_messages".into()], search: None, payload: format!("{{\"id\":\"{id}\"}}").into_bytes() }))
         .collect()
 }
 
@@ -131,7 +141,7 @@ fn apply_fsck_quarantines_and_removes_orphan_temp_rows() {
     assert_eq!((entry.0.as_str(), entry.1.as_str(), entry.2), ("orphan-temp-row", "messages", b"{\"id\":\"temp-orphan\"}".to_vec()));
 }
 
-fn create_operation(connection: &Connection, temp: &str, input: &[u8]) -> OperationId {
+fn create_operation(connection: &Connection, temp: &str, input: &serde_json::Value) -> OperationId {
     let mut operation = Operation::new("messages:create", vec![RowId::new(temp).unwrap()], 0, 1);
     operation.temp_id = Some(RowId::new(temp).unwrap());
     let seq = append_operation(connection, &operation, input).unwrap();
@@ -145,7 +155,7 @@ fn known() -> HashSet<String> {
 #[test]
 fn rebuilt_rows_come_from_the_input_of_the_create_operation() {
     let connection = with_messages_table();
-    let id = create_operation(&connection, "temp-1", b"{\"id\":\"temp-1\",\"body\":\"hi\"}");
+    let id = create_operation(&connection, "temp-1", &json!({"id": "temp-1", "body": "hi"}));
     let operations = open_operations(&connection).unwrap();
     let rows = rebuilt_rows(&connection, &[FsckAction::RebuildTempRow(id)], &operations, &known()).unwrap();
     assert_eq!(rows.len(), 1);
@@ -156,14 +166,28 @@ fn rebuilt_rows_come_from_the_input_of_the_create_operation() {
 #[test]
 fn rebuilt_rows_skip_inputs_that_do_not_describe_the_temp_row() {
     let connection = with_messages_table();
-    let wrong_id = create_operation(&connection, "temp-1", b"{\"id\":\"temp-2\"}");
-    let not_object = create_operation(&connection, "temp-3", b"[1]");
-    let broken = create_operation(&connection, "temp-4", b"nope");
+    let wrong_id = create_operation(&connection, "temp-1", &json!({"id": "temp-2"}));
+    let not_object = create_operation(&connection, "temp-3", &json!([1]));
+    let broken = create_operation(&connection, "temp-4", &json!("nope"));
     let operations = open_operations(&connection).unwrap();
     let actions: Vec<FsckAction> = [wrong_id, not_object, broken, OperationId(99)].into_iter().map(FsckAction::RebuildTempRow).collect();
     assert!(rebuilt_rows(&connection, &actions, &operations, &known()).unwrap().is_empty());
     let unknown = HashSet::new();
-    let id = create_operation(&connection, "temp-5", b"{\"id\":\"temp-5\"}");
+    let id = create_operation(&connection, "temp-5", &json!({"id": "temp-5"}));
     let operations = open_operations(&connection).unwrap();
     assert!(rebuilt_rows(&connection, &[FsckAction::RebuildTempRow(id)], &operations, &unknown).unwrap().is_empty());
+}
+
+#[test]
+fn apply_fsck_removes_the_search_row_of_an_orphan() {
+    let connection = database();
+    let mut notes = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str).optional()]);
+    notes.fields[1].searchable = true;
+    create_model_tables(&connection, &[notes]).unwrap();
+    connection.execute_batch("INSERT INTO row_notes (id, revision, born_rev) VALUES ('temp-orphan', 1, 1); INSERT INTO fts_row_notes (rowid, c0) VALUES (1, 'hello');").unwrap();
+    let orphan = Orphan { model: "notes".into(), tables: vec!["row_notes".into()], search: Some("fts_row_notes".into()), payload: Vec::new() };
+    let orphans: Orphans = [(RowId::new("temp-orphan").unwrap(), orphan)].into();
+    apply_fsck(&connection, &[FsckAction::QuarantineOrphan(RowId::new("temp-orphan").unwrap())], &orphans).unwrap();
+    let left: i64 = connection.query_row("SELECT COUNT(*) FROM fts_row_notes", [], |row| row.get(0)).unwrap();
+    assert_eq!(left, 0);
 }

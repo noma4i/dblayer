@@ -13,12 +13,13 @@ fn database() -> Connection {
 
 fn insert(connection: &Connection, action_key: &str, status: &str, started: i64, row_ids: &str, input: &str) -> i64 {
     connection
-        .execute(
-            "INSERT INTO op (action_key, status, row_ids, input, transport_started, created_at, since) VALUES (?1, ?2, ?3, ?4, ?5, 5, 5)",
-            rusqlite::params![action_key, status, row_ids.as_bytes(), input.as_bytes(), started],
-        )
+        .execute("INSERT INTO op (action_key, status, transport_started, created_at, since) VALUES (?1, ?2, ?3, 5, 5)", rusqlite::params![action_key, status, started])
         .unwrap();
-    connection.last_insert_rowid()
+    let seq = connection.last_insert_rowid();
+    let ids: Vec<crate::identity::RowId> = serde_json::from_str(row_ids).unwrap();
+    crate::operation::write_rows(&connection, seq, &ids).unwrap();
+    crate::operation::write_value(&connection, seq, "input", Some(&serde_json::from_str(input).unwrap())).unwrap();
+    seq
 }
 
 fn key(model: &str, id: &str) -> SyncKey {
@@ -79,12 +80,16 @@ fn rebuild_repairs_missing_extra_and_stale_rows() {
     recompute_sync(&connection, &keys(&[key("moments", "m1")])).unwrap();
     connection.execute("UPDATE row_sync SET state = 'pending' WHERE row_id = 'm1'", []).unwrap();
     connection
-        .execute("INSERT INTO row_sync (model, row_id, state, actions, dirty_fields, attempts, since) VALUES ('moments', 'ghost', 'pending', x'5b5d', x'5b5d', 0, 1)", [])
+        .execute_batch(
+            "INSERT INTO row_sync (model, row_id, state, attempts, since) VALUES ('moments', 'ghost', 'pending', 0, 1);\
+             INSERT INTO sync_action (model, row_id, pos, name) VALUES ('moments', 'ghost', 0, 'update');",
+        )
         .unwrap();
     assert_eq!(rebuild_sync(&connection).unwrap(), 3);
     assert_eq!(info(&connection, "moments", "m1").unwrap().state, SyncState::Failed);
     assert_eq!(info(&connection, "moments", "m2").unwrap().state, SyncState::Pending);
     assert_eq!(info(&connection, "moments", "ghost"), None);
+    assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sync_action WHERE row_id = 'ghost'", [], |row| row.get(0)).unwrap(), 0);
     assert_eq!(rebuild_sync(&connection).unwrap(), 0);
 }
 

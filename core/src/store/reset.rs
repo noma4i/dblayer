@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::ddl::{fingerprint, fts_tables, manifest_read, manifest_stamp, manifest_write, RESET_INTENT_KEY, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ScopeKey;
-use crate::operation::{quarantine_add, Operation, QuarantineReason};
+use crate::operation::{delete_operation, quarantine_add, read_value, Operation, QuarantineReason};
+use crate::syncstate::clear_sync;
 
 use super::{Inner, Store, StoreError, StoreEvent};
 
@@ -79,32 +80,21 @@ pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str
 }
 
 pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String]>, quarantined: Option<QuarantineReason>) -> Result<(), StoreError> {
-    let open: Vec<(i64, String, Vec<u8>)> = connection
-        .prepare("SELECT seq, action_key, input FROM op")?
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-        .collect::<Result<_, _>>()?;
-    for (seq, action_key, input) in open {
+    let open: Vec<(i64, String)> = connection.prepare("SELECT seq, action_key FROM op")?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
+    for (seq, action_key) in open {
         let owner = Operation::split_action_key(&action_key).map(|(owner, _)| owner).unwrap_or_default();
         if models.is_some_and(|models| !models.contains(&owner)) {
             continue;
         }
         if let Some(reason) = quarantined {
-            quarantine_add(connection, &owner, &input, reason)?;
+            let input = read_value(connection, seq, "input")?.unwrap_or(serde_json::Value::Null);
+            quarantine_add(connection, &owner, &serde_json::to_vec(&input)?, reason)?;
         }
-        connection.execute("DELETE FROM op WHERE seq = ?1", params![seq])?;
+        delete_operation(connection, seq)?;
     }
-    let has_row_sync: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'row_sync')", [], |row| row.get(0))?;
-    if has_row_sync {
-        match models {
-            Some(models) => {
-                for model in models {
-                    connection.execute("DELETE FROM row_sync WHERE model = ?1", params![model])?;
-                }
-            }
-            None => {
-                connection.execute("DELETE FROM row_sync", [])?;
-            }
-        }
+    match models {
+        Some(models) => models.iter().try_for_each(|model| clear_sync(connection, Some(model)))?,
+        None => clear_sync(connection, None)?,
     }
     Ok(())
 }
@@ -120,7 +110,8 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
             connection.execute_batch(&format!("DELETE FROM {table}"))?;
         }
     }
-    connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window; DELETE FROM row_sync; DELETE FROM local_pending;")?;
+    connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window; DELETE FROM local_pending;")?;
+    clear_sync(connection, None)?;
     clear_all(connection)?;
     Ok(())
 }

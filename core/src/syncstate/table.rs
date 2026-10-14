@@ -1,24 +1,25 @@
 use std::collections::{BTreeSet, HashMap};
 
+use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, Row};
-use serde_json::Value;
 
 use crate::commit::OperationStatus;
 use crate::identity::RowId;
-use crate::operation::Operation;
+use crate::operation::{failure_at, failure_cells, info_at, info_cells, read_all_fields, read_all_parts, read_all_rows, upload_at, Operation, INFO_COLUMNS};
 
 use super::derive::{fold_entries, SyncEntry};
-use super::info::{OperationFailure, SyncInfo, SyncState};
+use super::info::{SyncInfo, SyncState};
 
 pub type SyncKey = (String, String);
 
 const CHUNK: usize = 500;
 
-const OPEN_ENTRIES: &str = "SELECT action_key, status, row_ids, temp_id, transport_started, attempts, error, since, \
-     CASE WHEN action_key LIKE '%:update' THEN input END, upload \
+const OPEN_ENTRIES: &str = "SELECT seq, action_key, status, temp_id, transport_started, attempts, error_kind, error_message, since, up_phase, up_stage, up_scenario, up_total, up_sent, up_retries, up_key, up_upload_id, up_signed_id, up_blob_id \
      FROM op WHERE status IN ('pending', 'failed', 'delivery_unknown') ORDER BY seq";
 
-const SELECT_STORED: &str = "SELECT state, actions, dirty_fields, error, attempts, since, upload FROM row_sync";
+const SELECT_STORED_WITH_ID: &str = "SELECT row_id, state, error_kind, error_message, attempts, since, up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message FROM row_sync";
+
+const SELECT_STORED: &str = "SELECT state, error_kind, error_message, attempts, since, up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message FROM row_sync";
 
 pub fn operation_keys(action_key: &str, row_ids: &[RowId], temp_id: Option<&RowId>) -> Vec<SyncKey> {
     let Some((model, _)) = Operation::split_action_key(action_key) else { return Vec::new() };
@@ -28,34 +29,34 @@ pub fn operation_keys(action_key: &str, row_ids: &[RowId], temp_id: Option<&RowI
     ids.into_iter().map(|id| (model.clone(), id.to_string())).collect()
 }
 
-fn json_list(bytes: &[u8]) -> Vec<String> {
-    serde_json::from_slice(bytes).unwrap_or_default()
-}
-
 fn open_entries(connection: &Connection) -> rusqlite::Result<HashMap<SyncKey, Vec<SyncEntry>>> {
+    let mut rows_of = read_all_rows(connection)?;
+    let mut parts_of = read_all_parts(connection)?;
+    let mut fields_of = read_all_fields(connection)?;
     let mut statement = connection.prepare_cached(OPEN_ENTRIES)?;
     let mut rows = statement.query([])?;
     let mut grouped: HashMap<SyncKey, Vec<SyncEntry>> = HashMap::new();
     while let Some(row) = rows.next()? {
-        let action_key: String = row.get(0)?;
-        let Some(status) = OperationStatus::from_sql(&row.get::<_, String>(1)?) else { continue };
-        let row_ids: Vec<RowId> = serde_json::from_slice(&row.get::<_, Vec<u8>>(2)?).unwrap_or_default();
+        let seq: i64 = row.get(0)?;
+        let action_key: String = row.get(1)?;
+        let Some(status) = OperationStatus::from_sql(&row.get::<_, String>(2)?) else { continue };
+        let row_ids = rows_of.remove(&seq).unwrap_or_default();
         let temp_id: Option<RowId> = row.get::<_, Option<String>>(3)?.and_then(|text| RowId::new(&text).ok());
-        let error: Option<OperationFailure> = row.get::<_, Option<Vec<u8>>>(6)?.and_then(|bytes| serde_json::from_slice(&bytes).ok());
-        let fields: Vec<String> = match row.get::<_, Option<Vec<u8>>>(8)?.and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()) {
-            Some(Value::Object(input)) => input.keys().filter(|name| *name != "id").cloned().collect(),
-            _ => Vec::new(),
-        };
         let Some((_, action)) = Operation::split_action_key(&action_key) else { continue };
+        let fields = if action == "update" { fields_of.remove(&seq).unwrap_or_default() } else { Vec::new() };
+        let mut upload = upload_at(row, 9)?;
+        if let Some(state) = upload.as_mut() {
+            state.parts = parts_of.remove(&seq).unwrap_or_default();
+        }
         let entry = SyncEntry {
             action,
             status,
             transport_started: row.get::<_, i64>(4)? != 0,
             attempts: row.get::<_, u32>(5)?,
-            error,
-            since: row.get(7)?,
+            error: failure_at(row, 6)?,
+            since: row.get(8)?,
             fields,
-            upload: row.get::<_, Option<Vec<u8>>>(9)?.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+            upload,
         };
         for key in operation_keys(&action_key, &row_ids, temp_id.as_ref()) {
             grouped.entry(key).or_default().push(entry.clone());
@@ -64,15 +65,21 @@ fn open_entries(connection: &Connection) -> rusqlite::Result<HashMap<SyncKey, Ve
     Ok(grouped)
 }
 
-fn stored_info(row: &Row<'_>, first: usize) -> rusqlite::Result<SyncInfo> {
+fn names_of(connection: &Connection, table: &str, key: &SyncKey) -> rusqlite::Result<Vec<String>> {
+    let mut statement = connection.prepare_cached(&format!("SELECT name FROM {table} WHERE model = ?1 AND row_id = ?2 ORDER BY pos"))?;
+    let names = statement.query_map(params![key.0, key.1], |row| row.get(0))?;
+    names.collect()
+}
+
+fn stored_info(connection: &Connection, key: &SyncKey, row: &Row<'_>, first: usize) -> rusqlite::Result<SyncInfo> {
     Ok(SyncInfo {
         state: SyncState::from_sql(&row.get::<_, String>(first)?).unwrap_or_default(),
-        actions: json_list(&row.get::<_, Vec<u8>>(first + 1)?),
-        dirty_fields: json_list(&row.get::<_, Vec<u8>>(first + 2)?),
-        error: row.get::<_, Option<Vec<u8>>>(first + 3)?.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
-        attempts: row.get(first + 4)?,
-        since: row.get(first + 5)?,
-        upload: row.get::<_, Option<Vec<u8>>>(first + 6)?.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+        actions: names_of(connection, "sync_action", key)?,
+        dirty_fields: names_of(connection, "sync_field", key)?,
+        error: failure_at(row, first + 1)?,
+        attempts: row.get(first + 3)?,
+        since: row.get(first + 4)?,
+        upload: info_at(row, first + 5)?,
     })
 }
 
@@ -80,13 +87,13 @@ pub fn read_sync(connection: &Connection, model: &str, ids: &[String]) -> rusqli
     let mut found = HashMap::new();
     for chunk in ids.chunks(CHUNK) {
         let marks = vec!["?"; chunk.len()].join(", ");
-        let sql = format!("SELECT row_id, state, actions, dirty_fields, error, attempts, since, upload FROM row_sync WHERE model = ? AND row_id IN ({marks})");
+        let sql = format!("{SELECT_STORED_WITH_ID} WHERE model = ? AND row_id IN ({marks})");
         let mut statement = connection.prepare_cached(&sql)?;
         let arguments = std::iter::once(model).chain(chunk.iter().map(String::as_str));
         let mut rows = statement.query(params_from_iter(arguments))?;
         while let Some(row) = rows.next()? {
             let id: String = row.get(0)?;
-            let info = stored_info(row, 1)?;
+            let info = stored_info(connection, &(model.to_string(), id.clone()), row, 1)?;
             found.insert(id, info);
         }
     }
@@ -96,25 +103,41 @@ pub fn read_sync(connection: &Connection, model: &str, ids: &[String]) -> rusqli
 fn stored(connection: &Connection, key: &SyncKey) -> rusqlite::Result<Option<SyncInfo>> {
     let mut statement = connection.prepare_cached(&format!("{SELECT_STORED} WHERE model = ?1 AND row_id = ?2"))?;
     let mut rows = statement.query(params![key.0, key.1])?;
-    rows.next()?.map(|row| stored_info(row, 0)).transpose()
+    rows.next()?.map(|row| stored_info(connection, key, row, 0)).transpose()
+}
+
+pub fn clear_sync(connection: &Connection, model: Option<&str>) -> rusqlite::Result<()> {
+    for table in ["sync_action", "sync_field", "row_sync"] {
+        match model {
+            Some(model) => connection.execute(&format!("DELETE FROM {table} WHERE model = ?1"), [model])?,
+            None => connection.execute(&format!("DELETE FROM {table}"), [])?,
+        };
+    }
+    Ok(())
 }
 
 fn write(connection: &Connection, key: &SyncKey, info: &SyncInfo) -> rusqlite::Result<()> {
-    let error = info.error.as_ref().map(|error| serde_json::to_vec(error).expect("failure serializes"));
-    connection.prepare_cached(
-        "INSERT OR REPLACE INTO row_sync (model, row_id, state, actions, dirty_fields, error, attempts, since, upload) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-    )?
-    .execute(params![
-        key.0,
-        key.1,
-        info.state.as_sql(),
-        serde_json::to_vec(&info.actions).expect("actions serialize"),
-        serde_json::to_vec(&info.dirty_fields).expect("fields serialize"),
-        error,
-        info.attempts,
-        info.since,
-        info.upload.as_ref().map(|upload| serde_json::to_vec(upload).expect("upload serializes")),
-    ])?;
+    remove(connection, key)?;
+    let [kind, message] = failure_cells(info.error.as_ref());
+    let mut cells: Vec<SqlValue> = vec![key.0.clone().into(), key.1.clone().into(), info.state.as_sql().to_string().into(), kind, message, i64::from(info.attempts).into(), info.since.into()];
+    cells.extend(info_cells(info.upload.as_ref()));
+    let marks = vec!["?"; cells.len()].join(", ");
+    connection
+        .prepare_cached(&format!("INSERT INTO row_sync (model, row_id, state, error_kind, error_message, attempts, since, {INFO_COLUMNS}) VALUES ({marks})"))?
+        .execute(params_from_iter(cells))?;
+    for (table, names) in [("sync_action", &info.actions), ("sync_field", &info.dirty_fields)] {
+        let mut insert = connection.prepare_cached(&format!("INSERT INTO {table} (model, row_id, pos, name) VALUES (?1, ?2, ?3, ?4)"))?;
+        for (pos, name) in names.iter().enumerate() {
+            insert.execute(params![key.0, key.1, pos as i64, name])?;
+        }
+    }
+    Ok(())
+}
+
+fn remove(connection: &Connection, key: &SyncKey) -> rusqlite::Result<()> {
+    for table in ["sync_action", "sync_field", "row_sync"] {
+        connection.prepare_cached(&format!("DELETE FROM {table} WHERE model = ?1 AND row_id = ?2"))?.execute(params![key.0, key.1])?;
+    }
     Ok(())
 }
 
@@ -132,9 +155,7 @@ pub fn recompute_sync(connection: &Connection, keys: &BTreeSet<SyncKey>) -> rusq
         }
         match &next {
             Some(info) => write(connection, key, info)?,
-            None => {
-                connection.prepare_cached("DELETE FROM row_sync WHERE model = ?1 AND row_id = ?2")?.execute(params![key.0, key.1])?;
-            }
+            None => remove(connection, key)?,
         }
         changed.insert(key.clone());
     }

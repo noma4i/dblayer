@@ -17,9 +17,8 @@ const MODELS: [&str; 2] = ["moments", "users"];
 fn entry_of(connection: &rusqlite::Connection, operation: &Operation) -> rusqlite::Result<SyncEntry> {
     let (_, action) = Operation::split_action_key(&operation.action_key).unwrap_or_default();
     let fields = if action == "update" {
-        let bytes: Vec<u8> = connection.query_row("SELECT input FROM op WHERE seq = ?1", [operation.id.0], |row| row.get(0))?;
-        match serde_json::from_slice::<Value>(&bytes) {
-            Ok(Value::Object(input)) => input.keys().filter(|name| *name != "id").cloned().collect(),
+        match crate::operation::read_value(connection, operation.id.0, "input")? {
+            Some(Value::Object(input)) => input.keys().filter(|name| *name != "id").cloned().collect(),
             _ => Vec::new(),
         }
     } else {

@@ -2,12 +2,14 @@ mod fsck;
 mod outbox;
 mod quarantine;
 mod status;
+mod stored;
 mod table;
 
 pub use fsck::*;
 pub use outbox::*;
 pub use quarantine::*;
 pub use status::*;
+pub use stored::*;
 pub use table::*;
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ use crate::value::fractional_between;
 
 #[cfg(test)]
 use super::Store;
-use super::nodes::read_trees;
+use crate::nodes::read_trees;
 use super::shape::{assemble, read_cells, read_tables, take_leaf};
 use super::{ModelInfo, StoreError};
 use crate::ddl::FieldPlan;
@@ -64,8 +64,9 @@ pub(crate) fn fetch_stored(connection: &Connection, info: &ModelInfo, ids: &[Str
         let mut free: HashMap<String, Map<String, Value>> = HashMap::new();
         if let (Some(table), false) = (&layout.value_table, present.is_empty()) {
             let filter = format!("row_id IN ({})", placeholders(present.len()));
-            for (owner, value) in read_trees(connection, table, &["row_id", "field"], &filter, &present)? {
-                if let [row_id, field] = <[String; 2]>::try_from(owner).unwrap_or_default().as_slice() {
+            let owners: Vec<SqlValue> = present.iter().cloned().map(SqlValue::Text).collect();
+            for (owner, value) in read_trees(connection, table, &["row_id", "field"], &filter, &owners)? {
+                if let [SqlValue::Text(row_id), SqlValue::Text(field)] = owner.as_slice() {
                     free.entry(row_id.clone()).or_default().insert(field.clone(), value);
                 }
             }

@@ -196,7 +196,7 @@ fn core_constraints_reject_duplicate_scope_order_and_unknown_op_status() {
     let duplicate = connection.execute(scope, ["2"]);
     let op = |status: &str| {
         connection.execute(
-            "insert into op (action_key, status, row_ids, input, created_at, since) values ('Chat:send', ?1, x'00', x'00', 0, 0)",
+            "insert into op (action_key, status, created_at, since) values ('Chat:send', ?1, 0, 0)",
             [status],
         )
     };
@@ -211,7 +211,7 @@ fn open_dedupe_key_is_unique_only_while_open() {
     let connection = core_connection();
     let insert = |status: &str, dedupe: Option<&str>| {
         connection.execute(
-            "insert into op (action_key, status, row_ids, input, created_at, since, dedupe_key) values ('Chat:send', ?1, x'00', x'00', 0, 0, ?2)",
+            "insert into op (action_key, status, created_at, since, dedupe_key) values ('Chat:send', ?1, 0, 0, ?2)",
             rusqlite::params![status, dedupe],
         )
     };
@@ -235,22 +235,28 @@ fn core_table_columns_match_spec() {
         "seq",
         "action_key",
         "status",
-        "row_ids",
         "temp_id",
-        "input",
         "transport_started",
         "base_revision",
         "created_at",
         "dedupe_key",
-        "rollback",
         "attempts",
-        "error",
         "since",
-        "upload",
+        "error_kind",
+        "error_message",
+        "up_phase",
+        "up_stage",
+        "up_scenario",
+        "up_total",
+        "up_sent",
+        "up_retries",
+        "up_key",
+        "up_upload_id",
+        "up_signed_id",
+        "up_blob_id",
     ];
     assert_eq!(op_names, expected_op.into_iter().collect());
-    assert!(!op["dedupe_key"].1 && !op["rollback"].1 && !op["temp_id"].1 && !op["base_revision"].1);
-    assert!(op["input"].1 && op["row_ids"].1);
+    assert!(!op["dedupe_key"].1 && !op["temp_id"].1 && !op["base_revision"].1 && !op["error_kind"].1);
     assert_eq!(window.len(), 11);
     assert!(window["landed_at"].1 && !window["cursor"].1 && !window["total"].1);
     let bad_flag = connection.execute(

@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{params_from_iter, Connection};
+use rusqlite::{params_from_iter, Connection, Result};
 use serde_json::{Number, Value};
 
-use super::rows::placeholders;
-use super::StoreError;
 
 const NULL: i64 = 0;
 const BOOL: i64 = 1;
@@ -73,13 +71,13 @@ fn assemble(nodes: Vec<Node>) -> Option<Value> {
     root
 }
 
-pub(crate) fn write_tree(connection: &Connection, table: &str, keys: &[&str], owner: &[String], value: &Value) -> Result<(), StoreError> {
+pub fn write_tree(connection: &Connection, table: &str, keys: &[&str], owner: &[SqlValue], value: &Value) -> Result<()> {
     let mut nodes = Vec::new();
     flatten(value, -1, 0, None, &mut nodes);
     let names: Vec<&str> = keys.iter().copied().chain(["node", "parent", "pos", "name", "kind", "whole", "fraction", "text"]).collect();
-    let mut statement = connection.prepare_cached(&format!("INSERT INTO {table} ({}) VALUES ({})", names.join(", "), placeholders(names.len())))?;
+    let mut statement = connection.prepare_cached(&format!("INSERT INTO {table} ({}) VALUES ({})", names.join(", "), vec!["?"; names.len()].join(", ")))?;
     for entry in nodes {
-        let cells = owner.iter().map(|part| SqlValue::Text(part.clone())).chain([
+        let cells = owner.iter().cloned().chain([
             SqlValue::Integer(entry.node),
             SqlValue::Integer(entry.parent),
             SqlValue::Integer(entry.pos),
@@ -94,18 +92,18 @@ pub(crate) fn write_tree(connection: &Connection, table: &str, keys: &[&str], ow
     Ok(())
 }
 
-pub(crate) fn delete_trees(connection: &Connection, table: &str, filter: &str, params: &[String]) -> Result<(), StoreError> {
+pub fn delete_trees(connection: &Connection, table: &str, filter: &str, params: &[SqlValue]) -> Result<()> {
     connection.prepare_cached(&format!("DELETE FROM {table} WHERE {filter}"))?.execute(params_from_iter(params.iter()))?;
     Ok(())
 }
 
-pub(crate) fn read_trees(connection: &Connection, table: &str, keys: &[&str], filter: &str, params: &[String]) -> Result<Vec<(Vec<String>, Value)>, StoreError> {
+pub fn read_trees(connection: &Connection, table: &str, keys: &[&str], filter: &str, params: &[SqlValue]) -> Result<Vec<(Vec<SqlValue>, Value)>> {
     let order = keys.join(", ");
     let sql = format!("SELECT {order}, node, parent, pos, name, kind, whole, fraction, text FROM {table} WHERE {filter} ORDER BY {order}, node");
     let mut statement = connection.prepare_cached(&sql)?;
     let count = keys.len();
     let rows = statement.query_map(params_from_iter(params.iter()), |row| {
-        let owner = (0..count).map(|at| row.get::<_, String>(at)).collect::<Result<Vec<_>, _>>()?;
+        let owner = (0..count).map(|at| row.get::<_, SqlValue>(at)).collect::<Result<Vec<_>, _>>()?;
         let node = Node {
             node: row.get(count)?,
             parent: row.get(count + 1)?,
@@ -118,7 +116,7 @@ pub(crate) fn read_trees(connection: &Connection, table: &str, keys: &[&str], fi
         };
         Ok((owner, node))
     })?;
-    let mut found: Vec<(Vec<String>, Vec<Node>)> = Vec::new();
+    let mut found: Vec<(Vec<SqlValue>, Vec<Node>)> = Vec::new();
     for item in rows {
         let (owner, node) = item?;
         match found.last_mut() {
@@ -129,8 +127,15 @@ pub(crate) fn read_trees(connection: &Connection, table: &str, keys: &[&str], fi
     Ok(found.into_iter().filter_map(|(owner, nodes)| assemble(nodes).map(|value| (owner, value))).collect())
 }
 
-pub(crate) fn save_pending(connection: &Connection, model: &str, row_id: &str, path: &str, value: &Value) -> Result<(), StoreError> {
-    let owner = [model.to_string(), row_id.to_string(), path.to_string()];
-    delete_trees(connection, "local_pending", "model = ?1 AND row_id = ?2 AND path = ?3", &owner)?;
-    write_tree(connection, "local_pending", &["model", "row_id", "path"], &owner, value)
+pub fn node_table_statement(kind: &str, name: &str, keys: &[(&str, &str)]) -> String {
+    let owner: String = keys.iter().map(|(key, ty)| format!("  {key} {ty} NOT NULL,\n")).collect();
+    let names: Vec<&str> = keys.iter().map(|(key, _)| *key).collect();
+    format!(
+        "{kind} IF NOT EXISTS {name} (\n{owner}  node INTEGER NOT NULL,\n  parent INTEGER NOT NULL,\n  pos INTEGER NOT NULL,\n  name TEXT,\n  kind INTEGER NOT NULL,\n  whole INTEGER,\n  fraction REAL,\n  text TEXT,\n  PRIMARY KEY ({}, node)\n) STRICT, WITHOUT ROWID",
+        names.join(", ")
+    )
+}
+
+pub fn texts(parts: &[&str]) -> Vec<SqlValue> {
+    parts.iter().map(|part| SqlValue::Text((*part).to_string())).collect()
 }

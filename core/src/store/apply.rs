@@ -9,12 +9,14 @@ use crate::commit::{
 };
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
-use crate::syncstate::{operation_keys, recompute_sync, SyncKey};
+use crate::operation::{delete_operation, failure_cells, read_rows, read_value, upload_cells, write_parts, write_rows, write_value, UPLOAD_COLUMNS};
+use crate::syncstate::{operation_keys, recompute_sync, OperationFailure, SyncKey};
+use crate::upload::UploadState;
 
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, fetch_stored, placeholders, Reader, CHUNK};
 use super::search::{reindex, touches_search, unindex};
-use super::nodes::{delete_trees, read_trees, write_tree};
+use crate::nodes::{delete_trees, read_trees, texts, write_tree};
 use super::shape::{delete_tables, insert_children, member_values, normalize, normalize_leaf};
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
@@ -103,10 +105,6 @@ fn attempt(inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(Com
     Ok((outcome, acks))
 }
 
-fn json_bytes<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
-    Ok(serde_json::to_vec(value)?)
-}
-
 fn diff_fields(old: &Map<String, Value>, new: &Map<String, Value>) -> BTreeSet<String> {
     let mut changed = BTreeSet::new();
     for (key, value) in new {
@@ -123,7 +121,7 @@ fn diff_fields(old: &Map<String, Value>, new: &Map<String, Value>) -> BTreeSet<S
 }
 
 type HiddenRows = HashSet<(String, String)>;
-type OpenDestroy = (i64, String, Vec<u8>, Option<Vec<u8>>);
+type OpenDestroy = (i64, String);
 
 fn hidden_rows(connection: &Connection, transitions: &[OperationTransition]) -> Result<HiddenRows, StoreError> {
     let mut released: HashSet<i64> = HashSet::new();
@@ -144,22 +142,20 @@ fn hidden_rows(connection: &Connection, transitions: &[OperationTransition]) -> 
             _ => {}
         }
     }
-    let mut statement =
-        connection.prepare_cached("SELECT seq, action_key, row_ids, rollback FROM op WHERE status IN ('pending', 'delivery_unknown') AND action_key LIKE '%:destroy'")?;
-    let open: Vec<OpenDestroy> =
-        statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?.collect::<Result<_, _>>()?;
+    let mut statement = connection.prepare_cached("SELECT seq, action_key FROM op WHERE status IN ('pending', 'delivery_unknown') AND action_key LIKE '%:destroy'")?;
+    let open: Vec<OpenDestroy> = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
     let mut hidden = HiddenRows::new();
-    for (seq, action_key, row_ids, rollback) in open {
+    for (seq, action_key) in open {
         if released.contains(&seq) {
             continue;
         }
         let model = action_key.split(':').next().unwrap_or_default().to_string();
         let ids: Vec<String> = match rewritten.get(&seq) {
             Some(record) => record.row_ids.iter().map(|id| id.to_string()).collect(),
-            None => serde_json::from_slice(&row_ids)?,
+            None => read_rows(connection, seq)?.into_iter().map(|id| id.to_string()).collect(),
         };
         hidden.extend(ids.into_iter().map(|id| (model.clone(), id)));
-        let snapshot: Option<Value> = rollback.map(|bytes| serde_json::from_slice(&bytes)).transpose()?;
+        let snapshot: Option<Value> = read_value(connection, seq, "prior")?;
         let rows = snapshot.as_ref().and_then(|snapshot| snapshot.get("rows")).and_then(Value::as_array);
         for item in rows.into_iter().flatten() {
             let owner = item.get("model").and_then(Value::as_str);
@@ -184,13 +180,13 @@ fn visible_scope_ops(operations: &[ScopeOp], hidden: &HiddenRows) -> Vec<ScopeOp
 }
 
 fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, row: &mut Map<String, Value>) -> Result<(), StoreError> {
-    let owner = [model.as_str().to_string(), id.to_string()];
+    let owner = texts(&[model.as_str(), id]);
     let pending = read_trees(connection, "local_pending", &["model", "row_id", "path"], "model = ?1 AND row_id = ?2", &owner)?;
     if pending.is_empty() {
         return Ok(());
     }
     for (key, value) in pending {
-        if let Some(slot) = key.last().and_then(|path| info.spec.local_slot(path)) {
+        if let Some(slot) = key.last().and_then(|path| match path { rusqlite::types::Value::Text(path) => info.spec.local_slot(path), _ => None }) {
             slot.write(row, value);
         }
     }
@@ -325,7 +321,7 @@ fn write_row(
     }
     if let Some(table) = &layout.value_table {
         for field in free {
-            let owner = [id.to_string(), field.clone()];
+            let owner = texts(&[id, field]);
             if exists {
                 delete_trees(connection, table, "row_id = ?1 AND field = ?2", &owner)?;
             }
@@ -342,7 +338,7 @@ pub(crate) fn remove_row(connection: &Connection, info: &ModelInfo, id: &str) ->
     let all: Vec<usize> = (0..info.layout.tables.len()).collect();
     delete_tables(connection, &info.layout, &all, id)?;
     if let Some(table) = &info.layout.value_table {
-        delete_trees(connection, table, "row_id = ?1", &[id.to_string()])?;
+        delete_trees(connection, table, "row_id = ?1", &texts(&[id]))?;
     }
     Ok(connection.execute(&format!("DELETE FROM {} WHERE id = ?1", info.table), params![id])?)
 }
@@ -588,11 +584,10 @@ fn apply_scope_ops(
 }
 
 fn op_keys_of(connection: &Connection, seq: i64) -> Result<Vec<SyncKey>, StoreError> {
-    let found: Option<(String, Vec<u8>, Option<String>)> = connection
-        .query_row("SELECT action_key, row_ids, temp_id FROM op WHERE seq = ?1", params![seq], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-        .optional()?;
-    let Some((action_key, row_ids, temp_id)) = found else { return Ok(Vec::new()) };
-    let row_ids: Vec<crate::identity::RowId> = serde_json::from_slice(&row_ids)?;
+    let found: Option<(String, Option<String>)> =
+        connection.query_row("SELECT action_key, temp_id FROM op WHERE seq = ?1", params![seq], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+    let Some((action_key, temp_id)) = found else { return Ok(Vec::new()) };
+    let row_ids = read_rows(connection, seq)?;
     let temp_id = temp_id.and_then(|text| crate::identity::RowId::new(&text).ok());
     Ok(operation_keys(&action_key, &row_ids, temp_id.as_ref()))
 }
@@ -605,8 +600,7 @@ fn stamp_confirmed_rows(
 ) -> Result<(), StoreError> {
     for transition in transitions {
         let OperationTransition::Close { seq, status: OperationStatus::Committed, .. } = transition else { continue };
-        let rollback: Option<Vec<u8>> = connection.query_row("SELECT rollback FROM op WHERE seq = ?1", params![seq], |row| row.get(0)).optional()?.flatten();
-        let Some(snapshot) = rollback.and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()) else { continue };
+        let Some(snapshot) = read_value(connection, *seq, "prior")? else { continue };
         for item in snapshot.get("rows").and_then(Value::as_array).into_iter().flatten() {
             let (Some(kind), Some(model), Some(id)) =
                 (item.get("kind").and_then(Value::as_str), item.get("model").and_then(Value::as_str), item.get("id").and_then(Value::as_str))
@@ -669,7 +663,7 @@ fn apply_transitions(
                             params![action_key, key],
                         )?;
                     }
-                    connection.execute("DELETE FROM op WHERE seq = ?1", params![seq])?;
+                    delete_operation(connection, *seq)?;
                 } else {
                     set_open_status(connection, *seq, *status, None, now_ms)?;
                 }
@@ -678,8 +672,7 @@ fn apply_transitions(
             }
             OperationTransition::Fail { seq, status, failure } => {
                 synced.extend(op_keys_of(connection, *seq)?);
-                let error = json_bytes(failure)?;
-                if set_open_status(connection, *seq, *status, Some(error), now_ms)? == 0 {
+                if set_open_status(connection, *seq, *status, Some(failure), now_ms)? == 0 {
                     result.unknown_operation_acks += 1;
                     continue;
                 }
@@ -701,9 +694,10 @@ fn apply_transitions(
             }
             OperationTransition::Postpone { seq, failure } => {
                 synced.extend(op_keys_of(connection, *seq)?);
+                let [kind, message] = failure_cells(Some(failure));
                 let postponed = connection.execute(
-                    "UPDATE op SET transport_started = 0, error = ?2, since = ?3 WHERE seq = ?1 AND status = 'pending' AND transport_started = 1",
-                    params![seq, json_bytes(failure)?, now_ms],
+                    "UPDATE op SET transport_started = 0, error_kind = ?2, error_message = ?3, since = ?4 WHERE seq = ?1 AND status = 'pending' AND transport_started = 1",
+                    params![seq, kind, message, now_ms],
                 )?;
                 if postponed == 0 {
                     result.unknown_operation_acks += 1;
@@ -714,7 +708,7 @@ fn apply_transitions(
             }
             OperationTransition::Progress { seq, state } => {
                 synced.extend(op_keys_of(connection, *seq)?);
-                let saved = connection.execute("UPDATE op SET upload = ?2 WHERE seq = ?1", params![seq, json_bytes(state)?])?;
+                let saved = write_upload(connection, *seq, state)?;
                 if saved == 0 {
                     result.unknown_operation_acks += 1;
                     continue;
@@ -725,7 +719,7 @@ fn apply_transitions(
             OperationTransition::Retry { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let retried = connection.execute(
-                    "UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error = NULL, since = ?2 \
+                    "UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error_kind = NULL, error_message = NULL, since = ?2 \
                      WHERE seq = ?1 AND status IN ('failed', 'delivery_unknown')",
                     params![seq, now_ms],
                 )?;
@@ -738,11 +732,11 @@ fn apply_transitions(
             }
             OperationTransition::Remove { seq, expected } => {
                 synced.extend(op_keys_of(connection, *seq)?);
-                let removed = match expected {
-                    Some(status) => connection
-                        .execute("DELETE FROM op WHERE seq = ?1 AND status = ?2", params![seq, status.as_sql()])?,
-                    None => connection.execute("DELETE FROM op WHERE seq = ?1", params![seq])?,
+                let matches = match expected {
+                    Some(status) => connection.query_row("SELECT EXISTS (SELECT 1 FROM op WHERE seq = ?1 AND status = ?2)", params![seq, status.as_sql()], |row| row.get(0))?,
+                    None => true,
                 };
+                let removed = if matches { delete_operation(connection, *seq)? } else { 0 };
                 if removed == 0 {
                     result.unknown_operation_acks += 1;
                 } else {
@@ -755,39 +749,58 @@ fn apply_transitions(
     Ok(wrote)
 }
 
-fn set_open_status(connection: &Connection, seq: i64, status: OperationStatus, error: Option<Vec<u8>>, now_ms: i64) -> Result<usize, StoreError> {
+fn set_open_status(connection: &Connection, seq: i64, status: OperationStatus, error: Option<&OperationFailure>, now_ms: i64) -> Result<usize, StoreError> {
     let dedupe = if status == OperationStatus::Failed { ", dedupe_key = NULL" } else { "" };
+    let [kind, message] = failure_cells(error);
     Ok(connection.execute(
-        &format!("UPDATE op SET status = ?1, error = ?2, since = ?3{dedupe} WHERE seq = ?4"),
-        params![status.as_sql(), error, now_ms, seq],
+        &format!("UPDATE op SET status = ?1, error_kind = ?2, error_message = ?3, since = ?4{dedupe} WHERE seq = ?5"),
+        params![status.as_sql(), kind, message, now_ms, seq],
     )?)
 }
 
+fn write_upload(connection: &Connection, seq: i64, state: &UploadState) -> Result<usize, StoreError> {
+    let assignments: Vec<String> = UPLOAD_COLUMNS.split(", ").enumerate().map(|(at, column)| format!("{column} = ?{}", at + 2)).collect();
+    let mut values = vec![rusqlite::types::Value::Integer(seq)];
+    values.extend(upload_cells(Some(state)));
+    let saved = connection.execute(&format!("UPDATE op SET {} WHERE seq = ?1", assignments.join(", ")), params_from_iter(values))?;
+    if saved > 0 {
+        write_parts(connection, seq, &state.parts)?;
+    }
+    Ok(saved)
+}
+
 fn begin_operation(connection: &Connection, record: &OperationRecord) -> Result<i64, StoreError> {
-    let row_ids: Vec<&str> = record.row_ids.iter().map(|id| id.as_str()).collect();
     let dedupe_key = if record.status == OperationStatus::Failed { None } else { record.dedupe_key.clone() };
-    let rollback = record.rollback.as_ref().map(json_bytes).transpose()?;
     connection.execute(
-        "INSERT INTO op (seq, action_key, status, row_ids, temp_id, input, transport_started, \
-         base_revision, created_at, dedupe_key, rollback, since, upload) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?9, ?12) \
+        "INSERT INTO op (seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, since) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7) \
          ON CONFLICT (seq) DO UPDATE SET action_key = excluded.action_key, \
-         status = excluded.status, row_ids = excluded.row_ids, temp_id = excluded.temp_id, input = excluded.input, \
+         status = excluded.status, temp_id = excluded.temp_id, \
          transport_started = excluded.transport_started, base_revision = excluded.base_revision, \
-         created_at = excluded.created_at, dedupe_key = excluded.dedupe_key, rollback = excluded.rollback",
+         created_at = excluded.created_at, dedupe_key = excluded.dedupe_key",
         params![
             record.seq,
             record.action_key,
             record.status.as_sql(),
-            json_bytes(&row_ids)?,
             record.temp_id.as_ref().map(|id| id.as_str().to_string()),
-            json_bytes(&record.input)?,
             i64::from(record.transport_started),
             record.base_revision,
             record.created_at,
             dedupe_key,
-            rollback,
-            record.upload.as_ref().map(json_bytes).transpose()?,
         ],
     )?;
-    Ok(record.seq.unwrap_or_else(|| connection.last_insert_rowid()))
+    let seq = record.seq.unwrap_or_else(|| connection.last_insert_rowid());
+    write_rows(connection, seq, &record.row_ids)?;
+    write_value(connection, seq, "input", Some(&record.input))?;
+    write_value(connection, seq, "prior", record.rollback.as_ref())?;
+    if let Some(state) = &record.upload {
+        write_upload(connection, seq, state)?;
+    }
+    Ok(seq)
+}
+
+pub(crate) fn save_pending(connection: &Connection, model: &str, row_id: &str, path: &str, value: &Value) -> Result<(), StoreError> {
+    let owner = texts(&[model, row_id, path]);
+    delete_trees(connection, "local_pending", "model = ?1 AND row_id = ?2 AND path = ?3", &owner)?;
+    Ok(write_tree(connection, "local_pending", &["model", "row_id", "path"], &owner, value)?)
 }

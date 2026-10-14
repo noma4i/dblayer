@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 use serde_json::{Map, Value};
 
 use super::fsck::FsckAction;
+use super::stored::*;
 use super::quarantine::{quarantine_add, QuarantineReason};
 use super::status::{Operation, OperationId, OperationStatus};
 use crate::identity::RowId;
@@ -11,24 +12,24 @@ use crate::identity::RowId;
 const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
 
 #[cfg(test)]
-pub fn append_operation(connection: &Connection, operation: &Operation, input: &[u8]) -> rusqlite::Result<i64> {
-    let row_ids = serde_json::to_vec(&operation.row_ids).expect("row ids serialize");
+pub fn append_operation(connection: &Connection, operation: &Operation, input: &Value) -> rusqlite::Result<i64> {
     connection.execute(
-        "INSERT INTO op (action_key, status, row_ids, temp_id, input, transport_started, base_revision, dedupe_key, rollback, created_at, since) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?9)",
+        "INSERT INTO op (action_key, status, temp_id, transport_started, base_revision, dedupe_key, created_at, since) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
         params![
             operation.action_key,
             operation.status.as_sql(),
-            row_ids,
             operation.temp_id.as_ref().map(RowId::as_str),
-            input,
             operation.transport_started as i64,
             operation.base_revision,
             operation.dedupe_key,
             operation.created_at,
         ],
     )?;
-    Ok(connection.last_insert_rowid())
+    let seq = connection.last_insert_rowid();
+    write_rows(connection, seq, &operation.row_ids)?;
+    write_value(connection, seq, "input", Some(input))?;
+    Ok(seq)
 }
 
 pub fn set_status(connection: &Connection, sequence: i64, status: OperationStatus) -> rusqlite::Result<()> {
@@ -36,48 +37,49 @@ pub fn set_status(connection: &Connection, sequence: i64, status: OperationStatu
     Ok(())
 }
 
-pub fn operation_input(connection: &Connection, sequence: i64) -> rusqlite::Result<Option<Vec<u8>>> {
-    connection.query_row("SELECT input FROM op WHERE seq = ?", [sequence], |row| row.get(0)).optional()
+pub fn operation_input(connection: &Connection, sequence: i64) -> rusqlite::Result<Option<Value>> {
+    read_value(connection, sequence, "input")
 }
 
 pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operation>> {
     let sql = format!(
-        "SELECT seq, action_key, status, row_ids, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error, since, upload \
+        "SELECT seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, since, {UPLOAD_COLUMNS} \
          FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq"
     );
+    let mut rows_of = read_all_rows(connection)?;
+    let mut parts_of = read_all_parts(connection)?;
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], |row| {
         let status: String = row.get(2)?;
-        let row_ids: Vec<u8> = row.get(3)?;
-        let temp_id: Option<String> = row.get(4)?;
-        let error: Option<Vec<u8>> = row.get(10)?;
-        let upload: Option<Vec<u8>> = row.get(12)?;
+        let temp_id: Option<String> = row.get(3)?;
+        let seq: i64 = row.get(0)?;
         Ok((
             Operation {
-                id: OperationId(row.get(0)?),
+                id: OperationId(seq),
                 action_key: row.get(1)?,
                 status: OperationStatus::from_sql(&status).unwrap_or(OperationStatus::Failed),
                 row_ids: Vec::new(),
                 temp_id: temp_id.as_deref().and_then(|text| RowId::new(text).ok()),
-                transport_started: row.get::<_, i64>(5)? != 0,
-                base_revision: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
-                created_at: row.get(7)?,
-                dedupe_key: row.get(8)?,
-                attempts: row.get(9)?,
-                error: error.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+                transport_started: row.get::<_, i64>(4)? != 0,
+                base_revision: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                created_at: row.get(6)?,
+                dedupe_key: row.get(7)?,
+                attempts: row.get(8)?,
+                error: failure_at(row, 9)?,
                 since: row.get(11)?,
-                upload: upload.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+                upload: upload_at(row, 12)?,
             },
             OperationStatus::from_sql(&status).is_some(),
-            row_ids,
         ))
     })?;
     let mut operations = Vec::new();
     for item in rows {
-        let (mut operation, valid, row_ids) = item?;
-        let Ok(ids) = serde_json::from_slice::<Vec<RowId>>(&row_ids) else { continue };
+        let (mut operation, valid) = item?;
         if valid {
-            operation.row_ids = ids;
+            operation.row_ids = rows_of.remove(&operation.id.0).unwrap_or_default();
+            if let Some(state) = operation.upload.as_mut() {
+                state.parts = parts_of.remove(&operation.id.0).unwrap_or_default();
+            }
             operations.push(operation);
         }
     }
@@ -108,6 +110,7 @@ pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], orphans: &Orp
 pub struct Orphan {
     pub model: String,
     pub tables: Vec<String>,
+    pub search: Option<String>,
     pub payload: Vec<u8>,
 }
 
@@ -116,6 +119,9 @@ pub type Orphans = std::collections::HashMap<RowId, Orphan>;
 fn quarantine_row(connection: &Connection, id: &RowId, orphans: &Orphans) -> rusqlite::Result<bool> {
     let Some(orphan) = orphans.get(id) else { return Ok(false) };
     quarantine_add(connection, &orphan.model, &orphan.payload, QuarantineReason::OrphanTempRow)?;
+    if let (Some(search), Some(main)) = (&orphan.search, orphan.tables.last()) {
+        connection.execute(&format!("DELETE FROM {search} WHERE rowid = (SELECT rowid FROM {main} WHERE id = ?1)"), [id.as_str()])?;
+    }
     for (index, table) in orphan.tables.iter().enumerate() {
         let column = if index + 1 == orphan.tables.len() { "id" } else { "row_id" };
         connection.execute(&format!("DELETE FROM {table} WHERE {column} = ?"), [id.as_str()])?;
@@ -123,6 +129,7 @@ fn quarantine_row(connection: &Connection, id: &RowId, orphans: &Orphans) -> rus
     connection.execute("DELETE FROM scope_member WHERE model = ? AND row_id = ?", params![orphan.model, id.as_str()])?;
     Ok(true)
 }
+
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RebuiltRow {
@@ -145,8 +152,7 @@ pub fn rebuilt_rows(
             continue;
         };
         let Some(temp) = &operation.temp_id else { continue };
-        let Some(input) = operation_input(connection, sequence.0)? else { continue };
-        let Ok(Value::Object(row)) = serde_json::from_slice::<Value>(&input) else { continue };
+        let Some(Value::Object(row)) = operation_input(connection, sequence.0)? else { continue };
         if row.get("id").and_then(Value::as_str) == Some(temp.as_str()) {
             rows.push(RebuiltRow { model, id: temp.clone(), row });
         }

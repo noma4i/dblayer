@@ -159,7 +159,7 @@ fn restart_turns_an_interrupted_send_into_delivery_unknown_and_repairs_row_sync(
         db.update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
         apply(&db, OperationTransition::Start { seq: only_seq(&db) });
         assert_eq!(state_of(&db, "moments", "m1"), SyncState::Sending);
-        db.execute_for_test("UPDATE row_sync SET state = 'pending', attempts = 7; INSERT INTO row_sync (model, row_id, state, actions, dirty_fields, attempts, since) VALUES ('moments', 'ghost', 'failed', x'5b5d', x'5b5d', 0, 1);");
+        db.execute_for_test("UPDATE row_sync SET state = 'pending', attempts = 7; INSERT INTO row_sync (model, row_id, state, attempts, since) VALUES ('moments', 'ghost', 'failed', 0, 1);");
     }
     let db = Db::open(&path, all_specs(), None).unwrap();
     let info = db.sync_info("moments", &rid("m1")).unwrap();

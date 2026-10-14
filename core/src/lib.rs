@@ -6,6 +6,7 @@ pub mod transport;
 pub mod value;
 pub mod schema;
 pub mod ddl;
+pub mod nodes;
 pub mod operation;
 pub mod syncstate;
 pub mod write;

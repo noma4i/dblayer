@@ -35,7 +35,7 @@ fn seed_two_models(store: &Store) {
 fn user_tables(store: &Store) {
     exec(
         store,
-        "INSERT INTO op (action_key, status, row_ids, input, created_at, since) VALUES ('messages:send', 'pending', x'5b5d', x'7b7d', 1, 1);\
+        "INSERT INTO op (action_key, status, created_at, since) VALUES ('messages:send', 'pending', 1, 1);\
          INSERT INTO op_once (namespace, dedupe_key) VALUES ('messages:send', 'd1');\
          INSERT INTO quarantine (model, payload, reason) VALUES ('messages', x'00', 'test');",
     );

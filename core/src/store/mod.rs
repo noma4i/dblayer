@@ -15,8 +15,6 @@ mod error;
 mod file_ops;
 mod maintenance;
 mod membership;
-mod nodes;
-pub(crate) use nodes::save_pending;
 mod open;
 mod reset;
 mod rows;
@@ -28,6 +26,7 @@ mod windows;
 
 pub use admission::{admit_upsert, UpsertAdmission};
 pub use apply::PlanCommitError;
+pub(crate) use apply::save_pending;
 pub use boot::BootReport;
 pub use error::StoreError;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
@@ -202,6 +201,8 @@ mod rows_tests;
 mod shape_tests;
 #[cfg(test)]
 mod value_tests;
+#[cfg(test)]
+mod outbox_storage_tests;
 #[cfg(test)]
 mod tombstones_tests;
 #[cfg(test)]

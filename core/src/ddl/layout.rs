@@ -237,7 +237,7 @@ impl Layout {
 
     pub fn table_statements(&self, temp: bool) -> Vec<String> {
         let kind = if temp { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
-        let values = self.value_table.iter().map(|name| node_table_statement(kind, name, &["row_id", "field"]));
+        let values = self.value_table.iter().map(|name| crate::nodes::node_table_statement(kind, name, &[("row_id", "TEXT"), ("field", "TEXT")]));
         self.tables
             .iter()
             .map(|table| match &table.shape {
@@ -259,12 +259,4 @@ impl Layout {
             .chain(values)
             .collect()
     }
-}
-
-pub fn node_table_statement(kind: &str, name: &str, keys: &[&str]) -> String {
-    let owner: String = keys.iter().map(|key| format!("  {key} TEXT NOT NULL,\n")).collect();
-    format!(
-        "{kind} IF NOT EXISTS {name} (\n{owner}  node INTEGER NOT NULL,\n  parent INTEGER NOT NULL,\n  pos INTEGER NOT NULL,\n  name TEXT,\n  kind INTEGER NOT NULL,\n  whole INTEGER,\n  fraction REAL,\n  text TEXT,\n  PRIMARY KEY ({}, node)\n) STRICT, WITHOUT ROWID",
-        keys.join(", ")
-    )
 }

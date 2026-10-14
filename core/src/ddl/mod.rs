@@ -56,7 +56,7 @@ const CACHE_STATEMENTS: [&str; 7] = [
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 12] = [
+const CORE_STATEMENTS: [&str; 18] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -65,30 +65,84 @@ const CORE_STATEMENTS: [&str; 12] = [
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   action_key TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending', 'failed', 'delivery_unknown', 'committed', 'rolledback')),
-  row_ids BLOB NOT NULL,
   temp_id TEXT,
-  input BLOB NOT NULL,
   transport_started INTEGER NOT NULL DEFAULT 0,
   base_revision INTEGER,
   created_at INTEGER NOT NULL,
   dedupe_key TEXT,
-  rollback BLOB,
   attempts INTEGER NOT NULL DEFAULT 0,
-  error BLOB,
   since INTEGER NOT NULL,
-  upload BLOB
+  error_kind TEXT,
+  error_message TEXT,
+  up_phase TEXT,
+  up_stage TEXT,
+  up_scenario TEXT,
+  up_total INTEGER,
+  up_sent INTEGER,
+  up_retries INTEGER,
+  up_key TEXT,
+  up_upload_id TEXT,
+  up_signed_id TEXT,
+  up_blob_id TEXT
 ) STRICT",
+    "CREATE TABLE IF NOT EXISTS op_row (
+  seq INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  row_id TEXT NOT NULL,
+  PRIMARY KEY (seq, pos)
+) STRICT, WITHOUT ROWID",
+    "CREATE INDEX IF NOT EXISTS op_row_id ON op_row (row_id)",
+    "CREATE TABLE IF NOT EXISTS op_part (
+  seq INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  number INTEGER NOT NULL,
+  etag TEXT NOT NULL,
+  PRIMARY KEY (seq, pos)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS op_value (
+  seq INTEGER NOT NULL,
+  part TEXT NOT NULL,
+  node INTEGER NOT NULL,
+  parent INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT,
+  kind INTEGER NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (seq, part, node)
+) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS row_sync (
   model TEXT NOT NULL,
   row_id TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'failed', 'delivery_unknown')),
-  actions BLOB NOT NULL,
-  dirty_fields BLOB NOT NULL,
-  error BLOB,
+  error_kind TEXT,
+  error_message TEXT,
   attempts INTEGER NOT NULL,
   since INTEGER NOT NULL,
-  upload BLOB,
+  up_status TEXT,
+  up_stage TEXT,
+  up_sent INTEGER,
+  up_total INTEGER,
+  up_wait TEXT,
+  up_attempts INTEGER,
+  up_error_kind TEXT,
+  up_error_message TEXT,
   PRIMARY KEY (model, row_id)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS sync_action (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  PRIMARY KEY (model, row_id, pos)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS sync_field (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  PRIMARY KEY (model, row_id, pos)
 ) STRICT, WITHOUT ROWID",
     "CREATE INDEX IF NOT EXISTS op_open ON op (action_key, status)",
     "CREATE INDEX IF NOT EXISTS op_temp ON op (temp_id)",

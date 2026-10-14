@@ -265,7 +265,8 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
                     let payload = serde_json::to_vec(&stored.row).map_err(StoreError::from)?;
                     let info = inner.models.get(spec.key.as_str()).ok_or_else(|| StoreError::UnknownModel(spec.key.as_str().to_string()))?;
                     let tables = info.layout.child_tables().into_iter().chain([table_name(spec.key.as_str())]).collect();
-                    orphans.insert(id.clone(), Orphan { model: spec.key.as_str().to_string(), tables, payload });
+                    let search = (!info.search.is_empty()).then(|| crate::ddl::fts_name(spec.key.as_str()));
+                    orphans.insert(id.clone(), Orphan { model: spec.key.as_str().to_string(), tables, search, payload });
                     break;
                 }
             }

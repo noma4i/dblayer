@@ -46,10 +46,10 @@ fn fsck_keeps_unsent_operations_and_marks_started_ones_unknown_on_open() {
     {
         let db = Db::open(&path, all_specs(), None).unwrap();
         db.execute_for_test(
-            "INSERT INTO op (action_key, status, row_ids, input, transport_started, created_at, since) VALUES \
-             ('users:rename', 'pending', x'5b5d', x'7b7d', 0, 1, 1), \
-             ('users:rename', 'pending', x'5b5d', x'7b7d', 1, 2, 2), \
-             ('users:create', 'pending', x'5b5d', x'7b7d', 0, 3, 3)",
+            "INSERT INTO op (action_key, status, transport_started, created_at, since) VALUES \
+             ('users:rename', 'pending', 0, 1, 1), \
+             ('users:rename', 'pending', 1, 2, 2), \
+             ('users:create', 'pending', 0, 3, 3)",
         );
     }
     let db = Db::open(&path, all_specs(), None).unwrap();

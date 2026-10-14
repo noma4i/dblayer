@@ -59,15 +59,11 @@ impl OutboxOperation {
 
 pub(crate) fn read_outbox(reader: &Reader<'_>) -> Result<Vec<OutboxOperation>, StoreError> {
     let operations = crate::operation::open_operations(reader.connection())?;
-    let mut statement = reader.connection().prepare("SELECT input, rollback FROM op WHERE seq = ?1")?;
     let mut entries = Vec::with_capacity(operations.len());
     for operation in operations {
-        let (input, rollback): (Vec<u8>, Option<Vec<u8>>) = statement.query_row([operation.id.0], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        entries.push(OutboxOperation {
-            operation,
-            input: serde_json::from_slice(&input)?,
-            rollback: rollback.map(|bytes| serde_json::from_slice(&bytes)).transpose()?,
-        });
+        let input = crate::operation::read_value(reader.connection(), operation.id.0, "input")?.unwrap_or(Value::Null);
+        let rollback = crate::operation::read_value(reader.connection(), operation.id.0, "prior")?;
+        entries.push(OutboxOperation { operation, input, rollback });
     }
     Ok(entries)
 }
