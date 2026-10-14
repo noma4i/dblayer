@@ -123,6 +123,8 @@ pub enum DeclarationError {
     MemoryHasFile(String),
     #[error("memory model declares action {0}")]
     MemoryHasActions(String),
+    #[error("local model has no server: {0}")]
+    LocalHasServer(String),
     #[error("expire_after needs storage: :memory")]
     ExpireNeedsMemory,
     #[error("relation {relation} sets {field}, which is not an ephemeral field")]

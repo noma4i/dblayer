@@ -277,6 +277,11 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
     let file = node.file;
     let mut report = |line: usize, column: usize, message: String| errors.push(at(file, line, column, message));
     check_model_options(node, &mut report);
+    if node.options.iter().any(|pair| pair.key == "storage" && matches!(&pair.value.item, Value::Symbol(name) if name == "local")) {
+        for call in node.body.iter().filter(|call| matches!(call.word.as_str(), "remote" | "listen" | "action" | "create" | "update" | "destroy")) {
+            report(call.line, call.column, format!("local model has no server: `{}` is not allowed with `storage: :local`", call.word));
+        }
+    }
     let mut schemas = 0;
     let mut member_names = HashSet::new();
     let mut standard_words = HashSet::new();

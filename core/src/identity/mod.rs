@@ -30,6 +30,10 @@ impl RowId {
         Self(format!("temp-{prefix}{}", uuid::Uuid::new_v4().hyphenated().to_string().to_uppercase()))
     }
 
+    pub fn generate() -> Self {
+        Self(uuid::Uuid::new_v4().hyphenated().to_string().to_uppercase())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

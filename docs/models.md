@@ -208,7 +208,7 @@ user.set(typing = true)
 
 ## Memory models
 
-`model Session, storage: :local` keeps the model on disk and never sends it: `create`, `update` and `destroy` change the row and queue nothing, so the written values appear in no outbox record. Use it for data that must stay on the device, such as a session token, in a database file of its own.
+`model Session, storage: :local` persists rows without an outbox. It rejects server declarations. Local and synced models share a database. See [storage rules](storage-models.md).
 
 `model Presence, storage: :memory` keeps the whole model in memory. Rows are read, observed and loaded through `remote` like any other model. They are not written to the database file and are empty after a restart.
 

@@ -74,6 +74,8 @@ mod observe_tests;
 #[cfg(test)]
 mod open_tests;
 #[cfg(test)]
+mod storage_tests;
+#[cfg(test)]
 mod reactivity_tests;
 #[cfg(test)]
 mod record_sync_tests;

@@ -1,0 +1,5 @@
+model StorageRow do
+  schema do
+    string :record
+  end
+end

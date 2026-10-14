@@ -1,0 +1,265 @@
+[
+  {
+    "name": "local",
+    "models": [
+      {
+        "key": "StorageRow",
+        "fields": [
+          {
+            "name": "id",
+            "kind": {
+              "type": "scalar",
+              "kind": "id"
+            }
+          },
+          {
+            "name": "record",
+            "kind": {
+              "type": "scalar",
+              "kind": "str"
+            }
+          }
+        ],
+        "storage": "local"
+      }
+    ],
+    "error": false,
+    "declaration": ""
+  },
+  {
+    "name": "disk",
+    "models": [
+      {
+        "key": "StorageRow",
+        "fields": [
+          {
+            "name": "id",
+            "kind": {
+              "type": "scalar",
+              "kind": "id"
+            }
+          },
+          {
+            "name": "record",
+            "kind": {
+              "type": "scalar",
+              "kind": "str"
+            }
+          }
+        ],
+        "storage": "disk"
+      }
+    ],
+    "error": false,
+    "declaration": ""
+  },
+  {
+    "name": "local create",
+    "models": [
+      {
+        "key": "StorageRow",
+        "fields": [
+          {
+            "name": "id",
+            "kind": {
+              "type": "scalar",
+              "kind": "id"
+            }
+          },
+          {
+            "name": "record",
+            "kind": {
+              "type": "scalar",
+              "kind": "str"
+            }
+          }
+        ],
+        "storage": "local",
+        "actions": [
+          {
+            "name": "create",
+            "root_shape": "upsert",
+            "mutation": "WriteStorageRow"
+          }
+        ]
+      }
+    ],
+    "error": true,
+    "declaration": "create with: WriteStorageRow"
+  },
+  {
+    "name": "local update",
+    "models": [
+      {
+        "key": "StorageRow",
+        "fields": [
+          {
+            "name": "id",
+            "kind": {
+              "type": "scalar",
+              "kind": "id"
+            }
+          },
+          {
+            "name": "record",
+            "kind": {
+              "type": "scalar",
+              "kind": "str"
+            }
+          }
+        ],
+        "storage": "local",
+        "actions": [
+          {
+            "name": "update",
+            "root_shape": "upsert",
+            "mutation": "WriteStorageRow"
+          }
+        ]
+      }
+    ],
+    "error": true,
+    "declaration": "update with: WriteStorageRow"
+  },
+  {
+    "name": "local destroy",
+    "models": [
+      {
+        "key": "StorageRow",
+        "fields": [
+          {
+            "name": "id",
+            "kind": {
+              "type": "scalar",
+              "kind": "id"
+            }
+          },
+          {
+            "name": "record",
+            "kind": {
+              "type": "scalar",
+              "kind": "str"
+            }
+          }
+        ],
+        "storage": "local",
+        "actions": [
+          {
+            "name": "destroy",
+            "root_shape": "destroy",
+            "mutation": "WriteStorageRow"
+          }
+        ]
+      }
+    ],
+    "error": true,
+    "declaration": "destroy with: WriteStorageRow"
+  },
+  {
+    "name": "local publish",
+    "models": [
+      {
+        "key": "StorageRow",
+        "fields": [
+          {
+            "name": "id",
+            "kind": {
+              "type": "scalar",
+              "kind": "id"
+            }
+          },
+          {
+            "name": "record",
+            "kind": {
+              "type": "scalar",
+              "kind": "str"
+            }
+          }
+        ],
+        "storage": "local",
+        "actions": [
+          {
+            "name": "publish",
+            "root_shape": "upsert",
+            "mutation": "WriteStorageRow"
+          }
+        ]
+      }
+    ],
+    "error": true,
+    "declaration": "action :publish do\nmutation WriteStorageRow\nlocal_effect :none, reason: \"server only\"\nend"
+  },
+  {
+    "name": "local remote",
+    "models": [
+      {
+        "key": "StorageRow",
+        "fields": [
+          {
+            "name": "id",
+            "kind": {
+              "type": "scalar",
+              "kind": "id"
+            }
+          },
+          {
+            "name": "record",
+            "kind": {
+              "type": "scalar",
+              "kind": "str"
+            }
+          }
+        ],
+        "storage": "local",
+        "relations": [
+          {
+            "name": "all",
+            "by_columns": [],
+            "remote": {
+              "operation": "StorageRows",
+              "shape": {
+                "type": "list",
+                "coverage": "complete"
+              },
+              "stale_time": "5.minutes"
+            }
+          }
+        ]
+      }
+    ],
+    "error": true,
+    "declaration": "remote :all do\nquery StorageRows\nlist\nend"
+  },
+  {
+    "name": "local listen",
+    "models": [
+      {
+        "key": "StorageRow",
+        "fields": [
+          {
+            "name": "id",
+            "kind": {
+              "type": "scalar",
+              "kind": "id"
+            }
+          },
+          {
+            "name": "record",
+            "kind": {
+              "type": "scalar",
+              "kind": "str"
+            }
+          }
+        ],
+        "storage": "local",
+        "listens": [
+          {
+            "subscription": "StorageRowEvents"
+          }
+        ]
+      }
+    ],
+    "error": true,
+    "declaration": "listen StorageRowEvents"
+  }
+]

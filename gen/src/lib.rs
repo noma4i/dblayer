@@ -88,3 +88,6 @@ mod roundtrip_tests;
 
 #[cfg(test)]
 mod nested_tests;
+
+#[cfg(test)]
+mod storage_tests;

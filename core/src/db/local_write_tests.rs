@@ -318,25 +318,3 @@ fn a_keyed_patch_upserts_and_removes_one_element_of_an_array_field() {
     assert_eq!(react("u1", "b"), json!([{"userId": "u2", "body": "x"}, {"userId": "u1", "body": "b"}]));
     assert_eq!(react("u1", ""), json!([{"userId": "u2", "body": "x"}]));
 }
-
-fn session_db(storage: crate::schema::Storage) -> Db {
-    let mut spec = crate::schema::ModelSpec::new("sessions", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::scalar("record", crate::value::ScalarKind::Str).nullable().optional()]);
-    spec.storage = storage;
-    let db = Db::open_in_memory(vec![spec], None).unwrap();
-    db
-}
-
-#[test]
-fn local_model_writes_never_reach_the_outbox() {
-    // mutation: guarding `begin` with `!spec.is_local()` removed in create and update makes the Local half red
-    let local = session_db(crate::schema::Storage::Local);
-    local.create("sessions", obj(json!({"id": "session", "record": "token-one"}))).unwrap();
-    local.update("sessions", &rid("session"), obj(json!({"record": "token-two"}))).unwrap();
-    assert_eq!(local.find("sessions", &rid("session")).unwrap().unwrap().text("record"), Some("token-two"));
-    assert!(local.outbox().unwrap().is_empty());
-
-    let disk = session_db(crate::schema::Storage::Disk);
-    disk.create("sessions", obj(json!({"id": "session", "record": "token-one"}))).unwrap();
-    disk.update("sessions", &rid("session"), obj(json!({"record": "token-two"}))).unwrap();
-    assert!(disk.outbox().unwrap().iter().any(|entry| entry.input.to_string().contains("token-one") || entry.input.to_string().contains("token-two")));
-}

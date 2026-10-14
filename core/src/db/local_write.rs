@@ -151,6 +151,7 @@ impl Db {
         let mut input = values;
         let id = match input.get("id").and_then(read_id) {
             Some(id) => id,
+            None if spec.is_local() => RowId::generate(),
             None => RowId::generate_temp(None),
         };
         input.insert("id".to_string(), Value::String(id.to_string()));

@@ -116,6 +116,9 @@ impl ModelSpec {
             }
             positive_window(window)?;
         }
+        if self.is_local() {
+            return self.check_local_has_no_server();
+        }
         if !self.is_memory() {
             return Ok(());
         }
@@ -124,6 +127,16 @@ impl ModelSpec {
         }
         match self.actions.first() {
             Some(action) => Err(DeclarationError::MemoryHasActions(action.name.clone())),
+            None => Ok(()),
+        }
+    }
+
+    fn check_local_has_no_server(&self) -> Result<(), DeclarationError> {
+        let server = self.actions.first().map(|action| action.name.as_str())
+            .or_else(|| self.listens.first().map(|_| "listen"))
+            .or_else(|| self.relations.iter().find(|relation| relation.remote.is_some()).map(|relation| relation.name.as_str()));
+        match server {
+            Some(name) => Err(DeclarationError::LocalHasServer(name.to_string())),
             None => Ok(()),
         }
     }
