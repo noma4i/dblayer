@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,7 +8,7 @@ use crate::db::Db;
 use crate::pacing::ManualClock;
 use crate::schema::{
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, OnFailure, PageDirection, RelationSpec,
-    RemoteShape, RemoteSpec, RootShape, UpdatesSpec, EphemeralSpec,
+    RemoteShape, RemoteSpec, RootShape, UpdatesSpec, EphemeralSpec, MergeRule,
 };
 use crate::transport::MockTransport;
 use crate::value::ScalarKind;
@@ -39,6 +40,8 @@ pub fn moments_spec() -> ModelSpec {
             FieldSpec::scalar("text", ScalarKind::Str).optional(),
             FieldSpec::scalar("likedByMe", ScalarKind::Bool).optional(),
             FieldSpec::enumeration("mood", &["calm", "wild"]).optional().indexed(),
+            FieldSpec { merge: Some(MergeRule::Local), ..FieldSpec::scalar("tone", ScalarKind::Str).optional() },
+            FieldSpec { merge: Some(MergeRule::Keys { keys: BTreeMap::from([("tone".to_string(), MergeRule::Local)]) }), ..FieldSpec::object("cover").optional() },
         ],
     );
     spec.associations.push(AssociationSpec::new("author", AssociationKind::BelongsTo, "users", "userId"));

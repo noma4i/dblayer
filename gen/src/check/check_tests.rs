@@ -260,10 +260,20 @@ fn updates_set_is_a_hash_of_ephemeral_values() {
 
 #[test]
 fn a_merge_rule_must_be_a_known_word_a_list_of_tiers_or_a_hash_of_those() {
-    let message = "`merge` must be `:present`, `:non_empty`, `:positive`, `:monotonic`, a list of tiers like `[[:a, :b], [:c]]` or a hash of those per key";
+    let message = "`merge` must be `:present`, `:non_empty`, `:positive`, `:monotonic`, a list of tiers like `[[:a, :b], [:c]]` or a hash of those per key (a key may also be `:local`)";
     assert_eq!(field_failure("object :a, merge: :newest"), (3, message.to_string()));
     assert_eq!(field_failure("object :a, merge: { width: { deep: :positive } }"), (3, message.to_string()));
     assert_eq!(field_failure("enum :a, values: [:x], merge: [:x]"), (3, message.to_string()));
+}
+
+#[test]
+fn a_local_field_is_optional_and_carries_no_other_policy() {
+    assert_eq!(field_failure("string :a, local: true"), (3, "local field `a` needs `optional: true` or `null: true`".to_string()));
+    let message = "local field `a` cannot set `merge`, `index`, `default`, `from` or `id_from`";
+    assert_eq!(field_failure("string :a, optional: true, local: true, index: true"), (3, message.to_string()));
+    assert_eq!(field_failure("string :a, null: true, local: true, merge: :non_empty"), (3, message.to_string()));
+    assert_eq!(field_failure("string :a, optional: true, merge: :local").0, 3);
+    assert!(parse_models("model Sample do\n  schema do\n    file :a, optional: true, local: true\n  end\nend\n").unwrap_err().iter().any(|error| error.message == "unknown key `local` for `file`"));
 }
 
 #[test]

@@ -125,6 +125,9 @@ impl Database {
         self.send_writes();
         Ok(row_json(&row))
     }
+    pub fn set_local(&self, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
+        Ok(self.db.set_local(&model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
+    }
     pub fn act(&self, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
         let acted = self.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
         self.send_writes();

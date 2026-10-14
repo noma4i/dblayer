@@ -5,6 +5,7 @@ model Moment do
     string :text,      null: true
     bool   :likedByMe, default: false
     object :media,     default: {}
+    string :tone,      optional: true, local: true
     date   :createdAt, index: true
 
     index :userId, :createdAt

@@ -74,6 +74,9 @@ fun retryAll() { background.launch { runCatching { DBlayer.database.retryAll() }
 
 suspend fun DBModel.destroy() { DBlayer.database.destroy(modelName, id) }
 
+/** Writes a field the server never sends. `JsonNull` clears it. */
+suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement) { DBlayer.database.setLocal(modelName, id, path, value.toString()) }
+
 /** Waits until the server has answered every queued change of the record, throws on a refusal or when offline. */
 suspend fun DBModel.settled() { DBlayer.database.settled(modelName, id) }
 

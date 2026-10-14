@@ -138,7 +138,7 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             out.push_str("        return built\n    }\n");
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var singleton: Query<Self> {{ {} }}", name(&relation.name)).unwrap(); }
-        let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id").collect();
+        let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local()).collect();
         let create_fields = create_fields(model, &fields);
         let params = create_fields.iter().map(|field| {
             let optional = field.nullable || field.optional || field.default.is_some();
@@ -213,7 +213,7 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             out.push_str("            return built\n        }\n");
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", serializer(), {})", name(&relation.name)).unwrap(); }
-        let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id").collect();
+        let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local()).collect();
         let create_fields = create_fields(model, &fields);
         let params = create_fields.iter().map(|field| {
             let optional = field.nullable || field.optional || field.default.is_some();

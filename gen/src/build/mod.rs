@@ -99,6 +99,9 @@ fn build_field(call: &Call) -> FieldSpec {
     field.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));
     field.default = option(call, "default").map(|pair| json_of(&pair.value.item));
     field.merge = option(call, "merge").and_then(|pair| merge_of(&pair.value.item));
+    if flag(call, "local") {
+        field.merge = Some(MergeRule::Local);
+    }
     field
 }
 
@@ -109,6 +112,7 @@ fn merge_of(value: &Value) -> Option<MergeRule> {
             "non_empty" => Some(MergeRule::NonEmpty),
             "positive" => Some(MergeRule::Positive),
             "monotonic" => Some(MergeRule::Monotonic),
+            "local" => Some(MergeRule::Local),
             _ => None,
         },
         Value::Array(tiers) => Some(MergeRule::Ladder {

@@ -22,6 +22,10 @@ extension DBModel {
   public func update(values: [String: JSONValue]) async throws -> Self {
     try Self.decode(try DB.database.update(model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text))
   }
+  /// Writes a field the server never sends. A `nil` value clears it.
+  public func setLocal(_ path: String, _ value: JSONValue) async throws {
+    try DB.database.setLocal(model: Self.modelName, rowId: id, path: path, valueJson: value.text)
+  }
   public func act(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> Self {
     try Self.decode(try DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text).rowJson)
   }

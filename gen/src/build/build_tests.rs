@@ -327,6 +327,15 @@ fn a_field_merge_rule_keeps_its_words_tiers_and_keys() {
 }
 
 #[test]
+fn a_local_field_and_a_local_key_become_the_local_merge_rule() {
+    let models = parse_models("model Sample do\n  schema do\n    string :tone, optional: true, local: true\n    object :media, optional: true, merge: { tone: :local, width: :positive }\n  end\nend\n").unwrap();
+    let fields = &models[0].fields;
+    assert_eq!(fields.iter().find(|field| field.name == "tone").unwrap().merge, Some(MergeRule::Local));
+    let keys = [("tone", MergeRule::Local), ("width", MergeRule::Positive)].map(|(key, rule)| (key.to_string(), rule)).into();
+    assert_eq!(fields.iter().find(|field| field.name == "media").unwrap().merge, Some(MergeRule::Keys { keys }));
+}
+
+#[test]
 fn a_create_and_an_action_keep_their_correlation_paths() {
     let models = parse_models("model Sample do\n  schema do\n    string :body\n    object :media, null: true\n  end\n  create with: CreateSample, correlate: [:body, \"media.blobId\"]\n  action :upload do\n    mutation Upload\n    local_effect :none, reason: \"test\"\n    correlate :body\n  end\nend\n").unwrap();
     let actions = &models[0].actions;

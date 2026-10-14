@@ -185,6 +185,7 @@ pub struct CommitEnvelope {
     pub window: Option<WindowSave>,
     pub origin: WriteOrigin,
     pub generation: Generation,
+    pub writes_local: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -213,6 +214,7 @@ impl CommitEnvelope {
             window: None,
             origin,
             generation,
+            writes_local: false,
         }
     }
 

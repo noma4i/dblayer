@@ -14,6 +14,7 @@ pub enum MergeRule {
     NonEmpty,
     Positive,
     Monotonic,
+    Local,
     Ladder { tiers: Vec<Vec<String>> },
     Keys { keys: BTreeMap<String, MergeRule> },
 }
@@ -49,7 +50,7 @@ impl MergeRule {
     pub fn fits(&self, kind: &FieldKind) -> bool {
         let number = matches!(kind, FieldKind::Scalar { kind: ScalarKind::Num | ScalarKind::Int | ScalarKind::Date });
         match self {
-            MergeRule::Present | MergeRule::NonEmpty => !matches!(kind, FieldKind::File),
+            MergeRule::Present | MergeRule::NonEmpty | MergeRule::Local => !matches!(kind, FieldKind::File),
             MergeRule::Positive | MergeRule::Monotonic => number,
             MergeRule::Ladder { tiers } => match kind {
                 FieldKind::Enum { values } => tiers.iter().flatten().all(|name| values.contains(name)),
@@ -60,10 +61,19 @@ impl MergeRule {
         }
     }
 
+    pub(crate) fn local_keys(&self) -> impl Iterator<Item = &str> {
+        let keys = match self {
+            MergeRule::Keys { keys } => Some(keys),
+            _ => None,
+        };
+        keys.into_iter().flatten().filter(|(_, rule)| **rule == MergeRule::Local).map(|(key, _)| key.as_str())
+    }
+
     pub fn apply(&self, stored: Option<&Value>, incoming: Value) -> Value {
         let Some(stored) = stored.filter(|stored| !stored.is_null()) else { return incoming };
         let keep = match self {
             MergeRule::Present => incoming.is_null(),
+            MergeRule::Local => false,
             MergeRule::NonEmpty => is_empty(&incoming) && !is_empty(stored),
             MergeRule::Positive => is_positive(stored) && !is_positive(&incoming),
             MergeRule::Monotonic => incoming.is_null() || order(&incoming, stored) == Some(Ordering::Less),

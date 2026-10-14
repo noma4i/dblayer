@@ -26,6 +26,10 @@ pub enum DbError {
     NotEphemeralField { model: String, field: String },
     #[error("value for ephemeral field {field} of {model} is invalid")]
     InvalidEphemeralValue { model: String, field: String },
+    #[error("{path} of {model} is not a local field")]
+    NotLocalField { model: String, path: String },
+    #[error("value for local field {path} of {model} is invalid")]
+    LocalValue { model: String, path: String },
     #[error("row {id} of {model} does not exist")]
     NotFound { model: String, id: String },
     #[error("origin {0:?} cannot be landed")]

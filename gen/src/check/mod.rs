@@ -93,9 +93,10 @@ fn field_keys(word: &str) -> Vec<Key> {
         key("id_from", Want::Symbol, false),
         key("from", Want::Any, false),
         key("merge", Want::Merge, false),
+        key("local", Want::Bool, false),
     ];
     match word {
-        "file" => keys.retain(|candidate| !matches!(candidate.name, "id_from" | "from" | "merge")),
+        "file" => keys.retain(|candidate| !matches!(candidate.name, "id_from" | "from" | "merge" | "local")),
         "enum" => keys.push(key("values", Want::Symbols, true)),
         "list" => keys.push(key("of", Want::Symbol, true)),
         "object" | "array" | "raw" => keys.push(key("as", Want::Any, false)),
@@ -109,7 +110,7 @@ fn field_keys(word: &str) -> Vec<Key> {
 
 fn ephemeral_keys(word: &str) -> Vec<Key> {
     let mut keys = field_keys(word);
-    keys.retain(|candidate| !matches!(candidate.name, "optional" | "id_from" | "from" | "as" | "merge"));
+    keys.retain(|candidate| !matches!(candidate.name, "optional" | "id_from" | "from" | "as" | "merge" | "local"));
     keys.push(key("reset_after", Want::Duration, false));
     keys
 }
@@ -385,9 +386,23 @@ fn check_schema(schema: &Call, report: &mut impl FnMut(usize, usize, String)) {
         if call.word == "list" {
             check_list_element(call, report);
         }
+        check_local(call, report);
     }
     for ephemeral in schema.block.iter().flatten().filter(|call| call.word == "ephemeral") {
         check_ephemeral(ephemeral, &mut names, report);
+    }
+}
+
+fn check_local(call: &Call, report: &mut impl FnMut(usize, usize, String)) {
+    let has = |key: &str| call.options.iter().any(|pair| pair.key == key);
+    if !call.options.iter().any(|pair| pair.key == "local" && pair.value.item == Value::Bool(true)) {
+        return;
+    }
+    let name = symbol_name(call.args.first()).unwrap_or_default();
+    if !has("optional") && !has("null") {
+        report(call.line, call.column, format!("local field `{name}` needs `optional: true` or `null: true`"));
+    } else if has("merge") || has("index") || has("default") || has("from") || has("id_from") {
+        report(call.line, call.column, format!("local field `{name}` cannot set `merge`, `index`, `default`, `from` or `id_from`"));
     }
 }
 
@@ -560,7 +575,7 @@ fn check_value(pair: &Pair, want: Want, report: &mut impl FnMut(usize, usize, St
         Want::Hash if !matches!(value, Value::Hash(_)) => format!("`{key}` must be a hash like `{{ field: :param }}`"),
         Want::Duration if !matches!(value, Value::Duration { .. }) => format!("`{key}` must be a duration like `5.minutes`"),
         Want::Policy if !matches!(value, Value::Symbol(name) if is_policy(name)) => format!("`{key}` must be `:keep` or `:rollback`"),
-        Want::Merge if !is_merge(value) => format!("`{key}` must be `:present`, `:non_empty`, `:positive`, `:monotonic`, a list of tiers like `[[:a, :b], [:c]]` or a hash of those per key"),
+        Want::Merge if !is_merge(value) => format!("`{key}` must be `:present`, `:non_empty`, `:positive`, `:monotonic`, a list of tiers like `[[:a, :b], [:c]]` or a hash of those per key (a key may also be `:local`)"),
         _ => return,
     };
     report(pair.value.line, pair.value.column, message);
@@ -569,8 +584,8 @@ fn check_value(pair: &Pair, want: Want, report: &mut impl FnMut(usize, usize, St
 fn is_merge(value: &Value) -> bool {
     match value {
         Value::Symbol(name) => matches!(name.as_str(), "present" | "non_empty" | "positive" | "monotonic"),
+        Value::Hash(pairs) => !pairs.is_empty() && pairs.iter().all(|pair| matches!(&pair.value.item, Value::Symbol(name) if name == "local") || is_merge(&pair.value.item) && !matches!(pair.value.item, Value::Hash(_))),
         Value::Array(tiers) => !tiers.is_empty() && tiers.iter().all(|tier| matches!(&tier.item, Value::Array(names) if !names.is_empty() && names.iter().all(|name| matches!(name.item, Value::Symbol(_) | Value::Str(_))))),
-        Value::Hash(pairs) => !pairs.is_empty() && pairs.iter().all(|pair| is_merge(&pair.value.item) && !matches!(pair.value.item, Value::Hash(_))),
         _ => false,
     }
 }

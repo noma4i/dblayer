@@ -56,6 +56,17 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun aLocalWriteReachesTheTypedLiveRow() = bounded {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        val moment = Moment.create(text = "m")
+        assertNull(withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first().tone)
+        moment.setLocal("tone", kotlinx.serialization.json.JsonPrimitive("warm"))
+        assertEquals("warm", withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.tone == "warm" } }.first().tone)
+        moment.setLocal("tone", kotlinx.serialization.json.JsonNull)
+        assertNull(withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.tone == null } }.first().tone)
+    }
+
+    @Test
     fun feedLoadsFromTheTransportIntoLiveRows() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")

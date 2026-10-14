@@ -179,11 +179,27 @@ fn visible_scope_ops(operations: &[ScopeOp], hidden: &HiddenRows) -> Vec<ScopeOp
         .collect()
 }
 
+fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, row: &mut Map<String, Value>) -> Result<(), StoreError> {
+    let mut statement = connection.prepare_cached("SELECT path, value FROM local_pending WHERE model = ?1 AND row_id = ?2")?;
+    let pending: Vec<(String, Vec<u8>)> = statement.query_map(params![model.as_str(), id], |record| Ok((record.get(0)?, record.get(1)?)))?.collect::<Result<_, _>>()?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+    for (path, bytes) in pending {
+        if let Some(slot) = info.spec.local_slot(&path) {
+            slot.write(row, serde_json::from_slice(&bytes)?);
+        }
+    }
+    connection.execute("DELETE FROM local_pending WHERE model = ?1 AND row_id = ?2", params![model.as_str(), id])?;
+    Ok(())
+}
+
 fn apply_upsert(
     connection: &Connection,
     info: &ModelInfo,
     model: &ModelKey,
     row: &Map<String, Value>,
+    keeps_local: bool,
     revision: i64,
     hidden: &HiddenRows,
     result: &mut RowChanges,
@@ -204,6 +220,21 @@ fn apply_upsert(
         (_, Some(old)) => Some(old),
         _ => None,
     });
+    let folds = keeps_local && info.spec.has_local();
+    let folded;
+    let row = if folds {
+        let mut next = row.clone();
+        match (&existing, &old_row) {
+            (_, Some(old)) => info.spec.keep_local(old, &mut next),
+            (None, None) => take_pending(connection, info, model, &id, &mut next)?,
+            (Some(_), None) => {}
+        }
+        folded = next;
+        &folded
+    } else {
+        row
+    };
+    let payload = if folds { json_bytes(row)? } else { payload };
     let (born_rev, mut field_rev, changed, kind) = match (&existing, &old_row) {
         (Some((born, field_rev, _, _)), Some(old)) => {
             let changed = diff_fields(old, row);
@@ -304,7 +335,7 @@ pub(crate) fn apply_envelope(
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                apply_upsert(connection, info, model, row, revision, &hidden, &mut changes, &mut moves)?;
+                apply_upsert(connection, info, model, row, !envelope.writes_local, revision, &hidden, &mut changes, &mut moves)?;
             }
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;

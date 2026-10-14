@@ -52,6 +52,7 @@ Field options:
 | `as: MomentMedia` | for `object`, `array`, `raw`: the app type the generated model decodes the value to (a `Codable` you provide) |
 | `from: "location.lat"` | read the value from a nested path of the response when the field name itself is absent |
 | `merge: :non_empty` | what a row from the server may replace in a stored value, see below |
+| `local: true` | the server never sends the field and a refresh never replaces or clears it, see [local fields](#local-fields) (needs `optional: true` or `null: true`) |
 
 `index :a, :b` inside `schema` declares a composite index over fields that are already indexed.
 
@@ -74,6 +75,29 @@ string :avatarUrl, null: true, merge: :non_empty
 ```
 
 A local edit that is not confirmed yet is never replaced, with or without a rule. A rule that does not fit the field type rejects the model.
+
+## Local fields
+
+A local field is written by the app and stored with the row. The server never sends it: it is not in the sync diff, no mutation carries it, and no answer, page, event or refresh replaces or clears it. It reads `nil` until it is written, survives a restart, and goes with the row when the row is destroyed. Every subscription of the row delivers it together with the server fields.
+
+```ruby
+string :tone, optional: true, local: true
+object :media, as: MomentMedia, null: true, merge: { fileUrl: :non_empty, tone: :local }
+```
+
+`local: true` declares a top-level field. A key of an `object` or `raw` field is local with `tone: :local` inside its `merge:` hash. The value of a local key is any JSON the app type decodes. A local field is part of the generated model type and is left out of `create` and `update`.
+
+`setLocal` writes a local field by path (`tone`, or `media.tone` for a key). One write is one delivery to the observers of the row, and a write that does not change the value is silent. Passing null clears the field. A write to a row that is not stored yet waits and is applied when the row arrives, so the writer can be faster than the server.
+
+```swift
+try await moment.setLocal("media.tone", .object(["hue": .number(30)]))
+```
+
+```kotlin
+moment.setLocal("media.tone", buildJsonObject { put("hue", 30) })
+```
+
+A path that is not declared local is refused.
 
 ## Ephemeral fields
 

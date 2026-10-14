@@ -12,6 +12,7 @@ use crate::value::{
 
 mod ephemeral;
 pub(crate) mod keyed;
+mod local;
 mod merge;
 mod newer;
 
@@ -62,6 +63,8 @@ pub enum DeclarationError {
     CorrelateUnknownField(String),
     #[error("field {0} has a merge rule that does not fit its type")]
     MergeRuleMismatch(String),
+    #[error("local field {0} needs optional: true or null: true and cannot be indexed")]
+    LocalNotOptional(String),
     #[error("association {0} sets or compares a field that is not declared")]
     SetsUnknownField(String),
     #[error("action {action} lands the unknown model {model}")]
@@ -839,7 +842,7 @@ impl ModelSpec {
 
     pub fn normalize(&self, input: &Map<String, Value>) -> Result<Map<String, Value>, SchemaError> {
         let mut normalized = Map::new();
-        for field in &self.fields {
+        for field in self.fields.iter().filter(|field| !field.is_local()) {
             let value = field.read(input);
             if let Some(decoded) = value.as_ref().filter(|value| !value.is_null()).and_then(|value| field.decode(value)) {
                 normalized.insert(field.name.clone(), decoded);
@@ -859,7 +862,7 @@ impl ModelSpec {
     /// Normalizes a locally created row. Server-owned fields the caller did not give take a zero value of their type, dates take `now_ms`.
     pub fn normalize_local(&self, input: &Map<String, Value>, now_ms: i64) -> Result<Map<String, Value>, SchemaError> {
         let mut completed = input.clone();
-        for field in &self.fields {
+        for field in self.fields.iter().filter(|field| !field.is_local()) {
             if field.nullable || field.optional || field.default.is_some() || field.read(input).is_some() {
                 continue;
             }
@@ -872,7 +875,7 @@ impl ModelSpec {
 
     pub fn patch(&self, input: &Map<String, Value>) -> Map<String, Value> {
         let mut patched = Map::new();
-        for field in &self.fields {
+        for field in self.fields.iter().filter(|field| !field.is_local()) {
             let Some(value) = field.read(input) else { continue };
             if value.is_null() {
                 let emptied = if field.nullable { None } else { field.default.clone() };
@@ -928,6 +931,9 @@ impl ModelSpec {
             }
             if field.merge.as_ref().is_some_and(|rule| !rule.fits(&field.kind)) {
                 return Err(DeclarationError::MergeRuleMismatch(field.name.clone()));
+            }
+            if field.is_local() && (field.indexed || !(field.nullable || field.optional)) {
+                return Err(DeclarationError::LocalNotOptional(field.name.clone()));
             }
         }
         let names: Vec<&str> = self.fields.iter().map(|field| field.name.as_str()).collect();

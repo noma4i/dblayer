@@ -23,6 +23,19 @@ struct BridgeProbeTests {
     #expect(await changes.next()?.isEmpty == true)
   }
 
+  @Test
+  func aLocalWriteReachesTheTypedLiveRow() async throws {
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let changes = Cursor(await Moment.recent.live.stream())
+    #expect(await changes.next()?.isEmpty == true)
+    let moment = try await Moment.create(text: "m")
+    #expect(await changes.next()?.first?.tone == nil)
+    try await moment.setLocal("tone", .string("warm"))
+    #expect(await changes.next()?.first?.tone == "warm")
+    try await moment.setLocal("tone", .null)
+    #expect(await changes.next()?.first?.tone == nil)
+  }
+
   @MainActor
   @Test
   func anEntityFollowsAnEditAndLetsGoOfTheRecordWhenItIsDropped() async throws {

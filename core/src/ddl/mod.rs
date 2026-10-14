@@ -55,7 +55,7 @@ const CACHE_STATEMENTS: [&str; 7] = [
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 11] = [
+const CORE_STATEMENTS: [&str; 12] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -119,6 +119,13 @@ const CORE_STATEMENTS: [&str; 11] = [
   created_at INTEGER NOT NULL
 ) STRICT",
     "CREATE UNIQUE INDEX IF NOT EXISTS file_pair ON file (model, row_id, field)",
+    "CREATE TABLE IF NOT EXISTS local_pending (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  value BLOB NOT NULL,
+  PRIMARY KEY (model, row_id, path)
+) STRICT, WITHOUT ROWID",
 ];
 
 #[derive(Debug, thiserror::Error)]

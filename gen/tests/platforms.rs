@@ -198,3 +198,13 @@ fn model_with_one_single_record_relation_gets_a_singleton_entity() {
         assert_eq!(kotlin.contains("fun entity() = singletonEntityOf(\"Me\", serializer(), profile)"), singleton, "{kotlin}");
     }
 }
+
+#[test]
+fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
+    let models = parse_models("model Moment do\n  schema do\n    string :text\n    string :tone, optional: true, local: true\n  end\nend\n").unwrap();
+    let swift = emit_swift(&models);
+    let kotlin = emit_kotlin(&models);
+    assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
+    assert!(swift.contains("public static func create(text: String)") && swift.contains("public func update(text: String? = nil)"), "{swift}");
+    assert!(kotlin.contains("suspend fun create(text: String)") && kotlin.contains("suspend fun update(text: String? = null)"), "{kotlin}");
+}
