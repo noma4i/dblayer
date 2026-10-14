@@ -193,3 +193,26 @@ fn inv_observe_18_a_pair_replaced_while_the_group_is_evaluated_still_reaches_the
     let last = seen.last().unwrap();
     assert_eq!((ids(last), last.diff.renamed.clone()), (vec!["m7".to_string()], vec![(temp.id.clone(), rid("m7"))]));
 }
+
+#[test]
+fn inv_observe_18_more_replaced_pairs_than_the_log_keeps_deliver_none_of_them() {
+    let count = crate::db::dispatch::MAX_REPLACED_LOG + 4;
+    let db = booted();
+    let (log, callback) = recorder();
+    let _observer = db.observe(Query::new("moments").limited(count as u32 + 10), callback).unwrap();
+    db.settle();
+    let mut first = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
+    let mut second = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
+    for n in 0..count {
+        first.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("t{n}")), row: obj(json!({"id": format!("t{n}"), "text": "new"})) });
+        second.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: rid(&format!("t{n}")), reason: crate::commit::DestroyReason::Replaced { by: rid(&format!("m{n}")) } });
+        second.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{n}")), row: obj(json!({"id": format!("m{n}"), "text": "new"})) });
+    }
+    db.land(first).unwrap();
+    db.settle();
+    db.land(second).unwrap();
+    db.settle();
+    let seen = changes(&log);
+    let last = seen.last().unwrap();
+    assert_eq!((ids(last).len(), last.diff.renamed.len()), (count, 0));
+}

@@ -474,6 +474,23 @@ fn the_commit_hook_runs_inside_the_commit_for_every_non_empty_result() {
     assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
 }
 
+#[test]
+fn the_commit_hook_runs_while_every_read_is_excluded() {
+    use crate::store::StoreEvent;
+    use std::sync::{atomic::{AtomicUsize, Ordering}, Arc};
+    let (store, _) = booted_store();
+    let store = Arc::new(store);
+    let excluded = Arc::new(AtomicUsize::new(0));
+    let (probe, count) = (store.clone(), excluded.clone());
+    store.set_hook(Box::new(move |event| {
+        if matches!(event, StoreEvent::Committed(_)) && probe.inner.try_lock().is_err() {
+            count.fetch_add(1, Ordering::SeqCst);
+        }
+    }));
+    commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
+    assert_eq!(excluded.load(Ordering::SeqCst), 1);
+}
+
 fn sync_row(store: &Store, id: &str) -> Option<String> {
     text(store, &format!("SELECT state || ':' || attempts FROM row_sync WHERE model = 'messages' AND row_id = '{id}'"))
 }
