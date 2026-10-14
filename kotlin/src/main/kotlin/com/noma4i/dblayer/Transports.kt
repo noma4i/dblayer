@@ -145,7 +145,7 @@ class OkHttpTransport(
         }.build()
         return try {
             client.newCall(http).exchange { response ->
-                val text = response.body?.string().orEmpty()
+                val text = response.body.string()
                 if (response.code !in 200..299) throw DbException.Http(response.code.toUShort(), text)
                 text
             }

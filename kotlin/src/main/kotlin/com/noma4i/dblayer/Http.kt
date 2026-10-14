@@ -278,7 +278,7 @@ class GraphQLHttpTransport(
             headers.forEach { (field, value) -> header(field, value) }
         }.build()
         return client.newCall(request).exchange { response ->
-            val bytes = response.body?.bytes() ?: ByteArray(0)
+            val bytes = response.body.bytes()
             clock.update(response.header("Date"), System.currentTimeMillis())
             Reply(response.code, open(bytes, response))
         }
