@@ -16,11 +16,11 @@ extension DBModel {
 
   public static func ids(_ ids: [String]) -> Query<Self> { Query<Self>().where(.inList("id", ids.map(JSONValue.string))) }
 
-  public static func create(values: [String: JSONValue]) async throws -> Self {
-    try decode(try DB.database.create(model: modelName, valuesJson: JSONValue.object(values).text))
+  public static func create(values: [String: JSONValue], args: [String: JSONValue] = [:]) async throws -> Self {
+    try decode(try DB.database.create(model: modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
   }
-  public func update(values: [String: JSONValue]) async throws -> Self {
-    try Self.decode(try DB.database.update(model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text))
+  public func update(values: [String: JSONValue], args: [String: JSONValue] = [:]) async throws -> Self {
+    try Self.decode(try DB.database.update(model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
   }
   /// Writes a field the server never sends. A `nil` value clears it.
   public func setLocal(_ path: String, _ value: JSONValue) async throws {

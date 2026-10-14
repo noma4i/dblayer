@@ -131,13 +131,13 @@ impl Database {
     pub fn live_has_many(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.related(model, row_id, name, listener)
     }
-    pub fn create(&self, model: String, values_json: String) -> Result<String, DbError> {
-        let row = self.db.create(&model, serde_json::from_str(&values_json)?)?;
+    pub fn create(&self, model: String, values_json: String, args_json: String) -> Result<String, DbError> {
+        let row = self.db.create_with(&model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
         self.send_writes();
         Ok(row_json(&row))
     }
-    pub fn update(&self, model: String, row_id: String, patch_json: String) -> Result<String, DbError> {
-        let row = self.db.update(&model, &id(&row_id)?, serde_json::from_str(&patch_json)?)?;
+    pub fn update(&self, model: String, row_id: String, patch_json: String, args_json: String) -> Result<String, DbError> {
+        let row = self.db.update_with(&model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
         self.send_writes();
         Ok(row_json(&row))
     }

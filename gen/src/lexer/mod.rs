@@ -100,7 +100,12 @@ pub fn lex(source: &str) -> Result<Vec<Token>, ParseError> {
             }
             ':' if cursor.peek(1).is_some_and(is_name_character) => {
                 cursor.advance();
-                Kind::Symbol(cursor.take_while(is_name_character))
+                let mut name = cursor.take_while(is_name_character);
+                if cursor.peek(0) == Some('?') {
+                    cursor.advance();
+                    name.push('?');
+                }
+                Kind::Symbol(name)
             }
             ':' => {
                 cursor.advance();

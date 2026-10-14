@@ -230,6 +230,20 @@ struct BridgeProbeTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
+  func aCreateSendsItsArgsAndTheRowNeverStoresThem() async throws {
+    let transport = MockTransport()
+    transport.enqueue("CreateMessage", reply: #"{"data":{"createMessage":{"__typename":"Message","id":"x1","chatId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMessage","document":"mutation CreateMessage($chatId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createMessage(chatId: $chatId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id chatId authorId text createdAt } }"}]"#)
+
+    let local = try await Message.create(chatId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1")
+    try await local.settled()
+    let sent = transport.calls.first { $0.operationName == "CreateMessage" }?.variablesJson ?? ""
+    #expect(sent.contains(#""signedId":"blob-1""#) && sent.contains(#""attachedUserId":42"#), "variables sent: \(sent)")
+    #expect(try await Message.find(local.confirmedId()).current()?.text == "hi")
+  }
+
+  @Test(.timeLimit(.minutes(1)))
   func aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)

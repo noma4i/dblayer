@@ -301,6 +301,9 @@ fn build_standard_action(call: &Call) -> ActionDeclaration {
     if let Some(Value::Hash(pairs)) = option(call, "input").map(|pair| &pair.value.item) {
         action.variables = pairs.iter().filter_map(variable_binding).collect();
     }
+    if let Some(Value::Hash(pairs)) = option(call, "args").map(|pair| &pair.value.item) {
+        action.args = pairs.iter().filter_map(variable_binding).collect();
+    }
     action
 }
 

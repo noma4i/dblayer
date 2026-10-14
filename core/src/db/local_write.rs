@@ -138,15 +138,19 @@ fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool
 
 impl Db {
     pub fn create(&self, model: &str, values: Map<String, Value>) -> Result<Row, DbError> {
-        let id = self.insert_local(model, values, Action::Create, None)?;
+        self.create_with(model, values, Map::new())
+    }
+
+    pub fn create_with(&self, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+        let id = self.insert_local(model, values, args, Action::Create, None)?;
         self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
     }
 
     pub(crate) fn create_held(&self, model: &str, values: Map<String, Value>, input: Value, state: UploadState) -> Result<RowId, DbError> {
-        self.insert_local(model, values, Action::Named("upload".to_string()), Some((input, state)))
+        self.insert_local(model, values, Map::new(), Action::Named("upload".to_string()), Some((input, state)))
     }
 
-    fn insert_local(&self, model: &str, values: Map<String, Value>, action: Action, held: Option<(Value, UploadState)>) -> Result<RowId, DbError> {
+    fn insert_local(&self, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: Option<(Value, UploadState)>) -> Result<RowId, DbError> {
         let spec = self.shared.spec(model)?;
         let mut input = values;
         let id = match input.get("id").and_then(read_id) {
@@ -160,7 +164,7 @@ impl Db {
         let key = ModelKey::new(model);
         let (queued_input, upload) = match held {
             Some((input, state)) => (input, Some(state)),
-            None => (Value::Object(data.clone()), None),
+            None => (Value::Object(data.iter().chain(&args).map(|(name, value)| (name.clone(), value.clone())).collect()), None),
         };
         let mut queued = Queued {
             action,
@@ -184,6 +188,10 @@ impl Db {
     }
 
     pub fn update(&self, model: &str, id: &RowId, patch: Map<String, Value>) -> Result<Row, DbError> {
+        self.update_with(model, id, patch, Map::new())
+    }
+
+    pub fn update_with(&self, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
         let spec = self.shared.spec(model)?;
         let mut patch = spec.patch(&patch);
         patch.remove("id");
@@ -191,12 +199,14 @@ impl Db {
         let own = RowRef::new(key.clone(), id.clone());
         let mut input = patch.clone();
         input.insert("id".to_string(), Value::String(id.to_string()));
+        let sends_args = !args.is_empty();
+        input.extend(args);
         let mut queued = Queued { action: Action::Update, row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
         let committed = !self.commit_local_optional(spec, &mut queued, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
-            if same_fields(&merged, &current) {
+            if same_fields(&merged, &current) && !sends_args {
                 return Ok(None);
             }
             queued.rollback = Some(Prior { rows: vec![PriorRow::edited(reader, model, id.as_str(), &current, &merged)?] }.to_value());

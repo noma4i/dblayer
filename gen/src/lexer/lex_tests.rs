@@ -139,3 +139,8 @@ fn lexical_errors_report_line_column_and_message() {
 fn bare_colon_without_name_is_colon() {
     assert_eq!(kinds("a: b"), vec![word("a"), Kind::Colon, word("b")]);
 }
+
+#[test]
+fn a_symbol_may_end_with_a_question_mark() {
+    assert_eq!(kinds("a: :id?, b: :string"), vec![word("a"), Kind::Colon, symbol("id?"), Kind::Comma, word("b"), Kind::Colon, symbol("string")]);
+}

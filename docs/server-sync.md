@@ -123,7 +123,7 @@ end
 
 `wrap: :input` sends `{ input: { ...variables } }`. `root:` is the path of the row inside the response, by default the first field of the operation. `lands Model, root: "a.b"` writes the row at another path of the response into that model, once per line, so a payload that carries several rows lands all of them. The model must exist, and a path that the response lacks lands nothing. `refetch_of Model, relation: :name` marks a relation of another model stale after the action succeeds and reloads it when someone reads it, for counters that live on another row.
 
-`create`, `update` and `destroy` call the named mutation. `input:` maps row fields to variables (same names by default). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
+`create`, `update` and `destroy` call the named mutation. `input:` maps row fields to variables (same names by default). `args:` on `create` and `update` declares values that are sent but not stored (see [writing data](writing-data.md)). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
 
 ## Subscriptions
 

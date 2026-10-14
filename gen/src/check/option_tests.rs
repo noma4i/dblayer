@@ -62,6 +62,8 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("create.local", assoc("  create with: CreateA, input: { a: :a }"), assoc("  create with: CreateA, input: { a: :a }, local: [:a]")),
         ("update.local", assoc("  update with: UpdateA, input: { a: :a }"), assoc("  update with: UpdateA, input: { a: :a }, local: [:a]")),
         ("create.response", assoc("  create with: CreateA"), assoc("  create with: CreateA, response: :ignore")),
+        ("create.args", assoc("  create with: CreateA"), assoc("  create with: CreateA, args: { x: :string }")),
+        ("update.args", assoc("  update with: UpdateA"), assoc("  update with: UpdateA, args: { x: :string }")),
         ("create.refetch", assoc("  create with: CreateA"), assoc("  create with: CreateA, refetch: [:feed]")),
         ("update.with", assoc("  update with: UpdateA"), assoc("  update with: UpdateB")),
         ("update.input", assoc("  update with: UpdateA"), assoc("  update with: UpdateA, input: { a: :a }")),

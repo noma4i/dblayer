@@ -318,3 +318,22 @@ fn a_keyed_patch_upserts_and_removes_one_element_of_an_array_field() {
     assert_eq!(react("u1", "b"), json!([{"userId": "u2", "body": "x"}, {"userId": "u1", "body": "b"}]));
     assert_eq!(react("u1", ""), json!([{"userId": "u2", "body": "x"}]));
 }
+
+#[test]
+fn create_args_reach_the_operation_input_and_stay_out_of_the_row() {
+    let db = booted();
+    let row = db.create_with("moments", obj(json!({"userId": "u1", "text": "hi"})), obj(json!({"signedId": "blob-1"}))).unwrap();
+    assert_eq!(db.outbox().unwrap()[0].input["signedId"], json!("blob-1"));
+    assert_eq!(db.outbox().unwrap()[0].input["text"], json!("hi"));
+    assert!(!db.find("moments", &row.id).unwrap().unwrap().data.contains_key("signedId"));
+}
+
+#[test]
+fn update_args_alone_still_enqueue_an_operation_that_carries_them() {
+    let db = booted();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
+    db.update_with("moments", &rid("m1"), obj(json!({})), obj(json!({"signedId": "blob-2"}))).unwrap();
+    let outbox = db.outbox().unwrap();
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].input, json!({"id": "m1", "signedId": "blob-2"}));
+}

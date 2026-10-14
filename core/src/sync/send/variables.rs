@@ -4,7 +4,8 @@ use crate::identity::RowId;
 use crate::schema::ActionDeclaration;
 
 pub(crate) fn mutation_variables(declaration: &ActionDeclaration, input: &Value, temp: Option<&RowId>, is_id: &dyn Fn(&str) -> bool) -> Value {
-    let variables = plain_variables(declaration, input, temp, is_id);
+    let is_id = |name: &str| declaration.args.get(name).map_or_else(|| is_id(name), |kind| kind.starts_with("id") && !kind.starts_with("ids"));
+    let variables = plain_variables(declaration, input, temp, &is_id);
     match &declaration.wrap {
         Some(key) => Value::Object(Map::from_iter([(key.clone(), variables)])),
         None => variables,

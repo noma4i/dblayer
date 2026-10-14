@@ -141,7 +141,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Model, "create" | "update") => {
             plain(
                 Shape::Nothing,
-                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false), key("response", Want::Symbol, false), key("refetch", Want::Symbols, false), key("local", Want::Symbols, false), key("correlate", Want::Symbols, false)],
+                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false), key("response", Want::Symbol, false), key("refetch", Want::Symbols, false), key("local", Want::Symbols, false), key("correlate", Want::Symbols, false), key("args", Want::Hash, false)],
             )
         }
         (Context::Model, "destroy") => {
@@ -353,17 +353,36 @@ fn check_model_options(node: &ModelNode, report: &mut impl FnMut(usize, usize, S
 }
 
 fn check_standard_input(call: &Call, fields: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
-    let Some(Pair { value: Node { item: Value::Hash(pairs), .. }, .. }) = call.options.iter().find(|pair| pair.key == "input")
-    else {
-        return;
+    let hash = |key: &str| match call.options.iter().find(|pair| pair.key == key) {
+        Some(Pair { value: Node { item: Value::Hash(pairs), .. }, .. }) => Some(pairs),
+        _ => None,
     };
+    let args = hash("args").map(Vec::as_slice).unwrap_or_default();
+    for pair in args {
+        if !is_arg_kind(&pair.value.item) {
+            report(pair.value.line, pair.value.column, ARG_KIND_MESSAGE.to_string());
+        }
+        if fields.contains(pair.key.as_str()) {
+            report(call.line, call.column, format!("arg `{}` has the name of a field", pair.key));
+        }
+    }
+    let Some(pairs) = hash("input") else { return };
     for pair in pairs {
         match &pair.value.item {
-            Value::Symbol(field) if field == "id" || fields.contains(field.as_str()) => {}
+            Value::Symbol(field) if field == "id" || fields.contains(field.as_str()) || args.iter().any(|arg| arg.key == *field) => {}
             Value::Symbol(field) => report(call.line, call.column, format!("input names unknown field `{field}`")),
             _ => report(call.line, call.column, "input value must be a field symbol".to_string()),
         }
     }
+    for arg in args.iter().filter(|arg| !pairs.iter().any(|pair| matches!(&pair.value.item, Value::Symbol(name) if *name == arg.key))) {
+        report(call.line, call.column, format!("arg `{}` is not named by `input`", arg.key));
+    }
+}
+
+const ARG_KIND_MESSAGE: &str = "arg type must be :bool, :int, :num, :string, :id or :ids, each optionally followed by ?";
+
+fn is_arg_kind(value: &Value) -> bool {
+    matches!(value, Value::Symbol(kind) if ["bool", "int", "num", "string", "id", "ids"].contains(&kind.trim_end_matches('?')))
 }
 
 fn check_action(action: &Call, model: &str, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
@@ -418,8 +437,8 @@ fn check_action_line(call: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str
             }
         }
         "args" => {
-            for pair in call.options.iter().filter(|pair| !matches!(&pair.value.item, Value::Symbol(kind) if ["bool", "int", "num", "string", "id", "ids"].contains(&kind.as_str()))) {
-                report(pair.value.line, pair.value.column, "arg type must be :bool, :int, :num, :string, :id or :ids".to_string());
+            for pair in call.options.iter().filter(|pair| !is_arg_kind(&pair.value.item)) {
+                report(pair.value.line, pair.value.column, ARG_KIND_MESSAGE.to_string());
             }
         }
         "result" => {

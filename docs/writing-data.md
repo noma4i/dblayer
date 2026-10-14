@@ -16,6 +16,26 @@ moment.destroy()
 
 `create` takes the fields that the `create` line maps in `input:`, or every field when there is no `input:`. Add `local: [:userId]` to the `create` line for fields you set locally but do not send (the author of a message, for example). Fields the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
+## Values the row does not store
+
+A mutation may need a value that is not a field of the model, such as a signed upload id or the id of an attached record. Declare it with `args:` on `create` or `update`, and send it under its mutation variable with `input:`:
+
+```ruby
+create with: SendMessage, wrap: :input, input: { chatId: :chatId, body: :body, file: :file, attachedUserId: :attachedUserId }, args: { file: :string?, attachedUserId: :id? }
+```
+
+```swift
+let message = try await Message.create(chatId: chat.id, body: "hi", attachedUserId: "42", file: signedId)
+```
+
+```kotlin
+val message = Message.create(chatId = chat.id, body = "hi", attachedUserId = "42", file = signedId)
+```
+
+An arg has a kind (`:bool`, `:int`, `:num`, `:string`, `:id` or `:ids`). A trailing `?` makes it optional: the call may leave it out and the variable is then not sent. The generated call takes the args after the fields, in alphabetical order. The args of `update` are always optional.
+
+An arg goes into the queued change and is never stored in the row, so no read shows it. The queue is durable: after a restart the change is sent with the same args. Every arg must be named by a value of `input:`, and an arg may not have the name of a field. An `:id` arg that holds a whole number is sent as a JSON number, like an `id` field. Actions take the same `args` (see Custom actions).
+
 ## What a write does
 
 1. Plans the change: the row, cascades for `dependent: :destroy`, parent touches for `touch: true`.

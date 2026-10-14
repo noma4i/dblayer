@@ -38,3 +38,11 @@ fn integer_ids_travel_as_numbers_so_int_and_id_arguments_both_accept_them() {
     let keeps = mutation_variables(&declaration(&[]), &json!({"replyToId": "temp-1", "chatId": "007"}), None, &is_id);
     assert_eq!(keeps, json!({"replyToId": "temp-1", "chatId": "007"}));
 }
+
+#[test]
+fn an_id_arg_travels_as_a_number_and_a_nullable_one_may_be_left_out() {
+    let mut declared = declaration(&[("momentId", "momentId"), ("signedId", "signedId"), ("userId", "userId")]);
+    declared.args = [("momentId", "id?"), ("signedId", "string"), ("userId", "id?")].iter().map(|(name, kind)| (name.to_string(), kind.to_string())).collect();
+    let input = json!({"momentId": "427", "signedId": "12"});
+    assert_eq!(mutation_variables(&declared, &input, None, &no_ids), json!({"momentId": 427, "signedId": "12"}));
+}

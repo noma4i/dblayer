@@ -38,11 +38,11 @@ struct StorageTests {
       let state = name == "local" ? "synced" : "pending"
       func syncState(_ row: [String: Any]) -> String? { (row["sync"] as? [String: Any])?["state"] as? String }
       #expect(try await Self.rows(database).isEmpty, Comment(rawValue: name))
-      let created = try Self.object(database.create(model: "StorageRow", valuesJson: #"{"record":"one"}"#))
+      let created = try Self.object(database.create(model: "StorageRow", valuesJson: #"{"record":"one"}"#, argsJson: "{}"))
       let id = try #require(created["id"] as? String)
       #expect(syncState(created) == state, Comment(rawValue: name))
       #expect(try await Self.rows(database).first?["record"] as? String == "one", Comment(rawValue: name))
-      let edited = try Self.object(database.update(model: "StorageRow", rowId: id, patchJson: #"{"record":"two"}"#))
+      let edited = try Self.object(database.update(model: "StorageRow", rowId: id, patchJson: #"{"record":"two"}"#, argsJson: "{}"))
       #expect(syncState(edited) == state, Comment(rawValue: name))
       #expect(try await Self.rows(database).first?["record"] as? String == "two", Comment(rawValue: name))
       try await database.flush()

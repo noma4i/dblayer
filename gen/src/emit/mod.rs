@@ -93,7 +93,12 @@ fn create_fields<'a>(model: &ModelSpec, fields: &[&'a FieldSpec]) -> Vec<&'a Fie
     fields.iter().copied().filter(|field| sources.as_ref().is_none_or(|names| names.contains(&field.name.as_str()))).collect()
 }
 
+fn standard_args<'a>(model: &'a ModelSpec, action: &str) -> Vec<(&'a str, &'a str)> {
+    model.actions.iter().find(|declared| declared.name == action).map(|declared| declared.args.iter().map(|(name, kind)| (name.as_str(), kind.as_str())).collect()).unwrap_or_default()
+}
+
 fn arg_type(kind: &str, swift: bool) -> &'static str {
+    let kind = kind.trim_end_matches('?');
     match (kind, swift) {
         ("bool", true) => "Bool",
         ("bool", false) => "Boolean",
@@ -180,22 +185,30 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
         if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var singleton: Query<Self> {{ {} }}", name(&relation.name)).unwrap(); }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local()).collect();
         let create_fields = create_fields(model, &fields);
+        let args = local_name(model, "args");
+        let create_args = standard_args(model, "create");
         let params = create_fields.iter().map(|field| {
             let optional = field.nullable || field.optional || field.default.is_some();
             let mut kind = field_type(field, true);
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", field.name, kind, if optional { " = nil" } else { "" })
-        }).collect::<Vec<_>>().join(", ");
-        writeln!(out, "    public static func create({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
+        }).chain(create_args.iter().map(|(name, kind)| format!("{name}: {}{}{}", arg_type(kind, true), if kind.ends_with('?') { "?" } else { "" }, if kind.ends_with('?') { " = nil" } else { "" }))).collect::<Vec<_>>().join(", ");
+        writeln!(out, "    public static func create({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]\n        var {args}: [String: JSONValue] = [:]").unwrap();
         for field in &create_fields {
             if field.nullable || field.optional || field.default.is_some() { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
             else { writeln!(out, "        {values}[\"{}\"] = JSONValue.encode({})", field.name, field.name).unwrap(); }
         }
-        writeln!(out, "        return try await create(values: {values})\n    }}").unwrap();
-        let params = fields.iter().map(|field| format!("{}: {}{} = nil", field.name, field_type(field, true), if field.nullable || field.optional { "?" } else { "?" })).collect::<Vec<_>>().join(", ");
-        writeln!(out, "    public func update({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
+        for (name, kind) in &create_args {
+            if kind.ends_with('?') { writeln!(out, "        if let value = {name} {{ {args}[\"{name}\"] = JSONValue.encode(value) }}").unwrap(); }
+            else { writeln!(out, "        {args}[\"{name}\"] = JSONValue.encode({name})").unwrap(); }
+        }
+        writeln!(out, "        return try await create(values: {values}, args: {args})\n    }}").unwrap();
+        let update_args = standard_args(model, "update");
+        let params = fields.iter().map(|field| format!("{}: {}? = nil", field.name, field_type(field, true))).chain(update_args.iter().map(|(name, kind)| format!("{name}: {}? = nil", arg_type(kind, true)))).collect::<Vec<_>>().join(", ");
+        writeln!(out, "    public func update({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]\n        var {args}: [String: JSONValue] = [:]").unwrap();
         for field in &fields { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
-        writeln!(out, "        return try await update(values: {values})\n    }}").unwrap();
+        for (name, _) in &update_args { writeln!(out, "        if let value = {name} {{ {args}[\"{name}\"] = JSONValue.encode(value) }}").unwrap(); }
+        writeln!(out, "        return try await update(values: {values}, args: {args})\n    }}").unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| format!("{}: {}? = nil", field.field.name, field_type(&field.field, true))).collect::<Vec<_>>().join(", ");
             writeln!(out, "    public func set({params}) async throws {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
@@ -207,7 +220,7 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             writeln!(out, "    public var {}: LiveSource<[{}]> {{ related(\"{}\", as: {}.self) }}", association.name, target, association.name, target).unwrap();
         }
         for action in model.actions.iter().filter(|action| !["create", "update", "destroy"].contains(&action.name.as_str())) {
-            let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}", arg_type(kind, true))).collect::<Vec<_>>().join(", ");
+            let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let returns = if action.result.is_empty() { "Self".to_string() } else { format!("ActionAnswer<Self, {}>", result_type(class, &action.name)) };
             writeln!(out, "    public func {}({params}) async throws -> {returns} {{", name(&action.name)).unwrap();
@@ -259,22 +272,32 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
         if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", serializer(), {})", name(&relation.name)).unwrap(); }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local()).collect();
         let create_fields = create_fields(model, &fields);
+        let args = local_name(model, "args");
+        let create_args = standard_args(model, "create");
         let params = create_fields.iter().map(|field| {
             let optional = field.nullable || field.optional || field.default.is_some();
             let mut kind = field_type(field, false);
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", field.name, kind, if optional { " = null" } else { "" })
-        }).collect::<Vec<_>>().join(", ");
+        }).chain(create_args.iter().map(|(name, kind)| format!("{name}: {}{}", arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" }))).collect::<Vec<_>>().join(", ");
         writeln!(out, "        suspend fun create({params}): {class} {{\n            val {values} = buildJsonObject {{").unwrap();
         for field in &create_fields {
             if field.nullable || field.optional || field.default.is_some() { writeln!(out, "                {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.name, field.name).unwrap(); }
             else { writeln!(out, "                put(\"{}\", jsonValue({}))", field.name, field.name).unwrap(); }
         }
-        writeln!(out, "            }}\n            return dbJson.decodeFromString(serializer(), DBlayer.database.create(\"{class}\", {values}.toString()))\n        }}\n    }}").unwrap();
-        let params = fields.iter().map(|field| format!("{}: {}{} = null", field.name, field_type(field, false), if field.nullable || field.optional { "" } else { "?" })).collect::<Vec<_>>().join(", ");
+        writeln!(out, "            }}\n            val {args} = buildJsonObject {{").unwrap();
+        for (name, kind) in &create_args {
+            if kind.ends_with('?') { writeln!(out, "                {name}?.let {{ put(\"{name}\", jsonValue(it)) }}").unwrap(); }
+            else { writeln!(out, "                put(\"{name}\", jsonValue({name}))").unwrap(); }
+        }
+        writeln!(out, "            }}\n            return dbJson.decodeFromString(serializer(), DBlayer.database.create(\"{class}\", {values}.toString(), {args}.toString()))\n        }}\n    }}").unwrap();
+        let update_args = standard_args(model, "update");
+        let params = fields.iter().map(|field| format!("{}: {}{} = null", field.name, field_type(field, false), if field.nullable || field.optional { "" } else { "?" })).chain(update_args.iter().map(|(name, kind)| format!("{name}: {}? = null", arg_type(kind, false)))).collect::<Vec<_>>().join(", ");
         writeln!(out, "    suspend fun update({params}): {class} {{\n        val {values} = buildJsonObject {{").unwrap();
         for field in &fields { writeln!(out, "            {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.name, field.name).unwrap(); }
-        writeln!(out, "        }}\n        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, {values}.toString()))\n    }}").unwrap();
+        writeln!(out, "        }}\n        val {args} = buildJsonObject {{").unwrap();
+        for (name, _) in &update_args { writeln!(out, "            {name}?.let {{ put(\"{name}\", jsonValue(it)) }}").unwrap(); }
+        writeln!(out, "        }}\n        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, {values}.toString(), {args}.toString()))\n    }}").unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| format!("{}: {}{} = null", field.field.name, field_type(&field.field, false), if field.field.nullable || field.field.optional { "" } else { "?" })).collect::<Vec<_>>().join(", ");
             writeln!(out, "    suspend fun set({params}) {{\n        DBlayer.database.setEphemeral(modelName, id, buildJsonObject {{").unwrap();
@@ -282,7 +305,7 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             out.push_str("        }.toString())\n    }\n");
         }
         for action in model.actions.iter().filter(|action| !["create", "update", "destroy"].contains(&action.name.as_str())) {
-            let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}", arg_type(kind, false))).collect::<Vec<_>>().join(", ");
+            let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let from_args = action.optimistic.iter().filter_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({arg})"))).collect::<Vec<_>>().join(", ");
             let args = action.args.keys().map(|arg| format!("\"{arg}\" to jsonValue({arg})")).collect::<Vec<_>>().join(", ");

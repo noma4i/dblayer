@@ -10,7 +10,7 @@ model Message do
 
   scope :by_chat, params: [:chatId], where: { chatId: :chatId }, order: { createdAt: :asc }
 
-  create with: CreateMessage, input: { chatId: :chatId, text: :text }, local: [:authorId]
+  create with: CreateMessage, input: { chatId: :chatId, text: :text, signedId: :signedId, attachedUserId: :attachedUserId }, args: { signedId: :string?, attachedUserId: :id? }, local: [:authorId]
 
   remote :history do
     query ChatMessages
