@@ -56,10 +56,13 @@ pub(crate) fn row_tables(connection: &Connection) -> Result<Vec<String>, StoreEr
 }
 
 pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str, drop_table: bool) -> Result<(), StoreError> {
-    if drop_table {
-        connection.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
-    } else {
-        connection.execute_batch(&format!("DELETE FROM {table}"))?;
+    let children: Vec<String> = row_tables(connection)?.into_iter().filter(|name| name.starts_with(&format!("{table}__"))).collect();
+    for name in children.iter().map(String::as_str).chain([table]) {
+        if drop_table {
+            connection.execute_batch(&format!("DROP TABLE IF EXISTS {name}"))?;
+        } else {
+            connection.execute_batch(&format!("DELETE FROM {name}"))?;
+        }
     }
     connection.execute("DELETE FROM scope_member WHERE model = ?1", params![model])?;
     clear_model(connection, model)?;

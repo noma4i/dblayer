@@ -112,7 +112,7 @@ fn insert_message(connection: &Connection, id: &str) {
 fn orphans() -> Orphans {
     ["temp-orphan", "temp-kept"]
         .iter()
-        .map(|id| (RowId::new(id).unwrap(), Orphan { model: "messages".into(), table: "row_messages".into(), payload: format!("{{\"id\":\"{id}\"}}").into_bytes() }))
+        .map(|id| (RowId::new(id).unwrap(), Orphan { model: "messages".into(), tables: vec!["row_messages".into()], payload: format!("{{\"id\":\"{id}\"}}").into_bytes() }))
         .collect()
 }
 

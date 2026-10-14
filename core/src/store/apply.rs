@@ -12,7 +12,9 @@ use crate::identity::{Generation, ModelKey, RowRef};
 use crate::syncstate::{operation_keys, recompute_sync, SyncKey};
 
 use super::file_ops::{apply_file_ops, release_files};
-use super::rows::{column_value, placeholders, select_list, read_stored, Reader, CHUNK};
+use super::rows::{column_value, fetch_stored, placeholders, Reader, CHUNK};
+use super::shape::{delete_tables, insert_children, member_values, normalize, normalize_leaf};
+use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
 use super::{Inner, ModelInfo, Store, StoreError};
@@ -213,11 +215,10 @@ fn apply_upsert(
     if hidden.contains(&(model.to_string(), id.clone())) {
         return Ok(());
     }
-    let existing = connection
-        .query_row(&format!("SELECT {} FROM {} WHERE id = ?1", select_list(info), info.table), params![id], |record| read_stored(record, info))
-        .optional()?;
+    let existing = fetch_stored(connection, info, std::slice::from_ref(&id), true)?.remove(&id);
     let old_row = existing.as_ref().map(|stored| &stored.row);
     let mut next = without_nulls(row);
+    canonicalize(info, &mut next);
     if keeps_local && info.spec.has_local() {
         match old_row {
             Some(old) => info.spec.keep_local(old, &mut next),
@@ -247,6 +248,21 @@ fn apply_upsert(
     Ok(())
 }
 
+fn canonicalize(info: &ModelInfo, row: &mut Map<String, Value>) {
+    for plan in &info.layout.fields {
+        let Some(value) = row.get(plan.field()) else { continue };
+        let canonical = match plan {
+            FieldPlan::Leaf { leaf, .. } => normalize_leaf(leaf, value),
+            FieldPlan::Typed { member, .. } => normalize(member, &info.layout, value),
+            FieldPlan::Rest { .. } => continue,
+        };
+        match canonical {
+            Some(canonical) => row.insert(plan.field().to_string(), canonical),
+            None => row.remove(plan.field()),
+        };
+    }
+}
+
 fn write_row(
     connection: &Connection,
     info: &ModelInfo,
@@ -258,20 +274,37 @@ fn write_row(
     revision: i64,
     born_rev: i64,
 ) -> Result<(), StoreError> {
+    let layout = &info.layout;
     let mut names: Vec<String> = vec!["revision".into()];
     let mut values: Vec<rusqlite::types::Value> = vec![revision.into()];
     let writes = |field: &str| !exists || changed.contains(field);
-    for column in info.columns.iter().filter(|column| writes(&column.field)) {
-        names.push(column.column.clone());
-        values.push(column_value(column.kind, row.get(&column.field)));
+    let mut rewritten: Vec<&FieldPlan> = Vec::new();
+    for plan in layout.fields.iter().filter(|plan| writes(plan.field())) {
+        match plan {
+            FieldPlan::Leaf { field, leaf } => {
+                names.push(leaf.column.clone());
+                values.push(column_value(leaf.ty, row.get(field)));
+            }
+            FieldPlan::Typed { field, member, .. } => {
+                let mut columns = Vec::new();
+                member_values(member, row.get(field), &mut columns);
+                for (name, value) in columns {
+                    names.push(name);
+                    values.push(value);
+                }
+                rewritten.push(plan);
+            }
+            FieldPlan::Rest { .. } => {}
+        }
     }
-    // TEMPORARY: JSON bytes of the fields without a column yet.
-    if info.rest.iter().any(|field| writes(field)) {
-        let rest: Map<String, Value> = info.rest.iter().filter_map(|field| row.get(field).map(|value| (field.clone(), value.clone()))).collect();
+    // TEMPORARY: JSON bytes of the fields without a declared shape yet.
+    let rest_fields: Vec<&str> = layout.fields.iter().filter_map(|plan| matches!(plan, FieldPlan::Rest { .. }).then(|| plan.field())).collect();
+    if rest_fields.iter().any(|field| writes(field)) {
+        let rest: Map<String, Value> = rest_fields.iter().filter_map(|field| row.get(*field).map(|value| (field.to_string(), value.clone()))).collect();
         names.push("rest".into());
         values.push(if rest.is_empty() { rusqlite::types::Value::Null } else { json_bytes(&rest)?.into() });
     }
-    for (field, column) in info.rev_columns.iter().filter(|(field, _)| writes(field)) {
+    for (field, column) in layout.rev_columns().iter().filter(|(field, _)| writes(field)) {
         names.push(column.clone());
         values.push(field_rev.get(field).map_or(rusqlite::types::Value::Null, |stamp| (*stamp).into()));
     }
@@ -284,7 +317,20 @@ fn write_row(
         values.splice(0..0, [id.to_string().into(), born_rev.into()]);
         connection.prepare_cached(&format!("INSERT INTO {} ({}) VALUES ({})", info.table, names.join(", "), placeholders(names.len())))?.execute(params_from_iter(values))?;
     }
+    for plan in rewritten {
+        let FieldPlan::Typed { field, member, tables } = plan else { continue };
+        if exists {
+            delete_tables(connection, layout, tables, id)?;
+        }
+        insert_children(connection, layout, member, row.get(field), id, 0, &mut vec![0; layout.tables.len()])?;
+    }
     Ok(())
+}
+
+pub(crate) fn remove_row(connection: &Connection, info: &ModelInfo, id: &str) -> Result<usize, StoreError> {
+    let all: Vec<usize> = (0..info.layout.tables.len()).collect();
+    delete_tables(connection, &info.layout, &all, id)?;
+    Ok(connection.execute(&format!("DELETE FROM {} WHERE id = ?1", info.table), params![id])?)
 }
 
 fn membership_moves(
@@ -366,8 +412,7 @@ pub(crate) fn apply_envelope(
             }
             EntityOp::Destroy { model, id, reason } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                let removed =
-                    connection.execute(&format!("DELETE FROM {} WHERE id = ?1", info.table), params![id.as_str()])?;
+                let removed = remove_row(connection, info, id.as_str())?;
                 if reason.writes_tombstone() {
                     write_tombstone(connection, model.as_str(), id.as_str(), revision, now_ms)?;
                     tombstoned = true;
@@ -567,8 +612,7 @@ fn stamp_confirmed_rows(
 }
 
 fn stamp_owned_fields(connection: &Connection, info: &ModelInfo, id: &str, owned: &Map<String, Value>, revision: i64) -> Result<(), StoreError> {
-    for (field, column) in info.rev_columns.iter().filter(|(field, _)| owned.contains_key(field)) {
-        let _ = field;
+    for (_, column) in info.layout.rev_columns().iter().filter(|(field, _)| owned.contains_key(field)) {
         connection.prepare_cached(&format!("UPDATE {} SET {column} = ?1 WHERE id = ?2 AND {column} IS NOT NULL", info.table))?.execute(params![revision, id])?;
     }
     Ok(())

@@ -2,7 +2,7 @@ use rusqlite::types::Value as SqlValue;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ddl::{column_name, column_type};
+use crate::ddl::{column_name, column_type, layout, member_present, FieldPlan};
 use crate::schema::ModelSpec;
 
 use super::statement::QueryError;
@@ -190,10 +190,12 @@ pub(super) fn column_sql(model: &ModelSpec, field: &str) -> Result<String, Query
     }
     let spec = model.field(field).ok_or_else(|| QueryError::UnknownField(field.to_string()))?;
     if column_type(&spec.kind).is_some() {
-        Ok(format!("r.{}", column_name(field)))
-    } else {
-        // TEMPORARY: fields without a column are read from the JSON bytes of `rest`.
-        Ok(format!("json_extract(r.rest, '$.{field}')"))
+        return Ok(format!("r.{}", column_name(field)));
+    }
+    match layout(model).plan(field) {
+        Some(FieldPlan::Typed { member, .. }) => Ok(format!("r.{}", member_present(member))),
+        // TEMPORARY: fields without a declared shape are read from the JSON bytes of `rest`.
+        _ => Ok(format!("json_extract(r.rest, '$.{field}')")),
     }
 }
 

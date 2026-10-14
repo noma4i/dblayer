@@ -50,3 +50,7 @@ An object cycle without an array cannot form a Swift struct and is rejected. Arr
 ## ID conversion
 
 Generated Swift uses `IDText` for numeric IDs, and generated Kotlin uses the `IDText` and `IDTexts` serializers. Use the generated model types in apps. The library owns these conversion types and accepts JSON only.
+
+## Storage
+
+A list, a typed object and an array of a typed value are stored in SQLite columns and child tables, not as JSON text. A typed object becomes columns of its row, a list or an array becomes one child table with a position per item, and an array inside an array uses the same table with a link to its parent item. Recursive arrays keep every level in one table. A key that the declaration does not name is dropped when the row is stored, and so is a value of the wrong type. Raw values and objects or arrays without a type keep their JSON text until they get their own storage.

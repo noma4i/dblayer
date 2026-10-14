@@ -15,9 +15,11 @@ pub(crate) mod keyed;
 mod local;
 mod merge;
 mod newer;
+mod types;
 
 pub use ephemeral::{EphemeralSpec, Storage};
 pub use merge::MergeRule;
+pub use types::resolve_types;
 
 const FORBIDDEN_ACTION_MEMBERS: [&str; 6] = ["after", "invalidate", "onCommit", "extract", "complete", "resume"];
 

@@ -3,11 +3,10 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use rusqlite::Connection;
 
-use crate::ddl::{column_fields, column_name, rest_fields, rev_column, table_name, ColumnType, RecreateReason};
+use crate::ddl::{layout, table_name, Layout, RecreateReason};
 use crate::identity::Generation;
 use crate::pacing::{Clock, Counters, SystemClock};
-use crate::schema::{FieldKind, ModelSpec};
-use crate::value::ScalarKind;
+use crate::schema::ModelSpec;
 
 mod admission;
 mod apply;
@@ -20,6 +19,7 @@ mod open;
 mod reset;
 mod rows;
 mod scopes;
+mod shape;
 mod tombstones;
 mod windows;
 
@@ -35,37 +35,15 @@ pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;
 pub use windows::{family_prefix, window_key, PageInfo, WindowFreshness, WindowRecord};
 
-pub(crate) struct FieldColumn {
-    pub field: String,
-    pub column: String,
-    pub kind: ColumnType,
-    pub is_bool: bool,
-}
-
 pub(crate) struct ModelInfo {
     pub table: String,
-    pub columns: Vec<FieldColumn>,
-    pub rest: Vec<String>,
-    pub rev_columns: Vec<(String, String)>,
+    pub layout: Layout,
     pub spec: ModelSpec,
 }
 
 impl ModelInfo {
     pub(crate) fn new(spec: &ModelSpec) -> Self {
-        let columns = column_fields(spec)
-            .map(|(field, kind)| {
-                let column = column_name(&field.name);
-                FieldColumn { field: field.name.clone(), column, kind, is_bool: field.kind == FieldKind::Scalar { kind: ScalarKind::Bool } }
-            })
-            .collect();
-        let rest = rest_fields(spec).map(|field| field.name.clone()).collect();
-        let rev_columns = spec
-            .fields
-            .iter()
-            .filter(|field| field.name != "id")
-            .map(|field| (field.name.clone(), rev_column(&column_name(&field.name))))
-            .collect();
-        Self { table: table_name(spec.key.as_str()), columns, rest, rev_columns, spec: spec.clone() }
+        Self { table: table_name(spec.key.as_str()), layout: layout(spec), spec: spec.clone() }
     }
 }
 
@@ -216,6 +194,8 @@ mod open_tests;
 mod reset_tests;
 #[cfg(test)]
 mod rows_tests;
+#[cfg(test)]
+mod shape_tests;
 #[cfg(test)]
 mod tombstones_tests;
 #[cfg(test)]

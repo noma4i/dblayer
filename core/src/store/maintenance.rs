@@ -42,7 +42,7 @@ impl Store {
             let mut ids: Vec<(ModelKey, RowId)> = Vec::new();
             for policy in temp_rows {
                 let info = inner.model(policy.model.as_str())?;
-                if !info.columns.iter().any(|column| column.column == "created_at") {
+                if !info.layout.fields.iter().any(|plan| matches!(plan, crate::ddl::FieldPlan::Leaf { leaf, .. } if leaf.column == "created_at")) {
                     return Err(StoreError::Constraint(format!("model {} has no created_at column", policy.model)));
                 }
                 let cutoff = iso_millis(now - policy.drop_after_ms).unwrap_or_default();

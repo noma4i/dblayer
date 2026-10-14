@@ -107,7 +107,7 @@ pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], orphans: &Orp
 
 pub struct Orphan {
     pub model: String,
-    pub table: String,
+    pub tables: Vec<String>,
     pub payload: Vec<u8>,
 }
 
@@ -116,7 +116,10 @@ pub type Orphans = std::collections::HashMap<RowId, Orphan>;
 fn quarantine_row(connection: &Connection, id: &RowId, orphans: &Orphans) -> rusqlite::Result<bool> {
     let Some(orphan) = orphans.get(id) else { return Ok(false) };
     quarantine_add(connection, &orphan.model, &orphan.payload, QuarantineReason::OrphanTempRow)?;
-    connection.execute(&format!("DELETE FROM {} WHERE id = ?", orphan.table), [id.as_str()])?;
+    for (index, table) in orphan.tables.iter().enumerate() {
+        let column = if index + 1 == orphan.tables.len() { "id" } else { "row_id" };
+        connection.execute(&format!("DELETE FROM {table} WHERE {column} = ?"), [id.as_str()])?;
+    }
     connection.execute("DELETE FROM scope_member WHERE model = ? AND row_id = ?", params![orphan.model, id.as_str()])?;
     Ok(true)
 }

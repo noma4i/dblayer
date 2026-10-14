@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::collections::BTreeSet;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
@@ -12,7 +12,9 @@ use crate::value::fractional_between;
 
 #[cfg(test)]
 use super::Store;
-use super::{FieldColumn, ModelInfo, StoreError};
+use super::shape::{assemble, read_cells, read_tables, take_leaf};
+use super::{ModelInfo, StoreError};
+use crate::ddl::FieldPlan;
 
 pub(crate) const CHUNK: usize = 500;
 
@@ -30,55 +32,67 @@ pub(crate) fn column_value(kind: ColumnType, value: Option<&Value>) -> SqlValue 
     }
 }
 
-pub(crate) fn select_list(info: &ModelInfo) -> String {
-    let mut names = vec!["id".to_string(), "revision".to_string(), "born_rev".to_string()];
-    names.extend(info.columns.iter().map(|column| column.column.clone()));
-    if !info.rest.is_empty() {
-        names.push("rest".to_string());
-    }
-    names.extend(info.rev_columns.iter().map(|(_, column)| column.clone()));
-    names.join(", ")
-}
-
-fn cell(column: &FieldColumn, value: rusqlite::types::ValueRef<'_>) -> Option<Value> {
-    use rusqlite::types::ValueRef;
-    match (value, column.is_bool) {
-        (ValueRef::Text(text), _) => Some(Value::String(String::from_utf8_lossy(text).into_owned())),
-        (ValueRef::Integer(number), true) => Some(Value::Bool(number != 0)),
-        (ValueRef::Integer(number), false) => Some(Value::from(number)),
-        (ValueRef::Real(number), _) => serde_json::Number::from_f64(number).map(Value::Number),
-        _ => None,
-    }
-}
-
-pub(crate) fn read_stored(row: &rusqlite::Row<'_>, info: &ModelInfo) -> rusqlite::Result<StoredRow> {
-    let id: String = row.get(0)?;
-    let mut data = Map::new();
-    data.insert("id".to_string(), Value::String(id.clone()));
-    let mut next = 3;
-    for column in &info.columns {
-        if let Some(value) = cell(column, row.get_ref(next)?) {
-            data.insert(column.field.clone(), value);
+/// `with_revisions` also reads the revision of every field; without it `field_rev` is empty.
+pub(crate) fn fetch_stored(connection: &Connection, info: &ModelInfo, ids: &[String], with_revisions: bool) -> Result<BTreeMap<String, StoredRow>, StoreError> {
+    let layout = &info.layout;
+    let count = layout.row_columns().len();
+    let revs: &[(String, String)] = if with_revisions { layout.rev_columns() } else { &[] };
+    let select = if with_revisions { &layout.select } else { &layout.select_lean };
+    let mut found = BTreeMap::new();
+    for chunk in ids.chunks(CHUNK) {
+        let sql = format!("SELECT {} FROM {} WHERE id IN ({})", select, info.table, placeholders(chunk.len()));
+        let mut statement = connection.prepare_cached(&sql)?;
+        let mut partial = Vec::new();
+        let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
+            let cells = read_cells(row, count, 3)?;
+            let mut next = 3 + count;
+            let rest: Option<Vec<u8>> = if layout.has_rest() {
+                next += 1;
+                row.get(next - 1)?
+            } else {
+                None
+            };
+            let mut field_rev = BTreeMap::new();
+            for (field, _) in revs {
+                if let Some(revision) = row.get::<_, Option<i64>>(next)? {
+                    field_rev.insert(field.clone(), revision);
+                }
+                next += 1;
+            }
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, cells, rest, field_rev))
+        })?;
+        for item in rows {
+            partial.push(item?);
         }
-        next += 1;
-    }
-    if !info.rest.is_empty() {
-        let rest: Option<Vec<u8>> = row.get(next)?;
-        next += 1;
-        // TEMPORARY: JSON bytes of the fields without a column yet.
-        if let Some(Value::Object(fields)) = rest.and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
-            data.extend(fields);
+        let present: Vec<String> = partial.iter().map(|(id, ..)| id.clone()).collect();
+        let tables = if layout.tables.is_empty() || present.is_empty() { HashMap::new() } else { read_tables(connection, layout, &present)? };
+        for (id, revision, born_rev, mut cells, rest, field_rev) in partial {
+            let mut data = Map::new();
+            data.insert("id".to_string(), Value::String(id.clone()));
+            for plan in &layout.fields {
+                match plan {
+                    FieldPlan::Leaf { field, leaf } => {
+                        if let Some(value) = take_leaf(leaf, &mut cells) {
+                            data.insert(field.clone(), value);
+                        }
+                    }
+                    FieldPlan::Typed { field, member, .. } => {
+                        if let Some(value) = tables.get(&id).and_then(|row_tables| assemble(member, layout, &cells, row_tables, 0)) {
+                            data.insert(field.clone(), value);
+                        }
+                    }
+                    FieldPlan::Rest { .. } => {}
+                }
+            }
+            // TEMPORARY: JSON bytes of the fields without a declared shape yet.
+            if let Some(Value::Object(fields)) = rest.and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
+                data.extend(fields);
+            }
+            let row_id = RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
+            found.insert(id, StoredRow { id: row_id, revision, born_rev, field_rev, row: data });
         }
     }
-    let mut field_rev = BTreeMap::new();
-    for (field, _) in &info.rev_columns {
-        if let Some(revision) = row.get::<_, Option<i64>>(next)? {
-            field_rev.insert(field.clone(), revision);
-        }
-        next += 1;
-    }
-    let row_id = RowId::new(&id).map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))?;
-    Ok(StoredRow { id: row_id, revision: row.get(1)?, born_rev: row.get(2)?, field_rev, row: data })
+    Ok(found)
 }
 
 pub(crate) fn placeholders(count: usize) -> String {
@@ -125,26 +139,15 @@ impl<'a> Reader<'a> {
     }
 
     pub fn stored_row(&self, model: &str, id: &str) -> Result<Option<StoredRow>, StoreError> {
-        Ok(self.stored_rows(model, &[id.to_string()])?.remove(id))
+        Ok(fetch_stored(self.connection, self.model(model)?, &[id.to_string()], true)?.remove(id))
     }
 
     pub fn stored_rows(&self, model: &str, ids: &[String]) -> Result<BTreeMap<String, StoredRow>, StoreError> {
-        let info = self.model(model)?;
-        let mut found = BTreeMap::new();
-        for chunk in ids.chunks(CHUNK) {
-            let sql = format!("SELECT {} FROM {} WHERE id IN ({})", select_list(info), info.table, placeholders(chunk.len()));
-            let mut statement = self.connection.prepare_cached(&sql)?;
-            let rows = statement.query_map(params_from_iter(chunk.iter()), |row| read_stored(row, info))?;
-            for item in rows {
-                let stored = item?;
-                found.insert(stored.id.to_string(), stored);
-            }
-        }
-        Ok(found)
+        fetch_stored(self.connection, self.model(model)?, ids, false)
     }
 
     pub fn point(&self, model: &str, id: &str) -> Result<Option<Map<String, Value>>, StoreError> {
-        Ok(self.stored_row(model, id)?.map(|stored| stored.row))
+        Ok(self.stored_rows(model, &[id.to_string()])?.remove(id).map(|stored| stored.row))
     }
 
     #[cfg(test)]

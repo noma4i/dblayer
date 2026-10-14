@@ -5,6 +5,9 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::schema::{FieldKind, FieldSpec, ModelSpec, Sort};
+
+mod layout;
+pub use layout::*;
 use crate::value::ScalarKind;
 
 pub const SCHEMA_VERSION: i64 = 1;
@@ -198,30 +201,27 @@ pub fn rev_column(column: &str) -> String {
     format!("rev__{column}")
 }
 
-pub fn column_fields(model: &ModelSpec) -> impl Iterator<Item = (&FieldSpec, ColumnType)> + '_ {
-    model.fields.iter().filter(|field| field.name != "id").filter_map(|field| column_type(&field.kind).map(|column| (field, column)))
-}
-
-pub fn rest_fields(model: &ModelSpec) -> impl Iterator<Item = &FieldSpec> + '_ {
-    model.fields.iter().filter(|field| field.name != "id" && column_type(&field.kind).is_none())
-}
-
 fn promoted_columns(model: &ModelSpec) -> impl Iterator<Item = (String, ColumnType)> + '_ {
-    column_fields(model).filter(|(field, _)| field.indexed).map(|(field, column)| (column_name(&field.name), column))
+    model
+        .fields
+        .iter()
+        .filter(|field| field.indexed && field.name != "id")
+        .filter_map(|field| column_type(&field.kind).map(|column| (column_name(&field.name), column)))
 }
 
 pub fn create_table_statement(model: &ModelSpec) -> String {
+    let plan = layout(model);
     let mut definitions = vec![
         "id TEXT PRIMARY KEY NOT NULL".to_string(),
         "revision INTEGER NOT NULL".to_string(),
         "born_rev INTEGER NOT NULL".to_string(),
     ];
-    definitions.extend(column_fields(model).map(|(field, column)| format!("{} {}", column_name(&field.name), column.as_sql())));
-    // TEMPORARY: JSON bytes of the fields without a column yet (lists, arrays, raw, objects, files); removed by the child-table and node-table steps.
-    if rest_fields(model).next().is_some() {
+    definitions.extend(plan.row_columns().into_iter().map(|(name, ty)| format!("{name} {}", ty.as_sql())));
+    // TEMPORARY: JSON bytes of the fields without a declared shape yet (raw, untyped, files); removed by the free-value step.
+    if plan.has_rest() {
         definitions.push("rest BLOB".to_string());
     }
-    definitions.extend(model.fields.iter().filter(|field| field.name != "id").map(|field| format!("{} INTEGER", rev_column(&column_name(&field.name)))));
+    definitions.extend(plan.rev_columns().into_iter().map(|(_, column)| format!("{column} INTEGER")));
     let kind = if model.is_memory() { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
     format!(
         "{kind} IF NOT EXISTS {} (\n  {}\n) STRICT",
@@ -243,6 +243,7 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
 
 pub fn model_statements(model: &ModelSpec) -> Vec<String> {
     let mut statements = vec![create_table_statement(model)];
+    statements.extend(layout(model).table_statements(model.is_memory()));
     statements.extend(create_index_statements(model));
     statements
 }

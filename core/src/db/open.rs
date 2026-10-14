@@ -10,7 +10,7 @@ use crate::identity::ModelKey;
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
 use crate::syncstate::rebuild_sync;
 use crate::pacing::{Clock, Counters};
-use crate::schema::{validate_models, AssociationKind, AssociationSpec, ModelSpec};
+use crate::schema::{resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};
 use crate::store::{Reader, Store, StoreError, StoreEvent};
 
 use super::cache::RowCache;
@@ -106,6 +106,8 @@ impl Db {
         data_version: Option<&str>,
         config: DbConfig,
     ) -> Result<Db, DbError> {
+        let mut models = models;
+        resolve_types(&mut models);
         let faults = validate_models(&models, &RESERVED_MEMBERS);
         if !faults.is_empty() {
             return Err(DbError::Invalid(faults));
@@ -261,7 +263,9 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
             for spec in models {
                 if let Some(stored) = reader.stored_row(spec.key.as_str(), id.as_str())? {
                     let payload = serde_json::to_vec(&stored.row).map_err(StoreError::from)?;
-                    orphans.insert(id.clone(), Orphan { model: spec.key.as_str().to_string(), table: table_name(spec.key.as_str()), payload });
+                    let info = inner.models.get(spec.key.as_str()).ok_or_else(|| StoreError::UnknownModel(spec.key.as_str().to_string()))?;
+                    let tables = info.layout.tables.iter().map(|table| table.name.clone()).chain([table_name(spec.key.as_str())]).collect();
+                    orphans.insert(id.clone(), Orphan { model: spec.key.as_str().to_string(), tables, payload });
                     break;
                 }
             }
