@@ -71,28 +71,23 @@ fn assemble(nodes: Vec<Node>) -> Option<Value> {
     root
 }
 
-const NODES_PER_STATEMENT: usize = 64;
-
 pub fn write_tree(connection: &Connection, table: &str, keys: &[&str], owner: &[SqlValue], value: &Value) -> Result<()> {
     let mut nodes = Vec::new();
     flatten(value, -1, 0, None, &mut nodes);
     let names: Vec<&str> = keys.iter().copied().chain(["node", "parent", "pos", "name", "kind", "whole", "fraction", "text"]).collect();
-    let row = format!("({})", vec!["?"; names.len()].join(", "));
-    for chunk in nodes.chunks(NODES_PER_STATEMENT) {
-        let sql = format!("INSERT INTO {table} ({}) VALUES {}", names.join(", "), vec![row.as_str(); chunk.len()].join(", "));
-        let cells = chunk.iter().flat_map(|entry| {
-            owner.iter().cloned().chain([
-                SqlValue::Integer(entry.node),
-                SqlValue::Integer(entry.parent),
-                SqlValue::Integer(entry.pos),
-                entry.name.clone().map_or(SqlValue::Null, SqlValue::Text),
-                SqlValue::Integer(entry.kind),
-                entry.whole.map_or(SqlValue::Null, SqlValue::Integer),
-                entry.fraction.map_or(SqlValue::Null, SqlValue::Real),
-                entry.text.clone().map_or(SqlValue::Null, SqlValue::Text),
-            ])
-        });
-        connection.prepare_cached(&sql)?.execute(params_from_iter(cells))?;
+    let mut statement = connection.prepare_cached(&format!("INSERT INTO {table} ({}) VALUES ({})", names.join(", "), vec!["?"; names.len()].join(", ")))?;
+    for entry in nodes {
+        let cells = owner.iter().cloned().chain([
+            SqlValue::Integer(entry.node),
+            SqlValue::Integer(entry.parent),
+            SqlValue::Integer(entry.pos),
+            entry.name.map_or(SqlValue::Null, SqlValue::Text),
+            SqlValue::Integer(entry.kind),
+            entry.whole.map_or(SqlValue::Null, SqlValue::Integer),
+            entry.fraction.map_or(SqlValue::Null, SqlValue::Real),
+            entry.text.map_or(SqlValue::Null, SqlValue::Text),
+        ]);
+        statement.execute(params_from_iter(cells))?;
     }
     Ok(())
 }

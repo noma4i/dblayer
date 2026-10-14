@@ -68,8 +68,6 @@ pub(crate) fn delete_tables(connection: &Connection, layout: &Layout, tables: &[
     Ok(())
 }
 
-const ITEMS_PER_STATEMENT: usize = 200;
-
 pub(crate) fn insert_children(
     connection: &Connection,
     layout: &Layout,
@@ -89,12 +87,10 @@ pub(crate) fn insert_children(
         }
         Member::List { table, .. } => {
             let (Some(items), TableShape::Values(leaf)) = (value.and_then(Value::as_array), &layout.tables[*table].shape) else { return Ok(()) };
-            let name = &layout.tables[*table].name;
-            let positions: Vec<usize> = (0..items.len()).collect();
-            for chunk in positions.chunks(ITEMS_PER_STATEMENT) {
-                let sql = format!("INSERT INTO {name} (row_id, owner, pos, value) VALUES {}", vec!["(?, ?, ?, ?)"; chunk.len()].join(", "));
-                let cells = chunk.iter().flat_map(|position| [SqlValue::Text(row_id.to_string()), owner.into(), (*position as i64).into(), leaf_sql(leaf, Some(&items[*position]))]);
-                connection.prepare_cached(&sql)?.execute(params_from_iter(cells))?;
+            let sql = format!("INSERT INTO {} (row_id, owner, pos, value) VALUES (?1, ?2, ?3, ?4)", layout.tables[*table].name);
+            let mut statement = connection.prepare_cached(&sql)?;
+            for (position, item) in items.iter().enumerate() {
+                statement.execute(params_from_iter([SqlValue::Text(row_id.to_string()), owner.into(), (position as i64).into(), leaf_sql(leaf, Some(item))]))?;
             }
         }
         Member::Array { table, .. } => {
