@@ -42,6 +42,24 @@ Data crosses between the core and the platform as JSON strings. The platform dec
 - **Local first.** Reads come from SQLite. The network only fills it.
 - **One mechanism per question.** Duplicate mechanisms and duplicate names are treated as defects and checked by `scripts/check_zoo.sh`.
 
+## Database tables
+
+A file the build does not recognise is dropped and created again when the database opens, so there is no migration. Row data, search, outbox and caches all use typed columns.
+
+| Table | Holds |
+| ----- | ----- |
+| `row_<model>` | One row per record: id, revision, birth revision, one typed column per scalar and enum field, `rev__<field>` revision columns, `<field>__present` flags of typed objects |
+| `row_<model>__<field>` | Items of a list or of an array of typed values, with their position; a recursive array uses one table for every level |
+| `row_<model>__value` | Values without a declared shape (`raw`, `file`, untyped `object` and `array`) as rows of a tree: parent, position, key, kind and the number or text |
+| `fts_row_<model>` | Full-text index of the `searchable` fields of the model |
+| `scope_member`, `tombstone`, `query_window`, `query_window_row` | List membership and order, deleted rows, loaded windows and their ids |
+| `op`, `op_row`, `op_value`, `op_part` | The outbox: status and error columns, the rows of an operation, its input and prior values, the parts of an upload |
+| `row_sync`, `sync_action`, `sync_field` | The stored sync state of every unconfirmed record, with its actions and dirty fields |
+| `local_pending` | Values written to a local field before its row exists, as a tree of rows |
+| `file` | Small file bytes and file descriptors; larger files live in a directory next to the database |
+| `quarantine`, `quarantine_value` | Payloads the core refused, with the reason |
+| `manifest`, `reset_intent`, `reset_intent_model` | Format and data versions, model fingerprints (hashes) and an unfinished cache reset |
+
 ## Repository
 
 | Path | Contents |
