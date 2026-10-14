@@ -34,7 +34,7 @@ val message = Message.create(chatId = chat.id, body = "hi", attachedUserId = "42
 
 An arg has a kind (`:bool`, `:int`, `:num`, `:string`, `:id` or `:ids`). A trailing `?` makes it optional: the call may leave it out and the variable is then not sent. The generated call takes the args after the fields, in alphabetical order. The args of `update` are always optional.
 
-An arg goes into the queued change and is never stored in the row, so no read shows it. The queue is durable: after a restart the change is sent with the same args. Every arg must be named by a value of `input:`, and an arg may not have the name of a field. An `:id` arg that holds a whole number is sent as a JSON number, like an `id` field. Actions take the same `args` (see Custom actions).
+An arg goes into the queued change and is never stored in the row, so no read shows it. The queue is durable: after a restart the change is sent with the same args. Every arg must be named by a value of `input:`, and an arg may not have the name of a field. An `:id` arg that holds a whole number is sent as a JSON number, like an `id` field. It fits a GraphQL `ID` and an `Int`. Actions take the same `args` (see Custom actions). `dblayer-gen --schema` checks each arg against the input of the mutation (see [models](models.md#check-against-the-server-schema)).
 
 ## What a write does
 

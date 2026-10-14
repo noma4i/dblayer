@@ -301,7 +301,7 @@ Example models live in `fixtures/`.
 
 `dblayer-gen --schema schema.graphql models/*.dbl` checks the declarations against the GraphQL schema of the server. It prints nothing but notes when every check passes, and exits with code 1 and a file and line for each mismatch.
 
-For each `remote`, the check finds the operation named by `query`, takes its first field (the alias when there is one) and follows `root:` from there, through connections (`nodes` or `edges { node }`) to the type that holds the rows. Operations are read from the `queries` directory next to the schema file, or from every `--operations <file or directory>` you pass. Without operation documents the operation name is read as the schema field.
+For each `remote`, the check finds the operation named by `query`, takes its first field (the alias when there is one) and follows `root:` from there, through connections (`nodes` or `edges { node }`) to the type that holds the rows. Operations are read from the `queries` and `mutations` directories next to the schema file, or from every `--operations <file or directory>` you pass. Without operation documents the operation name is read as the schema field.
 
 Every field of the model, every `from:` path, every `id_from:` and every field of a nested type must exist on that type. The check reports:
 
@@ -311,6 +311,14 @@ Every field of the model, every `from:` path, every `id_from:` and every field o
 - a scalar, enum or object that does not fit the schema type, and an `enum` value the schema enum lacks;
 - a `remote` that paginates, lists or returns one row against a schema field of another shape;
 - an association `from:` path of the wrong shape.
+
+Each arg declared with `args:` on `create`, `update` or an action is checked against the mutation that sends it. With `wrap:`, the check reads the input type of the wrapped variable. Without it, the check reads the variables of the operation. The check needs the mutation in the operation documents and reports:
+
+- a variable that `input:` binds to an arg but the input type or the operation does not have;
+- an arg whose kind does not fit the type: `:string` fits `String`, `ID`, an enum or a custom scalar, `:id` fits `ID`, `Int`, `String` or a custom scalar, `:int` fits `Int`, `:num` fits `Float` or `Int`, `:bool` fits `Boolean`, `:ids` fits a list of `ID`, `Int` or `String`;
+- an arg with `?` that the schema requires (`String!` without a default).
+
+A required arg may fill an optional input. An input with a default counts as optional.
 
 Fields marked `local: true`, `file` fields and models with `storage: :local` are skipped. Schema fields that the model leaves out are listed as notes, because a model may select a subset.
 
