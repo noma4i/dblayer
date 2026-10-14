@@ -15,10 +15,12 @@ pub(crate) mod keyed;
 mod local;
 mod merge;
 mod newer;
+mod search;
 mod types;
 
 pub use ephemeral::{EphemeralSpec, Storage};
 pub use merge::MergeRule;
+pub use search::{search_text, SearchPath};
 pub use types::resolve_types;
 
 const FORBIDDEN_ACTION_MEMBERS: [&str; 6] = ["after", "invalidate", "onCommit", "extract", "complete", "resume"];
@@ -41,6 +43,8 @@ pub enum DeclarationError {
     EmptyFieldName,
     #[error("field name {0} is reserved")]
     ReservedFieldName(String),
+    #[error("searchable field {0} is not a string or a list of strings")]
+    SearchableNotText(String),
     #[error("field {0} is declared twice")]
     DuplicateField(String),
     #[error("indexed field {0} is not a scalar or enum")]
@@ -173,6 +177,8 @@ pub struct FieldSpec {
     pub app_type: Option<String>,
     #[serde(default)]
     pub merge: Option<MergeRule>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub searchable: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<FieldSpec>,
 }
@@ -190,6 +196,7 @@ impl FieldSpec {
             from: None,
             app_type: None,
             merge: None,
+            searchable: false,
             fields: Vec::new(),
         }
     }
@@ -942,6 +949,7 @@ impl ModelSpec {
             if field.is_local() && (field.indexed || !(field.nullable || field.optional)) {
                 return Err(DeclarationError::LocalNotOptional(field.name.clone()));
             }
+            field.check_searchable()?;
         }
         let names: Vec<&str> = self.fields.iter().map(|field| field.name.as_str()).collect();
         match duplicates(&names).first() {

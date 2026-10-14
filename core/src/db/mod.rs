@@ -58,6 +58,8 @@ mod ephemeral_tests;
 #[cfg(test)]
 mod cache_tests;
 #[cfg(test)]
+mod search_tests;
+#[cfg(test)]
 mod warm_tests;
 #[cfg(test)]
 mod dispatch_tests;

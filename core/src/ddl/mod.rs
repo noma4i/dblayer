@@ -241,8 +241,36 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
     singles.chain(composites).collect()
 }
 
+pub fn fts_name(model: &str) -> String {
+    format!("fts_{}", table_name(model))
+}
+
+pub fn fts_statement(model: &ModelSpec) -> Option<String> {
+    let count = model.search_paths().len();
+    if count == 0 {
+        return None;
+    }
+    let columns: Vec<String> = (0..count).map(|index| format!("c{index}")).collect();
+    let schema = if model.is_memory() { "temp." } else { "" };
+    Some(format!(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS {schema}{} USING fts5({}, tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3 4')",
+        fts_name(model.key.as_str()),
+        columns.join(", ")
+    ))
+}
+
+pub fn fts_tables(connection: &Connection) -> Result<Vec<String>, DdlError> {
+    let mut statement = connection.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'fts\\_row\\_%' ESCAPE '\\' AND sql LIKE 'CREATE VIRTUAL%'
+         UNION ALL SELECT name FROM sqlite_temp_master WHERE type = 'table' AND name LIKE 'fts\\_row\\_%' ESCAPE '\\' AND sql LIKE 'CREATE VIRTUAL%'",
+    )?;
+    let names = statement.query_map([], |row| row.get(0))?;
+    Ok(names.collect::<Result<_, _>>()?)
+}
+
 pub fn model_statements(model: &ModelSpec) -> Vec<String> {
     let mut statements = vec![create_table_statement(model)];
+    statements.extend(fts_statement(model));
     statements.extend(layout(model).table_statements(model.is_memory()));
     statements.extend(create_index_statements(model));
     statements

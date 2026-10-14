@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::Value;
 
-use crate::ddl::table_name;
+use crate::ddl::{fts_name, table_name};
 use crate::identity::{ModelKey, ScopeKey};
 use crate::schema::ModelSpec;
 use crate::value::SortDirection;
 
-use super::filter::{column_sql, Where, SYNC_FIELD};
+use super::filter::{column_sql, fts_expression, Where, SYNC_FIELD};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum QueryError {
@@ -20,6 +20,10 @@ pub enum QueryError {
     UnsupportedValue(String),
     #[error("query targets model {query} but the spec is for {model}")]
     ModelMismatch { query: String, model: String },
+    #[error("model {0} has no searchable field")]
+    NoSearchableField(String),
+    #[error("a query holds at most one search")]
+    SeveralSearches,
     #[error("sqlite: {0}")]
     Sqlite(String),
 }
@@ -154,9 +158,32 @@ fn sync_join(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
     " LEFT JOIN row_sync AS s ON s.row_id = r.id AND s.model = ?".to_string()
 }
 
+fn search_join(query: &Query, model: &ModelSpec, bindings: &mut Vec<SqlValue>) -> Result<String, QueryError> {
+    let searches = query.r#where.iter().flat_map(Where::searches).collect::<Vec<_>>();
+    let Some(&(text, whole_words)) = searches.first() else { return Ok(String::new()) };
+    if searches.len() > 1 {
+        return Err(QueryError::SeveralSearches);
+    }
+    if model.search_paths().is_empty() {
+        return Err(QueryError::NoSearchableField(model.key.as_str().to_string()));
+    }
+    let Some(expression) = fts_expression(text, whole_words) else { return Ok(String::new()) };
+    bindings.push(SqlValue::Text(expression));
+    let table = fts_name(model.key.as_str());
+    Ok(format!(" LEFT JOIN (SELECT rowid AS match_id, rank AS match_rank FROM {table} WHERE {table} MATCH ?) AS q ON q.match_id = r.rowid"))
+}
+
+fn searching(query: &Query) -> bool {
+    query.r#where.iter().any(|clause| clause.searches().iter().any(|(text, whole_words)| fts_expression(text, *whole_words).is_some()))
+}
+
 fn order_clause(query: &Query, model: &ModelSpec) -> Result<String, QueryError> {
     if query.order.is_empty() {
-        return Ok(if query.scope.is_some() { " ORDER BY m.order_key, m.row_id".to_string() } else { String::new() });
+        return Ok(match (query.scope.is_some(), searching(query)) {
+            (true, _) => " ORDER BY m.order_key, m.row_id".to_string(),
+            (false, true) => " ORDER BY q.match_rank, r.id".to_string(),
+            (false, false) => String::new(),
+        });
     }
     let mut parts = Vec::new();
     for order in &query.order {
@@ -194,7 +221,7 @@ fn window_clause(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
 fn compile_columns(query: &Query, model: &ModelSpec, columns: &str) -> Result<CompiledStatement, QueryError> {
     check_model(query, model)?;
     let mut bindings = Vec::new();
-    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings);
+    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
     let filter = filter_clause(query, model, &mut bindings)?;
     let order = order_clause(query, model)?;
     let window = window_clause(query, &mut bindings);
@@ -209,7 +236,7 @@ pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatemen
 pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
     check_model(query, model)?;
     let mut bindings = Vec::new();
-    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings);
+    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
     let filter = filter_clause(query, model, &mut bindings)?;
     let sql = format!("SELECT COUNT(*) FROM {} AS r{join}{filter}", table_name(query.model.as_str()));
     Ok(CompiledStatement { sql, bindings })

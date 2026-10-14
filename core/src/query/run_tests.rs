@@ -93,6 +93,7 @@ fn matches(clause: &Where, row: &Map<String, Value>) -> bool {
         Where::AllOf { clauses } => clauses.iter().all(|clause| matches(clause, row)),
         Where::AnyOf { clauses } => clauses.iter().any(|clause| matches(clause, row)),
         Where::Not { clause } => !matches(clause, row),
+        Where::Search { .. } => false,
     }
 }
 

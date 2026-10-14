@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
-use crate::ddl::{fingerprint, manifest_read, manifest_stamp, manifest_write, RESET_INTENT_KEY, REVISION_SEQ_KEY};
+use crate::ddl::{fingerprint, fts_tables, manifest_read, manifest_stamp, manifest_write, RESET_INTENT_KEY, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ScopeKey;
 use crate::operation::{quarantine_add, Operation, QuarantineReason};
@@ -57,6 +57,9 @@ pub(crate) fn row_tables(connection: &Connection) -> Result<Vec<String>, StoreEr
 
 pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str, drop_table: bool) -> Result<(), StoreError> {
     let children: Vec<String> = row_tables(connection)?.into_iter().filter(|name| name.starts_with(&format!("{table}__"))).collect();
+    for name in fts_tables(connection)?.iter().filter(|name| **name == format!("fts_{table}")) {
+        connection.execute_batch(&format!("{} {name}", if drop_table { "DROP TABLE IF EXISTS" } else { "DELETE FROM" }))?;
+    }
     for name in children.iter().map(String::as_str).chain([table]) {
         if drop_table {
             connection.execute_batch(&format!("DROP TABLE IF EXISTS {name}"))?;
@@ -107,6 +110,9 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
 }
 
 pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Result<(), StoreError> {
+    for name in fts_tables(connection)? {
+        connection.execute_batch(&format!("{} {name}", if drop_tables { "DROP TABLE IF EXISTS" } else { "DELETE FROM" }))?;
+    }
     for table in row_tables(connection)?.into_iter().filter(|table| table != "row_sync") {
         if drop_tables {
             connection.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;

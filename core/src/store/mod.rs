@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use crate::ddl::{layout, table_name, Layout, RecreateReason};
 use crate::identity::Generation;
 use crate::pacing::{Clock, Counters, SystemClock};
-use crate::schema::ModelSpec;
+use crate::schema::{ModelSpec, SearchPath};
 
 mod admission;
 mod apply;
@@ -19,6 +19,7 @@ mod open;
 mod reset;
 mod rows;
 mod scopes;
+mod search;
 mod shape;
 mod tombstones;
 mod windows;
@@ -38,12 +39,13 @@ pub use windows::{family_prefix, window_key, PageInfo, WindowFreshness, WindowRe
 pub(crate) struct ModelInfo {
     pub table: String,
     pub layout: Layout,
+    pub search: Vec<SearchPath>,
     pub spec: ModelSpec,
 }
 
 impl ModelInfo {
     pub(crate) fn new(spec: &ModelSpec) -> Self {
-        Self { table: table_name(spec.key.as_str()), layout: layout(spec), spec: spec.clone() }
+        Self { table: table_name(spec.key.as_str()), layout: layout(spec), search: spec.search_paths(), spec: spec.clone() }
     }
 }
 

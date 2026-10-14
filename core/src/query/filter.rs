@@ -41,6 +41,7 @@ pub enum Where {
     AllOf { clauses: Vec<Where> },
     AnyOf { clauses: Vec<Where> },
     Not { clause: Box<Where> },
+    Search { text: String, #[serde(default)] whole_words: bool },
 }
 
 impl Where {
@@ -83,6 +84,19 @@ impl Where {
     }
 
     #[cfg(test)]
+    pub fn search(text: &str, whole_words: bool) -> Self {
+        Where::Search { text: text.to_string(), whole_words }
+    }
+
+    pub(super) fn searches(&self) -> Vec<(&str, bool)> {
+        match self {
+            Where::Search { text, whole_words } => vec![(text, *whole_words)],
+            Where::AllOf { clauses } | Where::AnyOf { clauses } => clauses.iter().flat_map(Where::searches).collect(),
+            Where::Not { clause } => clause.searches(),
+            _ => Vec::new(),
+        }
+    }
+
     pub fn negated(clause: Where) -> Self {
         Where::Not { clause: Box::new(clause) }
     }
@@ -97,6 +111,7 @@ impl Where {
             | Where::IsNull { field } => vec![field.clone()],
             Where::AllOf { clauses } | Where::AnyOf { clauses } => clauses.iter().flat_map(Where::fields).collect(),
             Where::Not { clause } => clause.fields(),
+            Where::Search { .. } => Vec::new(),
         }
     }
 
@@ -137,6 +152,7 @@ impl Where {
             Where::AllOf { clauses } => compile_group(model, clauses, bindings, " AND ", "1"),
             Where::AnyOf { clauses } => compile_group(model, clauses, bindings, " OR ", "0"),
             Where::Not { clause } => Ok(format!("NOT COALESCE({}, 0)", clause.compile(model, bindings)?)),
+            Where::Search { text, whole_words } => Ok(if fts_expression(text, *whole_words).is_some() { "q.match_id IS NOT NULL".to_string() } else { "0".to_string() }),
         }
     }
 }
@@ -216,4 +232,11 @@ pub(super) fn binding(field: &str, value: &Value) -> Result<SqlValue, QueryError
         }
         Value::Array(_) | Value::Object(_) => Err(QueryError::UnsupportedValue(field.to_string())),
     }
+}
+
+/// The words of a search text as FTS5 terms: every word quoted, the last one a prefix unless whole words are asked.
+pub(super) fn fts_expression(text: &str, whole_words: bool) -> Option<String> {
+    let words: Vec<String> = text.split_whitespace().map(|word| format!("\"{}\"", word.replace('"', "\"\""))).collect();
+    let last = words.len().checked_sub(1)?;
+    Some(words.into_iter().enumerate().map(|(index, word)| if index == last && !whole_words { word + "*" } else { word }).collect::<Vec<_>>().join(" "))
 }

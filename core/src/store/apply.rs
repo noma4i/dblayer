@@ -13,6 +13,7 @@ use crate::syncstate::{operation_keys, recompute_sync, SyncKey};
 
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, fetch_stored, placeholders, Reader, CHUNK};
+use super::search::{reindex, touches_search, unindex};
 use super::shape::{delete_tables, insert_children, member_values, normalize, normalize_leaf};
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
@@ -241,6 +242,9 @@ fn apply_upsert(
     }
     field_rev.retain(|field, _| row.contains_key(field));
     write_row(connection, info, &id, row, existing.is_some(), &changed, &field_rev, revision, born_rev)?;
+    if !info.search.is_empty() && (existing.is_none() || touches_search(info, &changed)) {
+        reindex(connection, info, &id, row)?;
+    }
     if let Some(old) = old_row {
         moves.extend(membership_moves(connection, info, model, &id, old, row)?);
     }
@@ -328,6 +332,7 @@ fn write_row(
 }
 
 pub(crate) fn remove_row(connection: &Connection, info: &ModelInfo, id: &str) -> Result<usize, StoreError> {
+    unindex(connection, info, id)?;
     let all: Vec<usize> = (0..info.layout.tables.len()).collect();
     delete_tables(connection, &info.layout, &all, id)?;
     Ok(connection.execute(&format!("DELETE FROM {} WHERE id = ?1", info.table), params![id])?)
