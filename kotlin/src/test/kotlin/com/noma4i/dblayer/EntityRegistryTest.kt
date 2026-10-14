@@ -29,7 +29,7 @@ class EntityRegistryTest {
     private fun delivery(revision: Long, rows: List<Moment> = emptyList(), removed: List<String> = emptyList()) = EntityDeliveryRows(revision, rows, removed)
 
     private fun registry(source: EntitySource = CountingSource(), maxAge: Long = 120_000, maxCount: Int = 200, now: () -> Long = { 0 }) =
-        Entities("Moment", Moment.serializer(), maxAge, maxCount, now, source)
+        Entities("Moment", Moment, maxAge, maxCount, now, source)
 
     private fun collectGarbage(until: () -> Boolean) = eventuallyBlocking("the garbage collector frees the readers") { until() || run { System.gc(); false } }
 

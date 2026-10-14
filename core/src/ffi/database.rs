@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -12,7 +13,8 @@ use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
 use super::entities::{self, EntityListener, LiveEntities};
 use super::live::LiveHandles;
 use super::transport::ForeignTransport;
-use super::{row_json, DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, RelationStateChange, StateListener, StateSubscription, Transport};
+use super::wire::{WireModel, WireRow};
+use super::{DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, RelationStateChange, StateListener, StateSubscription, Transport};
 
 pub(super) fn executor() -> Result<&'static Runtime, DbError> {
     static EXECUTOR: Starter = Starter::new();
@@ -57,7 +59,7 @@ pub struct Config { pub path: Option<String>, pub data_version: Option<String>, 
 pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64 }
 
 #[derive(uniffi::Record)]
-pub struct QueuedAction { pub row_json: String, pub operation: i64 }
+pub struct QueuedAction { pub row: WireRow, pub operation: i64 }
 
 #[derive(uniffi::Object)]
 pub struct TestClock { clock: Arc<ManualClock> }
@@ -70,15 +72,21 @@ impl TestClock {
 }
 
 #[derive(uniffi::Object)]
-pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync> }
+pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync>, wires: HashMap<String, Arc<WireModel>> }
 
 impl Database {
     fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
         let models: Vec<ModelSpec> = serde_json::from_str(&models_json)?;
+        let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
         let db = Db::open_with(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), DbConfig { cache_rows: config.cache_rows as usize })?;
         db.set_clock(clock.clone());
         let sync = transport.map(|transport| Sync::new(db.clone(), Arc::new(ForeignTransport(transport)), clock, SyncConfig::default()));
-        Ok(Arc::new(Self { db, sync }))
+        let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
+        Ok(Arc::new(Self { db, sync, wires }))
+    }
+
+    fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {
+        self.wires.get(model).ok_or_else(|| DbError::Invalid { detail: format!("model {model} is not registered") })
     }
 }
 
@@ -102,12 +110,14 @@ impl Database {
         let row_id = id(&row_id)?;
         self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, listener)
     }
-    pub fn peek_row(&self, model: String, row_id: String) -> Result<Option<String>, DbError> {
-        Ok(self.db.peek_row(&model, &id(&row_id)?).map(|row| row_json(&row)))
+    pub fn peek_row(&self, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
+        let wire = self.wire(&model)?;
+        Ok(self.db.peek_row(&model, &id(&row_id)?).map(|row| wire.row(&row)))
     }
     pub fn peek_query(&self, query_json: String) -> Result<Option<LiveChange>, DbError> {
         let (query, _) = self.parsed_query(&query_json)?;
-        Ok(self.db.peek_query(&query).map(|peeked| LiveChange::whole(peeked.revision, peeked.rows.iter().map(row_json).collect())))
+        let wire = self.wire(query.model.as_str())?;
+        Ok(self.db.peek_query(&query).map(|peeked| LiveChange::whole(peeked.revision, peeked.rows.iter().map(|row| wire.row(row)).collect())))
     }
     pub async fn warm(&self, query_json: String) -> Result<(), DbError> {
         let (query, _) = self.parsed_query(&query_json)?;
@@ -120,7 +130,7 @@ impl Database {
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64 }
     }
     pub fn live_entities(&self, model: String, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
-        entities::open(&self.db, &model, listener)
+        entities::open(&self.db, &model, self.wire(&model)?.clone(), listener)
     }
     pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.connect_json(&query_json, false, listener)
@@ -146,15 +156,15 @@ impl Database {
     pub fn live_has_many(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.related(model, row_id, name, listener)
     }
-    pub fn create(&self, model: String, values_json: String, args_json: String) -> Result<String, DbError> {
+    pub fn create(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
         let row = self.db.create_with(&model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
         self.send_writes();
-        Ok(row_json(&row))
+        Ok(self.wire(&model)?.row(&row))
     }
-    pub fn update(&self, model: String, row_id: String, patch_json: String, args_json: String) -> Result<String, DbError> {
+    pub fn update(&self, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireRow, DbError> {
         let row = self.db.update_with(&model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
         self.send_writes();
-        Ok(row_json(&row))
+        Ok(self.wire(&model)?.row(&row))
     }
     pub fn set_local(&self, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
         Ok(self.db.set_local(&model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
@@ -162,7 +172,7 @@ impl Database {
     pub fn act(&self, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
         let acted = self.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
         self.send_writes();
-        Ok(QueuedAction { row_json: row_json(&acted.row), operation: acted.operation })
+        Ok(QueuedAction { row: self.wire(&model)?.row(&acted.row), operation: acted.operation })
     }
     pub fn destroy(&self, model: String, row_id: String) -> Result<(), DbError> {
         self.db.destroy(&model, &id(&row_id)?)?;
@@ -270,13 +280,13 @@ impl Database {
         on_executor(async move { sync.upload(&model, &row, input).await }).await?;
         Ok(())
     }
-    pub async fn upload_create(&self, model: String, values_json: String, input_json: String) -> Result<String, DbError> {
+    pub async fn upload_create(&self, model: String, values_json: String, input_json: String) -> Result<WireRow, DbError> {
         let sync = self.sync()?.clone();
         let (values, input) = (serde_json::from_str(&values_json)?, serde_json::from_str(&input_json)?);
         let owner = model.clone();
         let row_id = on_executor(async move { sync.upload_create(&owner, values, input).await }).await?;
         let row = self.db.find(&model, &row_id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {row_id} was not created") })?;
-        Ok(row_json(&row))
+        Ok(self.wire(&model)?.row(&row))
     }
     pub async fn confirmed(&self, model: String, row_id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
@@ -338,13 +348,14 @@ impl Database {
         if !count {
             let _ = self.db.warm(&query);
         }
+        let wire = self.wire(query.model.as_str())?.clone();
         let observer = if count {
             self.db.observe_count(query.clone(), move |change| {
                 let value = LiveChange::counted(change.revision, change.count);
                 post.send_replace(Some(value.clone())); callback.changed(value);
             })?
         } else {
-            self.db.observe(query.clone(), move |change| { let value = LiveChange::rows(change); post.send_replace(Some(value.clone())); callback.changed(value); })?
+            self.db.observe(query.clone(), move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); callback.changed(value); })?
         };
         let (watch, load) = match remote {
             Some((relation, params)) => {
@@ -370,10 +381,12 @@ impl Database {
         let row_id = id(&row_id)?;
         let (latest, _) = tokio::sync::watch::channel(None);
         let post = latest.clone();
+        let target = self.db.spec(&model)?.associations.iter().find(|association| association.name == name).map(|association| association.target.to_string()).ok_or_else(|| DbError::Invalid { detail: format!("{model} has no association {name}") })?;
+        let wire = self.wire(&target)?.clone();
         let query = Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))).including(&[&name]);
         let observer = self.db.observe(query, move |change| {
             let rows = change.related.get(&name).and_then(|parents| parents.get(&row_id)).cloned().unwrap_or_default();
-            let value = LiveChange::whole(change.revision, rows.iter().map(row_json).collect());
+            let value = LiveChange::whole(change.revision, rows.iter().map(|row| wire.row(row)).collect());
             post.send_replace(Some(value.clone())); listener.changed(value);
         })?;
         Ok(Arc::new(LiveSubscription { latest, handles: Mutex::new(Some(LiveHandles { _observer: observer, _watch: None, load: None })) }))

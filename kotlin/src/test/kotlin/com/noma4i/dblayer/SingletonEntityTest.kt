@@ -27,7 +27,7 @@ class SingletonEntityTest {
 
     private suspend fun loaded(entity: Entity<User>) = withTimeout(5000) { entity.value.first { it != null } }
 
-    private val registry get() = EntityRegistries.of("User", User.serializer())
+    private val registry get() = EntityRegistries.of("User", User)
 
     /** REL-01 for the singleton and REL-08: 10 readers share 1 object, 1 value and 1 core subscription. */
     @Test

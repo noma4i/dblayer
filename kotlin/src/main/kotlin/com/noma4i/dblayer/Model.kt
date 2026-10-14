@@ -27,7 +27,9 @@ data class SyncInfo(
     val error: OperationFailure? = null,
     val attempts: Int = 0,
     val since: Long = 0,
-)
+) {
+    companion object
+}
 
 @Serializable
 enum class UploadStatus {
@@ -52,6 +54,8 @@ data class UploadInfo(
     val attempts: Int = 0,
     val error: OperationFailure? = null,
 ) {
+    companion object
+
     val percent: Double get() = if (totalBytes == 0uL) 0.0 else minOf(100.0, sentBytes.toDouble() * 100 / totalBytes.toDouble())
 }
 
@@ -83,18 +87,18 @@ suspend fun DBModel.settled() { DBlayer.database.settled(modelName, id) }
 /** The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline. */
 suspend fun DBModel.confirmedId(): String = DBlayer.database.confirmed(modelName, id)
 
-suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, serializer: KSerializer<Model>): Model =
-    dbJson.decodeFromString(serializer, DBlayer.database.act(modelName, id, action, values.toString(), args.toString()).rowJson)
+suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, decoder: ModelDecoder<Model>): Model =
+    decoder.read(DBlayer.database.act(modelName, id, action, values.toString(), args.toString()).row)
 
 suspend fun <Model : DBModel, Answer> Model.actAnswering(
     action: String,
     values: kotlinx.serialization.json.JsonObject,
     args: kotlinx.serialization.json.JsonObject,
-    serializer: KSerializer<Model>,
+    decoder: ModelDecoder<Model>,
     answerSerializer: KSerializer<Answer>,
 ): ActionAnswer<Model, Answer> {
     val queued = DBlayer.database.act(modelName, id, action, values.toString(), args.toString())
-    return ActionAnswer(dbJson.decodeFromString(serializer, queued.rowJson), queued.operation, answerSerializer)
+    return ActionAnswer(decoder.read(queued.row), queued.operation, answerSerializer)
 }
 
 /** The optimistic record of a queued action and, once the server answers, the `result` fields the action declares. */
@@ -103,8 +107,8 @@ class ActionAnswer<Model : DBModel, Answer>(val model: Model, private val operat
     suspend fun answer(): Answer = dbJson.decodeFromString(serializer, DBlayer.database.answer(model.modelName, operation))
 }
 
-fun <Target : DBModel> DBModel.related(name: String, serializer: KSerializer<Target>): LiveSource<List<Target>> {
+fun <Target : DBModel> DBModel.related(name: String, decoder: ModelDecoder<Target>): LiveSource<List<Target>> {
     val model = modelName
     val rowId = id
-    return listSource(emptyList(), serializer, open = { listener -> DBlayer.database.liveHasMany(model, rowId, name, listener) }) { applied, _ -> applied.rows }
+    return listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveHasMany(model, rowId, name, listener) }) { applied, _ -> applied.rows }
 }

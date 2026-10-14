@@ -57,7 +57,7 @@ Every scalar and enum field is its own typed SQLite column, indexed or not. An u
 
 ### Nested objects and lists
 
-Declare JSON fields with `object do ... end` or `array do ... end`. An object generates a Swift `Codable`, `Sendable`, `Equatable` struct and a Kotlin serializable data class. An array generates a list of that type. Both platforms use the same type and property names. Inside the `Message` model:
+Declare JSON fields with `object do ... end` or `array do ... end`. An object generates a Swift `Codable`, `Sendable`, `Equatable` struct and a Kotlin serializable data class. The model itself is read from the cells of a row (see [architecture](architecture.md#rows-between-the-core-and-the-app)) and is not `Codable`. An array generates a list of that type. Both platforms use the same type and property names. Inside the `Message` model:
 
 ```ruby
   schema do
@@ -82,7 +82,7 @@ Declare JSON fields with `object do ... end` or `array do ... end`. An object ge
   end
 ```
 
-Use generated values when creating or updating a model, or decode a response with the platform serializer. Do not write another struct, data class or decoder with the same fields.
+Use generated values when creating or updating a model, or decode a response with the platform serializer of the nested type. Do not write another struct, data class or decoder with the same fields.
 
 ```swift
 let reply = MessageReplyNode(body: "Hello", userId: "u1", user: MessageUserRef(id: "u1", fullName: "Ada"))

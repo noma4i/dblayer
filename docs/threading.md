@@ -24,7 +24,7 @@ Speed never relaxes the guarantees of [live data](live-data.md): ordered deliver
 
 ## Caching
 
-A row cache keeps decoded rows keyed by model and id with their revision. Commits invalidate only the rows they touched. Repeated reads of unchanged rows do not parse JSON again. Many observers of one query share a single read per commit.
+A row cache keeps decoded rows keyed by model and id with their revision. Commits invalidate only the rows they touched. Repeated reads of unchanged rows do not build their cells again. Many observers of one query share a single read per commit.
 
 ## Diagnostics
 

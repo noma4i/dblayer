@@ -19,6 +19,18 @@ public struct Chat: DBModel {
         self.upload = upload
     }
 
+    public static let wireLayout = "3a6adefbaba50c45e0170f495c76a9edb9914628792627415847915b498b1fa2"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.title = try r.req(0, \.asText)
+        self.lastMessageAt = try r.opt(1, \.asText)
+        self.lastMessageId = try r.opt(2, \.asId)
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
+    }
+
     public static let title = Column<Chat, String>("title")
     public static let lastMessageAt = Column<Chat, String?>("lastMessageAt")
     public static let lastMessageId = Column<Chat, String?>("lastMessageId")
@@ -65,6 +77,19 @@ public struct Message: DBModel {
         self.createdAt = createdAt
         self.sync = sync
         self.upload = upload
+    }
+
+    public static let wireLayout = "52ff8aca19952061c79f498db4e784e635ebe11fd93a573512342ea9ff4c0e40"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.chatId = try r.req(0, \.asId)
+        self.authorId = try r.req(1, \.asId)
+        self.text = try r.req(2, \.asText)
+        self.createdAt = try r.req(3, \.asText)
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
     }
 
     public static let chatId = Column<Message, String>("chatId")
@@ -128,6 +153,22 @@ public struct Moment: DBModel {
         self.createdAt = createdAt
         self.sync = sync
         self.upload = upload
+    }
+
+    public static let wireLayout = "1b66c84852ce5a61eeef6f7c5acf272acbdc9e265628ebcf4f9429e7f94772b1"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.uuid = try r.req(0, \.asText)
+        self.userId = try r.opt(1, \.asId)
+        self.text = try r.opt(2, \.asText)
+        self.likedByMe = try r.opt(3, \.asBool) ?? false
+        self.media = try r.jsonOpt(4) ?? .object([:])
+        self.tone = try r.opt(5, \.asText)
+        self.createdAt = try r.req(6, \.asText)
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
     }
 
     public static let uuid = Column<Moment, String>("uuid")
@@ -201,6 +242,16 @@ public struct NestedReference: DBModel {
         self.upload = upload
     }
 
+    public static let wireLayout = "1f93bebc94e76afff074fd047e84d5066b4d70676ff703781e6eec12866579e4"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.values = try r.arrOpt(0, NestedValue.init(cells:)) ?? []
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
+    }
+
     public static let values = Column<NestedReference, [NestedValue]>("values")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
@@ -234,6 +285,19 @@ public struct NestedSample: DBModel {
         self.replyTo = replyTo
         self.sync = sync
         self.upload = upload
+    }
+
+    public static let wireLayout = "a9f3b2299c7165f1e2fbe3254ec8b700d7ae0632a730fced9b75b16ec923631f"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.value = try r.objOpt(0, NestedValue.init(cells:))
+        self.values = try r.arrOpt(1, NestedValue.init(cells:)) ?? []
+        self.tree = try r.objOpt(2, NestedTree.init(cells:))
+        self.replyTo = try r.objOpt(3, MessageReplyNode.init(cells:))
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
     }
 
     public static let value = Column<NestedSample, NestedValue?>("value")
@@ -274,6 +338,17 @@ public struct Presence: DBModel {
         self.room = room
         self.sync = sync
         self.upload = upload
+    }
+
+    public static let wireLayout = "6389b939e12075c3b9a36a258c0ebb41dee76a6ce786ccf5d21f28dad18bfc97"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.userId = try r.req(0, \.asId)
+        self.room = try r.req(1, \.asText)
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
     }
 
     public static let userId = Column<Presence, String>("userId")
@@ -318,6 +393,16 @@ public struct StorageRow: DBModel {
         self.upload = upload
     }
 
+    public static let wireLayout = "fe5fbb4f29b1efa251b84c3acf30c1c33a863db299f28340d13b798cba3d174f"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.record = try r.req(0, \.asText)
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
+    }
+
     public static let record = Column<StorageRow, String>("record")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
@@ -353,6 +438,20 @@ public struct User: DBSingleton {
         self.mood = mood
         self.sync = sync
         self.upload = upload
+    }
+
+    public static let wireLayout = "4849bf8a3175334b01f39299c6e9512f671e8acabd8119121c8cc168047fb390"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.name = try r.req(0, \.asText)
+        self.avatar = try r.jsonOpt(1)
+        self.birthday = try r.opt(2, \.asText)
+        self.typing = try r.opt(3, \.asBool) ?? false
+        self.mood = try r.opt(4, \.asText)
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
     }
 
     public static let name = Column<User, String>("name")
@@ -403,6 +502,18 @@ public struct Vibe: DBModel {
         self.kind = kind
         self.sync = sync
         self.upload = upload
+    }
+
+    public static let wireLayout = "091ba73dd97a9be52544a900fa4ddd6515d3e70202d2fb1eb080d7211c9610b0"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.momentId = try r.req(0, \.asId)
+        self.userId = try r.req(1, \.asId)
+        self.kind = try r.req(2, \.asText)
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
     }
 
     public static let momentId = Column<Vibe, String>("momentId")
@@ -529,6 +640,33 @@ public struct NestedValue: Codable, Sendable, Equatable {
         child = try container.decodeIfPresent(NestedValueChild.self, forKey: .child)
         children = try container.decodeIfPresent([NestedValueChild].self, forKey: .children) ?? []
     }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        title = try r.req(0, \.asText)
+        note = try r.opt(1, \.asText)
+        nullableDefault = try r.opt(2, \.asText) ?? "default"
+        ownerId = try r.opt(3, \.asId)
+        count = try r.opt(4, \.asInt) ?? 2
+        ratio = try r.opt(5, \.asDouble) ?? 1.5
+        enabled = try r.opt(6, \.asBool) ?? false
+        createdAt = try r.opt(7, \.asText)
+        state = try r.opt(8, \.asText) ?? "ready"
+        labels = try r.listOpt(9, \.asText) ?? []
+        counts = try r.listOpt(10, \.asInt) ?? []
+        ratios = try r.listOpt(11, \.asDouble) ?? []
+        flags = try r.listOpt(12, \.asBool) ?? []
+        dates = try r.listOpt(13, \.asText) ?? []
+        owners = try r.listOpt(14, \.asId) ?? []
+        payload = try r.jsonOpt(15)
+        rawValue = try r.jsonOpt(16) ?? .object(["free": .array([.number(1), .bool(true), .null])])
+        preferences = try r.objOpt(17, NestedValuePreferences.init(cells:)) ?? NestedValuePreferences(label: "base")
+        presets = try r.arrOpt(18, NestedValuePreferences.init(cells:)) ?? [NestedValuePreferences(label: "first")]
+        metadata = try r.jsonOpt(19)
+        values = try r.jsonOpt(20)
+        child = try r.objOpt(21, NestedValueChild.init(cells:))
+        children = try r.arrOpt(22, NestedValueChild.init(cells:)) ?? []
+    }
 }
 
 public struct NestedValuePreferences: Codable, Sendable, Equatable {
@@ -549,6 +687,12 @@ public struct NestedValuePreferences: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         label = try container.decode(String.self, forKey: .label)
         active = try container.decodeIfPresent(Bool.self, forKey: .active) ?? true
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        label = try r.req(0, \.asText)
+        active = try r.opt(1, \.asBool) ?? true
     }
 }
 
@@ -571,6 +715,12 @@ public struct NestedValueChild: Codable, Sendable, Equatable {
         body = try container.decodeIfPresent(String.self, forKey: .body)
         horizontal = try container.decodeIfPresent(Double.self, forKey: .horizontal) ?? 0.0
     }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        body = try r.opt(0, \.asText)
+        horizontal = try r.opt(1, \.asDouble) ?? 0.0
+    }
 }
 
 public struct NestedTree: Codable, Sendable, Equatable {
@@ -591,6 +741,12 @@ public struct NestedTree: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
         children = try container.decodeIfPresent([NestedTree].self, forKey: .children) ?? []
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        name = try r.req(0, \.asText)
+        children = try r.arrOpt(1, NestedTree.init(cells:)) ?? []
     }
 }
 
@@ -629,6 +785,16 @@ public struct MessageReplyNode: Codable, Sendable, Equatable {
         user = try container.decodeIfPresent(MessageUserRef.self, forKey: .user)
         media = try container.decodeIfPresent(NestedMedia.self, forKey: .media)
     }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        id = try r.opt(0, \.asId)
+        body = try r.opt(1, \.asText)
+        kind = try r.opt(2, \.asText)
+        userId = try r.opt(3, \.asId)
+        user = try r.objOpt(4, MessageUserRef.init(cells:))
+        media = try r.objOpt(5, NestedMedia.init(cells:))
+    }
 }
 
 public struct MessageUserRef: Codable, Sendable, Equatable {
@@ -662,6 +828,15 @@ public struct MessageUserRef: Codable, Sendable, Equatable {
         username = try container.decodeIfPresent(String.self, forKey: .username)
         avatarUrl = try container.decodeIfPresent(String.self, forKey: .avatarUrl)
     }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        id = try r.opt(0, \.asId)
+        fullName = try r.opt(1, \.asText)
+        name = try r.opt(2, \.asText)
+        username = try r.opt(3, \.asText)
+        avatarUrl = try r.opt(4, \.asText)
+    }
 }
 
 public struct NestedMedia: Codable, Sendable, Equatable {
@@ -682,6 +857,12 @@ public struct NestedMedia: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value ?? ""
         fileUrl = try container.decodeIfPresent(String.self, forKey: .fileUrl)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        id = try r.opt(0, \.asId) ?? ""
+        fileUrl = try r.opt(1, \.asText)
     }
 }
 

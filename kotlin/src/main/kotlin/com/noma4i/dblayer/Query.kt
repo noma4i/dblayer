@@ -1,6 +1,5 @@
 package com.noma4i.dblayer
 
-import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -65,7 +64,7 @@ inline infix fun <Model : DBModel, reified Value> Column<Model, Value>.within(va
 
 class Query<Model : DBModel>(
     private val modelName: String,
-    private val serializer: KSerializer<Model>,
+    private val decoder: ModelDecoder<Model>,
     private val condition: Condition? = null,
     private val orders: List<Order> = emptyList(),
     private val limitCount: Int? = null,
@@ -73,7 +72,7 @@ class Query<Model : DBModel>(
     private val params: JsonObject = JsonObject(emptyMap()),
 ) {
     private fun copy(condition: Condition? = this.condition, orders: List<Order> = this.orders, limitCount: Int? = this.limitCount) =
-        Query(modelName, serializer, condition, orders, limitCount, relation, params)
+        Query(modelName, decoder, condition, orders, limitCount, relation, params)
 
     fun where(next: Condition) = copy(condition = condition?.and(next) ?: next)
     /** Rows whose searchable fields hold the words of [text], best match first when the query has no order. The last word matches as a prefix unless [wholeWords] is true. */
@@ -91,10 +90,10 @@ class Query<Model : DBModel>(
         }.toString()
 
     val live: LiveSource<List<Model>>
-        get() = listSource(emptyList(), serializer, open = { listener -> DBlayer.database.liveQuery(json, listener) }) { applied, _ -> applied.rows }
+        get() = listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveQuery(json, listener) }) { applied, _ -> applied.rows }
 
     val snapshots: LiveSource<Snapshot<Model>>
-        get() = listSource(Snapshot(emptyList(), emptyMap()), serializer, { older, newer -> Snapshot.merging(older, newer) }, { listener -> DBlayer.database.liveQuery(json, listener) }) { applied, change ->
+        get() = listSource(Snapshot(emptyList(), emptyMap()), decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener -> DBlayer.database.liveQuery(json, listener) }) { applied, change ->
             Snapshot(applied.rows, change.replacedIds(), applied.reordered, applied.failure)
         }
 
@@ -102,17 +101,17 @@ class Query<Model : DBModel>(
         get() = LiveSource(0L, { listener -> DBlayer.database.liveCount(json, listener) }) { change -> change.count ?: 0L }
 
     fun find(id: String): LiveSource<Model?> =
-        listSource<Model, Model?>(null, serializer, open = { listener -> DBlayer.database.liveFind(modelName, id, listener) }) { applied, _ -> applied.rows.firstOrNull() }
+        listSource<Model, Model?>(null, decoder, open = { listener -> DBlayer.database.liveFind(modelName, id, listener) }) { applied, _ -> applied.rows.firstOrNull() }
 
     val state: LiveSource<LoadState> get() = stateSource(modelName, relation.orEmpty(), params.toString())
 
     /** The rows of this query from memory, or null when the query is not warm. It reads no database file, so it is safe on the main thread. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows. */
     fun cached(): Cached<List<Model>>? =
-        DBlayer.database.peekQuery(json)?.let { change -> Cached(change.rows.mapNotNull { row -> runCatching { dbJson.decodeFromString(serializer, row) }.getOrNull() }, change.revision) }
+        DBlayer.database.peekQuery(json)?.let { change -> Cached(change.rows.mapNotNull { row -> runCatching { decoder.read(row) }.getOrNull() }, change.revision) }
 
     /** One row from the row cache, or null when it is not cached. Null does not mean that the row does not exist. */
     fun cachedRow(id: String): Model? =
-        DBlayer.database.peekRow(modelName, id)?.let { row -> runCatching { dbJson.decodeFromString(serializer, row) }.getOrNull() }
+        DBlayer.database.peekRow(modelName, id)?.let { row -> runCatching { decoder.read(row) }.getOrNull() }
 
     /** Reads the query once and keeps its rows in memory, so that `cached()` answers at once. The library keeps the latest queries warm and drops the oldest. */
     suspend fun warm() = DBlayer.database.warm(json)
@@ -124,5 +123,5 @@ class Query<Model : DBModel>(
 
 data class Cached<Value>(val value: Value, val revision: Long)
 
-fun <Model : DBModel> idsQuery(modelName: String, serializer: KSerializer<Model>, ids: List<String>): Query<Model> =
-    Query(modelName, serializer).where(Condition.inList("id", ids.map { JsonPrimitive(it) }))
+fun <Model : DBModel> idsQuery(modelName: String, decoder: ModelDecoder<Model>, ids: List<String>): Query<Model> =
+    Query(modelName, decoder).where(Condition.inList("id", ids.map { JsonPrimitive(it) }))

@@ -30,7 +30,7 @@ class StorageTest {
                 val transport = MockTransport()
                 DBlayer.database = Database.open(config, models, transport)
                 val state = if (name == "local") SyncState.Synced else SyncState.Pending
-                val query = Query("StorageRow", StorageRow.serializer())
+                val query = Query("StorageRow", StorageRow)
                 assertEquals(emptyList<StorageRow>(), withTimeout(5000) { query.live.flow.first() })
                 val row = StorageRow.create(record = "one")
                 assertEquals(name, state, row.sync.state)

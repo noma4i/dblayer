@@ -3,11 +3,13 @@ mod entities;
 mod live;
 mod state;
 mod transport;
+pub mod wire;
 
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
 pub use live::{LiveChange, LiveSubscription, QueryListener};
 pub use state::{RelationStateChange, StateListener, StateSubscription};
+pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
 pub use transport::{ByteProgress, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -48,17 +50,6 @@ impl From<crate::sync::SyncError> for DbError {
 
 impl From<serde_json::Error> for DbError {
     fn from(error: serde_json::Error) -> Self { Self::Invalid { detail: error.to_string() } }
-}
-
-fn row_json(row: &crate::db::Row) -> String {
-    let mut data = row.data.clone();
-    data.insert("id".into(), serde_json::json!(row.id.as_str()));
-    data.insert("sync".into(), serde_json::json!({
-        "state": row.sync.state, "actions": row.sync.actions, "dirtyFields": row.sync.dirty_fields,
-        "error": row.sync.error, "attempts": row.sync.attempts, "since": row.sync.since,
-    }));
-    data.insert("upload".into(), serde_json::to_value(&row.sync.upload).expect("upload serializes"));
-    serde_json::Value::Object(data).to_string()
 }
 
 #[cfg(test)]

@@ -36,7 +36,7 @@ fn json_literal(value: &Value, swift: bool) -> String {
     }
 }
 
-fn literal(field: &FieldSpec, value: &Value, swift: bool, types: &[&FieldSpec]) -> String {
+pub(super) fn literal(field: &FieldSpec, value: &Value, swift: bool, types: &[&FieldSpec]) -> String {
     if value.is_null() { return if swift { "nil".into() } else { "null".into() }; }
     match (&field.kind, value) {
         (FieldKind::Scalar { kind: ScalarKind::Num }, Value::Number(number)) => format!("{:?}", number.as_f64().unwrap()),
@@ -69,7 +69,7 @@ fn default_argument(field: &FieldSpec, swift: bool, types: &[&FieldSpec]) -> Str
     String::new()
 }
 
-pub(super) fn emit_swift_type(out: &mut String, declaration: &FieldSpec, types: &[&FieldSpec]) {
+pub(super) fn emit_swift_type(out: &mut String, declaration: &FieldSpec, types: &[&FieldSpec], cells: bool) {
     let name = declaration.app_type.as_deref().unwrap();
     let fields = &declaration.fields;
     writeln!(out, "public struct {name}: Codable, Sendable, Equatable {{").unwrap();
@@ -95,10 +95,16 @@ pub(super) fn emit_swift_type(out: &mut String, declaration: &FieldSpec, types: 
         } else { read };
         writeln!(out, "        {} = {read}", field.name).unwrap();
     }
-    out.push_str("    }\n}\n\n");
+    out.push_str("    }\n");
+    if cells {
+        out.push_str("\n    public init(cells: [Cell]) throws {\n        let r = CellReader(cells)\n");
+        for (at, field) in fields.iter().enumerate() { writeln!(out, "        {} = {}", field.name, super::wire::read_swift(field, at, types)).unwrap(); }
+        out.push_str("    }\n");
+    }
+    out.push_str("}\n\n");
 }
 
-pub(super) fn emit_kotlin_type(out: &mut String, declaration: &FieldSpec, types: &[&FieldSpec]) {
+pub(super) fn emit_kotlin_type(out: &mut String, declaration: &FieldSpec, types: &[&FieldSpec], cells: bool) {
     writeln!(out, "@Serializable\ndata class {}(", declaration.app_type.as_ref().unwrap()).unwrap();
     for field in &declaration.fields {
         let mut notes = String::new();
@@ -107,5 +113,12 @@ pub(super) fn emit_kotlin_type(out: &mut String, declaration: &FieldSpec, types:
         if matches!(field.kind, FieldKind::List { element: ScalarKind::Id }) { notes.push_str("@Serializable(with = IDTexts::class) "); }
         writeln!(out, "    {notes}val {}: {}{},", field.name, field_type(field, false), default_argument(field, false, types)).unwrap();
     }
-    out.push_str(")\n\n");
+    if !cells {
+        out.push_str(")\n\n");
+        return;
+    }
+    out.push_str(") {\n    companion object {\n        fun fromCells(cells: List<Cell>): ");
+    write!(out, "{} {{\n            val r = CellReader(cells)\n            return {}(\n", declaration.app_type.as_ref().unwrap(), declaration.app_type.as_ref().unwrap()).unwrap();
+    for (at, field) in declaration.fields.iter().enumerate() { writeln!(out, "                {} = {},", field.name, super::wire::read_kotlin(field, at, types)).unwrap(); }
+    out.push_str("            )\n        }\n    }\n}\n\n");
 }

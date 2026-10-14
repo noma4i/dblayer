@@ -1,7 +1,9 @@
 import Foundation
 
-public protocol DBModel: Codable, Sendable, Identifiable, Hashable {
+public protocol DBModel: Sendable, Identifiable, Hashable {
   static var modelName: String { get }
+  static var wireLayout: String { get }
+  init(wire: WireRow) throws
   var id: String { get }
   var sync: SyncInfo { get }
   var upload: UploadInfo? { get }
@@ -27,11 +29,11 @@ extension DBModel {
     try DB.database.setLocal(model: Self.modelName, rowId: id, path: path, valueJson: value.text)
   }
   public func act(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> Self {
-    try Self.decode(try DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text).rowJson)
+    try Self.decode(try DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text).row)
   }
   public func actAnswering<Answer: Decodable & Sendable>(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> ActionAnswer<Self, Answer> {
     let queued = try DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text)
-    return ActionAnswer(model: try Self.decode(queued.rowJson), operation: queued.operation)
+    return ActionAnswer(model: try Self.decode(queued.row), operation: queued.operation)
   }
   public func set(values: [String: JSONValue]) async throws {
     try DB.database.setEphemeral(model: Self.modelName, rowId: id, valuesJson: JSONValue.object(values).text)
@@ -51,7 +53,10 @@ extension DBModel {
     return listSource(initial: [], open: { listener in try DB.database.liveHasMany(model: model, rowId: rowId, name: name, listener: listener) }) { (applied: ListApplied<Target>, _) in applied.rows }
   }
 
-  static func decode(_ json: String) throws -> Self { try JSONDecoder().decode(Self.self, from: Data(json.utf8)) }
+  static func decode(_ row: WireRow) throws -> Self {
+    guard row.layout == wireLayout else { throw DbError.Invalid(detail: "the generated \(modelName) does not match the library: layout \(wireLayout) against \(row.layout)") }
+    return try Self(wire: row)
+  }
 }
 
 /// The optimistic record of a queued action and, once the server answers, the `result` fields the action declares.

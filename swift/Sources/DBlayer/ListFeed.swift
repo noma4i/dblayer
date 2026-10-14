@@ -10,8 +10,6 @@ struct ListApplied<Model: DBModel> {
   var failure: String?
 }
 
-private struct IdOnly: Decodable { let id: String }
-
 final class ListFeed<Model: DBModel>: @unchecked Sendable {
   private struct Slot {
     let id: String
@@ -19,7 +17,6 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   }
 
   private let lock = NSLock()
-  private let decoder = JSONDecoder()
   private var slots: [Slot] = []
   private var decoded = 0
   private var undecodable = 0
@@ -33,17 +30,16 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   func apply(_ change: LiveChange) -> ListApplied<Model> {
     lock.withLock {
       if change.error != nil { return ListApplied(rows: slots.compactMap(\.row), reordered: false, desynced: false) }
-      let carried: [(slot: Slot, index: Int)] = change.rows.enumerated().map { position, text in
+      let carried: [(slot: Slot, index: Int)] = change.rows.enumerated().map { position, wire in
         decoded += 1
         let index = change.full ? position : Int(change.rowIndexes[position])
         do {
-          let row = try decoder.decode(Model.self, from: Data(text.utf8))
+          let row = try Model.decode(wire)
           return (Slot(id: row.id, row: row), index)
         } catch {
           undecodable += 1
           decodeLog.error("Row of \(Model.modelName, privacy: .public) failed to decode: \(String(describing: error), privacy: .public)")
-          let id = (try? decoder.decode(IdOnly.self, from: Data(text.utf8)))?.id ?? "undecodable-\(position)"
-          return (Slot(id: id, row: nil), index)
+          return (Slot(id: wire.id, row: nil), index)
         }
       }
       if change.full {

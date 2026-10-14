@@ -1,4 +1,4 @@
-import DBlayer
+@testable import DBlayer
 import Foundation
 import Testing
 
@@ -37,5 +37,37 @@ struct NestedTypesTests {
     #expect(reply.userId == "23" && reply.user?.fullName == "Ada" && reply.media?.id == "")
     let tree = try JSONDecoder().decode(NestedTree.self, from: Data(#"{"name":"root","children":[{"name":"leaf"}]}"#.utf8))
     #expect(tree.children.first?.name == "leaf" && tree.children.first?.children == [])
+  }
+}
+
+@Suite(.serialized)
+struct CellDecoderTests {
+  private func open() throws -> Database {
+    try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+  }
+
+  @Test
+  func aStoredRowDecodesFromCellsLikeTheSharedJSONCases() throws {
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let cases = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/nested.json")))
+    let database = try open()
+    for row in cases {
+      let fields = row.objectValue
+      guard fields["error"] != .bool(true), let input = fields["input"] else { continue }
+      let label = fields["name"]!.stringValue!
+      let values = String(decoding: try JSONEncoder().encode(["value": input]), as: UTF8.self)
+      let wire = try database.create(model: "NestedSample", valuesJson: values, argsJson: "{}")
+      let sample = try NestedSample.decode(wire)
+      let expected = try JSONDecoder().decode(NestedValue.self, from: JSONEncoder().encode(fields["output"]!))
+      #expect(sample.value == expected, Comment(rawValue: label))
+    }
+  }
+
+  @Test
+  func aRowWithAnotherLayoutIsRefused() throws {
+    let database = try open()
+    var wire = try database.create(model: "NestedSample", valuesJson: "{}", argsJson: "{}")
+    wire.layout = "other"
+    #expect(throws: (any Error).self) { try NestedSample.decode(wire) }
   }
 }

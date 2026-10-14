@@ -2,7 +2,6 @@ package com.noma4i.dblayer
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.serialization.KSerializer
 import java.lang.ref.ReferenceQueue
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
@@ -58,7 +57,7 @@ private enum class Step { Retain, Release, Refresh }
 /** The registry of one model: one [Entity] per id, one core observer for the whole model. */
 class Entities<Model : DBModel> internal constructor(
     private val modelName: String,
-    private val serializer: KSerializer<Model>,
+    private val decoder: ModelDecoder<Model>,
     private val maxAge: Long = 120_000,
     private val maxCount: Int = 200,
     private val now: () -> Long = { System.nanoTime() / 1_000_000 },
@@ -76,7 +75,7 @@ class Entities<Model : DBModel> internal constructor(
     private var single: Entity<Model>? = null
     private var singleQuery: Query<Model>? = null
     private var singleFeed: SingletonFeed<Model>? = null
-    private val core = CoreEntitySource(modelName, serializer) { delivery -> apply(delivery) }
+    private val core = CoreEntitySource(modelName, decoder) { delivery -> apply(delivery) }
     private val source: EntitySource = source ?: core
 
     internal val decodedRows: Int get() = core.decodedRows
@@ -121,7 +120,7 @@ class Entities<Model : DBModel> internal constructor(
     private fun startSingleton() {
         val query = singleQuery ?: return
         singleFeed?.cancel()
-        val feed = SingletonFeed(query, serializer) { from, revision, row -> receive(from, revision, row) }
+        val feed = SingletonFeed(query, decoder) { from, revision, row -> receive(from, revision, row) }
         singleFeed = feed
         flusher.execute { feed.attach() }
     }
@@ -208,7 +207,7 @@ class Entities<Model : DBModel> internal constructor(
 /** Opens the one core observer of a model on first use. */
 internal class CoreEntitySource<Model : DBModel>(
     private val modelName: String,
-    private val serializer: KSerializer<Model>,
+    private val decoder: ModelDecoder<Model>,
     private val deliver: (EntityDeliveryRows<Model>) -> Unit,
 ) : EntitySource, EntityListener {
     private var observer: LiveEntities? = null
@@ -243,7 +242,7 @@ internal class CoreEntitySource<Model : DBModel>(
     }
 
     override fun changed(delivery: EntityDelivery) {
-        val rows = delivery.rows.mapNotNull { row -> runCatching { dbJson.decodeFromString(serializer, row) }.getOrNull() }
+        val rows = delivery.rows.mapNotNull { row -> runCatching { decoder.read(row) }.getOrNull() }
         decoded.addAndGet(rows.size)
         deliver(EntityDeliveryRows(delivery.revision, rows, delivery.removed))
     }
@@ -252,7 +251,7 @@ internal class CoreEntitySource<Model : DBModel>(
 /** The one relation subscription of a singleton. It belongs to one database and one reset: a replaced feed writes nothing. */
 internal class SingletonFeed<Model : DBModel>(
     private val query: Query<Model>,
-    private val serializer: KSerializer<Model>,
+    private val decoder: ModelDecoder<Model>,
     private val deliver: (SingletonFeed<Model>, Long, Model?) -> Unit,
 ) {
     private var session: ListSession<Model, Pair<Long, Model?>>? = null
@@ -265,7 +264,7 @@ internal class SingletonFeed<Model : DBModel>(
     fun attach() {
         val database = DBlayer.databaseOrNull ?: return
         val made = ListSession<Model, Pair<Long, Model?>>(
-            serializer,
+            decoder,
             { listener -> val subscription = database.liveQuery(query.json, listener); val cancel: () -> Unit = { subscription.cancel() }; cancel },
             { value -> count.incrementAndGet(); deliver(this, value.first, value.second) },
             { applied, change -> change.revision to applied.rows.firstOrNull() },
@@ -284,16 +283,16 @@ internal object EntityRegistries {
     private val registries = ConcurrentHashMap<String, Entities<*>>()
 
     @Suppress("UNCHECKED_CAST")
-    fun <Model : DBModel> of(modelName: String, serializer: KSerializer<Model>): Entities<Model> =
-        registries.getOrPut(modelName) { Entities(modelName, serializer) } as Entities<Model>
+    fun <Model : DBModel> of(modelName: String, decoder: ModelDecoder<Model>): Entities<Model> =
+        registries.getOrPut(modelName) { Entities(modelName, decoder) } as Entities<Model>
 
     fun resetAll() = registries.values.forEach { it.reset() }
 }
 
 /** The live entity of a record by id. */
-fun <Model : DBModel> entityOf(modelName: String, serializer: KSerializer<Model>, id: String): Entity<Model> =
-    EntityRegistries.of(modelName, serializer).entity(id)
+fun <Model : DBModel> entityOf(modelName: String, decoder: ModelDecoder<Model>, id: String): Entity<Model> =
+    EntityRegistries.of(modelName, decoder).entity(id)
 
 /** The live entity of the one row of a model that has one. */
-fun <Model : DBModel> singletonEntityOf(modelName: String, serializer: KSerializer<Model>, query: Query<Model>): Entity<Model> =
-    EntityRegistries.of(modelName, serializer).singleton(query)
+fun <Model : DBModel> singletonEntityOf(modelName: String, decoder: ModelDecoder<Model>, query: Query<Model>): Entity<Model> =
+    EntityRegistries.of(modelName, decoder).singleton(query)

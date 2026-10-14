@@ -307,8 +307,7 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, EntityListener, @unc
   }
 
   func changed(delivery: EntityDelivery) {
-    let decoder = JSONDecoder()
-    let rows = delivery.rows.compactMap { try? decoder.decode(Model.self, from: Data($0.utf8)) }
+    let rows = delivery.rows.compactMap { try? Model.decode($0) }
     lock.withLock { total += rows.count }
     deliver?(EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed))
   }

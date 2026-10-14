@@ -82,7 +82,7 @@ try await moment.confirmedId()
 
 ```kotlin
 val request = UploadRequest(path = file.path, mutation = "CreateMoment", createBlob = "CreateBlob", variables = variables)
-val moment = uploadCreate("Moment", values, request, Moment.serializer())
+val moment = uploadCreate("Moment", values, request, Moment)
 moment.upload?.percent      // 42.0
 moment.confirmedId()
 ```

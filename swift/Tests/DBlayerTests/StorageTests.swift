@@ -6,13 +6,9 @@ import Testing
 /// Uses its own `Database`, never `DB.database`, so suites that share the global one keep it.
 @Suite(.serialized)
 struct StorageTests {
-  static func object(_ json: String) throws -> [String: Any] {
-    try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
-  }
-
-  static func rows(_ database: Database) async throws -> [[String: Any]] {
+  static func rows(_ database: Database) async throws -> [WireRow] {
     let live = try database.liveQuery(queryJson: #"{"model":"StorageRow"}"#, listener: ChangeListener { _ in })
-    return try await live.current().rows.map(object)
+    return try await live.current().rows
   }
 
   @Test
@@ -35,21 +31,21 @@ struct StorageTests {
       let config = Config(path: directory.appendingPathComponent("db.sqlite").path, dataVersion: nil, cacheRows: 32)
       let transport = MockTransport()
       var database = try Database.open(config: config, modelsJson: models, transport: transport)
-      let state = name == "local" ? "synced" : "pending"
-      func syncState(_ row: [String: Any]) -> String? { (row["sync"] as? [String: Any])?["state"] as? String }
+      let state: WireSyncState = name == "local" ? .synced : .pending
+      func syncState(_ row: WireRow) -> WireSyncState { row.sync.state }
       #expect(try await Self.rows(database).isEmpty, Comment(rawValue: name))
-      let created = try Self.object(database.create(model: "StorageRow", valuesJson: #"{"record":"one"}"#, argsJson: "{}"))
-      let id = try #require(created["id"] as? String)
+      let created = try database.create(model: "StorageRow", valuesJson: #"{"record":"one"}"#, argsJson: "{}")
+      let id = created.id
       #expect(syncState(created) == state, Comment(rawValue: name))
-      #expect(try await Self.rows(database).first?["record"] as? String == "one", Comment(rawValue: name))
-      let edited = try Self.object(database.update(model: "StorageRow", rowId: id, patchJson: #"{"record":"two"}"#, argsJson: "{}"))
+      #expect(try await Self.rows(database).first?.cells.first == .text(value: "one"), Comment(rawValue: name))
+      let edited = try database.update(model: "StorageRow", rowId: id, patchJson: #"{"record":"two"}"#, argsJson: "{}")
       #expect(syncState(edited) == state, Comment(rawValue: name))
-      #expect(try await Self.rows(database).first?["record"] as? String == "two", Comment(rawValue: name))
+      #expect(try await Self.rows(database).first?.cells.first == .text(value: "two"), Comment(rawValue: name))
       try await database.flush()
       #expect(transport.calls.isEmpty, Comment(rawValue: name))
       database = try Database.open(config: config, modelsJson: models, transport: transport)
       let reopened = try #require(await Self.rows(database).first, Comment(rawValue: name))
-      #expect(reopened["record"] as? String == "two" && syncState(reopened) == state, Comment(rawValue: name))
+      #expect(reopened.cells.first == .text(value: "two") && syncState(reopened) == state, Comment(rawValue: name))
       try database.destroy(model: "StorageRow", rowId: id)
       #expect(try await Self.rows(database).isEmpty, Comment(rawValue: name))
       try await database.flush()

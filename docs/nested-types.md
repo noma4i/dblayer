@@ -49,7 +49,7 @@ An object cycle without an array cannot form a Swift struct and is rejected. Arr
 
 ## ID conversion
 
-Generated Swift uses `IDText` for numeric IDs, and generated Kotlin uses the `IDText` and `IDTexts` serializers. Use the generated model types in apps. The library owns these conversion types and accepts JSON only.
+Generated Swift uses `IDText` for numeric IDs, and generated Kotlin uses the `IDText` and `IDTexts` serializers. Use the generated model types in apps. The library owns these conversion types. They apply to JSON answers. A model reads ids from cells and turns a numeric id into text the same way.
 
 ## Storage
 

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use super::{Config, Database, LiveChange, QueryListener, Transport};
+use super::{Cell, Config, Database, LiveChange, QueryListener, Transport};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
@@ -16,7 +16,7 @@ fn with_rows(count: usize) -> (Arc<Database>, Vec<String>) {
     let model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 64 }, serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>).unwrap();
     let ids = (0..count)
-        .map(|n| serde_json::from_str::<serde_json::Value>(&db.create("Moment".into(), format!(r#"{{"text":"t{n:05}"}}"#), "{}".into()).unwrap()).unwrap()["id"].as_str().unwrap().to_string())
+        .map(|n| db.create("Moment".into(), format!(r#"{{"text":"t{n:05}"}}"#), "{}".into()).unwrap().id)
         .collect();
     (db, ids)
 }
@@ -69,5 +69,5 @@ fn a_live_query_leaves_its_rows_to_peek_and_no_subscription() {
     db.db.settle();
     let after = db.peek_query(query.into()).unwrap().unwrap();
     assert!(after.revision > peeked.revision);
-    assert_eq!(serde_json::from_str::<serde_json::Value>(&after.rows[2]).unwrap()["text"], "zz");
+    assert_eq!(after.rows[2].cells, vec![Cell::Text { value: "zz".into() }]);
 }

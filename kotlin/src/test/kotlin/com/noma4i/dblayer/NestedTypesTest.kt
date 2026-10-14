@@ -1,7 +1,9 @@
 package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.MessageReplyNode
+import com.noma4i.dblayer.models.NestedSample
 import com.noma4i.dblayer.models.NestedValue
+import com.noma4i.dblayer.models.modelsJSON
 import com.noma4i.dblayer.models.NestedTree
 import java.io.File
 import kotlinx.serialization.json.JsonArray
@@ -9,6 +11,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -42,5 +45,29 @@ class NestedTypesTest {
         val tree = dbJson.decodeFromString(NestedTree.serializer(), """{"name":"root","children":[{"name":"leaf"}]}""")
         assertEquals("leaf", tree.children.first().name)
         assertEquals(emptyList<NestedTree>(), tree.children.first().children)
+    }
+}
+
+class CellDecoderTest {
+    private fun open() = Database.open(Config(null, null, 32u), modelsJSON, null)
+
+    @Test
+    fun aStoredRowDecodesFromCellsLikeTheSharedJSONCases() {
+        val cases = parseJson(File("../fixtures/nested.json").readText()) as JsonArray
+        val database = open()
+        for (row in cases) {
+            val fields = row.jsonObject
+            if (fields["error"] == JsonPrimitive(true) || fields["input"] == null) continue
+            val label = fields.getValue("name").toString()
+            val wire = database.create("NestedSample", buildJsonObject { put("value", fields.getValue("input")) }.toString(), "{}")
+            val expected = dbJson.decodeFromString(NestedValue.serializer(), fields.getValue("output").toString())
+            assertEquals(label, expected, NestedSample.read(wire).value)
+        }
+    }
+
+    @Test
+    fun aRowWithAnotherLayoutIsRefused() {
+        val wire = open().create("NestedSample", "{}", "{}")
+        assertThrows(DbException::class.java) { NestedSample.read(wire.copy(layout = "other")) }
     }
 }

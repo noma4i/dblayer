@@ -228,9 +228,9 @@ Query<Moment>().search("cats").where(Moment.userId == id).limit(20)
 ```
 
 ```kotlin
-Query("Moment", Moment.serializer()).search("hel")                          // finds "hello": the last word is a prefix
-Query("Moment", Moment.serializer()).search("hello wor", wholeWords = true) // every word must match whole
-Query("Moment", Moment.serializer()).search("cats").where(Moment.userId eq id).limit(20)
+Query("Moment", Moment).search("hel")                          // finds "hello": the last word is a prefix
+Query("Moment", Moment).search("hello wor", wholeWords = true) // every word must match whole
+Query("Moment", Moment).search("cats").where(Moment.userId eq id).limit(20)
 ```
 
 The default match treats the last word as a prefix and the other words as whole words. A query without an order is ranked by relevance. A query has one search, and the model needs at least one searchable field. Search combines with filters, scopes and limits, and an observed search re-runs when a searchable field changes.

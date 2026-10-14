@@ -78,12 +78,18 @@ extension BridgeProbeTests {
     #expect(moved?.reordered == true)
   }
 
-  fileprivate static func moment(_ id: String) -> String {
-    let row = Moment(id: id, uuid: id, text: id, media: .object([:]), createdAt: "x")
-    return String(decoding: (try? JSONEncoder().encode(row)) ?? Data(), as: UTF8.self)
+  fileprivate static func moment(_ id: String) -> WireRow {
+    let cells: [Cell] = [.text(value: id), .null, .text(value: id), .bool(value: false), .keyed(entries: []), .null, .text(value: "x")]
+    return WireRow(id: id, layout: Moment.wireLayout, cells: cells, sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), upload: nil)
   }
 
-  fileprivate static func wire(full: Bool = false, size: UInt32, rows: [String] = [], indexes: [UInt32] = [], removed: [String] = [], placed: [Placement] = [], renamed: [Replacement] = [], error: String? = nil) -> LiveChange {
+  fileprivate static func brokenMoment(_ id: String) -> WireRow {
+    var row = moment(id)
+    row.cells = []
+    return row
+  }
+
+  fileprivate static func wire(full: Bool = false, size: UInt32, rows: [WireRow] = [], indexes: [UInt32] = [], removed: [String] = [], placed: [Placement] = [], renamed: [Replacement] = [], error: String? = nil) -> LiveChange {
     LiveChange(revision: 1, full: full, size: size, rows: rows, rowIndexes: indexes, removed: removed, placed: placed, replaced: [], renamed: renamed, count: nil, error: error)
   }
 
@@ -137,7 +143,7 @@ extension BridgeProbeTests {
     let rig = Self.session()
     try rig.session.start()
     let listener = try #require(await rig.listeners.next("the subscription"))
-    listener.changed(change: Self.wire(full: true, size: 3, rows: [Self.moment("a"), #"{"id":"b"}"#, Self.moment("c")]))
+    listener.changed(change: Self.wire(full: true, size: 3, rows: [Self.moment("a"), Self.brokenMoment("b"), Self.moment("c")]))
     #expect(await rig.values.next("the list without the bad row")?.rows.map(\.id) == ["a", "c"])
     for step in 0 ..< 3 {
       listener.changed(change: Self.wire(size: 3, rows: [Self.moment("c")], indexes: [2]))

@@ -3,18 +3,19 @@ use std::sync::Arc;
 use crate::db::{EntityChange, EntityObserver};
 use crate::identity::RowId;
 
-use super::{row_json, DbError};
+use super::wire::{WireModel, WireRow};
+use super::DbError;
 
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct EntityDelivery {
     pub revision: i64,
-    pub rows: Vec<String>,
+    pub rows: Vec<WireRow>,
     pub removed: Vec<String>,
 }
 
 impl EntityDelivery {
-    pub(super) fn of(change: &EntityChange) -> Self {
-        Self { revision: change.revision, rows: change.rows.iter().map(row_json).collect(), removed: change.removed.iter().map(ToString::to_string).collect() }
+    pub(super) fn of(change: &EntityChange, wire: &WireModel) -> Self {
+        Self { revision: change.revision, rows: change.rows.iter().map(|row| wire.row(row)).collect(), removed: change.removed.iter().map(ToString::to_string).collect() }
     }
 }
 
@@ -36,7 +37,7 @@ impl LiveEntities {
     pub fn release(&self, ids: Vec<String>) -> Result<(), DbError> { self.observer.release(&row_ids(&ids)?); Ok(()) }
 }
 
-pub(super) fn open(db: &crate::db::Db, model: &str, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
-    let observer = db.observe_entities(model, move |change| listener.changed(EntityDelivery::of(change)))?;
+pub(super) fn open(db: &crate::db::Db, model: &str, wire: Arc<WireModel>, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
+    let observer = db.observe_entities(model, move |change| listener.changed(EntityDelivery::of(change, &wire)))?;
     Ok(Arc::new(LiveEntities { observer }))
 }

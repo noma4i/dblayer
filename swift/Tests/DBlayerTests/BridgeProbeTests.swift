@@ -448,13 +448,13 @@ extension BridgeProbeTests {
 
     _ = try await first.update(text: "edited")
     let changed = await collector.wait(for: 2)
-    #expect(changed.count == 2 && changed[1].rows.count == 1 && changed[1].rows[0].contains("edited"))
+    #expect(changed.count == 2 && changed[1].rows.count == 1 && changed[1].rows[0].cells.contains(.text(value: "edited")))
 
     try entities.release(ids: [first.id])
     _ = try await first.update(text: "unseen")
     _ = try await second.update(text: "seen")
     let last = await collector.wait(for: 3)
-    #expect(last.count == 3 && last[2].rows.count == 1 && last[2].rows[0].contains("seen"))
+    #expect(last.count == 3 && last[2].rows.count == 1 && last[2].rows[0].cells.contains(.text(value: "seen")))
 
     try await second.destroy()
     let removed = await collector.wait(for: 4)

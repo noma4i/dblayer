@@ -5,7 +5,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.atomic.AtomicInteger
@@ -15,7 +14,7 @@ private val reopening = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 internal class ListState<Model>(val rows: List<Model>, val reordered: Boolean, val desynced: Boolean = false, val failure: String? = null)
 
-internal class ListFeed<Model : DBModel>(private val serializer: KSerializer<Model>) {
+internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model>) {
     private class Slot<Model>(val id: String, val row: Model?)
 
     private val slots = ArrayList<Slot<Model>>()
@@ -34,14 +33,13 @@ internal class ListFeed<Model : DBModel>(private val serializer: KSerializer<Mod
     @Synchronized
     fun apply(change: LiveChange): ListState<Model> {
         if (change.error != null) return ListState(rows, false)
-        val carried = change.rows.mapIndexed { position, text ->
+        val carried = change.rows.mapIndexed { position, wire ->
             decoded.incrementAndGet()
             val index = if (change.full) position else change.rowIndexes[position].toInt()
-            val row = runCatching { dbJson.decodeFromString(serializer, text) }
-                .onFailure { undecodable.incrementAndGet(); decodeLog.severe("Row of ${serializer.descriptor.serialName} failed to decode: $it") }
+            val row = runCatching { decoder.read(wire) }
+                .onFailure { undecodable.incrementAndGet(); decodeLog.severe("Row of ${decoder.modelName} failed to decode: $it") }
                 .getOrNull()
-            val id = row?.id ?: runCatching { dbJson.parseToJsonElement(text).jsonObject["id"]!!.jsonPrimitive.content }.getOrDefault("undecodable-$position")
-            Slot(id, row) to index
+            Slot(wire.id, row) to index
         }
         if (change.full) {
             slots.clear()
@@ -92,13 +90,13 @@ internal class ListFeed<Model : DBModel>(private val serializer: KSerializer<Mod
 }
 
 internal class ListSession<Model : DBModel, Value>(
-    serializer: KSerializer<Model>,
+    decoder: ModelDecoder<Model>,
     private val open: (QueryListener) -> () -> Unit,
     private val emit: (Value) -> Unit,
     private val map: (ListState<Model>, LiveChange) -> Value,
     private val maxReopens: Int = 2,
 ) {
-    private val feed = ListFeed(serializer)
+    private val feed = ListFeed(decoder)
     private var cancelSubscription: (() -> Unit)? = null
     private var cancelled = false
     private var stalled = false
@@ -166,12 +164,12 @@ internal class ListSession<Model : DBModel, Value>(
 
 internal fun <Model : DBModel, Value> listSource(
     initial: Value,
-    serializer: KSerializer<Model>,
+    decoder: ModelDecoder<Model>,
     merge: ((Value, Value) -> Value)? = null,
     open: (QueryListener) -> LiveSubscription,
     map: (ListState<Model>, LiveChange) -> Value,
 ): LiveSource<Value> = LiveSource(initial, merge) { emit ->
-    val session = ListSession(serializer, { listener -> val subscription = open(listener); val cancel: () -> Unit = { subscription.cancel() }; cancel }, emit, map)
+    val session = ListSession(decoder, { listener -> val subscription = open(listener); val cancel: () -> Unit = { subscription.cancel() }; cancel }, emit, map)
     session.start()
     val cancel: () -> Unit = { session.cancel() }
     cancel

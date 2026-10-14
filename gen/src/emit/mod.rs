@@ -3,6 +3,7 @@ use dblayer::value::ScalarKind;
 use std::fmt::Write;
 
 mod nested;
+mod wire;
 mod inputs;
 mod operations;
 use nested::{emit_kotlin_type, emit_swift_type};
@@ -167,6 +168,9 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], inputs: &[
         writeln!(out, "    public init({}) {{", params.join(", ")).unwrap();
         for field in fields.iter().map(|field| field.name.as_str()).chain(["sync", "upload"]) { writeln!(out, "        self.{field} = {field}").unwrap(); }
         out.push_str("    }\n\n");
+        writeln!(out, "    public static let wireLayout = \"{}\"\n\n    public init(wire row: WireRow) throws {{\n        let r = CellReader(row.cells)\n        self.id = row.id", wire::layout_of(models, model)).unwrap();
+        for (at, field) in wire::wired(model).into_iter().enumerate() { writeln!(out, "        self.{} = {}", field.name, wire::read_swift(field, at, &declared_types(models))).unwrap(); }
+        out.push_str("        self.sync = SyncInfo(wire: row.sync)\n        self.upload = row.upload.map(UploadInfo.init(wire:))\n    }\n\n");
         for field in &model.fields {
             if field.name != "id" { writeln!(out, "    public static let {} = Column<{class}, {}>(\"{}\")", field.name, field_type(field, true), field.name).unwrap(); }
         }
@@ -245,7 +249,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], inputs: &[
         }
     }
     let types = declared_types(models);
-    for declaration in &types { emit_swift_type(&mut out, declaration, &types); }
+    for declaration in &types { emit_swift_type(&mut out, declaration, &types, true); }
     emit_swift_inputs(&mut out, inputs);
     emit_swift_operations(&mut out, operations);
     if !models.is_empty() { writeln!(out, "public let modelsJSON = #\"{}\"#", serde_json::to_string(models).unwrap()).unwrap(); }
@@ -259,20 +263,20 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &
         let class = model.key.as_str();
         let values = local_name(model, "values");
         let built = local_name(model, "built");
-        writeln!(out, "@Serializable\ndata class {class}(").unwrap();
+        writeln!(out, "data class {class}(").unwrap();
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    {}val {}: {}{},", if field.name == "id" { "override " } else { "" }, field.name, field_type(field, false), if field.nullable || field.optional { " = null" } else { "" }).unwrap();
         }
-        writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val upload: UploadInfo? = null\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object {{").unwrap();
+        writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val upload: UploadInfo? = null\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val layout = \"{}\"\n        override val modelName = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                upload = row.upload?.let {{ UploadInfo.of(it) }},\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", field.name, wire::read_kotlin(field, at, &declared_types(models)))).collect::<String>()).unwrap();
         for field in model.fields.iter().filter(|field| field.name != "id") { writeln!(out, "        val {} = Column<{class}, {}>(\"{}\")", field.name, field_type(field, false), field.name).unwrap(); }
-        writeln!(out, "        fun find(id: String) = Query(\"{class}\", serializer()).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", serializer()).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", serializer(), ids)\n        fun entity(id: String) = entityOf(\"{class}\", serializer(), id)").unwrap();
+        writeln!(out, "        fun find(id: String) = Query(\"{class}\", this).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", this).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", this, ids)\n        fun entity(id: String) = entityOf(\"{class}\", this, id)").unwrap();
         for relation in &model.relations {
             let method = name(&relation.name);
             let params = relation.by_columns.iter().map(|key| format!("{key}: {}", model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| format!("{key}: String"))).collect::<Vec<_>>().join(", ");
             if params.is_empty() { writeln!(out, "        val {method}: Query<{class}> get() {{").unwrap(); }
             else { writeln!(out, "        fun {method}({params}): Query<{class}> {{").unwrap(); }
             let params = relation.by_columns.iter().map(|key| format!("\"{key}\" to jsonValue({key})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "            var {built} = Query(\"{class}\", serializer(), relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("put(\"{key}\", jsonValue({key}))")).collect::<Vec<_>>().join("; ")).unwrap();
+            writeln!(out, "            var {built} = Query(\"{class}\", this, relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("put(\"{key}\", jsonValue({key}))")).collect::<Vec<_>>().join("; ")).unwrap();
             let _ = params;
             if relation.remote.is_none() {
                 for key in &relation.by_columns { writeln!(out, "            {built} = {built}.where(Condition.equal(\"{key}\", jsonValue({key})))").unwrap(); }
@@ -280,7 +284,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &
             }
             writeln!(out, "            return {built}\n        }}").unwrap();
         }
-        if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", serializer(), {})", name(&relation.name)).unwrap(); }
+        if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", this, {})", name(&relation.name)).unwrap(); }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local()).collect();
         let create_fields = create_fields(model, &fields);
         let args = local_name(model, "args");
@@ -305,7 +309,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &
             }
             out.push_str("            }\n");
         }
-        writeln!(out, "            return dbJson.decodeFromString(serializer(), DBlayer.database.create(\"{class}\", {values}.toString(), {}))\n        }}\n    }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.toString()") }).unwrap();
+        writeln!(out, "            return read(DBlayer.database.create(\"{class}\", {values}.toString(), {}))\n        }}\n    }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.toString()") }).unwrap();
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| format!("{}: {}{} = null", field.name, field_type(field, false), if field.nullable || field.optional { "" } else { "?" })).chain(update_args.iter().map(|(name, kind)| format!("{name}: {}? = null", arg_type(kind, false)))).collect::<Vec<_>>().join(", ");
         writeln!(out, "    suspend fun update({params}): {class} {{\n        val {values} = buildJsonObject {{").unwrap();
@@ -316,7 +320,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &
             for (name, _) in &update_args { writeln!(out, "            {name}?.let {{ put(\"{name}\", jsonValue(it)) }}").unwrap(); }
             out.push_str("        }\n");
         }
-        writeln!(out, "        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, {values}.toString(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.toString()") }).unwrap();
+        writeln!(out, "        return {class}.read(DBlayer.database.update(modelName, id, {values}.toString(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.toString()") }).unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| format!("{}: {}{} = null", field.field.name, field_type(&field.field, false), if field.field.nullable || field.field.optional { "" } else { "?" })).collect::<Vec<_>>().join(", ");
             writeln!(out, "    suspend fun set({params}) {{\n        DBlayer.database.setEphemeral(modelName, id, buildJsonObject {{").unwrap();
@@ -328,7 +332,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let from_args = action.optimistic.iter().filter_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({arg})"))).collect::<Vec<_>>().join(", ");
             let args = action.args.keys().map(|arg| format!("\"{arg}\" to jsonValue({arg})")).collect::<Vec<_>>().join(", ");
-            let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args})), serializer()", action.name, serde_json::to_string(&literals).unwrap().replace('$', "${'$'}"));
+            let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args})), {class}", action.name, serde_json::to_string(&literals).unwrap().replace('$', "${'$'}"));
             if action.result.is_empty() {
                 writeln!(out, "    suspend fun {}({params}): {class} = act({call})", name(&action.name)).unwrap();
             } else {
@@ -336,7 +340,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &
                 writeln!(out, "    suspend fun {}({params}): ActionAnswer<{class}, {result}> = actAnswering({call}, {result}.serializer())", name(&action.name)).unwrap();
             }
         }
-        for association in &model.associations { writeln!(out, "    val {} get() = related(\"{}\", {}.serializer())", association.name, association.name, association.target).unwrap(); }
+        for association in &model.associations { writeln!(out, "    val {} get() = related(\"{}\", {})", association.name, association.name, association.target).unwrap(); }
         out.push_str("}\n\n");
         for action in model.actions.iter().filter(|action| !action.result.is_empty()) {
             let fields = action.result.iter().map(|(field, kind)| format!("val {field}: {}? = null", arg_type(kind, false))).collect::<Vec<_>>().join(", ");
@@ -344,7 +348,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &
         }
     }
     let types = declared_types(models);
-    for declaration in &types { emit_kotlin_type(&mut out, declaration, &types); }
+    for declaration in &types { emit_kotlin_type(&mut out, declaration, &types, true); }
     emit_kotlin_inputs(&mut out, inputs);
     emit_kotlin_operations(&mut out, operations);
     let models_json = serde_json::to_string(models).unwrap().replace('$', "${'$'}");

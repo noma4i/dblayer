@@ -32,3 +32,56 @@ public struct UploadInfo: Codable, Sendable, Equatable {
     case sentBytes = "sent_bytes", totalBytes = "total_bytes", waitReason = "wait_reason"
   }
 }
+
+extension SyncState {
+  init(wire: WireSyncState) {
+    switch wire {
+    case .synced: self = .synced
+    case .pending: self = .pending
+    case .sending: self = .sending
+    case .failed: self = .failed
+    case .deliveryUnknown: self = .deliveryUnknown
+    }
+  }
+}
+
+extension UploadStatus {
+  init(wire: WireUploadStatus) {
+    switch wire {
+    case .waiting: self = .waiting
+    case .preparing: self = .preparing
+    case .queued: self = .queued
+    case .uploading: self = .uploading
+    case .sending: self = .sending
+    case .done: self = .done
+    case .failed: self = .failed
+    case .deliveryUnknown: self = .deliveryUnknown
+    case .cancelled: self = .cancelled
+    }
+  }
+}
+
+extension OperationFailure {
+  init(wire: WireFailure) { self.init(kind: wire.kind, message: wire.message) }
+}
+
+extension SyncInfo {
+  public init(wire: WireSync) {
+    self.init()
+    state = SyncState(wire: wire.state)
+    actions = wire.actions
+    dirtyFields = wire.dirtyFields
+    error = wire.error.map(OperationFailure.init(wire:))
+    attempts = Int(wire.attempts)
+    since = wire.since
+  }
+}
+
+extension UploadInfo {
+  public init(wire: WireUpload) {
+    self.init(
+      status: UploadStatus(wire: wire.status), stage: wire.stage, sentBytes: wire.sentBytes, totalBytes: wire.totalBytes,
+      waitReason: wire.waitReason, attempts: Int(wire.attempts), error: wire.error.map(OperationFailure.init(wire:))
+    )
+  }
+}

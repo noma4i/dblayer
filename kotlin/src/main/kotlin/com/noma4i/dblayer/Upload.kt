@@ -1,6 +1,5 @@
 package com.noma4i.dblayer
 
-import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -36,8 +35,8 @@ data class UploadRequest(
 }
 
 /** Creates the record locally at once and sends its file in the background. A failed upload leaves the record failed: `retry()` sends again, `discard()` removes it. */
-suspend fun <Model : DBModel> uploadCreate(modelName: String, values: JsonObject, request: UploadRequest, serializer: KSerializer<Model>): Model =
-    dbJson.decodeFromString(serializer, DBlayer.database.uploadCreate(modelName, values.toString(), request.json))
+suspend fun <Model : DBModel> uploadCreate(modelName: String, values: JsonObject, request: UploadRequest, decoder: ModelDecoder<Model>): Model =
+    decoder.read(DBlayer.database.uploadCreate(modelName, values.toString(), request.json))
 
 /** Sends the file of an existing record, then runs the content mutation. */
 suspend fun DBModel.upload(request: UploadRequest) { DBlayer.database.upload(modelName, id, request.json) }

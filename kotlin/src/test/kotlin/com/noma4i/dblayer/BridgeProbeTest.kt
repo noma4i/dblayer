@@ -27,15 +27,15 @@ class BridgeProbeTest {
         assertEquals("edited", withTimeout(5000) { entity!!.value.first { it?.text == "edited" } }?.text)
         assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
         entity = null
-        eventually("the registry lets go of the record", 10_000) { System.gc(); EntityRegistries.of("Moment", Moment.serializer()).liveCount == 0 }
-        assertEquals(0, EntityRegistries.of("Moment", Moment.serializer()).liveCount)
+        eventually("the registry lets go of the record", 10_000) { System.gc(); EntityRegistries.of("Moment", Moment).liveCount == 0 }
+        assertEquals(0, EntityRegistries.of("Moment", Moment).liveCount)
     }
 
     @Test
     fun aSearchFindsRowsByWordPrefixesAndFollowsEdits() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
-        val prefix = Query("Moment", Moment.serializer()).search("hel")
-        val whole = Query("Moment", Moment.serializer()).search("hel", wholeWords = true)
+        val prefix = Query("Moment", Moment).search("hel")
+        val whole = Query("Moment", Moment).search("hel", wholeWords = true)
         val hello = Moment.create(text = "hello world")
         Moment.create(text = "other")
         assertEquals(listOf("hello world"), withTimeout(5000) { prefix.live.flow.first { it.isNotEmpty() } }.map { it.text })
@@ -233,7 +233,7 @@ class BridgeProbeTest {
 
         val values = kotlinx.serialization.json.buildJsonObject { put("text", kotlinx.serialization.json.JsonPrimitive("hello")) }
         val request = UploadRequest(file.path, "CreateMoment", createBlob = "CreateBlob", variables = values)
-        val local = uploadCreate("Moment", values, request, Moment.serializer())
+        val local = uploadCreate("Moment", values, request, Moment)
 
         assertEquals(true, local.id.startsWith("temp"))
         assertEquals(true, local.upload != null)
@@ -311,14 +311,14 @@ class EntityBridgeTest {
         first.update(text = "edited")
         val changed = collector.wait(2)
         assertEquals(1, changed[1].rows.size)
-        assertEquals(true, changed[1].rows[0].contains("edited"))
+        assertEquals(true, changed[1].rows[0].cells.contains(Cell.Text("edited")))
 
         entities.release(listOf(first.id))
         first.update(text = "unseen")
         second.update(text = "seen")
         val last = collector.wait(3)
         assertEquals(3, last.size)
-        assertEquals(true, last[2].rows[0].contains("seen"))
+        assertEquals(true, last[2].rows[0].cells.contains(Cell.Text("seen")))
 
         second.destroy()
         assertEquals(listOf(second.id), collector.wait(4).last().removed)

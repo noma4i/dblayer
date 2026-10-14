@@ -31,7 +31,7 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
     for operation in operations {
         let Some(root) = &operation.result else { continue };
         let types = declared(root);
-        for declaration in &types { emit_swift_type(out, declaration, &types); }
+        for declaration in &types { emit_swift_type(out, declaration, &types, false); }
     }
     writeln!(out, "public enum Operations {{").unwrap();
     for operation in operations {
@@ -55,7 +55,7 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
     for operation in operations {
         let Some(root) = &operation.result else { continue };
         let types = declared(root);
-        for declaration in &types { emit_kotlin_type(out, declaration, &types); }
+        for declaration in &types { emit_kotlin_type(out, declaration, &types, false); }
     }
     writeln!(out, "object Operations {{").unwrap();
     for operation in operations {

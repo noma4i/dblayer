@@ -36,7 +36,7 @@ end
     for token in ["struct Moment", "DBModel", "func create(", "func set(", "static var recent", "static var feed", "func like("] {
         assert!(swift.contains(token), "missing Swift {token}");
     }
-    for token in ["@Serializable", "data class Moment", "fun create(", "fun set(", "val recent", "val feed", "fun like(", "fun ids("] {
+    for token in ["ModelDecoder<Moment>", "data class Moment", "fun create(", "fun set(", "val recent", "val feed", "fun like(", "fun ids("] {
         assert!(kotlin.contains(token), "missing Kotlin {token}");
     }
 }
@@ -195,7 +195,7 @@ fn model_with_one_single_record_relation_gets_a_singleton_entity() {
         let models = parse_models(source).unwrap();
         let (swift, kotlin) = (emit_swift(&models, &[], &[]), emit_kotlin(&models, &[], &[]));
         assert_eq!(swift.contains("struct Me: DBSingleton") && swift.contains("static var singleton: Query<Self> { profile }"), singleton, "{swift}");
-        assert_eq!(kotlin.contains("fun entity() = singletonEntityOf(\"Me\", serializer(), profile)"), singleton, "{kotlin}");
+        assert_eq!(kotlin.contains("fun entity() = singletonEntityOf(\"Me\", this, profile)"), singleton, "{kotlin}");
     }
 }
 
@@ -207,4 +207,36 @@ fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
     assert!(swift.contains("public static func create(text: String)") && swift.contains("public func update(text: String? = nil)"), "{swift}");
     assert!(kotlin.contains("suspend fun create(text: String)") && kotlin.contains("suspend fun update(text: String? = null)"), "{kotlin}");
+}
+
+#[test]
+fn models_and_nested_types_read_positional_cells_on_both_platforms() {
+    let models = parse_models("model Moment do\n  schema do\n    id :ownerId, null: true\n    int :count, default: 2\n    list :tags, of: :string, default: []\n    raw :extra, null: true\n    object :size, as: MomentSize, null: true do\n      int :w\n    end\n    array :boxes, as: MomentBox, default: [] do\n      string :label\n    end\n  end\nend\n").unwrap();
+    let swift = emit_swift(&models, &[], &[]);
+    let kotlin = emit_kotlin(&models, &[], &[]);
+    for token in [
+        "public init(wire row: WireRow) throws",
+        "self.ownerId = try r.opt(0, \\.asId)",
+        "self.count = try r.opt(1, \\.asInt) ?? 2",
+        "self.tags = try r.listOpt(2, \\.asText) ?? []",
+        "self.extra = try r.jsonOpt(3)",
+        "self.size = try r.objOpt(4, MomentSize.init(cells:))",
+        "self.boxes = try r.arrOpt(5, MomentBox.init(cells:)) ?? []",
+        "public init(cells: [Cell]) throws",
+    ] {
+        assert!(swift.contains(token), "missing Swift {token}\n{swift}");
+    }
+    for token in [
+        "companion object : ModelDecoder<Moment>",
+        "override fun decode(row: WireRow): Moment",
+        "ownerId = r.opt(0, Cell::asId)",
+        "count = r.opt(1, Cell::asInt) ?: 2L",
+        "tags = r.listOpt(2, Cell::asText) ?: listOf()",
+        "extra = r.jsonOpt(3)",
+        "size = r.objOpt(4) { MomentSize.fromCells(it) }",
+        "boxes = r.arrOpt(5) { MomentBox.fromCells(it) } ?: listOf()",
+        "fun fromCells(cells: List<Cell>)",
+    ] {
+        assert!(kotlin.contains(token), "missing Kotlin {token}\n{kotlin}");
+    }
 }
