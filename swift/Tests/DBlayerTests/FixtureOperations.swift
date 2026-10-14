@@ -23,6 +23,16 @@ public struct StickerInput: Encodable, Sendable {
     }
 }
 
+public struct MomentInput: Encodable, Sendable {
+    public let file: String
+    public let widgets: [WidgetInput]?
+
+    public init(file: String, widgets: [WidgetInput]? = nil) {
+        self.file = file
+        self.widgets = widgets
+    }
+}
+
 public struct OwnerInput: Encodable, Sendable {
     public let id: String
     public let nickname: String?
@@ -30,6 +40,26 @@ public struct OwnerInput: Encodable, Sendable {
     public init(id: String, nickname: String? = nil) {
         self.id = id
         self.nickname = nickname
+    }
+}
+
+public struct WidgetInput: Encodable, Sendable {
+    public let kind: String
+    public let settings: SettingsInput
+
+    public init(kind: String, settings: SettingsInput) {
+        self.kind = kind
+        self.settings = settings
+    }
+}
+
+public struct SettingsInput: Encodable, Sendable {
+    public let itemProps: JSONValue
+    public let rotate: Double?
+
+    public init(itemProps: JSONValue, rotate: Double? = nil) {
+        self.itemProps = itemProps
+        self.rotate = rotate
     }
 }
 
@@ -138,6 +168,40 @@ public struct PricingLoadResultVideoIntro: Codable, Sendable, Equatable {
     }
 }
 
+public struct MomentCreateResult: Codable, Sendable, Equatable {
+    public let moment: MomentCreateResultMoment?
+
+    public init(moment: MomentCreateResultMoment? = nil) {
+        self.moment = moment
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case moment = "moment"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        moment = try container.decodeIfPresent(MomentCreateResultMoment.self, forKey: .moment)
+    }
+}
+
+public struct MomentCreateResultMoment: Codable, Sendable, Equatable {
+    public let id: String?
+
+    public init(id: String? = nil) {
+        self.id = id
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
+    }
+}
+
 public enum Operations {
     public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {
         var variables: [String: JSONValue] = [:]
@@ -157,5 +221,10 @@ public enum Operations {
     public static func pricingLoad() async throws -> PricingLoadResult {
         var variables: [String: JSONValue] = [:]
         return try await DB.run("Pricing", variables: variables, as: PricingLoadResult.self)
+    }
+    public static func momentCreate(input: MomentInput) async throws -> MomentCreateResult {
+        var variables: [String: JSONValue] = [:]
+        variables["input"] = JSONValue.encode(input)
+        return try await DB.run("MomentCreate", variables: variables, as: MomentCreateResult.self)
     }
 }

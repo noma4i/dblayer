@@ -53,4 +53,21 @@ extension BridgeProbeTests {
     #expect(result.tags == ["a", "b"])
     #expect(result.spec == JSONValue.parse(#"{"k":[1,2]}"#))
   }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aJsonScalarOfAnInputObjectIsSentAsAnObjectAndAnOmittedListIsNotSent() async throws {
+    let transport = try Self.openOperationRig("MomentCreate", document: "mutation MomentCreate($input: MomentInput!) { momentCreate(input: $input) { moment { id } } }", reply: #"{"data":{"momentCreate":{"moment":{"id":9}}}}"#)
+    let widget = WidgetInput(kind: "EMOJI", settings: SettingsInput(itemProps: .object(["emoji": "fire", "size": 3, "tags": .array(["a"])]), rotate: 1.5))
+
+    let sent = try await Operations.momentCreate(input: MomentInput(file: "s1", widgets: [widget]))
+    #expect(sent.moment?.id == "9")
+    transport.enqueue("MomentCreate", reply: #"{"data":{"momentCreate":{"moment":{"id":9}}}}"#)
+    let without = try await Operations.momentCreate(input: MomentInput(file: "s2"))
+    #expect(without.moment?.id == "9")
+
+    let calls = transport.calls.filter { $0.operationName == "MomentCreate" }.map(\.variablesJson)
+    #expect(JSONValue.parse(calls[0]) == JSONValue.parse(#"{"input":{"file":"s1","widgets":[{"kind":"EMOJI","settings":{"itemProps":{"emoji":"fire","size":3,"tags":["a"]},"rotate":1.5}}]}}"#), "variables sent: \(calls[0])")
+    #expect(JSONValue.parse(calls[1]) == JSONValue.parse(#"{"input":{"file":"s2"}}"#), "variables sent: \(calls[1])")
+  }
 }

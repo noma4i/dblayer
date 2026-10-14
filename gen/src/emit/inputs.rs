@@ -9,6 +9,8 @@ fn element(field: &InputField, swift: bool) -> String {
         ("num", _) => "Double".to_string(),
         ("bool", true) => "Bool".to_string(),
         ("bool", false) => "Boolean".to_string(),
+        ("json", true) => "JSONValue".to_string(),
+        ("json", false) => "JsonElement".to_string(),
         (other, _) => other.to_string(),
     }
 }

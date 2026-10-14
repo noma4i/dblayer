@@ -338,6 +338,7 @@ The generator writes every input object that an operation names, and every input
 | Schema field | Swift | Kotlin |
 | ------------ | ----- | ------ |
 | `String`, `ID`, an enum, a custom scalar | `String` | `String` |
+| the scalar named `JSON` | `JSONValue` | `JsonElement` |
 | `Int`, `Float`, `Boolean` | `Int`, `Double`, `Bool` | `Int`, `Double`, `Boolean` |
 | `[T!]!`, `[T]` | `[T]`, `[T?]?` | `List<T>`, `List<T?>?` |
 | another input object | its struct | its data class |

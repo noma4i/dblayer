@@ -19,3 +19,9 @@ operation :pricing_load do
   query Pricing
   result gifts: [{ id: :id, name: :string, price: :int }], videoIntro: { enabled: :bool }, tags: [:string], spec: :json
 end
+
+operation :moment_create do
+  mutation MomentCreate
+  args input: :MomentInput
+  result moment: { id: :id }
+end

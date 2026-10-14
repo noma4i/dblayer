@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::graphql::{Schema, TypeKind};
 
-/// One field of a schema input object: `base` is a scalar kind (`string`, `int`, `num`, `bool`) or the name of another input object.
+/// One field of a schema input object: `base` is a scalar kind (`string`, `int`, `num`, `bool`), `json` for the schema scalar `JSON`, or the name of another input object.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputField {
     pub name: String,
@@ -24,6 +24,7 @@ fn scalar_kind(schema: &Schema, owner: &str, field: &str, named: &str, queue: &m
         "Int" => Ok("int".to_string()),
         "Float" => Ok("num".to_string()),
         "Boolean" => Ok("bool".to_string()),
+        "JSON" if matches!(schema.types.get("JSON"), Some(TypeKind::Scalar)) => Ok("json".to_string()),
         other => match schema.types.get(other) {
             Some(TypeKind::Scalar | TypeKind::Enum(_)) => Ok("string".to_string()),
             Some(TypeKind::Input(_)) => {

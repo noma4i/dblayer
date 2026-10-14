@@ -83,3 +83,28 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }
 }
+
+const MOMENT_SCHEMA: &str = "type Query { a: Int }\nscalar JSON\nenum Kind { EMOJI GIF }\ninput PointInput { x: Float, y: Float }\ninput SettingsInput { itemProps: JSON!, extras: [JSON!], offset: PointInput, rotate: Float }\ninput WidgetInput { kind: Kind!, settings: SettingsInput! }\ninput MomentInput { file: String!, widgets: [WidgetInput!] = [] }\n";
+const MOMENT: &str = "operation :moment_create do\n  mutation MomentCreate\n  args input: :MomentInput\n  result moment: { id: :id }\nend\n";
+
+#[test]
+fn a_json_scalar_in_an_input_object_is_raw_json_on_both_platforms_and_default_lists_stay_optional() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("schema.graphql");
+    fs::write(&path, MOMENT_SCHEMA).unwrap();
+    let declared = parse_all(&[MOMENT]).unwrap();
+    let objects = load_input_objects(Some(&path), &declared.operations).unwrap();
+    let settings = objects.iter().find(|object| object.name == "SettingsInput").unwrap();
+    assert_eq!(settings.fields[0], field("itemProps", "json", false, false, false));
+    assert_eq!(settings.fields[1], field("extras", "json", true, false, true));
+    let widgets = objects.iter().find(|object| object.name == "MomentInput").unwrap().fields[1].clone();
+    assert_eq!(widgets, field("widgets", "WidgetInput", true, false, true));
+    let swift = emit_swift(&declared.models, &declared.operations, &objects);
+    for line in ["    public let itemProps: JSONValue", "    public let extras: [JSONValue]?", "    public let widgets: [WidgetInput]?"] {
+        assert!(swift.contains(line), "swift lacks {line}\n{swift}");
+    }
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &objects);
+    for line in ["val itemProps: JsonElement,", "val extras: List<JsonElement>? = null"] {
+        assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
+    }
+}

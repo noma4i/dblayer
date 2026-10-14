@@ -7,3 +7,8 @@ scalar DateTime
 enum Mood { HAPPY SAD }
 input StickerInput { name: String!, mood: Mood, tags: [String!]!, notes: [String], size: Int, pinned: Boolean!, owner: OwnerInput!, helpers: [OwnerInput!] }
 input OwnerInput { id: ID!, nickname: String }
+scalar JSON
+enum WidgetKind { EMOJI GIF }
+input SettingsInput { itemProps: JSON!, rotate: Float }
+input WidgetInput { kind: WidgetKind!, settings: SettingsInput! }
+input MomentInput { file: String!, widgets: [WidgetInput!] = [] }

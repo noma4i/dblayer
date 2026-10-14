@@ -1,11 +1,17 @@
 package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.Operations
+import com.noma4i.dblayer.models.MomentInput
 import com.noma4i.dblayer.models.OwnerInput
+import com.noma4i.dblayer.models.SettingsInput
 import com.noma4i.dblayer.models.StickerInput
+import com.noma4i.dblayer.models.WidgetInput
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Test
 
 class OperationCallTest {
@@ -50,5 +56,20 @@ class OperationCallTest {
         assertEquals(true, result.videoIntro?.enabled)
         assertEquals(listOf("a", "b"), result.tags)
         assertEquals(parseJson("""{"k":[1,2]}"""), result.spec)
+    }
+
+    @Test
+    fun aJsonScalarOfAnInputObjectIsSentAsAnObjectAndAnOmittedListIsNotSent() = bounded {
+        val transport = rig("MomentCreate", "mutation MomentCreate(${'$'}input: MomentInput!) { momentCreate(input: ${'$'}input) { moment { id } } }", """{"data":{"momentCreate":{"moment":{"id":9}}}}""")
+        val props = JsonObject(mapOf("emoji" to JsonPrimitive("fire"), "size" to JsonPrimitive(3), "tags" to JsonArray(listOf(JsonPrimitive("a")))))
+        val widget = WidgetInput(kind = "EMOJI", settings = SettingsInput(itemProps = props, rotate = 1.5))
+
+        assertEquals("9", withTimeout(5000) { Operations.momentCreate(MomentInput(file = "s1", widgets = listOf(widget))) }.moment?.id)
+        transport.enqueue("MomentCreate", """{"data":{"momentCreate":{"moment":{"id":9}}}}""")
+        assertEquals("9", withTimeout(5000) { Operations.momentCreate(MomentInput(file = "s2")) }.moment?.id)
+
+        val calls = transport.calls.filter { it.operationName == "MomentCreate" }.map { it.variablesJson }
+        assertEquals(parseJson("""{"input":{"file":"s1","widgets":[{"kind":"EMOJI","settings":{"itemProps":{"emoji":"fire","size":3,"tags":["a"]},"rotate":1.5}}]}}"""), parseJson(calls[0]))
+        assertEquals(parseJson("""{"input":{"file":"s2"}}"""), parseJson(calls[1]))
     }
 }
