@@ -35,6 +35,13 @@ private struct TickSubscription: GraphQLSubscription {
   static let operationName = "Tick"
 }
 
+private struct ArchiveMutation: GraphQLMutation {
+  struct Variables: Encodable, Sendable {}
+
+  static let document = "mutation Archive { archive { id } }"
+  static let operationName = "Archive"
+}
+
 @Suite(.serialized)
 struct GraphQLOperationProtocolTests {
   @Test
@@ -45,5 +52,10 @@ struct GraphQLOperationProtocolTests {
     )
 
     #expect(data.ping == "pong")
+  }
+
+  @Test
+  func operationWithoutDataDefaultsToNever() {
+    #expect(ArchiveMutation.Data.self == Never.self)
   }
 }

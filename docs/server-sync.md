@@ -8,6 +8,23 @@ DBlayer talks to a GraphQL endpoint. You describe operations and models once. Re
 2. Open the database with your models and the transport.
 3. Pass your GraphQL operation types. The name and document come from the type, the response root is the first field of the document.
 
+An operation type declares `Data` (Swift) or a `dataSerializer` (Kotlin) only when your code reads the response itself through the typed transport calls. An operation that models and actions run needs neither: leave `Data` out and it is `Never`, and the library still normalizes the response into rows. Do not write a response type that copies a model.
+
+```swift
+enum ArchiveChatMutation: GraphQLMutation {
+  struct Variables: Encodable, Sendable { let id: String }
+  static let operationName = "ArchiveChat"
+  static let document = "mutation ArchiveChat($id: ID!) { archiveChat(id: $id) { id archived } }"
+}
+```
+
+```kotlin
+object ArchiveChatMutation : GraphQLOperation {
+    override val operationName = "ArchiveChat"
+    override val document = "mutation ArchiveChat(\$id: ID!) { archiveChat(id: \$id) { id archived } }"
+}
+```
+
 The transport is an interface with three calls: `query`, `mutate` and `subscribe`. Your app gets HTTP and WebSocket implementations for each platform. Tests use a mock transport. A REST transport implements the same interface.
 
 ## Responses become rows
