@@ -20,6 +20,9 @@ object DBlayer {
     /** The live subscriptions of the database: observed queries and subscriptions, for probes of how many a screen opens. */
     fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
 
+    /** What the open discarded: the reason the database file was recreated, and the models whose rows a schema change cleared. Empty when nothing was discarded. */
+    fun openReport(): OpenReport = database.openReport()
+
     lateinit var database: Database
     internal val databaseOrNull: Database? get() = if (::database.isInitialized) database else null
 

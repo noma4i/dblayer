@@ -35,6 +35,13 @@ impl FileDirectories {
         Self { directory: Some(suffixed(database, ".files")), cache: suffixed(database, ".cache"), scratch: false }
     }
 
+    pub(crate) fn remove_all(&self) -> io::Result<()> {
+        if let Some(directory) = &self.directory {
+            ignore_missing(fs::remove_dir_all(directory))?;
+        }
+        ignore_missing(fs::remove_dir_all(&self.cache))
+    }
+
     pub(crate) fn scratch() -> Self {
         let cache = std::env::temp_dir().join(format!("dblayer-{}", uuid::Uuid::new_v4()));
         Self { directory: None, cache, scratch: true }

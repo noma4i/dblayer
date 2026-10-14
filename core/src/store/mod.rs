@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use rusqlite::Connection;
 
-use crate::ddl::{column_name, column_type, table_name, ColumnType};
+use crate::ddl::{column_name, column_type, table_name, ColumnType, RecreateReason};
 use crate::identity::Generation;
 use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::ModelSpec;
@@ -112,6 +112,7 @@ pub type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
 pub struct Store {
     inner: Mutex<Inner>,
     hook: OnceLock<StoreHook>,
+    recreated: Option<RecreateReason>,
     #[cfg(test)]
     failing_entity_reads: std::sync::atomic::AtomicUsize,
 }
@@ -131,6 +132,7 @@ impl Store {
         Self {
             inner: Mutex::new(inner),
             hook: OnceLock::new(),
+            recreated: None,
             #[cfg(test)]
             failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),
         }

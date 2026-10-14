@@ -13,6 +13,9 @@ public enum DB {
   /// The live subscriptions of the database, for probes of how many a screen opens.
   public static func subscriptionCensus() -> SubscriptionCensus { database.subscriptionCensus() }
 
+  /// What the open discarded: the reason the database file was recreated, and the models whose rows a schema change cleared. Empty when nothing was discarded.
+  public static func openReport() -> OpenReport { database.openReport() }
+
   /// Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`.
   public static func listen() throws { try database.listen() }
   public static func unlisten() throws { try database.unlisten() }

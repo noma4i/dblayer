@@ -32,7 +32,7 @@ pub use entities::{EntityChange, EntityObserver};
 pub use error::DbError;
 pub use local_write::{Acted, OutboxOperation};
 pub use observe::ObserverHandle;
-pub use open::{Db, DbConfig};
+pub use open::{Db, DbConfig, OpenReport};
 pub use replace::{OnAbsent, ReplaceRequest};
 pub use row::{Record, Row};
 pub(crate) use local_write::read_outbox;

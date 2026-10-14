@@ -2,6 +2,7 @@ use super::fixtures::*;
 use super::*;
 use crate::commit::OperationStatus;
 use crate::schema::{AssociationKind, AssociationSpec, DeclarationError};
+use crate::ddl::RecreateReason;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -24,7 +25,7 @@ fn open_rejects_invalid_models() {
 }
 
 #[test]
-fn rows_and_operations_survive_a_reopen() {
+fn inv_open_04_a_reopen_with_the_same_schema_keeps_rows_and_operations() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
     let created = {
@@ -130,4 +131,20 @@ fn inv_panic_01_open_reports_a_thread_that_cannot_start_and_leaves_no_open_handl
         }
         Db::open(&path, all_specs(), None).expect("the file opens again after the refused open");
     }
+}
+
+#[test]
+fn inv_open_03_the_open_report_names_what_the_open_discarded() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    std::fs::write(&path, "this is not a database ".repeat(400)).unwrap();
+    let report = Db::open(&path, all_specs(), None).unwrap().open_report().clone();
+    assert_eq!(report, OpenReport { recreated: Some(RecreateReason::UnreadableFile), reset_models: vec![] });
+
+    assert_eq!(Db::open(&path, all_specs(), None).unwrap().open_report(), &OpenReport { recreated: None, reset_models: vec![] });
+
+    let mut changed = all_specs();
+    changed[1].fields.push(crate::schema::FieldSpec::scalar("extra", crate::value::ScalarKind::Str).optional());
+    let report = Db::open(&path, changed, None).unwrap().open_report().clone();
+    assert_eq!(report, OpenReport { recreated: None, reset_models: vec!["moments".to_string()] });
 }

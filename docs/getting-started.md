@@ -47,6 +47,22 @@ Single steps:
 5. Register your GraphQL operations. Every mutation a model action names must be registered, or the record fails with `operation <name> is not registered` ([sync state](sync-state.md)).
 6. Use the generated model API: every read is live ([live data](live-data.md)).
 
+## Schema changes
+
+The open compares the database file with the build. A changed model clears the rows of that model, which the server sends again through sync. A file that does not fit the build is deleted and created empty: not a database, damaged, a newer or older format version, or a changed format of the internal tables. The files beside it (`.files`, `.cache`, `-wal`, `-shm`) go with it. Unsent writes in a discarded file are lost. Keep the session of the signed-in user outside the database file. `openReport` names what the open discarded, so the app can log it.
+
+```swift
+let report = DB.openReport()
+if let reason = report.recreated { log("database recreated: \(reason)") }
+if !report.resetModels.isEmpty { log("models cleared: \(report.resetModels)") }
+```
+
+```kotlin
+val report = DB.openReport()
+report.recreated?.let { log("database recreated: $it") }
+if (report.resetModels.isNotEmpty()) log("models cleared: ${report.resetModels}")
+```
+
 ## Where to go next
 
 - [Describing models](models.md)

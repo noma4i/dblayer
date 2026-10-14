@@ -125,8 +125,6 @@ const CORE_STATEMENTS: [&str; 11] = [
 pub enum DdlError {
     #[error("sqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
-    #[error("database schema version {found} is newer than this build")]
-    SchemaVersionAhead { found: i64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +142,13 @@ impl ColumnType {
             ColumnType::Real => "REAL",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RecreateReason {
+    UnreadableFile,
+    SchemaVersion,
+    CoreFormat,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,16 +249,24 @@ pub fn prepare_connection(connection: &Connection) -> Result<(), DdlError> {
 }
 
 pub fn migrate_core(connection: &Connection) -> Result<(), DdlError> {
-    let version: i64 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
-    if version != 0 && version != SCHEMA_VERSION {
-        return Err(DdlError::SchemaVersionAhead { found: version });
-    }
     let transaction = connection.unchecked_transaction()?;
     for statement in CORE_STATEMENTS.iter().chain(CACHE_STATEMENTS.iter()) {
         transaction.execute_batch(statement)?;
     }
     transaction.execute_batch(&format!("pragma user_version = {SCHEMA_VERSION}"))?;
     Ok(transaction.commit()?)
+}
+
+pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>, DdlError> {
+    let version: i64 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
+    if version != 0 && version != SCHEMA_VERSION {
+        return Ok(Some(RecreateReason::SchemaVersion));
+    }
+    let has_manifest: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'manifest')", [], |row| row.get(0))?;
+    if has_manifest && manifest_read(connection, FORMAT_VERSION_KEY)?.is_some_and(|stored| stored != format_version()) {
+        return Ok(Some(RecreateReason::CoreFormat));
+    }
+    Ok(None)
 }
 
 const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds";

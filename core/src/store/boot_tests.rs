@@ -148,9 +148,8 @@ fn removed_model_loses_its_cache_and_fingerprint() {
 #[test]
 fn incompatible_manifests_wipe_cache_and_quarantine_operations() {
     type Case = (&'static str, Option<&'static str>, Option<&'static str>, Option<&'static str>);
-    let cases: [Case; 3] = [
+    let cases: [Case; 2] = [
         ("data version changed", Some("v1"), Some("v2"), None),
-        ("old format version", None, None, Some("UPDATE manifest SET value = '0' WHERE key = 'format_version'")),
         ("manifest missing", None, None, Some("DELETE FROM manifest")),
     ];
     for (case, before, after, tamper) in cases {
@@ -273,18 +272,7 @@ fn boot_prunes_expired_tombstones() {
 }
 
 #[test]
-fn schema_ahead_database_refuses_to_open() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("a.sqlite");
-    {
-        let connection = rusqlite::Connection::open(&path).unwrap();
-        connection.execute_batch("PRAGMA user_version = 99").unwrap();
-    }
-    assert!(matches!(Store::open(&path), Err(StoreError::Ddl(_))));
-}
-
-#[test]
-fn incompatible_boot_rebuilds_cache_tables_with_the_current_columns() {
+fn a_stale_core_table_shape_is_replaced_by_a_recreated_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     let models = [messages_spec()];
@@ -300,7 +288,8 @@ fn incompatible_boot_rebuilds_cache_tables_with_the_current_columns() {
         );
     }
     let (store, report) = reopen(&path, &models, None);
-    assert_eq!(report.verdict, ManifestVerdict::Incompatible);
+    assert_eq!(store.recreated(), Some(crate::ddl::RecreateReason::CoreFormat));
+    assert_eq!(report.verdict, ManifestVerdict::Fresh);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('query_window') WHERE name = 'total'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync"), 0);
 }

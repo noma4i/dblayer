@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use serde_json::{Map, Value};
 use tokio::runtime::Runtime;
-use crate::db::{Db, DbConfig};
+use crate::db::{Db, DbConfig, OpenReport};
 use crate::identity::RowId;
 use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::query::{Query, Where};
@@ -83,6 +83,7 @@ impl Database {
         let row_id = id(&row_id)?;
         self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, listener)
     }
+    pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
     pub fn subscription_census(&self) -> SubscriptionCensus {
         let census = self.db.observer_census();
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64 }

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::ddl::table_name;
+use crate::ddl::{table_name, ManifestVerdict, RecreateReason};
 use crate::files::FileDirectories;
 use crate::identity::{Generation, RowId};
 use crate::commit::{CommitEnvelope, EntityOp, RowChangeKind, WriteOrigin};
@@ -35,6 +35,7 @@ impl Default for DbConfig {
 
 pub(crate) struct Shared {
     pub store: Store,
+    pub opened: OpenReport,
     pub specs: BTreeMap<String, ModelSpec>,
     pub pointer_guards: BTreeMap<String, Vec<AssociationSpec>>,
     pub cache: Arc<Mutex<RowCache>>,
@@ -76,6 +77,12 @@ impl Shared {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OpenReport {
+    pub recreated: Option<RecreateReason>,
+    pub reset_models: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct Db {
     pub(crate) shared: Arc<Shared>,
@@ -105,7 +112,13 @@ impl Db {
             Some(path) => Store::open(path)?,
             None => Store::open_in_memory()?,
         };
-        store.boot(&models, data_version)?;
+        let boot = store.boot(&models, data_version)?;
+        let reset_models = match boot.verdict {
+            ManifestVerdict::CacheOnly { models } => models,
+            ManifestVerdict::Incompatible => models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect(),
+            ManifestVerdict::Fresh | ManifestVerdict::Compatible => Vec::new(),
+        };
+        let opened = OpenReport { recreated: store.recreated(), reset_models };
         recover_operations(&store, &models)?;
         store.mark_ready();
         let ephemeral = Ephemerals::new(&models);
@@ -117,6 +130,7 @@ impl Db {
         store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone()));
         let shared = Arc::new(Shared {
             store,
+            opened,
             specs,
             pointer_guards,
             cache,
@@ -133,6 +147,10 @@ impl Db {
         Dispatch::start(dispatch, Arc::downgrade(&shared))?;
         Ephemerals::start(ephemeral, Arc::downgrade(&shared))?;
         Ok(Db { shared })
+    }
+
+    pub fn open_report(&self) -> &OpenReport {
+        &self.shared.opened
     }
 
     pub fn set_clock(&self, clock: Arc<dyn Clock>) {

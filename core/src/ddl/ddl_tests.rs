@@ -273,14 +273,6 @@ fn core_migration_is_idempotent_and_stamps_schema_version() {
 }
 
 #[test]
-fn core_migration_rejects_a_newer_schema_version() {
-    let connection = Connection::open_in_memory().unwrap();
-    connection.pragma_update(None, "user_version", SCHEMA_VERSION + 1).unwrap();
-
-    assert!(matches!(migrate_core(&connection), Err(DdlError::SchemaVersionAhead { found }) if found == SCHEMA_VERSION + 1));
-}
-
-#[test]
 fn prepared_connection_uses_normal_sync_no_foreign_keys_and_memory_temp_tables() {
     let connection = Connection::open_in_memory().unwrap();
     prepare_connection(&connection).unwrap();
