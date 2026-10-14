@@ -46,7 +46,8 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
         let method = name(&operation.name);
         let params = operation.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", param_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
         let returns = if operation.result.is_none() { String::new() } else { format!(" -> {}", returned(operation, true)) };
-        writeln!(out, "    public static func {method}({params}) async throws{returns} {{\n        var variables: [String: JSONValue] = [:]").unwrap();
+        let binding = if operation.args.is_empty() { "let" } else { "var" };
+        writeln!(out, "    public static func {method}({params}) async throws{returns} {{\n        {binding} variables: [String: JSONValue] = [:]").unwrap();
         for (arg, kind) in &operation.args {
             if kind.ends_with('?') { writeln!(out, "        if let value = {arg} {{ variables[\"{arg}\"] = JSONValue.encode(value) }}").unwrap(); }
             else { writeln!(out, "        variables[\"{arg}\"] = JSONValue.encode({arg})").unwrap(); }

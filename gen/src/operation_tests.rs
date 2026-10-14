@@ -13,7 +13,7 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
         "public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {",
         "if let value = size { variables[\"size\"] = JSONValue.encode(value) }",
         "return try await DB.run(\"QrCodeCreate\", variables: [\"input\": JSONValue.object(variables)], as: QrCodeCreateResult.self)",
-        "public static func signOut() async throws {",
+        "public static func signOut() async throws {\n        let variables: [String: JSONValue] = [:]",
         "try await DB.run(\"SignOut\", variables: variables)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");

@@ -60,7 +60,7 @@ fn check_schema(schema: &std::path::Path, mut operations: Vec<PathBuf>, files: &
     match check_models_against_schema(schema, &operations, files) {
         Ok(notes) => {
             for note in notes {
-                println!("note: {note}");
+                eprintln!("note: {note}");
             }
             ExitCode::SUCCESS
         }

@@ -235,7 +235,7 @@ public enum Operations {
         return try await DB.run("QrCodeCreate", variables: ["input": JSONValue.object(variables)], as: QrCodeCreateResult.self)
     }
     public static func signOut() async throws {
-        var variables: [String: JSONValue] = [:]
+        let variables: [String: JSONValue] = [:]
         try await DB.run("SignOut", variables: variables)
     }
     public static func stickerSend(input: StickerInput) async throws -> StickerSendResult {
@@ -244,7 +244,7 @@ public enum Operations {
         return try await DB.run("StickerSend", variables: variables, as: StickerSendResult.self)
     }
     public static func pricingLoad() async throws -> PricingLoadResult {
-        var variables: [String: JSONValue] = [:]
+        let variables: [String: JSONValue] = [:]
         return try await DB.run("Pricing", variables: variables, as: PricingLoadResult.self)
     }
     public static func momentCreate(input: MomentInput) async throws -> MomentCreateResult {
