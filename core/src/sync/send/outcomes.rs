@@ -75,7 +75,7 @@ impl Outcomes {
 
 fn error_of(model: &str, result: &SendResult, subject: &str) -> SyncError {
     match result {
-        SendResult::Rejected(message) => SyncError::Graphql(message.clone()),
+        SendResult::Rejected(message) => SyncError::Graphql(vec![message.clone()]),
         SendResult::Discarded => SyncError::Cancelled,
         _ => SyncError::Store(format!("{model} {subject}: the answer is unknown")),
     }

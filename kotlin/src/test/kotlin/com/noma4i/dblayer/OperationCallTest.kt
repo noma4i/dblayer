@@ -33,6 +33,32 @@ class OperationCallTest {
         assertEquals(parseJson("""{"input":{"kind":"chat","size":3}}"""), parseJson(transport.calls.first { it.operationName == "QrCodeCreate" }.variablesJson))
     }
 
+    private fun refusal(error: DbException): String = when (error) {
+        is DbException.Http -> "Http ${error.status}"
+        is DbException.Graphql -> "Graphql ${error.messages.joinToString(",")}"
+        else -> error.javaClass.simpleName
+    }
+
+    @Test
+    fun aRefusalOfTheServerArrivesTypedThroughAnOperationCall() = bounded {
+        val refusals = listOf(DbException.Http(401u, "unauthorized") to "Http 401", DbException.Graphql(listOf("nope", "bad")) to "Graphql nope,bad")
+        for ((failure, expected) in refusals) {
+            val transport = MockTransport()
+            transport.enqueue("QrCodeCreate", failure)
+            DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+            DBlayer.database.registerOperations("""[{"name":"QrCodeCreate","document":"mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }"}]""")
+            val error = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "chat", size = 3) } }.exceptionOrNull()
+            assertEquals(expected, refusal(error as DbException))
+        }
+    }
+
+    @Test
+    fun aGraphqlErrorsAnswerArrivesWithEveryMessageThroughAnOperationCall() = bounded {
+        rig("QrCodeCreate", "mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }", """{"errors":[{"message":"nope"},{"message":"bad"}]}""")
+        val error = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "chat", size = 3) } }.exceptionOrNull()
+        assertEquals("Graphql nope,bad", refusal(error as DbException))
+    }
+
     @Test
     fun anInputObjectOfTheSchemaIsSentNestedAndWithoutItsNullFields() = bounded {
         val transport = rig("StickerSend", "mutation StickerSend(${'$'}input: StickerInput!) { stickerSend(input: ${'$'}input) { id } }", """{"data":{"stickerSend":{"id":"s1"}}}""")

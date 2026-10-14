@@ -26,6 +26,42 @@ extension BridgeProbeTests {
   }
 
   @MainActor
+  @Test(.timeLimit(.minutes(1)), arguments: [
+    ("a status", DbError.Http(status: 401, detail: "unauthorized"), "Http 401"),
+    ("graphql messages", DbError.Graphql(messages: ["nope", "bad"]), "Graphql nope,bad")
+  ])
+  func aRefusalOfTheServerArrivesTypedThroughAnOperationCall(_ name: String, _ failure: DbError, _ expected: String) async throws {
+    let transport = MockTransport()
+    transport.enqueue("QrCodeCreate", failure: failure)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#)
+
+    do {
+      _ = try await Operations.qrCodeCreate(kind: "chat", size: 3)
+      Issue.record("\(name): the refused call did not throw")
+    } catch let error as DbError {
+      #expect(TransportFailureTests.shape(error) == expected, "\(name): \(error)")
+    } catch {
+      Issue.record("\(name): the refusal surfaced as \(error), not as a database error")
+    }
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aGraphqlErrorsAnswerArrivesWithEveryMessageThroughAnOperationCall() async throws {
+    _ = try Self.openOperationRig("QrCodeCreate", document: "mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }", reply: #"{"errors":[{"message":"nope"},{"message":"bad"}]}"#)
+
+    do {
+      _ = try await Operations.qrCodeCreate(kind: "chat", size: 3)
+      Issue.record("the answer with errors did not throw")
+    } catch let error as DbError {
+      #expect(TransportFailureTests.shape(error) == "Graphql nope,bad", "\(error)")
+    } catch {
+      Issue.record("the answer with errors surfaced as \(error), not as a database error")
+    }
+  }
+
+  @MainActor
   @Test(.timeLimit(.minutes(1)))
   func anInputObjectOfTheSchemaIsSentNestedAndWithoutItsNilFields() async throws {
     let transport = try Self.openOperationRig("StickerSend", document: "mutation StickerSend($input: StickerInput!) { stickerSend(input: $input) { id } }", reply: #"{"data":{"stickerSend":{"id":"s1"}}}"#)

@@ -57,7 +57,7 @@ Moment.feed.refresh()            // pull to refresh, replaces in one commit
 - Fresh data is not requested again. `fresh_for` sets how long data counts as fresh.
 - Identical parallel loads become one request.
 - Network and server errors of a load are retried within a budget; fatal errors are returned. Mutations are never retried by themselves, see [sync state](sync-state.md).
-- The built-in transports tell the core whether the server answered. A GraphQL error, a 401 or a 5xx answer reaches the core as an HTTP error: a mutation is rejected (answers below 500) or delivery unknown (5xx) and is never sent again by itself, a load retries a 5xx. A request that never left the device (offline, host not found, connection refused) is a network error and is retried. A timeout or a lost connection after the request was sent is a network error for a load and delivery unknown for a mutation.
+- The built-in transports tell the core whether the server answered. A GraphQL error reaches the core with its messages and a 401 or a 5xx answer as an HTTP error: a mutation is rejected (answers below 500) or delivery unknown (5xx) and is never sent again by itself, a load retries a 5xx. A request that never left the device (offline, host not found, connection refused) is a network error and is retried. A timeout or a lost connection after the request was sent is a network error for a load and delivery unknown for a mutation.
 - A response older than the data already stored never overwrites it.
 - A row that another response stored while this one was in flight keeps its stored data and still joins the list this response names.
 - `max_pages` limits how many pages one load takes.
@@ -153,6 +153,27 @@ println(code.url)
 - `result` lists the fields to read from the root field of the answer, all optional. Without `result` the call returns nothing. A field is a scalar (`:bool`, `:int`, `:num`, `:string`, `:id`), `:ids` or `[:string]` for a list of scalars, `:json` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), `{ a: :int }` for an object, or `[{ a: :int }]` for a list of objects. Each object becomes its own type named after the call and the field (`PricingLoadResultGifts`). An `:id` field accepts a number or a string and arrives as a string.
 - An arg can also name an input object of the server schema, written as a symbol: `args input: :StickerInput`. The generator reads the object and every object it nests from the schema file (`--schema`, see [models](models.md)) and writes one struct (Swift) or one `@Serializable` data class (Kotlin) for each. A field the schema marks `!` is required, any other field is optional and a nil field is not sent. Lists keep their element nullability. Enums and custom scalars are strings, except the scalar named `JSON`: it is sent as a JSON value (`JSONValue` in Swift, `JsonElement` in Kotlin), never as a string. A field with a schema default (`widgets: [WidgetInput!] = []`) is optional and is not sent when you leave it out.
 - The call is sent at once. It is not queued, stored or retried, and it fails when the device is offline, when the transport fails or when the answer carries errors. The error text holds every message.
+- A failed call or load throws a typed error. `Http` carries the status and the body (401, 503), `Graphql` carries every message of an answer with errors in order, `Network` and `Interrupted` tell whether the request left the device. Any other failure is a `Sync` error with its text.
+
+```swift
+do {
+  _ = try await Operations.pricingLoad()
+} catch DbError.Http(let status, _) where status == 401 {
+  signOut()
+} catch DbError.Graphql(let messages) {
+  show(messages)
+}
+```
+
+```kotlin
+try {
+    Operations.pricingLoad()
+} catch (error: DbException.Http) {
+    if (error.status == 401.toUShort()) signOut()
+} catch (error: DbException.Graphql) {
+    show(error.messages)
+}
+```
 - Do not use it for a row of a model. The row is written by `create`, `update` or an `action`, which keep the queue, the retries and the rollback.
 
 An operation that reads lists, objects and raw JSON from the answer:

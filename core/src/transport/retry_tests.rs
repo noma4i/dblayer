@@ -28,4 +28,5 @@ fn transport_error_classifies_by_variant() {
         RetryClass::Server
     );
     assert_eq!(RetryClass::of_error(&TransportError::Decode("x".into())), RetryClass::Fatal);
+    assert_eq!(RetryClass::of_error(&TransportError::Graphql { messages: vec!["x".into()] }), RetryClass::Fatal);
 }

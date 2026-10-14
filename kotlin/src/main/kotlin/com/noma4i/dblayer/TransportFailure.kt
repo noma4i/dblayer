@@ -9,7 +9,7 @@ internal fun classifyTransportFailure(error: Exception, kind: GraphQLOperationKi
         is GraphQLTransportError.Unauthenticated -> DbException.Http(401u, detail)
         is GraphQLTransportError.PayloadTransport -> DbException.Http((if (error.status >= 400) error.status else 500).toUShort(), detail)
         is GraphQLTransportError.Server -> DbException.Http((if (error.status >= 400) error.status else 500).toUShort(), detail)
-        is GraphQLTransportError.GraphQL -> DbException.Http(200u, detail)
+        is GraphQLTransportError.GraphQL -> DbException.Graphql(error.messages)
         is UnknownHostException, is ConnectException -> DbException.Network(detail)
         else -> if (kind == GraphQLOperationKind.Query) DbException.Network(detail) else DbException.Interrupted(detail)
     }

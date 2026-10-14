@@ -24,6 +24,8 @@ pub enum DbError {
     Interrupted { detail: String },
     #[error("http {status}: {detail}")]
     Http { status: u16, detail: String },
+    #[error("graphql: {}", messages.join("\n"))]
+    Graphql { messages: Vec<String> },
 }
 
 impl From<crate::db::DbError> for DbError {
@@ -31,7 +33,17 @@ impl From<crate::db::DbError> for DbError {
 }
 
 impl From<crate::sync::SyncError> for DbError {
-    fn from(error: crate::sync::SyncError) -> Self { Self::Sync { detail: error.to_string() } }
+    fn from(error: crate::sync::SyncError) -> Self {
+        use crate::sync::SyncError;
+        use crate::transport::TransportError;
+        match error {
+            SyncError::Transport(TransportError::Http { status, body }) => Self::Http { status, detail: body },
+            SyncError::Transport(TransportError::Network(detail)) => Self::Network { detail },
+            SyncError::Transport(TransportError::Interrupted(detail)) => Self::Interrupted { detail },
+            SyncError::Transport(TransportError::Graphql { messages }) | SyncError::Graphql(messages) => Self::Graphql { messages },
+            other => Self::Sync { detail: other.to_string() },
+        }
+    }
 }
 
 impl From<serde_json::Error> for DbError {
@@ -51,6 +63,8 @@ fn row_json(row: &crate::db::Row) -> String {
 
 #[cfg(test)]
 mod executor_tests;
+#[cfg(test)]
+mod failure_tests;
 #[cfg(test)]
 mod file_calls_tests;
 #[cfg(test)]

@@ -21,7 +21,7 @@ enum TransportFailure {
     switch failure {
     case .unauthenticated: .Http(status: 401, detail: detail)
     case let .payloadTransport(_, status), let .server(status): .Http(status: UInt16(clamping: status >= 400 ? status : 500), detail: detail)
-    case .graphQL: .Http(status: 200, detail: detail)
+    case let .graphQL(messages): .Graphql(messages: messages)
     }
   }
 }

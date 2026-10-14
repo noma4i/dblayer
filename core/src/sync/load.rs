@@ -271,10 +271,13 @@ impl Inner {
                 Ok(response) if response.shape().outcome() == ResponseOutcome::Commit => return Ok((response, attempt + 1)),
                 Ok(response) => {
                     let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
-                    let message = response.errors.first().map_or("empty response".to_string(), |error| error.message.clone());
-                    (RetryClass::classify(false, None, &codes), SyncError::Graphql(message))
+                    let mut messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
+                    if messages.is_empty() {
+                        messages.push("empty response".to_string());
+                    }
+                    (RetryClass::classify(false, None, &codes), SyncError::Graphql(messages))
                 }
-                Err(error) => (RetryClass::of_error(&error), SyncError::Transport(error.to_string())),
+                Err(error) => (RetryClass::of_error(&error), SyncError::Transport(error)),
             };
             if !class.allows_retry(attempt) {
                 return Err(error);

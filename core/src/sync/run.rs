@@ -15,10 +15,10 @@ impl Sync {
         let request = GraphQLRequest::new(&definition.document, operation, variables);
         let transport = &self.inner.transport;
         let response = if definition.document.trim_start().starts_with("mutation") { transport.mutate(request).await } else { transport.query(request).await }
-            .map_err(|error| SyncError::Transport(error.to_string()))?;
+            .map_err(SyncError::Transport)?;
         if response.shape().outcome() != ResponseOutcome::Commit {
-            let messages: Vec<&str> = response.errors.iter().map(|error| error.message.as_str()).collect();
-            return Err(SyncError::Graphql(if messages.is_empty() { "empty response".to_string() } else { messages.join("\n") }));
+            let messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
+            return Err(SyncError::Graphql(if messages.is_empty() { vec!["empty response".to_string()] } else { messages }));
         }
         let data = response.data.unwrap_or(Value::Null);
         Ok(data.get(&definition.root_path).cloned().unwrap_or(Value::Null))

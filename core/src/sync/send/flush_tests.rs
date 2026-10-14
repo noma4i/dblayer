@@ -411,6 +411,7 @@ async fn kinds_follow_the_failure_class() {
         ("m3", Reply::fail(TransportError::Http { status: 400, body: "bad".into() }), SyncState::Failed, FailureKind::Rejected),
         ("m4", Reply::fail(TransportError::Decode("junk".into())), SyncState::DeliveryUnknown, FailureKind::Unrecognized),
         ("m5", Reply::fail(TransportError::Interrupted("reset".into())), SyncState::DeliveryUnknown, FailureKind::Network),
+        ("m6", Reply::fail(TransportError::Graphql { messages: vec!["no".into()] }), SyncState::Failed, FailureKind::Rejected),
     ] {
         let rig = keeping_rig();
         put(&rig, "moments", moment(id, "old"));

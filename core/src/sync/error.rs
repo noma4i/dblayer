@@ -18,11 +18,11 @@ pub enum SyncError {
     #[error("params are invalid: {0}")]
     Params(String),
     #[error("transport: {0}")]
-    Transport(String),
+    Transport(crate::transport::TransportError),
     #[error("offline")]
     Offline,
-    #[error("graphql: {0}")]
-    Graphql(String),
+    #[error("graphql: {}", .0.join("\n"))]
+    Graphql(Vec<String>),
     #[error("malformed response: {0}")]
     Malformed(String),
     #[error("event is invalid: {0}")]

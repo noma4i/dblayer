@@ -12,11 +12,12 @@ class TransportFailureTest {
         is DbException.Network -> "Network"
         is DbException.Interrupted -> "Interrupted"
         is DbException.Http -> "Http ${error.status}"
+        is DbException.Graphql -> "Graphql ${error.messages.joinToString(",")}"
         else -> error.javaClass.simpleName
     }
 
     private val cases: List<Triple<String, Pair<Exception, GraphQLOperationKind>, String>> = listOf(
-        Triple("mutation graphQL errors", GraphQLTransportError.GraphQL(listOf("too large")) to GraphQLOperationKind.Mutation, "Http 200"),
+        Triple("mutation graphQL errors", GraphQLTransportError.GraphQL(listOf("too large")) to GraphQLOperationKind.Mutation, "Graphql too large"),
         Triple("mutation unauthenticated", GraphQLTransportError.Unauthenticated to GraphQLOperationKind.Mutation, "Http 401"),
         Triple("mutation server 503", GraphQLTransportError.Server(503) to GraphQLOperationKind.Mutation, "Http 503"),
         Triple("query server 503", GraphQLTransportError.Server(503) to GraphQLOperationKind.Query, "Http 503"),

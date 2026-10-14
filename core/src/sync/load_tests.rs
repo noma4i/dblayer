@@ -134,7 +134,7 @@ async fn retry_budget_is_spent_then_the_error_is_returned() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::fail(TransportError::Network("down".to_string())));
     let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
-    assert_eq!(result, Err(SyncError::Transport("network: down".to_string())));
+    assert_eq!(result, Err(SyncError::Transport(TransportError::Network("down".to_string()))));
     assert_eq!(rig.transport.call_count("MomentsFeed"), 4);
 }
 
@@ -147,7 +147,7 @@ async fn server_error_code_is_retried_and_fatal_code_is_not() {
     assert_eq!(outcome.attempts, 2);
     rig.transport.enqueue("MomentsByUser", Reply::graphql_error("nope", "FORBIDDEN"));
     let fatal = rig.sync.load("moments", "by_user", &params(json!({"userId": "u1"})), LoadOptions::default()).await;
-    assert_eq!(fatal, Err(SyncError::Graphql("nope".to_string())));
+    assert_eq!(fatal, Err(SyncError::Graphql(vec!["nope".to_string()])));
     assert_eq!(rig.transport.call_count("MomentsByUser"), 1);
 }
 
@@ -161,7 +161,7 @@ async fn failed_refresh_keeps_stale_data_unless_forced() {
     let kept = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(kept.status, LoadStatus::KeptStale);
     let forced = rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await;
-    assert_eq!(forced, Err(SyncError::Graphql("nope".to_string())));
+    assert_eq!(forced, Err(SyncError::Graphql(vec!["nope".to_string()])));
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m1"]);
 }
 
@@ -170,7 +170,7 @@ async fn failed_first_load_without_window_is_an_error() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
     let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
-    assert_eq!(result, Err(SyncError::Graphql("nope".to_string())));
+    assert_eq!(result, Err(SyncError::Graphql(vec!["nope".to_string()])));
 }
 
 #[tokio::test(start_paused = true)]
