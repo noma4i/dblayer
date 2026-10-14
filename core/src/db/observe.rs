@@ -36,6 +36,7 @@ pub(crate) struct Observers {
     groups: HashMap<String, Group>,
     by_row: HashMap<RowRef, BTreeSet<String>>,
     pub(crate) entities: HashMap<String, EntityGroup>,
+    pub(crate) warm_ids: HashSet<u64>,
 }
 
 impl Observers {
@@ -137,11 +138,11 @@ impl Observers {
     }
 
     pub(crate) fn query_count(&self) -> usize {
-        self.groups.len()
+        self.groups.values().filter(|group| group.subscribers.iter().any(|(id, _)| !self.warm_ids.contains(id))).count()
     }
 
     pub(crate) fn subscription_count(&self) -> usize {
-        self.groups.values().map(|group| group.subscribers.len()).sum::<usize>() + self.entities.len()
+        self.groups.values().flat_map(|group| &group.subscribers).filter(|(id, _)| !self.warm_ids.contains(id)).count() + self.entities.len()
     }
 }
 
@@ -152,11 +153,18 @@ pub struct ObserverHandle {
     subscriber: Arc<Subscriber>,
 }
 
+impl ObserverHandle {
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+}
+
 impl Drop for ObserverHandle {
     fn drop(&mut self) {
         self.subscriber.cancel();
         let Some(shared) = self.shared.upgrade() else { return };
         let mut observers = locked(&shared.observers);
+        observers.warm_ids.remove(&self.id);
         let Some(group) = observers.groups.get_mut(&self.group) else { return };
         group.subscribers.retain(|(id, _)| *id != self.id);
         if group.subscribers.is_empty() {

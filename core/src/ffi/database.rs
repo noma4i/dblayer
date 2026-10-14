@@ -87,6 +87,18 @@ impl Database {
         let row_id = id(&row_id)?;
         self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, listener)
     }
+    pub fn peek_row(&self, model: String, row_id: String) -> Result<Option<String>, DbError> {
+        Ok(self.db.peek_row(&model, &id(&row_id)?).map(|row| row_json(&row)))
+    }
+    pub fn peek_query(&self, query_json: String) -> Result<Option<LiveChange>, DbError> {
+        let (query, _) = self.parsed_query(&query_json)?;
+        Ok(self.db.peek_query(&query).map(|peeked| LiveChange::whole(peeked.revision, peeked.rows.iter().map(row_json).collect())))
+    }
+    pub async fn warm(&self, query_json: String) -> Result<(), DbError> {
+        let (query, _) = self.parsed_query(&query_json)?;
+        let db = self.db.clone();
+        blocking(move || db.warm(&query)).await
+    }
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
     pub fn subscription_census(&self) -> SubscriptionCensus {
         let census = self.db.observer_census();
@@ -280,7 +292,7 @@ impl Database {
     fn send_writes(&self) {
         if let (Some(sync), Ok(executor)) = (self.sync.clone(), executor()) { executor.spawn(async move { let _ = sync.flush().await; }); }
     }
-    fn connect_json(&self, json: &str, count: bool, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
+    fn parsed_query(&self, json: &str) -> Result<(Query, Option<(String, Map<String, Value>)>), DbError> {
         let description: Value = serde_json::from_str(json)?;
         let mut query: Query = serde_json::from_value(description.clone())?;
         let remote = description["relation"].as_str().map(|name| -> Result<_, DbError> {
@@ -292,6 +304,10 @@ impl Database {
                 (name.to_string(), params)
             }))
         }).transpose()?.flatten();
+        Ok((query, remote))
+    }
+    fn connect_json(&self, json: &str, count: bool, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
+        let (query, remote) = self.parsed_query(json)?;
         self.connect(query, remote, count, listener)
     }
     fn connect(&self, query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
@@ -299,6 +315,9 @@ impl Database {
         let (latest, _) = tokio::sync::watch::channel(None);
         let post = latest.clone();
         let callback = listener.clone();
+        if !count {
+            let _ = self.db.warm(&query);
+        }
         let observer = if count {
             self.db.observe_count(query.clone(), move |change| {
                 let value = LiveChange::counted(change.revision, change.count);

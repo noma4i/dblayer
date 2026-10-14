@@ -50,3 +50,24 @@ fn inv_panic_01_live_and_state_subscriptions_cancel_after_a_poisoned_lock() {
     crate::db::fixtures::poison(&state.task);
     state.cancel();
 }
+
+#[test]
+fn a_live_query_leaves_its_rows_to_peek_and_no_subscription() {
+    let (db, ids) = with_rows(3);
+    let query = r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#;
+    assert!(db.peek_query(query.into()).unwrap().is_none());
+    let tape = Arc::new(Tape(Mutex::default()));
+    let live = db.live_query(query.into(), tape.clone()).unwrap();
+    db.db.settle();
+    live.cancel();
+    drop(live);
+    let peeked = db.peek_query(query.into()).unwrap().unwrap();
+    assert_eq!((peeked.rows.len(), peeked.full), (3, true));
+    assert_eq!(peeked.revision, tape.0.lock().unwrap()[0].revision);
+    assert_eq!((db.subscription_census().subscriptions, db.subscription_census().observed_queries), (0, 0));
+    db.update("Moment".into(), ids[0].clone(), r#"{"text":"zz"}"#.into()).unwrap();
+    db.db.settle();
+    let after = db.peek_query(query.into()).unwrap().unwrap();
+    assert!(after.revision > peeked.revision);
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&after.rows[2]).unwrap()["text"], "zz");
+}

@@ -14,6 +14,7 @@ use crate::schema::{validate_models, AssociationKind, AssociationSpec, ModelSpec
 use crate::store::{Reader, Store, StoreError, StoreEvent};
 
 use super::cache::RowCache;
+use super::warm::Warm;
 use super::dispatch::{Dispatch, Event};
 use super::ephemeral::Ephemerals;
 use super::error::DbError;
@@ -40,6 +41,7 @@ pub(crate) struct Shared {
     pub pointer_guards: BTreeMap<String, Vec<AssociationSpec>>,
     pub cache: Arc<Mutex<RowCache>>,
     pub observers: Mutex<Observers>,
+    pub warm: Mutex<Warm>,
     pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
@@ -135,6 +137,7 @@ impl Db {
             pointer_guards,
             cache,
             observers: Mutex::new(Observers::default()),
+            warm: Mutex::new(Warm::default()),
             counters: Arc::new(Mutex::new(Counters::default())),
             executor: Executor::new(dispatch.busy.clone()),
             dispatch: dispatch.clone(),

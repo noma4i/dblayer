@@ -24,6 +24,22 @@ struct BridgeProbeTests {
   }
 
   @Test
+  func aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() async throws {
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    #expect(Moment.recent.cached() == nil)
+    let moment = try await Moment.create(text: "m")
+    try await Moment.recent.warm()
+    let warm = try #require(Moment.recent.cached())
+    #expect(warm.value.map(\.id) == [moment.id] && warm.value.first?.text == "m")
+    #expect(Moment.recent.cachedRow("ghost") == nil)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    #expect(Moment.recent.cached() == nil)
+    _ = try await Moment.create(text: "n")
+    #expect(await Moment.recent.live.current().count == 1)
+    #expect(Moment.recent.cached()?.value.first?.text == "n")
+  }
+
+  @Test
   func aLocalWriteReachesTheTypedLiveRow() async throws {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let changes = Cursor(await Moment.recent.live.stream())

@@ -85,6 +85,21 @@ public struct Query<Model: DBModel>: Sendable {
     listSource(initial: nil, open: { listener in try DB.database.liveFind(model: Model.modelName, rowId: id, listener: listener) }) { (applied: ListApplied<Model>, _) in applied.rows.first }
   }
 
+  /// The rows of this query from memory, or nil when the query is not warm. It reads no database file, so it is safe on the main thread. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows.
+  public func cached() -> Cached<[Model]>? {
+    guard let change = try? DB.database.peekQuery(queryJson: json) else { return nil }
+    return Cached(value: change.rows.compactMap { try? Model.decode($0) }, revision: change.revision)
+  }
+
+  /// One row from the row cache, or nil when it is not cached. Nil does not mean that the row does not exist.
+  public func cachedRow(_ id: String) -> Model? {
+    guard let row = try? DB.database.peekRow(model: Model.modelName, rowId: id) else { return nil }
+    return try? Model.decode(row)
+  }
+
+  /// Reads the query once and keeps its rows in memory, so that `cached()` answers at once. The library keeps the latest queries warm and drops the oldest.
+  public func warm() async throws { try await DB.database.warm(queryJson: json) }
+
   public func load() async throws { try await DB.database.load(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
   public func refresh() async throws { try await DB.database.refresh(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
   @discardableResult public func loadMore() async throws -> Bool { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
@@ -103,6 +118,11 @@ public struct Query<Model: DBModel>: Sendable {
       return { subscription.cancel() }
     }
   }
+}
+
+public struct Cached<Value: Sendable>: Sendable {
+  public let value: Value
+  public let revision: Int64
 }
 
 public struct Snapshot<Model: DBModel>: Sendable {

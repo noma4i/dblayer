@@ -32,6 +32,23 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() = bounded {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        assertNull(Moment.recent.cached())
+        val moment = Moment.create(text = "m")
+        Moment.recent.warm()
+        val warm = Moment.recent.cached()!!
+        assertEquals(listOf(moment.id), warm.value.map { it.id })
+        assertEquals("m", warm.value.first().text)
+        assertNull(Moment.recent.cachedRow("ghost"))
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        assertNull(Moment.recent.cached())
+        Moment.create(text = "n")
+        assertEquals(1, withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.size)
+        assertEquals("n", Moment.recent.cached()!!.value.first().text)
+    }
+
+    @Test
     fun anEntityOfARecordThatAnotherRecordRefersToFollowsItsCreateAndDestroy() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val message = Message.create(chatId = "c", authorId = "u1", text = "hi")

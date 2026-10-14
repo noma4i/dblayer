@@ -46,6 +46,29 @@ val chat by Chat.find(chatId).collectAsLive()
 // chat.author.typing changes -> the chat row is in diff.updated
 ```
 
+## Reading before the first delivery
+
+A new subscription delivers its first rows from a library thread, so a screen that has to show cached rows at once cannot wait for it. `cached()` answers from memory, without reading the database file, so it is safe on the main thread. It gives `nil` (Swift) or `null` (Kotlin) when the query is not warm. That means "not in memory", never "no rows".
+
+```swift
+let list = Moment.recent
+if let cached = list.cached() { show(cached.value, revision: cached.revision) }   // rows and revision, or nil
+try await list.warm()                    // read once, keep in memory
+let row = list.cachedRow(id)             // one row from the row cache, or nil
+```
+
+```kotlin
+val list = Moment.recent
+list.cached()?.let { show(it.value, it.revision) }   // rows and revision, or null
+list.warm()                              // read once, keep in memory
+val row = list.cachedRow(id)             // one row from the row cache, or null
+```
+
+- A query is warm after `warm()` and after any read of it through `live` or `snapshots`, even when that read has ended. The library keeps the 16 latest queries warm and drops the oldest. A warm query is not a subscription: the subscription count does not include it.
+- A warm query follows every commit. `revision` grows with each commit that reaches the rows, so you can tell a stale value from a newer one. The value can be one delivery behind a commit that you just made.
+- `cachedRow` reads the row cache, which holds a limited number of rows. A miss does not say the row is absent.
+- `cached()` and `cachedRow` count `peek_hits` and `peek_misses` in the counters and read no rows from storage.
+
 ## What a query depends on
 
 A query depends on its model, so a commit of any row of the model makes the library check it. One shape is cheaper: a query for a known set of ids is bound to those rows, not to the model. A commit of any other row does not read it and does not wake it.
