@@ -34,9 +34,7 @@ data class Chat(
                 lastMessageAt?.let { put("lastMessageAt", jsonValue(it)) }
                 lastMessageId?.let { put("lastMessageId", jsonValue(it)) }
             }
-            val args = buildJsonObject {
-            }
-            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Chat", values.toString(), args.toString()))
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Chat", values.toString(), "{}"))
         }
     }
     suspend fun update(title: String? = null, lastMessageAt: String? = null, lastMessageId: String? = null): Chat {
@@ -45,9 +43,7 @@ data class Chat(
             lastMessageAt?.let { put("lastMessageAt", jsonValue(it)) }
             lastMessageId?.let { put("lastMessageId", jsonValue(it)) }
         }
-        val args = buildJsonObject {
-        }
-        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), args.toString()))
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
     val messages get() = related("messages", Message.serializer())
     val lastMessage get() = related("lastMessage", Message.serializer())
@@ -103,9 +99,7 @@ data class Message(
             text?.let { put("text", jsonValue(it)) }
             createdAt?.let { put("createdAt", jsonValue(it)) }
         }
-        val args = buildJsonObject {
-        }
-        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), args.toString()))
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
     val chat get() = related("chat", Chat.serializer())
 }
@@ -156,9 +150,7 @@ data class Moment(
                 text?.let { put("text", jsonValue(it)) }
                 media?.let { put("media", jsonValue(it)) }
             }
-            val args = buildJsonObject {
-            }
-            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Moment", values.toString(), args.toString()))
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Moment", values.toString(), "{}"))
         }
     }
     suspend fun update(uuid: String? = null, userId: String? = null, text: String? = null, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String? = null): Moment {
@@ -170,9 +162,7 @@ data class Moment(
             media?.let { put("media", jsonValue(it)) }
             createdAt?.let { put("createdAt", jsonValue(it)) }
         }
-        val args = buildJsonObject {
-        }
-        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), args.toString()))
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
     suspend fun like(): Moment = act("like", JsonObject(parseJsonObject("""{"likedByMe":true}""") + mapOf()), JsonObject(mapOf()), serializer())
     suspend fun share(): ActionAnswer<Moment, MomentShareResult> = actAnswering("share", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf()), serializer(), MomentShareResult.serializer())
@@ -201,18 +191,14 @@ data class NestedReference(
             val values_ = buildJsonObject {
                 values?.let { put("values", jsonValue(it)) }
             }
-            val args = buildJsonObject {
-            }
-            return dbJson.decodeFromString(serializer(), DBlayer.database.create("NestedReference", values_.toString(), args.toString()))
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("NestedReference", values_.toString(), "{}"))
         }
     }
     suspend fun update(values: List<NestedValue>? = null): NestedReference {
         val values_ = buildJsonObject {
             values?.let { put("values", jsonValue(it)) }
         }
-        val args = buildJsonObject {
-        }
-        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values_.toString(), args.toString()))
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values_.toString(), "{}"))
     }
 }
 
@@ -243,9 +229,7 @@ data class NestedSample(
                 tree?.let { put("tree", jsonValue(it)) }
                 replyTo?.let { put("replyTo", jsonValue(it)) }
             }
-            val args = buildJsonObject {
-            }
-            return dbJson.decodeFromString(serializer(), DBlayer.database.create("NestedSample", values_.toString(), args.toString()))
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("NestedSample", values_.toString(), "{}"))
         }
     }
     suspend fun update(value: NestedValue? = null, values: List<NestedValue>? = null, tree: NestedTree? = null, replyTo: MessageReplyNode? = null): NestedSample {
@@ -255,9 +239,7 @@ data class NestedSample(
             tree?.let { put("tree", jsonValue(it)) }
             replyTo?.let { put("replyTo", jsonValue(it)) }
         }
-        val args = buildJsonObject {
-        }
-        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values_.toString(), args.toString()))
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values_.toString(), "{}"))
     }
 }
 
@@ -291,9 +273,7 @@ data class Presence(
                 put("userId", jsonValue(userId))
                 put("room", jsonValue(room))
             }
-            val args = buildJsonObject {
-            }
-            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Presence", values.toString(), args.toString()))
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Presence", values.toString(), "{}"))
         }
     }
     suspend fun update(userId: String? = null, room: String? = null): Presence {
@@ -301,9 +281,7 @@ data class Presence(
             userId?.let { put("userId", jsonValue(it)) }
             room?.let { put("room", jsonValue(it)) }
         }
-        val args = buildJsonObject {
-        }
-        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), args.toString()))
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
     val user get() = related("user", User.serializer())
 }
@@ -326,18 +304,14 @@ data class StorageRow(
             val values = buildJsonObject {
                 put("record", jsonValue(record))
             }
-            val args = buildJsonObject {
-            }
-            return dbJson.decodeFromString(serializer(), DBlayer.database.create("StorageRow", values.toString(), args.toString()))
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("StorageRow", values.toString(), "{}"))
         }
     }
     suspend fun update(record: String? = null): StorageRow {
         val values = buildJsonObject {
             record?.let { put("record", jsonValue(it)) }
         }
-        val args = buildJsonObject {
-        }
-        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), args.toString()))
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
 }
 
@@ -372,9 +346,7 @@ data class User(
                 avatar?.let { put("avatar", jsonValue(it)) }
                 birthday?.let { put("birthday", jsonValue(it)) }
             }
-            val args = buildJsonObject {
-            }
-            return dbJson.decodeFromString(serializer(), DBlayer.database.create("User", values.toString(), args.toString()))
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("User", values.toString(), "{}"))
         }
     }
     suspend fun update(name: String? = null, avatar: JsonElement? = null, birthday: String? = null): User {
@@ -383,9 +355,7 @@ data class User(
             avatar?.let { put("avatar", jsonValue(it)) }
             birthday?.let { put("birthday", jsonValue(it)) }
         }
-        val args = buildJsonObject {
-        }
-        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), args.toString()))
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
     suspend fun set(typing: Boolean? = null, mood: String? = null) {
         DBlayer.database.setEphemeral(modelName, id, buildJsonObject {
@@ -419,9 +389,7 @@ data class Vibe(
                 put("userId", jsonValue(userId))
                 put("kind", jsonValue(kind))
             }
-            val args = buildJsonObject {
-            }
-            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Vibe", values.toString(), args.toString()))
+            return dbJson.decodeFromString(serializer(), DBlayer.database.create("Vibe", values.toString(), "{}"))
         }
     }
     suspend fun update(momentId: String? = null, userId: String? = null, kind: String? = null): Vibe {
@@ -430,9 +398,7 @@ data class Vibe(
             userId?.let { put("userId", jsonValue(it)) }
             kind?.let { put("kind", jsonValue(it)) }
         }
-        val args = buildJsonObject {
-        }
-        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), args.toString()))
+        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
 }
 

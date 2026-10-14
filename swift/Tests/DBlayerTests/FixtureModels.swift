@@ -31,19 +31,17 @@ public struct Chat: DBModel {
     }
     public static func create(title: String, lastMessageAt: String? = nil, lastMessageId: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         values["title"] = JSONValue.encode(title)
         if let value = lastMessageAt { values["lastMessageAt"] = JSONValue.encode(value) }
         if let value = lastMessageId { values["lastMessageId"] = JSONValue.encode(value) }
-        return try await create(values: values, args: args)
+        return try await create(values: values)
     }
     public func update(title: String? = nil, lastMessageAt: String?? = nil, lastMessageId: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = title { values["title"] = JSONValue.encode(value) }
         if let value = lastMessageAt { values["lastMessageAt"] = JSONValue.encode(value) }
         if let value = lastMessageId { values["lastMessageId"] = JSONValue.encode(value) }
-        return try await update(values: values, args: args)
+        return try await update(values: values)
     }
     public var messages: LiveSource<[Message]> { related("messages", as: Message.self) }
     public var lastMessage: LiveSource<[Message]> { related("lastMessage", as: Message.self) }
@@ -97,12 +95,11 @@ public struct Message: DBModel {
     }
     public func update(chatId: String? = nil, authorId: String? = nil, text: String? = nil, createdAt: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = chatId { values["chatId"] = JSONValue.encode(value) }
         if let value = authorId { values["authorId"] = JSONValue.encode(value) }
         if let value = text { values["text"] = JSONValue.encode(value) }
         if let value = createdAt { values["createdAt"] = JSONValue.encode(value) }
-        return try await update(values: values, args: args)
+        return try await update(values: values)
     }
     public var chat: LiveSource<[Chat]> { related("chat", as: Chat.self) }
 }
@@ -159,21 +156,19 @@ public struct Moment: DBModel {
     }
     public static func create(text: String? = nil, media: JSONValue? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = text { values["text"] = JSONValue.encode(value) }
         if let value = media { values["media"] = JSONValue.encode(value) }
-        return try await create(values: values, args: args)
+        return try await create(values: values)
     }
     public func update(uuid: String? = nil, userId: String?? = nil, text: String?? = nil, likedByMe: Bool? = nil, media: JSONValue? = nil, createdAt: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = uuid { values["uuid"] = JSONValue.encode(value) }
         if let value = userId { values["userId"] = JSONValue.encode(value) }
         if let value = text { values["text"] = JSONValue.encode(value) }
         if let value = likedByMe { values["likedByMe"] = JSONValue.encode(value) }
         if let value = media { values["media"] = JSONValue.encode(value) }
         if let value = createdAt { values["createdAt"] = JSONValue.encode(value) }
-        return try await update(values: values, args: args)
+        return try await update(values: values)
     }
     public var author: LiveSource<[User]> { related("author", as: User.self) }
     public var vibes: LiveSource<[Vibe]> { related("vibes", as: Vibe.self) }
@@ -211,15 +206,13 @@ public struct NestedReference: DBModel {
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func create(values: [NestedValue]? = nil) async throws -> Self {
         var values_: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = values { values_["values"] = JSONValue.encode(value) }
-        return try await create(values: values_, args: args)
+        return try await create(values: values_)
     }
     public func update(values: [NestedValue]? = nil) async throws -> Self {
         var values_: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = values { values_["values"] = JSONValue.encode(value) }
-        return try await update(values: values_, args: args)
+        return try await update(values: values_)
     }
 }
 
@@ -251,21 +244,19 @@ public struct NestedSample: DBModel {
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func create(value: NestedValue? = nil, values: [NestedValue]? = nil, tree: NestedTree? = nil, replyTo: MessageReplyNode? = nil) async throws -> Self {
         var values_: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = value { values_["value"] = JSONValue.encode(value) }
         if let value = values { values_["values"] = JSONValue.encode(value) }
         if let value = tree { values_["tree"] = JSONValue.encode(value) }
         if let value = replyTo { values_["replyTo"] = JSONValue.encode(value) }
-        return try await create(values: values_, args: args)
+        return try await create(values: values_)
     }
     public func update(value: NestedValue?? = nil, values: [NestedValue]? = nil, tree: NestedTree?? = nil, replyTo: MessageReplyNode?? = nil) async throws -> Self {
         var values_: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = value { values_["value"] = JSONValue.encode(value) }
         if let value = values { values_["values"] = JSONValue.encode(value) }
         if let value = tree { values_["tree"] = JSONValue.encode(value) }
         if let value = replyTo { values_["replyTo"] = JSONValue.encode(value) }
-        return try await update(values: values_, args: args)
+        return try await update(values: values_)
     }
 }
 
@@ -300,17 +291,15 @@ public struct Presence: DBModel {
     }
     public static func create(userId: String, room: String) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         values["userId"] = JSONValue.encode(userId)
         values["room"] = JSONValue.encode(room)
-        return try await create(values: values, args: args)
+        return try await create(values: values)
     }
     public func update(userId: String? = nil, room: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = userId { values["userId"] = JSONValue.encode(value) }
         if let value = room { values["room"] = JSONValue.encode(value) }
-        return try await update(values: values, args: args)
+        return try await update(values: values)
     }
     public var user: LiveSource<[User]> { related("user", as: User.self) }
 }
@@ -334,15 +323,13 @@ public struct StorageRow: DBModel {
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func create(record: String) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         values["record"] = JSONValue.encode(record)
-        return try await create(values: values, args: args)
+        return try await create(values: values)
     }
     public func update(record: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = record { values["record"] = JSONValue.encode(value) }
-        return try await update(values: values, args: args)
+        return try await update(values: values)
     }
 }
 
@@ -380,19 +367,17 @@ public struct User: DBSingleton {
     public static var singleton: Query<Self> { profile }
     public static func create(name: String, avatar: JSONValue? = nil, birthday: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         values["name"] = JSONValue.encode(name)
         if let value = avatar { values["avatar"] = JSONValue.encode(value) }
         if let value = birthday { values["birthday"] = JSONValue.encode(value) }
-        return try await create(values: values, args: args)
+        return try await create(values: values)
     }
     public func update(name: String? = nil, avatar: JSONValue?? = nil, birthday: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = name { values["name"] = JSONValue.encode(value) }
         if let value = avatar { values["avatar"] = JSONValue.encode(value) }
         if let value = birthday { values["birthday"] = JSONValue.encode(value) }
-        return try await update(values: values, args: args)
+        return try await update(values: values)
     }
     public func set(typing: Bool? = nil, mood: String?? = nil) async throws {
         var values: [String: JSONValue] = [:]
@@ -427,19 +412,17 @@ public struct Vibe: DBModel {
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func create(momentId: String, userId: String, kind: String) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         values["momentId"] = JSONValue.encode(momentId)
         values["userId"] = JSONValue.encode(userId)
         values["kind"] = JSONValue.encode(kind)
-        return try await create(values: values, args: args)
+        return try await create(values: values)
     }
     public func update(momentId: String? = nil, userId: String? = nil, kind: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        var args: [String: JSONValue] = [:]
         if let value = momentId { values["momentId"] = JSONValue.encode(value) }
         if let value = userId { values["userId"] = JSONValue.encode(value) }
         if let value = kind { values["kind"] = JSONValue.encode(value) }
-        return try await update(values: values, args: args)
+        return try await update(values: values)
     }
 }
 

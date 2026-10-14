@@ -58,3 +58,12 @@ fn the_generated_calls_take_the_args_after_the_fields() {
         assert!(kotlin.contains(expected), "kotlin lacks {expected}");
     }
 }
+
+#[test]
+fn a_model_without_args_emits_no_args_variable() {
+    let models = parse_models(&model("  create with: CreateSample, input: { name: :name }\n  update with: UpdateSample")).unwrap();
+    let swift = emit_swift(&models);
+    assert!(!swift.contains("var args") && !swift.contains("args: args"), "swift keeps an unused args variable");
+    let kotlin = emit_kotlin(&models);
+    assert!(kotlin.contains("create(\"Sample\", values.toString(), \"{}\")") && kotlin.contains("update(modelName, id, values.toString(), \"{}\")"), "kotlin builds an empty args object");
+}
