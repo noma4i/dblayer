@@ -106,15 +106,9 @@ pub fn lists(db: &Db, findings: &Findings) {
                 problems.push(format!("scope {scope} holds row {id} that is not stored"));
             }
         }
-        let mut windows = connection.prepare("SELECT key, ids FROM query_window")?;
-        let rows: Vec<(String, Vec<u8>)> = windows.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
-        for (key, bytes) in rows {
-            let ids: Vec<Value> = serde_json::from_slice(&bytes).unwrap_or_default();
-            let texts: Vec<String> = ids.iter().filter_map(|id| id.as_str().map(str::to_string)).collect();
-            let unique: HashSet<&String> = texts.iter().collect();
-            if unique.len() != texts.len() {
-                problems.push(format!("window {key} lists a row twice"));
-            }
+        let mut windows = connection.prepare("SELECT key FROM query_window_row GROUP BY key HAVING COUNT(*) != COUNT(DISTINCT row_id)")?;
+        for key in windows.query_map([], |row| row.get::<_, String>(0))? {
+            problems.push(format!("window {} lists a row twice", key?));
         }
         Ok(problems)
     });

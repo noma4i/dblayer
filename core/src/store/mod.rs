@@ -204,6 +204,8 @@ mod value_tests;
 #[cfg(test)]
 mod outbox_storage_tests;
 #[cfg(test)]
+mod cache_storage_tests;
+#[cfg(test)]
 mod tombstones_tests;
 #[cfg(test)]
 mod windows_tests;

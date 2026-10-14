@@ -1,22 +1,14 @@
 use std::collections::BTreeMap;
 
-use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
+use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::ddl::{fingerprint, fts_tables, manifest_read, manifest_stamp, manifest_write, RESET_INTENT_KEY, REVISION_SEQ_KEY};
+use crate::ddl::{fingerprint, fts_tables, manifest_read, manifest_stamp, manifest_write, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ScopeKey;
 use crate::operation::{delete_operation, quarantine_add, read_value, Operation, QuarantineReason};
 use crate::syncstate::clear_sync;
 
 use super::{Inner, Store, StoreError, StoreEvent};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ResetIntent {
-    mode: String,
-    models: Vec<String>,
-    started_at: i64,
-}
 
 fn like_pattern(prefix: &str) -> String {
     let mut pattern = String::new();
@@ -31,8 +23,11 @@ fn like_pattern(prefix: &str) -> String {
 }
 
 pub(crate) fn write_intent(connection: &Connection, mode: &str, models: &[String], now: i64) -> Result<(), StoreError> {
-    let intent = ResetIntent { mode: mode.to_string(), models: models.to_vec(), started_at: now };
-    manifest_write(connection, RESET_INTENT_KEY, &serde_json::to_string(&intent)?)?;
+    clear_intent(connection)?;
+    connection.execute("INSERT INTO reset_intent (id, mode, started_at) VALUES (1, ?1, ?2)", params![mode, now])?;
+    for (pos, model) in models.iter().enumerate() {
+        connection.execute("INSERT INTO reset_intent_model (pos, model) VALUES (?1, ?2)", params![pos as i64, model])?;
+    }
     Ok(())
 }
 
@@ -42,8 +37,13 @@ fn bump_revision(connection: &Connection) -> Result<i64, StoreError> {
     Ok(current + 1)
 }
 
+pub(crate) fn pending_intent(connection: &Connection) -> Result<Option<String>, StoreError> {
+    Ok(connection.query_row("SELECT mode FROM reset_intent", [], |row| row.get(0)).optional()?)
+}
+
 pub(crate) fn clear_intent(connection: &Connection) -> Result<(), StoreError> {
-    connection.execute("DELETE FROM manifest WHERE key = ?1", params![RESET_INTENT_KEY])?;
+    connection.execute("DELETE FROM reset_intent", [])?;
+    connection.execute("DELETE FROM reset_intent_model", [])?;
     Ok(())
 }
 
@@ -72,10 +72,9 @@ pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str
     clear_model(connection, model)?;
     connection.execute("DELETE FROM tombstone WHERE model = ?1", params![model])?;
     connection.execute("DELETE FROM local_pending WHERE model = ?1", params![model])?;
-    connection.execute(
-        "DELETE FROM query_window WHERE key LIKE ?1 ESCAPE '\\'",
-        params![like_pattern(ScopeKey::compose(&[model]).as_str())],
-    )?;
+    for table in ["query_window_row", "query_window"] {
+        connection.execute(&format!("DELETE FROM {table} WHERE key LIKE ?1 ESCAPE '\\'"), params![like_pattern(ScopeKey::compose(&[model]).as_str())])?;
+    }
     Ok(())
 }
 
@@ -88,7 +87,7 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
         }
         if let Some(reason) = quarantined {
             let input = read_value(connection, seq, "input")?.unwrap_or(serde_json::Value::Null);
-            quarantine_add(connection, &owner, &serde_json::to_vec(&input)?, reason)?;
+            quarantine_add(connection, Some(&owner), &input, reason)?;
         }
         delete_operation(connection, seq)?;
     }
@@ -110,7 +109,7 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
             connection.execute_batch(&format!("DELETE FROM {table}"))?;
         }
     }
-    connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window; DELETE FROM local_pending;")?;
+    connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window; DELETE FROM query_window_row; DELETE FROM local_pending;")?;
     clear_sync(connection, None)?;
     clear_all(connection)?;
     Ok(())
@@ -121,21 +120,19 @@ pub(crate) fn current_fingerprints(inner: &Inner) -> BTreeMap<String, String> {
 }
 
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {
-    let Some(raw) = manifest_read(&inner.connection, RESET_INTENT_KEY)? else { return Ok(false) };
-    let Ok(intent) = serde_json::from_str::<ResetIntent>(&raw) else {
+    let Some(mode) = pending_intent(&inner.connection)? else { return Ok(false) };
+    let models: Vec<String> = inner.connection.prepare("SELECT model FROM reset_intent_model ORDER BY pos")?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    if !matches!(mode.as_str(), "cache_only" | "incompatible") {
         let transaction = inner.connection.unchecked_transaction()?;
-        transaction.execute(
-            "INSERT INTO quarantine (model, payload, reason) VALUES (NULL, ?1, 'corrupt-reset-intent')",
-            params![raw.as_bytes()],
-        )?;
+        quarantine_add(&transaction, None, &serde_json::json!({ "mode": mode }), QuarantineReason::CorruptResetIntent)?;
         clear_intent(&transaction)?;
         transaction.commit()?;
         return Ok(false);
-    };
+    }
     let transaction = inner.connection.unchecked_transaction()?;
-    match intent.mode.as_str() {
+    match mode.as_str() {
         "cache_only" => {
-            for model in &intent.models {
+            for model in &models {
                 let table = crate::ddl::table_name(model);
                 wipe_model_cache(&transaction, model, &table, true)?;
             }
@@ -195,6 +192,6 @@ impl Store {
     #[cfg(test)]
     pub fn reset_intent(&self) -> Result<Option<String>, StoreError> {
         let inner = self.lock();
-        Ok(manifest_read(&inner.connection, RESET_INTENT_KEY)?)
+        pending_intent(&inner.connection)
     }
 }

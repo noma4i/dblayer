@@ -102,11 +102,3 @@ fn window_key_carries_direction() {
     assert_eq!(window_key("inbox", PageDirection::Forward), "inbox:forward");
     assert_eq!(window_key("inbox", PageDirection::Backward), "inbox:backward");
 }
-
-#[test]
-fn window_ids_decode_filters_non_strings() {
-    let (store, _) = booted_store();
-    store.save_window(&window("k")).unwrap();
-    exec(&store, "UPDATE query_window SET ids = CAST('[\"a\",1]' AS BLOB) WHERE key = 'k'");
-    assert_eq!(store.window("k").unwrap().unwrap().ids, vec!["a"]);
-}

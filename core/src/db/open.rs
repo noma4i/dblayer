@@ -262,7 +262,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
         for id in plan.iter().filter_map(|action| match action { FsckAction::QuarantineOrphan(id) => Some(id), _ => None }) {
             for spec in models {
                 if let Some(stored) = reader.stored_row(spec.key.as_str(), id.as_str())? {
-                    let payload = serde_json::to_vec(&stored.row).map_err(StoreError::from)?;
+                    let payload = serde_json::Value::Object(stored.row.clone());
                     let info = inner.models.get(spec.key.as_str()).ok_or_else(|| StoreError::UnknownModel(spec.key.as_str().to_string()))?;
                     let tables = info.layout.child_tables().into_iter().chain([table_name(spec.key.as_str())]).collect();
                     let search = (!info.search.is_empty()).then(|| crate::ddl::fts_name(spec.key.as_str()));

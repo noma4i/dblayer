@@ -122,7 +122,7 @@ fn insert_message(connection: &Connection, id: &str) {
 fn orphans() -> Orphans {
     ["temp-orphan", "temp-kept"]
         .iter()
-        .map(|id| (RowId::new(id).unwrap(), Orphan { model: "messages".into(), tables: vec!["row_messages".into()], search: None, payload: format!("{{\"id\":\"{id}\"}}").into_bytes() }))
+        .map(|id| (RowId::new(id).unwrap(), Orphan { model: "messages".into(), tables: vec!["row_messages".into()], search: None, payload: json!({"id": id}) }))
         .collect()
 }
 
@@ -137,8 +137,11 @@ fn apply_fsck_quarantines_and_removes_orphan_temp_rows() {
     assert_eq!(left, vec!["temp-kept"]);
     let members: i64 = connection.query_row("SELECT COUNT(*) FROM scope_member WHERE row_id = 'temp-orphan'", [], |r| r.get(0)).unwrap();
     assert_eq!(members, 0);
-    let entry: (String, String, Vec<u8>) = connection.query_row("SELECT reason, model, payload FROM quarantine", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
-    assert_eq!((entry.0.as_str(), entry.1.as_str(), entry.2), ("orphan-temp-row", "messages", b"{\"id\":\"temp-orphan\"}".to_vec()));
+    let entry: (String, String) = connection.query_row("SELECT reason, model FROM quarantine", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((entry.0.as_str(), entry.1.as_str()), ("orphan-temp-row", "messages"));
+    let seq: i64 = connection.query_row("SELECT seq FROM quarantine", [], |r| r.get(0)).unwrap();
+    let kept = crate::nodes::read_trees(&connection, "quarantine_value", &["seq"], "seq = ?1", &[rusqlite::types::Value::Integer(seq)]).unwrap();
+    assert_eq!(kept.into_iter().map(|(_, value)| value).collect::<Vec<_>>(), [json!({"id": "temp-orphan"})]);
 }
 
 fn create_operation(connection: &Connection, temp: &str, input: &serde_json::Value) -> OperationId {
@@ -185,7 +188,7 @@ fn apply_fsck_removes_the_search_row_of_an_orphan() {
     notes.fields[1].searchable = true;
     create_model_tables(&connection, &[notes]).unwrap();
     connection.execute_batch("INSERT INTO row_notes (id, revision, born_rev) VALUES ('temp-orphan', 1, 1); INSERT INTO fts_row_notes (rowid, c0) VALUES (1, 'hello');").unwrap();
-    let orphan = Orphan { model: "notes".into(), tables: vec!["row_notes".into()], search: Some("fts_row_notes".into()), payload: Vec::new() };
+    let orphan = Orphan { model: "notes".into(), tables: vec!["row_notes".into()], search: Some("fts_row_notes".into()), payload: json!({}) };
     let orphans: Orphans = [(RowId::new("temp-orphan").unwrap(), orphan)].into();
     apply_fsck(&connection, &[FsckAction::QuarantineOrphan(RowId::new("temp-orphan").unwrap())], &orphans).unwrap();
     let left: i64 = connection.query_row("SELECT COUNT(*) FROM fts_row_notes", [], |row| row.get(0)).unwrap();

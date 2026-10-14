@@ -37,7 +37,7 @@ fn user_tables(store: &Store) {
         store,
         "INSERT INTO op (action_key, status, created_at, since) VALUES ('messages:send', 'pending', 1, 1);\
          INSERT INTO op_once (namespace, dedupe_key) VALUES ('messages:send', 'd1');\
-         INSERT INTO quarantine (model, payload, reason) VALUES ('messages', x'00', 'test');",
+         INSERT INTO quarantine (model, reason) VALUES ('messages', 'test');",
     );
 }
 

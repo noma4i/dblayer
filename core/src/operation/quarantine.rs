@@ -1,4 +1,8 @@
+use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, Connection};
+use serde_json::Value;
+
+use crate::nodes::write_tree;
 #[cfg(test)]
 use std::collections::HashMap;
 
@@ -7,6 +11,7 @@ pub enum QuarantineReason {
     OrphanTempRow,
     ReplaceNormalizeRejected,
     SchemaChanged,
+    CorruptResetIntent,
 }
 
 impl QuarantineReason {
@@ -15,13 +20,16 @@ impl QuarantineReason {
             QuarantineReason::OrphanTempRow => "orphan-temp-row",
             QuarantineReason::ReplaceNormalizeRejected => "replace-normalize-rejected",
             QuarantineReason::SchemaChanged => "schema-changed",
+            QuarantineReason::CorruptResetIntent => "corrupt-reset-intent",
         }
     }
 }
 
-pub fn quarantine_add(connection: &Connection, model: &str, payload: &[u8], reason: QuarantineReason) -> rusqlite::Result<i64> {
-    connection.execute("INSERT INTO quarantine (model, payload, reason) VALUES (?, ?, ?)", params![model, payload, reason.as_str()])?;
-    Ok(connection.last_insert_rowid())
+pub fn quarantine_add(connection: &Connection, model: Option<&str>, payload: &Value, reason: QuarantineReason) -> rusqlite::Result<i64> {
+    connection.execute("INSERT INTO quarantine (model, reason) VALUES (?, ?)", params![model, reason.as_str()])?;
+    let seq = connection.last_insert_rowid();
+    write_tree(connection, "quarantine_value", &["seq"], &[SqlValue::Integer(seq)], payload)?;
+    Ok(seq)
 }
 
 #[cfg(test)]

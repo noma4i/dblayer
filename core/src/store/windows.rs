@@ -62,16 +62,15 @@ pub struct PageInfo {
 
 pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, landed_at: i64) -> Result<(), StoreError> {
     connection.execute(
-        "INSERT INTO query_window (key, cursor, has_next, total, ids, issued, applied, generation, count, landed_at) \
-         VALUES (?1, ?2, ?3, ?10, ?4, ?5, ?6, ?7, ?8, ?9) \
+        "INSERT INTO query_window (key, cursor, has_next, total, issued, applied, generation, count, landed_at) \
+         VALUES (?1, ?2, ?3, ?9, ?4, ?5, ?6, ?7, ?8) \
          ON CONFLICT (key) DO UPDATE SET cursor = excluded.cursor, has_next = excluded.has_next, total = excluded.total, \
-         ids = excluded.ids, issued = excluded.issued, applied = excluded.applied, \
+         issued = excluded.issued, applied = excluded.applied, \
          generation = excluded.generation, count = excluded.count",
         params![
             record.key,
             record.cursor,
             i64::from(record.has_next),
-            serde_json::to_vec(&record.ids)?,
             record.issued,
             record.applied,
             record.generation,
@@ -80,6 +79,11 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
             record.total,
         ],
     )?;
+    connection.prepare_cached("DELETE FROM query_window_row WHERE key = ?1")?.execute(params![record.key])?;
+    let mut insert = connection.prepare_cached("INSERT INTO query_window_row (key, pos, row_id) VALUES (?1, ?2, ?3)")?;
+    for (pos, id) in record.ids.iter().enumerate() {
+        insert.execute(params![record.key, pos as i64, id])?;
+    }
     Ok(())
 }
 
@@ -97,25 +101,24 @@ impl Store {
         let found = inner
             .connection
             .query_row(
-                "SELECT key, cursor, has_next, ids, issued, applied, generation, total FROM query_window WHERE key = ?1",
+                "SELECT key, cursor, has_next, issued, applied, generation, total FROM query_window WHERE key = ?1",
                 params![key],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, Option<String>>(1)?,
                         row.get::<_, i64>(2)?,
-                        row.get::<_, Vec<u8>>(3)?,
+                        row.get::<_, i64>(3)?,
                         row.get::<_, i64>(4)?,
                         row.get::<_, i64>(5)?,
-                        row.get::<_, i64>(6)?,
-                        row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, Option<i64>>(6)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((key, cursor, has_next, ids, issued, applied, generation, total)) = found else { return Ok(None) };
-        let ids: Vec<serde_json::Value> = serde_json::from_slice(&ids)?;
-        let ids = ids.into_iter().filter_map(|value| value.as_str().map(str::to_string)).collect();
+        let Some((key, cursor, has_next, issued, applied, generation, total)) = found else { return Ok(None) };
+        let mut statement = inner.connection.prepare_cached("SELECT row_id FROM query_window_row WHERE key = ?1 ORDER BY pos")?;
+        let ids = statement.query_map(params![key], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
         Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, ids, issued, applied, generation }))
     }
 

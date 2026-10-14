@@ -111,14 +111,14 @@ pub struct Orphan {
     pub model: String,
     pub tables: Vec<String>,
     pub search: Option<String>,
-    pub payload: Vec<u8>,
+    pub payload: Value,
 }
 
 pub type Orphans = std::collections::HashMap<RowId, Orphan>;
 
 fn quarantine_row(connection: &Connection, id: &RowId, orphans: &Orphans) -> rusqlite::Result<bool> {
     let Some(orphan) = orphans.get(id) else { return Ok(false) };
-    quarantine_add(connection, &orphan.model, &orphan.payload, QuarantineReason::OrphanTempRow)?;
+    quarantine_add(connection, Some(&orphan.model), &orphan.payload, QuarantineReason::OrphanTempRow)?;
     if let (Some(search), Some(main)) = (&orphan.search, orphan.tables.last()) {
         connection.execute(&format!("DELETE FROM {search} WHERE rowid = (SELECT rowid FROM {main} WHERE id = ?1)"), [id.as_str()])?;
     }

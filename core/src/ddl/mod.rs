@@ -15,14 +15,13 @@ pub const SCHEMA_VERSION: i64 = 1;
 pub const FORMAT_VERSION_KEY: &str = "format_version";
 pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
-pub const RESET_INTENT_KEY: &str = "reset_intent";
 
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
-const CACHE_TABLES: [&str; 3] = ["scope_member", "tombstone", "query_window"];
+const CACHE_TABLES: [&str; 4] = ["scope_member", "tombstone", "query_window", "query_window_row"];
 
-const CACHE_STATEMENTS: [&str; 7] = [
+const CACHE_STATEMENTS: [&str; 8] = [
     "CREATE TABLE IF NOT EXISTS scope_member (
   model TEXT NOT NULL,
   scope_key TEXT NOT NULL,
@@ -46,7 +45,6 @@ const CACHE_STATEMENTS: [&str; 7] = [
   cursor TEXT,
   has_next INTEGER NOT NULL,
   total INTEGER,
-  ids BLOB NOT NULL,
   issued INTEGER NOT NULL,
   applied INTEGER NOT NULL,
   generation INTEGER NOT NULL,
@@ -54,9 +52,15 @@ const CACHE_STATEMENTS: [&str; 7] = [
   landed_at INTEGER NOT NULL,
   invalidated INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1))
 ) STRICT",
+    "CREATE TABLE IF NOT EXISTS query_window_row (
+  key TEXT NOT NULL,
+  pos INTEGER NOT NULL,
+  row_id TEXT NOT NULL,
+  PRIMARY KEY (key, pos)
+) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 18] = [
+const CORE_STATEMENTS: [&str; 21] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -156,8 +160,28 @@ const CORE_STATEMENTS: [&str; 18] = [
     "CREATE TABLE IF NOT EXISTS quarantine (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   model TEXT,
-  payload BLOB NOT NULL,
   reason TEXT NOT NULL
+) STRICT",
+    "CREATE TABLE IF NOT EXISTS quarantine_value (
+  seq INTEGER NOT NULL,
+  node INTEGER NOT NULL,
+  parent INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT,
+  kind INTEGER NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (seq, node)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS reset_intent (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  mode TEXT NOT NULL,
+  started_at INTEGER NOT NULL
+) STRICT",
+    "CREATE TABLE IF NOT EXISTS reset_intent_model (
+  pos INTEGER PRIMARY KEY,
+  model TEXT NOT NULL
 ) STRICT",
     "CREATE INDEX IF NOT EXISTS quarantine_reason ON quarantine (reason, seq)",
     "CREATE TABLE IF NOT EXISTS file (
@@ -424,7 +448,8 @@ pub fn fingerprint(model: &ModelSpec) -> String {
     relations.sort_by(|left, right| left.name.cmp(right.name));
     let mut composite_indexes: Vec<&Vec<String>> = model.composite_indexes.iter().collect();
     composite_indexes.sort();
-    serde_json::to_string(&ModelFingerprint { fields, relations, composite_indexes }).expect("fingerprint serializes")
+    let text = serde_json::to_string(&ModelFingerprint { fields, relations, composite_indexes }).expect("fingerprint serializes");
+    Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 pub fn fingerprint_key(model: &str) -> String {

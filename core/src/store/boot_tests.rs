@@ -17,7 +17,7 @@ fn seed(store: &Store) {
     exec(
         store,
         "INSERT INTO op (action_key, status, created_at, since) VALUES ('messages:send', 'pending', 1, 1);\
-         INSERT INTO quarantine (model, payload, reason) VALUES ('messages', x'00', 'test');",
+         INSERT INTO quarantine (model, reason) VALUES ('messages', 'test');",
     );
 }
 
@@ -186,7 +186,7 @@ fn interrupted_cache_only_reset_is_completed_before_manifest_check() {
         seed(&store);
         exec(
             &store,
-            "INSERT INTO manifest (key, value) VALUES ('reset_intent', '{\"mode\":\"cache_only\",\"models\":[\"messages\"],\"started_at\":1}')",
+            "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'cache_only', 1); INSERT INTO reset_intent_model (pos, model) VALUES (0, 'messages');",
         );
     }
     let (store, report) = reopen(&path, &models, None);
@@ -204,7 +204,7 @@ fn interrupted_incompatible_reset_is_completed_idempotently() {
     {
         let (store, _) = reopen(&path, &models, None);
         seed(&store);
-        exec(&store, "INSERT INTO manifest (key, value) VALUES ('reset_intent', '{\"mode\":\"incompatible\",\"models\":[],\"started_at\":1}')");
+        exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'incompatible', 1)");
     }
     let (store, report) = reopen(&path, &models, None);
     assert!(report.finished_interrupted_reset);
@@ -220,7 +220,7 @@ fn corrupt_reset_intent_goes_to_quarantine_and_is_cleared() {
     let models = [messages_spec()];
     {
         let (store, _) = reopen(&path, &models, None);
-        exec(&store, "INSERT INTO manifest (key, value) VALUES ('reset_intent', 'garbage')");
+        exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'garbage', 1)");
     }
     let (store, report) = reopen(&path, &models, None);
     assert!(!report.finished_interrupted_reset);

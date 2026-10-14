@@ -358,8 +358,7 @@ impl Inner {
     }
 
     fn quarantine(&self, sending: &Sending<'_>, data: &Value) -> Result<SendResult, SyncError> {
-        let payload = serde_json::to_vec(data).map_err(|error| SyncError::Malformed(error.to_string()))?;
-        self.on_connection(|connection| quarantine_add(connection, &sending.model, &payload, QuarantineReason::ReplaceNormalizeRejected).map(|_| ()))?;
+        self.on_connection(|connection| quarantine_add(connection, Some(&sending.model), data, QuarantineReason::ReplaceNormalizeRejected).map(|_| ()))?;
         let failure = OperationFailure::new(FailureKind::Unrecognized, "the response could not be matched to the record");
         self.fail(sending, OperationStatus::DeliveryUnknown, failure, SendResult::Quarantined)
     }
