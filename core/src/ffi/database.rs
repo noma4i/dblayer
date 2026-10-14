@@ -15,16 +15,31 @@ use super::transport::ForeignTransport;
 use super::{row_json, DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, RelationStateChange, StateListener, StateSubscription, Transport};
 
 pub(super) fn executor() -> Result<&'static Runtime, DbError> {
-    static EXECUTOR: OnceLock<Runtime> = OnceLock::new();
+    static EXECUTOR: Starter = Starter::new();
     started(&EXECUTOR, || tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build())
 }
 
-pub(super) fn started(slot: &OnceLock<Runtime>, build: impl FnOnce() -> std::io::Result<Runtime>) -> Result<&Runtime, DbError> {
-    if let Some(runtime) = slot.get() {
+pub(super) struct Starter {
+    runtime: OnceLock<Runtime>,
+    starting: Mutex<()>,
+}
+
+impl Starter {
+    pub(super) const fn new() -> Self {
+        Self { runtime: OnceLock::new(), starting: Mutex::new(()) }
+    }
+}
+
+pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Runtime>) -> Result<&Runtime, DbError> {
+    if let Some(runtime) = slot.runtime.get() {
+        return Ok(runtime);
+    }
+    let _starting = slot.starting.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(runtime) = slot.runtime.get() {
         return Ok(runtime);
     }
     let runtime = build().map_err(|error| DbError::Database { detail: format!("the database executor did not start: {error}") })?;
-    Ok(slot.get_or_init(|| runtime))
+    Ok(slot.runtime.get_or_init(|| runtime))
 }
 
 async fn on_executor<T: Send + 'static>(work: impl std::future::Future<Output = Result<T, crate::sync::SyncError>> + Send + 'static) -> Result<T, DbError> {
