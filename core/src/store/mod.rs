@@ -182,6 +182,8 @@ mod admission_tests;
 #[cfg(test)]
 mod apply_tests;
 #[cfg(test)]
+mod batch_tests;
+#[cfg(test)]
 mod boot_tests;
 #[cfg(test)]
 mod file_ops_tests;

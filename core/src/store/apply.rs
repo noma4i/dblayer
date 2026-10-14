@@ -14,7 +14,7 @@ use crate::syncstate::{operation_keys, recompute_sync, OperationFailure, SyncKey
 use crate::upload::UploadState;
 
 use super::file_ops::{apply_file_ops, release_files};
-use super::rows::{column_value, fetch_stored, placeholders, Reader, CHUNK};
+use super::rows::{column_value, fetch_stored, placeholders, Reader, StoredRow, CHUNK};
 use super::search::{reindex, touches_search, unindex};
 use crate::nodes::{delete_trees, read_trees, texts, write_tree};
 use super::shape::{delete_tables, insert_children, member_values, normalize, normalize_leaf};
@@ -198,6 +198,28 @@ fn without_nulls(row: &Map<String, Value>) -> Map<String, Value> {
     row.iter().filter(|(_, value)| !value.is_null()).map(|(key, value)| (key.clone(), value.clone())).collect()
 }
 
+type Prefetched = HashMap<(String, String), Option<StoredRow>>;
+
+fn prefetch_stored(connection: &Connection, models: &BTreeMap<String, ModelInfo>, operations: &[EntityOp], hidden: &HiddenRows) -> Result<Prefetched, StoreError> {
+    let mut wanted: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for operation in operations {
+        let EntityOp::Upsert { model, id, .. } = operation else { continue };
+        if !id.as_str().is_empty() && !hidden.contains(&(model.to_string(), id.as_str().to_string())) {
+            wanted.entry(model.to_string()).or_default().push(id.as_str().to_string());
+        }
+    }
+    let mut found = Prefetched::new();
+    for (model, ids) in wanted {
+        let Some(info) = models.get(&model) else { continue };
+        let mut stored = fetch_stored(connection, info, &ids, true)?;
+        for id in ids {
+            let row = stored.remove(&id);
+            found.insert((model.clone(), id), row);
+        }
+    }
+    Ok(found)
+}
+
 fn apply_upsert(
     connection: &Connection,
     info: &ModelInfo,
@@ -206,6 +228,7 @@ fn apply_upsert(
     keeps_local: bool,
     revision: i64,
     hidden: &HiddenRows,
+    prefetched: &mut Prefetched,
     result: &mut RowChanges,
     moves: &mut Vec<ScopeOp>,
 ) -> Result<(), StoreError> {
@@ -213,7 +236,10 @@ fn apply_upsert(
     if hidden.contains(&(model.to_string(), id.clone())) {
         return Ok(());
     }
-    let existing = fetch_stored(connection, info, std::slice::from_ref(&id), true)?.remove(&id);
+    let existing = match prefetched.remove(&(model.to_string(), id.clone())) {
+        Some(found) => found,
+        None => fetch_stored(connection, info, std::slice::from_ref(&id), true)?.remove(&id),
+    };
     let old_row = existing.as_ref().map(|stored| &stored.row);
     let mut next = without_nulls(row);
     canonicalize(info, &mut next);
@@ -405,12 +431,13 @@ pub(crate) fn apply_envelope(
     let mut result = CommitResult::noop(envelope.tx_id);
     let lands_rows = envelope.entity_ops.iter().any(|operation| matches!(operation, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
     let hidden = if lands_rows { hidden_rows(connection, &envelope.operation_transitions)? } else { HiddenRows::new() };
+    let mut prefetched = prefetch_stored(connection, models, &envelope.entity_ops, &hidden)?;
 
     for operation in &envelope.entity_ops {
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                apply_upsert(connection, info, model, row, !envelope.writes_local, revision, &hidden, &mut changes, &mut moves)?;
+                apply_upsert(connection, info, model, row, !envelope.writes_local, revision, &hidden, &mut prefetched, &mut changes, &mut moves)?;
             }
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
