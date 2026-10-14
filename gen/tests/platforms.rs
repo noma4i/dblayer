@@ -49,8 +49,8 @@ fn object_field_can_name_the_app_type_it_decodes_to() {
     assert!(swift.contains("public let widgets: [MomentWidget]"), "{swift}");
     assert!(swift.contains("Column<Moment, MomentMedia?>(\"media\")"), "{swift}");
     let kotlin = emit_kotlin(&models);
-    assert!(kotlin.contains("val media: JsonElement?"), "{kotlin}");
-    assert!(kotlin.contains("val widgets: List<JsonElement>"), "{kotlin}");
+    assert!(kotlin.contains("val media: MomentMedia?"), "{kotlin}");
+    assert!(kotlin.contains("val widgets: List<MomentWidget>"), "{kotlin}");
 }
 
 #[test]
@@ -70,6 +70,8 @@ end
 "#).unwrap();
     let kotlin = emit_kotlin(&models);
     assert!(kotlin.contains(r#"${'$'}arg"#), "{kotlin}");
+    let unescaped = kotlin.replace("${'$'}", "");
+    assert!(!unescaped.contains("$arg"), "{unescaped}");
 }
 
 #[test]

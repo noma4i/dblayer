@@ -36,7 +36,7 @@ fn kotlin_app_type(app_type: &str) -> String {
     if let Some(element) = app_type.strip_prefix('[').and_then(|value| value.strip_suffix(']')) {
         return format!("List<{}>", kotlin_app_type(element));
     }
-    "JsonElement".into()
+    app_type.into()
 }
 
 fn field_type(field: &FieldSpec, swift: bool) -> String {
@@ -242,7 +242,7 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let from_args = action.optimistic.iter().filter_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({arg})"))).collect::<Vec<_>>().join(", ");
             let args = action.args.keys().map(|arg| format!("\"{arg}\" to jsonValue({arg})")).collect::<Vec<_>>().join(", ");
-            let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args})), serializer()", action.name, serde_json::to_string(&literals).unwrap());
+            let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args})), serializer()", action.name, serde_json::to_string(&literals).unwrap().replace('$', "${'$'}"));
             if action.result.is_empty() {
                 writeln!(out, "    suspend fun {}({params}): {class} = act({call})", name(&action.name)).unwrap();
             } else {
