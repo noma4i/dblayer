@@ -49,6 +49,7 @@ Field options:
 | `from: "location.lat"` | read the value from a nested path of the response when the field name itself is absent |
 | `merge: :non_empty` | what a row from the server may replace in a stored value, see below |
 | `local: true` | the server never sends the field and a refresh never replaces or clears it, see [local fields](#local-fields) (needs `optional: true` or `null: true`) |
+| `searchable: true` | the text of the field is indexed for full-text search, see [text search](live-data.md#text-search) (`string` and `list` of strings only) |
 
 `index :a, :b` inside `schema` declares a composite index over fields that are already indexed.
 

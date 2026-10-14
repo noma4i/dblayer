@@ -7,6 +7,9 @@ public struct Condition: Sendable {
   public static func compare(_ field: String, _ op: String, _ value: JSONValue) -> Condition { .make("compare", field, ["op": .string(op), "value": value]) }
   public static func inList(_ field: String, _ values: [JSONValue]) -> Condition { .make("in_list", field, ["values": .array(values)]) }
   public static func isNull(_ field: String) -> Condition { .make("is_null", field, [:]) }
+  public static func search(_ text: String, wholeWords: Bool = false) -> Condition {
+    Condition(json: .object(["type": "search", "text": .string(text), "whole_words": .bool(wholeWords)]))
+  }
   public static func && (lhs: Condition, rhs: Condition) -> Condition { Condition(json: .object(["type": "all_of", "clauses": .array([lhs.json, rhs.json])])) }
   public static func || (lhs: Condition, rhs: Condition) -> Condition { Condition(json: .object(["type": "any_of", "clauses": .array([lhs.json, rhs.json])])) }
   public static prefix func ! (clause: Condition) -> Condition { Condition(json: .object(["type": "not", "clause": clause.json])) }
@@ -67,6 +70,8 @@ public struct Query<Model: DBModel>: Sendable {
     copy.condition = self.condition.map { $0 && condition } ?? condition
     return copy
   }
+  /// Rows whose searchable fields hold the words of `text`, best match first when the query has no order. The last word matches as a prefix unless `wholeWords` is true.
+  public func search(_ text: String, wholeWords: Bool = false) -> Query { `where`(.search(text, wholeWords: wholeWords)) }
   public func order(_ order: Order...) -> Query { var copy = self; copy.orders += order; return copy }
   public func limit(_ count: Int) -> Query { var copy = self; copy.limitCount = count; return copy }
 

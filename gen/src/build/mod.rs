@@ -94,6 +94,7 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
     field.nullable = flag(call, "null");
     field.optional = flag(call, "optional");
     field.indexed = flag(call, "index");
+    field.searchable = flag(call, "searchable");
     field.id_from_parent = option(call, "id_from").and_then(|pair| text_of(&pair.value.item));
     field.app_type = option(call, "as").and_then(|pair| text_of(&pair.value.item));
     if let Some(block) = &call.block {

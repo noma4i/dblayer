@@ -31,6 +31,11 @@ class Condition(val json: JsonObject) {
         fun compare(field: String, op: String, value: JsonElement) = make("compare", field, "op" to JsonPrimitive(op), "value" to value)
         fun inList(field: String, values: List<JsonElement>) = make("in_list", field, "values" to JsonArray(values))
         fun isNull(field: String) = make("is_null", field)
+        fun search(text: String, wholeWords: Boolean = false) = Condition(buildJsonObject {
+            put("type", "search")
+            put("text", text)
+            put("whole_words", wholeWords)
+        })
 
         private fun make(type: String, field: String, vararg rest: Pair<String, JsonElement>) = Condition(buildJsonObject {
             put("type", type)
@@ -71,6 +76,8 @@ class Query<Model : DBModel>(
         Query(modelName, serializer, condition, orders, limitCount, relation, params)
 
     fun where(next: Condition) = copy(condition = condition?.and(next) ?: next)
+    /** Rows whose searchable fields hold the words of [text], best match first when the query has no order. The last word matches as a prefix unless [wholeWords] is true. */
+    fun search(text: String, wholeWords: Boolean = false) = where(Condition.search(text, wholeWords))
     fun order(vararg next: Order) = copy(orders = orders + next)
     fun limit(count: Int) = copy(limitCount = count)
 

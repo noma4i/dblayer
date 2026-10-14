@@ -217,6 +217,24 @@ Query description is plain data (`model`, `where`, `order`, `limit`, `offset`); 
 
 Null handling follows one rule: a row with a null field matches `!(field == value)`, like a person would expect.
 
+## Text search
+
+A field declared `searchable: true` is indexed by SQLite FTS5 in the same transaction that writes the row. The index keeps its own copy of the text, follows edits and deletes, and is dropped with the cache. The app never writes FTS syntax: the core quotes each word.
+
+```swift
+Query<Moment>().search("hel")                          // finds "hello": the last word is a prefix
+Query<Moment>().search("hello wor", wholeWords: true)  // every word must match whole
+Query<Moment>().search("cats").where(Moment.userId == id).limit(20)
+```
+
+```kotlin
+Query("Moment", Moment.serializer()).search("hel")                          // finds "hello": the last word is a prefix
+Query("Moment", Moment.serializer()).search("hello wor", wholeWords = true) // every word must match whole
+Query("Moment", Moment.serializer()).search("cats").where(Moment.userId eq id).limit(20)
+```
+
+The default match treats the last word as a prefix and the other words as whole words. A query without an order is ranked by relevance. A query has one search, and the model needs at least one searchable field. Search combines with filters, scopes and limits, and an observed search re-runs when a searchable field changes.
+
 ## Remote relations are live too
 
 Connecting to a relation that has a `remote` block loads it when its data is stale, keeps it fresh through its `updates` subscription while someone reads it, and lets go a while after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.

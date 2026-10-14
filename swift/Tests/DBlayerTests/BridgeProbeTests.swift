@@ -11,6 +11,22 @@ struct BridgeProbeTests {
   }
 
   @Test
+  func aSearchFindsRowsByWordPrefixesAndFollowsEdits() async throws {
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let prefix = Cursor(await Query<Moment>().search("hel").live.stream())
+    let whole = Cursor(await Query<Moment>().search("hel", wholeWords: true).live.stream())
+    #expect(await prefix.next()?.isEmpty == true)
+    #expect(await whole.next()?.isEmpty == true)
+    let hello = try await Moment.create(text: "hello world")
+    _ = try await Moment.create(text: "other")
+    #expect(await prefix.first("the row that starts with hel") { $0.map(\.text) == ["hello world"] } != nil)
+    _ = try await hello.update(text: "goodbye")
+    #expect(await prefix.first("the row that no longer matches") { $0.isEmpty } != nil)
+    _ = try await Moment.create(text: "hel")
+    #expect(await whole.first("the row with the whole word") { $0.map(\.text) == ["hel"] } != nil)
+  }
+
+  @Test
   func writesReachTypedLiveRows() async throws {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let changes = Cursor(await Moment.recent.live.stream())

@@ -110,6 +110,9 @@ fn field_keys(word: &str) -> Vec<Key> {
     if word != "file" {
         keys.push(key("index", Want::Bool, false));
     }
+    if matches!(word, "string" | "list") {
+        keys.push(key("searchable", Want::Bool, false));
+    }
     keys
 }
 
@@ -126,7 +129,7 @@ fn nested_keys(word: &str) -> Vec<Key> {
 
 fn ephemeral_keys(word: &str) -> Vec<Key> {
     let mut keys = field_keys(word);
-    keys.retain(|candidate| !matches!(candidate.name, "optional" | "id_from" | "from" | "as" | "merge" | "local"));
+    keys.retain(|candidate| !matches!(candidate.name, "optional" | "id_from" | "from" | "as" | "merge" | "local" | "searchable"));
     keys.push(key("reset_after", Want::Duration, false));
     keys
 }

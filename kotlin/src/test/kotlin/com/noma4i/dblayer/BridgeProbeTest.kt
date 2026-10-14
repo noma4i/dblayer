@@ -32,6 +32,19 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun aSearchFindsRowsByWordPrefixesAndFollowsEdits() = bounded {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        val prefix = Query("Moment", Moment.serializer()).search("hel")
+        val whole = Query("Moment", Moment.serializer()).search("hel", wholeWords = true)
+        val hello = Moment.create(text = "hello world")
+        Moment.create(text = "other")
+        assertEquals(listOf("hello world"), withTimeout(5000) { prefix.live.flow.first { it.isNotEmpty() } }.map { it.text })
+        assertEquals(emptyList<Moment>(), withTimeout(5000) { whole.live.flow.first() })
+        hello.update(text = "goodbye")
+        assertEquals(emptyList<Moment>(), withTimeout(5000) { prefix.live.flow.first { it.isEmpty() } })
+    }
+
+    @Test
     fun aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         assertNull(Moment.recent.cached())
