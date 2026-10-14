@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(sysctl -n hw.ncpu)}" RUST_TEST_THREADS="${RUST_TEST_THREADS:-$(sysctl -n hw.ncpu)}"
 export IPHONEOS_DEPLOYMENT_TARGET=17.0
 bridge="$root/swift"
 build="$root/target/ios-build"
