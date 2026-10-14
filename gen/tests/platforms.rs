@@ -42,8 +42,8 @@ end
 }
 
 #[test]
-fn object_field_can_name_the_app_type_it_decodes_to() {
-    let models = parse_models("model Moment do\n  schema do\n    object :media, as: MomentMedia, null: true\n    array :widgets, as: \"[MomentWidget]\"\n  end\nend\n").unwrap();
+fn object_fields_generate_the_types_they_decode_to() {
+    let models = parse_models("model Moment do\n  schema do\n    object :media, as: MomentMedia, null: true do\n      string :url\n    end\n    array :widgets, as: MomentWidget do\n      string :kind\n    end\n  end\nend\n").unwrap();
     let swift = emit_swift(&models);
     assert!(swift.contains("public let media: MomentMedia?"), "{swift}");
     assert!(swift.contains("public let widgets: [MomentWidget]"), "{swift}");

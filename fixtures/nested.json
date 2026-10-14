@@ -1,0 +1,504 @@
+[
+  {
+    "name": "all kinds and unknown keys",
+    "input": {
+      "title": "full",
+      "note": "keep me",
+      "owner_id": 42,
+      "count": 7,
+      "ratio": 2.5,
+      "enabled": true,
+      "createdAt": "2026-10-14T00:00:00Z",
+      "state": "done",
+      "labels": [
+        "x"
+      ],
+      "counts": [
+        1,
+        2
+      ],
+      "ratios": [
+        1.5
+      ],
+      "flags": [
+        true,
+        false
+      ],
+      "dates": [
+        "today"
+      ],
+      "payload": {
+        "free": true
+      },
+      "metadata": {
+        "key": 3
+      },
+      "values": [
+        1,
+        "two",
+        null
+      ],
+      "child": {
+        "body": "inside",
+        "x": 4.5,
+        "unknown": 1
+      },
+      "children": [
+        {
+          "body": "list",
+          "x": 2
+        }
+      ],
+      "unknown": true,
+      "owners": [
+        42,
+        "u1"
+      ],
+      "nullableDefault": "supplied"
+    },
+    "output": {
+      "title": "full",
+      "note": "keep me",
+      "owner_id": "42",
+      "count": 7,
+      "ratio": 2.5,
+      "enabled": true,
+      "createdAt": "2026-10-14T00:00:00Z",
+      "state": "done",
+      "labels": [
+        "x"
+      ],
+      "counts": [
+        1,
+        2
+      ],
+      "ratios": [
+        1.5
+      ],
+      "flags": [
+        true,
+        false
+      ],
+      "dates": [
+        "today"
+      ],
+      "payload": {
+        "free": true
+      },
+      "metadata": {
+        "key": 3
+      },
+      "values": [
+        1,
+        "two",
+        null
+      ],
+      "child": {
+        "body": "inside",
+        "x": 4.5
+      },
+      "children": [
+        {
+          "body": "list",
+          "x": 2
+        }
+      ],
+      "owners": [
+        "42",
+        "u1"
+      ],
+      "nullableDefault": "supplied",
+      "rawValue": {
+        "free": [
+          1,
+          true,
+          null
+        ]
+      },
+      "preferences": {
+        "label": "base",
+        "active": true
+      },
+      "presets": [
+        {
+          "label": "first",
+          "active": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "absent optional and defaults",
+    "input": {
+      "title": "absent"
+    },
+    "output": {
+      "title": "absent",
+      "count": 2,
+      "ratio": 1.5,
+      "enabled": false,
+      "state": "ready",
+      "labels": [],
+      "counts": [],
+      "ratios": [],
+      "flags": [],
+      "dates": [],
+      "children": [],
+      "owners": [],
+      "nullableDefault": "default",
+      "rawValue": {
+        "free": [
+          1,
+          true,
+          null
+        ]
+      },
+      "preferences": {
+        "label": "base",
+        "active": true
+      },
+      "presets": [
+        {
+          "label": "first",
+          "active": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "null optional and defaults",
+    "input": {
+      "title": "null",
+      "note": null,
+      "owner_id": null,
+      "count": null,
+      "ratio": null,
+      "enabled": null,
+      "state": null,
+      "labels": null,
+      "counts": null,
+      "ratios": null,
+      "flags": null,
+      "dates": null,
+      "child": null,
+      "children": null,
+      "payload": null,
+      "metadata": null,
+      "values": null,
+      "nullableDefault": null,
+      "rawValue": null
+    },
+    "output": {
+      "title": "null",
+      "count": 2,
+      "ratio": 1.5,
+      "enabled": false,
+      "state": "ready",
+      "labels": [],
+      "counts": [],
+      "ratios": [],
+      "flags": [],
+      "dates": [],
+      "children": [],
+      "owners": [],
+      "rawValue": {
+        "free": [
+          1,
+          true,
+          null
+        ]
+      },
+      "preferences": {
+        "label": "base",
+        "active": true
+      },
+      "presets": [
+        {
+          "label": "first",
+          "active": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "nested absent fields and string id",
+    "input": {
+      "title": "nested",
+      "owner_id": "u1",
+      "child": {},
+      "children": [
+        {},
+        {
+          "body": "kept"
+        }
+      ]
+    },
+    "output": {
+      "title": "nested",
+      "owner_id": "u1",
+      "count": 2,
+      "ratio": 1.5,
+      "enabled": false,
+      "state": "ready",
+      "labels": [],
+      "counts": [],
+      "ratios": [],
+      "flags": [],
+      "dates": [],
+      "child": {
+        "x": 0
+      },
+      "children": [
+        {
+          "x": 0
+        },
+        {
+          "body": "kept",
+          "x": 0
+        }
+      ],
+      "owners": [],
+      "nullableDefault": "default",
+      "rawValue": {
+        "free": [
+          1,
+          true,
+          null
+        ]
+      },
+      "preferences": {
+        "label": "base",
+        "active": true
+      },
+      "presets": [
+        {
+          "label": "first",
+          "active": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "missing required",
+    "input": {},
+    "error": true
+  },
+  {
+    "name": "null required",
+    "input": {
+      "title": null
+    },
+    "error": true
+  },
+  {
+    "name": "wrong integer",
+    "input": {
+      "title": "bad",
+      "count": "seven"
+    },
+    "error": true
+  },
+  {
+    "name": "wrong number",
+    "input": {
+      "title": "bad",
+      "ratio": {}
+    },
+    "error": true
+  },
+  {
+    "name": "wrong boolean",
+    "input": {
+      "title": "bad",
+      "enabled": "yes"
+    },
+    "error": true
+  },
+  {
+    "name": "wrong list",
+    "input": {
+      "title": "bad",
+      "flags": {}
+    },
+    "error": true
+  },
+  {
+    "name": "wrong child",
+    "input": {
+      "title": "bad",
+      "child": []
+    },
+    "error": true
+  },
+  {
+    "name": "wrong children",
+    "input": {
+      "title": "bad",
+      "children": [
+        "bad"
+      ]
+    },
+    "error": true
+  },
+  {
+    "name": "boolean id",
+    "input": {
+      "title": "bad",
+      "owner_id": true
+    },
+    "error": true
+  },
+  {
+    "name": "fractional id",
+    "input": {
+      "title": "bad",
+      "owner_id": 1.5
+    },
+    "error": true
+  },
+  {
+    "name": "object id",
+    "input": {
+      "title": "bad",
+      "owner_id": {}
+    },
+    "error": true
+  },
+  {
+    "name": "integer overflow id",
+    "input": {
+      "title": "bad",
+      "owner_id": 9223372036854775808
+    },
+    "error": true
+  },
+  {
+    "name": "invalid id list",
+    "input": {
+      "title": "bad",
+      "owners": [
+        false
+      ]
+    },
+    "error": true
+  },
+  {
+    "name": "required field inside default object",
+    "input": {
+      "title": "bad",
+      "preferences": {}
+    },
+    "error": true
+  },
+  {
+    "name": "exact integer id 9007199254740993",
+    "inputText": "{\"title\": \"integer\", \"owner_id\": 9007199254740993}",
+    "output": {
+      "title": "integer",
+      "count": 2,
+      "ratio": 1.5,
+      "enabled": false,
+      "state": "ready",
+      "labels": [],
+      "counts": [],
+      "ratios": [],
+      "flags": [],
+      "dates": [],
+      "children": [],
+      "owners": [],
+      "nullableDefault": "default",
+      "rawValue": {
+        "free": [
+          1,
+          true,
+          null
+        ]
+      },
+      "preferences": {
+        "label": "base",
+        "active": true
+      },
+      "presets": [
+        {
+          "label": "first",
+          "active": true
+        }
+      ],
+      "owner_id": "9007199254740993"
+    }
+  },
+  {
+    "name": "exact integer id 9223372036854775807",
+    "inputText": "{\"title\": \"integer\", \"owner_id\": 9223372036854775807}",
+    "output": {
+      "title": "integer",
+      "count": 2,
+      "ratio": 1.5,
+      "enabled": false,
+      "state": "ready",
+      "labels": [],
+      "counts": [],
+      "ratios": [],
+      "flags": [],
+      "dates": [],
+      "children": [],
+      "owners": [],
+      "nullableDefault": "default",
+      "rawValue": {
+        "free": [
+          1,
+          true,
+          null
+        ]
+      },
+      "preferences": {
+        "label": "base",
+        "active": true
+      },
+      "presets": [
+        {
+          "label": "first",
+          "active": true
+        }
+      ],
+      "owner_id": "9223372036854775807"
+    }
+  },
+  {
+    "name": "exact integer id -9223372036854775808",
+    "inputText": "{\"title\": \"integer\", \"owner_id\": -9223372036854775808}",
+    "output": {
+      "title": "integer",
+      "count": 2,
+      "ratio": 1.5,
+      "enabled": false,
+      "state": "ready",
+      "labels": [],
+      "counts": [],
+      "ratios": [],
+      "flags": [],
+      "dates": [],
+      "children": [],
+      "owners": [],
+      "nullableDefault": "default",
+      "rawValue": {
+        "free": [
+          1,
+          true,
+          null
+        ]
+      },
+      "preferences": {
+        "label": "base",
+        "active": true
+      },
+      "presets": [
+        {
+          "label": "first",
+          "active": true
+        }
+      ],
+      "owner_id": "-9223372036854775808"
+    }
+  }
+]

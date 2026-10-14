@@ -63,7 +63,7 @@ model Moment do
 end
 ```
 
-The generator turns these files into typed Swift and Kotlin models and a model specification for the core. See [docs/models.md](docs/models.md).
+The generator turns these files into typed Swift and Kotlin models and a model specification for the core. Nested `object` and `array` blocks generate their value types too, with reusable names, optional fields, defaults and JSON key aliases. Keep field declarations in `.dbl` and add app behavior in extensions. See [describing models](docs/models.md#nested-objects-and-lists).
 
 ## What using it looks like
 

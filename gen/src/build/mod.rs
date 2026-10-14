@@ -62,9 +62,9 @@ fn build_schema(schema: &Call, model: &mut ModelSpec) {
     for call in schema.block.iter().flatten() {
         match call.word.as_str() {
             "index" => model.composite_indexes.push(call.args.iter().filter_map(|arg| text_of(&arg.item)).collect()),
-            "ephemeral" => model.ephemeral.extend(call.block.iter().flatten().map(build_ephemeral)),
+            "ephemeral" => model.ephemeral.extend(call.block.iter().flatten().map(|call| build_ephemeral(call, model.key.as_str()))),
             _ => {
-                let field = build_field(call);
+                let field = build_field(call, model.key.as_str());
                 if field.name == "id" { model.fields.retain(|field| field.name != "id"); }
                 model.fields.push(field);
             }
@@ -72,7 +72,7 @@ fn build_schema(schema: &Call, model: &mut ModelSpec) {
     }
 }
 
-fn build_field(call: &Call) -> FieldSpec {
+fn build_field(call: &Call, owner: &str) -> FieldSpec {
     let name = first_name(call);
     let mut field = match call.word.as_str() {
         "string" => FieldSpec::scalar(&name, ScalarKind::Str),
@@ -96,6 +96,11 @@ fn build_field(call: &Call) -> FieldSpec {
     field.indexed = flag(call, "index");
     field.id_from_parent = option(call, "id_from").and_then(|pair| text_of(&pair.value.item));
     field.app_type = option(call, "as").and_then(|pair| text_of(&pair.value.item));
+    if let Some(block) = &call.block {
+        let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(&name)));
+        field.fields = block.iter().map(|child| build_field(child, &type_name)).collect();
+        field.app_type = Some(type_name);
+    }
     field.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));
     field.default = option(call, "default").map(|pair| json_of(&pair.value.item));
     field.merge = option(call, "merge").and_then(|pair| merge_of(&pair.value.item));
@@ -123,9 +128,9 @@ fn merge_of(value: &Value) -> Option<MergeRule> {
     }
 }
 
-fn build_ephemeral(call: &Call) -> EphemeralSpec {
+fn build_ephemeral(call: &Call, owner: &str) -> EphemeralSpec {
     EphemeralSpec {
-        field: build_field(call),
+        field: build_field(call, owner),
         reset_after: option(call, "reset_after").and_then(|pair| text_of(&pair.value.item)),
     }
 }

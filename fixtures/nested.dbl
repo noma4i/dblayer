@@ -1,0 +1,57 @@
+model NestedSample, storage: :local do
+  schema do
+    object :value, as: NestedValue, null: true do
+      string :title
+      string :note, optional: true
+      string :nullableDefault, optional: true, default: "default"
+      id :ownerId, null: true, from: "owner_id"
+      int :count, default: 2
+      num :ratio, default: 1.5
+      bool :enabled, default: false
+      date :createdAt, null: true
+      enum :state, values: [:ready, :done], default: :ready
+      list :labels, of: :string, default: []
+      list :counts, of: :int, default: []
+      list :ratios, of: :num, default: []
+      list :flags, of: :bool, default: []
+      list :dates, of: :date, default: []
+      list :owners, of: :id, default: []
+      raw :payload, null: true
+      raw :rawValue, default: { free: [1, true, nil] }
+      object :preferences, default: { label: "base" } do
+        string :label
+        bool :active, default: true
+      end
+      array :presets, as: NestedValuePreferences, default: [{ label: "first" }]
+      object :metadata, null: true
+      array :values, null: true
+      object :child, null: true do
+        string :body, null: true
+        num :horizontal, from: "x", default: 0
+      end
+      array :children, as: NestedValueChild, default: []
+    end
+    array :values, as: NestedValue, default: []
+    object :tree, as: NestedTree, null: true do
+      string :name
+      array :children, as: NestedTree, default: []
+    end
+    object :replyTo, as: MessageReplyNode, null: true do
+      id :id, null: true
+      string :body, null: true
+      string :kind, null: true
+      id :userId, null: true
+      object :user, as: MessageUserRef, null: true do
+        id :id, null: true
+        string :fullName, null: true
+        string :name, null: true
+        string :username, null: true
+        string :avatarUrl, null: true
+      end
+      object :media, as: NestedMedia, null: true do
+        id :id, default: ""
+        string :fileUrl, null: true
+      end
+    end
+  end
+end

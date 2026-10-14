@@ -36,7 +36,7 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("field.default", with_schema("    string :b"), with_schema("    string :b, default: \"x\"")),
         ("field.id_from", with_schema("    id :b"), with_schema("    id :b, id_from: :ownerId")),
         ("field.from", with_schema("    num :b"), with_schema("    num :b, from: \"loc.b\"")),
-        ("field.as", with_schema("    object :b"), with_schema("    object :b, as: Media")),
+        ("field.as", with_schema("    object :b do\n      string :url\n    end"), with_schema("    object :b, as: Media do\n      string :url\n    end")),
         ("field.index", with_schema("    string :b"), with_schema("    string :b, index: true")),
         ("field.merge", with_schema("    object :b"), with_schema("    object :b, merge: { width: :positive }")),
         ("field.local", with_schema("    string :b, optional: true"), with_schema("    string :b, optional: true, local: true")),

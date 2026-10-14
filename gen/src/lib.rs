@@ -85,3 +85,6 @@ mod lib_tests;
 
 #[cfg(test)]
 mod roundtrip_tests;
+
+#[cfg(test)]
+mod nested_tests;

@@ -169,6 +169,8 @@ pub struct FieldSpec {
     pub app_type: Option<String>,
     #[serde(default)]
     pub merge: Option<MergeRule>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<FieldSpec>,
 }
 
 impl FieldSpec {
@@ -184,6 +186,7 @@ impl FieldSpec {
             from: None,
             app_type: None,
             merge: None,
+            fields: Vec::new(),
         }
     }
 

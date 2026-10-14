@@ -5,15 +5,14 @@ use super::*;
 
 fn fixture_paths() -> Vec<PathBuf> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
-    let mut paths: Vec<PathBuf> = fs::read_dir(root).unwrap().map(|entry| entry.unwrap().path()).collect();
+    let mut paths: Vec<PathBuf> = fs::read_dir(root).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|extension| extension == "dbl")).collect();
     paths.sort();
     paths
 }
 
 #[test]
-fn fixtures_parse_into_six_models_that_are_valid_for_the_core() {
+fn fixtures_parse_into_models_that_are_valid_for_the_core() {
     let models = parse_files(&fixture_paths()).unwrap();
-    assert_eq!(models.len(), 6);
     assert!(dblayer::schema::validate_models(&models, &[]).is_empty());
 }
 

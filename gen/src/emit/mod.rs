@@ -2,6 +2,9 @@ use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, RemoteShape, RelationSpec
 use dblayer::value::ScalarKind;
 use std::fmt::Write;
 
+mod nested;
+use nested::{emit_kotlin_type, emit_swift_type};
+
 /// The relation that holds the one row of a model: the only global relation answered as a single record.
 fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
     let mut found = model.relations.iter().filter(|relation| relation.is_global && relation.remote.as_ref().is_some_and(|remote| remote.shape == RemoteShape::Single));
@@ -23,7 +26,8 @@ fn result_type(class: &str, action: &str) -> String {
 
 fn scalar(kind: ScalarKind, swift: bool) -> &'static str {
     match (kind, swift) {
-        (ScalarKind::Bool, _) => "Bool",
+        (ScalarKind::Bool, true) => "Bool",
+        (ScalarKind::Bool, false) => "Boolean",
         (ScalarKind::Int, true) => "Int",
         (ScalarKind::Int, false) => "Long",
         (ScalarKind::Num, _) => "Double",
@@ -31,12 +35,8 @@ fn scalar(kind: ScalarKind, swift: bool) -> &'static str {
     }
 }
 
-fn kotlin_app_type(app_type: &str) -> String {
-    let app_type = app_type.trim();
-    if let Some(element) = app_type.strip_prefix('[').and_then(|value| value.strip_suffix(']')) {
-        return format!("List<{}>", kotlin_app_type(element));
-    }
-    app_type.into()
+fn raw_type(swift: bool) -> String {
+    if swift { "JSONValue".into() } else { "JsonElement".into() }
 }
 
 fn field_type(field: &FieldSpec, swift: bool) -> String {
@@ -44,10 +44,48 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
         FieldKind::Scalar { kind } => scalar(*kind, swift).to_string(),
         FieldKind::Enum { .. } => "String".into(),
         FieldKind::List { element } => if swift { format!("[{}]", scalar(*element, true)) } else { format!("List<{}>", scalar(*element, false)) },
-        _ => field.app_type.as_ref().map(|app_type| if swift { app_type.clone() } else { kotlin_app_type(app_type) }).unwrap_or_else(|| if swift { "JSONValue".into() } else { "JsonElement".into() }),
+        FieldKind::Array => field.app_type.as_ref().map(|name| if swift { format!("[{name}]") } else { format!("List<{name}>") }).unwrap_or_else(|| raw_type(swift)),
+        FieldKind::Object => field.app_type.clone().unwrap_or_else(|| raw_type(swift)),
+        _ => raw_type(swift),
     };
-    let base = if !swift && base == "Bool" { "Boolean".into() } else { base };
     if field.nullable || field.optional { format!("{base}?") } else { base }
+}
+
+pub(crate) fn declared_types(models: &[ModelSpec]) -> Vec<&FieldSpec> {
+    fn walk<'a>(fields: &'a [FieldSpec], out: &mut Vec<&'a FieldSpec>) {
+        for field in fields.iter().filter(|field| !field.fields.is_empty()) {
+            out.push(field);
+            walk(&field.fields, out);
+        }
+    }
+    let mut out = Vec::new();
+    for model in models {
+        walk(&model.fields, &mut out);
+    }
+    out
+}
+
+fn is_nullable(field: &FieldSpec) -> bool {
+    field.nullable || field.optional
+}
+
+fn is_id(field: &FieldSpec) -> bool {
+    matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Id })
+}
+
+fn key_of(field: &FieldSpec) -> &str {
+    field.from.as_deref().unwrap_or(&field.name)
+}
+
+fn local_name(model: &ModelSpec, stem: &str) -> String {
+    let used: std::collections::HashSet<_> = model.fields.iter().map(|field| field.name.as_str())
+        .chain(model.ephemeral.iter().map(|field| field.field.name.as_str()))
+        .chain(model.actions.iter().flat_map(|action| action.args.keys().map(String::as_str)))
+        .chain(model.relations.iter().flat_map(|relation| relation.by_columns.iter().chain(&relation.text_params).map(String::as_str)))
+        .collect();
+    let mut name = stem.to_string();
+    while used.contains(name.as_str()) { name.push('_'); }
+    name
 }
 
 fn create_fields<'a>(model: &ModelSpec, fields: &[&'a FieldSpec]) -> Vec<&'a FieldSpec> {
@@ -103,6 +141,8 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
     for model in models {
         let class = model.key.as_str();
+        let values = local_name(model, "values");
+        let built = local_name(model, "built");
         writeln!(out, "public struct {class}: {} {{\n    public static let modelName = \"{class}\"", if singleton_relation(model).is_some() { "DBSingleton" } else { "DBModel" }).unwrap();
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    public let {}: {}", field.name, field_type(field, true)).unwrap();
@@ -128,14 +168,14 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
                 writeln!(out, "    public static func {method}({params}) -> Query<Self> {{").unwrap();
             }
             let params = relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("\"{key}\": JSONValue.encode({key})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "        {} built = Query<Self>(relation: \"{}\", params: [{}])", if relation.remote.is_none() { "var" } else { "let" }, relation.name, if params.is_empty() { ":" } else { &params }).unwrap();
+            writeln!(out, "        {} {built} = Query<Self>(relation: \"{}\", params: [{}])", if relation.remote.is_none() { "var" } else { "let" }, relation.name, if params.is_empty() { ":" } else { &params }).unwrap();
             if relation.remote.is_none() {
-                for key in &relation.by_columns { writeln!(out, "        built = built.where(Condition.equal(\"{key}\", JSONValue.encode({key})))").unwrap(); }
+                for key in &relation.by_columns { writeln!(out, "        {built} = {built}.where(Condition.equal(\"{key}\", JSONValue.encode({key})))").unwrap(); }
                 if let Sort::Fields(fields) = &relation.sort {
-                    for field in fields { writeln!(out, "        built = built.order(Order(field: \"{}\", direction: \"{}\"))", field.column, field.direction.name()).unwrap(); }
+                    for field in fields { writeln!(out, "        {built} = {built}.order(Order(field: \"{}\", direction: \"{}\"))", field.column, field.direction.name()).unwrap(); }
                 }
             }
-            out.push_str("        return built\n    }\n");
+            writeln!(out, "        return {built}\n    }}").unwrap();
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var singleton: Query<Self> {{ {} }}", name(&relation.name)).unwrap(); }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local()).collect();
@@ -146,21 +186,21 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", field.name, kind, if optional { " = nil" } else { "" })
         }).collect::<Vec<_>>().join(", ");
-        writeln!(out, "    public static func create({params}) async throws -> Self {{\n        var values: [String: JSONValue] = [:]").unwrap();
+        writeln!(out, "    public static func create({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
         for field in &create_fields {
-            if field.nullable || field.optional || field.default.is_some() { writeln!(out, "        if let value = {} {{ values[\"{}\"] = JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
-            else { writeln!(out, "        values[\"{}\"] = JSONValue.encode({})", field.name, field.name).unwrap(); }
+            if field.nullable || field.optional || field.default.is_some() { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
+            else { writeln!(out, "        {values}[\"{}\"] = JSONValue.encode({})", field.name, field.name).unwrap(); }
         }
-        out.push_str("        return try await create(values: values)\n    }\n");
+        writeln!(out, "        return try await create(values: {values})\n    }}").unwrap();
         let params = fields.iter().map(|field| format!("{}: {}{} = nil", field.name, field_type(field, true), if field.nullable || field.optional { "?" } else { "?" })).collect::<Vec<_>>().join(", ");
-        writeln!(out, "    public func update({params}) async throws -> Self {{\n        var values: [String: JSONValue] = [:]").unwrap();
-        for field in &fields { writeln!(out, "        if let value = {} {{ values[\"{}\"] = JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
-        out.push_str("        return try await update(values: values)\n    }\n");
+        writeln!(out, "    public func update({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
+        for field in &fields { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
+        writeln!(out, "        return try await update(values: {values})\n    }}").unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| format!("{}: {}? = nil", field.field.name, field_type(&field.field, true))).collect::<Vec<_>>().join(", ");
-            writeln!(out, "    public func set({params}) async throws {{\n        var values: [String: JSONValue] = [:]").unwrap();
-            for field in &model.ephemeral { writeln!(out, "        if let value = {} {{ values[\"{}\"] = JSONValue.encode(value) }}", field.field.name, field.field.name).unwrap(); }
-            out.push_str("        try await set(values: values)\n    }\n");
+            writeln!(out, "    public func set({params}) async throws {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
+            for field in &model.ephemeral { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = JSONValue.encode(value) }}", field.field.name, field.field.name).unwrap(); }
+            writeln!(out, "        try await set(values: {values})\n    }}").unwrap();
         }
         for association in &model.associations {
             let target = association.target.as_str();
@@ -171,10 +211,10 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let returns = if action.result.is_empty() { "Self".to_string() } else { format!("ActionAnswer<Self, {}>", result_type(class, &action.name)) };
             writeln!(out, "    public func {}({params}) async throws -> {returns} {{", name(&action.name)).unwrap();
-            writeln!(out, "        {} values = JSONValue.parse(#\"{}\"#).objectValue", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
-            for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        values[\"{field}\"] = JSONValue.encode({arg})").unwrap(); } }
+            writeln!(out, "        {} {values} = JSONValue.parse(#\"{}\"#).objectValue", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
+            for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        {values}[\"{field}\"] = JSONValue.encode({arg})").unwrap(); } }
             let args = action.args.keys().map(|arg| format!("\"{arg}\": JSONValue.encode({arg})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "        return try await {}(\"{}\", values: values, args: [{}])\n    }}", if action.result.is_empty() { "act" } else { "actAnswering" }, action.name, if args.is_empty() { ":" } else { &args }).unwrap();
+            writeln!(out, "        return try await {}(\"{}\", values: {values}, args: [{}])\n    }}", if action.result.is_empty() { "act" } else { "actAnswering" }, action.name, if args.is_empty() { ":" } else { &args }).unwrap();
         }
         out.push_str("}\n\n");
         for action in model.actions.iter().filter(|action| !action.result.is_empty()) {
@@ -183,14 +223,18 @@ pub fn emit_swift(models: &[ModelSpec]) -> String {
             out.push_str("}\n\n");
         }
     }
+    let types = declared_types(models);
+    for declaration in &types { emit_swift_type(&mut out, declaration, &types); }
     writeln!(out, "public let modelsJSON = #\"{}\"#", serde_json::to_string(models).unwrap()).unwrap();
     out
 }
 
 pub fn emit_kotlin(models: &[ModelSpec]) -> String {
-    let mut out = "package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n".to_string();
+    let mut out = "package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\nimport kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n".to_string();
     for model in models {
         let class = model.key.as_str();
+        let values = local_name(model, "values");
+        let built = local_name(model, "built");
         writeln!(out, "@Serializable\ndata class {class}(").unwrap();
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    {}val {}: {}{},", if field.name == "id" { "override " } else { "" }, field.name, field_type(field, false), if field.nullable || field.optional { " = null" } else { "" }).unwrap();
@@ -204,13 +248,13 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             if params.is_empty() { writeln!(out, "        val {method}: Query<{class}> get() {{").unwrap(); }
             else { writeln!(out, "        fun {method}({params}): Query<{class}> {{").unwrap(); }
             let params = relation.by_columns.iter().map(|key| format!("\"{key}\" to jsonValue({key})")).collect::<Vec<_>>().join(", ");
-            writeln!(out, "            var built = Query(\"{class}\", serializer(), relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("put(\"{key}\", jsonValue({key}))")).collect::<Vec<_>>().join("; ")).unwrap();
+            writeln!(out, "            var {built} = Query(\"{class}\", serializer(), relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("put(\"{key}\", jsonValue({key}))")).collect::<Vec<_>>().join("; ")).unwrap();
             let _ = params;
             if relation.remote.is_none() {
-                for key in &relation.by_columns { writeln!(out, "            built = built.where(Condition.equal(\"{key}\", jsonValue({key})))").unwrap(); }
-                if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            built = built.order(Order(\"{}\", \"{}\"))", field.column, field.direction.name()).unwrap(); } }
+                for key in &relation.by_columns { writeln!(out, "            {built} = {built}.where(Condition.equal(\"{key}\", jsonValue({key})))").unwrap(); }
+                if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            {built} = {built}.order(Order(\"{}\", \"{}\"))", field.column, field.direction.name()).unwrap(); } }
             }
-            out.push_str("            return built\n        }\n");
+            writeln!(out, "            return {built}\n        }}").unwrap();
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", serializer(), {})", name(&relation.name)).unwrap(); }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local()).collect();
@@ -221,16 +265,16 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", field.name, kind, if optional { " = null" } else { "" })
         }).collect::<Vec<_>>().join(", ");
-        writeln!(out, "        suspend fun create({params}): {class} {{\n            val values = buildJsonObject {{").unwrap();
+        writeln!(out, "        suspend fun create({params}): {class} {{\n            val {values} = buildJsonObject {{").unwrap();
         for field in &create_fields {
             if field.nullable || field.optional || field.default.is_some() { writeln!(out, "                {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.name, field.name).unwrap(); }
             else { writeln!(out, "                put(\"{}\", jsonValue({}))", field.name, field.name).unwrap(); }
         }
-        writeln!(out, "            }}\n            return dbJson.decodeFromString(serializer(), DBlayer.database.create(\"{class}\", values.toString()))\n        }}\n    }}").unwrap();
+        writeln!(out, "            }}\n            return dbJson.decodeFromString(serializer(), DBlayer.database.create(\"{class}\", {values}.toString()))\n        }}\n    }}").unwrap();
         let params = fields.iter().map(|field| format!("{}: {}{} = null", field.name, field_type(field, false), if field.nullable || field.optional { "" } else { "?" })).collect::<Vec<_>>().join(", ");
-        writeln!(out, "    suspend fun update({params}): {class} {{\n        val values = buildJsonObject {{").unwrap();
+        writeln!(out, "    suspend fun update({params}): {class} {{\n        val {values} = buildJsonObject {{").unwrap();
         for field in &fields { writeln!(out, "            {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.name, field.name).unwrap(); }
-        writeln!(out, "        }}\n        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, values.toString()))\n    }}").unwrap();
+        writeln!(out, "        }}\n        return dbJson.decodeFromString(serializer(), DBlayer.database.update(modelName, id, {values}.toString()))\n    }}").unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| format!("{}: {}{} = null", field.field.name, field_type(&field.field, false), if field.field.nullable || field.field.optional { "" } else { "?" })).collect::<Vec<_>>().join(", ");
             writeln!(out, "    suspend fun set({params}) {{\n        DBlayer.database.setEphemeral(modelName, id, buildJsonObject {{").unwrap();
@@ -257,6 +301,8 @@ pub fn emit_kotlin(models: &[ModelSpec]) -> String {
             writeln!(out, "@Serializable\ndata class {}({fields})\n", result_type(class, &action.name)).unwrap();
         }
     }
+    let types = declared_types(models);
+    for declaration in &types { emit_kotlin_type(&mut out, declaration, &types); }
     let models_json = serde_json::to_string(models).unwrap().replace('$', "${'$'}");
     writeln!(out, "val modelsJSON = \"\"\"{models_json}\"\"\"").unwrap();
     out

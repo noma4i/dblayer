@@ -10,16 +10,12 @@ model Moment do
     string :text,      null: true
     object :media,     default: {}
     date   :createdAt, index: true
-
     index :userId, :createdAt
   end
-
   belongs_to :author, model: User, key: :userId, touch: true
   has_many   :vibes,  model: Vibe, key: :momentId, dependent: :destroy
-
   scope :recent,  order: { createdAt: :desc }
   scope :by_user, params: [:userId], where: { userId: :userId }, order: { createdAt: :desc }
-
   remote :feed do
     query MomentsFeed
     paginate 20
@@ -49,12 +45,76 @@ Field options:
 | `default: value` | default value, also stored when the server answers null for a field without `null: true` |
 | `index: true` | indexed column (not allowed for `object`, `array`, `raw`, `list`, `file`) |
 | `id_from: :parent` | take the id from a nested parent object, also when the same object is a `belongs_to` association |
-| `as: MomentMedia` | for `object`, `array`, `raw`: the app type the generated model decodes the value to (a `Codable` you provide) |
+| `as: MomentMedia` | for `object` and `array`: name a generated value type, declared by a field block in the input files |
 | `from: "location.lat"` | read the value from a nested path of the response when the field name itself is absent |
 | `merge: :non_empty` | what a row from the server may replace in a stored value, see below |
 | `local: true` | the server never sends the field and a refresh never replaces or clears it, see [local fields](#local-fields) (needs `optional: true` or `null: true`) |
 
 `index :a, :b` inside `schema` declares a composite index over fields that are already indexed.
+
+### Nested objects and lists
+
+Declare JSON fields with `object do ... end` or `array do ... end`. An object generates a Swift `Codable`, `Sendable`, `Equatable` struct and a Kotlin serializable data class. An array generates a list of that type. Both platforms use the same type and property names. Inside the `Message` model:
+
+```ruby
+  schema do
+    object :replyTo, as: MessageReplyNode, null: true do
+      id :id, null: true
+      string :body, null: true
+      string :kind, null: true
+      id :userId, null: true
+      object :user, as: MessageUserRef, null: true do
+        id :id, null: true
+        string :fullName, null: true
+        string :name, null: true
+        string :username, null: true
+        string :avatarUrl, null: true
+      end
+      object :media, as: MomentMedia, null: true do
+        id :id, default: ""
+        string :fileUrl, null: true, from: "file_url"
+      end
+    end
+    array :replies, as: MessageReplyNode, default: []
+  end
+```
+
+Use generated values when creating or updating a model, or decode a response with the platform serializer. Do not write another struct, data class or decoder with the same fields.
+
+```swift
+let reply = MessageReplyNode(body: "Hello", userId: "u1", user: MessageUserRef(id: "u1", fullName: "Ada"))
+let message = try await Message.create(replyTo: reply, replies: [reply])
+let name = message.replyTo?.user?.fullName
+```
+
+```kotlin
+val reply = MessageReplyNode(body = "Hello", userId = "u1", user = MessageUserRef(id = "u1", fullName = "Ada"))
+val message = Message.create(replyTo = reply, replies = listOf(reply))
+val name = message.replyTo?.user?.fullName
+```
+
+Nested blocks accept `string`, `num`, `int`, `bool`, `date`, `id`, `enum`, `list`, `object`, `array` and `raw`. Options are `null`, `optional`, `default` and `from`, with `values` for enums, `of` for scalar lists and `as` for objects and arrays. Blocks can contain more blocks. Without `as`, the type name joins the owning type and the capitalized field name. All generated value types have top-level names.
+
+For reusable names, recursive lists, unrestricted JSON and typed defaults, see [nested value types](nested-types.md).
+
+| Input | Decoding rule on both platforms |
+| ----- | ------------------------------ |
+| Unknown key | ignored by generated types, retained inside unrestricted JSON |
+| Absent nullable or optional field without a default | `nil` / `null` |
+| Absent field with a default | declared default |
+| Null nullable or optional field | `nil` / `null`, even when a default is declared |
+| Null required field with a default | declared default |
+| Absent or null required field without a default | decoding error |
+| Wrong type for a present field | decoding error |
+| ID string or signed 64-bit integer | string, for scalar IDs and scalar ID lists |
+| Boolean, fractional number, object or out-of-range integer as an ID | decoding error |
+| Nested date or enum | string, as in the generated model properties |
+
+An enum default must be one of its declared values. Nested enums decode as strings. Unknown server values are preserved. `from` inside a nested block names a literal JSON key, including dots. At the model level, `from` reads a response path.
+
+Declare each named type once. Pass all files that declare or use it to `dblayer-gen`. `as` accepts a type name such as `GiftItem`, never a Swift list expression. A missing declaration, duplicate type or invalid default reports its input file and line. `raw` has no `as` option.
+
+Nested values belong to their containing row. They have no independent table, index, relation, file attachment or sync operation. Put those features on a model. The same declarations work in local, memory and synchronized models.
 
 ### Merge rules
 
@@ -237,4 +297,4 @@ Example models live in `fixtures/`.
 
 ## Access level
 
-`dblayer-gen --internal swift ...` emits the Swift models without `public`, for an app that generates them into its own module and uses app types in `as:`.
+`dblayer-gen --internal swift ...` emits models and their generated value types without `public`, for an app that generates them into its own module.
