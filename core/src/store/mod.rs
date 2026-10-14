@@ -15,6 +15,8 @@ mod error;
 mod file_ops;
 mod maintenance;
 mod membership;
+mod nodes;
+pub(crate) use nodes::save_pending;
 mod open;
 mod reset;
 mod rows;
@@ -198,6 +200,8 @@ mod reset_tests;
 mod rows_tests;
 #[cfg(test)]
 mod shape_tests;
+#[cfg(test)]
+mod value_tests;
 #[cfg(test)]
 mod tombstones_tests;
 #[cfg(test)]

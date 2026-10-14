@@ -17,7 +17,7 @@ pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub const RESET_INTENT_KEY: &str = "reset_intent";
 
-pub const SERVICE_COLUMNS: [&str; 4] = ["id", "revision", "born_rev", "rest"];
+pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
 const CACHE_TABLES: [&str; 3] = ["scope_member", "tombstone", "query_window"];
@@ -124,8 +124,15 @@ const CORE_STATEMENTS: [&str; 12] = [
   model TEXT NOT NULL,
   row_id TEXT NOT NULL,
   path TEXT NOT NULL,
-  value BLOB NOT NULL,
-  PRIMARY KEY (model, row_id, path)
+  node INTEGER NOT NULL,
+  parent INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT,
+  kind INTEGER NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (model, row_id, path, node)
 ) STRICT, WITHOUT ROWID",
 ];
 
@@ -217,10 +224,6 @@ pub fn create_table_statement(model: &ModelSpec) -> String {
         "born_rev INTEGER NOT NULL".to_string(),
     ];
     definitions.extend(plan.row_columns().into_iter().map(|(name, ty)| format!("{name} {}", ty.as_sql())));
-    // TEMPORARY: JSON bytes of the fields without a declared shape yet (raw, untyped, files); removed by the free-value step.
-    if plan.has_rest() {
-        definitions.push("rest BLOB".to_string());
-    }
     definitions.extend(plan.rev_columns().into_iter().map(|(_, column)| format!("{column} INTEGER")));
     let kind = if model.is_memory() { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
     format!(
@@ -309,7 +312,7 @@ pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>
     Ok(None)
 }
 
-const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds; rows are typed columns with rev__ columns";
+const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds; rows are typed columns with rev__ columns; free values are node trees";
 
 pub fn format_version() -> String {
     let text = [CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice(), &[STORED_VALUE_FORMAT]].concat().join("\n");

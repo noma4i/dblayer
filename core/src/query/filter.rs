@@ -210,8 +210,11 @@ pub(super) fn column_sql(model: &ModelSpec, field: &str) -> Result<String, Query
     }
     match layout(model).plan(field) {
         Some(FieldPlan::Typed { member, .. }) => Ok(format!("r.{}", member_present(member))),
-        // TEMPORARY: fields without a declared shape are read from the JSON bytes of `rest`.
-        _ => Ok(format!("json_extract(r.rest, '$.{field}')")),
+        Some(FieldPlan::Rest { .. }) => {
+            let table = layout(model).value_table.unwrap_or_default();
+            Ok(format!("(SELECT CASE kind WHEN 5 THEN 1 WHEN 6 THEN 1 ELSE COALESCE(whole, fraction, text) END FROM {table} WHERE row_id = r.id AND field = '{field}' AND node = 0)"))
+        }
+        _ => Err(QueryError::UnknownField(field.to_string())),
     }
 }
 

@@ -60,6 +60,8 @@ mod cache_tests;
 #[cfg(test)]
 mod search_tests;
 #[cfg(test)]
+mod free_filter_tests;
+#[cfg(test)]
 mod warm_tests;
 #[cfg(test)]
 mod dispatch_tests;

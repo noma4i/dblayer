@@ -1,4 +1,3 @@
-use rusqlite::params;
 use serde_json::Value;
 
 use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
@@ -19,10 +18,7 @@ impl Db {
         let generation = self.generation();
         self.commit_following(generation, |reader| {
                 let Some(mut row) = reader.point(model, id.as_str())? else {
-                    reader.connection().execute(
-                        "INSERT OR REPLACE INTO local_pending (model, row_id, path, value) VALUES (?1, ?2, ?3, ?4)",
-                        params![model, id.as_str(), path, serde_json::to_vec(&value).map_err(crate::store::StoreError::from)?],
-                    )?;
+                    crate::store::save_pending(reader.connection(), model, id.as_str(), path, &value)?;
                     return Ok::<_, DbError>(None);
                 };
                 slot.write(&mut row, value);

@@ -123,7 +123,6 @@ fn row_table_matches_spec_columns() {
     assert_eq!(found["id"], ("TEXT".to_string(), true));
     assert_eq!(found["revision"], ("INTEGER".to_string(), true));
     assert_eq!(found["born_rev"], ("INTEGER".to_string(), true));
-    assert_eq!(found["rest"], ("BLOB".to_string(), false));
     assert_eq!(found["chat_id"], ("TEXT".to_string(), false));
     assert_eq!(found["sequence_number"], ("INTEGER".to_string(), false));
     assert_eq!(found["score"], ("REAL".to_string(), false));
@@ -131,7 +130,7 @@ fn row_table_matches_spec_columns() {
     for rev in ["rev__chat_id", "rev__sequence_number", "rev__score", "rev__created_at", "rev__media"] {
         assert_eq!(found[rev], ("INTEGER".to_string(), false), "{rev}");
     }
-    assert_eq!(found.len(), 13);
+    assert_eq!(found.len(), 12);
 }
 
 #[test]

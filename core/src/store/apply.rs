@@ -14,6 +14,7 @@ use crate::syncstate::{operation_keys, recompute_sync, SyncKey};
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, fetch_stored, placeholders, Reader, CHUNK};
 use super::search::{reindex, touches_search, unindex};
+use super::nodes::{delete_trees, read_trees, write_tree};
 use super::shape::{delete_tables, insert_children, member_values, normalize, normalize_leaf};
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
@@ -183,17 +184,17 @@ fn visible_scope_ops(operations: &[ScopeOp], hidden: &HiddenRows) -> Vec<ScopeOp
 }
 
 fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, row: &mut Map<String, Value>) -> Result<(), StoreError> {
-    let mut statement = connection.prepare_cached("SELECT path, value FROM local_pending WHERE model = ?1 AND row_id = ?2")?;
-    let pending: Vec<(String, Vec<u8>)> = statement.query_map(params![model.as_str(), id], |record| Ok((record.get(0)?, record.get(1)?)))?.collect::<Result<_, _>>()?;
+    let owner = [model.as_str().to_string(), id.to_string()];
+    let pending = read_trees(connection, "local_pending", &["model", "row_id", "path"], "model = ?1 AND row_id = ?2", &owner)?;
     if pending.is_empty() {
         return Ok(());
     }
-    for (path, bytes) in pending {
-        if let Some(slot) = info.spec.local_slot(&path) {
-            slot.write(row, serde_json::from_slice(&bytes)?);
+    for (key, value) in pending {
+        if let Some(slot) = key.last().and_then(|path| info.spec.local_slot(path)) {
+            slot.write(row, value);
         }
     }
-    connection.execute("DELETE FROM local_pending WHERE model = ?1 AND row_id = ?2", params![model.as_str(), id])?;
+    delete_trees(connection, "local_pending", "model = ?1 AND row_id = ?2", &owner)?;
     Ok(())
 }
 
@@ -283,6 +284,7 @@ fn write_row(
     let mut values: Vec<rusqlite::types::Value> = vec![revision.into()];
     let writes = |field: &str| !exists || changed.contains(field);
     let mut rewritten: Vec<&FieldPlan> = Vec::new();
+    let mut free: Vec<&String> = Vec::new();
     for plan in layout.fields.iter().filter(|plan| writes(plan.field())) {
         match plan {
             FieldPlan::Leaf { field, leaf } => {
@@ -298,15 +300,8 @@ fn write_row(
                 }
                 rewritten.push(plan);
             }
-            FieldPlan::Rest { .. } => {}
+            FieldPlan::Rest { field } => free.push(field),
         }
-    }
-    // TEMPORARY: JSON bytes of the fields without a declared shape yet.
-    let rest_fields: Vec<&str> = layout.fields.iter().filter_map(|plan| matches!(plan, FieldPlan::Rest { .. }).then(|| plan.field())).collect();
-    if rest_fields.iter().any(|field| writes(field)) {
-        let rest: Map<String, Value> = rest_fields.iter().filter_map(|field| row.get(*field).map(|value| (field.to_string(), value.clone()))).collect();
-        names.push("rest".into());
-        values.push(if rest.is_empty() { rusqlite::types::Value::Null } else { json_bytes(&rest)?.into() });
     }
     for (field, column) in layout.rev_columns().iter().filter(|(field, _)| writes(field)) {
         names.push(column.clone());
@@ -328,6 +323,17 @@ fn write_row(
         }
         insert_children(connection, layout, member, row.get(field), id, 0, &mut vec![0; layout.tables.len()])?;
     }
+    if let Some(table) = &layout.value_table {
+        for field in free {
+            let owner = [id.to_string(), field.clone()];
+            if exists {
+                delete_trees(connection, table, "row_id = ?1 AND field = ?2", &owner)?;
+            }
+            if let Some(value) = row.get(field).filter(|value| !value.is_null()) {
+                write_tree(connection, table, &["row_id", "field"], &owner, value)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -335,6 +341,9 @@ pub(crate) fn remove_row(connection: &Connection, info: &ModelInfo, id: &str) ->
     unindex(connection, info, id)?;
     let all: Vec<usize> = (0..info.layout.tables.len()).collect();
     delete_tables(connection, &info.layout, &all, id)?;
+    if let Some(table) = &info.layout.value_table {
+        delete_trees(connection, table, "row_id = ?1", &[id.to_string()])?;
+    }
     Ok(connection.execute(&format!("DELETE FROM {} WHERE id = ?1", info.table), params![id])?)
 }
 

@@ -12,6 +12,7 @@ use crate::value::fractional_between;
 
 #[cfg(test)]
 use super::Store;
+use super::nodes::read_trees;
 use super::shape::{assemble, read_cells, read_tables, take_leaf};
 use super::{ModelInfo, StoreError};
 use crate::ddl::FieldPlan;
@@ -46,12 +47,6 @@ pub(crate) fn fetch_stored(connection: &Connection, info: &ModelInfo, ids: &[Str
         let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
             let cells = read_cells(row, count, 3)?;
             let mut next = 3 + count;
-            let rest: Option<Vec<u8>> = if layout.has_rest() {
-                next += 1;
-                row.get(next - 1)?
-            } else {
-                None
-            };
             let mut field_rev = BTreeMap::new();
             for (field, _) in revs {
                 if let Some(revision) = row.get::<_, Option<i64>>(next)? {
@@ -59,14 +54,23 @@ pub(crate) fn fetch_stored(connection: &Connection, info: &ModelInfo, ids: &[Str
                 }
                 next += 1;
             }
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, cells, rest, field_rev))
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, cells, field_rev))
         })?;
         for item in rows {
             partial.push(item?);
         }
         let present: Vec<String> = partial.iter().map(|(id, ..)| id.clone()).collect();
         let tables = if layout.tables.is_empty() || present.is_empty() { HashMap::new() } else { read_tables(connection, layout, &present)? };
-        for (id, revision, born_rev, mut cells, rest, field_rev) in partial {
+        let mut free: HashMap<String, Map<String, Value>> = HashMap::new();
+        if let (Some(table), false) = (&layout.value_table, present.is_empty()) {
+            let filter = format!("row_id IN ({})", placeholders(present.len()));
+            for (owner, value) in read_trees(connection, table, &["row_id", "field"], &filter, &present)? {
+                if let [row_id, field] = <[String; 2]>::try_from(owner).unwrap_or_default().as_slice() {
+                    free.entry(row_id.clone()).or_default().insert(field.clone(), value);
+                }
+            }
+        }
+        for (id, revision, born_rev, mut cells, field_rev) in partial {
             let mut data = Map::new();
             data.insert("id".to_string(), Value::String(id.clone()));
             for plan in &layout.fields {
@@ -84,10 +88,7 @@ pub(crate) fn fetch_stored(connection: &Connection, info: &ModelInfo, ids: &[Str
                     FieldPlan::Rest { .. } => {}
                 }
             }
-            // TEMPORARY: JSON bytes of the fields without a declared shape yet.
-            if let Some(Value::Object(fields)) = rest.and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
-                data.extend(fields);
-            }
+            data.extend(free.remove(&id).unwrap_or_default());
             let row_id = RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
             found.insert(id, StoredRow { id: row_id, revision, born_rev, field_rev, row: data });
         }

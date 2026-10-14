@@ -95,7 +95,6 @@ fn a_recursive_array_keeps_all_levels_in_one_table() {
     put(&store, json!({"id": "g1", "tree": tree()}));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_gifts__tree__children"), 3);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_gifts__tree__children WHERE owner = 0"), 2);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('row_gifts') WHERE name = 'rest'"), 0);
 }
 
 #[test]

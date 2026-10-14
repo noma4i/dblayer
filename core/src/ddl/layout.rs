@@ -63,6 +63,7 @@ pub struct Layout {
     pub table: String,
     pub fields: Vec<FieldPlan>,
     pub tables: Vec<Table>,
+    pub value_table: Option<String>,
     row_columns: Vec<(String, ColumnType)>,
     revs: Vec<(String, String)>,
     pub select: String,
@@ -163,7 +164,8 @@ pub fn layout(model: &ModelSpec) -> Layout {
             members.iter_mut().for_each(|member| number(member, &mut next));
         }
     }
-    let mut layout = Layout { table: builder.row_table, fields, tables, row_columns: Vec::new(), revs: Vec::new(), select: String::new(), select_lean: String::new() };
+    let value_table = fields.iter().any(|plan| matches!(plan, FieldPlan::Rest { .. })).then(|| format!("{}__value", builder.row_table));
+    let mut layout = Layout { table: builder.row_table, fields, tables, value_table, row_columns: Vec::new(), revs: Vec::new(), select: String::new(), select_lean: String::new() };
     for plan in &layout.fields {
         match plan {
             FieldPlan::Leaf { leaf, .. } => layout.row_columns.push((leaf.column.clone(), leaf.ty)),
@@ -174,9 +176,6 @@ pub fn layout(model: &ModelSpec) -> Layout {
     layout.revs = layout.fields.iter().map(|plan| (plan.field().to_string(), rev_column(&column_name(plan.field())))).collect();
     let mut names = vec!["id".to_string(), "revision".to_string(), "born_rev".to_string()];
     names.extend(layout.row_columns.iter().map(|(name, _)| name.clone()));
-    if layout.has_rest() {
-        names.push("rest".to_string());
-    }
     layout.select_lean = names.join(", ");
     names.extend(layout.revs.iter().map(|(_, column)| column.clone()));
     layout.select = names.join(", ");
@@ -224,10 +223,6 @@ impl Layout {
         &self.row_columns
     }
 
-    pub fn has_rest(&self) -> bool {
-        self.fields.iter().any(|plan| matches!(plan, FieldPlan::Rest { .. }))
-    }
-
     pub fn rev_columns(&self) -> &[(String, String)] {
         &self.revs
     }
@@ -236,8 +231,13 @@ impl Layout {
         self.fields.iter().find(|plan| plan.field() == field)
     }
 
+    pub fn child_tables(&self) -> Vec<String> {
+        self.tables.iter().map(|table| table.name.clone()).chain(self.value_table.clone()).collect()
+    }
+
     pub fn table_statements(&self, temp: bool) -> Vec<String> {
         let kind = if temp { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
+        let values = self.value_table.iter().map(|name| node_table_statement(kind, name, &["row_id", "field"]));
         self.tables
             .iter()
             .map(|table| match &table.shape {
@@ -256,6 +256,15 @@ impl Layout {
                     )
                 }
             })
+            .chain(values)
             .collect()
     }
+}
+
+pub fn node_table_statement(kind: &str, name: &str, keys: &[&str]) -> String {
+    let owner: String = keys.iter().map(|key| format!("  {key} TEXT NOT NULL,\n")).collect();
+    format!(
+        "{kind} IF NOT EXISTS {name} (\n{owner}  node INTEGER NOT NULL,\n  parent INTEGER NOT NULL,\n  pos INTEGER NOT NULL,\n  name TEXT,\n  kind INTEGER NOT NULL,\n  whole INTEGER,\n  fraction REAL,\n  text TEXT,\n  PRIMARY KEY ({}, node)\n) STRICT, WITHOUT ROWID",
+        keys.join(", ")
+    )
 }
