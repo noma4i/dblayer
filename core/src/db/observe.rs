@@ -178,7 +178,6 @@ struct Due {
     subject: Subject,
     version: Arc<Version>,
     touched: Option<HashSet<String>>,
-    replaced: Vec<(RowId, RowId)>,
     reached: Option<(i64, u64)>,
 }
 
@@ -200,7 +199,6 @@ impl Shared {
                 .filter(|(_, group)| batch.iter().any(|event| (event.revision > group.at || event.epoch > group.epoch) && group.deps.hit(event)))
                 .map(|(key, group)| Due {
                     touched: observers.touched_ids(&key, batch),
-                    replaced: batch.iter().filter(|event| event.revision > group.at).flat_map(|event| event.replaced.iter().cloned()).collect(),
                     reached: (!batch.iter().any(|event| event.epoch > group.epoch)).then(|| (batch.iter().map(|event| event.revision).max().unwrap_or(0), group.epoch)),
                     subject: group.subject.clone(),
                     version: group.version.clone(),
@@ -213,7 +211,7 @@ impl Shared {
             self.refresh_entities(&key, &model, ids);
         }
         for due in due {
-            self.publish_group(&due.key, &due.subject, &due.version, &due.replaced, due.touched.as_ref().map(|touched| (touched, due.reached)));
+            self.publish_group(&due.key, &due.subject, &due.version, due.touched.as_ref().map(|touched| (touched, due.reached)));
         }
     }
 
@@ -228,7 +226,7 @@ impl Shared {
         self.read(|reader| Ok(self.query_keys(reader, &probe)?.is_empty()))
     }
 
-    fn publish_group(&self, key: &str, subject: &Subject, previous: &Arc<Version>, replaced: &[(RowId, RowId)], step: Option<(&HashSet<String>, Option<(i64, u64)>)>) {
+    fn publish_group(&self, key: &str, subject: &Subject, previous: &Arc<Version>, step: Option<(&HashSet<String>, Option<(i64, u64)>)>) {
         if let (Subject::Rows(query), Some((touched, Some((revision, epoch))))) = (subject, step) {
             if self.cannot_enter(query, previous, touched).unwrap_or(false) {
                 let mut observers = locked(&self.observers);
@@ -247,6 +245,8 @@ impl Shared {
         };
         let Ok(Evaluated { version: next, loaded }) = evaluated else { return };
         let (revision, epoch) = next.position();
+        let replaced = self.dispatch.replaced_between(previous.position().0, revision);
+        let replaced = replaced.as_slice();
         let published = next.succeeding(previous, replaced, loaded).map(Arc::new);
         let mut observers = locked(&self.observers);
         let Some(group) = observers.groups.get_mut(key) else { return };
@@ -274,7 +274,7 @@ impl Db {
         let subscriber = Subscriber::new(listener, self.shared.counters.clone());
         let current = locked(&self.shared.observers).groups.get(&key).map(|group| (group.at, group.version.clone()));
         if let Some((_, previous)) = current.filter(|(at, _)| self.shared.store.revision_seq().is_ok_and(|latest| latest > *at)) {
-            self.shared.publish_group(&key, &subject, &previous, &[], None);
+            self.shared.publish_group(&key, &subject, &previous, None);
         }
         let mut observers = locked(&self.shared.observers);
         let id = observers.next_id;

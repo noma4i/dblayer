@@ -9,6 +9,7 @@ use super::error::DbError;
 use super::open::{Db, Shared};
 
 pub(crate) const MAX_PENDING: usize = 256;
+const MAX_REPLACED_LOG: usize = 4096;
 
 thread_local! {
     static CORE_THREAD: Cell<bool> = const { Cell::new(false) };
@@ -102,6 +103,7 @@ impl Busy {
 #[derive(Default)]
 struct Pending {
     events: VecDeque<Event>,
+    replaced: Vec<(i64, RowId, RowId)>,
     closed: bool,
 }
 
@@ -119,6 +121,11 @@ impl Dispatch {
     pub(crate) fn push(&self, event: Event) {
         let mut pending = held(&self.pending);
         self.busy.enter();
+        pending.replaced.extend(event.replaced.iter().map(|(from, to)| (event.revision, from.clone(), to.clone())));
+        if pending.replaced.len() > MAX_REPLACED_LOG {
+            let excess = pending.replaced.len() - MAX_REPLACED_LOG;
+            pending.replaced.drain(..excess);
+        }
         pending.events.push_back(event);
         if pending.events.len() > MAX_PENDING {
             let first = pending.events.pop_front().expect("queue is not empty");
@@ -140,6 +147,15 @@ impl Dispatch {
             }
             pending = self.wake.wait(pending).unwrap_or_else(|poisoned| poisoned.into_inner());
         }
+    }
+
+    pub(crate) fn replaced_between(&self, after: i64, upto: i64) -> Vec<(RowId, RowId)> {
+        held(&self.pending).replaced.iter().filter(|(revision, _, _)| *revision > after && *revision <= upto).map(|(_, from, to)| (from.clone(), to.clone())).collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queued(&self) -> usize {
+        held(&self.pending).events.len()
     }
 
     pub(crate) fn close(&self) {

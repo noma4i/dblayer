@@ -169,3 +169,27 @@ fn inv_observe_18_a_replaced_pair_reaches_a_reader_that_never_saw_the_temporary_
     let told: Vec<_> = seen.iter().map(|change| (ids(change), change.diff.replaced.clone(), change.diff.renamed.clone(), change.revision)).collect();
     assert_eq!((ids(last), last.diff.renamed.clone()), (vec!["m7".to_string()], vec![(temp.id.clone(), rid("m7"))]), "deliveries (ids, replaced, renamed, revision): {told:?}");
 }
+
+#[test]
+fn inv_observe_18_a_pair_replaced_while_the_group_is_evaluated_still_reaches_the_reader() {
+    let db = booted();
+    let (log, callback) = recorder();
+    let _observer = db.observe(Query::new("moments").limited(50), callback).unwrap();
+    db.settle();
+    let hold = crate::db::open::locked(&db.shared.observers);
+    let temp = db.create("moments", obj(json!({"text": "new"}))).unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    while db.shared.dispatch.queued() > 0 {
+        assert!(std::time::Instant::now() < deadline, "the dispatcher never took the create event");
+        std::thread::yield_now();
+    }
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
+    envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: crate::commit::DestroyReason::Replaced { by: rid("m7") } });
+    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
+    db.land(envelope).unwrap();
+    drop(hold);
+    db.settle();
+    let seen = changes(&log);
+    let last = seen.last().unwrap();
+    assert_eq!((ids(last), last.diff.renamed.clone()), (vec!["m7".to_string()], vec![(temp.id.clone(), rid("m7"))]));
+}
