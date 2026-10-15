@@ -64,6 +64,8 @@ Every delivery carries the revision of the database. An entity ignores a deliver
 
 Native callbacks hold entity sources weakly. Releasing a source releases its observer without a separate cleanup call.
 
+Each entity delivery identifies the database that opened its observer. Rows and removals from a replaced database are ignored, regardless of revision.
+
 ## Ending a session
 
 `try await DB.logout()` (Swift) and suspending `DBlayer.logout()` (Kotlin) clear the data and drop every entity, lease and kept value. Wait for completion before opening another account. The account entity stays the same object and goes back to empty. Logout deletes every queued, refused and unconfirmed operation.

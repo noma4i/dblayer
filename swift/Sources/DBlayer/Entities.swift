@@ -103,8 +103,8 @@ public final class Entities<Model: DBModel> {
     self.core = core
     self.source = source ?? core
     followsDatabase = source == nil
-    core.deliver = { [weak self] delivery in
-      DispatchQueue.main.async { MainActor.assumeIsolated { self?.apply(delivery) } }
+    core.deliver = { [weak self] database, delivery in
+      DispatchQueue.main.async { MainActor.assumeIsolated { self?.receive(from: database, delivery: delivery) } }
     }
   }
 
@@ -192,6 +192,11 @@ public final class Entities<Model: DBModel> {
     scheduleFlush()
   }
 
+  func receive(from database: Database, delivery: EntityDecoding.Decoded<Model>) {
+    guard self.database === database, DB.database === database else { return }
+    apply(delivery)
+  }
+
   func apply(_ delivery: EntityDecoding.Decoded<Model>) {
     for (model, bytes) in delivery.rows { live[model.id]?.entity?.accept(model, revision: delivery.revision, bytes: bytes) }
     for id in delivery.removed { live[id]?.entity?.accept(nil, revision: delivery.revision) }
@@ -262,8 +267,11 @@ enum EntityDecoding {
 final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable {
   private final class Changes: EntityListener, @unchecked Sendable {
     weak var source: CoreEntitySource?
-    init(_ source: CoreEntitySource) { self.source = source }
-    func changed(delivery: EntityDelivery) { source?.changed(delivery: delivery) }
+    weak var database: Database?
+    init(_ source: CoreEntitySource, database: Database) { self.source = source; self.database = database }
+    func changed(delivery: EntityDelivery) {
+      if let database { source?.changed(delivery: delivery, from: database) }
+    }
   }
 
   private let queue = DispatchQueue(label: "dblayer.entities", qos: .userInitiated)
@@ -272,7 +280,7 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
   private var leased = Set<String>()
   private let lock = NSLock()
   private var total = 0
-  var deliver: (@Sendable (EntityDecoding.Decoded<Model>) -> Void)?
+  var deliver: (@Sendable (Database, EntityDecoding.Decoded<Model>) -> Void)?
 
   var decodedRows: Int { lock.withLock { total } }
 
@@ -299,16 +307,16 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
     guard let current = DB.database else { return nil }
     if observer == nil || database !== current {
       database = current
-      observer = try? current.liveEntities(model: Model.modelName, listener: Changes(self))
+      observer = try? current.liveEntities(model: Model.modelName, listener: Changes(self, database: current))
       if !leased.isEmpty { try? observer?.retain(ids: Array(leased)) }
     }
     return observer
   }
 
-  func changed(delivery: EntityDelivery) {
+  private func changed(delivery: EntityDelivery, from database: Database) {
     let rows = delivery.rows.compactMap { row in (try? Model.decode(row)).map { ($0, row.estimatedBytes) } }
     lock.withLock { total += rows.count }
-    deliver?(EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed))
+    deliver?(database, EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed))
   }
 }
 

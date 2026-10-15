@@ -82,7 +82,7 @@ class Entities<Model : DBModel> internal constructor(
     private var single: Entity<Model>? = null
     private var singleQuery: Query<Model>? = null
     private var singleFeed: SingletonFeed<Model>? = null
-    private val core = CoreEntitySource(modelName, decoder) { delivery -> apply(delivery) }
+    private val core = CoreEntitySource(modelName, decoder) { database, delivery -> receive(database, delivery) }
     private val source: EntitySource = source ?: core
 
     internal val decodedRows: Int get() = core.decodedRows
@@ -164,6 +164,11 @@ class Entities<Model : DBModel> internal constructor(
     internal val retainedCount: Int get() = synchronized(lock) { kept.count(modelName, now()) }
     internal val liveCount: Int get() = synchronized(lock) { live.size }
 
+    internal fun receive(database: Database, delivery: EntityDeliveryRows<Model>) = synchronized(lock) {
+        if (this.database !== database || DBlayer.databaseOrNull !== database) return@synchronized
+        apply(delivery)
+    }
+
     internal fun apply(delivery: EntityDeliveryRows<Model>) = synchronized(lock) {
         delivery.rows.forEach { (model, bytes) -> live[model.id]?.takeIf { it.get() != null }?.cell?.accept(model, delivery.revision, bytes) }
         delivery.removed.forEach { id -> live[id]?.takeIf { it.get() != null }?.cell?.accept(null, delivery.revision) }
@@ -204,11 +209,15 @@ class Entities<Model : DBModel> internal constructor(
 internal class CoreEntitySource<Model : DBModel>(
     private val modelName: String,
     private val decoder: ModelDecoder<Model>,
-    private val deliver: (EntityDeliveryRows<Model>) -> Unit,
+    private val deliver: (Database, EntityDeliveryRows<Model>) -> Unit,
 ) : EntitySource {
-    private class Changes<Model : DBModel>(source: CoreEntitySource<Model>) : EntityListener {
+    private class Changes<Model : DBModel>(source: CoreEntitySource<Model>, database: Database) : EntityListener {
         private val source = WeakReference(source)
-        override fun changed(delivery: EntityDelivery) { source.get()?.changed(delivery) }
+        private val database = WeakReference(database)
+        override fun changed(delivery: EntityDelivery) {
+            val current = database.get() ?: return
+            source.get()?.changed(delivery, current)
+        }
     }
 
     private var observer: LiveEntities? = null
@@ -238,16 +247,16 @@ internal class CoreEntitySource<Model : DBModel>(
         val existing = observer
         if (existing != null && database === current) return existing
         database = current
-        return current.liveEntities(modelName, Changes(this)).also {
+        return current.liveEntities(modelName, Changes(this, current)).also {
             observer = it
             if (leased.isNotEmpty()) it.retain(leased.toList())
         }
     }
 
-    private fun changed(delivery: EntityDelivery) {
+    private fun changed(delivery: EntityDelivery, database: Database) {
         val rows = delivery.rows.mapNotNull { row -> runCatching { decoder.read(row) to row.estimatedBytes }.getOrNull() }
         decoded.addAndGet(rows.size)
-        deliver(EntityDeliveryRows(delivery.revision, rows, delivery.removed))
+        deliver(database, EntityDeliveryRows(delivery.revision, rows, delivery.removed))
     }
 }
 

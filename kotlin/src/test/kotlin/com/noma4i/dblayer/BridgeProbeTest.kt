@@ -340,11 +340,32 @@ class BridgeProbeTest {
 
 class EntityBridgeTest {
     @Test
+    fun aReplacedDatabaseCannotDeliverRowsOrRemovalsToCurrentEntities() = bounded {
+        val old = Database.open(Config(null, null, 32u), modelsJSON, null)
+        DBlayer.database = old
+        val former = Moment.read(old.create("Moment", """{"id":"same","text":"old"}""", "{}"))
+        val registry = Entities("Moment", Moment)
+        val previous = registry.entity(former.id)
+        val current = Database.open(Config(null, null, 32u), modelsJSON, null)
+        DBlayer.database = current
+        val row = Moment.read(current.create("Moment", """{"id":"same","text":"current"}""", "{}"))
+        Moment.recent.warm()
+        val entity = registry.entity(row.id)
+        assertNull(previous.value.value)
+        for (removal in listOf(false, true)) {
+            registry.receive(old, EntityDeliveryRows(Long.MAX_VALUE, if (removal) emptyList() else listOf(former to 1uL), if (removal) listOf(former.id) else emptyList()))
+            assertEquals("current", entity.value.value?.text)
+        }
+        registry.receive(current, EntityDeliveryRows(Long.MAX_VALUE, emptyList(), listOf(row.id)))
+        assertNull(entity.value.value)
+    }
+
+    @Test
     fun droppingAnEntitySourceReleasesItsObserver() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val row = Moment.create(text = "held")
         val delivered = java.util.concurrent.atomic.AtomicInteger()
-        var source: CoreEntitySource<Moment>? = CoreEntitySource("Moment", Moment) { delivered.incrementAndGet() }
+        var source: CoreEntitySource<Moment>? = CoreEntitySource("Moment", Moment) { _, _ -> delivered.incrementAndGet() }
         val released = java.lang.ref.WeakReference(source)
         source!!.retain(listOf(row.id))
         eventually("the entity source delivers its row") { delivered.get() > 0 }
