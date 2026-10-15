@@ -32,6 +32,33 @@ fn failed(kind: SubscriptionFailureKind) -> SubscriptionEvent {
 }
 
 #[tokio::test(start_paused = true)]
+async fn partial_child_events_preserve_absent_parent_fields_and_apply_explicit_null() {
+    for stored_child in [true, false] {
+        let mut users = users_spec();
+        users.fields.push(FieldSpec::scalar("lastMomentId", ScalarKind::Id).nullable().optional());
+        users.fields.push(FieldSpec::scalar("lastText", ScalarKind::Str).nullable().optional());
+        let mut moments = moments_spec();
+        moments.fields.iter_mut().find(|field| field.name == "text").unwrap().nullable = true;
+        moments.associations[0].sets = [("lastMomentId".to_string(), "id".to_string()), ("lastText".to_string(), "text".to_string())].into();
+        let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
+        rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+        put(&rig, "users", json!({"id": "u1", "name": "Ann", "lastMomentId": "m1", "lastText": "kept"}));
+        if stored_child {
+            put(&rig, "moments", json!({"id": "m1", "userId": "u1", "text": "kept"}));
+        }
+        let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+        for (node, expected) in [(json!({"id": "m1", "userId": "u1"}), Some("kept")), (json!({"id": "m1", "userId": "u1", "text": null}), None)] {
+            rig.transport.emit("MomentChanged", next(node));
+            settle().await;
+            let parent = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
+            assert_eq!(parent.text("lastText"), expected, "stored child: {stored_child}");
+            assert_eq!(parent.text("lastMomentId"), Some("m1"));
+        }
+        assert_eq!(subscription.status().applied, 2);
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn upsert_event_changes_the_row_and_fires_the_observer() {
     let rig = rig_with_subscription();
     put(&rig, "moments", json!({"id": "m1", "text": "before", "userId": null}));

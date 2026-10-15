@@ -106,7 +106,9 @@ impl Db {
             }
             let mut merged = current.clone();
             for (parent_field, child_field) in &association.sets {
-                merged.insert(parent_field.clone(), row.get(child_field).cloned().unwrap_or(Value::Null));
+                if let Some(value) = row.get(child_field) {
+                    merged.insert(parent_field.clone(), value.clone());
+                }
             }
             if !same_fields(&merged, &current) {
                 ops.set(parents, parent, current, merged);
