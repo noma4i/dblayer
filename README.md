@@ -18,6 +18,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - **Background delivery.** Observers receive updates from library threads. Disk reads use a bounded WAL connection pool beside the writer. See [threading](docs/threading.md).
 - **One core, two platforms.** All logic is Rust. Swift and Kotlin contain no business logic.
 - **Versioned cached rows.** Each row sent to Swift or Kotlin includes its stored revision, so readers can reject older values.
+- **Immediate cached entities.** The first reader gets a row already in memory without waiting for a subscription delivery or reading disk.
 
 
 ## Documentation

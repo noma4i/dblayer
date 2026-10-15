@@ -16,7 +16,8 @@ import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 
-private class CountingSource : EntitySource {
+private class CountingSource(private val cached: WireRow? = null) : EntitySource {
+    override fun cachedRow(id: String): WireRow? = cached?.takeIf { it.id == id }
     val retained = java.util.concurrent.CopyOnWriteArrayList<String>()
     val released = java.util.concurrent.CopyOnWriteArrayList<String>()
     override fun retain(ids: List<String>) { retained.addAll(ids) }
@@ -24,6 +25,27 @@ private class CountingSource : EntitySource {
 }
 
 class EntityRegistryTest {
+    @Test
+    fun cachedFirstReadAndRetainedNewerValueAreAvailableBeforeDelivery() = bounded {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        val row = Moment.create(text = "cached")
+        Moment.recent.warm()
+        val cached = DBlayer.database.peekRow("Moment", row.id)!!
+        val registry = registry(CountingSource(cached))
+        var held: Entity<Moment>? = registry.entity(row.id)
+        assertEquals("cached", held!!.value.value?.text)
+        val newer = moment(row.id, "newer")
+        registry.apply(delivery(cached.revision + 1, listOf(newer)))
+        assertEquals("newer", registry.entity(row.id).value.value?.text)
+        held = null
+        collectGarbage { registry.liveCount == 0 }
+        val returned = registry.entity(row.id)
+        assertEquals("newer", returned.value.value?.text)
+        registry.apply(delivery(cached.revision, listOf(row)))
+        assertEquals("newer", returned.value.value?.text)
+        assertNull(registry.entity("missing").value.value)
+    }
+
     private fun moment(id: String, text: String) = Moment(id = id, uuid = id, text = text, likedByMe = false, media = JsonObject(emptyMap()), createdAt = "2026-10-08T00:00:00.000Z")
 
     private fun delivery(revision: Long, rows: List<Moment> = emptyList(), removed: List<String> = emptyList()) = EntityDeliveryRows(revision, rows.map { it to 1uL }, removed)

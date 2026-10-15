@@ -4,6 +4,9 @@ import Testing
 @testable import DBlayer
 
 final class CountingSource: EntitySource, @unchecked Sendable {
+  private let cached: WireRow?
+  init(cached: WireRow? = nil) { self.cached = cached }
+  func cachedRow(_ id: String) -> WireRow? { cached?.id == id ? cached : nil }
   private let lock = NSLock()
   private var retains: [[String]] = []
   private var releases: [[String]] = []

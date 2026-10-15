@@ -38,11 +38,11 @@ class Entity<Model : DBModel> internal constructor(private val fixedId: String?,
     val id: String get() = fixedId ?: cell.value.value?.id.orEmpty()
     /** The newest value, null while none has arrived or when the record does not exist. */
     val value: StateFlow<Model?> get() = cell.value
-    /** The value comes from the retention of a released entity and no fresh delivery has replaced it yet. */
     val isStale: Boolean get() = cell.stale
 }
 
 internal interface EntitySource {
+    fun cachedRow(id: String): WireRow?
     fun retain(ids: List<String>)
     fun release(ids: List<String>)
 }
@@ -93,13 +93,20 @@ class Entities<Model : DBModel> internal constructor(
         val previous = live[id]
         previous?.get()?.let { return it }
         if (previous != null) collected(previous)
-        val seed = kept.take<Model>(modelName, id, now())
+        var seed = kept.take<Model>(modelName, id, now())
+        val retained = seed != null
+        val cached = source.cachedRow(id)
+        if (cached != null && cached.revision > (seed?.revision ?: Long.MIN_VALUE)) {
+            runCatching { decoder.read(cached) }.getOrNull()?.let { value ->
+                seed = EntityCell<Model>().also { it.accept(value, cached.revision, cached.estimatedBytes) }
+            }
+        }
         val cell = seed ?: EntityCell()
         cell.stale = seed != null
         cell.epoch = epoch
         val made = Entity(id, cell)
         live[id] = LiveRef(made, id, cell, ::collected)
-        steps[id] = if (seed != null || steps[id] == Step.Release) Step.Refresh else Step.Retain
+        steps[id] = if (retained || steps[id] == Step.Release) Step.Refresh else Step.Retain
         scheduleFlush()
         made
     }
@@ -205,6 +212,8 @@ internal class CoreEntitySource<Model : DBModel>(
     private val decoded = AtomicInteger()
 
     val decodedRows: Int get() = decoded.get()
+
+    override fun cachedRow(id: String): WireRow? = DBlayer.databaseOrNull?.peekRow(modelName, id)
 
     @Synchronized
     override fun retain(ids: List<String>) {

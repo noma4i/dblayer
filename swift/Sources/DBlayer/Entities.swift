@@ -9,7 +9,6 @@ public final class Entity<Model: DBModel> {
   public private(set) var id: String
   /// The newest value, nil while none has arrived or when the record does not exist.
   public private(set) var value: Model?
-  /// The value comes from the retention of a released entity and no fresh delivery has replaced it yet.
   public private(set) var isStale: Bool
   @ObservationIgnored private(set) var revision: Int64
   @ObservationIgnored private var bytes: UInt64 = 0
@@ -68,6 +67,7 @@ struct Retained<Model: DBModel> {
 }
 
 protocol EntitySource: AnyObject, Sendable {
+  func cachedRow(_ id: String) -> WireRow?
   func retain(_ ids: [String])
   func release(_ ids: [String])
 }
@@ -115,10 +115,14 @@ public final class Entities<Model: DBModel> {
   public func entity(_ id: String) -> Entity<Model> {
     follow(DB.database)
     if let existing = live[id]?.entity { return existing }
-    let seed = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
+    let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
+    var seed = retained
+    if let cached = source.cachedRow(id), cached.revision > (seed?.revision ?? Int64.min), let value = try? Model.decode(cached) {
+      seed = Retained(value: value, revision: cached.revision, bytes: cached.estimatedBytes)
+    }
     let made = Entity<Model>(id: id, seed: seed, registry: self)
     live[id] = Weak(entity: made)
-    steps[id] = (seed != nil || steps[id] == .release) ? .refresh : .retain
+    steps[id] = (retained != nil || steps[id] == .release) ? .refresh : .retain
     scheduleFlush()
     return made
   }
@@ -265,6 +269,10 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, EntityListener, @unc
   var deliver: (@Sendable (EntityDecoding.Decoded<Model>) -> Void)?
 
   var decodedRows: Int { lock.withLock { total } }
+
+  func cachedRow(_ id: String) -> WireRow? {
+    try? DB.database?.peekRow(model: Model.modelName, rowId: id)
+  }
 
   func retain(_ ids: [String]) {
     queue.async {

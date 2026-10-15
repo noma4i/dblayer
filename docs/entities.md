@@ -16,7 +16,21 @@ val author = User.entity(moment.userId)   // hold it while the author is shown
 val name by author.value.collectAsState()
 ```
 
-`value` is the newest known state of the record. It is empty until the first delivery and when the record does not exist. Reading is synchronous. A second reader of an id that is already live gets the value at once and opens no new subscription.
+`value` is the newest known state of the record. The first reader receives a cached row immediately when it is in memory. A second reader of a live id receives the same object and opens no new subscription.
+
+Entity creation reads only memory. It never reads SQLite synchronously. A cache miss stays empty until the first delivery, even if the record exists on disk.
+Cached and retained values have `isStale` set until a fresh delivery arrives. An older cached row never replaces a newer live or retained value.
+Lists that already loaded their rows can create entities directly, with no extra prefetch call:
+
+```swift
+let entity = Moment.entity(momentId)
+let firstValue = entity.value
+```
+
+```kotlin
+val entity = Moment.entity(momentId)
+val firstValue = entity.value.value
+```
 
 ## The one row of an account
 
