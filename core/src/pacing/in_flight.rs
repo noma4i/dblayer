@@ -13,11 +13,11 @@ pub struct FetchCoalescing {
 }
 
 impl FetchCoalescing {
-    pub fn request(&mut self, key: &str, is_stale: bool) -> FetchVerdict {
+    pub fn request(&mut self, key: &str, forced: bool, is_fresh: impl FnOnce() -> bool) -> FetchVerdict {
         if self.in_flight.contains(key) {
             return FetchVerdict::AwaitInFlight;
         }
-        if !is_stale {
+        if !forced && is_fresh() {
             return FetchVerdict::SkipFresh;
         }
         self.in_flight.insert(key.to_string());

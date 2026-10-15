@@ -179,10 +179,10 @@ impl Inner {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
             None => resolved.window_key.clone(),
         };
-        let is_stale = force || cursor.is_some() || !self.window_is_fresh(resolved)?;
+        let forced = force || cursor.is_some();
         let verdict = {
             let mut flights = locked(&self.flights);
-            let verdict = flights.coalescing.request(&flight_key, is_stale);
+            let verdict = flights.coalescing.request(&flight_key, forced, || self.window_is_fresh(resolved).unwrap_or(false));
             match verdict {
                 FetchVerdict::StartFetch => {
                     let (sender, receiver) = watch::channel(None);
