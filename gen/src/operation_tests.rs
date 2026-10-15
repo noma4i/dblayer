@@ -34,6 +34,10 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
 #[test]
 fn a_wrong_operation_declaration_is_named_with_its_line() {
     let cases = [
+        ("operation :a do\n  mutation A\n  args first: :string\n  args second: :int\nend\n", "`args` is declared twice"),
+        ("operation :a do\n  mutation A\n  result first: :string\n  result second: :int\nend\n", "`result` is declared twice"),
+        ("operation :a do\n  mutation A\n  wrap :first\n  wrap :second\nend\n", "`wrap` is declared twice"),
+        ("operation :a do\n  mutation A\n  args x: :string, x: :int\nend\n", "arg `x` is declared twice"),
         ("operation :a do\n  args x: :id\nend\n", "needs exactly one `mutation` or `query` line"),
         ("operation :a do\n  mutation A\n  query B\nend\n", "needs exactly one `mutation` or `query` line"),
         ("operation :a do\n  mutation A\n  args x: :uuid\nend\n", "or the name of a schema input object like :QrCodeInput"),

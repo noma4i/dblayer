@@ -16,7 +16,7 @@ fn with_rows(count: usize) -> (Arc<Database>, Vec<String>) {
     let model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 64 }, serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>).unwrap();
     let ids = (0..count)
-        .map(|n| db.create("Moment".into(), format!(r#"{{"text":"t{n:05}"}}"#), "{}".into()).unwrap().id)
+        .map(|n| super::database::executor().unwrap().block_on(db.create("Moment".into(), format!(r#"{{"text":"t{n:05}"}}"#), "{}".into())).unwrap().id)
         .collect();
     (db, ids)
 }
@@ -31,7 +31,7 @@ fn inv_observe_17_a_live_change_of_one_changed_row_carries_one_row_at_every_list
             let _live = db.live_query(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), tape.clone()).unwrap();
             db.db.settle();
             assert_eq!(tape.0.lock().unwrap()[0].rows.len(), count, "the first delivery is the whole list");
-            db.update("Moment".into(), ids[count / 2].clone(), format!(r#"{{"text":"t{:05}x"}}"#, count / 2), "{}".into()).unwrap();
+            super::database::executor().unwrap().block_on(db.update("Moment".into(), ids[count / 2].clone(), format!(r#"{{"text":"t{:05}x"}}"#, count / 2), "{}".into())).unwrap();
             db.db.settle();
             let last = tape.0.lock().unwrap().last().unwrap().clone();
             (last.rows.len(), last.full)
@@ -65,7 +65,7 @@ fn a_live_query_leaves_its_rows_to_peek_and_no_subscription() {
     assert_eq!((peeked.rows.len(), peeked.full), (3, true));
     assert_eq!(peeked.revision, tape.0.lock().unwrap()[0].revision);
     assert_eq!((db.subscription_census().subscriptions, db.subscription_census().observed_queries), (0, 0));
-    db.update("Moment".into(), ids[0].clone(), r#"{"text":"zz"}"#.into(), "{}".into()).unwrap();
+    super::database::executor().unwrap().block_on(db.update("Moment".into(), ids[0].clone(), r#"{"text":"zz"}"#.into(), "{}".into())).unwrap();
     db.db.settle();
     let after = db.peek_query(query.into()).unwrap().unwrap();
     assert!(after.revision > peeked.revision);

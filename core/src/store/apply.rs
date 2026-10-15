@@ -52,7 +52,7 @@ impl Store {
         generation: Generation,
         plan: impl FnOnce(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<CommitResult, PlanCommitError<E>> {
-        let mut inner = self.lock();
+        let inner = self.lock();
         inner.ensure_healthy()?;
         if generation != inner.generation {
             return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration).into());
@@ -75,7 +75,7 @@ impl Store {
                 Ok(result) => Ok(self.finish(inner, result)),
                 Err(second) => {
                     if second.is_apply_failure() {
-                        inner.poison = Some(second.to_string());
+                        *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = Some(second.to_string());
                     }
                     Err(second.into())
                 }

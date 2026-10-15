@@ -18,7 +18,7 @@ fn repeated_mark_leaves_one_tombstone_row_with_latest_values() {
     store.mark_tombstone("messages", "1", 1, 100).unwrap();
     store.mark_tombstone("messages", "1", 2, 200).unwrap();
     assert_eq!(store.tombstone_count().unwrap(), 1);
-    assert_eq!(store.read(|reader| reader.tombstone_seq("messages", "1")).unwrap(), Some(2));
+    assert_eq!(store.read(&[], |reader| reader.tombstone_seq("messages", "1")).unwrap(), Some(2));
 }
 
 #[test]

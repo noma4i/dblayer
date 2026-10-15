@@ -158,21 +158,21 @@ fn indexed_fields_must_be_scalar_and_map_to_distinct_columns() {
 }
 
 #[test]
-fn composite_indexes_need_two_indexed_fields() {
+fn indexes_accept_scalar_columns_without_separate_field_indexes() {
     let fields = vec![
         FieldSpec::scalar("chatId", ScalarKind::Id).indexed(),
         FieldSpec::scalar("sequenceNumber", ScalarKind::Int).indexed(),
         FieldSpec::scalar("body", ScalarKind::Str),
     ];
     let with = |composite: Vec<&str>| ModelSpec {
-        composite_indexes: vec![composite.into_iter().map(String::from).collect()],
+        indexes: vec![composite.into_iter().map(String::from).collect()],
         ..model(fields.clone())
     };
 
     assert_eq!(with(vec!["chatId", "sequenceNumber"]).validate(&[]), Ok(()));
-    assert_eq!(with(vec!["chatId"]).validate(&[]), Err(DeclarationError::CompositeIndexTooShort));
-    assert_eq!(with(vec!["chatId", "ghost"]).validate(&[]), Err(DeclarationError::CompositeIndexFieldNotIndexed("ghost".into())));
-    assert_eq!(with(vec!["chatId", "body"]).validate(&[]), Err(DeclarationError::CompositeIndexFieldNotIndexed("body".into())));
+    assert_eq!(with(vec!["chatId"]).validate(&[]), Ok(()));
+    assert_eq!(with(vec!["chatId", "ghost"]).validate(&[]), Err(DeclarationError::InvalidIndexColumn("ghost".into())));
+    assert_eq!(with(vec!["chatId", "body"]).validate(&[]), Ok(()));
 }
 
 #[test]
@@ -482,7 +482,7 @@ fn specs_round_trip_through_json_and_default_missing_parts() {
     let spec = ModelSpec {
         associations: vec![association("chat", AssociationKind::BelongsTo, "chats", "chatId")],
         relations: vec![RelationSpec { remote: Some(paged_remote(true)), ..RelationSpec::new("thread", &["chatId"]) }],
-        composite_indexes: vec![vec!["chatId".into(), "sequenceNumber".into()]],
+        indexes: vec![vec!["chatId".into(), "sequenceNumber".into()]],
         actions: vec![action("send", RootShape::Upsert)],
         ..model(vec![
             FieldSpec::scalar("chatId", ScalarKind::Id).indexed(),

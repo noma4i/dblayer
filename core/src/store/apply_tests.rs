@@ -48,7 +48,7 @@ fn changed_upsert_advances_revision_and_field_revisions() {
     assert_eq!(second.rows.len(), 1);
     assert_eq!(second.rows[0].kind, RowChangeKind::Updated);
     assert_eq!(second.rows[0].fields.iter().cloned().collect::<Vec<_>>(), vec!["body".to_string()]);
-    let stored = store.read(|reader| reader.stored_row("messages", "m1")).unwrap().unwrap();
+    let stored = store.read(&[], |reader| reader.stored_row("messages", "m1")).unwrap().unwrap();
     assert_eq!(stored.revision, 2);
     assert_eq!(stored.born_rev, 1);
     assert_eq!(stored.field_rev["body"], 2);
@@ -60,7 +60,7 @@ fn removed_field_leaves_field_revisions() {
     let (store, _) = booted_store();
     commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "a"}))], vec![]);
     commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
-    let stored = store.read(|reader| reader.stored_row("messages", "m1")).unwrap().unwrap();
+    let stored = store.read(&[], |reader| reader.stored_row("messages", "m1")).unwrap().unwrap();
     assert!(!stored.field_rev.contains_key("body"));
     assert!(stored.row.get("body").is_none());
 }
@@ -108,7 +108,7 @@ fn destroy_with_server_or_local_reason_writes_tombstone_with_revision() {
         vec![destroy("messages", "m1", DestroyReason::Server), destroy("messages", "m2", DestroyReason::Expired)],
         vec![],
     );
-    assert_eq!(store.read(|reader| reader.tombstone_seq("messages", "m1")).unwrap(), result.revision);
+    assert_eq!(store.read(&[], |reader| reader.tombstone_seq("messages", "m1")).unwrap(), result.revision);
     assert!(!store.is_tombstoned("messages", "m2").unwrap());
     assert_eq!(count(&store, "SELECT deleted_at FROM tombstone WHERE id = 'm1'"), clock.now().as_millis() as i64);
 }
@@ -268,18 +268,24 @@ fn empty_envelope_opens_no_transaction_and_keeps_revision() {
 
 #[test]
 fn second_apply_failure_poisons_reads_until_reset() {
-    let (store, _) = booted_store();
-    exec(&store, "DROP TABLE row_messages");
-    let error = store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap_err();
-    assert!(matches!(error, StoreError::Sqlite(_)));
-    assert!(store.apply_failure().is_some());
-    assert!(matches!(store.point("messages", "m1"), Err(StoreError::Poisoned(_))));
-    assert!(matches!(
-        store.commit(envelope(&store, vec![upsert("items", json!({"id": "i1"}))], vec![])),
-        Err(StoreError::Poisoned(_))
-    ));
-    store.reset_incompatible().unwrap();
-    assert!(store.apply_failure().is_none());
+    let directory = tempfile::tempdir().unwrap();
+    for store in [Store::open_in_memory().unwrap(), Store::open(&directory.path().join("failure.sqlite")).unwrap()] {
+        store.boot(&[messages_spec(), items_spec()], None).unwrap();
+        exec(&store, "DROP TABLE row_messages");
+        let error = store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap_err();
+        assert!(matches!(error, StoreError::Sqlite(_)));
+        assert!(store.apply_failure().is_some());
+        for _ in 0..3 {
+            assert!(matches!(store.point("messages", "m1"), Err(StoreError::Poisoned(_))));
+        }
+        assert!(matches!(
+            store.commit(envelope(&store, vec![upsert("items", json!({"id": "i1"}))], vec![])),
+            Err(StoreError::Poisoned(_))
+        ));
+        store.reset_incompatible().unwrap();
+        assert!(store.apply_failure().is_none());
+        assert!(store.point("items", "i1").unwrap().is_none());
+    }
 }
 
 #[test]

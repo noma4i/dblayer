@@ -9,15 +9,15 @@ import kotlinx.serialization.json.*
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: String? = null, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: List<String?>? = null, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: Int? = null, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: List<OwnerInput>? = null)
+data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<String> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Int> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class MomentInput(val file: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val widgets: List<WidgetInput>? = null)
+data class MomentInput(val file: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val widgets: GraphQLNullable<List<WidgetInput>> = GraphQLNullable.Omitted)
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: String? = null)
+data class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: GraphQLNullable<String> = GraphQLNullable.Omitted)
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -25,7 +25,7 @@ data class WidgetInput(val kind: String, val settings: SettingsInput)
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class SettingsInput(val itemProps: JsonElement, @EncodeDefault(EncodeDefault.Mode.NEVER) val rotate: Double? = null)
+data class SettingsInput(val itemProps: JsonElement, @EncodeDefault(EncodeDefault.Mode.NEVER) val rotate: GraphQLNullable<Double> = GraphQLNullable.Omitted)
 
 @Serializable
 data class QrCodeCreateResult(

@@ -59,7 +59,7 @@ extension BridgeProbeTests {
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
     let seen = Counter()
-    try DB.logout()
+    try await DB.logout()
     #expect(entity.value == nil && entity.id.isEmpty)
     withObservationTracking { _ = entity.value } onChange: { seen.add() }
     try await Task.sleep(for: .milliseconds(200))

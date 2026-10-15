@@ -61,7 +61,7 @@ fn build_model(node: &ModelNode) -> ModelSpec {
 fn build_schema(schema: &Call, model: &mut ModelSpec) {
     for call in schema.block.iter().flatten() {
         match call.word.as_str() {
-            "index" => model.composite_indexes.push(call.args.iter().filter_map(|arg| text_of(&arg.item)).collect()),
+            "index" => model.indexes.push(call.args.iter().filter_map(|arg| text_of(&arg.item)).collect()),
             "ephemeral" => model.ephemeral.extend(call.block.iter().flatten().map(|call| build_ephemeral(call, model.key.as_str()))),
             _ => {
                 let field = build_field(call, model.key.as_str());
@@ -159,14 +159,29 @@ fn lower(name: &str) -> String {
     chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()
 }
 
+pub(crate) fn association_key(call: &Call, owner: &str) -> String {
+    option(call, "key").and_then(|pair| text_of(&pair.value.item)).unwrap_or_else(|| match call.word.as_str() {
+        "belongs_to" => format!("{}Id", first_name(call)),
+        "references" => first_name(call),
+        _ => format!("{}Id", lower(owner)),
+    })
+}
+
+pub(crate) fn association_target(call: &Call) -> String {
+    let name = first_name(call);
+    option(call, "model").and_then(|pair| text_of(&pair.value.item)).unwrap_or_else(|| {
+        let singular = match call.word.as_str() {
+            "has_many" | "references" => name.strip_suffix('s').unwrap_or(&name),
+            _ => &name,
+        };
+        camel(singular)
+    })
+}
+
 fn build_association(call: &Call, kind: AssociationKind, owner: &str) -> AssociationSpec {
     let name = first_name(call);
-    let target = option(call, "model").and_then(|pair| text_of(&pair.value.item)).unwrap_or_else(|| camel(name.strip_suffix('s').unwrap_or(&name)));
-    let key = option(call, "key").and_then(|pair| text_of(&pair.value.item)).unwrap_or_else(|| match kind {
-        AssociationKind::BelongsTo => format!("{name}Id"),
-        AssociationKind::References => name.clone(),
-        _ => format!("{}Id", lower(owner)),
-    });
+    let target = association_target(call);
+    let key = association_key(call, owner);
     let mut association = AssociationSpec::new(&name, kind, &target, &key);
     association.touches_parent = flag(call, "touch");
     association.sets = hash_texts(call, "sets").into_iter().collect();

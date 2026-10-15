@@ -10,14 +10,12 @@ Choose storage in the model declaration. Both platforms use the same rules.
 
 Local and synced models can share a database. A local model needs no separate database file.
 
-`storage: :local` rejects `remote`, `listen`, `action`, `create with:`, `update with:` and `destroy with:`.
+`storage: :local` rejects `fetch`, `listen`, and model `operation` blocks.
 Declare fields, nested values, scopes and associations as usual. Generated create, update and destroy calls still work.
 
 ```ruby
 model Session, storage: :local do
-  schema do
-    string :token
-  end
+  field :token, type: :string
 end
 ```
 

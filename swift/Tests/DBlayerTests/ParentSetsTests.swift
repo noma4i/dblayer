@@ -14,7 +14,7 @@ struct ParentSetsTests {
     #expect(pointed?.lastMessageId == message.id)
     #expect(pointed?.lastMessageAt != nil)
 
-    message.discard()
+    try await message.discard()
     let restored = await Chat.find(chat.id).current()
     #expect(restored?.lastMessageId == nil)
     #expect(restored?.lastMessageAt == nil)

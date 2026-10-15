@@ -11,30 +11,17 @@ mod nested;
 
 type Found = (usize, ParseError);
 
+#[cfg(test)]
+pub(crate) fn check_source(source: &str) -> Result<Vec<ModelSpec>, Vec<ParseError>> {
+    crate::parse_tree(&[source]).and_then(|parsed| check(&parsed.models)).map_err(|errors| errors.into_iter().map(|(_, error)| error).collect())
+}
+
 const SCALAR_WORDS: [&str; 6] = ["string", "num", "int", "bool", "date", "id"];
 const FIELD_WORDS: [&str; 12] =
     ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list", "file"];
 const NESTED_WORDS: [&str; 11] = ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list"];
 const EPHEMERAL_WORDS: [&str; 11] = ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list"];
 const ASSOCIATION_WORDS: [&str; 4] = ["belongs_to", "has_many", "has_one", "references"];
-
-const UNDECLARED_ACTIONS: [&str; 15] = [
-    "Chat.leave",
-    "Chat.add_members",
-    "Chat.remove_members",
-    "Message.upload",
-    "Message.forward",
-    "Message.open_gift",
-    "Moment.set_quality_score",
-    "Moment.set_ai_score",
-    "Moment.set_content_kind",
-    "Moment.reanalyze",
-    "User.send_gift",
-    "User.send_gift_with_note",
-    "User.send_intro",
-    "User.block",
-    "User.unblock",
-];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Context {
@@ -334,7 +321,7 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
             check_standard_input(call, &fields, &mut report);
         }
         if call.word == "action" {
-            check_action(call, &node.name, &fields, &remotes, &mut report);
+            check_action(call, &fields, &remotes, &mut report);
         }
     }
     for schema in node.body.iter().filter(|call| call.word == "schema") {
@@ -388,7 +375,7 @@ fn is_arg_kind(value: &Value) -> bool {
     matches!(value, Value::Symbol(kind) if ["bool", "int", "num", "string", "id", "ids"].contains(&kind.trim_end_matches('?')))
 }
 
-fn check_action(action: &Call, model: &str, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
+fn check_action(action: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
     let lines: Vec<&Call> = action.block.iter().flatten().collect();
     let mut seen = HashSet::new();
     for call in &lines {
@@ -401,10 +388,10 @@ fn check_action(action: &Call, model: &str, fields: &HashSet<&str>, remotes: &Ha
     if action.block.is_some() && !seen.contains("mutation") {
         report(action.line, action.column, "`action` needs a `mutation` line".to_string());
     }
-    check_local_effect(action, model, &seen, report);
+    check_local_effect(action, &seen, report);
 }
 
-fn check_local_effect(action: &Call, model: &str, seen: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
+fn check_local_effect(action: &Call, seen: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
     let Some(block) = &action.block else { return };
     let name = symbol_name(action.args.first()).unwrap_or_default();
     if let Some(effect) = block.iter().find(|call| call.word == "local_effect") {
@@ -415,7 +402,7 @@ fn check_local_effect(action: &Call, model: &str, seen: &HashSet<&str>, report: 
         if !matches!(reason, Some(Value::Str(text)) if !text.trim().is_empty()) {
             report(effect.line, effect.column, "`local_effect :none` needs a non-empty `reason:` string".to_string());
         }
-    } else if !seen.contains("optimistic") && !action.options.iter().any(|pair| pair.key == "optimistic") && !UNDECLARED_ACTIONS.contains(&format!("{model}.{name}").as_str()) {
+    } else if !seen.contains("optimistic") && !action.options.iter().any(|pair| pair.key == "optimistic") {
         report(action.line, action.column, format!("`action :{name}` must declare `optimistic` or `local_effect :none, reason: \"...\"`"));
     }
 }
@@ -564,11 +551,8 @@ fn check_list_element(call: &Call, report: &mut impl FnMut(usize, usize, String)
 }
 
 fn check_target(call: &Call, all: &[ModelNode], report: &mut impl FnMut(usize, usize, String)) {
-    let Some(Pair { value: Node { item: Value::Const(target), .. }, .. }) = call.options.iter().find(|pair| pair.key == "model")
-    else {
-        return;
-    };
-    if !all.iter().any(|node| &node.name == target) {
+    let target = crate::build::association_target(call);
+    if !all.iter().any(|node| node.name == target) {
         let name = symbol_name(call.args.first()).unwrap_or_default();
         report(call.line, call.column, format!("association `{name}` targets unknown model `{target}`"));
     }
@@ -662,8 +646,8 @@ fn check_shape(call: &Call, shape: Shape, report: &mut impl FnMut(usize, usize, 
     let args = call.args.as_slice();
     let message = match shape {
         Shape::Name if !matches!(args, [Node { item: Value::Symbol(_), .. }]) => format!("`{word}` needs a name like `:name`"),
-        Shape::Names if args.len() < 2 || args.iter().any(|arg| !matches!(arg.item, Value::Symbol(_))) => {
-            format!("`{word}` needs 2 or more field names like `:a, :b`")
+        Shape::Names if args.is_empty() || args.iter().any(|arg| !matches!(arg.item, Value::Symbol(_))) => {
+            format!("`{word}` needs field names like `:a` or `:a, :b`")
         }
         Shape::Const if !matches!(args, [Node { item: Value::Const(_) | Value::Str(_), .. }]) => {
             format!("`{word}` needs an operation name like `MomentsFeed` or \"feed\"")

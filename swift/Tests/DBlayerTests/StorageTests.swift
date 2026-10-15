@@ -34,11 +34,11 @@ struct StorageTests {
       let state: WireSyncState = name == "local" ? .synced : .pending
       func syncState(_ row: WireRow) -> WireSyncState { row.sync.state }
       #expect(try await Self.rows(database).isEmpty, Comment(rawValue: name))
-      let created = try database.create(model: "StorageRow", valuesJson: #"{"record":"one"}"#, argsJson: "{}")
+      let created = try await database.create(model: "StorageRow", valuesJson: #"{"record":"one"}"#, argsJson: "{}")
       let id = created.id
       #expect(syncState(created) == state, Comment(rawValue: name))
       #expect(try await Self.rows(database).first?.cells.first == .text(value: "one"), Comment(rawValue: name))
-      let edited = try database.update(model: "StorageRow", rowId: id, patchJson: #"{"record":"two"}"#, argsJson: "{}")
+      let edited = try await database.update(model: "StorageRow", rowId: id, patchJson: #"{"record":"two"}"#, argsJson: "{}")
       #expect(syncState(edited) == state, Comment(rawValue: name))
       #expect(try await Self.rows(database).first?.cells.first == .text(value: "two"), Comment(rawValue: name))
       try await database.flush()
@@ -46,7 +46,7 @@ struct StorageTests {
       database = try Database.open(config: config, modelsJson: models, transport: transport)
       let reopened = try #require(await Self.rows(database).first, Comment(rawValue: name))
       #expect(reopened.cells.first == .text(value: "two") && syncState(reopened) == state, Comment(rawValue: name))
-      try database.destroy(model: "StorageRow", rowId: id)
+      try await database.destroy(model: "StorageRow", rowId: id)
       #expect(try await Self.rows(database).isEmpty, Comment(rawValue: name))
       try await database.flush()
       #expect(transport.calls.isEmpty, Comment(rawValue: name))

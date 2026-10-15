@@ -1,5 +1,11 @@
-type Query { ping: Int }
-type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker }
+type Query { ping: Int, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]! }
+type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker, momentCreate(input: MomentInput!): MomentCreated }
+type MomentCreated { moment: Moment }
+type Moment { id: ID! }
+type Pricing { gifts: [Gift!]!, videoIntro: VideoIntro, tags: [String!], spec: JSON }
+type Gift { id: ID!, name: String!, price: Int! }
+type VideoIntro { enabled: Boolean! }
+type Giphy { id: ID!, url: String!, isSticker: Boolean! }
 type QrCode { url: String }
 type Sticker { id: ID }
 input CreateQrCodeInput { kind: String!, size: Int }

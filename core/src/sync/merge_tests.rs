@@ -101,10 +101,10 @@ async fn an_observer_gets_a_diff_of_the_changed_fields_only_and_nothing_for_equa
         counter.fetch_add(1, Ordering::SeqCst);
     }).unwrap();
     rig.db.settle();
-    let before = rig.db.shared.store.read(|reader| reader.stored_row("moments", "m1")).unwrap().unwrap();
+    let before = rig.db.shared.store.read(&[], |reader| reader.stored_row("moments", "m1")).unwrap().unwrap();
     load_page(&rig).await;
     rig.db.settle();
-    let after = rig.db.shared.store.read(|reader| reader.stored_row("moments", "m1")).unwrap().unwrap();
+    let after = rig.db.shared.store.read(&[], |reader| reader.stored_row("moments", "m1")).unwrap().unwrap();
     assert_eq!(deliveries.load(Ordering::SeqCst), 2);
     assert_eq!(after.field_rev["mood"], before.field_rev["mood"]);
     assert!(after.field_rev["text"] > before.field_rev["text"]);

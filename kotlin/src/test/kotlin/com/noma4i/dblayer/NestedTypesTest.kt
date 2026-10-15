@@ -52,7 +52,7 @@ class CellDecoderTest {
     private fun open() = Database.open(Config(null, null, 32u), modelsJSON, null)
 
     @Test
-    fun aStoredRowDecodesFromCellsLikeTheSharedJSONCases() {
+    fun aStoredRowDecodesFromCellsLikeTheSharedJSONCases() = bounded {
         val cases = parseJson(File("../fixtures/nested.json").readText()) as JsonArray
         val database = open()
         for (row in cases) {
@@ -66,7 +66,7 @@ class CellDecoderTest {
     }
 
     @Test
-    fun aRowWithAnotherLayoutIsRefused() {
+    fun aRowWithAnotherLayoutIsRefused(): Unit = bounded {
         val wire = open().create("NestedSample", "{}", "{}")
         assertThrows(DbException::class.java) { NestedSample.read(wire.copy(layout = "other")) }
     }

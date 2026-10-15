@@ -240,7 +240,12 @@ impl Shared {
 
     pub(crate) fn evaluate(&self, subject: &Subject) -> Result<Evaluated, DbError> {
         let epoch = self.ephemeral.lock().epoch;
-        self.read(|reader| {
+        let models = match subject {
+            Subject::Rows(query) => self.query_models(query.model.as_str(), &query.include)?,
+            Subject::Count(query) => vec![query.model.as_str()],
+            Subject::Row(row) => vec![row.model.as_str()],
+        };
+        self.read(&models, |reader| {
             let revision = reader.revision_seq()?;
             let (body, loaded) = match subject {
                 Subject::Rows(query) => {
@@ -265,7 +270,7 @@ impl Shared {
     pub(crate) fn evaluate_step(&self, query: &Query, previous: &Version, touched: &HashSet<String>) -> Result<Evaluated, DbError> {
         let Body::Rows(old) = &previous.body else { return self.evaluate(&Subject::Rows(query.clone())) };
         let epoch = self.ephemeral.lock().epoch;
-        self.read(|reader| {
+        self.read(&[query.model.as_str()], |reader| {
             let revision = reader.revision_seq()?;
             let keys = self.query_keys(reader, query)?;
             let prior: HashMap<&str, &Arc<Entry>> = old.entries.iter().map(|entry| (entry.id.as_str(), entry)).collect();
@@ -300,12 +305,22 @@ impl Shared {
             Subject::Count(_) => return Ok(Loaded::default()),
         };
         let keys: Vec<(String, i64)> = body.entries.iter().map(|entry| (entry.id.to_string(), entry.stamp.revision)).collect();
-        self.read(|reader| {
+        let models = self.query_models(model.as_str(), &include)?;
+        self.read(&models, |reader| {
             let rows = self.rows_for_keys(reader, model.as_str(), &keys)?;
             locked(&self.counters).rows_loaded += rows.len();
             let related = self.related_rows(reader, self.spec(model.as_str())?, &include, &rows)?.0;
             Ok(Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related })
         })
+    }
+
+    fn query_models<'a>(&'a self, model: &'a str, include: &[String]) -> Result<Vec<&'a str>, DbError> {
+        let spec = self.spec(model)?;
+        let mut models = vec![model];
+        for name in include {
+            models.push(association(spec, name)?.target.as_str());
+        }
+        Ok(models)
     }
 
     fn rows_body(&self, reader: &Reader<'_>, query: &Query, rows: Vec<Row>) -> Result<(Body, Loaded), DbError> {

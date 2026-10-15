@@ -21,10 +21,12 @@ pub struct BootReport {
 
 impl Store {
     pub fn boot(&self, models: &[ModelSpec], data_version: Option<&str>) -> Result<BootReport, StoreError> {
+        let mut reading_models = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         inner.ready = false;
         inner.data_version = data_version.map(str::to_string);
-        inner.models = models.iter().map(|spec| (spec.key.as_str().to_string(), ModelInfo::new(spec))).collect();
+        inner.models = std::sync::Arc::new(models.iter().map(|spec| (spec.key.as_str().to_string(), ModelInfo::new(spec))).collect());
+        *reading_models = inner.models.clone();
 
         let finished_interrupted_reset = finish_interrupted_reset(&mut inner)?;
         let fingerprints: BTreeMap<String, String> = current_fingerprints(&inner);

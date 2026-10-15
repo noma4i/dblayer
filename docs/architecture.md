@@ -44,6 +44,8 @@ The generated model reads the cells by position and builds itself once per revis
 - **Live reads.** Observers depend on models, lists and rows. A commit wakes only observers whose dependencies it touched. A query for a set of ids depends on those rows and is found by a reverse index from row to query, so a commit costs work in proportion to the rows it touched and the queries that depend on the whole model, not to every query of the model. The rule is in [live data](live-data.md#what-a-query-depends-on).
 - **One live value per record.** A registry per model keeps one entity per id and one database observer for the whole model. The observer delivers only the rows that changed, see [entities](entities.md).
 - **Normalized storage.** No table holds JSON text or a blob. Scalars are columns, lists and arrays are child tables, and values without a declared shape are rows of a node table. The outbox keeps its row ids, input, prior values and upload parts in child tables, and its errors and upload progress in columns. Query windows keep their ids in a child table, quarantined payloads are node rows, a pending reset is stored in columns, and model fingerprints are hashes.
+
+Typed members keep their columns when another member contains unrestricted data. Only that unrestricted subtree uses a node table. Model fingerprints include generated table and index statements, so storage changes recreate the affected model tables on opening.
 - **Sync state is stored.** The state of every unconfirmed record lives in a small table written by the same commit that changes the queue, so it is cheap to read and to query.
 - **Local first.** Reads come from SQLite. The network only fills it.
 - **One mechanism per question.** Duplicate mechanisms and duplicate names are treated as defects and checked by `scripts/check_zoo.sh`.
@@ -57,7 +59,7 @@ A file the build does not recognise is dropped and created again when the databa
 | `row_<model>` | One row per record: id, revision, birth revision, one typed column per scalar and enum field, `rev__<field>` revision columns, `<field>__present` flags of typed objects |
 | `row_<model>__<field>` | Items of a list or of an array of typed values, with their position; a recursive array uses one table for every level |
 | `row_<model>__value` | Values without a declared shape (`raw`, `file`, untyped `object` and `array`) as rows of a tree: parent, position, key, kind and the number or text |
-| `fts_row_<model>` | Full-text index of the `searchable` fields of the model |
+| `fts_row_<model>` | Full-text index of the fields selected by `search` |
 | `scope_member`, `tombstone`, `query_window`, `query_window_row` | List membership and order, deleted rows, loaded windows and their ids |
 | `op`, `op_row`, `op_value`, `op_part` | The outbox: status and error columns, the rows of an operation, its input and prior values, the parts of an upload |
 | `row_sync`, `sync_action`, `sync_field` | The stored sync state of every unconfirmed record, with its actions and dirty fields |

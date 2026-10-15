@@ -52,6 +52,28 @@ fn tree() -> serde_json::Value {
 }
 
 #[test]
+fn typed_siblings_stay_in_columns_when_a_member_has_unrestricted_values() {
+    for free in [true, false] {
+        let mut fields = vec![FieldSpec::scalar("title", ScalarKind::Str)];
+        let mut value = json!({"title": "first"});
+        if free {
+            fields.push(FieldSpec::raw("extra"));
+            value["extra"] = json!({"arbitrary": [null, 3, {"text": "kept"}]});
+        }
+        let spec = ModelSpec::new("gifts", vec![FieldSpec::scalar("id", ScalarKind::Id), typed(FieldSpec::object("meta"), "Meta", fields)]);
+        let store = Store::open_in_memory().unwrap();
+        store.boot(&[spec], None).unwrap();
+        store.mark_ready();
+        put(&store, json!({"id": "g1", "meta": value}));
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('row_gifts') WHERE name = 'meta__title' AND type = 'TEXT'"), 1);
+        assert_eq!(store.point("gifts", "g1").unwrap().unwrap().get("meta"), Some(&value), "raw member: {free}");
+        value["title"] = json!("second");
+        put(&store, json!({"id": "g1", "meta": value}));
+        assert_eq!(store.point("gifts", "g1").unwrap().unwrap().get("meta"), Some(&value), "raw member: {free}");
+    }
+}
+
+#[test]
 fn lists_arrays_objects_and_recursive_trees_read_back_as_written() {
     let store = store_with_gifts();
     let full = json!({
@@ -85,8 +107,26 @@ fn unknown_keys_wrong_types_and_nulls_do_not_reach_storage() {
     let store = store_with_gifts();
     put(&store, json!({"id": "g1", "meta": {"owner_id": 42, "state": "nope", "extra": true}, "items": [{"title": "t", "tags": ["a"], "size": {"w": 1, "h": 2}, "extra": 1}, 7]}));
     let stored = store.point("gifts", "g1").unwrap().unwrap();
-    assert_eq!(stored["meta"], json!({"owner_id": "42"}));
+    assert_eq!(stored["meta"], json!({"owner_id": "42", "state": "nope"}));
     assert_eq!(stored["items"], json!([{"title": "t", "tags": ["a"], "size": {"w": 1, "h": 2}}]));
+}
+
+#[test]
+fn nested_dates_keep_their_text_in_objects_and_lists() {
+    for free in [false, true] {
+        let mut fields = vec![FieldSpec::scalar("at", ScalarKind::Date), FieldSpec::list("dates", ScalarKind::Date)];
+        if free {
+            fields.push(FieldSpec::raw("extra"));
+        }
+        let spec = ModelSpec::new("gifts", vec![FieldSpec::scalar("id", ScalarKind::Id), typed(FieldSpec::object("meta"), "Meta", fields)]);
+        let store = Store::open_in_memory().unwrap();
+        store.boot(&[spec], None).unwrap();
+        store.mark_ready();
+        put(&store, json!({"id": "g1", "meta": {"at": "2026-10-14T00:00:00Z", "dates": ["2026-10-14T10:00:00+10:00"]}}));
+        let stored = store.point("gifts", "g1").unwrap().unwrap();
+        assert_eq!(stored["meta"]["at"], "2026-10-14T00:00:00Z");
+        assert_eq!(stored["meta"]["dates"], json!(["2026-10-14T10:00:00+10:00"]));
+    }
 }
 
 #[test]

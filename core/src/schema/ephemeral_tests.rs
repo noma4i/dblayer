@@ -53,7 +53,7 @@ fn an_ephemeral_file_is_rejected() {
 fn an_indexed_ephemeral_field_is_rejected() {
     let spec = EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false)).indexed());
     assert_eq!(with_ephemeral(spec).validate(&[]), Err(DeclarationError::EphemeralIndexed("typing".into())));
-    let composite = ModelSpec { composite_indexes: vec![vec!["name".into(), "typing".into()]], ..with_ephemeral(typing()) };
+    let composite = ModelSpec { indexes: vec![vec!["name".into(), "typing".into()]], ..with_ephemeral(typing()) };
     assert_eq!(composite.validate(&[]), Err(DeclarationError::EphemeralIndexed("typing".into())));
 }
 

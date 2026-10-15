@@ -55,12 +55,4 @@ impl FieldSpec {
         }
     }
 
-    /// True when a part of the value has no declared shape (raw, file, object or array without a type).
-    pub fn has_free_part(&self) -> bool {
-        match self.kind {
-            FieldKind::Raw | FieldKind::File => true,
-            FieldKind::Object | FieldKind::Array => self.app_type.is_none() || self.fields.iter().any(FieldSpec::has_free_part),
-            _ => false,
-        }
-    }
 }

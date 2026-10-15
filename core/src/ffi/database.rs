@@ -48,8 +48,8 @@ async fn on_executor<T: Send + 'static>(work: impl std::future::Future<Output = 
     executor()?.spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(DbError::from)
 }
 
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, crate::db::DbError> + Send + 'static) -> Result<T, DbError> {
-    executor()?.spawn_blocking(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(DbError::from)
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
+    executor()?.spawn_blocking(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }
 
 #[derive(uniffi::Record)]
@@ -71,8 +71,8 @@ impl TestClock {
     pub fn advance(&self, millis: u64) { self.clock.advance(Duration::from_millis(millis)) }
 }
 
-#[derive(uniffi::Object)]
-pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync>, wires: HashMap<String, Arc<WireModel>> }
+#[derive(Clone, uniffi::Object)]
+pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 impl Database {
     fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
@@ -82,7 +82,7 @@ impl Database {
         db.set_clock(clock.clone());
         let sync = transport.map(|transport| Sync::new(db.clone(), Arc::new(ForeignTransport(transport)), clock, SyncConfig::default()));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { db, sync, wires }))
+        Ok(Arc::new(Self { db, sync, wires: Arc::new(wires) }))
     }
 
     fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {
@@ -122,7 +122,7 @@ impl Database {
     pub async fn warm(&self, query_json: String) -> Result<(), DbError> {
         let (query, _) = self.parsed_query(&query_json)?;
         let db = self.db.clone();
-        blocking(move || db.warm(&query)).await
+        blocking(move || Ok(db.warm(&query)?)).await
     }
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
     pub fn subscription_census(&self) -> SubscriptionCensus {
@@ -156,31 +156,49 @@ impl Database {
     pub fn live_has_many(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.related(model, row_id, name, listener)
     }
-    pub fn create(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
-        let row = self.db.create_with(&model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
-        self.send_writes();
-        Ok(self.wire(&model)?.row(&row))
+    pub async fn create(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
+        let database = self.clone();
+        blocking(move || {
+            let row = database.db.create_with(&model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
+            database.send_writes();
+            Ok(database.wire(&model)?.row(&row))
+        }).await
     }
-    pub fn update(&self, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireRow, DbError> {
-        let row = self.db.update_with(&model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
-        self.send_writes();
-        Ok(self.wire(&model)?.row(&row))
+    pub async fn update(&self, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireRow, DbError> {
+        let database = self.clone();
+        blocking(move || {
+            let row = database.db.update_with(&model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
+            database.send_writes();
+            Ok(database.wire(&model)?.row(&row))
+        }).await
     }
-    pub fn set_local(&self, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
-        Ok(self.db.set_local(&model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
+    pub async fn set_local(&self, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
+        let database = self.clone();
+        blocking(move || {
+            Ok(database.db.set_local(&model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
+        }).await
     }
-    pub fn act(&self, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
-        let acted = self.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
-        self.send_writes();
-        Ok(QueuedAction { row: self.wire(&model)?.row(&acted.row), operation: acted.operation })
+    pub async fn act(&self, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
+        let database = self.clone();
+        blocking(move || {
+            let acted = database.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
+            database.send_writes();
+            Ok(QueuedAction { row: database.wire(&model)?.row(&acted.row), operation: acted.operation })
+        }).await
     }
-    pub fn destroy(&self, model: String, row_id: String) -> Result<(), DbError> {
-        self.db.destroy(&model, &id(&row_id)?)?;
-        self.send_writes();
-        Ok(())
+    pub async fn destroy(&self, model: String, row_id: String) -> Result<(), DbError> {
+        let database = self.clone();
+        blocking(move || {
+            database.db.destroy(&model, &id(&row_id)?)?;
+            database.send_writes();
+            Ok(())
+        }).await
     }
-    pub fn set_ephemeral(&self, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
-        Ok(self.db.set_ephemeral(&model, &id(&row_id)?, serde_json::from_str(&values_json)?)?)
+    pub async fn set_ephemeral(&self, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
+        let database = self.clone();
+        blocking(move || {
+            Ok(database.db.set_ephemeral(&model, &id(&row_id)?, serde_json::from_str(&values_json)?)?)
+        }).await
     }
     pub async fn attach(&self, model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String) -> Result<String, DbError> {
         let (db, row_id) = (self.db.clone(), id(&row_id)?);
@@ -192,7 +210,7 @@ impl Database {
     }
     pub async fn read(&self, model: String, row_id: String, field: String) -> Result<Option<Vec<u8>>, DbError> {
         let (db, row_id) = (self.db.clone(), id(&row_id)?);
-        blocking(move || db.read(&model, &row_id, &field)).await
+        blocking(move || Ok(db.read(&model, &row_id, &field)?)).await
     }
     pub async fn url(&self, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let (db, row_id) = (self.db.clone(), id(&row_id)?);
@@ -200,7 +218,7 @@ impl Database {
     }
     pub async fn detach(&self, model: String, row_id: String, field: String) -> Result<bool, DbError> {
         let (db, row_id) = (self.db.clone(), id(&row_id)?);
-        blocking(move || db.detach(&model, &row_id, &field)).await
+        blocking(move || Ok(db.detach(&model, &row_id, &field)?)).await
     }
     pub fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         let defs: Vec<Value> = serde_json::from_str(&defs_json)?;
@@ -265,7 +283,12 @@ impl Database {
         on_executor(async move { sync.retry_all().await }).await?;
         Ok(())
     }
-    pub fn discard(&self, model: String, row_id: String) -> Result<(), DbError> { self.db.discard(&model, &id(&row_id)?)?; Ok(()) }
+    pub async fn discard(&self, model: String, row_id: String) -> Result<(), DbError> {
+        let database = self.clone();
+        blocking(move || {
+            database.db.discard(&model, &id(&row_id)?)?; Ok(())
+        }).await
+    }
     pub async fn resume(&self) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         on_executor(async move { sync.resume().await }).await?;
@@ -312,9 +335,14 @@ impl Database {
     }
     pub async fn maintain(&self) -> Result<(), DbError> {
         let db = self.db.clone();
-        blocking(move || db.maintain(&[]).map(|_| ())).await
+        blocking(move || Ok(db.maintain(&[]).map(|_| ())?)).await
     }
-    pub fn logout(&self) -> Result<(), DbError> { self.db.reset_all()?; Ok(()) }
+    pub async fn logout(&self) -> Result<(), DbError> {
+        let database = self.clone();
+        blocking(move || {
+            database.db.reset_all()?; Ok(())
+        }).await
+    }
 }
 
 impl Database {

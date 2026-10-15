@@ -1,6 +1,7 @@
 mod database;
 mod entities;
 mod live;
+mod retention;
 mod state;
 mod transport;
 pub mod wire;
@@ -8,6 +9,7 @@ pub mod wire;
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
 pub use live::{LiveChange, LiveSubscription, QueryListener};
+pub use retention::{RetentionChange, RetentionPool};
 pub use state::{RelationStateChange, StateListener, StateSubscription};
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
 pub use transport::{ByteProgress, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
@@ -62,3 +64,7 @@ mod file_calls_tests;
 mod load_tests;
 #[cfg(test)]
 mod live_tests;
+#[cfg(test)]
+mod write_calls_tests;
+#[cfg(test)]
+mod retention_tests;

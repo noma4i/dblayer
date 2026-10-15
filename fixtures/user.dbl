@@ -1,17 +1,15 @@
 model User do
-  schema do
-    string :name
-    file   :avatar,   null: true
-    date   :birthday, null: true
+  field :name, type: :string
+  field :avatar, type: :file, null: true
+  field :birthday, type: :date, null: true
 
-    ephemeral do
-      bool   :typing, default: false, reset_after: 5.seconds
-      string :mood,   null: true
-    end
+  ephemeral do
+    field :typing, type: :bool, default: false, reset_after: 5.seconds
+    field :mood, type: :string, null: true
   end
 
-  remote :profile do
-    query UserProfile
+  scope :profile do
+    fetch UserProfile
     updates UserTyping, set: { typing: true }
   end
 end

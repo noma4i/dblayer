@@ -12,6 +12,7 @@ public final class Entity<Model: DBModel> {
   /// The value comes from the retention of a released entity and no fresh delivery has replaced it yet.
   public private(set) var isStale: Bool
   @ObservationIgnored private(set) var revision: Int64
+  @ObservationIgnored private var bytes: UInt64 = 0
   @ObservationIgnored private let registry: Entities<Model>
   @ObservationIgnored private let epoch: Int
   @ObservationIgnored private let isSingleton: Bool
@@ -20,6 +21,7 @@ public final class Entity<Model: DBModel> {
     self.id = id
     value = seed?.value
     revision = seed?.revision ?? Int64.min
+    bytes = seed?.bytes ?? 0
     isStale = seed != nil
     self.registry = registry
     epoch = registry.epoch
@@ -36,9 +38,10 @@ public final class Entity<Model: DBModel> {
     isSingleton = true
   }
 
-  fileprivate func accept(_ next: Model?, revision incoming: Int64) {
+  fileprivate func accept(_ next: Model?, revision incoming: Int64, bytes: UInt64 = 0) {
     guard incoming >= revision else { return }
     revision = incoming
+    self.bytes = bytes
     isStale = false
     if next != value { value = next }
     if isSingleton, id != (next?.id ?? "") { id = next?.id ?? "" }
@@ -54,14 +57,14 @@ public final class Entity<Model: DBModel> {
 
   isolated deinit {
     guard !isSingleton else { return }
-    registry.released(id: id, value: value, revision: revision, epoch: epoch)
+    registry.released(id: id, value: value, revision: revision, bytes: bytes, epoch: epoch)
   }
 }
 
 struct Retained<Model: DBModel> {
   let value: Model?
   let revision: Int64
-  let releasedAt: TimeInterval
+  let bytes: UInt64
 }
 
 protocol EntitySource: AnyObject, Sendable {
@@ -74,33 +77,27 @@ protocol EntitySource: AnyObject, Sendable {
 public final class Entities<Model: DBModel> {
   public static var shared: Entities<Model> { EntityRegistries.registry(for: Model.self) }
 
-  nonisolated static var retentionAge: TimeInterval { 120 }
-  nonisolated static var retentionCount: Int { 200 }
-
   private enum Step { case retain, release, refresh }
 
   private struct Weak { weak var entity: Entity<Model>? }
 
   fileprivate private(set) var epoch = 0
   private var live: [String: Weak] = [:]
-  private var kept: [String: Retained<Model>] = [:]
+  private let kept: RetainedValues
   private var steps: [String: Step] = [:]
   private var flushScheduled = false
   private var database: Database?
   private let followsDatabase: Bool
   private let source: any EntitySource
   private let now: @Sendable () -> TimeInterval
-  private let maxAge: TimeInterval
-  private let maxCount: Int
 
   private let core: CoreEntitySource<Model>
   private var single: Entity<Model>?
   private var singleQuery: Query<Model>?
   private(set) var singleFeed: SingletonFeed<Model>?
 
-  init(maxAge: TimeInterval = Entities.retentionAge, maxCount: Int = Entities.retentionCount, now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, source: (any EntitySource)? = nil) {
-    self.maxAge = maxAge
-    self.maxCount = maxCount
+  init(now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, source: (any EntitySource)? = nil) {
+    kept = source == nil ? EntityRegistries.retained : RetainedValues()
     self.now = now
     let core = CoreEntitySource<Model>()
     self.core = core
@@ -118,8 +115,7 @@ public final class Entities<Model: DBModel> {
   public func entity(_ id: String) -> Entity<Model> {
     follow(DB.database)
     if let existing = live[id]?.entity { return existing }
-    purge()
-    let seed = kept.removeValue(forKey: id)
+    let seed = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
     let made = Entity<Model>(id: id, seed: seed, registry: self)
     live[id] = Weak(entity: made)
     steps[id] = (seed != nil || steps[id] == .release) ? .refresh : .retain
@@ -166,11 +162,11 @@ public final class Entities<Model: DBModel> {
   /// Drops every entity, lease and retained value. Called when the account ends.
   public func reset() {
     epoch += 1
-    let all = Array(live.keys) + Array(kept.keys)
+    let all = Array(live.keys)
     live.values.forEach { $0.entity?.detach() }
     live = [:]
-    kept = [:]
-    steps = Dictionary(uniqueKeysWithValues: all.map { ($0, Step.release) })
+    kept.clear(Model.modelName)
+    for id in all { steps[id] = .release }
     scheduleFlush()
     if let single {
       single.detach()
@@ -179,34 +175,22 @@ public final class Entities<Model: DBModel> {
   }
 
   var retainedCount: Int {
-    purge()
-    return kept.count
+    kept.count(Model.modelName, now: UInt64(now() * 1000))
   }
 
   var liveCount: Int { live.values.filter { $0.entity != nil }.count }
 
-  fileprivate func released(id: String, value: Model?, revision: Int64, epoch entityEpoch: Int) {
+  fileprivate func released(id: String, value: Model?, revision: Int64, bytes: UInt64, epoch entityEpoch: Int) {
     guard entityEpoch == epoch, live[id]?.entity == nil else { return }
     live[id] = nil
     steps[id] = .release
-    if let value { keep(id, Retained(value: value, revision: revision, releasedAt: now())) }
+    if let value { kept.keep(id, value: Retained(value: value, revision: revision, bytes: bytes), now: UInt64(now() * 1000)) }
     scheduleFlush()
   }
 
   func apply(_ delivery: EntityDecoding.Decoded<Model>) {
-    for model in delivery.rows { live[model.id]?.entity?.accept(model, revision: delivery.revision) }
+    for (model, bytes) in delivery.rows { live[model.id]?.entity?.accept(model, revision: delivery.revision, bytes: bytes) }
     for id in delivery.removed { live[id]?.entity?.accept(nil, revision: delivery.revision) }
-  }
-
-  private func keep(_ id: String, _ retained: Retained<Model>) {
-    kept[id] = retained
-    purge()
-    if kept.count > maxCount, let oldest = kept.min(by: { $0.value.releasedAt < $1.value.releasedAt })?.key { kept[oldest] = nil }
-  }
-
-  private func purge() {
-    let cutoff = now() - maxAge
-    if kept.contains(where: { $0.value.releasedAt <= cutoff }) { kept = kept.filter { $0.value.releasedAt > cutoff } }
   }
 
   private func scheduleFlush() {
@@ -228,6 +212,7 @@ public final class Entities<Model: DBModel> {
 
 @MainActor
 enum EntityRegistries {
+  static let retained = RetainedValues()
   private static var registries: [ObjectIdentifier: AnyObject] = [:]
   private static var resets: [() -> Void] = []
 
@@ -264,7 +249,7 @@ extension DBSingleton {
 enum EntityDecoding {
   struct Decoded<Model: DBModel> {
     let revision: Int64
-    let rows: [Model]
+    let rows: [(Model, UInt64)]
     let removed: [String]
   }
 }
@@ -307,7 +292,7 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, EntityListener, @unc
   }
 
   func changed(delivery: EntityDelivery) {
-    let rows = delivery.rows.compactMap { try? Model.decode($0) }
+    let rows = delivery.rows.compactMap { row in (try? Model.decode(row)).map { ($0, row.estimatedBytes) } }
     lock.withLock { total += rows.count }
     deliver?(EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed))
   }

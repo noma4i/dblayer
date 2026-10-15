@@ -1,5 +1,3 @@
 model StorageRow do
-  schema do
-    string :record
-  end
+  field :record, type: :string
 end

@@ -69,9 +69,9 @@ impl Shared {
         self.specs.get(model).ok_or_else(|| DbError::UnknownModel(model.to_string()))
     }
 
-    pub(crate) fn read<T>(&self, run: impl FnOnce(&Reader<'_>) -> Result<T, DbError>) -> Result<T, DbError> {
+    pub(crate) fn read<T>(&self, models: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, DbError>) -> Result<T, DbError> {
         let mut outcome = None;
-        self.store.read(|reader| {
+        self.store.read(models, |reader| {
             outcome = Some(run(reader));
             Ok(())
         })?;
@@ -200,6 +200,9 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
         StoreEvent::Committed(result) => {
             {
                 let mut cache = locked(&cache);
+                if let Some(revision) = result.revision {
+                    cache.committed(revision);
+                }
                 for change in &result.rows {
                     cache.evict(change.row.model.as_str(), change.row.id.as_str());
                 }
@@ -227,6 +230,7 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
         StoreEvent::Reset { revision, models } => {
             {
                 let mut cache = locked(&cache);
+                cache.committed(revision);
                 match &models {
                     Some(models) => cache.evict_models(models),
                     None => cache.clear(),

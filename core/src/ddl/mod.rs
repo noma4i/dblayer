@@ -313,13 +313,34 @@ pub fn create_table_statement(model: &ModelSpec) -> String {
 
 pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
     let table = table_name(model.key.as_str());
-    let singles = promoted_columns(model)
-        .map(|(name, _)| format!("CREATE INDEX IF NOT EXISTS {table}_{name} ON {table} ({name})"));
-    let composites = model.composite_indexes.iter().map(|fields| {
-        let names: Vec<String> = fields.iter().map(|field| column_name(field)).collect();
-        format!("CREATE INDEX IF NOT EXISTS {table}_{} ON {table} ({})", names.join("_"), names.join(", "))
-    });
-    singles.chain(composites).collect()
+    let mut indexes: Vec<Vec<(String, bool)>> = promoted_columns(model).map(|(name, _)| vec![(name, false)]).collect();
+    indexes.extend(model.indexes.iter().map(|fields| fields.iter().map(|field| (column_name(field), false)).collect()));
+    for relation in &model.relations {
+        let mut fields: Vec<_> = relation.by_columns.iter().map(|name| (column_name(name), false)).collect();
+        fields.sort();
+        if let Sort::Fields(order) = &relation.sort {
+            for field in order {
+                let name = column_name(&field.column);
+                if !fields.iter().any(|(held, _)| held == &name) {
+                    match field.direction {
+                        crate::value::SortDirection::AscNullsLast => fields.push((format!("{name} IS NULL"), false)),
+                        crate::value::SortDirection::DescNullsFirst => fields.push((format!("{name} IS NOT NULL"), false)),
+                        _ => {}
+                    }
+                    fields.push((name, matches!(field.direction, crate::value::SortDirection::Desc | crate::value::SortDirection::DescNullsFirst)));
+                }
+            }
+            if !order.is_empty() && !fields.iter().any(|(name, _)| name == "id") { fields.push(("id".into(), false)); }
+        }
+        if !fields.is_empty() { indexes.push(fields); }
+    }
+    indexes.sort();
+    indexes.dedup();
+    indexes.iter().filter(|fields| !indexes.iter().any(|other| other.len() > fields.len() && other.starts_with(fields)))
+        .enumerate().map(|(index, fields)| {
+            let columns: Vec<_> = fields.iter().map(|(name, descending)| if *descending { format!("{name} DESC") } else { name.clone() }).collect();
+            format!("CREATE INDEX IF NOT EXISTS {table}_idx_{index} ON {table} ({})", columns.join(", "))
+        }).collect()
 }
 
 pub fn fts_name(model: &str) -> String {
@@ -428,7 +449,8 @@ struct RelationFingerprint<'a> {
 struct ModelFingerprint<'a> {
     fields: Vec<&'a FieldSpec>,
     relations: Vec<RelationFingerprint<'a>>,
-    composite_indexes: Vec<&'a Vec<String>>,
+    indexes: Vec<&'a Vec<String>>,
+    ddl: Vec<String>,
 }
 
 pub fn fingerprint(model: &ModelSpec) -> String {
@@ -446,9 +468,15 @@ pub fn fingerprint(model: &ModelSpec) -> String {
         })
         .collect();
     relations.sort_by(|left, right| left.name.cmp(right.name));
-    let mut composite_indexes: Vec<&Vec<String>> = model.composite_indexes.iter().collect();
-    composite_indexes.sort();
-    let text = serde_json::to_string(&ModelFingerprint { fields, relations, composite_indexes }).expect("fingerprint serializes");
+    let mut indexes: Vec<&Vec<String>> = model.indexes.iter().collect();
+    indexes.sort();
+    let mut canonical = model.clone();
+    canonical.fields.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut ddl = vec![create_table_statement(&canonical)];
+    ddl.extend(layout(&canonical).table_statements(canonical.is_memory()));
+    ddl.extend(create_index_statements(&canonical));
+    ddl.sort();
+    let text = serde_json::to_string(&ModelFingerprint { fields, relations, indexes, ddl }).expect("fingerprint serializes");
     Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

@@ -60,14 +60,14 @@ class OperationCallTest {
     }
 
     @Test
-    fun anInputObjectOfTheSchemaIsSentNestedAndWithoutItsNullFields() = bounded {
+    fun inputObjectsDistinguishOmittedNullAndValues() = bounded {
         val transport = rig("StickerSend", "mutation StickerSend(${'$'}input: StickerInput!) { stickerSend(input: ${'$'}input) { id } }", """{"data":{"stickerSend":{"id":"s1"}}}""")
-        val input = StickerInput(name = "wave", tags = listOf("a", "b"), notes = listOf("n", null), pinned = true, owner = OwnerInput(id = "7"), helpers = listOf(OwnerInput(id = "8", nickname = "ann")))
+        val input = StickerInput(name = "wave", mood = GraphQLNullable.Null, tags = listOf("a", "b"), notes = GraphQLNullable.Value(listOf("n", null)), pinned = true, owner = OwnerInput(id = "7"), helpers = GraphQLNullable.Value(listOf(OwnerInput(id = "8", nickname = GraphQLNullable.Value("ann")))))
 
         val result = withTimeout(5000) { Operations.stickerSend(input) }
 
         assertEquals("s1", result.id)
-        val expected = """{"input":{"name":"wave","tags":["a","b"],"notes":["n",null],"pinned":true,"owner":{"id":"7"},"helpers":[{"id":"8","nickname":"ann"}]}}"""
+        val expected = """{"input":{"name":"wave","mood":null,"tags":["a","b"],"notes":["n",null],"pinned":true,"owner":{"id":"7"},"helpers":[{"id":"8","nickname":"ann"}]}}"""
         assertEquals(parseJson(expected), parseJson(transport.calls.first { it.operationName == "StickerSend" }.variablesJson))
     }
 
@@ -99,9 +99,9 @@ class OperationCallTest {
     fun aJsonScalarOfAnInputObjectIsSentAsAnObjectAndAnOmittedListIsNotSent() = bounded {
         val transport = rig("MomentCreate", "mutation MomentCreate(${'$'}input: MomentInput!) { momentCreate(input: ${'$'}input) { moment { id } } }", """{"data":{"momentCreate":{"moment":{"id":9}}}}""")
         val props = JsonObject(mapOf("emoji" to JsonPrimitive("fire"), "size" to JsonPrimitive(3), "tags" to JsonArray(listOf(JsonPrimitive("a")))))
-        val widget = WidgetInput(kind = "EMOJI", settings = SettingsInput(itemProps = props, rotate = 1.5))
+        val widget = WidgetInput(kind = "EMOJI", settings = SettingsInput(itemProps = props, rotate = GraphQLNullable.Value(1.5)))
 
-        assertEquals("9", withTimeout(5000) { Operations.momentCreate(MomentInput(file = "s1", widgets = listOf(widget))) }.moment?.id)
+        assertEquals("9", withTimeout(5000) { Operations.momentCreate(MomentInput(file = "s1", widgets = GraphQLNullable.Value(listOf(widget)))) }.moment?.id)
         transport.enqueue("MomentCreate", """{"data":{"momentCreate":{"moment":{"id":9}}}}""")
         assertEquals("9", withTimeout(5000) { Operations.momentCreate(MomentInput(file = "s2")) }.moment?.id)
 

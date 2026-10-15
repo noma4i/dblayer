@@ -47,7 +47,7 @@ struct CellDecoderTests {
   }
 
   @Test
-  func aStoredRowDecodesFromCellsLikeTheSharedJSONCases() throws {
+  func aStoredRowDecodesFromCellsLikeTheSharedJSONCases() async throws {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let cases = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/nested.json")))
     let database = try open()
@@ -56,7 +56,7 @@ struct CellDecoderTests {
       guard fields["error"] != .bool(true), let input = fields["input"] else { continue }
       let label = fields["name"]!.stringValue!
       let values = String(decoding: try JSONEncoder().encode(["value": input]), as: UTF8.self)
-      let wire = try database.create(model: "NestedSample", valuesJson: values, argsJson: "{}")
+      let wire = try await database.create(model: "NestedSample", valuesJson: values, argsJson: "{}")
       let sample = try NestedSample.decode(wire)
       let expected = try JSONDecoder().decode(NestedValue.self, from: JSONEncoder().encode(fields["output"]!))
       #expect(sample.value == expected, Comment(rawValue: label))
@@ -64,9 +64,9 @@ struct CellDecoderTests {
   }
 
   @Test
-  func aRowWithAnotherLayoutIsRefused() throws {
+  func aRowWithAnotherLayoutIsRefused() async throws {
     let database = try open()
-    var wire = try database.create(model: "NestedSample", valuesJson: "{}", argsJson: "{}")
+    var wire = try await database.create(model: "NestedSample", valuesJson: "{}", argsJson: "{}")
     wire.layout = "other"
     #expect(throws: (any Error).self) { try NestedSample.decode(wire) }
   }

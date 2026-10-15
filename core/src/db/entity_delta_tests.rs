@@ -91,7 +91,9 @@ fn dropping_the_observer_empties_the_index_and_stops_delivery() {
 fn a_row_that_appears_later_and_one_that_is_destroyed_are_delivered() {
     let (db, log, observer) = rig();
     observer.retain(&[rid("late")]).unwrap();
+    db.settle();
     named(&db, "late", "here");
+    db.settle();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("users"), id: rid("u4"), reason: DestroyReason::Server });
     db.land(envelope).unwrap();

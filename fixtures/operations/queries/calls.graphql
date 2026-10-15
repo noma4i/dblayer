@@ -1,0 +1,2 @@
+query Pricing { pricing { gifts { id name price } videoIntro { enabled } tags spec } }
+query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { id url isSticker } }

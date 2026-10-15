@@ -24,7 +24,7 @@ impl Db {
 
     fn stored_file(&self, model: &str, id: &RowId, field: &str) -> Result<Option<FileRecord>, DbError> {
         self.file_field(model, field)?;
-        self.shared.read(|reader| {
+        self.shared.read(&[model], |reader| {
             if reader.point(model, id.as_str())?.is_none() {
                 return Ok(None);
             }

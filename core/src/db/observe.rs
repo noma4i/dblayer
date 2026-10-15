@@ -223,7 +223,7 @@ impl Shared {
         }
         let ids = touched.iter().map(|id| Value::from(id.as_str())).collect();
         let probe = Query { order: Vec::new(), r#where: Some(Where::AllOf { clauses: query.r#where.iter().cloned().chain([Where::in_list("id", ids)]).collect() }), ..query.clone() };
-        self.read(|reader| Ok(self.query_keys(reader, &probe)?.is_empty()))
+        self.read(&[probe.model.as_str()], |reader| Ok(self.query_keys(reader, &probe)?.is_empty()))
     }
 
     fn publish_group(&self, key: &str, subject: &Subject, previous: &Arc<Version>, step: Option<(&HashSet<String>, Option<(i64, u64)>)>) {

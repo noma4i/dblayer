@@ -82,7 +82,7 @@ pub(crate) fn fetch_stored(connection: &Connection, info: &ModelInfo, ids: &[Str
                         }
                     }
                     FieldPlan::Typed { field, member, .. } => {
-                        if let Some(value) = tables.get(&id).and_then(|row_tables| assemble(member, layout, &cells, row_tables, 0)) {
+                        if let Some(value) = assemble(member, layout, &cells, tables.get(&id).map(Vec::as_slice).unwrap_or_default(), 0) {
                             data.insert(field.clone(), value);
                         }
                     }
@@ -253,22 +253,22 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 impl Store {
     pub fn point(&self, model: &str, id: &str) -> Result<Option<Map<String, Value>>, StoreError> {
-        self.read(|reader| reader.point(model, id))
+        self.read(&[model], |reader| reader.point(model, id))
     }
 
     pub fn rows_by_ids(&self, model: &str, ids: &[RowId]) -> Result<Vec<Map<String, Value>>, StoreError> {
         let names: Vec<String> = ids.iter().map(|id| id.as_str().to_string()).collect();
-        let mut stored = self.read(|reader| reader.stored_rows(model, &names))?;
+        let mut stored = self.read(&[model], |reader| reader.stored_rows(model, &names))?;
         Ok(names.iter().filter_map(|name| stored.remove(name)).map(|row| row.row).collect())
     }
 
     pub fn scope_rows(&self, model: &str, scope_key: &str, limit: Option<usize>) -> Result<ScopeRowsResult, StoreError> {
-        let result = self.read(|reader| reader.scope_rows(model, scope_key, limit))?;
+        let result = self.read(&[model], |reader| reader.scope_rows(model, scope_key, limit))?;
         self.lock().counters.membership_missing_entity += result.dangling_members;
         Ok(result)
     }
 
     pub fn row_count(&self, model: &str) -> Result<i64, StoreError> {
-        self.read(|reader| reader.row_count(model))
+        self.read(&[model], |reader| reader.row_count(model))
     }
 }

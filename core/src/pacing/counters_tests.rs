@@ -16,6 +16,7 @@ fn new_counters_have_zero_values() {
         cache_hits: 0,
         cache_misses: 0,
         cache_evictions: 0,
+        cache_estimated_bytes: 0,
         peek_hits: 0,
         peek_misses: 0,
         transport_calls: 0,

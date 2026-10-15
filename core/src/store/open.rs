@@ -23,7 +23,9 @@ fn probe(path: &Path) -> Result<Result<Store, RecreateReason>, StoreError> {
         Ok(None) => {}
     }
     migrate_core(&connection)?;
-    Ok(Ok(Store::from_connection(connection)))
+    let mut store = Store::from_connection(connection);
+    store.readers = Some(super::readers::Readers::open(path)?);
+    Ok(Ok(store))
 }
 
 fn remove_database(path: &Path) -> Result<(), StoreError> {

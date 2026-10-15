@@ -5,7 +5,8 @@ use rusqlite::{params_from_iter, Connection};
 use serde_json::{Map, Number, Value};
 
 use crate::ddl::{Layout, Leaf, Member, Table, TableShape};
-use crate::value::{read_array, read_enum, read_scalar};
+use crate::value::{read_array, read_enum, read_scalar, ScalarKind};
+use crate::schema::FieldKind;
 
 use super::rows::{column_value, placeholders};
 use super::StoreError;
@@ -24,20 +25,32 @@ fn normalize_members(members: &[Member], layout: &Layout, source: &Map<String, V
     members.iter().filter_map(|member| source.get(member.key()).and_then(|value| normalize(member, layout, value)).map(|value| (member.key().to_string(), value))).collect()
 }
 
+fn normalize_nested_leaf(leaf: &Leaf, value: &Value) -> Option<Value> {
+    match leaf.scalar {
+        Some(ScalarKind::Date) | None => read_scalar(value, ScalarKind::Str),
+        Some(kind) => read_scalar(value, kind),
+    }
+}
+
 /// The value as storage returns it: known members only, scalars read by their kind, nulls and wrong types removed.
 pub(crate) fn normalize(member: &Member, layout: &Layout, value: &Value) -> Option<Value> {
     match member {
-        Member::Leaf(leaf) => normalize_leaf(leaf, value),
+        Member::Leaf(leaf) => normalize_nested_leaf(leaf, value),
+        Member::Raw { kind, .. } => match kind {
+            FieldKind::Object => value.as_object().map(|value| Value::Object(value.clone())),
+            FieldKind::Array => value.as_array().map(|value| Value::Array(value.clone())),
+            _ => Some(value.clone()),
+        },
         Member::Object { members, .. } => value.as_object().map(|source| Value::Object(normalize_members(members, layout, source))),
         Member::List { table, .. } => match &layout.tables[*table].shape {
-            TableShape::Values(leaf) => read_array(value, |item| normalize_leaf(leaf, item)).map(Value::Array),
-            TableShape::Elements(_) => None,
+            TableShape::Values(leaf) => read_array(value, |item| normalize_nested_leaf(leaf, item)).map(Value::Array),
+            TableShape::Elements(_) | TableShape::Nodes => None,
         },
         Member::Array { table, .. } => match &layout.tables[*table].shape {
             TableShape::Elements(members) => value.as_array().map(|items| {
                 Value::Array(items.iter().filter_map(Value::as_object).map(|item| Value::Object(normalize_members(members, layout, item))).collect())
             }),
-            TableShape::Values(_) => None,
+            TableShape::Values(_) | TableShape::Nodes => None,
         },
     }
 }
@@ -50,6 +63,7 @@ pub(crate) fn member_values(member: &Member, value: Option<&Value>, out: &mut Ve
     let present = |flag: bool| if flag { SqlValue::Integer(1) } else { SqlValue::Null };
     match member {
         Member::Leaf(leaf) => out.push((leaf.column.clone(), leaf_sql(leaf, value))),
+        Member::Raw { present: column, .. } => out.push((column.clone(), present(value.is_some()))),
         Member::Object { present: column, members, .. } => {
             let source = value.and_then(Value::as_object);
             out.push((column.clone(), present(source.is_some())));
@@ -79,6 +93,11 @@ pub(crate) fn insert_children(
 ) -> Result<(), StoreError> {
     match member {
         Member::Leaf(_) => {}
+        Member::Raw { table, .. } => {
+            if let Some(value) = value {
+                crate::nodes::write_tree(connection, &layout.tables[*table].name, &["row_id", "owner"], &[SqlValue::Text(row_id.to_string()), SqlValue::Integer(owner)], value)?;
+            }
+        }
         Member::Object { members, .. } => {
             let source = value.and_then(Value::as_object);
             for child in members {
@@ -141,6 +160,7 @@ struct Element {
 pub(crate) struct TableRows {
     values: HashMap<i64, Vec<(i64, SqlValue)>>,
     elements: HashMap<i64, Vec<(i64, Element)>>,
+    nodes: HashMap<i64, Value>,
 }
 
 pub(crate) type RowTables = Vec<TableRows>;
@@ -149,9 +169,10 @@ fn present(cells: &Cells, at: usize) -> bool {
     !matches!(cells.get(at), None | Some(SqlValue::Null))
 }
 
-pub(crate) fn assemble(member: &Member, layout: &Layout, cells: &Cells, tables: &RowTables, owner: i64) -> Option<Value> {
+pub(crate) fn assemble(member: &Member, layout: &Layout, cells: &Cells, tables: &[TableRows], owner: i64) -> Option<Value> {
     match member {
         Member::Leaf(leaf) => leaf_value(leaf, cells.get(leaf.pos)),
+        Member::Raw { table, .. } => tables[*table].nodes.get(&owner).cloned(),
         Member::Object { at, members, .. } => {
             if !present(cells, *at) {
                 return None;
@@ -177,7 +198,7 @@ pub(crate) fn assemble(member: &Member, layout: &Layout, cells: &Cells, tables: 
     }
 }
 
-fn assemble_members(members: &[Member], layout: &Layout, cells: &Cells, tables: &RowTables, owner: i64) -> Map<String, Value> {
+fn assemble_members(members: &[Member], layout: &Layout, cells: &Cells, tables: &[TableRows], owner: i64) -> Map<String, Value> {
     members.iter().filter_map(|member| assemble(member, layout, cells, tables, owner).map(|value| (member.key().to_string(), value))).collect()
 }
 
@@ -198,6 +219,15 @@ pub(crate) fn read_cells(row: &rusqlite::Row<'_>, count: usize, skip: usize) -> 
 fn read_table(connection: &Connection, table: &Table, ids: &[String]) -> Result<BTreeMap<String, TableRows>, StoreError> {
     let mut found: BTreeMap<String, TableRows> = BTreeMap::new();
     match &table.shape {
+        TableShape::Nodes => {
+            let filter = format!("row_id IN ({})", placeholders(ids.len()));
+            let values: Vec<_> = ids.iter().cloned().map(SqlValue::Text).collect();
+            for (key, value) in crate::nodes::read_trees(connection, &table.name, &["row_id", "owner"], &filter, &values)? {
+                if let [SqlValue::Text(row_id), SqlValue::Integer(owner)] = key.as_slice() {
+                    found.entry(row_id.clone()).or_default().nodes.insert(*owner, value);
+                }
+            }
+        }
         TableShape::Values(_) => {
             let sql = format!("SELECT row_id, owner, pos, value FROM {} WHERE row_id IN ({}) ORDER BY row_id, owner, pos", table.name, placeholders(ids.len()));
             let mut statement = connection.prepare_cached(&sql)?;

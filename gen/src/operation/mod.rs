@@ -47,7 +47,12 @@ pub(crate) fn input_object_names(operations: &[OperationCall]) -> Vec<String> {
 
 fn kinds(call: &Call, file: usize, errors: &mut Vec<Found>) -> Vec<(String, String)> {
     let mut found = Vec::new();
+    let mut names = HashSet::new();
     for pair in &call.options {
+        if !names.insert(&pair.key) {
+            errors.push((file, ParseError::new(pair.line, pair.column, format!("arg `{}` is declared twice", pair.key))));
+            continue;
+        }
         match &pair.value.item {
             Value::Symbol(kind) if ARG_KINDS.contains(&kind.trim_end_matches('?')) || is_input_object(kind) => found.push((pair.key.clone(), kind.clone())),
             _ => errors.push((file, ParseError::new(pair.line, pair.column, "type must be :bool, :int, :num, :string, :id, :ids or the name of a schema input object like :QrCodeInput, each optionally followed by ?"))),
@@ -122,7 +127,12 @@ pub(crate) fn build(nodes: &[OperationNode], errors: &mut Vec<Found>) -> Vec<Ope
         let mut call = OperationCall { name: node.name.clone(), operation: String::new(), wrap: None, args: Vec::new(), result: None, list: false };
         let mut named = 0;
         let mut list_line = None;
+        let mut lines = HashSet::new();
         for line in &node.body {
+            if !lines.insert(&line.word) {
+                errors.push(fail(line.line, line.column, format!("`{}` is declared twice", line.word)));
+                continue;
+            }
             match line.word.as_str() {
                 "mutation" | "query" => {
                     named += 1;

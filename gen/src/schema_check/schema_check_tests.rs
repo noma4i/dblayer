@@ -39,10 +39,10 @@ type Mutation {
 
 const OPERATIONS: &str = "query items($first: Int) { items(first: $first) { nodes { id } } }\nquery mine { mine: items { nodes { id } } }\nquery one($id: ID!) { item(id: $id) { id } }\nquery all { plain { id } }\nmutation CreateItem($input: ItemInput!) { createItem(input: $input) { id } }\nmutation TagItem($itemId: ID!, $label: String, $size: Int!) { tagItem(itemId: $itemId, label: $label, size: $size) { id } }\n";
 
-const REMOTE: &str = "  remote :all do\n    query \"items\"\n    paginate 20\n  end\n";
+const REMOTE: &str = "  scope :all do\n    fetch \"items\"\n    paginate 20\n  end\n";
 
 fn model(fields: &str, remote: &str) -> String {
-    format!("model Item do\n  schema do\n{fields}  end\n\n{remote}end\n")
+    format!("model Item do\n\n{fields}\n\n{remote}end\n")
 }
 
 fn run(source: &str) -> Result<Vec<String>, Vec<(usize, String)>> {
@@ -59,27 +59,27 @@ fn run(source: &str) -> Result<Vec<String>, Vec<(usize, String)>> {
 
 #[test]
 fn declarations_are_checked_against_the_schema() {
-    let valid = "    string :title\n    string :note, null: true\n    int :count\n    list :tags, of: :string\n    enum :kind, values: [:A, :B]\n    date :createdAt\n    string :ownerName, null: true, from: \"owner.name\"\n    object :meta, as: MetaBox, null: true do\n      string :label\n      object :inner, as: InnerBox, null: true do\n        int :x\n      end\n    end\n    string :ghost, local: true, null: true\n";
+    let valid = "    field :title, type: :string\n    field :note, type: :string, null: true\n    field :count, type: :int\n    field :tags, type: [:string]\n    field :kind, type: :enum, values: [:A, :B]\n    field :createdAt, type: :date\n    field :ownerName, type: :string, null: true, from: \"owner.name\"\n    field :meta, type: MetaBox, null: true do\n      field :label, type: :string\n      field :inner, type: InnerBox, null: true do\n        field :x, type: :int\n      end\n    end\n    field :ghost, type: :string, local: true, null: true\n";
     let cases: [(&str, String, Option<(usize, &str)>); 19] = [
         ("every kind fits", model(valid, REMOTE), None),
-        ("missing field", model("    string :ghost\n", REMOTE), Some((3, "type `Item` has no field `ghost`"))),
-        ("nullable in schema, required in model", model("    string :note\n", REMOTE), Some((3, "declare `null: true`"))),
-        ("list declared as scalar", model("    string :tags\n", REMOTE), Some((3, "which is a list"))),
-        ("scalar declared as list", model("    list :title, of: :string\n", REMOTE), Some((3, "not a list"))),
-        ("wrong scalar kind", model("    bool :title\n", REMOTE), Some((3, "does not fit the schema type"))),
-        ("enum value the schema lacks", model("    enum :kind, values: [:A, :Z]\n", REMOTE), Some((3, "enum `Kind` does not have"))),
-        ("from path missing", model("    string :ownerName, null: true, from: \"owner.ghost\"\n", REMOTE), Some((3, "type `Owner` has no field `ghost`"))),
-        ("nested field missing", model("    object :meta, as: MetaBox, null: true do\n      string :gone\n    end\n", REMOTE), Some((4, "type `Meta` has no field `gone`"))),
-        ("unknown root field", model("    string :title\n", "  remote :all do\n    query \"nothing\"\n    paginate 20\n  end\n"), Some((7, "operation `nothing` is not in the operation documents"))),
-        ("single remote on a list", model("    string :title\n", "  remote :one do\n    query \"all\"\n  end\n"), Some((7, "returns `[Item]!`"))),
-        ("list remote on one object", model("    string :title\n", "  remote :one do\n    query \"one\"\n    list\n  end\n"), Some((8, "expects a list"))),
-        ("aliased root needs its key", model("    string :title\n", "  remote :mine do\n    query \"mine\", root: \"items\"\n    paginate 20\n  end\n"), Some((7, "must start with the first field `mine`"))),
-        ("aliased root with its key", model("    string :title\n", "  remote :mine do\n    query \"mine\"\n    paginate 20\n  end\n"), None),
-        ("id from the parent object", "model Item do\n  schema do\n    id :id, id_from: :owner\n    id :ownerId, null: true, index: true\n  end\n\n  belongs_to :owner, model: Item, key: :ownerId, from: \"owner\"\n  remote :one do\n    query \"one\"\n  end\nend\n".to_string(), None),
-        ("association path of the wrong shape", "model Item do\n  schema do\n    string :title\n    id :ownerId, null: true, index: true\n  end\n\n  has_many :owners, model: Item, key: :ownerId, from: \"owner\"\n  remote :one do\n    query \"one\"\n  end\nend\n".to_string(), Some((7, "expects a list"))),
-        ("default covers a nullable schema field", model("    string :note, default: \"\"\n", REMOTE), None),
-        ("association path through a list", "model Item do\n  schema do\n    string :title\n    list :ownerIds, of: :id, default: []\n  end\n\n  references :owners, model: Item, key: :ownerIds, from: \"links.owner\"\n  remote :one do\n    query \"one\"\n  end\nend\n".to_string(), None),
-        ("local model has no schema", "model Item, storage: :local do\n  schema do\n    string :ghost\n  end\nend\n".to_string(), None),
+        ("missing field", model("    field :ghost, type: :string\n", REMOTE), Some((3, "type `Item` has no field `ghost`"))),
+        ("nullable in schema, required in model", model("    field :note, type: :string\n", REMOTE), Some((3, "declare `null: true`"))),
+        ("list declared as scalar", model("    field :tags, type: :string\n", REMOTE), Some((3, "which is a list"))),
+        ("scalar declared as list", model("    field :title, type: [:string]\n", REMOTE), Some((3, "not a list"))),
+        ("wrong scalar kind", model("    field :title, type: :bool\n", REMOTE), Some((3, "does not fit the schema type"))),
+        ("enum value the schema lacks", model("    field :kind, type: :enum, values: [:A, :Z]\n", REMOTE), Some((3, "enum `Kind` does not have"))),
+        ("from path missing", model("    field :ownerName, type: :string, null: true, from: \"owner.ghost\"\n", REMOTE), Some((3, "type `Owner` has no field `ghost`"))),
+        ("nested field missing", model("    field :meta, type: MetaBox, null: true do\n      field :gone, type: :string\n    end\n", REMOTE), Some((4, "type `Meta` has no field `gone`"))),
+        ("unknown root field", model("    field :title, type: :string\n", "  scope :all do\n    fetch \"nothing\"\n    paginate 20\n  end\n"), Some((7, "operation `nothing` is not in the operation documents"))),
+        ("single remote on a list", model("    field :title, type: :string\n", "  scope :one do\n    fetch \"all\"\n  end\n"), Some((7, "returns `[Item!]!`"))),
+        ("list remote on one object", model("    field :title, type: :string\n", "  scope :one do\n    fetch \"one\"\n    list\n  end\n"), Some((8, "expects a list"))),
+        ("aliased root needs its key", model("    field :title, type: :string\n", "  scope :mine do\n    fetch \"mine\", root: \"items\"\n    paginate 20\n  end\n"), Some((7, "must start with the first field `mine`"))),
+        ("aliased root with its key", model("    field :title, type: :string\n", "  scope :mine do\n    fetch \"mine\"\n    paginate 20\n  end\n"), None),
+        ("id from the parent object", "model Item do\n\n    field :id, type: :id, id_from: :owner\n    field :ownerId, type: :id, null: true\n\n\n  belongs_to :owner, model: Item, from: \"owner\"\n  scope :one do\n    fetch \"one\"\n  end\nend\n".to_string(), None),
+        ("association path of the wrong shape", "model Item do\n\n    field :title, type: :string\n    field :ownerId, type: :id, null: true\n\n\n  has_many :owners, model: Item, key: :ownerId, from: \"owner\"\n  scope :one do\n    fetch \"one\"\n  end\nend\n".to_string(), Some((7, "expects a list"))),
+        ("default covers a nullable schema field", model("    field :note, type: :string, default: \"\"\n", REMOTE), None),
+        ("association path through a list", "model Item do\n\n    field :title, type: :string\n    field :ownerIds, type: [:id], default: []\n\n\n  references :owners, model: Item, key: :ownerIds, from: \"links.owner\"\n  scope :one do\n    fetch \"one\"\n  end\nend\n".to_string(), None),
+        ("local model has no schema", "model Item, storage: :local do\n\n    field :ghost, type: :string\n\nend\n".to_string(), None),
     ];
     for (name, source, expected) in cases {
         match (run(&source), expected) {
@@ -93,22 +93,22 @@ fn declarations_are_checked_against_the_schema() {
 
 #[test]
 fn schema_fields_the_model_lacks_are_only_listed() {
-    let notes = run(&model("    string :title\n", REMOTE)).unwrap();
-    assert!(notes.iter().any(|note| note.contains("model `Item` remote `all` does not use") && note.contains("extra")), "{notes:?}");
+    let notes = run(&model("    field :title, type: :string\n", REMOTE)).unwrap();
+    assert!(notes.iter().any(|note| note.contains("model `Item` scope `all` does not use") && note.contains("extra")), "{notes:?}");
 }
 
 fn with_lines(lines: &str) -> String {
-    model("    string :title\n", lines)
+    model("    field :title, type: :string\n", lines)
 }
 
 fn action_with(lines: &str) -> String {
-    with_lines(&format!("  action :tag do\n    mutation TagItem\n    local_effect :none, reason: \"test\"\n{lines}\n  end\n"))
+    with_lines(&format!("  operation :tag do\n    mutation TagItem\n    local_effect :none, reason: \"test\"\n{lines}\n  end\n"))
 }
 
 #[test]
 fn args_are_checked_against_the_input_of_their_mutation() {
-    let create = |wrap: &str, input: &str, args: &str| with_lines(&format!("  create with: CreateItem, {wrap}input: {{ {input} }}, args: {{ {args} }}\n"));
-    let wrapped = |input: &str, args: &str| create("wrap: :input, ", input, args);
+    let create = |wrap: &str, input: &str, args: &str| with_lines(&format!("  operation :create do\n    mutation CreateItem\n    {wrap}\n    input {input}\n    args {args}\n  end\n"));
+    let wrapped = |input: &str, args: &str| create("wrap :input", input, args);
     let cases: [(&str, String, Option<(usize, &str)>); 15] = [
         ("string for String!", wrapped("title: :title, file: :file", "file: :string"), None),
         ("nullable arg for a nullable input", wrapped("title: :title, note: :note", "note: :string?"), None),
@@ -121,10 +121,10 @@ fn args_are_checked_against_the_input_of_their_mutation() {
         ("kind that does not fit", wrapped("title: :title, file: :file", "file: :bool"), Some((6, "arg `file` of kind `:bool` does not fit `file: String!`"))),
         ("string for an Int input", wrapped("title: :title, count: :count, file: :f", "count: :string?, f: :string"), Some((6, "does not fit `count: Int`"))),
         ("nullable arg for a required input", wrapped("title: :title, file: :file", "file: :string?"), Some((6, "arg `file` may be nil but `file: String!` is required"))),
-        ("operation that is not in the documents", with_lines("  create with: Nope, input: { a: :a }, args: { a: :string }\n"), Some((6, "operation `Nope` is not in the operation documents"))),
+        ("operation that is not in the documents", with_lines("  operation :create do\n    mutation Nope\n    input a: :a\n    args a: :string\n  end\n"), Some((6, "operation `Nope` is not in the operation documents"))),
         ("unwrapped action takes the variables", action_with("    args label: :string?, size: :int\n    input itemId: :id, label: :label, size: :size"), None),
         ("unwrapped action with a wrong kind", action_with("    args size: :string\n    input itemId: :id, size: :size"), Some((6, "arg `size` of kind `:string` does not fit `size: Int!`"))),
-        ("wrap that is not a variable", with_lines("  create with: CreateItem, wrap: :payload, input: { title: :title, file: :file }, args: { file: :string }\n"), Some((6, "operation `CreateItem` has no variable `$payload`"))),
+        ("wrap that is not a variable", with_lines("  operation :create do\n    mutation CreateItem\n    wrap :payload\n    input title: :title, file: :file\n    args file: :string\n  end\n"), Some((6, "operation `CreateItem` has no variable `$payload`"))),
     ];
     for (name, source, expected) in cases {
         match (run(&source), expected) {

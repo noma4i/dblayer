@@ -3,9 +3,7 @@
 A `file` field stores binary data such as images, audio, video and documents.
 
 ```ruby
-schema do
-  file :media, null: true
-end
+field :media, type: :file, null: true
 ```
 
 ```swift
@@ -71,7 +69,7 @@ sync.cancelUpload(moment)
 
 A record that does not exist yet can be created together with its upload. The record appears at once with a temporary id and its `upload` state. No create operation is queued: after the file is stored, the content mutation creates the record on the server and its id replaces the temporary one. A failed upload leaves the record failed, `retry()` sends again and `discard()` removes it.
 
-The model declares `action :upload` with the `root` of the created record, so the answer of the content mutation lands on the record.
+The model declares `operation :upload` with the `root` of the created record, so the answer of the content mutation lands on the record.
 
 ```swift
 let request = UploadRequest(path: url.path, mutation: "CreateMoment", createBlob: "CreateBlob", variables: ["text": .string("hello")])

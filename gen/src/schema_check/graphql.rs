@@ -9,26 +9,40 @@ const BUILTIN_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ty {
-    pub name: String,
-    pub list: bool,
+    pub kind: TyKind,
     pub nullable: bool,
-    pub item_nullable: bool,
+    pub has_default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TyKind {
+    Named(String),
+    List(Box<Ty>),
 }
 
 impl Ty {
     fn of(declared: &Type<'_, String>) -> Self {
         match declared {
             Type::NonNullType(inner) => Self { nullable: false, ..Self::of(inner) },
-            Type::ListType(inner) => {
-                let item = Self::of(inner);
-                Self { name: item.name, list: true, nullable: true, item_nullable: item.nullable }
-            }
-            Type::NamedType(name) => Self { name: name.clone(), list: false, nullable: true, item_nullable: false },
+            Type::ListType(inner) => Self { kind: TyKind::List(Box::new(Self::of(inner))), nullable: true, has_default: false },
+            Type::NamedType(name) => Self { kind: TyKind::Named(name.clone()), nullable: true, has_default: false },
         }
     }
 
+    pub fn name(&self) -> &str {
+        match &self.kind { TyKind::Named(name) => name, TyKind::List(item) => item.name() }
+    }
+
+    pub fn is_list(&self) -> bool { matches!(self.kind, TyKind::List(_)) }
+
+    pub fn optional(&self) -> bool { self.nullable || self.has_default }
+
+    pub fn into_list(self) -> Self {
+        Self { nullable: self.nullable, has_default: false, kind: TyKind::List(Box::new(self)) }
+    }
+
     pub fn describe(&self) -> String {
-        let named = if self.list { format!("[{}]", self.name) } else { self.name.clone() };
+        let named = match &self.kind { TyKind::Named(name) => name.clone(), TyKind::List(item) => format!("[{}]", item.describe()) };
         if self.nullable { named } else { format!("{named}!") }
     }
 }
@@ -74,7 +88,7 @@ impl Schema {
             TypeDefinition::Enum(declared) => (&declared.name, TypeKind::Enum(declared.values.iter().map(|value| value.name.clone()).collect())),
             TypeDefinition::Union(union) => (&union.name, TypeKind::Union),
             TypeDefinition::Scalar(scalar) => (&scalar.name, TypeKind::Scalar),
-            TypeDefinition::InputObject(input) => (&input.name, TypeKind::Input(input.fields.iter().map(|field| (field.name.clone(), Ty { nullable: field.default_value.is_some() || Ty::of(&field.value_type).nullable, ..Ty::of(&field.value_type) })).collect())),
+            TypeDefinition::InputObject(input) => (&input.name, TypeKind::Input(input.fields.iter().map(|field| (field.name.clone(), Ty { has_default: field.default_value.is_some(), ..Ty::of(&field.value_type) })).collect())),
         };
         self.types.insert(name.clone(), kind);
     }
@@ -122,8 +136,14 @@ pub struct Root {
 
 #[derive(Debug, Default)]
 pub struct Operations {
-    pub roots: HashMap<String, Root>,
-    pub mutations: HashMap<String, HashMap<String, Ty>>,
+    pub named: HashMap<String, Operation>,
+}
+
+#[derive(Debug)]
+pub struct Operation {
+    pub kind: &'static str,
+    pub root: Option<Root>,
+    pub variables: HashMap<String, Ty>,
 }
 
 impl Operations {
@@ -131,22 +151,24 @@ impl Operations {
         let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
         let document = query::parse_query::<String>(&text).map_err(|error| error.to_string())?;
         for definition in &document.definitions {
-            if let QueryDefinition::Operation(OperationDefinition::Mutation(mutation)) = definition {
-                if let Some(name) = &mutation.name {
-                    let variables = mutation.variable_definitions.iter().map(|variable| (variable.name.clone(), Ty { nullable: variable.default_value.is_some() || Ty::of(&variable.var_type).nullable, ..Ty::of(&variable.var_type) })).collect();
-                    self.mutations.insert(name.clone(), variables);
-                }
-                continue;
-            }
-            let QueryDefinition::Operation(OperationDefinition::Query(operation)) = definition else { continue };
-            let Some(name) = &operation.name else { continue };
-            let first = operation.selection_set.items.iter().find_map(|selection| match selection {
+            let (kind, name, variables, selection) = match definition {
+                QueryDefinition::Operation(OperationDefinition::Query(operation)) => ("query", &operation.name, &operation.variable_definitions, &operation.selection_set),
+                QueryDefinition::Operation(OperationDefinition::Mutation(operation)) => ("mutation", &operation.name, &operation.variable_definitions, &operation.selection_set),
+                QueryDefinition::Operation(OperationDefinition::Subscription(operation)) => ("subscription", &operation.name, &operation.variable_definitions, &operation.selection_set),
+                _ => continue,
+            };
+            let Some(name) = name else { return Err("operation documents need named operations".into()) };
+            let first = selection.items.iter().find_map(|selection| match selection {
                 Selection::Field(field) => Some(field),
                 _ => None,
             });
-            if let Some(field) = first {
+            let root = first.map(|field| {
                 let key = field.alias.clone().unwrap_or_else(|| field.name.clone());
-                self.roots.insert(name.clone(), Root { key, field: field.name.clone() });
+                Root { key, field: field.name.clone() }
+            });
+            let variables = variables.iter().map(|variable| (variable.name.clone(), Ty { has_default: variable.default_value.is_some(), ..Ty::of(&variable.var_type) })).collect();
+            if self.named.insert(name.clone(), Operation { kind, root, variables }).is_some() {
+                return Err(format!("operation `{name}` is declared twice in operation documents"));
             }
         }
         Ok(())

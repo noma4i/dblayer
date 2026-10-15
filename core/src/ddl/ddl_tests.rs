@@ -77,16 +77,30 @@ fn column_types_follow_field_kinds() {
 }
 
 #[test]
-fn create_indexes_include_columns_and_composites() {
-    let model = ModelSpec { composite_indexes: vec![vec!["chatId".into(), "sequenceNumber".into()]], ..messages() };
+fn index_names_distinguish_column_names_from_sort_terms() {
+    let model = ModelSpec {
+        relations: vec![RelationSpec { sort: Sort::Fields(vec![SortField { column: "position".into(), direction: SortDirection::Desc }]), ..RelationSpec::global("recent") }],
+        ..ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("position", ScalarKind::Int).indexed(), FieldSpec::scalar("positionDescId", ScalarKind::Int).indexed()])
+    };
+    let connection = Connection::open_in_memory().unwrap();
+    connection.execute_batch(&create_table_statement(&model)).unwrap();
+    let statements = create_index_statements(&model);
+    for sql in &statements { connection.execute_batch(sql).unwrap(); }
+    let count: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL", [], |row| row.get(0)).unwrap();
+    assert_eq!(count as usize, statements.len(), "an index name silently replaced a different definition: {statements:?}");
+}
+
+#[test]
+fn create_indexes_remove_duplicate_and_prefix_indexes() {
+    let model = ModelSpec { indexes: vec![vec!["chatId".into(), "sequenceNumber".into()]; 2], ..messages() };
     let statements = create_index_statements(&model);
 
-    assert_eq!(statements.len(), 5);
-    assert_eq!(statements[0], "CREATE INDEX IF NOT EXISTS row_messages_chat_id ON row_messages (chat_id)");
-    assert_eq!(
-        statements.last().unwrap(),
-        "CREATE INDEX IF NOT EXISTS row_messages_chat_id_sequence_number ON row_messages (chat_id, sequence_number)"
-    );
+    let connection = Connection::open_in_memory().unwrap();
+    connection.execute_batch(&create_table_statement(&model)).unwrap();
+    for sql in &statements { connection.execute_batch(sql).unwrap(); }
+    assert_eq!(statements.len(), 4);
+    assert!(!statements.iter().any(|sql| sql.ends_with("(chat_id)")));
+    assert!(statements.iter().any(|sql| sql.ends_with("(chat_id, sequence_number)")));
 }
 
 #[test]
@@ -111,7 +125,7 @@ fn model_tables_apply_once_and_again() {
     let tables = names(&connection, "table");
     assert!(tables.contains("row_groups") && tables.contains("row_messages"));
     let indexes = names(&connection, "index");
-    assert!(indexes.contains("row_messages_chat_id") && indexes.contains("row_groups_title"));
+    assert!(indexes.contains("row_messages_idx_0") && indexes.contains("row_groups_idx_0"));
 }
 
 #[test]

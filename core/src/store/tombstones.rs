@@ -74,12 +74,12 @@ impl Store {
 
     #[cfg(test)]
     pub fn is_tombstoned(&self, model: &str, id: &str) -> Result<bool, StoreError> {
-        self.read(|reader| reader.is_tombstoned(model, id))
+        self.read(&[model], |reader| reader.is_tombstoned(model, id))
     }
 
     #[cfg(test)]
     pub fn tombstoned_ids(&self, model: &str, ids: &[String]) -> Result<BTreeSet<String>, StoreError> {
-        self.read(|reader| reader.tombstoned_ids(model, ids))
+        self.read(&[model], |reader| reader.tombstoned_ids(model, ids))
     }
 
     #[cfg(test)]

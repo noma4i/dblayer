@@ -1,15 +1,15 @@
 model Presence, storage: :memory, expire_after: 1.minute do
-  schema do
-    id     :userId, index: true
-    string :room
+  field :userId, type: :id
+  field :room, type: :string
+
+  belongs_to :user
+
+  scope :for_user do
+    where :userId
   end
 
-  belongs_to :user, model: User, key: :userId
-
-  scope :for_user, params: [:userId], where: { userId: :userId }
-
-  remote :online do
-    query PresenceOnline
+  scope :online do
+    fetch PresenceOnline
     list
     fresh_for 30.seconds
     updates PresenceChanged, deleted_by: :left

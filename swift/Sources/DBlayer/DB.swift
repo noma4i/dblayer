@@ -5,8 +5,8 @@ public enum DB {
   public nonisolated(unsafe) static var database: Database!
 
   /// Ends the session: clears the stored data and drops every entity, lease and retained value.
-  @MainActor public static func logout() throws {
-    try database.logout()
+  @MainActor public static func logout() async throws {
+    try await database.logout()
     EntityRegistries.resetAll()
   }
 

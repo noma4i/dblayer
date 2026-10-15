@@ -1,4 +1,5 @@
 mod cache;
+pub(crate) use cache::row_bytes;
 mod warm;
 mod commit;
 mod correlate;

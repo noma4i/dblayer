@@ -297,7 +297,7 @@ impl Db {
     }
 
     pub fn outbox(&self) -> Result<Vec<OutboxOperation>, DbError> {
-        self.shared.read(|reader| Ok(read_outbox(reader)?))
+        self.shared.read(&[], |reader| Ok(read_outbox(reader)?))
     }
 
     fn commit_local_optional(

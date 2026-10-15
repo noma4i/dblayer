@@ -1,17 +1,17 @@
 import Foundation
 import DBlayer
 
-public struct StickerInput: Encodable, Sendable {
+public struct StickerInput: Encodable, Sendable, Equatable {
     public let name: String
-    public let mood: String?
+    public let mood: GraphQLNullable<String>
     public let tags: [String]
-    public let notes: [String?]?
-    public let size: Int?
+    public let notes: GraphQLNullable<[String?]>
+    public let size: GraphQLNullable<Int>
     public let pinned: Bool
     public let owner: OwnerInput
-    public let helpers: [OwnerInput]?
+    public let helpers: GraphQLNullable<[OwnerInput]>
 
-    public init(name: String, mood: String? = nil, tags: [String], notes: [String?]? = nil, size: Int? = nil, pinned: Bool, owner: OwnerInput, helpers: [OwnerInput]? = nil) {
+    public init(name: String, mood: GraphQLNullable<String> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, pinned: Bool, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted) {
         self.name = name
         self.mood = mood
         self.tags = tags
@@ -21,29 +21,74 @@ public struct StickerInput: Encodable, Sendable {
         self.owner = owner
         self.helpers = helpers
     }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case mood
+        case tags
+        case notes
+        case size
+        case pinned
+        case owner
+        case helpers
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(mood, forKey: .mood)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(notes, forKey: .notes)
+        try container.encode(size, forKey: .size)
+        try container.encode(pinned, forKey: .pinned)
+        try container.encode(owner, forKey: .owner)
+        try container.encode(helpers, forKey: .helpers)
+    }
 }
 
-public struct MomentInput: Encodable, Sendable {
+public struct MomentInput: Encodable, Sendable, Equatable {
     public let file: String
-    public let widgets: [WidgetInput]?
+    public let widgets: GraphQLNullable<[WidgetInput]>
 
-    public init(file: String, widgets: [WidgetInput]? = nil) {
+    public init(file: String, widgets: GraphQLNullable<[WidgetInput]> = .omitted) {
         self.file = file
         self.widgets = widgets
     }
-}
 
-public struct OwnerInput: Encodable, Sendable {
-    public let id: String
-    public let nickname: String?
+    enum CodingKeys: String, CodingKey {
+        case file
+        case widgets
+    }
 
-    public init(id: String, nickname: String? = nil) {
-        self.id = id
-        self.nickname = nickname
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(file, forKey: .file)
+        try container.encode(widgets, forKey: .widgets)
     }
 }
 
-public struct WidgetInput: Encodable, Sendable {
+public struct OwnerInput: Encodable, Sendable, Equatable {
+    public let id: String
+    public let nickname: GraphQLNullable<String>
+
+    public init(id: String, nickname: GraphQLNullable<String> = .omitted) {
+        self.id = id
+        self.nickname = nickname
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case nickname
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(nickname, forKey: .nickname)
+    }
+}
+
+public struct WidgetInput: Encodable, Sendable, Equatable {
     public let kind: String
     public let settings: SettingsInput
 
@@ -51,15 +96,37 @@ public struct WidgetInput: Encodable, Sendable {
         self.kind = kind
         self.settings = settings
     }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case settings
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(settings, forKey: .settings)
+    }
 }
 
-public struct SettingsInput: Encodable, Sendable {
+public struct SettingsInput: Encodable, Sendable, Equatable {
     public let itemProps: JSONValue
-    public let rotate: Double?
+    public let rotate: GraphQLNullable<Double>
 
-    public init(itemProps: JSONValue, rotate: Double? = nil) {
+    public init(itemProps: JSONValue, rotate: GraphQLNullable<Double> = .omitted) {
         self.itemProps = itemProps
         self.rotate = rotate
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case itemProps
+        case rotate
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(itemProps, forKey: .itemProps)
+        try container.encode(rotate, forKey: .rotate)
     }
 }
 

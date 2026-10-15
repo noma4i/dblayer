@@ -1,41 +1,54 @@
 model Moment do
-  schema do
-    string :uuid,      index: true
-    id     :userId,    null: true, index: true
-    string :text,      null: true, searchable: true
-    bool   :likedByMe, default: false
-    object :media,     default: {}
-    string :tone,      optional: true, local: true
-    date   :createdAt, index: true
+  field :uuid, type: :string
+  field :userId, type: :id, null: true
+  field :text, type: :string, null: true
+  field :likedByMe, type: :bool, default: false
+  field :media, type: :object, default: {}
+  field :tone, type: :string, optional: true, local: true
+  field :createdAt, type: :date
 
-    index :userId, :createdAt
-  end
+
+  index :uuid
+  search :text
+  index :userId, :createdAt
 
   belongs_to :author, model: User, key: :userId, touch: true
-  has_many   :vibes,  model: Vibe, key: :momentId, dependent: :destroy
+  has_many   :vibes, dependent: :destroy
 
-  scope :recent,  order: { createdAt: :desc }
-  scope :by_user, params: [:userId], where: { userId: :userId }, order: { createdAt: :desc }
+  scope :recent do
+    order createdAt: :desc
+  end
+  scope :by_user do
+    where :userId
+    order createdAt: :desc
+  end
 
-  remote :feed do
-    query MomentsFeed
+  scope :feed do
+    fetch MomentsFeed
     paginate 20
     fresh_for 5.minutes
     updates MomentEvents, deleted_by: :destroyed
   end
 
-  create  with: CreateMoment, input: { text: :text, media: :media }
-  update  with: UpdateMoment
-  destroy with: DeleteMoment
+  operation :create do
+    mutation CreateMoment
+    input text: :text, media: :media
+  end
+  operation :update do
+    mutation UpdateMoment
+  end
+  operation :destroy do
+    mutation DeleteMoment
+  end
 
-  action :like do
+  operation :like do
     mutation   LikeMoment
     input      momentId: :id
     optimistic likedByMe: true
     refetch    :feed
   end
 
-  action :share do
+  operation :share do
     mutation ShareMoment
     local_effect :none, reason: "the server answers with the share counters"
     input    momentId: :id

@@ -114,9 +114,12 @@ You choose per action, in the model file:
 | `on_failure: :keep` | the record stays with `state = failed` and its error, and waits for your decision |
 
 ```ruby
-create with: CreateMessage, on_failure: :keep
+operation :create do
+  mutation CreateMessage
+  on_failure :keep
+end
 
-action :like do
+operation :like do
   mutation LikeMoment
   on_failure :keep
 end
@@ -128,7 +131,7 @@ A record in `failed` or `deliveryUnknown` has two gestures:
 
 ```swift
 await message.retry()     // back to pending, attempts reset, sent again
-await message.discard()   // roll back the local change and drop it from the queue
+try await message.discard()   // roll back the local change and drop it from the queue
 ```
 
 ```kotlin

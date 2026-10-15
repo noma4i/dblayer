@@ -224,7 +224,7 @@ impl Shared {
         }
         let wanted: Vec<String> = ids.map(RowId::to_string).collect();
         let epoch = self.ephemeral.lock().epoch;
-        self.read(|reader| Ok(((reader.revision_seq()?, epoch), self.load(reader, model.as_str(), &wanted)?)))
+        self.read(&[model.as_str()], |reader| Ok(((reader.revision_seq()?, epoch), self.load(reader, model.as_str(), &wanted)?)))
     }
 
     pub(crate) fn refresh_entities(&self, key: &str, model: &ModelKey, ids: BTreeSet<RowId>) {

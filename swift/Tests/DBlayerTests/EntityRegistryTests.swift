@@ -34,7 +34,7 @@ struct EntityRegistryTests {
   }
 
   func delivery(_ revision: Int64, _ rows: [Moment] = [], removed: [String] = []) -> EntityDecoding.Decoded<Moment> {
-    EntityDecoding.Decoded(revision: revision, rows: rows, removed: removed)
+    EntityDecoding.Decoded(revision: revision, rows: rows.map { ($0, 1) }, removed: removed)
   }
 
   func settle() async { for _ in 0 ..< 5 { await Task.yield() } }
@@ -115,7 +115,7 @@ struct EntityRegistryTests {
   @Test
   func retainedValueIsDroppedAfterTheBound() async {
     let clock = Clock()
-    let registry = Entities<Moment>(maxAge: 120, maxCount: 200, now: { clock.now }, source: CountingSource())
+    let registry = Entities<Moment>(now: { clock.now }, source: CountingSource())
     for index in 0 ..< 201 {
       var entity: Entity<Moment>? = registry.entity("\(index)")
       registry.apply(delivery(1, [moment("\(index)", "v")]))

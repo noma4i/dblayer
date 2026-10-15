@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
@@ -35,7 +35,10 @@ pub(crate) struct State {
     closed: bool,
     rows: HashMap<RowKey, RowValues>,
     expiry: HashMap<RowKey, Duration>,
+    deadlines: BTreeSet<(Duration, RowKey, Option<String>)>,
     windows: HashMap<String, Duration>,
+    #[cfg(test)]
+    pub(crate) due_visits: std::cell::Cell<usize>,
 }
 
 pub(crate) struct Due {
@@ -79,9 +82,14 @@ impl State {
             .map(|(field, _)| current(self.rows.get(&key).and_then(|row| row.slots.get(&field.field.name)), now).cloned().unwrap_or_else(|| field.initial()))
             .collect();
         let changed = accepted.iter().zip(&previous).any(|((_, value), before)| value != before);
-        let row = self.rows.entry(key).or_default();
+        let row = self.rows.entry(key.clone()).or_default();
         for (field, value) in accepted {
-            row.slots.insert(field.field.name.clone(), Slot { value, initial: field.initial(), due: field.reset_window().map(|window| now + window) });
+            let name = field.field.name.clone();
+            let due = field.reset_window().map(|window| now + window);
+            if let Some(previous) = row.slots.insert(name.clone(), Slot { value, initial: field.initial(), due }).and_then(|slot| slot.due) {
+                self.deadlines.remove(&(previous, key.clone(), Some(name.clone())));
+            }
+            if let Some(due) = due { self.deadlines.insert((due, key.clone(), Some(name))); }
         }
         if changed {
             self.epoch += 1;
@@ -93,77 +101,98 @@ impl State {
     pub(crate) fn rename(&mut self, model: &str, from: &str, to: &str) {
         let (from, to) = ((model.to_string(), from.to_string()), (model.to_string(), to.to_string()));
         if let Some(values) = self.rows.remove(&from) {
+            for (name, slot) in &values.slots {
+                if let Some(due) = slot.due {
+                    self.deadlines.remove(&(due, from.clone(), Some(name.clone())));
+                    if !self.rows.contains_key(&to) { self.deadlines.insert((due, to.clone(), Some(name.clone()))); }
+                }
+            }
             self.rows.entry(to.clone()).or_insert(values);
         }
         if let Some(due) = self.expiry.remove(&from) {
-            self.expiry.entry(to).or_insert(due);
+            self.deadlines.remove(&(due, from, None));
+            let due = *self.expiry.entry(to.clone()).or_insert(due);
+            self.deadlines.insert((due, to, None));
         }
     }
 
     pub(crate) fn forget(&mut self, model: &str, id: &str) {
         let key = (model.to_string(), id.to_string());
-        self.rows.remove(&key);
-        self.expiry.remove(&key);
+        if let Some(row) = self.rows.remove(&key) {
+            for (name, slot) in row.slots {
+                if let Some(due) = slot.due { self.deadlines.remove(&(due, key.clone(), Some(name))); }
+            }
+        }
+        if let Some(due) = self.expiry.remove(&key) { self.deadlines.remove(&(due, key, None)); }
     }
 
     pub(crate) fn clear(&mut self, models: Option<&[String]>) {
         let keep = |key: &RowKey| models.is_some_and(|models| !models.contains(&key.0));
         self.rows.retain(|key, _| keep(key));
         self.expiry.retain(|key, _| keep(key));
+        self.deadlines.retain(|(_, key, _)| keep(key));
     }
 
     pub(crate) fn track(&mut self, model: &str, id: &str) -> bool {
         let Some(window) = self.windows.get(model).copied() else { return false };
-        self.expiry.insert((model.to_string(), id.to_string()), self.clock.now() + window);
+        let key = (model.to_string(), id.to_string());
+        let due = self.clock.now() + window;
+        if let Some(previous) = self.expiry.insert(key.clone(), due) { self.deadlines.remove(&(previous, key.clone(), None)); }
+        self.deadlines.insert((due, key, None));
         true
     }
 
     pub(crate) fn take_due(&mut self) -> Due {
         let now = self.clock.now();
-        let mut reset = Vec::new();
-        let mut epoch = self.epoch;
-        for (key, row) in self.rows.iter_mut() {
-            let lapsed: Vec<String> = row.slots.iter().filter(|(_, slot)| slot.due.is_some_and(|due| due <= now)).map(|(name, _)| name.clone()).collect();
-            if lapsed.is_empty() {
+        let mut reset = BTreeSet::new();
+        let mut expired = Vec::new();
+        let due: Vec<_> = self.deadlines.iter().take_while(|(due, _, _)| *due <= now).cloned().collect();
+        for entry @ (_, ref key, ref name) in &due {
+            #[cfg(test)]
+            self.due_visits.set(self.due_visits.get() + 1);
+            let Some(name) = name else {
+                expired.push(key.clone());
                 continue;
-            }
-            let visible = lapsed.iter().any(|name| row.slots.get(name).is_some_and(|slot| slot.value != slot.initial));
-            for name in &lapsed {
-                row.slots.remove(name);
-            }
-            if visible {
-                epoch += 1;
-                row.epoch = epoch;
-                reset.push(key.clone());
+            };
+            self.deadlines.remove(entry);
+            if let Some(slot) = self.rows.get_mut(key).and_then(|row| row.slots.remove(name)) {
+                if slot.value != slot.initial { reset.insert(key.clone()); }
             }
         }
-        self.epoch = epoch;
-        let expired = self.lapsed(now, None);
-        Due { reset, expired }
-    }
-
-    fn lapsed(&self, now: Duration, among: Option<&[RowKey]>) -> Vec<RowKey> {
-        self.expiry.iter().filter(|(key, due)| **due <= now && among.is_none_or(|among| among.contains(key))).map(|(key, _)| key.clone()).collect()
+        for key in &reset {
+            self.epoch += 1;
+            if let Some(row) = self.rows.get_mut(key) { row.epoch = self.epoch; }
+        }
+        Due { reset: reset.into_iter().collect(), expired }
     }
 
     pub(crate) fn claim_expired(&mut self, candidates: &[RowKey]) -> Vec<RowKey> {
-        let claimed = self.lapsed(self.clock.now(), Some(candidates));
-        for key in &claimed {
-            self.expiry.remove(key);
+        let now = self.clock.now();
+        let mut claimed = Vec::new();
+        for key in candidates {
+            #[cfg(test)]
+            self.due_visits.set(self.due_visits.get() + 1);
+            if let Some(due) = self.expiry.get(key).copied().filter(|due| *due <= now) {
+                self.expiry.remove(key);
+                self.deadlines.remove(&(due, key.clone(), None));
+                claimed.push(key.clone());
+            }
         }
         claimed
     }
 
     fn next_due(&self) -> Option<Duration> {
-        let slots = self.rows.values().flat_map(|row| row.slots.values()).filter_map(|slot| slot.due);
-        slots.chain(self.expiry.values().copied()).min()
+        self.deadlines.first().map(|(due, _, _)| *due)
     }
 }
 
 impl Ephemerals {
     pub(crate) fn new(specs: &[ModelSpec]) -> Arc<Self> {
         let windows = specs.iter().filter_map(|spec| spec.expire_window().map(|window| (spec.key.as_str().to_string(), window))).collect();
-        let state = State { clock: Arc::new(SystemClock), epoch: 0, closed: false, rows: HashMap::new(), expiry: HashMap::new(), windows };
+        let state = State { clock: Arc::new(SystemClock), epoch: 0, closed: false, rows: HashMap::new(), expiry: HashMap::new(), deadlines: BTreeSet::new(), windows,
+            #[cfg(test)]
+            due_visits: std::cell::Cell::new(0),
+        };
         Arc::new(Self { state: Mutex::new(state), wake: Condvar::new() })
     }
 
@@ -220,7 +249,7 @@ impl Shared {
             }
         }
         let mut event = Event { epoch, ..Event::default() };
-        self.read(|reader| {
+        self.read(&[], |reader| {
             event.revision = reader.revision_seq()?;
             for (model, id) in touched {
                 event.models.insert(ModelKey::new(model));

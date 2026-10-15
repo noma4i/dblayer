@@ -5,17 +5,17 @@ use dblayer::schema::{MergeRule, Newer, CursorSpec, VariableSource,
 use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::json;
 
-use crate::parse_models;
+use crate::check::check_source;
 
 fn build_one(body: &str) -> ModelSpec {
     let source = format!("model Sample do\n  schema do\n    id :ownerId, index: true\n    date :createdAt, index: true\n  end\n{body}\nend\n");
-    let mut models = parse_models(&source).unwrap();
+    let mut models = check_source(&source).unwrap();
     assert_eq!(models.len(), 1);
     models.remove(0)
 }
 
 fn fields_of(lines: &str) -> Vec<dblayer::schema::FieldSpec> {
-    let mut fields = parse_models(&format!("model Sample do\n  schema do\n{lines}\n  end\nend\n")).unwrap().remove(0).fields;
+    let mut fields = check_source(&format!("model Sample do\n  schema do\n{lines}\n  end\nend\n")).unwrap().remove(0).fields;
     fields.retain(|field| field.name != "id");
     fields
 }
@@ -62,12 +62,12 @@ fn defaults_convert_to_json() {
 
 #[test]
 fn associations_and_composite_index() {
-    let model = parse_models(
+    let model = check_source(
         "model Owner do\n  schema do\n    string :n\n  end\nend\nmodel Sample do\n  schema do\n    id :ownerId, index: true\n    date :createdAt, index: true\n    list :peers, of: :id\n    index :ownerId, :createdAt\n  end\n  belongs_to :owner, model: Owner, key: :ownerId, touch: true\n  has_one :first, model: Sample, key: :ownerId, dependent: :destroy\n  references :peers, model: Owner\nend\n",
     )
     .unwrap()
     .remove(1);
-    assert_eq!(model.composite_indexes, vec![vec!["ownerId".to_string(), "createdAt".to_string()]]);
+    assert_eq!(model.indexes, vec![vec!["ownerId".to_string(), "createdAt".to_string()]]);
     let owner = &model.associations[0];
     assert_eq!((owner.kind, owner.target.as_str(), owner.foreign_key.as_str(), owner.touches_parent), (AssociationKind::BelongsTo, "Owner", "ownerId", true));
     assert_eq!(model.associations[1].dependent, Some(Dependent::Destroy));
@@ -77,7 +77,7 @@ fn associations_and_composite_index() {
 
 #[test]
 fn a_belongs_to_that_sets_parent_fields_keeps_them_and_the_newer_guard() {
-    let model = parse_models(
+    let model = check_source(
         "model Owner do\n  schema do\n    id :lastId, null: true\n    date :lastAt, null: true\n    int :lastSeq, null: true\n  end\nend\nmodel Sample do\n  schema do\n    id :ownerId, index: true\n    date :createdAt\n    int :seq, null: true\n  end\n  belongs_to :owner, model: Owner, key: :ownerId, sets: { lastId: :id, lastAt: :createdAt, lastSeq: :seq }, newer: { seq: :lastSeq, createdAt: :lastAt }\nend\n",
     )
     .unwrap()
@@ -89,7 +89,7 @@ fn a_belongs_to_that_sets_parent_fields_keeps_them_and_the_newer_guard() {
 
 #[test]
 fn references_to_the_same_model_keep_their_list_key_unindexed() {
-    let models = parse_models("model Node do\n  schema do\n    list :nearIds, of: :id\n  end\n  references :near, model: Node, key: :nearIds\nend\n").unwrap();
+    let models = check_source("model Node do\n  schema do\n    list :nearIds, of: :id\n  end\n  references :near, model: Node, key: :nearIds\nend\n").unwrap();
     assert!(!models[0].fields.iter().find(|field| field.name == "nearIds").unwrap().indexed);
 }
 
@@ -230,7 +230,7 @@ fn on_failure_defaults_to_rollback_and_reads_keep_from_standard_and_block_action
 
 #[test]
 fn ephemeral_block_builds_ephemeral_specs_beside_stored_fields() {
-    let model = parse_models(
+    let model = check_source(
         "model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false, reset_after: 5.seconds\n      string :mood, null: true\n    end\n  end\nend\n",
     )
     .unwrap()
@@ -244,15 +244,15 @@ fn ephemeral_block_builds_ephemeral_specs_beside_stored_fields() {
 
 #[test]
 fn model_line_options_build_storage_and_expiry() {
-    let memory = parse_models("model Presence, storage: :memory, expire_after: 30.seconds do\n  schema do\n    string :room\n  end\nend\n").unwrap().remove(0);
+    let memory = check_source("model Presence, storage: :memory, expire_after: 30.seconds do\n  schema do\n    string :room\n  end\nend\n").unwrap().remove(0);
     assert_eq!((memory.storage, memory.expire_after.as_deref()), (Storage::Memory, Some("30.seconds")));
-    let plain = parse_models("model Presence do\n  schema do\n    string :room\n  end\nend\n").unwrap().remove(0);
+    let plain = check_source("model Presence do\n  schema do\n    string :room\n  end\nend\n").unwrap().remove(0);
     assert_eq!((plain.storage, plain.expire_after), (Storage::Disk, None));
 }
 
 #[test]
 fn updates_set_builds_ephemeral_values() {
-    let model = parse_models(
+    let model = check_source(
         "model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false, reset_after: 5.seconds\n    end\n  end\n  remote :one do\n    query One\n    updates Typing, set: { typing: true }\n  end\nend\n",
     )
     .unwrap()
@@ -318,7 +318,7 @@ fn a_remote_relation_can_order_its_rows_locally() {
 
 #[test]
 fn a_field_merge_rule_keeps_its_words_tiers_and_keys() {
-    let models = parse_models("model Sample do\n  schema do\n    object :media, null: true, merge: { fileUrl: :non_empty, width: :positive, status: [[:PENDING, :PROGRESSING], [:COMPLETED]], progress: :monotonic }\n    string :url, null: true, merge: :non_empty\n  end\nend\n").unwrap();
+    let models = check_source("model Sample do\n  schema do\n    object :media, null: true, merge: { fileUrl: :non_empty, width: :positive, status: [[:PENDING, :PROGRESSING], [:COMPLETED]], progress: :monotonic }\n    string :url, null: true, merge: :non_empty\n  end\nend\n").unwrap();
     let fields = &models[0].fields;
     let tiers = vec![vec!["PENDING".to_string(), "PROGRESSING".to_string()], vec!["COMPLETED".to_string()]];
     let keys = [("fileUrl", MergeRule::NonEmpty), ("width", MergeRule::Positive), ("status", MergeRule::Ladder { tiers }), ("progress", MergeRule::Monotonic)].map(|(key, rule)| (key.to_string(), rule)).into();
@@ -328,7 +328,7 @@ fn a_field_merge_rule_keeps_its_words_tiers_and_keys() {
 
 #[test]
 fn a_local_field_and_a_local_key_become_the_local_merge_rule() {
-    let models = parse_models("model Sample do\n  schema do\n    string :tone, optional: true, local: true\n    object :media, optional: true, merge: { tone: :local, width: :positive }\n  end\nend\n").unwrap();
+    let models = check_source("model Sample do\n  schema do\n    string :tone, optional: true, local: true\n    object :media, optional: true, merge: { tone: :local, width: :positive }\n  end\nend\n").unwrap();
     let fields = &models[0].fields;
     assert_eq!(fields.iter().find(|field| field.name == "tone").unwrap().merge, Some(MergeRule::Local));
     let keys = [("tone", MergeRule::Local), ("width", MergeRule::Positive)].map(|(key, rule)| (key.to_string(), rule)).into();
@@ -337,7 +337,7 @@ fn a_local_field_and_a_local_key_become_the_local_merge_rule() {
 
 #[test]
 fn a_create_and_an_action_keep_their_correlation_paths() {
-    let models = parse_models("model Sample do\n  schema do\n    string :body\n    object :media, null: true\n  end\n  create with: CreateSample, correlate: [:body, \"media.blobId\"]\n  action :upload do\n    mutation Upload\n    local_effect :none, reason: \"test\"\n    correlate :body\n  end\nend\n").unwrap();
+    let models = check_source("model Sample do\n  schema do\n    string :body\n    object :media, null: true\n  end\n  create with: CreateSample, correlate: [:body, \"media.blobId\"]\n  action :upload do\n    mutation Upload\n    local_effect :none, reason: \"test\"\n    correlate :body\n  end\nend\n").unwrap();
     let actions = &models[0].actions;
     assert_eq!(actions.iter().find(|action| action.name == "create").unwrap().correlate, ["body", "media.blobId"]);
     assert_eq!(actions.iter().find(|action| action.name == "upload").unwrap().correlate, ["body"]);
@@ -345,7 +345,7 @@ fn a_create_and_an_action_keep_their_correlation_paths() {
 
 #[test]
 fn a_scope_order_keeps_the_null_placement_of_each_key() {
-    let models = parse_models("model Sample do\n  schema do\n    int :seq, null: true, index: true\n    date :createdAt, index: true\n  end\n  scope :thread, order: { seq: :asc_nulls_last, createdAt: :desc }\nend\n").unwrap();
+    let models = check_source("model Sample do\n  schema do\n    int :seq, null: true, index: true\n    date :createdAt, index: true\n  end\n  scope :thread, order: { seq: :asc_nulls_last, createdAt: :desc }\nend\n").unwrap();
     let sort = &models[0].relations.iter().find(|relation| relation.name == "thread").unwrap().sort;
     assert_eq!(*sort, dblayer::schema::Sort::Fields(vec![
         dblayer::schema::SortField { column: "seq".to_string(), direction: SortDirection::AscNullsLast },

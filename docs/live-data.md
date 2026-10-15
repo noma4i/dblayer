@@ -219,7 +219,7 @@ Null handling follows one rule: a row with a null field matches `!(field == valu
 
 ## Text search
 
-A field declared `searchable: true` is indexed by SQLite FTS5 in the same transaction that writes the row. The index keeps its own copy of the text, follows edits and deletes, and is dropped with the cache. The app never writes FTS syntax: the core quotes each word.
+Fields listed by `search :text, :tags` use SQLite FTS5. The index changes in the same transaction as the row and follows edits and deletes. The app never writes FTS syntax: the core quotes each word.
 
 ```swift
 Query<Moment>().search("hel")                          // finds "hello": the last word is a prefix
@@ -237,7 +237,7 @@ The default match treats the last word as a prefix and the other words as whole 
 
 ## Remote relations are live too
 
-Connecting to a relation that has a `remote` block loads it when its data is stale, keeps it fresh through its `updates` subscription while someone reads it, and lets go a while after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.
+Connecting to a relation that has a `fetch` declaration loads it when its data is stale, keeps it fresh through its `updates` subscription while someone reads it, and lets go a while after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.
 
 Three calls read a remote relation, each for one need:
 

@@ -38,17 +38,19 @@ There is one such entity per process and one core subscription for it, however m
 
 Nothing to start, stop or release. The library keeps the record current as long as the entity object is alive and lets go of it when the last holder drops it (Swift: when the object is freed; Kotlin: when it is no longer reachable). A delivery that was already on its way when the entity was dropped is ignored.
 
-A dropped entity keeps its last value for 120 seconds, at most 200 values per model. Asking for the id again within that time returns the kept value at once with `isStale` set, and the record is read again so the fresh state replaces it. `isStale` turns false with the first fresh delivery. After the time or the count runs out the value is gone and the entity starts empty.
+A dropped entity can keep its last value for 120 seconds, with at most 200 values per model and 8 MiB estimated across models. Rust applies these limits. Swift and Kotlin store the selected typed values. Oversized values are not retained. Limits apply to released entities, not values still held by screens.
+
+Requesting a retained id returns its value with `isStale` set and reads the record again. A fresh delivery clears `isStale`. Expired entries are removed on the next retention operation. Kotlin processes garbage-collection notifications on one waiting thread, without polling.
 
 `entity(id)` for many ids sends one batch to the database observer, however many entities are created in one turn.
 
 ## Order
 
-Every delivery carries the revision of the database. An entity ignores a delivery with a lower revision than the one it shows, whatever the order in which they arrive. A record that was deleted arrives as an empty value. A reset of the model (logout, `reset`) empties every entity.
+Every delivery carries the revision of the database. An entity ignores a delivery with a lower revision than the one it shows, whatever the order in which they arrive. A record that was deleted arrives as an empty value. A reset of the model (logout, `reset`) empties every entity and preserves pending lease releases.
 
 ## Ending a session
 
-`DB.logout()` (Swift) and `DBlayer.logout()` (Kotlin) clear the data and drop every entity, lease and kept value of every model. The entity of an account row stays the same object and goes back to empty. `logout()` also deletes every queued, refused and unconfirmed operation, so no operation of the old session blocks or reaches the server for the next one.
+`try await DB.logout()` (Swift) and suspending `DBlayer.logout()` (Kotlin) clear the data and drop every entity, lease and kept value. Wait for completion before opening another account. The account entity stays the same object and goes back to empty. Logout deletes every queued, refused and unconfirmed operation.
 
 ## Cost
 

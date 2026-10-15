@@ -41,7 +41,7 @@ fn describe(info: Option<&SyncInfo>) -> String {
 }
 
 pub fn queue(db: &Db, findings: &Findings) {
-    let outcome = db.shared.read(|reader| {
+    let outcome = db.shared.read(&[], |reader| {
         let connection = reader.connection();
         let operations = open_operations(connection)?;
         let mut expected: BTreeMap<SyncKey, Vec<SyncEntry>> = BTreeMap::new();
@@ -89,7 +89,7 @@ pub fn queue(db: &Db, findings: &Findings) {
 }
 
 pub fn lists(db: &Db, findings: &Findings) {
-    let outcome: Result<Vec<String>, DbError> = db.shared.read(|reader| {
+    let outcome: Result<Vec<String>, DbError> = db.shared.read(&[], |reader| {
         let connection = reader.connection();
         let mut problems = Vec::new();
         let mut keys = connection.prepare("SELECT DISTINCT scope_key FROM scope_member WHERE model = 'moments'")?;
@@ -120,7 +120,7 @@ pub fn lists(db: &Db, findings: &Findings) {
 
 fn stale_cache_entries(db: &Db, universe: &[(String, String)]) -> Result<Vec<String>, DbError> {
     let _ = db.expire_ephemeral();
-    db.shared.read(|reader| {
+    db.shared.read(&[], |reader| {
         let mut stale = Vec::new();
         for model in MODELS {
             let ids: Vec<String> = universe.iter().filter(|(owner, _)| owner == model).map(|(_, id)| id.clone()).collect();

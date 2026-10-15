@@ -12,6 +12,25 @@ use std::time::Duration;
 
 const START: u64 = 1_000_000;
 
+#[test]
+fn expiry_visits_only_due_rows_and_claims_only_candidates() {
+    let clock = Arc::new(ManualClock::new(seconds(0)));
+    let held = super::ephemeral::Ephemerals::new(&[presence_spec()]);
+    let mut state = held.lock();
+    state.clock = clock.clone();
+    state.track("presence", "due");
+    clock.advance(seconds(1));
+    for id in 0..1000 { state.track("presence", &id.to_string()); }
+    clock.advance(seconds(29));
+    state.due_visits.set(0);
+    let due = state.take_due();
+    assert_eq!(due.expired, vec![("presence".to_string(), "due".to_string())]);
+    assert_eq!(state.due_visits.get(), 1);
+    state.due_visits.set(0);
+    assert_eq!(state.claim_expired(&due.expired), due.expired);
+    assert_eq!(state.due_visits.get(), 1);
+}
+
 fn people_spec() -> ModelSpec {
     ModelSpec {
         ephemeral: vec![

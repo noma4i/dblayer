@@ -5,6 +5,28 @@ import Testing
 
 @Suite(.serialized)
 struct BridgeProbeTests {
+  @Test @MainActor
+  func releasedEntitiesRespectTheSharedMemoryBudget() async throws {
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let row = try await Moment.create(text: String(repeating: "x", count: 9 * 1024 * 1024))
+    var entity: Entity<Moment>? = Moment.entity(row.id)
+    await eventually("the large row is delivered") { entity?.value != nil }
+    #expect(entity?.value?.text?.count == 9 * 1024 * 1024)
+    entity = nil
+    #expect(Entities<Moment>.shared.retainedCount == 0)
+    let moment = try await Moment.create(text: String(repeating: "m", count: 5 * 1024 * 1024))
+    var heldMoment: Entity<Moment>? = Moment.entity(moment.id)
+    await eventually("the moment is delivered") { heldMoment?.value != nil }
+    heldMoment = nil
+    #expect(Entities<Moment>.shared.retainedCount == 1)
+    let message = try await Message.create(chatId: "chat", authorId: "user", text: String(repeating: "n", count: 5 * 1024 * 1024))
+    var heldMessage: Entity<Message>? = Message.entity(message.id)
+    await eventually("the message is delivered") { heldMessage?.value != nil }
+    heldMessage = nil
+    #expect(Entities<Moment>.shared.retainedCount == 0)
+    #expect(Entities<Message>.shared.retainedCount == 1)
+  }
+
   /// Waits for the event that the relation failed, not for a time.
   static func failedState(of query: Query<Moment>) async -> LoadState {
     await Cursor(await query.state.stream()).first("the relation to fail") { $0.phase == .failed } ?? LoadState()

@@ -30,29 +30,29 @@ const KINDS: [(&str, fn() -> Value); 10] = [
 ];
 
 fn random_model(dice: &mut Dice) -> (String, Map<String, Value>) {
-    let mut source = String::from("model Sample do\n  schema do\n");
+    let mut source = String::from("model Sample do\n");
     let mut values = Map::new();
     if dice.below(2) == 0 {
-        source.push_str("    id :id\n");
+        source.push_str("  field :id, type: :id\n");
     }
     for index in 0..1 + dice.below(5) {
         let (word, value) = KINDS[dice.below(KINDS.len())];
         let name = format!("field{index}");
-        let mut line = format!("    {word} :{name}");
-        if word == "list" {
-            line.push_str(", of: :int");
-        }
-        for (key, chance) in [("null: true", 3), ("optional: true", 3), ("index: true", 4)] {
-            let indexable = !matches!(word, "object" | "array" | "raw" | "list");
-            if dice.below(chance) == 0 && (indexable || !key.starts_with("index")) {
+        let kind = if word == "list" { "[:int]".into() } else { format!(":{word}") };
+        let mut line = format!("  field :{name}, type: {kind}");
+        for (key, chance) in [("null: true", 3), ("optional: true", 3)] {
+            if dice.below(chance) == 0 {
                 line.push_str(&format!(", {key}"));
             }
         }
         source.push_str(&line);
         source.push('\n');
+        if dice.below(4) == 0 && !matches!(word, "object" | "array" | "raw" | "list") {
+            source.push_str(&format!("  index :{name}\n"));
+        }
         values.insert(name, value());
     }
-    source.push_str("  end\nend\n");
+    source.push_str("end\n");
     (source, values)
 }
 

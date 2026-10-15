@@ -1,19 +1,25 @@
 model Message do
-  schema do
-    id     :chatId,    index: true
-    id     :authorId
-    string :text
-    date   :createdAt, index: true
+  field :chatId, type: :id
+  field :authorId, type: :id
+  field :text, type: :string
+  field :createdAt, type: :date
+
+  belongs_to :chat, sets: { lastMessageId: :id, lastMessageAt: :createdAt }, newer: { createdAt: :lastMessageAt }
+
+  scope :by_chat do
+    where :chatId
+    order createdAt: :asc
   end
 
-  belongs_to :chat, model: Chat, key: :chatId, sets: { lastMessageId: :id, lastMessageAt: :createdAt }, newer: { createdAt: :lastMessageAt }
+  operation :create do
+    mutation CreateMessage
+    input chatId: :chatId, text: :text, signedId: :signedId, attachedUserId: :attachedUserId
+    args signedId: :string?, attachedUserId: :id?
+    local :authorId
+  end
 
-  scope :by_chat, params: [:chatId], where: { chatId: :chatId }, order: { createdAt: :asc }
-
-  create with: CreateMessage, input: { chatId: :chatId, text: :text, signedId: :signedId, attachedUserId: :attachedUserId }, args: { signedId: :string?, attachedUserId: :id? }, local: [:authorId]
-
-  remote :history do
-    query ChatMessages
+  scope :history do
+    fetch ChatMessages
     paginate 30, backward: true
     fresh_for 1.minute, empty: 10.seconds
   end

@@ -89,7 +89,7 @@ fn inv_observe_19_a_refresh_that_cannot_read_is_counted_and_a_reset_tells_every_
     let observer = db.observe_entities("users", callback).unwrap();
     observer.retain(&[rid("u0"), rid("u1"), rid("u2")]).unwrap();
     db.settle();
-    db.shared.store.lock().poison = Some("the store cannot read".to_string());
+    *db.shared.store.lock().poison.lock().unwrap() = Some("the store cannot read".to_string());
     let key = locked(&db.shared.observers).entities.keys().next().cloned().unwrap();
     db.shared.refresh_entities(&key, &crate::identity::ModelKey::new("users"), [rid("u1")].into_iter().collect());
     db.settle();

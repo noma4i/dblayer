@@ -13,11 +13,13 @@ internal class EntityCell<Model : DBModel> {
     @Volatile var stale = false
     @Volatile var revision = Long.MIN_VALUE
     @Volatile var epoch = 0
+    @Volatile var bytes = 0uL
 
     @Synchronized
-    fun accept(next: Model?, incoming: Long) {
+    fun accept(next: Model?, incoming: Long, bytes: ULong = 0uL) {
         if (incoming < revision) return
         revision = incoming
+        this.bytes = bytes
         stale = false
         value.value = next
     }
@@ -45,12 +47,20 @@ internal interface EntitySource {
     fun release(ids: List<String>)
 }
 
-internal class EntityDeliveryRows<Model>(val revision: Long, val rows: List<Model>, val removed: List<String>)
+internal class EntityDeliveryRows<Model>(val revision: Long, val rows: List<Pair<Model, ULong>>, val removed: List<String>)
 
-private class Retention<Model : DBModel>(val cell: EntityCell<Model>, val releasedAt: Long)
+private class LiveRef<Model : DBModel>(entity: Entity<Model>, val id: String, val cell: EntityCell<Model>, private val collect: (LiveRef<Model>) -> Unit) :
+    WeakReference<Entity<Model>>(entity, EntityReferences.queue) {
+    fun collected() = collect(this)
+}
 
-private class LiveRef<Model : DBModel>(entity: Entity<Model>, queue: ReferenceQueue<Entity<Model>>, val id: String, val cell: EntityCell<Model>) :
-    WeakReference<Entity<Model>>(entity, queue)
+private object EntityReferences {
+    val queue = ReferenceQueue<Any>()
+
+    init {
+        Thread({ while (true) (queue.remove() as LiveRef<*>).collected() }, "dblayer-entity-releases").apply { isDaemon = true }.start()
+    }
+}
 
 private enum class Step { Retain, Release, Refresh }
 
@@ -58,15 +68,12 @@ private enum class Step { Retain, Release, Refresh }
 class Entities<Model : DBModel> internal constructor(
     private val modelName: String,
     private val decoder: ModelDecoder<Model>,
-    private val maxAge: Long = 120_000,
-    private val maxCount: Int = 200,
     private val now: () -> Long = { System.nanoTime() / 1_000_000 },
     source: EntitySource? = null,
 ) {
     private val lock = Any()
-    private val queue = ReferenceQueue<Entity<Model>>()
     private val live = HashMap<String, LiveRef<Model>>()
-    private val kept = LinkedHashMap<String, Retention<Model>>()
+    private val kept = if (source == null) EntityRegistries.retained else RetainedValues()
     private val steps = HashMap<String, Step>()
     private var flushScheduled = false
     private var database: Database? = null
@@ -83,15 +90,15 @@ class Entities<Model : DBModel> internal constructor(
     /** The entity of an id. Hold it for as long as the value is shown. The value is there at once when the id is live or retained. */
     fun entity(id: String): Entity<Model> = synchronized(lock) {
         follow(DBlayer.databaseOrNull)
-        drain()
-        live[id]?.get()?.let { return it }
-        purge()
-        val seed = kept.remove(id)
-        val cell = seed?.cell ?: EntityCell()
+        val previous = live[id]
+        previous?.get()?.let { return it }
+        if (previous != null) collected(previous)
+        val seed = kept.take<Model>(modelName, id, now())
+        val cell = seed ?: EntityCell()
         cell.stale = seed != null
         cell.epoch = epoch
         val made = Entity(id, cell)
-        live[id] = LiveRef(made, queue, id, cell)
+        live[id] = LiveRef(made, id, cell, ::collected)
         steps[id] = if (seed != null || steps[id] == Step.Release) Step.Refresh else Step.Retain
         scheduleFlush()
         made
@@ -135,10 +142,10 @@ class Entities<Model : DBModel> internal constructor(
     /** Drops every entity, lease and retained value. Called when the account ends. */
     fun reset() = synchronized(lock) {
         epoch += 1
-        val all = live.keys + kept.keys
+        val all = live.keys.toList()
         live.values.forEach { it.cell.value.value = null }
         live.clear()
-        kept.clear()
+        kept.clear(modelName)
         all.forEach { steps[it] = Step.Release }
         scheduleFlush()
         single?.let {
@@ -147,38 +154,21 @@ class Entities<Model : DBModel> internal constructor(
         }
     }
 
-    internal val retainedCount: Int get() = synchronized(lock) { drain(); purge(); kept.size }
-    internal val liveCount: Int get() = synchronized(lock) { drain(); live.values.count { it.get() != null } }
+    internal val retainedCount: Int get() = synchronized(lock) { kept.count(modelName, now()) }
+    internal val liveCount: Int get() = synchronized(lock) { live.size }
 
     internal fun apply(delivery: EntityDeliveryRows<Model>) = synchronized(lock) {
-        drain()
-        delivery.rows.forEach { model -> live[model.id]?.takeIf { it.get() != null }?.cell?.accept(model, delivery.revision) }
+        delivery.rows.forEach { (model, bytes) -> live[model.id]?.takeIf { it.get() != null }?.cell?.accept(model, delivery.revision, bytes) }
         delivery.removed.forEach { id -> live[id]?.takeIf { it.get() != null }?.cell?.accept(null, delivery.revision) }
     }
 
-    private fun drain() {
-        while (true) {
-            @Suppress("UNCHECKED_CAST")
-            val ref = queue.poll() as LiveRef<Model>? ?: return
-            if (live[ref.id] !== ref) continue
-            live.remove(ref.id)
-            if (ref.cell.epoch != epoch) continue
-            steps[ref.id] = Step.Release
-            if (ref.cell.value.value != null) keep(ref.id, ref.cell)
-            scheduleFlush()
-        }
-    }
-
-    private fun keep(id: String, cell: EntityCell<Model>) {
-        kept.remove(id)
-        kept[id] = Retention(cell, now())
-        purge()
-        if (kept.size > maxCount) kept.remove(kept.entries.minByOrNull { it.value.releasedAt }!!.key)
-    }
-
-    private fun purge() {
-        val cutoff = now() - maxAge
-        kept.entries.removeAll { it.value.releasedAt <= cutoff }
+    private fun collected(ref: LiveRef<Model>) = synchronized(lock) {
+        if (live[ref.id] !== ref) return@synchronized
+        live.remove(ref.id)
+        if (ref.cell.epoch != epoch) return@synchronized
+        steps[ref.id] = Step.Release
+        if (ref.cell.value.value != null) kept.keep(modelName, ref.id, ref.cell, now())
+        scheduleFlush()
     }
 
     private fun scheduleFlush() {
@@ -190,7 +180,6 @@ class Entities<Model : DBModel> internal constructor(
     private fun flush() {
         val pending = synchronized(lock) {
             flushScheduled = false
-            drain()
             HashMap(steps).also { steps.clear() }
         }
         val release = pending.filterValues { it != Step.Retain }.keys.toList()
@@ -242,7 +231,7 @@ internal class CoreEntitySource<Model : DBModel>(
     }
 
     override fun changed(delivery: EntityDelivery) {
-        val rows = delivery.rows.mapNotNull { row -> runCatching { decoder.read(row) }.getOrNull() }
+        val rows = delivery.rows.mapNotNull { row -> runCatching { decoder.read(row) to row.estimatedBytes }.getOrNull() }
         decoded.addAndGet(rows.size)
         deliver(EntityDeliveryRows(delivery.revision, rows, delivery.removed))
     }
@@ -280,6 +269,7 @@ internal class SingletonFeed<Model : DBModel>(
 }
 
 internal object EntityRegistries {
+    val retained = RetainedValues()
     private val registries = ConcurrentHashMap<String, Entities<*>>()
 
     @Suppress("UNCHECKED_CAST")

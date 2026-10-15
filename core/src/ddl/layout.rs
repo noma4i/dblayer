@@ -20,13 +20,14 @@ pub enum Member {
     Object { key: String, present: String, at: usize, members: Vec<Member> },
     List { key: String, present: String, at: usize, table: usize },
     Array { key: String, present: String, at: usize, table: usize },
+    Raw { key: String, present: String, at: usize, table: usize, kind: FieldKind },
 }
 
 impl Member {
     pub fn key(&self) -> &str {
         match self {
             Member::Leaf(leaf) => &leaf.key,
-            Member::Object { key, .. } | Member::List { key, .. } | Member::Array { key, .. } => key,
+            Member::Object { key, .. } | Member::List { key, .. } | Member::Array { key, .. } | Member::Raw { key, .. } => key,
         }
     }
 }
@@ -35,6 +36,7 @@ impl Member {
 pub enum TableShape {
     Values(Leaf),
     Elements(Vec<Member>),
+    Nodes,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,6 +123,11 @@ impl Builder {
                 self.tables[index].shape = TableShape::Elements(members);
                 Some(Member::Array { key: key.to_string(), present, at: 0, table: index })
             }
+            FieldKind::Raw | FieldKind::Object | FieldKind::Array => {
+                let table = self.tables.len();
+                self.tables.push(Table { name: format!("{}__{path}", self.row_table), shape: TableShape::Nodes });
+                Some(Member::Raw { key: key.to_string(), present, at: 0, table, kind: field.kind.clone() })
+            }
             _ => None,
         }
     }
@@ -136,7 +143,7 @@ pub fn layout(model: &ModelSpec) -> Layout {
             continue;
         }
         let before = builder.tables.len();
-        let typed = if field.is_structured() && !field.has_free_part() { builder.member(field, &field.name, &base, &base) } else { None };
+        let typed = if field.is_structured() { builder.member(field, &field.name, &base, &base) } else { None };
         match typed {
             Some(member) => fields.push(FieldPlan::Typed { field: field.name.clone(), member, tables: (before..builder.tables.len()).collect() }),
             None => {
@@ -193,7 +200,7 @@ fn number(member: &mut Member, next: &mut usize) {
             *next += 1;
             members.iter_mut().for_each(|child| number(child, next));
         }
-        Member::List { at, .. } | Member::Array { at, .. } => {
+        Member::List { at, .. } | Member::Array { at, .. } | Member::Raw { at, .. } => {
             *at = *next;
             *next += 1;
         }
@@ -202,7 +209,7 @@ fn number(member: &mut Member, next: &mut usize) {
 
 pub fn member_present(member: &Member) -> &str {
     match member {
-        Member::Object { present, .. } | Member::List { present, .. } | Member::Array { present, .. } => present,
+        Member::Object { present, .. } | Member::List { present, .. } | Member::Array { present, .. } | Member::Raw { present, .. } => present,
         Member::Leaf(leaf) => &leaf.column,
     }
 }
@@ -214,7 +221,7 @@ pub fn member_columns(member: &Member, out: &mut Vec<(String, ColumnType)>) {
             out.push((present.clone(), ColumnType::Integer));
             members.iter().for_each(|child| member_columns(child, out));
         }
-        Member::List { present, .. } | Member::Array { present, .. } => out.push((present.clone(), ColumnType::Integer)),
+        Member::List { present, .. } | Member::Array { present, .. } | Member::Raw { present, .. } => out.push((present.clone(), ColumnType::Integer)),
     }
 }
 
@@ -241,6 +248,7 @@ impl Layout {
         self.tables
             .iter()
             .map(|table| match &table.shape {
+                TableShape::Nodes => crate::nodes::node_table_statement(kind, &table.name, &[("row_id", "TEXT"), ("owner", "INTEGER")]),
                 TableShape::Values(value) => format!(
                     "{kind} IF NOT EXISTS {} (\n  row_id TEXT NOT NULL,\n  owner INTEGER NOT NULL,\n  pos INTEGER NOT NULL,\n  value {},\n  PRIMARY KEY (row_id, owner, pos)\n) STRICT, WITHOUT ROWID",
                     table.name,

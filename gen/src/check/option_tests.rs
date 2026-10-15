@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::{word_for, Context, EPHEMERAL_WORDS, FIELD_WORDS};
-use crate::parse_models;
+use crate::check::check_source;
 
 const WORLD: &str = "model User do\n  schema do\n    string :name\n  end\nend\nmodel Vibe do\n  schema do\n    id :momentId, index: true\n  end\nend\n";
 
@@ -10,7 +10,7 @@ fn sample(extra: &str, body: &str) -> String {
 }
 
 fn built(source: &str) -> Result<String, String> {
-    let models = parse_models(source).map_err(|errors| format!("{errors:?}"))?;
+    let models = check_source(source).map_err(|errors| format!("{errors:?}"))?;
     Ok(format!("{:?}", models.last().unwrap()))
 }
 

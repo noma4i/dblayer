@@ -102,7 +102,7 @@ impl ModelSpec {
         if let Some(name) = duplicates(&names).first() {
             return Err(DeclarationError::DuplicateField(name.to_string()));
         }
-        let indexed = self.composite_indexes.iter().flatten().find(|name| self.ephemeral_field(name).is_some());
+        let indexed = self.indexes.iter().flatten().find(|name| self.ephemeral_field(name).is_some());
         match indexed {
             Some(name) => Err(DeclarationError::EphemeralIndexed(name.clone())),
             None => Ok(()),

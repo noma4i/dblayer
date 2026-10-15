@@ -13,7 +13,7 @@ object DBlayer {
     suspend fun resume() = database.resume()
 
     /** Ends the session: clears the stored data and drops every entity, lease and retained value. */
-    fun logout() {
+    suspend fun logout() {
         database.logout()
         EntityRegistries.resetAll()
     }

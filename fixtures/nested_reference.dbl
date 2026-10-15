@@ -1,5 +1,3 @@
 model NestedReference, storage: :local do
-  schema do
-    array :values, as: NestedValue, default: []
-  end
+  field :values, type: [NestedValue], default: []
 end

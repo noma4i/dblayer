@@ -1,14 +1,19 @@
 # Threading and performance
 
-DBlayer never makes your threads wait. Loading data, writing, parsing responses and recomputing live results happen in the background, so a list that is loading or syncing does not cost frames.
+Live results arrive from library threads. Record writes run on background threads. Disk reads use separate connections from the writer.
 
 ## What you can rely on
 
-- Public calls are asynchronous (`async` in Swift, `suspend` in Kotlin) and cheap: they enqueue work and return.
+- Record writes use `async` in Swift and `suspend` in Kotlin. Rust runs SQLite writes, argument decoding and result conversion off the caller thread.
+- Await `discard()` and `logout()` to finish removing queued changes or clearing account data before starting dependent work.
+- Opening a database, registering operations and starting live queries still execute synchronously.
 - Calls that read or write files (`attach`, `file`, `read`, `url`, `detach`, `maintain`) run on a background thread of the library, never on the caller thread.
 - `cached()` and `cachedRow` answer from memory and never wait for the database lock, so they are safe on the main thread. See [live data](live-data.md#reading-before-the-first-delivery).
 - The transports on both platforms do the whole network exchange, including reading the response body, off the caller thread: Kotlin on `Dispatchers.IO`, Swift through the async `URLSession` API. You can call them from the main thread.
-- The database runs in WAL mode. Reads and the single writer share one SQLite connection under one lock, so a read waits while a commit runs. There is no reader pool.
+- Disk databases use WAL with 2 read-only connections and 1 writer. Each read holds a transaction across rows, nested values and synchronization metadata.
+- A read waits when both read connections are occupied. Boot and reset wait for active reads before changing tables or clearing data.
+- Reads involving temporary models use their owning connection. Entirely in-memory databases also share their connection with the writer.
+- A disk-only read uses the pool even when the database contains temporary models. Included associations participate in connection selection.
 - Parsing, normalization and planning are done before the writer runs, so the writer only executes ready statements.
 - Listener callbacks never run under the store lock.
 - Listeners are called from library threads, never from the main thread. Move to the main thread in your UI code.
@@ -26,6 +31,14 @@ Speed never relaxes the guarantees of [live data](live-data.md): ordered deliver
 
 A row cache keeps decoded rows keyed by model and id with their revision. Commits invalidate only the rows they touched. Repeated reads of unchanged rows do not build their cells again. Many observers of one query share a single read per commit.
 
+A read started before a commit retains its SQLite snapshot. Its rows cannot repopulate the cache after a newer commit.
+
+The row cache applies both a row-count limit and a 16 MiB estimated memory limit. It evicts the least recently used rows. A record larger than the memory limit bypasses the cache without evicting other records. Estimates include nested values, string capacities, collection storage and synchronization metadata. They do not measure allocator overhead or process memory.
+
+Released native entities share a separate 8 MiB estimated budget. Rust selects retained values using row-size estimates carried with deliveries. No second serialization measures them.
+
+Temporary values and memory records use an ordered set of deadlines. Expiration visits due entries, and deletion checks only those candidates. Rewriting a value replaces its deadline. An idle database waits for an event or the next deadline without polling.
+
 ## Diagnostics
 
-Counters count cache hits, misses and evictions, observation reads, observer calls and transport calls. Tests use these counters instead of wall-clock time.
+Counters report cache hits, misses, evictions, estimated retained bytes, observation reads, observer calls and transport calls. Tests use work counters instead of wall-clock time.

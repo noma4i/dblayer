@@ -1,6 +1,6 @@
 # DBlayer
 
-ActiveRecord for Swift and Kotlin. You describe your models once, DBlayer keeps them in a local SQLite database, syncs them with a GraphQL endpoint and hands your app live data that never blocks a thread.
+ActiveRecord for Swift and Kotlin. Describe models once, store normalized data in SQLite, synchronize through GraphQL and receive live updates.
 
 One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings and a typed, Rails-like API generated from your model files.
 
@@ -13,7 +13,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - **GraphQL without glue code.** Register your operations and point models at them. Responses of queries, mutations and subscription events are normalized into rows by one set of rules. Refetching after mutations, reconnects and app resume is automatic.
 - **No flicker.** One change is one commit. Observers see cascades, replacements and id swaps as a single transition, in order. Pull-to-refresh replaces data in one commit with no empty state in between.
 - **Files built in.** A `file` field stores binary data. You never choose where bytes live: SQLite or disk.
-- **Does not block.** Public calls are asynchronous and cheap. Reads do not wait for writes, and observers are called from library threads, never from the main thread.
+- **Background delivery.** Observers receive updates from library threads. Disk reads use a bounded WAL connection pool beside the writer. See [threading](docs/threading.md).
 - **One core, two platforms.** All logic is Rust. Swift and Kotlin contain no business logic.
 
 
@@ -38,33 +38,40 @@ Models are described in `.dbl` files with a Rails-like syntax:
 
 ```ruby
 model Moment do
-  schema do
-    string :uuid,      index: true
-    id     :userId,    null: true, index: true
-    string :text,      null: true
-    file   :media,     null: true
-    date   :createdAt, index: true
+  field :uuid, type: :string
+  field :userId, type: :id, null: true
+  field :text, type: :string, null: true
+  field :media, type: :file, null: true
+  field :createdAt, type: :date
 
-    index :userId, :createdAt
-  end
+  index :uuid
+  index :userId, :createdAt
 
   belongs_to :author, model: User, key: :userId, touch: true
-  has_many   :vibes,  model: Vibe, key: :momentId, dependent: :destroy
+  has_many :vibes, dependent: :destroy
 
-  scope :recent, order: { createdAt: :desc }
+  scope :recent do
+    order createdAt: :desc
+  end
 
-  remote :feed do
-    query MomentsFeed
+  scope :feed do
+    fetch MomentsFeed
     updates MomentEvents, deleted_by: :destroyed
     fresh_for 5.minutes
   end
 
-  create  with: CreateMoment
-  destroy with: DeleteMoment
+  operation :create do
+    mutation CreateMoment
+  end
+  operation :destroy do
+    mutation DeleteMoment
+  end
 end
 ```
 
 The generator turns these files into typed Swift and Kotlin models and a model specification for the core. Nested `object` and `array` blocks generate their value types too, with reusable names, optional fields, defaults and JSON key aliases. Keep field declarations in `.dbl` and add app behavior in extensions. See [describing models](docs/models.md#nested-objects-and-lists).
+
+Use `dblayer-gen explain models/*.dbl` to inspect generated tables, indexes and SQLite query plans before building the app.
 
 ## What using it looks like
 

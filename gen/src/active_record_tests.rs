@@ -1,0 +1,164 @@
+use dblayer::db::Db;
+use dblayer::query::{Order, Query, Where};
+use dblayer::value::SortDirection;
+use serde_json::json;
+
+use crate::{emit_kotlin, emit_swift, parse_models};
+
+#[test]
+fn singular_associations_preserve_names_ending_in_s() {
+    let models = parse_models("model Entry do\n field :statusId, type: :id\n belongs_to :status\n has_one :address\nend\nmodel Status do\nend\nmodel Address do\n field :entryId, type: :id\nend\n").unwrap();
+    let associations = &models[0].associations;
+    assert_eq!(associations[0].target.as_str(), "Status");
+    assert_eq!(associations[1].target.as_str(), "Address");
+}
+
+#[test]
+fn standalone_operations_match_document_names_kinds_and_inputs() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = directory.path().join("schema.graphql");
+    let document = directory.path().join("operations.graphql");
+    let source = directory.path().join("note.dbl");
+    std::fs::write(&schema, "type Query { count: Int } type Mutation { save(input: NoteInput!): Int } input NoteInput { text: String!, priority: Int = 0 } input OtherInput { text: String! }").unwrap();
+    std::fs::write(&document, "mutation Save($input: NoteInput!) { save(input: $input) }").unwrap();
+    let mut accepted = Vec::new();
+    for body in [
+        "mutation Missing",
+        "query Save\n args input: :NoteInput",
+        "mutation Save\n args input: :OtherInput",
+        "mutation Save\n args input: :NoteInput?",
+        "mutation Save",
+        "mutation Save\n wrap :input\n args priority: :int",
+        "mutation Save\n wrap :input\n args text: :int",
+        "mutation Save\n wrap :input\n args text: :string, extra: :string",
+    ] {
+        std::fs::write(&source, format!("operation :save do\n{body}\nend\n")).unwrap();
+        if crate::compile_files(&[&source], Some(&schema), std::slice::from_ref(&document)).is_ok() { accepted.push(body); }
+    }
+    assert!(accepted.is_empty(), "accepted invalid operations: {accepted:?}");
+    for body in ["args input: :NoteInput", "wrap :input\n args text: :string, priority: :int?", "wrap :input\n args text: :string"] {
+        std::fs::write(&source, format!("operation :save do\n mutation Save\n{body}\nend\n")).unwrap();
+        assert!(crate::compile_files(&[&source], Some(&schema), std::slice::from_ref(&document)).is_ok(), "{body}");
+    }
+}
+
+#[test]
+fn operation_effect_requirements_do_not_depend_on_application_model_names() {
+    let accepted = ["Chat", "Group"].into_iter().filter(|model| {
+        parse_models(&format!("model {model} do\n operation :leave do\n mutation Leave\n end\nend\n")).is_ok()
+    }).collect::<Vec<_>>();
+    assert!(accepted.is_empty(), "models exempt from declaring their effect: {accepted:?}");
+}
+
+#[test]
+fn replaced_declarations_are_not_accepted_as_another_dsl() {
+    let mut accepted = Vec::new();
+    for body in [
+        "schema do\n string :name\n end",
+        "scope :all",
+        "remote :all do\n query All\n end",
+        "create with: Create",
+        "update with: Update",
+        "destroy with: Destroy",
+        "scope :all, order: { name: :asc } do\n end",
+        "field :tags, type: :list, of: :string",
+        "field :meta, type: :object, as: Meta do\n field :name, type: :string\n end",
+        "action :publish do\n mutation Publish\n local_effect :none, reason: \"server result\"\n end",
+        "operation :create, with: Create do\n end",
+        "operation :publish, mutation: Publish, optimistic: { name: \"ready\" } do\n end",
+        "field :rank, type: :int, index: true",
+        "field :summary, type: :string, searchable: true",
+        "scope :named do\n where name: :name\n end",
+    ] {
+        if parse_models(&format!("model Note do\n field :name, type: :string\n{body}\nend")).is_ok() { accepted.push(body); }
+    }
+    assert!(accepted.is_empty(), "accepted replaced declarations: {accepted:#?}");
+}
+
+#[test]
+fn declarations_reject_values_that_would_be_discarded() {
+    let mut accepted = Vec::new();
+    for body in [
+        "scope :all do\n where \"ignored\"\n end",
+        "scope :all do\n order :ignored\n end",
+        "operation :create do\n mutation Create, Extra\n end",
+        "operation :create do\n mutation Create, ignored: true\n end",
+        "operation :create do\n input name: :name do\n ignored :value\n end\n end",
+        "search :name, ignored: true",
+    ] {
+        let source = format!("model Note do\n field :name, type: :string\n{body}\nend\n");
+        if parse_models(&source).is_ok() { accepted.push(body); }
+    }
+    assert!(accepted.is_empty(), "accepted ignored syntax: {accepted:#?}");
+}
+
+#[test]
+fn filtered_ordered_query_uses_one_index_without_a_temporary_sort() {
+    for direction in [SortDirection::Asc, SortDirection::Desc, SortDirection::AscNullsLast, SortDirection::DescNullsFirst] {
+    let models = parse_models(&format!("model Note, storage: :local do\n field :folderId, type: :id\n field :position, type: :int, null: true\n scope :in_folder do\n where :folderId\n order position: :{}\n end\nend\n", direction.name())).unwrap();
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.execute_batch(&dblayer::ddl::create_table_statement(&models[0])).unwrap();
+    for sql in dblayer::ddl::create_index_statements(&models[0]) { db.execute_batch(&sql).unwrap(); }
+    let query = Query::new("Note").filtered(Where::equal("folderId", json!("folder"))).ordered(vec![Order::new("position", direction)]);
+    let statement = dblayer::query::compile_keys(&query, &models[0]).unwrap();
+    let mut explain = db.prepare(&format!("EXPLAIN QUERY PLAN {}", statement.sql)).unwrap();
+    let plan = explain.query_map(rusqlite::params_from_iter(statement.bindings), |row| row.get::<_, String>(3)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    assert!(plan.iter().any(|line| line.to_lowercase().contains("using index row_note_idx_")), "{plan:?}");
+    assert!(!plan.iter().any(|line| line.contains("TEMP B-TREE")), "{plan:?}");
+    }
+}
+
+#[test]
+fn schema_fields_are_inferred_without_losing_local_fields() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = directory.path().join("schema.graphql");
+    let source = directory.path().join("note.dbl");
+    std::fs::write(&schema, "type Query { note: Note }\ntype Note { id: ID! body: String! score: Int }").unwrap();
+    std::fs::write(&source, "model Note do\n field :body\n field :score\n field :draft, type: :string, local: true, null: true\nend\n").unwrap();
+    let checked = crate::compile_files(&[source], Some(&schema), &[]).unwrap();
+    let swift = emit_swift(&checked.models, &checked.operations, &checked.inputs);
+    let kotlin = emit_kotlin(&checked.models, &checked.operations, &checked.inputs);
+    for part in ["let body: String", "let score: Int?", "let draft: String?"] { assert!(swift.contains(part), "{swift}"); }
+    for part in ["val body: String", "val score: Long?", "val draft: String?"] { assert!(kotlin.contains(part), "{kotlin}"); }
+}
+
+#[test]
+fn explicit_fields_do_not_require_a_graphql_type_named_after_the_model() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = directory.path().join("schema.graphql");
+    let source = directory.path().join("note.dbl");
+    std::fs::write(&schema, "type Query { count: Int }").unwrap();
+    std::fs::write(&source, "model Note do\n field :meta, type: Meta do\n field :title, type: :string\n end\nend\n").unwrap();
+    assert!(crate::compile_files(&[source], Some(&schema), &[]).is_ok());
+}
+
+#[test]
+fn local_models_store_and_query_without_graphql_and_generate_both_languages() {
+    let models = parse_models(r#"
+model Note, storage: :local do
+  field :text, type: :string
+  field :folderId, type: :id
+  field :position, type: :int
+  search :text
+  index :position
+  scope :in_folder do
+    where :folderId
+    order position: :desc
+  end
+end
+"#).unwrap();
+    let swift = emit_swift(&models, &[], &[]);
+    let kotlin = emit_kotlin(&models, &[], &[]);
+    assert!(swift.contains("func inFolder(") && swift.contains("func create("), "{swift}");
+    assert!(kotlin.contains("fun inFolder(") && kotlin.contains("fun create("), "{kotlin}");
+    let db = Db::open_in_memory(models, None).unwrap();
+    for (text, folder, position) in [("first", "f1", 1), ("second", "f1", 2), ("other", "f2", 3)] {
+        db.create("Note", json!({"text": text, "folderId": folder, "position": position}).as_object().unwrap().clone()).unwrap();
+    }
+    let query = Query::new("Note").filtered(Where::equal("folderId", json!("f1"))).ordered(vec![Order::new("position", SortDirection::Desc)]);
+    let rows = db.query(&query).unwrap();
+    assert_eq!(rows.iter().map(|row| row.text("text").unwrap()).collect::<Vec<_>>(), ["second", "first"]);
+    assert!(rows.iter().all(|row| row.sync.state == dblayer::syncstate::SyncState::Synced));
+    let found = db.query(&Query::new("Note").filtered(Where::Search { text: "second".into(), whole_words: true })).unwrap();
+    assert_eq!(found.iter().map(|row| row.text("text").unwrap()).collect::<Vec<_>>(), ["second"]);
+}

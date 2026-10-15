@@ -18,6 +18,32 @@ import org.junit.Test
 
 class BridgeProbeTest {
     @Test
+    fun releasedEntitiesRespectTheSharedMemoryBudget() = bounded {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        val row = Moment.create(text = "x".repeat(9 * 1024 * 1024))
+        val registry = EntityRegistries.of("Moment", Moment)
+        var entity: Entity<Moment>? = registry.entity(row.id)
+        assertEquals(9 * 1024 * 1024, withTimeout(5000) { entity!!.value.first { it != null } }?.text?.length)
+        entity = null
+        eventuallyBlocking("the large entity is collected") { registry.liveCount == 0 || run { System.gc(); false } }
+        assertEquals(0, registry.retainedCount)
+        val moment = Moment.create(text = "m".repeat(5 * 1024 * 1024))
+        var heldMoment: Entity<Moment>? = registry.entity(moment.id)
+        withTimeout(5000) { heldMoment!!.value.first { it != null } }
+        heldMoment = null
+        eventuallyBlocking("the moment is collected") { registry.liveCount == 0 || run { System.gc(); false } }
+        assertEquals(1, registry.retainedCount)
+        val message = Message.create(chatId = "chat", authorId = "user", text = "n".repeat(5 * 1024 * 1024))
+        val messages = EntityRegistries.of("Message", Message)
+        var heldMessage: Entity<Message>? = messages.entity(message.id)
+        withTimeout(5000) { heldMessage!!.value.first { it != null } }
+        heldMessage = null
+        eventuallyBlocking("the message is collected") { messages.liveCount == 0 || run { System.gc(); false } }
+        assertEquals(0, registry.retainedCount)
+        assertEquals(1, messages.retainedCount)
+    }
+
+    @Test
     fun anEntityFollowsAnEditAndLetsGoOfTheRecordWhenItIsDropped() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
         val first = Moment.create(text = "one")

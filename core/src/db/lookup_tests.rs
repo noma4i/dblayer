@@ -1,10 +1,25 @@
 use super::fixtures::*;
 use super::*;
-use crate::pacing::Counters;
 use crate::query::{Order, Query, Where};
 use crate::value::SortDirection;
 use serde_json::json;
 use std::sync::Arc;
+
+#[test]
+fn a_read_snapshot_cannot_repopulate_the_cache_after_a_newer_commit() {
+    let directory = tempfile::tempdir().unwrap();
+    let db = Db::open(&directory.path().join("snapshot.sqlite"), all_specs(), None).unwrap();
+    put(&db, "users", json!({"id": "u1", "name": "before"}));
+    db.shared.read(&[], |reader| {
+        let revision = reader.revision_seq()?;
+        put(&db, "users", json!({"id": "u1", "name": "after"}));
+        let rows = db.shared.load(reader, "users", &["u1".to_string()])?;
+        assert_eq!(rows["u1"].text("name"), Some("before"));
+        assert_eq!(reader.revision_seq()?, revision);
+        Ok(())
+    }).unwrap();
+    assert_eq!(db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("after"));
+}
 
 #[test]
 fn find_returns_the_stored_row_and_the_second_find_hits_the_cache() {
@@ -12,10 +27,12 @@ fn find_returns_the_stored_row_and_the_second_find_hits_the_cache() {
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let first = db.find("users", &rid("u1")).unwrap().unwrap();
     assert_eq!(first.text("name"), Some("Ann"));
-    assert_eq!(db.counters(), Counters { cache_hits: 0, cache_misses: 1, cache_evictions: 0, ..Counters::default() });
+    let counts = db.counters();
+    assert_eq!((counts.cache_hits, counts.cache_misses, counts.cache_evictions), (0, 1, 0));
     let second = db.find("users", &rid("u1")).unwrap().unwrap();
     assert!(Arc::ptr_eq(&first, &second));
-    assert_eq!(db.counters(), Counters { cache_hits: 1, cache_misses: 1, cache_evictions: 0, ..Counters::default() });
+    let counts = db.counters();
+    assert_eq!((counts.cache_hits, counts.cache_misses, counts.cache_evictions), (1, 1, 0));
 }
 
 #[test]
@@ -47,7 +64,8 @@ fn query_parses_each_row_once_while_unchanged() {
     let first = db.query(&query).unwrap();
     assert_eq!(db.counters().cache_misses, 2);
     let second = db.query(&query).unwrap();
-    assert_eq!(db.counters(), Counters { cache_hits: 2, cache_misses: 2, cache_evictions: 0, ..Counters::default() });
+    let counts = db.counters();
+    assert_eq!((counts.cache_hits, counts.cache_misses, counts.cache_evictions), (2, 2, 0));
     assert!(first.iter().zip(&second).all(|(a, b)| Arc::ptr_eq(a, b)));
 }
 

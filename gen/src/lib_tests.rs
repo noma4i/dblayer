@@ -23,7 +23,10 @@ fn unknown_model_across_files_is_reported_per_file() {
     fs::copy(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/moment.dbl"), &only_moment).unwrap();
     let errors = parse_files(std::slice::from_ref(&only_moment)).unwrap_err();
     assert!(errors.iter().all(|error| error.file == only_moment.display().to_string()));
-    assert_eq!(errors.iter().map(|error| error.error.line).collect::<Vec<_>>(), vec![14, 15]);
+    let source = fs::read_to_string(&only_moment).unwrap();
+    let declarations = source.lines().enumerate().filter(|(_, line)| line.trim_start().starts_with("belongs_to") || line.trim_start().starts_with("has_many"))
+        .map(|(line, _)| line + 1).collect::<Vec<_>>();
+    assert_eq!(errors.iter().map(|error| error.error.line).collect::<Vec<_>>(), declarations);
 }
 
 #[test]

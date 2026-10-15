@@ -1,18 +1,13 @@
-use std::path::Path;
-
 use super::graphql::{Schema, TypeKind};
+pub use super::graphql::{Ty, TyKind};
 
-/// One field of a schema input object: `base` is a scalar kind (`string`, `int`, `num`, `bool`), `json` for the schema scalar `JSON`, or the name of another input object.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InputField {
     pub name: String,
-    pub base: String,
-    pub list: bool,
-    pub item_optional: bool,
-    pub optional: bool,
+    pub ty: Ty,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InputObject {
     pub name: String,
     pub fields: Vec<InputField>,
@@ -38,8 +33,15 @@ fn scalar_kind(schema: &Schema, owner: &str, field: &str, named: &str, queue: &m
     }
 }
 
-pub(crate) fn load_input_objects(path: &Path, wanted: &[String]) -> Result<Vec<InputObject>, String> {
-    let schema = Schema::load(path)?;
+fn input_type(schema: &Schema, owner: &str, field: &str, ty: &Ty, queue: &mut Vec<String>) -> Result<Ty, String> {
+    let kind = match &ty.kind {
+        TyKind::Named(name) => TyKind::Named(scalar_kind(schema, owner, field, name, queue)?),
+        TyKind::List(item) => TyKind::List(Box::new(input_type(schema, owner, field, item, queue)?)),
+    };
+    Ok(Ty { kind, nullable: ty.nullable, has_default: ty.has_default })
+}
+
+pub(crate) fn load_input_objects(schema: &Schema, wanted: &[String]) -> Result<Vec<InputObject>, String> {
     let mut queue = wanted.to_vec();
     let mut found = Vec::new();
     let mut index = 0;
@@ -51,8 +53,7 @@ pub(crate) fn load_input_objects(path: &Path, wanted: &[String]) -> Result<Vec<I
         };
         let mut fields = Vec::new();
         for (field, ty) in declared {
-            let base = scalar_kind(&schema, &name, field, &ty.name, &mut queue)?;
-            fields.push(InputField { name: field.clone(), base, list: ty.list, item_optional: ty.list && ty.item_nullable, optional: ty.nullable });
+            fields.push(InputField { name: field.clone(), ty: input_type(schema, &name, field, ty, &mut queue)? });
         }
         found.push(InputObject { name, fields });
     }

@@ -27,7 +27,7 @@ impl Db {
     #[cfg(test)]
     pub fn sync_info(&self, model: &str, id: &RowId) -> Result<SyncInfo, DbError> {
         self.shared.spec(model)?;
-        self.shared.read(|reader| Ok(read_sync(reader.connection(), model, &[id.to_string()])?.remove(id.as_str()).unwrap_or_default()))
+        self.shared.read(&[model], |reader| Ok(read_sync(reader.connection(), model, &[id.to_string()])?.remove(id.as_str()).unwrap_or_default()))
     }
 
     #[cfg(test)]

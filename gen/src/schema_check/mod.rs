@@ -2,16 +2,18 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::parser::{Call, ModelNode, Node, Pair, Value};
+use crate::parser::{Call, ModelNode, Node, OperationNode, Pair, Value};
 use crate::{FileError, ParseError};
 
 mod graphql;
 mod inputs;
+mod standalone;
 
-pub use inputs::{InputField, InputObject};
+pub use inputs::{InputField, InputObject, Ty, TyKind};
 pub(crate) use inputs::load_input_objects;
 
-use graphql::{Operations, Schema, Ty, TypeKind};
+use graphql::Operations;
+pub(crate) use graphql::{Schema, TypeKind};
 
 type Declared<'a> = HashMap<&'a str, (usize, &'a [Call])>;
 
@@ -19,9 +21,8 @@ pub struct Outcome {
     pub notes: Vec<String>,
 }
 
-pub fn check_schema(schema: &Path, operations: &[PathBuf], files: &[String], nodes: &[ModelNode]) -> Result<Outcome, Vec<FileError>> {
+pub fn check_schema(schema: &Schema, operations: &[PathBuf], files: &[String], nodes: &[ModelNode], standalone: &[OperationNode]) -> Result<Outcome, Vec<FileError>> {
     let failed = |file: &Path, message: String| vec![FileError { file: file.display().to_string(), error: ParseError::new(0, 0, message) }];
-    let schema_types = Schema::load(schema).map_err(|message| failed(schema, message))?;
     let mut documents = Operations::default();
     for path in operation_files(operations) {
         documents.load(&path).map_err(|message| failed(&path, message))?;
@@ -32,10 +33,11 @@ pub fn check_schema(schema: &Path, operations: &[PathBuf], files: &[String], nod
             collect_declared(schema_block.block.as_deref().unwrap_or_default(), node.file, &mut declared);
         }
     }
-    let mut run = Run { schema: &schema_types, operations: &documents, files, declared, found: Vec::new(), notes: Vec::new() };
+    let mut run = Run { schema, operations: &documents, files, declared, found: Vec::new(), notes: Vec::new() };
     for node in nodes.iter().filter(|node| !is_local(node)) {
         run.check_model(node);
     }
+    for node in standalone { run.check_standalone(node); }
     let mut found = run.found;
     found.sort_by(|left, right| (&left.file, left.error.line, &left.error.message).cmp(&(&right.file, right.error.line, &right.error.message)));
     found.dedup();
@@ -102,9 +104,9 @@ struct Run<'a> {
     notes: Vec<String>,
 }
 
-struct Scope<'a> {
+struct Scope {
     file: usize,
-    keys: HashSet<&'a str>,
+    keys: HashSet<String>,
     top: bool,
     lists: bool,
 }
@@ -121,7 +123,7 @@ impl<'a> Run<'a> {
             if !seen.insert(element.clone()) {
                 continue;
             }
-            let keys = node.body.iter().filter(|call| matches!(call.word.as_str(), "belongs_to" | "has_one" | "has_many" | "references")).filter_map(|call| option_text(call, "key")).collect();
+            let keys = node.body.iter().filter(|call| matches!(call.word.as_str(), "belongs_to" | "has_one" | "has_many" | "references")).map(|call| crate::build::association_key(call, &node.name)).collect();
             let fields: Vec<&Call> = node.body.iter().filter(|call| call.word == "schema").flat_map(|call| call.block.iter().flatten()).collect();
             let mut covered = BTreeSet::new();
             self.check_fields(node, &fields, &element, &Scope { file: node.file, keys, top: true, lists: false }, &mut covered, &mut Vec::new());
@@ -156,13 +158,14 @@ impl<'a> Run<'a> {
 
     fn check_args_of(&mut self, file: usize, call: &Call, mutation: Option<&str>, wrap: Option<&str>, args: &[Pair], input: &[Pair]) {
         let Some(mutation) = mutation.filter(|_| !args.is_empty()) else { return };
-        if self.operations.roots.is_empty() && self.operations.mutations.is_empty() {
+        if self.operations.named.is_empty() {
             return;
         }
-        let Some(variables) = self.operations.mutations.get(mutation) else {
+        let Some(operation) = self.operations.named.get(mutation).filter(|operation| operation.kind == "mutation") else {
             self.fail(file, call.line, call.column, format!("operation `{mutation}` is not in the operation documents"));
             return;
         };
+        let variables = &operation.variables;
         let (owner, accepted) = match wrap {
             None => (format!("operation `{mutation}`"), variables.clone()),
             Some(key) => {
@@ -170,11 +173,11 @@ impl<'a> Run<'a> {
                     self.fail(file, call.line, call.column, format!("operation `{mutation}` has no variable `${key}`"));
                     return;
                 };
-                let Some(fields) = self.schema.input_fields(&wrapper.name) else {
+                let Some(fields) = self.schema.input_fields(wrapper.name()) else {
                     self.fail(file, call.line, call.column, format!("variable `${key}` of `{mutation}` is `{}`, not an input type", wrapper.describe()));
                     return;
                 };
-                (format!("`{}`", wrapper.name), fields)
+                (format!("`{}`", wrapper.name().to_string()), fields)
             }
         };
         for arg in args {
@@ -187,25 +190,25 @@ impl<'a> Run<'a> {
             let base = kind.trim_end_matches('?');
             if !self.arg_fits(base, declared) {
                 self.fail(file, call.line, call.column, format!("arg `{}` of kind `:{base}` does not fit `{variable}: {}`", arg.key, declared.describe()));
-            } else if kind.ends_with('?') && !declared.nullable {
+            } else if kind.ends_with('?') && !declared.optional() {
                 self.fail(file, call.line, call.column, format!("arg `{}` may be nil but `{variable}: {}` is required", arg.key, declared.describe()));
             }
         }
     }
 
     fn arg_fits(&self, kind: &str, declared: &Ty) -> bool {
-        let named = declared.name.as_str();
+        let named = declared.name();
         let custom = matches!(self.schema.types.get(named), Some(TypeKind::Scalar));
         let enumerated = matches!(self.schema.types.get(named), Some(TypeKind::Enum(_)));
         match kind {
-            "ids" => declared.list && (matches!(named, "ID" | "String" | "Int") || custom),
-            _ if declared.list => false,
+            "ids" => declared.is_list() && (matches!(named, "ID" | "String" | "Int") || custom),
+            _ if declared.is_list() => false,
             "string" => matches!(named, "String" | "ID") || custom || enumerated,
             "id" => matches!(named, "ID" | "String" | "Int") || custom,
             "int" => named == "Int" || custom,
             "num" => matches!(named, "Float" | "Int") || custom,
             "bool" => named == "Boolean",
-            _ => true,
+            _ => named == kind && matches!(self.schema.types.get(named), Some(TypeKind::Input(_))),
         }
     }
 
@@ -213,9 +216,9 @@ impl<'a> Run<'a> {
         let lines = remote.block.as_deref().unwrap_or_default();
         let query = lines.iter().find(|call| call.word == "query")?;
         let name = query.args.first().and_then(|arg| text(&arg.item))?.to_string();
-        let root = if self.operations.roots.is_empty() {
+        let root = if self.operations.named.is_empty() {
             graphql::Root { key: name.clone(), field: name.clone() }
-        } else if let Some(root) = self.operations.roots.get(&name) {
+        } else if let Some(root) = self.operations.named.get(&name).filter(|operation| operation.kind == "query").and_then(|operation| operation.root.as_ref()) {
             root.clone()
         } else {
             self.fail(node.file, query.line, query.column, format!("operation `{name}` is not in the operation documents"));
@@ -235,8 +238,8 @@ impl<'a> Run<'a> {
             }
         };
         for segment in segments {
-            reached = match self.schema.field(&reached.name, segment) {
-                Ok(next) if !reached.list => next,
+            reached = match self.schema.field(reached.name(), segment) {
+                Ok(next) if !reached.is_list() => next,
                 Ok(_) => {
                     self.fail(node.file, query.line, query.column, format!("root `{path}` crosses the list `{}`", reached.describe()));
                     return None;
@@ -253,26 +256,26 @@ impl<'a> Run<'a> {
         if paginates {
             return self.connection_node(node, line, &reached);
         }
-        if lists != reached.list {
+        if lists != reached.is_list() {
             let expected = if lists { "a list" } else { "one object" };
-            self.fail(node.file, line.line, line.column, format!("remote `{}` expects {expected} but `{path}` returns `{}`", name_of(remote), reached.describe()));
+            self.fail(node.file, line.line, line.column, format!("scope `{}` expects {expected} but `{path}` returns `{}`", name_of(remote), reached.describe()));
             return None;
         }
-        Some(reached.name)
+        Some(reached.name().to_string())
     }
 
     fn connection_node(&mut self, node: &ModelNode, line: &Call, connection: &Ty) -> Option<String> {
-        let found = match self.schema.field(&connection.name, "nodes") {
-            Ok(nodes) if nodes.list => Some(nodes.name),
-            _ => self.schema.field(&connection.name, "edges").and_then(|edges| self.schema.field(&edges.name, "node")).ok().map(|edge| edge.name),
+        let found = match self.schema.field(connection.name(), "nodes") {
+            Ok(nodes) if nodes.is_list() => Some(nodes.name().to_string()),
+            _ => self.schema.field(connection.name(), "edges").and_then(|edges| self.schema.field(edges.name(), "node")).ok().map(|edge| edge.name().to_string()),
         };
         if found.is_none() {
-            self.fail(node.file, line.line, line.column, format!("`paginate` needs `nodes` or `edges {{ node }}` on `{}`", connection.name));
+            self.fail(node.file, line.line, line.column, format!("`paginate` needs `nodes` or `edges {{ node }}` on `{}`", connection.name().to_string()));
         }
         found
     }
 
-    fn check_fields(&mut self, node: &'a ModelNode, calls: &[&'a Call], owner: &str, scope: &Scope<'a>, covered: &mut BTreeSet<String>, stack: &mut Vec<(String, String)>) {
+    fn check_fields(&mut self, node: &'a ModelNode, calls: &[&'a Call], owner: &str, scope: &Scope, covered: &mut BTreeSet<String>, stack: &mut Vec<(String, String)>) {
         for call in calls {
             let name = name_of(call);
             if matches!(call.word.as_str(), "index" | "ephemeral" | "file") || flag(call, "local") || name.is_empty() {
@@ -289,18 +292,18 @@ impl<'a> Run<'a> {
                 _ => None,
             };
             let Some((file, children)) = block else { continue };
-            let marker = (option_text(call, "as").unwrap_or(name).to_string(), reached.0.name.clone());
-            if !matches!(self.schema.types.get(&reached.0.name), Some(TypeKind::Fields(_))) || stack.contains(&marker) {
+            let marker = (option_text(call, "as").unwrap_or(name).to_string(), reached.0.name().to_string());
+            if !matches!(self.schema.types.get(reached.0.name()), Some(TypeKind::Fields(_))) || stack.contains(&marker) {
                 continue;
             }
             stack.push(marker);
             let inner: Vec<&Call> = children.iter().collect();
-            self.check_fields(node, &inner, &reached.0.name, &Scope { file, keys: HashSet::new(), top: false, lists: false }, &mut BTreeSet::new(), stack);
+            self.check_fields(node, &inner, reached.0.name(), &Scope { file, keys: HashSet::new(), top: false, lists: false }, &mut BTreeSet::new(), stack);
             stack.pop();
         }
     }
 
-    fn path_of(&mut self, node: &ModelNode, call: &Call, name: &str, scope: &Scope<'_>) -> Option<Vec<String>> {
+    fn path_of(&mut self, node: &ModelNode, call: &Call, name: &str, scope: &Scope) -> Option<Vec<String>> {
         if let Some(parent) = option_text(call, "id_from") {
             let association = node.body.iter().find(|candidate| matches!(candidate.word.as_str(), "belongs_to" | "has_one") && name_of(candidate) == parent);
             let base = association.and_then(|association| option_text(association, "from")).unwrap_or(parent);
@@ -310,7 +313,7 @@ impl<'a> Run<'a> {
         Some(option_text(call, "from").unwrap_or(name).split('.').map(str::to_string).collect())
     }
 
-    fn walk(&mut self, file: usize, call: &Call, owner: &str, segments: &[&str], scope: &Scope<'_>, name: &str) -> Option<(Ty, bool)> {
+    fn walk(&mut self, file: usize, call: &Call, owner: &str, segments: &[&str], scope: &Scope, name: &str) -> Option<(Ty, bool)> {
         let mut current = owner.to_string();
         let mut nullable_hop = false;
         let mut crossed = false;
@@ -324,15 +327,15 @@ impl<'a> Run<'a> {
                 }
             };
             if index + 1 == segments.len() {
-                return Some((Ty { list: reached.list || crossed, ..reached }, nullable_hop));
+                return Some((if crossed && !reached.is_list() { reached.into_list() } else { reached }, nullable_hop));
             }
-            if reached.list && !scope.lists {
+            if reached.is_list() && !scope.lists {
                 self.fail(file, call.line, call.column, format!("field `{name}`: path `{}` crosses the list `{segment}`", segments.join(".")));
                 return None;
             }
-            crossed |= reached.list;
+            crossed |= reached.is_list();
             nullable_hop |= reached.nullable;
-            current = reached.name;
+            current = reached.name().to_string();
         }
         None
     }
@@ -347,14 +350,14 @@ impl<'a> Run<'a> {
             problems.push(format!("is nullable in the schema (`{}`), declare `null: true`", reached.describe()));
         }
         let wants_list = matches!(word, "list" | "array");
-        if wants_list != reached.list {
-            let schema_shape = if reached.list { "a list" } else { "not a list" };
+        if wants_list != reached.is_list() {
+            let schema_shape = if reached.is_list() { "a list" } else { "not a list" };
             problems.push(format!("`{word}` does not fit `{}`, which is {schema_shape}", reached.describe()));
-        } else if !self.named_fits(call, &reached.name) {
+        } else if !self.named_fits(call, reached.name()) {
             problems.push(format!("`{word}` does not fit the schema type `{}`", reached.describe()));
         }
         if word == "enum" {
-            problems.extend(self.enum_problems(call, &reached.name));
+            problems.extend(self.enum_problems(call, reached.name()));
         }
         for problem in problems {
             self.fail(file, call.line, call.column, format!("field `{name}` {problem}"));
@@ -399,7 +402,7 @@ impl<'a> Run<'a> {
             let keys = HashSet::new();
             let Some((reached, _)) = self.walk(node.file, call, element, &segments, &Scope { file: node.file, keys, top: false, lists: true }, name_of(call)) else { continue };
             let one = matches!(call.word.as_str(), "belongs_to" | "has_one");
-            if one == reached.list {
+            if one == reached.is_list() {
                 let expected = if one { "one object" } else { "a list" };
                 self.fail(node.file, call.line, call.column, format!("`{}` `{}` expects {expected} but `{path}` is `{}`", call.word, name_of(call), reached.describe()));
             }
@@ -410,7 +413,7 @@ impl<'a> Run<'a> {
         let Some(fields) = self.schema.fields(element) else { return };
         let missing: BTreeSet<&str> = fields.keys().map(String::as_str).filter(|name| !covered.contains(*name) && !name.starts_with("__")).collect();
         if !missing.is_empty() {
-            self.notes.push(format!("{}: model `{}` remote `{}` does not use {} fields of `{element}`: {}", self.files[node.file], node.name, name_of(remote), missing.len(), missing.into_iter().collect::<Vec<_>>().join(", ")));
+            self.notes.push(format!("{}: model `{}` scope `{}` does not use {} fields of `{element}`: {}", self.files[node.file], node.name, name_of(remote), missing.len(), missing.into_iter().collect::<Vec<_>>().join(", ")));
         }
     }
 }

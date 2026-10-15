@@ -172,7 +172,7 @@ fn promoted_comparison_uses_the_column_index() {
             row.get(3)
         })
         .unwrap();
-    assert!(plan.contains("USING INDEX row_people_status"), "{plan}");
+    assert!(plan.contains("USING INDEX") && plan.contains("(status=?)"), "{plan}");
 }
 
 #[test]

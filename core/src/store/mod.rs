@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 
 use rusqlite::Connection;
 
@@ -16,6 +16,7 @@ mod file_ops;
 mod maintenance;
 mod membership;
 mod open;
+mod readers;
 mod reset;
 mod rows;
 mod scopes;
@@ -52,11 +53,11 @@ impl ModelInfo {
 
 pub(crate) struct Inner {
     pub connection: Connection,
-    pub models: BTreeMap<String, ModelInfo>,
+    pub models: Arc<BTreeMap<String, ModelInfo>>,
     pub clock: Arc<dyn Clock>,
     pub generation: Generation,
     pub ready: bool,
-    pub poison: Option<String>,
+    pub poison: Arc<Mutex<Option<String>>>,
     pub data_version: Option<String>,
     pub counters: Counters,
 }
@@ -71,7 +72,7 @@ impl Inner {
     }
 
     pub(crate) fn ensure_healthy(&self) -> Result<(), StoreError> {
-        match &self.poison {
+        match &*self.poison.lock().unwrap_or_else(|error| error.into_inner()) {
             Some(reason) => Err(StoreError::Poisoned(reason.clone())),
             None => Ok(()),
         }
@@ -87,6 +88,9 @@ pub type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
 
 pub struct Store {
     inner: Mutex<Inner>,
+    models: RwLock<Arc<BTreeMap<String, ModelInfo>>>,
+    poison: Arc<Mutex<Option<String>>>,
+    readers: Option<readers::Readers>,
     hook: OnceLock<StoreHook>,
     recreated: Option<RecreateReason>,
     #[cfg(test)]
@@ -95,18 +99,23 @@ pub struct Store {
 
 impl Store {
     pub(crate) fn from_connection(connection: Connection) -> Self {
+        let models = Arc::new(BTreeMap::new());
+        let poison = Arc::new(Mutex::new(None));
         let inner = Inner {
             connection,
-            models: BTreeMap::new(),
+            models: models.clone(),
             clock: Arc::new(SystemClock),
             generation: Generation::INITIAL,
             ready: false,
-            poison: None,
+            poison: poison.clone(),
             data_version: None,
             counters: Counters::default(),
         };
         Self {
             inner: Mutex::new(inner),
+            models: RwLock::new(models),
+            poison,
+            readers: None,
             hook: OnceLock::new(),
             recreated: None,
             #[cfg(test)]
@@ -161,17 +170,33 @@ impl Store {
 
     #[cfg(test)]
     pub fn apply_failure(&self) -> Option<String> {
-        self.lock().poison.clone()
+        self.poison.lock().unwrap_or_else(|error| error.into_inner()).clone()
     }
 
-    pub fn read<T>(&self, run: impl FnOnce(&Reader<'_>) -> Result<T, StoreError>) -> Result<T, StoreError> {
+    pub fn read<T>(&self, required: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, StoreError>) -> Result<T, StoreError> {
+        let models = self.models.read().unwrap_or_else(|error| error.into_inner());
+        let memory = if required.is_empty() {
+            models.values().any(|model| model.spec.is_memory())
+        } else {
+            required.iter().any(|key| models.get(*key).is_some_and(|model| model.spec.is_memory()))
+        };
+        if let Some(readers) = self.readers.as_ref().filter(|_| !memory) {
+            let connection = readers.lease();
+            if let Some(reason) = &*self.poison.lock().unwrap_or_else(|error| error.into_inner()) {
+                return Err(StoreError::Poisoned(reason.clone()));
+            }
+            let transaction = connection.unchecked_transaction()?;
+            let result = run(&Reader::new(&transaction, &models))?;
+            transaction.commit()?;
+            return Ok(result);
+        }
         let inner = self.lock();
         inner.ensure_healthy()?;
         run(&Reader::new(&inner.connection, &inner.models))
     }
 
     pub fn revision_seq(&self) -> Result<i64, StoreError> {
-        self.read(|reader| reader.revision_seq())
+        self.read(&[], |reader| reader.revision_seq())
     }
 }
 
@@ -195,6 +220,8 @@ mod membership_tests;
 mod memory_tests;
 #[cfg(test)]
 mod open_tests;
+#[cfg(test)]
+mod readers_tests;
 #[cfg(test)]
 mod reset_tests;
 #[cfg(test)]

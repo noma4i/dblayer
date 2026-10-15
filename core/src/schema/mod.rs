@@ -51,10 +51,10 @@ pub enum DeclarationError {
     IndexedFieldNotScalar(String),
     #[error("column of field {0} collides with another column")]
     ColumnCollision(String),
-    #[error("composite index needs at least 2 fields")]
-    CompositeIndexTooShort,
-    #[error("composite index field {0} is not an indexed field")]
-    CompositeIndexFieldNotIndexed(String),
+    #[error("index needs at least 1 field")]
+    EmptyIndex,
+    #[error("index column {0} must name a scalar or enum field")]
+    InvalidIndexColumn(String),
     #[error("association {0} has no foreign key")]
     EmptyForeignKey(String),
     #[error("foreign key of association {0} is not indexed")]
@@ -783,7 +783,7 @@ pub struct ModelSpec {
     #[serde(default)]
     pub relations: Vec<RelationSpec>,
     #[serde(default)]
-    pub composite_indexes: Vec<Vec<String>>,
+    pub indexes: Vec<Vec<String>>,
     #[serde(default)]
     pub actions: Vec<ActionDeclaration>,
     #[serde(default)]
@@ -807,7 +807,7 @@ impl ModelSpec {
             fields,
             associations: Vec::new(),
             relations: Vec::new(),
-            composite_indexes: Vec::new(),
+            indexes: Vec::new(),
             actions: Vec::new(),
             ephemeral: Vec::new(),
             storage: Storage::Disk,
@@ -846,7 +846,7 @@ impl ModelSpec {
     }
 
     pub fn is_indexed(&self, name: &str) -> bool {
-        name == "id" || self.field(name).is_some_and(|field| field.indexed)
+        name == "id" || self.field(name).is_some_and(|field| field.indexed) || self.indexes.iter().any(|fields| fields.first().is_some_and(|first| first == name))
     }
 
     #[cfg(test)]
@@ -970,12 +970,12 @@ impl ModelSpec {
                 return Err(DeclarationError::ColumnCollision(field.name.clone()));
             }
         }
-        for composite in &self.composite_indexes {
-            if composite.len() < 2 {
-                return Err(DeclarationError::CompositeIndexTooShort);
+        for columns in &self.indexes {
+            if columns.is_empty() {
+                return Err(DeclarationError::EmptyIndex);
             }
-            if let Some(name) = composite.iter().find(|name| !self.is_indexed(name)) {
-                return Err(DeclarationError::CompositeIndexFieldNotIndexed(name.clone()));
+            if let Some(name) = columns.iter().find(|name| self.field(name).is_none_or(|field| column_type(&field.kind).is_none())) {
+                return Err(DeclarationError::InvalidIndexColumn(name.clone()));
             }
         }
         Ok(())

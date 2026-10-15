@@ -26,10 +26,10 @@ private class CountingSource : EntitySource {
 class EntityRegistryTest {
     private fun moment(id: String, text: String) = Moment(id = id, uuid = id, text = text, likedByMe = false, media = JsonObject(emptyMap()), createdAt = "2026-10-08T00:00:00.000Z")
 
-    private fun delivery(revision: Long, rows: List<Moment> = emptyList(), removed: List<String> = emptyList()) = EntityDeliveryRows(revision, rows, removed)
+    private fun delivery(revision: Long, rows: List<Moment> = emptyList(), removed: List<String> = emptyList()) = EntityDeliveryRows(revision, rows.map { it to 1uL }, removed)
 
-    private fun registry(source: EntitySource = CountingSource(), maxAge: Long = 120_000, maxCount: Int = 200, now: () -> Long = { 0 }) =
-        Entities("Moment", Moment, maxAge, maxCount, now, source)
+    private fun registry(source: EntitySource = CountingSource(), now: () -> Long = { 0 }) =
+        Entities("Moment", Moment, now, source)
 
     private fun collectGarbage(until: () -> Boolean) = eventuallyBlocking("the garbage collector frees the readers") { until() || run { System.gc(); false } }
 
@@ -112,7 +112,7 @@ class EntityRegistryTest {
     @Test
     fun retainedValueIsDroppedAfterTheBound() {
         var clock = 0L
-        val registry = registry(maxAge = 120_000, maxCount = 200, now = { clock })
+        val registry = registry(now = { clock })
         repeat(201) { index ->
             var entity: Entity<Moment>? = registry.entity("$index")
             registry.apply(delivery(1, listOf(moment("$index", "v"))))

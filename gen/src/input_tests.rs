@@ -1,12 +1,14 @@
 use std::fs;
 
-use crate::{emit_kotlin, emit_swift, load_input_objects, parse_all, InputField};
+use crate::{emit_kotlin, emit_swift, load_input_objects, parse_all, InputField, Ty, TyKind};
 
 const SCHEMA: &str = "type Query { a: Int }\nscalar DateTime\nenum Mood { HAPPY SAD }\ninput StickerInput { name: String!, mood: Mood, tags: [String!]!, notes: [String], size: Int, scale: Float, pinned: Boolean!, sentAt: DateTime, owner: OwnerInput!, helpers: [OwnerInput!] }\ninput OwnerInput { id: ID!, nickname: String }\ninput Unused { x: Int }\n";
 const SEND: &str = "operation :sticker_send do\n  mutation StickerSend\n  args input: :StickerInput\n  result id: :string\nend\n";
 
 fn field(name: &str, base: &str, list: bool, item_optional: bool, optional: bool) -> InputField {
-    InputField { name: name.into(), base: base.into(), list, item_optional, optional }
+    let scalar = Ty { kind: TyKind::Named(base.into()), nullable: if list { item_optional } else { optional }, has_default: false };
+    let ty = if list { Ty { kind: TyKind::List(Box::new(scalar)), nullable: optional, has_default: false } } else { scalar };
+    InputField { name: name.into(), ty }
 }
 
 fn read(source: &str) -> Result<Vec<crate::InputObject>, String> {
@@ -59,14 +61,14 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
     let inputs = read(SEND).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &inputs);
     for line in [
-        "public struct StickerInput: Encodable, Sendable {",
+        "public struct StickerInput: Encodable, Sendable, Equatable {",
         "    public let tags: [String]",
-        "    public let notes: [String?]?",
-        "    public let scale: Double?",
+        "    public let notes: GraphQLNullable<[String?]>",
+        "    public let scale: GraphQLNullable<Double>",
         "    public let owner: OwnerInput",
-        "    public let helpers: [OwnerInput]?",
-        "    public init(name: String, mood: String? = nil, tags: [String], notes: [String?]? = nil, size: Int? = nil, scale: Double? = nil, pinned: Bool, sentAt: String? = nil, owner: OwnerInput, helpers: [OwnerInput]? = nil) {",
-        "public struct OwnerInput: Encodable, Sendable {",
+        "    public let helpers: GraphQLNullable<[OwnerInput]>",
+        "    public init(name: String, mood: GraphQLNullable<String> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, scale: GraphQLNullable<Double> = .omitted, pinned: Bool, sentAt: GraphQLNullable<String> = .omitted, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted) {",
+        "public struct OwnerInput: Encodable, Sendable, Equatable {",
         "public static func stickerSend(input: StickerInput) async throws -> StickerSendResult {",
         "variables[\"input\"] = JSONValue.encode(input)",
     ] {
@@ -74,8 +76,8 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &inputs);
     for line in [
-        "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: String? = null, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: List<String?>? = null, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: Int? = null, @EncodeDefault(EncodeDefault.Mode.NEVER) val scale: Double? = null, val pinned: Boolean, @EncodeDefault(EncodeDefault.Mode.NEVER) val sentAt: String? = null, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: List<OwnerInput>? = null)",
-        "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: String? = null)",
+        "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<String> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Int> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val scale: GraphQLNullable<Double> = GraphQLNullable.Omitted, val pinned: Boolean, @EncodeDefault(EncodeDefault.Mode.NEVER) val sentAt: GraphQLNullable<String> = GraphQLNullable.Omitted, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)",
+        "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: GraphQLNullable<String> = GraphQLNullable.Omitted)",
         "import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n",
         "suspend fun stickerSend(input: StickerInput): StickerSendResult {",
         "variables[\"input\"] = jsonValue(input)",
@@ -88,6 +90,21 @@ const MOMENT_SCHEMA: &str = "type Query { a: Int }\nscalar JSON\nenum Kind { EMO
 const MOMENT: &str = "operation :moment_create do\n  mutation MomentCreate\n  args input: :MomentInput\n  result moment: { id: :id }\nend\n";
 
 #[test]
+fn nested_input_lists_keep_every_dimension_and_nullability_in_both_languages() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("schema.graphql");
+    fs::write(&path, "input MatrixInput { cells: [[Int!]!]! sparse: [[String]]! }").unwrap();
+    let declared = parse_all(&["operation :send do\n mutation Send\n args input: :MatrixInput\nend\n"]).unwrap();
+    let inputs = load_input_objects(Some(&path), &declared.operations).unwrap();
+    let swift = emit_swift(&declared.models, &declared.operations, &inputs);
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &inputs);
+    assert!(swift.contains("public let cells: [[Int]]"), "{swift}");
+    assert!(swift.contains("public let sparse: [[String?]?]"), "{swift}");
+    assert!(kotlin.contains("val cells: List<List<Int>>"), "{kotlin}");
+    assert!(kotlin.contains("val sparse: List<List<String?>?>"), "{kotlin}");
+}
+
+#[test]
 fn a_json_scalar_in_an_input_object_is_raw_json_on_both_platforms_and_default_lists_stay_optional() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("schema.graphql");
@@ -98,13 +115,15 @@ fn a_json_scalar_in_an_input_object_is_raw_json_on_both_platforms_and_default_li
     assert_eq!(settings.fields[0], field("itemProps", "json", false, false, false));
     assert_eq!(settings.fields[1], field("extras", "json", true, false, true));
     let widgets = objects.iter().find(|object| object.name == "MomentInput").unwrap().fields[1].clone();
-    assert_eq!(widgets, field("widgets", "WidgetInput", true, false, true));
+    let mut expected = field("widgets", "WidgetInput", true, false, true);
+    expected.ty.has_default = true;
+    assert_eq!(widgets, expected);
     let swift = emit_swift(&declared.models, &declared.operations, &objects);
-    for line in ["    public let itemProps: JSONValue", "    public let extras: [JSONValue]?", "    public let widgets: [WidgetInput]?"] {
+    for line in ["    public let itemProps: JSONValue", "    public let extras: GraphQLNullable<[JSONValue]>", "    public let widgets: GraphQLNullable<[WidgetInput]>"] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &objects);
-    for line in ["val itemProps: JsonElement,", "val extras: List<JsonElement>? = null"] {
+    for line in ["val itemProps: JsonElement,", "val extras: GraphQLNullable<List<JsonElement>> = GraphQLNullable.Omitted"] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }
 }

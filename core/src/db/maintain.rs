@@ -19,7 +19,7 @@ impl Db {
 
     pub fn sweep_files(&self) -> Result<usize, DbError> {
         let _gate = locked(&self.shared.files_gate);
-        let orphans = self.shared.read(|reader| {
+        let orphans = self.shared.read(&[], |reader| {
             let held: HashSet<String> = read_outbox(reader)?
                 .iter()
                 .filter_map(Prior::of)
@@ -44,7 +44,7 @@ impl Db {
         if !orphans.is_empty() {
             self.remove_references(&orphans)?;
         }
-        let live = self.shared.read(|reader| Ok(all_references(reader.connection())?))?;
+        let live = self.shared.read(&[], |reader| Ok(all_references(reader.connection())?))?;
         let live_ids: HashSet<&str> = live.iter().map(|reference| reference.id.as_str()).collect();
         let directory_ids: HashSet<&str> =
             live.iter().filter(|reference| reference.location == Location::Directory).map(|reference| reference.id.as_str()).collect();

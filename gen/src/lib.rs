@@ -1,4 +1,5 @@
 mod build;
+mod declarations;
 mod check;
 mod lexer;
 mod operation;
@@ -7,7 +8,7 @@ mod schema_check;
 mod emit;
 pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
 pub use operation::OperationCall;
-pub use schema_check::{InputField, InputObject};
+pub use schema_check::{InputField, InputObject, Ty, TyKind};
 
 use std::fmt;
 use std::fs;
@@ -53,21 +54,44 @@ pub fn parse_models(source: &str) -> Result<Vec<ModelSpec>, Vec<ParseError>> {
 pub struct Declarations {
     pub models: Vec<ModelSpec>,
     pub operations: Vec<OperationCall>,
+    pub inputs: Vec<InputObject>,
+    pub notes: Vec<String>,
 }
 
 pub fn parse_files(paths: &[impl AsRef<Path>]) -> Result<Vec<ModelSpec>, Vec<FileError>> {
-    parse_declarations(paths).map(|declarations| declarations.models)
+    compile_files(paths, None, &[]).map(|declarations| declarations.models)
 }
 
-pub fn parse_declarations(paths: &[impl AsRef<Path>]) -> Result<Declarations, Vec<FileError>> {
+pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operations: &[PathBuf]) -> Result<Declarations, Vec<FileError>> {
     let (names, sources) = read_sources(paths)?;
     let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
-    parse_all(&sources).map_err(|found| {
-        found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect()
-    })
+    let locate = |found: Vec<(usize, ParseError)>| {
+        found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect::<Vec<_>>()
+    };
+    let mut parsed = parse_tree(&sources).map_err(&locate)?;
+    let loaded = schema.map(schema_check::Schema::load).transpose().map_err(|message| vec![FileError {
+        file: schema.unwrap().display().to_string(), error: ParseError::new(0, 0, message),
+    }])?;
+    if let Some(schema) = &loaded {
+        declarations::infer(&mut parsed.models, schema).map_err(&locate)?;
+    }
+    declarations::prepare(&mut parsed.models).map_err(&locate)?;
+    let notes = match &loaded {
+        Some(schema) => schema_check::check_schema(schema, operations, &names, &parsed.models, &parsed.operations)?.notes,
+        None => Vec::new(),
+    };
+    let mut declared = build_declarations(parsed).map_err(locate)?;
+    declared.inputs = inputs_from_schema(loaded.as_ref(), &declared.operations).map_err(|message| vec![FileError { file: names.first().cloned().unwrap_or_default(), error: ParseError::new(0, 0, message) }])?;
+    declared.notes = notes;
+    Ok(declared)
 }
 
 pub fn load_input_objects(schema: Option<&Path>, operations: &[OperationCall]) -> Result<Vec<InputObject>, String> {
+    let loaded = schema.map(schema_check::Schema::load).transpose()?;
+    inputs_from_schema(loaded.as_ref(), operations)
+}
+
+fn inputs_from_schema(schema: Option<&schema_check::Schema>, operations: &[OperationCall]) -> Result<Vec<InputObject>, String> {
     let wanted = operation::input_object_names(operations);
     match (schema, wanted.first()) {
         (_, None) => Ok(Vec::new()),
@@ -77,13 +101,7 @@ pub fn load_input_objects(schema: Option<&Path>, operations: &[OperationCall]) -
 }
 
 pub fn check_models_against_schema(schema: &Path, operations: &[PathBuf], paths: &[impl AsRef<Path>]) -> Result<Vec<String>, Vec<FileError>> {
-    parse_files(paths)?;
-    let (names, sources) = read_sources(paths)?;
-    let mut nodes = Vec::new();
-    for (file, source) in sources.iter().enumerate() {
-        nodes.extend(lexer::lex(source).and_then(|tokens| parser::parse(&tokens, file)).expect("sources parsed above").models);
-    }
-    schema_check::check_schema(schema, operations, &names, &nodes).map(|outcome| outcome.notes)
+    compile_files(paths, Some(schema), operations).map(|declarations| declarations.notes)
 }
 
 fn read_sources(paths: &[impl AsRef<Path>]) -> Result<(Vec<String>, Vec<String>), Vec<FileError>> {
@@ -104,6 +122,12 @@ fn parse_sources(sources: &[&str]) -> Result<Vec<ModelSpec>, Vec<(usize, ParseEr
 }
 
 fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>> {
+    let mut parsed = parse_tree(sources)?;
+    declarations::prepare(&mut parsed.models)?;
+    build_declarations(parsed)
+}
+
+fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError)>> {
     let mut nodes = Vec::new();
     let mut operation_nodes = Vec::new();
     let mut errors = Vec::new();
@@ -119,15 +143,20 @@ fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>>
     if !errors.is_empty() {
         return Err(errors);
     }
-    let operations = operation::build(&operation_nodes, &mut errors);
-    let models = match check::check(&nodes) {
+    Ok(parser::Parsed { models: nodes, operations: operation_nodes })
+}
+
+fn build_declarations(parsed: parser::Parsed) -> Result<Declarations, Vec<(usize, ParseError)>> {
+    let mut errors = Vec::new();
+    let operations = operation::build(&parsed.operations, &mut errors);
+    let models = match check::check(&parsed.models) {
         Ok(models) => models,
         Err(found) => {
             errors.extend(found);
             return Err(errors);
         }
     };
-    if errors.is_empty() { Ok(Declarations { models, operations }) } else { Err(errors) }
+    if errors.is_empty() { Ok(Declarations { models, operations, inputs: Vec::new(), notes: Vec::new() }) } else { Err(errors) }
 }
 
 #[cfg(test)]
@@ -153,3 +182,6 @@ mod input_tests;
 
 #[cfg(test)]
 mod result_tests;
+
+#[cfg(test)]
+mod active_record_tests;

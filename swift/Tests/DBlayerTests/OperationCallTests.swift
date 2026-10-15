@@ -63,15 +63,15 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func anInputObjectOfTheSchemaIsSentNestedAndWithoutItsNilFields() async throws {
+  func inputObjectsDistinguishOmittedNullAndValues() async throws {
     let transport = try Self.openOperationRig("StickerSend", document: "mutation StickerSend($input: StickerInput!) { stickerSend(input: $input) { id } }", reply: #"{"data":{"stickerSend":{"id":"s1"}}}"#)
-    let input = StickerInput(name: "wave", tags: ["a", "b"], notes: ["n", nil], pinned: true, owner: OwnerInput(id: "7"), helpers: [OwnerInput(id: "8", nickname: "ann")])
+    let input = StickerInput(name: "wave", mood: .null, tags: ["a", "b"], notes: .value(["n", nil]), pinned: true, owner: OwnerInput(id: "7"), helpers: .value([OwnerInput(id: "8", nickname: .value("ann"))]))
 
     let result = try await Operations.stickerSend(input: input)
 
     #expect(result.id == "s1")
     let sent = transport.calls.first { $0.operationName == "StickerSend" }?.variablesJson ?? ""
-    let expected = #"{"input":{"name":"wave","tags":["a","b"],"notes":["n",null],"pinned":true,"owner":{"id":"7"},"helpers":[{"id":"8","nickname":"ann"}]}}"#
+    let expected = #"{"input":{"name":"wave","mood":null,"tags":["a","b"],"notes":["n",null],"pinned":true,"owner":{"id":"7"},"helpers":[{"id":"8","nickname":"ann"}]}}"#
     #expect(JSONValue.parse(sent) == JSONValue.parse(expected), "variables sent: \(sent)")
   }
 
@@ -106,9 +106,9 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aJsonScalarOfAnInputObjectIsSentAsAnObjectAndAnOmittedListIsNotSent() async throws {
     let transport = try Self.openOperationRig("MomentCreate", document: "mutation MomentCreate($input: MomentInput!) { momentCreate(input: $input) { moment { id } } }", reply: #"{"data":{"momentCreate":{"moment":{"id":9}}}}"#)
-    let widget = WidgetInput(kind: "EMOJI", settings: SettingsInput(itemProps: .object(["emoji": "fire", "size": 3, "tags": .array(["a"])]), rotate: 1.5))
+    let widget = WidgetInput(kind: "EMOJI", settings: SettingsInput(itemProps: .object(["emoji": "fire", "size": 3, "tags": .array(["a"])]), rotate: .value(1.5)))
 
-    let sent = try await Operations.momentCreate(input: MomentInput(file: "s1", widgets: [widget]))
+    let sent = try await Operations.momentCreate(input: MomentInput(file: "s1", widgets: .value([widget])))
     #expect(sent.moment?.id == "9")
     transport.enqueue("MomentCreate", reply: #"{"data":{"momentCreate":{"moment":{"id":9}}}}"#)
     let without = try await Operations.momentCreate(input: MomentInput(file: "s2"))

@@ -18,6 +18,7 @@ pub(crate) type RowKey = (String, i64);
 
 impl Shared {
     pub(crate) fn load(&self, reader: &Reader<'_>, model: &str, ids: &[String]) -> Result<HashMap<String, Row>, DbError> {
+        let snapshot_revision = reader.revision_seq()?;
         let stored = reader.stored_rows(model, ids)?;
         let mut syncs = read_sync(reader.connection(), model, ids).map_err(StoreError::from)?;
         let spec = self.spec(model)?;
@@ -28,7 +29,7 @@ impl Shared {
             let mut data = record.row;
             let ephemeral = overlay.as_ref().map_or(0, |state| state.overlay(spec, &id, &mut data));
             let row: Row = Arc::new(Record { id: record.id, revision: record.revision, data, sync: syncs.remove(&id).unwrap_or_default(), ephemeral });
-            cache.put(model, row.clone());
+            cache.put(model, row.clone(), snapshot_revision);
             loaded.insert(id, row);
         }
         Ok(loaded)
@@ -71,7 +72,7 @@ impl Db {
             return Ok(Some(row));
         }
         let ids = [id.to_string()];
-        let mut loaded = self.shared.read(|reader| self.shared.load(reader, model, &ids))?;
+        let mut loaded = self.shared.read(&[model], |reader| self.shared.load(reader, model, &ids))?;
         Ok(loaded.remove(id.as_str()))
     }
 
@@ -91,7 +92,7 @@ impl Db {
             }
         }
         if !missing.is_empty() {
-            let loaded = self.shared.read(|reader| self.shared.load(reader, model, &missing))?;
+            let loaded = self.shared.read(&[model], |reader| self.shared.load(reader, model, &missing))?;
             for (slot, id) in slots.iter_mut().zip(ids) {
                 if slot.is_none() {
                     *slot = loaded.get(id.as_str()).cloned();
@@ -103,7 +104,7 @@ impl Db {
 
     pub fn query(&self, query: &Query) -> Result<Vec<Row>, DbError> {
         let model = query.model.as_str();
-        self.shared.read(|reader| {
+        self.shared.read(&[model], |reader| {
             let keys = self.shared.query_keys(reader, query)?;
             self.shared.rows_for_keys(reader, model, &keys)
         })
@@ -111,13 +112,13 @@ impl Db {
 
     pub fn count(&self, query: &Query) -> Result<i64, DbError> {
         let statement = compile_count(query, self.shared.spec(query.model.as_str())?)?;
-        self.shared.read(|reader| Ok(fetch_count(reader.connection(), &statement)?))
+        self.shared.read(&[query.model.as_str()], |reader| Ok(fetch_count(reader.connection(), &statement)?))
     }
 
     #[cfg(test)]
     pub fn exists(&self, query: &Query) -> Result<bool, DbError> {
         let probe = Query { limit: Some(1), ..query.clone() };
-        self.shared.read(|reader| Ok(!self.shared.query_keys(reader, &probe)?.is_empty()))
+        self.shared.read(&[probe.model.as_str()], |reader| Ok(!self.shared.query_keys(reader, &probe)?.is_empty()))
     }
 
     #[cfg(test)]

@@ -84,33 +84,33 @@ What a refresh does, in one commit:
 - Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`deleted_by`, a null node, a delete event).
 - A failed request changes nothing.
 
-An event never loads a list again. A row that arrives by an event is stored like any other row (V2 does the same: the event inserts the row and no list is fetched). A relation that lists every row of its params (`remote :thread, params: [:chatId], joins: :events do ... end`) also gets the new row appended, when that list is loaded, in the same commit as the event. Declare `joins: :events` only for a relation without server-side filters (`variables`), because the library cannot tell from the row whether the server would have listed it. Other lists show the row on their next load. Only a row whose parent is not stored makes the library reload the lists of that parent model.
+An event never loads a list again. A row that arrives by an event is stored like any other row (V2 does the same: the event inserts the row and no list is fetched). A relation that lists every row of its params (a scope with `where :chatId` and `joins: :events`) also gets the new row appended, when that list is loaded, in the same commit as the event. Declare `joins: :events` only for a relation without server-side filters (`variables`), because the library cannot tell from the row whether the server would have listed it. Other lists show the row on their next load. Only a row whose parent is not stored makes the library reload the lists of that parent model.
 
 `refresh(replace: true)` replaces the whole list with the response (unconfirmed records still stay). It is meant for small lists where the server is the only authority.
 
 ## Mutations
 
 ```ruby
-create  with: CreateMoment, input: { text: :text }
-update  with: UpdateMoment
-destroy with: DeleteMoment
+operation :create do
+  mutation CreateMoment
+  input text: :text
+end
 ```
 
 Fields of the kind `id` that hold a whole number are sent as JSON numbers. A GraphQL `ID` accepts a number and so does an `Int`, while a string only fits an `ID`.
 
-Servers that take one input object and answer with a payload (the Relay mutation style) use `wrap:` and `root:`:
+Servers that take one input object and answer with a payload use `wrap` and `root`:
 
 ```ruby
-update  with: UpdateChat, wrap: :input, root: "chatUpdate.chat"
-action :mute do
-  mutation ChatMute
-  wrap     :input
-  root     "chatMute.chat"
-  input    chatId: :id
+operation :update do
+  mutation UpdateChat
+  wrap :input
+  root "chatUpdate.chat"
 end
-
-action :send_gift do
+operation :send_gift do
   mutation GiftSend
+  args giftId: :string
+  local_effect :none, reason: "Apply the server response"
   wrap     :input
   root     "giftSend.user"
   lands    Message, root: "giftSend.message"
@@ -119,11 +119,11 @@ action :send_gift do
 end
 ```
 
-`response: :ignore` skips reading the response, for a mutation whose answer is not the model's row; add `refetch: [:profile]` (or a `refetch` line in an action) to reload the relation instead.
+`response :ignore` skips reading the response, for a mutation whose answer is not the model's row; add `refetch :profile` (or a `refetch` line in an action) to reload the relation instead.
 
-`wrap: :input` sends `{ input: { ...variables } }`. `root:` is the path of the row inside the response, by default the first field of the operation. `lands Model, root: "a.b"` writes the row at another path of the response into that model, once per line, so a payload that carries several rows lands all of them. The model must exist, and a path that the response lacks lands nothing. `refetch_of Model, relation: :name` marks a relation of another model stale after the action succeeds and reloads it when someone reads it, for counters that live on another row.
+`wrap :input` sends `{ input: { ...variables } }`. `root` is the path of the row inside the response, by default the first field of the operation. `lands Model, root: "a.b"` writes the row at another path of the response into that model, once per line, so a payload that carries several rows lands all of them. The model must exist, and a path that the response lacks lands nothing. `refetch_of Model, relation: :name` marks a relation of another model stale after the action succeeds and reloads it when someone reads it, for counters that live on another row.
 
-`create`, `update` and `destroy` call the named mutation. `input:` maps row fields to variables (same names by default). `args:` on `create` and `update` declares values that are sent but not stored (see [writing data](writing-data.md)). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
+`create`, `update` and `destroy` call the named mutation. The `input` line maps row fields to variables (same names by default). The `args` line in `operation :create` and `operation :update` declares values that are sent but not stored (see [writing data](writing-data.md)). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
 
 ## Operations without a model
 
@@ -151,7 +151,10 @@ println(code.url)
 - `mutation` or `query` names the operation. Pass the operation type to `DB.open` (Swift) or `DBlayer.open` (Kotlin) like any other operation.
 - `args` are the variables, with the same kinds as the args of `create`. A trailing `?` makes one optional and an omitted one is not sent. `wrap :input` sends them as `{ input: { ... } }`.
 - `result` lists the fields to read from the root field of the answer, all optional. Without `result` the call returns nothing. A field is a scalar (`:bool`, `:int`, `:num`, `:string`, `:id`), `:ids` or `[:string]` for a list of scalars, `:json` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), `{ a: :int }` for an object, or `[{ a: :int }]` for a list of objects. Each object becomes its own type named after the call and the field (`PricingLoadResultGifts`). An `:id` field accepts a number or a string and arrives as a string.
-- An arg can also name an input object of the server schema, written as a symbol: `args input: :StickerInput`. The generator reads the object and every object it nests from the schema file (`--schema`, see [models](models.md)) and writes one struct (Swift) or one `@Serializable` data class (Kotlin) for each. A field the schema marks `!` is required, any other field is optional and a nil field is not sent. Lists keep their element nullability. Enums and custom scalars are strings, except the scalar named `JSON`: it is sent as a JSON value (`JSONValue` in Swift, `JsonElement` in Kotlin), never as a string. A field with a schema default (`widgets: [WidgetInput!] = []`) is optional and is not sent when you leave it out.
+- `args input: :StickerInput` names a schema input object. The generator reads it and nested inputs from `--schema`.
+- Required inputs remain required. Nullable fields use `GraphQLNullable`: omitted by default, explicit null, or a supplied value. Lists preserve every dimension and element nullability.
+- A required field with a schema default can be omitted. Nullable fields with defaults still distinguish omission from explicit null.
+- Enums and custom scalars are strings. The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.
 - The call is sent at once. It is not queued, stored or retried, and it fails when the device is offline, when the transport fails or when the answer carries errors. The error text holds every message.
 - A failed call or load throws a typed error. `Http` carries the status and the body (401, 503), `Graphql` carries every message of an answer with errors in order, `Network` and `Interrupted` tell whether the request left the device. Any other failure is a `Sync` error with its text.
 
@@ -174,7 +177,7 @@ try {
     show(error.messages)
 }
 ```
-- Do not use it for a row of a model. The row is written by `create`, `update` or an `action`, which keep the queue, the retries and the rollback.
+- Do not use it for a row of a model. The row is written by `create`, `update` or a model `operation`, which keep the queue, the retries and the rollback.
 
 An operation that reads lists, objects and raw JSON from the answer:
 
@@ -241,8 +244,8 @@ println(sent.id)
 ## Subscriptions
 
 ```ruby
-remote :feed do
-  query MomentsFeed
+scope :feed do
+  fetch MomentsFeed
   updates MomentEvents, deleted_by: :destroyed
 end
 ```

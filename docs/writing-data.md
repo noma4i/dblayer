@@ -14,14 +14,19 @@ moment.update(text = "hello world")
 moment.destroy()
 ```
 
-`create` takes the fields that the `create` line maps in `input:`, or every field when there is no `input:`. Add `local: [:userId]` to the `create` line for fields you set locally but do not send (the author of a message, for example). Fields the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
+`create` takes the fields that `operation :create` maps with `input`, or every field when no mapping exists. Add `local :userId` inside `operation :create` for fields you set locally but do not send (the author of a message, for example). Fields the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
 ## Values the row does not store
 
-A mutation may need a value that is not a field of the model, such as a signed upload id or the id of an attached record. Declare it with `args:` on `create` or `update`, and send it under its mutation variable with `input:`:
+A mutation may need a value that is not a field of the model, such as a signed upload id or the id of an attached record. Declare it with `args` inside `operation :create` or `operation :update`. Map it to a mutation variable with `input`:
 
 ```ruby
-create with: SendMessage, wrap: :input, input: { chatId: :chatId, body: :body, file: :file, attachedUserId: :attachedUserId }, args: { file: :string?, attachedUserId: :id? }
+operation :create do
+  mutation SendMessage
+  wrap :input
+  input chatId: :chatId, body: :body, file: :file, attachedUserId: :attachedUserId
+  args file: :string?, attachedUserId: :id?
+end
 ```
 
 ```swift
@@ -34,7 +39,7 @@ val message = Message.create(chatId = chat.id, body = "hi", attachedUserId = "42
 
 An arg has a kind (`:bool`, `:int`, `:num`, `:string`, `:id` or `:ids`). A trailing `?` makes it optional: the call may leave it out and the variable is then not sent. The generated call takes the args after the fields, in alphabetical order. The args of `update` are always optional.
 
-An arg goes into the queued change and is never stored in the row, so no read shows it. The queue is durable: after a restart the change is sent with the same args. Every arg must be named by a value of `input:`, and an arg may not have the name of a field. An `:id` arg that holds a whole number is sent as a JSON number, like an `id` field. It fits a GraphQL `ID` and an `Int`. Actions take the same `args` (see Custom actions). `dblayer-gen --schema` checks each arg against the input of the mutation (see [models](models.md#check-against-the-server-schema)).
+An arg goes into the queued change and is never stored in the row, so no read shows it. The queue is durable: after a restart the change is sent with the same args. Every arg must be named by a value of `input`, and an arg may not have the name of a field. An `:id` arg that holds a whole number is sent as a JSON number, like an `id` field. It fits a GraphQL `ID` and an `Int`. Actions take the same `args` (see Custom actions). `dblayer-gen --schema` checks each arg against the input of the mutation (see [models](models.md#check-against-the-server-schema)).
 
 ## What a write does
 
@@ -55,7 +60,7 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`, `
 
 ## Temporary ids
 
-A created row joins, at the front, the list of every remote relation whose params it carries and that has no constant variable filter, so a live list shows it at once. A relation without params takes a created row only when it declares `joins: :created` (`remote :owned, joins: :created do ... end`): the list maps to a server query whose scope the client cannot evaluate, so the author says that every row this device creates belongs to it. A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
+A created row joins, at the front, the list of every remote relation whose params it carries and that has no constant variable filter, so a live list shows it at once. A relation without params takes a created row only when it declares `joins: :created` (`scope :owned, joins: :created do ... end`): the list maps to a server query whose scope the client cannot evaluate, so the author says that every row this device creates belongs to it. A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
 
 `settled()` waits until the server has answered every queued change of a record and throws on a refusal, which is how a screen shows a save error for an optimistic `update`:
 
@@ -123,7 +128,7 @@ sync.retryAll()      // send every failed and deliveryUnknown change again
 An action is a named mutation with its own optimistic effect:
 
 ```ruby
-action :like do
+operation :like do
   mutation LikeMoment
   input    momentId: :id
   optimistic likedByMe: true
@@ -131,12 +136,12 @@ action :like do
 end
 ```
 
-Every action declares its local effect: `optimistic` fields, or `local_effect :none, reason: "..."` when the server alone owns the result. The generator refuses an action with neither. `UNDECLARED_ACTIONS` in `gen/src/check/mod.rs` lists the existing actions that still declare neither; the list only shrinks.
+Every model operation declares `optimistic` fields or `local_effect :none, reason: "..."` when only the server changes the row. The generator rejects missing declarations for every model name.
 
 An action can take arguments. `args` declares them (`:bool`, `:int`, `:num`, `:string`, `:id`). `input` and `optimistic` can use an argument by name:
 
 ```ruby
-action :mute do
+operation :mute do
   mutation   ChatMute
   args       mute: :bool
   input      chatId: :id, mute: :mute
@@ -149,7 +154,7 @@ end
 An array field holds records such as reactions. `optimistic` changes one element of it by a key and leaves the others, so two writers do not overwrite each other:
 
 ```ruby
-action :react do
+operation :react do
   mutation   MessageReact
   args       userId: :id, reactionBody: :string
   input      messageId: :id, reactionBody: :reactionBody
@@ -172,7 +177,7 @@ chat.mute(mute = true)
 `result` declares the scalar fields of the mutation payload that the app needs, for example the text a server shows after a send (`:string`, `:int`, `:num`, `:bool` or `:id`). The payload is the object the mutation field returns, the first part of `root`. An action with `result` returns an answer handle instead of the model: `model` is the optimistic record, `answer()` waits for the server and returns a generated type with one optional property per declared field.
 
 ```ruby
-action :send_gift do
+operation :send_gift do
   mutation GiftSend
   args     giftId: :string
   input    userId: :id, giftId: :giftId
