@@ -354,23 +354,25 @@ class EntityBridgeTest {
         val first = Moment.create(text = "one")
         val second = Moment.create(text = "two")
         val collector = Collector()
-        val entities = DBlayer.database.liveEntities(first.modelName, collector)
-        entities.retain(listOf(first.id, second.id))
-        assertEquals(2, collector.wait(1)[0].rows.size)
+        DBlayer.database.liveEntities(first.modelName, collector).use { entities ->
+            entities.retain(listOf(first.id, second.id))
+            assertEquals(2, collector.wait(1)[0].rows.size)
 
-        first.update(text = "edited")
-        val changed = collector.wait(2)
-        assertEquals(1, changed[1].rows.size)
-        assertEquals(true, changed[1].rows[0].cells.contains(Cell.Text("edited")))
+            first.update(text = "edited")
+            val changed = collector.wait(2)
+            assertEquals(1, changed[1].rows.size)
+            assertEquals(true, changed[1].rows[0].cells.contains(Cell.Text("edited")))
 
-        entities.release(listOf(first.id))
-        first.update(text = "unseen")
-        second.update(text = "seen")
-        val last = collector.wait(3)
-        assertEquals(3, last.size)
-        assertEquals(true, last[2].rows[0].cells.contains(Cell.Text("seen")))
+            entities.release(listOf(first.id))
+            first.update(text = "unseen")
+            System.gc()
+            second.update(text = "seen")
+            val last = collector.wait(3)
+            assertEquals(3, last.size)
+            assertEquals(true, last[2].rows[0].cells.contains(Cell.Text("seen")))
 
-        second.destroy()
-        assertEquals(listOf(second.id), collector.wait(4).last().removed)
+            second.destroy()
+            assertEquals(listOf(second.id), collector.wait(4).last().removed)
+        }
     }
 }
