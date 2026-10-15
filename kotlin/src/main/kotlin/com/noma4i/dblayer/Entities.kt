@@ -205,7 +205,12 @@ internal class CoreEntitySource<Model : DBModel>(
     private val modelName: String,
     private val decoder: ModelDecoder<Model>,
     private val deliver: (EntityDeliveryRows<Model>) -> Unit,
-) : EntitySource, EntityListener {
+) : EntitySource {
+    private class Changes<Model : DBModel>(source: CoreEntitySource<Model>) : EntityListener {
+        private val source = WeakReference(source)
+        override fun changed(delivery: EntityDelivery) { source.get()?.changed(delivery) }
+    }
+
     private var observer: LiveEntities? = null
     private var database: Database? = null
     private val leased = HashSet<String>()
@@ -233,13 +238,13 @@ internal class CoreEntitySource<Model : DBModel>(
         val existing = observer
         if (existing != null && database === current) return existing
         database = current
-        return current.liveEntities(modelName, this).also {
+        return current.liveEntities(modelName, Changes(this)).also {
             observer = it
             if (leased.isNotEmpty()) it.retain(leased.toList())
         }
     }
 
-    override fun changed(delivery: EntityDelivery) {
+    private fun changed(delivery: EntityDelivery) {
         val rows = delivery.rows.mapNotNull { row -> runCatching { decoder.read(row) to row.estimatedBytes }.getOrNull() }
         decoded.addAndGet(rows.size)
         deliver(EntityDeliveryRows(delivery.revision, rows, delivery.removed))

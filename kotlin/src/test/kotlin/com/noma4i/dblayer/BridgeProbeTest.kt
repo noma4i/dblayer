@@ -339,6 +339,19 @@ class BridgeProbeTest {
 }
 
 class EntityBridgeTest {
+    @Test
+    fun droppingAnEntitySourceReleasesItsObserver() = bounded {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        val row = Moment.create(text = "held")
+        val delivered = java.util.concurrent.atomic.AtomicInteger()
+        var source: CoreEntitySource<Moment>? = CoreEntitySource("Moment", Moment) { delivered.incrementAndGet() }
+        val released = java.lang.ref.WeakReference(source)
+        source!!.retain(listOf(row.id))
+        eventually("the entity source delivers its row") { delivered.get() > 0 }
+        source = null
+        eventually("the entity source releases its observer") { System.gc(); released.get() == null && DBlayer.subscriptionCensus().subscriptions == 0uL }
+    }
+
     private class Collector : EntityListener {
         val received = java.util.concurrent.CopyOnWriteArrayList<EntityDelivery>()
         override fun changed(delivery: EntityDelivery) { received.add(delivery) }

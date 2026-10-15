@@ -62,6 +62,8 @@ Requesting a retained id returns its value with `isStale` set and reads the reco
 
 Every delivery carries the revision of the database. An entity ignores a delivery with a lower revision than the one it shows, whatever the order in which they arrive. A record that was deleted arrives as an empty value. A reset of the model (logout, `reset`) empties every entity and preserves pending lease releases.
 
+Native callbacks hold entity sources weakly. Releasing a source releases its observer without a separate cleanup call.
+
 ## Ending a session
 
 `try await DB.logout()` (Swift) and suspending `DBlayer.logout()` (Kotlin) clear the data and drop every entity, lease and kept value. Wait for completion before opening another account. The account entity stays the same object and goes back to empty. Logout deletes every queued, refused and unconfirmed operation.

@@ -259,7 +259,13 @@ enum EntityDecoding {
 }
 
 /// Opens the one core observer of a model on first use and keeps its calls off the main thread, in order.
-final class CoreEntitySource<Model: DBModel>: EntitySource, EntityListener, @unchecked Sendable {
+final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable {
+  private final class Changes: EntityListener, @unchecked Sendable {
+    weak var source: CoreEntitySource?
+    init(_ source: CoreEntitySource) { self.source = source }
+    func changed(delivery: EntityDelivery) { source?.changed(delivery: delivery) }
+  }
+
   private let queue = DispatchQueue(label: "dblayer.entities", qos: .userInitiated)
   private var observer: LiveEntities?
   private var database: Database?
@@ -293,7 +299,7 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, EntityListener, @unc
     guard let current = DB.database else { return nil }
     if observer == nil || database !== current {
       database = current
-      observer = try? current.liveEntities(model: Model.modelName, listener: self)
+      observer = try? current.liveEntities(model: Model.modelName, listener: Changes(self))
       if !leased.isEmpty { try? observer?.retain(ids: Array(leased)) }
     }
     return observer
