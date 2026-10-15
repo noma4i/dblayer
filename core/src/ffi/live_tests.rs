@@ -43,7 +43,8 @@ fn inv_observe_17_a_live_change_of_one_changed_row_carries_one_row_at_every_list
 #[test]
 fn inv_panic_01_live_and_state_subscriptions_cancel_after_a_poisoned_lock() {
     let (latest, _) = tokio::sync::watch::channel(None);
-    let live = super::LiveSubscription { latest, handles: Mutex::new(None) };
+    let (_, initial_load) = tokio::sync::watch::channel(Some(Ok(())));
+    let live = super::LiveSubscription { latest, initial_load, handles: Mutex::new(None) };
     crate::db::fixtures::poison(&live.handles);
     live.cancel();
     let state = super::StateSubscription { task: Mutex::new(None) };

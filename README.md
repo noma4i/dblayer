@@ -7,6 +7,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 ## Highlights
 
 - **Always live.** Every read of a model returns a live result: the current value plus a stream of changes. There is no separate "observe" call to remember.
+- **Refresh on entry.** `LiveList` can force its initial request while keeping cached rows visible. Await that request without starting another one.
 - **Local first.** Data lives in SQLite. Reads never wait for the network, and writes are applied locally at once.
 - **Sync state on every record.** Each record knows if the server has seen it: `synced`, `pending`, `sending` or `failed`, plus `isLocal` for records that still have a temporary id. Build spinners, retry buttons and unsent banners on it, and query by it.
 - **Offline writes.** Create, update and destroy are applied optimistically and queued. The queue survives restarts, is sent in order, rolled back on a final failure and replaces temporary ids with server ids.

@@ -79,11 +79,22 @@ impl Drop for LiveHandles {
 #[derive(uniffi::Object)]
 pub struct LiveSubscription {
     pub(super) latest: watch::Sender<Option<LiveChange>>,
+    pub(super) initial_load: watch::Receiver<Option<Result<(), crate::sync::SyncError>>>,
     pub(super) handles: Mutex<Option<LiveHandles>>,
 }
 
 #[uniffi::export]
 impl LiveSubscription {
+    pub async fn wait_for_initial_load(&self) -> Result<(), super::DbError> {
+        let mut receiver = self.initial_load.clone();
+        loop {
+            if let Some(result) = receiver.borrow_and_update().clone() {
+                return result.map_err(Into::into);
+            }
+            receiver.changed().await
+                .map_err(|_| super::DbError::Interrupted { detail: "initial load cancelled".into() })?;
+        }
+    }
     pub async fn current(&self) -> LiveChange {
         let mut receiver = self.latest.subscribe();
         let value = receiver.wait_for(Option::is_some).await.expect("live owns sender").as_ref().expect("first delivery").clone();

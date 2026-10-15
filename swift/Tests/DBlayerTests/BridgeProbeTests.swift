@@ -233,6 +233,30 @@ struct BridgeProbeTests {
   }
 
   @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func eachNewListCanRefreshAndAwaitItsOwnInitialRequest() async throws {
+    let transport = MockTransport()
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed { feed { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+    for index in 0..<3 {
+      if index == 2 {
+        transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "rejected"))
+      } else {
+        transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false}}}}"#)
+      }
+      let list = LiveList(Moment.feed, refreshOnConnect: true)
+      do {
+        try await list.waitForInitialLoad()
+        #expect(index < 2)
+      } catch DbError.Http(let status, _) {
+        #expect(index == 2 && status == 400)
+      }
+      #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == index + 1)
+      await eventually("initial rows remain visible") { list.rows.first?.uuid == "a" }
+    }
+  }
+
+  @MainActor
   @Test
   func aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndSendsAfterRegisteringAndRetrying() async throws {
     let transport = MockTransport()

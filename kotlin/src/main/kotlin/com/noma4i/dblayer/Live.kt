@@ -132,7 +132,8 @@ internal class ListUpdate<Model : DBModel>(val snapshot: Snapshot<Model>? = null
 }
 
 /** A live query for view models: the rows, the load state of the relation, and the calls that move them. The scope of the owner ends it. */
-class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope) {
+class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope, refreshOnConnect: Boolean = false) {
+    private val initialSubscription = kotlinx.coroutines.CompletableDeferred<LiveSubscription>(scope.coroutineContext[kotlinx.coroutines.Job])
     private val mutableRows = kotlinx.coroutines.flow.MutableStateFlow<List<Model>>(emptyList())
     private val mutableIds = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
     private val mutableFailure = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
@@ -140,7 +141,9 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     private val mutableState = kotlinx.coroutines.flow.MutableStateFlow(LoadState())
 
     init {
-        val snapshots = query.snapshots
+        val snapshots = query.snapshots(refreshOnConnect) { result ->
+            result.fold({ initialSubscription.complete(it) }, { initialSubscription.completeExceptionally(it) })
+        }
         val state = query.state
         val source = LiveSource(ListUpdate<Model>(), { older, newer -> ListUpdate.merging(older, newer) }) { emit ->
             val rows = snapshots.subscribe { emit(ListUpdate(snapshot = it)) }
@@ -164,5 +167,6 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     val state: kotlinx.coroutines.flow.StateFlow<LoadState> get() = mutableState
 
     suspend fun refresh() = query.refresh()
+    suspend fun waitForInitialLoad() = initialSubscription.await().waitForInitialLoad()
     suspend fun loadMore(): Boolean = query.loadMore()
 }

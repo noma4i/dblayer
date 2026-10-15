@@ -201,6 +201,30 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun eachNewListCanRefreshAndAwaitItsOwnInitialRequest() = bounded {
+        val transport = MockTransport()
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed { feed { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+        repeat(3) { index ->
+            if (index == 2) {
+                transport.enqueue("MomentsFeed", DbException.Http(400u, "rejected"))
+            } else {
+                transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false}}}}""")
+            }
+            val listScope = CoroutineScope(SupervisorJob())
+            try {
+                val list = LiveList(Moment.feed, listScope, refreshOnConnect = true)
+                val failure = runCatching { withTimeout(5000) { list.waitForInitialLoad() } }.exceptionOrNull()
+                if (index == 2) assertEquals(true, failure is DbException.Http) else assertNull(failure)
+                assertEquals(index + 1, transport.calls.count { it.operationName == "MomentsFeed" })
+                assertEquals("a", withTimeout(5000) { list.rows.first { it.isNotEmpty() } }.first().uuid)
+            } finally {
+                listScope.cancel()
+            }
+        }
+    }
+
+    @Test
     fun aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndSendsAfterRegisteringAndRetrying() = bounded {
         val transport = MockTransport()
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)

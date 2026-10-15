@@ -178,9 +178,20 @@ public final class LiveList<Model: DBModel> {
   public private(set) var failure: String?
   @ObservationIgnored private let query: Query<Model>
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
+  @ObservationIgnored private var initialLoad: Task<Void, Error>?
 
-  public convenience init(_ query: Query<Model>) {
-    self.init(query, snapshots: query.snapshots, state: query.state)
+  public convenience init(_ query: Query<Model>, refreshOnConnect: Bool = false) {
+    let (connections, continuation) = AsyncThrowingStream<LiveSubscription, Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let snapshots = query.snapshots(refreshOnConnect: refreshOnConnect) { result in
+      switch result {
+      case .success(let subscription): continuation.yield(subscription); continuation.finish()
+      case .failure(let error): continuation.finish(throwing: error)
+      }
+    }
+    self.init(query, snapshots: snapshots, state: query.state)
+    initialLoad = Task {
+      for try await subscription in connections { try await subscription.waitForInitialLoad() }
+    }
   }
 
   init(_ query: Query<Model>, snapshots: LiveSource<Snapshot<Model>>, state: LiveSource<LoadState>) {
@@ -208,8 +219,17 @@ public final class LiveList<Model: DBModel> {
 
   public func refresh() async throws { try await query.refresh() }
 
+  public func waitForInitialLoad() async throws {
+    let load = initialLoad
+    try await withTaskCancellationHandler {
+      try await load?.value
+    } onCancel: {
+      load?.cancel()
+    }
+  }
+
   @discardableResult
   public func loadMore() async throws -> Bool { try await query.loadMore() }
 
-  isolated deinit { tasks.forEach { $0.cancel() } }
+  isolated deinit { tasks.forEach { $0.cancel() }; initialLoad?.cancel() }
 }

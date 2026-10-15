@@ -153,6 +153,18 @@ feed.refresh()
 feed.loadMore()
 ```
 
+A screen that needs fresh history on every entry can set `refreshOnConnect`. The initial connection then forces 1 request, including when cached data is fresh. `waitForInitialLoad()` waits for that request and throws its error. It does not request again. Cached rows remain visible during loading and after failure. Ending the list cancels its wait without cancelling a request shared with other readers.
+
+```swift
+let thread = LiveList(Message.thread(chatId), refreshOnConnect: true)
+try await thread.waitForInitialLoad()
+```
+
+```kotlin
+val thread = LiveList(Message.thread(chatId), viewModelScope, refreshOnConnect = true)
+thread.waitForInitialLoad()
+```
+
 **UIKit and Android views.** Apply the diff to a diffable data source or a collection view. The diff already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:
 
 ```swift

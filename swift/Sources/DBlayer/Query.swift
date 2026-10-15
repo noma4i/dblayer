@@ -76,7 +76,12 @@ public struct Query<Model: DBModel>: Sendable {
   public func limit(_ count: Int) -> Query { var copy = self; copy.limitCount = count; return copy }
 
   var json: String {
+    json(refreshOnConnect: false)
+  }
+
+  private func json(refreshOnConnect: Bool) -> String {
     var object: [String: JSONValue] = ["model": .string(Model.modelName)]
+    if refreshOnConnect { object["refreshOnConnect"] = .bool(true) }
     if let condition { object["where"] = condition.json }
     if !orders.isEmpty { object["order"] = .array(orders.map { .object(["field": .string($0.field), "direction": .string($0.direction)]) }) }
     if let limitCount { object["limit"] = .number(Double(limitCount)) }
@@ -111,7 +116,15 @@ public struct Query<Model: DBModel>: Sendable {
 
   /// The rows with the ids that the delivery replaced: a created record answered by the server (or matched by `correlate`) arrives under its real id.
   public var snapshots: LiveSource<Snapshot<Model>> {
-    listSource(initial: Snapshot(rows: [], replaced: [:], reordered: false), merge: { Snapshot.merging($0, $1) }, open: { listener in try DB.database.liveQuery(queryJson: json, listener: listener) }) { (applied: ListApplied<Model>, change) in
+    snapshots(refreshOnConnect: false) { _ in }
+  }
+
+  func snapshots(refreshOnConnect: Bool, connected: @escaping @Sendable (Result<LiveSubscription, Error>) -> Void) -> LiveSource<Snapshot<Model>> {
+    listSource(initial: Snapshot(rows: [], replaced: [:], reordered: false), merge: { Snapshot.merging($0, $1) }, open: { listener in
+      let result = Result { try DB.database.liveQuery(queryJson: json(refreshOnConnect: refreshOnConnect), listener: listener) }
+      connected(result)
+      return try result.get()
+    }) { (applied: ListApplied<Model>, change) in
       Snapshot(rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, failure: applied.failure)
     }
   }

@@ -81,19 +81,29 @@ class Query<Model : DBModel>(
     fun limit(count: Int) = copy(limitCount = count)
 
     internal val json: String
-        get() = buildJsonObject {
-            put("model", modelName)
-            condition?.let { put("where", it.json) }
-            if (orders.isNotEmpty()) put("order", JsonArray(orders.map { buildJsonObject { put("field", it.field); put("direction", it.direction) } }))
-            limitCount?.let { put("limit", it) }
-            relation?.let { put("relation", it); put("params", params) }
-        }.toString()
+        get() = json(false)
+
+    private fun json(refreshOnConnect: Boolean) = buildJsonObject {
+        put("model", modelName)
+        if (refreshOnConnect) put("refreshOnConnect", true)
+        condition?.let { put("where", it.json) }
+        if (orders.isNotEmpty()) put("order", JsonArray(orders.map { buildJsonObject { put("field", it.field); put("direction", it.direction) } }))
+        limitCount?.let { put("limit", it) }
+        relation?.let { put("relation", it); put("params", params) }
+    }.toString()
 
     val live: LiveSource<List<Model>>
         get() = listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveQuery(json, listener) }) { applied, _ -> applied.rows }
 
     val snapshots: LiveSource<Snapshot<Model>>
-        get() = listSource(Snapshot(emptyList(), emptyMap()), decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener -> DBlayer.database.liveQuery(json, listener) }) { applied, change ->
+        get() = snapshots(false) {}
+
+    internal fun snapshots(refreshOnConnect: Boolean, connected: (Result<LiveSubscription>) -> Unit): LiveSource<Snapshot<Model>> =
+        listSource(Snapshot(emptyList(), emptyMap()), decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener ->
+            val result = runCatching { DBlayer.database.liveQuery(json(refreshOnConnect), listener) }
+            connected(result)
+            result.getOrThrow()
+        }) { applied, change ->
             Snapshot(applied.rows, change.replacedIds(), applied.reordered, applied.failure)
         }
 

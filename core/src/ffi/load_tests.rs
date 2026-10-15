@@ -119,6 +119,39 @@ async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
 }
 
 #[tokio::test]
+async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
+    for preloaded in [false, true] {
+        let (db, transport) = rig(Duration::from_millis(20));
+        if preloaded {
+            load(&db, "feed").await.unwrap();
+            transport.started.notified().await;
+        }
+        let before = queries(&transport);
+        let live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{},"refreshOnConnect":true}"#.into(), Arc::new(Silent)).unwrap();
+        if preloaded {
+            assert_eq!(live.current().await.rows.len(), 1, "cached rows stay visible during the forced load");
+        }
+        let started = tokio::time::timeout(Duration::from_secs(2), transport.started.notified()).await;
+        assert!(started.is_ok(), "preloaded={preloaded}, requests={}, expected=1", queries(&transport) - before);
+        live.wait_for_initial_load().await.unwrap();
+        assert!(stored(&db));
+        load(&db, "feed").await.unwrap();
+        assert_eq!(queries(&transport) - before, 1, "preloaded={preloaded}");
+        live.cancel();
+    }
+}
+
+#[tokio::test]
+async fn cancelling_a_live_query_finishes_its_initial_wait() {
+    let (db, transport) = rig(Duration::from_secs(30));
+    let live = db.live_query(r#"{"model":"Moment","relation":"feed"}"#.into(), Arc::new(Silent)).unwrap();
+    transport.started.notified().await;
+    live.cancel();
+    let result = tokio::time::timeout(Duration::from_secs(2), live.wait_for_initial_load()).await.unwrap();
+    assert!(matches!(result, Err(DbError::Interrupted { .. })));
+}
+
+#[tokio::test]
 async fn inv_fresh_14_load_keeps_no_subscription() {
     let (db, _transport) = rig(Duration::ZERO);
     let before = db.subscription_census();
