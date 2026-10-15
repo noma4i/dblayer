@@ -8,7 +8,7 @@ use crate::schema::UpdatesSpec;
 use crate::transport::EventSpec;
 
 use super::subscribe::{EventEffect, EventSubscription, SubscriptionDef};
-use super::{locked, Inner, Sync};
+use super::{locked, Inner};
 
 #[derive(Default)]
 pub(crate) struct Live {
@@ -64,7 +64,7 @@ impl Inner {
         let inner = self.clone();
         let model = model.to_string();
         let slot = key.clone();
-        let task = runtime.spawn(async move {
+        let task = runtime.spawn(self.until_closed(async move {
             let mut event = EventSpec::new(updates.subscription.as_str());
             if let Some(interval) = updates.debounce.as_deref().and_then(parse_duration) {
                 event = event.debounced(interval).merged_by_row();
@@ -75,12 +75,12 @@ impl Inner {
             def.set = updates.set;
             def.root = updates.root;
             def.id = updates.id;
-            let started = Sync { inner: inner.clone() }.subscribe(def).await;
+            let started = inner.subscribe(def).await;
             let mut lives = locked(&inner.lives);
             let Some(live) = lives.get_mut(&slot) else { return };
             live.starting = None;
             live.subscription = started.ok();
-        });
+        }));
         live.starting = Some(task.abort_handle());
         key
     }
@@ -99,7 +99,7 @@ impl Inner {
         let inner = self.clone();
         let slot = key.to_string();
         let linger: Duration = self.config.live_linger;
-        let task = runtime.spawn(async move {
+        let task = runtime.spawn(self.until_closed(async move {
             tokio::time::sleep(linger).await;
             let mut lives = locked(&inner.lives);
             if lives.get(&slot).is_some_and(|live| live.readers == 0) {
@@ -107,7 +107,7 @@ impl Inner {
                     live.closing = None;
                 }
             }
-        });
+        }));
         if let Some(live) = lives.get_mut(key) {
             live.closing = Some(task.abort_handle());
         }

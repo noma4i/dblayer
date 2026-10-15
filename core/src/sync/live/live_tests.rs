@@ -9,6 +9,31 @@ use crate::transport::Response;
 
 const KEY: &str = "moments|MomentEvents";
 
+#[tokio::test(start_paused = true)]
+async fn dropping_sync_stops_subscriptions_at_every_lifetime_stage() {
+    let mut results = Vec::new();
+    for stage in ["starting", "active", "lingering", "clone", "direct"] {
+        let rig = rig();
+        let _direct = if stage == "direct" {
+            Some(rig.sync.subscribe(super::SubscriptionDef::new(crate::transport::EventSpec::new("listen"), "MomentListen", "moments", super::EventEffect::Upsert)).await.unwrap())
+        } else {
+            rig.sync.listen();
+            None
+        };
+        if stage != "starting" { settle().await; }
+        if stage == "lingering" { rig.sync.unlisten(); }
+        let survivor = (stage == "clone").then(|| rig.sync.clone());
+        let inner = std::sync::Arc::downgrade(&rig.sync.inner);
+        drop(rig.sync);
+        settle().await;
+        if survivor.is_some() { assert!(inner.upgrade().is_some()); }
+        drop(survivor);
+        settle().await;
+        results.push((stage, inner.upgrade().is_none(), rig.transport.call_count("MomentListen"), rig.transport.cancellations("MomentListen")));
+    }
+    assert!(results.iter().all(|(_, released, opened, closed)| *released && opened == closed), "{results:?}");
+}
+
 fn none() -> Map<String, serde_json::Value> {
     Map::new()
 }

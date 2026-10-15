@@ -310,20 +310,26 @@ impl Feed {
 
 impl Sync {
     pub async fn subscribe(&self, def: SubscriptionDef) -> Result<EventSubscription, SyncError> {
+        self.inner.subscribe(def).await
+    }
+}
+
+impl Inner {
+    pub(crate) async fn subscribe(self: &Arc<Self>, def: SubscriptionDef) -> Result<EventSubscription, SyncError> {
         if let Some(fault) = def.event.fault() {
             return Err(SyncError::Event(format!("{fault:?}")));
         }
-        self.inner.db.spec(&def.model).map_err(|_| SyncError::UnknownModel(def.model.clone()))?;
-        let operation = locked(&self.inner.operations)
+        self.db.spec(&def.model).map_err(|_| SyncError::UnknownModel(def.model.clone()))?;
+        let operation = locked(&self.operations)
             .get(&def.operation)
             .cloned()
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
-        let first = self.inner.transport.subscribe(request.clone()).await;
+        let first = self.transport.subscribe(request.clone()).await;
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
         let def_root = def.root.clone();
-        let feed = Feed { inner: self.inner.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone() };
-        let task = tokio::spawn(feed.run(request, first));
+        let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone() };
+        let task = tokio::spawn(self.until_closed(feed.run(request, first)));
         Ok(EventSubscription { abort: task.abort_handle(), status })
     }
 }

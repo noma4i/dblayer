@@ -13,7 +13,16 @@ use crate::commit::OperationStatus;
 use crate::identity::RowId;
 
 use super::error::SyncError;
-use super::{locked, Sync};
+use super::{locked, Inner, Sync};
+
+impl Inner {
+    pub(crate) async fn flush_pending(self: &std::sync::Arc<Self>) -> Result<FlushReport, SyncError> {
+        let report = self.flush().await?;
+        self.start_uploads()?;
+        self.arm_wake();
+        Ok(report)
+    }
+}
 
 impl Sync {
     /// Waits until every queued change of the record is answered. Fails with the refusal, when a change is refused or its outcome is unknown.
@@ -99,10 +108,7 @@ impl Sync {
     }
 
     pub async fn flush(&self) -> Result<FlushReport, SyncError> {
-        let report = self.inner.flush().await?;
-        self.start_uploads()?;
-        self.arm_wake();
-        Ok(report)
+        self.inner.flush_pending().await
     }
 
     pub async fn retry(&self, model: &str, id: &RowId) -> Result<FlushReport, SyncError> {

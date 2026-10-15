@@ -74,6 +74,7 @@ pub(crate) struct WatchEntry {
 }
 
 pub(crate) struct Inner {
+    stopped: watch::Receiver<()>,
     pub db: Db,
     pub transport: Arc<dyn Transport>,
     pub clock: Arc<dyn Clock>,
@@ -96,6 +97,17 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
+    pub(crate) fn until_closed(&self, work: impl std::future::Future<Output = ()> + Send + 'static) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let mut stopped = self.stopped.clone();
+        async move {
+            tokio::select! {
+                biased;
+                _ = stopped.changed() => {}
+                () = work => {}
+            }
+        }
+    }
+
     pub(crate) fn now_ms(&self) -> i64 {
         i64::try_from(self.clock.now().as_millis()).unwrap_or(i64::MAX)
     }
@@ -108,13 +120,16 @@ pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Clone)]
 pub struct Sync {
     pub(crate) inner: Arc<Inner>,
+    _lifetime: Arc<watch::Sender<()>>,
 }
 
 impl Sync {
     pub fn new(db: Db, transport: Arc<dyn Transport>, clock: Arc<dyn Clock>, config: SyncConfig) -> Self {
         db.set_clock(clock.clone());
         let max_files = config.upload.max_files;
+        let (lifetime, stopped) = watch::channel(());
         let inner = Inner {
+            stopped,
             db,
             transport,
             clock,
@@ -135,7 +150,7 @@ impl Sync {
             replaced: Mutex::new(HashMap::new()),
             outcomes: Mutex::new(send::Outcomes::default()),
         };
-        Self { inner: Arc::new(inner) }
+        Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) }
     }
 
     pub fn register(&self, def: OperationDef) {

@@ -48,6 +48,19 @@ fn upload_entry(entries: Vec<OutboxOperation>, model: &str, id: &RowId) -> Optio
 }
 
 impl Inner {
+    pub(crate) fn start_uploads(self: &Arc<Self>) -> Result<(), SyncError> {
+        for entry in self.db.outbox()? {
+            let Some(state) = &entry.operation.upload else { continue };
+            let seq = entry.operation.id.0;
+            match entry.operation.status {
+                OperationStatus::Pending if !entry.operation.transport_started && !self.is_waiting(&entry.operation) => self.spawn_run(seq, Mode::Transfer),
+                OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() => self.spawn_run(seq, Mode::Orphan),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn begin_upload(&self, model: &str, id: &RowId, input: &UploadInput, state: UploadState) -> Result<i64, SyncError> {
         self.db.spec(model)?;
         let record = OperationRecord {
@@ -100,10 +113,10 @@ impl Inner {
     fn spawn_run(self: &Arc<Self>, seq: i64, mode: Mode) {
         let Some((run, token, permits)) = self.register(seq) else { return };
         let inner = self.clone();
-        locked(&self.uploads).tasks.spawn(async move {
+        locked(&self.uploads).tasks.spawn(self.until_closed(async move {
             run::drive(inner.clone(), seq, run, token, permits, mode).await;
             inner.finish_run(seq, run);
-        });
+        }));
     }
 
     fn register(&self, seq: i64) -> Option<(u64, CancelToken, Arc<Semaphore>)> {
@@ -157,21 +170,6 @@ impl Sync {
                 return;
             }
         }
-    }
-
-    pub(crate) fn start_uploads(&self) -> Result<(), SyncError> {
-        for entry in self.inner.db.outbox()? {
-            let Some(state) = &entry.operation.upload else { continue };
-            let seq = entry.operation.id.0;
-            match entry.operation.status {
-                OperationStatus::Pending if !entry.operation.transport_started && !self.inner.is_waiting(&entry.operation) => {
-                    self.inner.spawn_run(seq, Mode::Transfer)
-                }
-                OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() => self.inner.spawn_run(seq, Mode::Orphan),
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     async fn run_inline(&self, seq: i64, mode: Mode) {

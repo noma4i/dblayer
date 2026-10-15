@@ -21,6 +21,8 @@ Live results arrive from library threads. Record writes run on background thread
 - Entities never block either: `entity(id)` answers at once from memory, and the calls into the database for a batch of new ids run on one background queue (Swift) or thread (Kotlin), in order.
 - Frequent changes are merged: a listener gets one change per dispatch cycle, and the last state always arrives.
 - Cancelling or dropping a subscription stops its work at once without leaking tasks.
+- Releasing the last owning synchronization handle stops background subscriptions, uploads and scheduled retries. Background tasks never keep that handle alive.
+- Cloned database handles and connectivity sinks keep synchronization alive until they are released. Explicitly awaited operations retain their handle until they finish.
 - Queues are bounded. A full queue makes the caller wait asynchronously. Data is never dropped.
 
 ## Consistency under load

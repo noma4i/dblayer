@@ -111,6 +111,22 @@ fn stored_state(rig: &Rig) -> UploadState {
 const TWELVE: &[u8] = b"0123456789ab";
 
 #[tokio::test(start_paused = true)]
+async fn dropping_sync_stops_uploads_before_the_next_request() {
+    let rig = upload_rig(small());
+    rig.transport.enqueue("CreateBlob", blob().after(Duration::from_secs(60)));
+    let source = file(b"abcdef");
+    rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
+    settle().await;
+    assert_eq!(rig.transport.call_count("CreateBlob"), 1);
+    let inner = Arc::downgrade(&rig.sync.inner);
+    drop(rig.sync);
+    settle().await;
+    assert!(inner.upgrade().is_none());
+    tokio::time::sleep(Duration::from_secs(61)).await;
+    assert_eq!(rig.transport.call_count("CreateMoment"), 0);
+}
+
+#[tokio::test(start_paused = true)]
 async fn single_upload_creates_puts_and_sends_the_mutation_once() {
     let rig = upload_rig(small());
     single_replies(&rig);
@@ -555,7 +571,7 @@ async fn inv_op_09_a_retry_that_lands_while_the_old_run_is_ending_still_starts_t
     let source = file(b"abcdef");
     let seq = rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
     let (run, _, _) = rig.sync.inner.register(seq).unwrap();
-    rig.sync.start_uploads().unwrap();
+    rig.sync.inner.start_uploads().unwrap();
     rig.sync.inner.finish_run(seq, run);
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);

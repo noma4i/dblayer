@@ -348,7 +348,10 @@ impl Database {
 impl Database {
     pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "transport is required for server operations".into() }) }
     fn send_writes(&self) {
-        if let (Some(sync), Ok(executor)) = (self.sync.clone(), executor()) { executor.spawn(async move { let _ = sync.flush().await; }); }
+        if let (Some(sync), Ok(executor)) = (self.sync.as_ref(), executor()) {
+            let _entered = executor.enter();
+            sync.inner.spawn_flush(Duration::ZERO);
+        }
     }
     fn parsed_query(&self, json: &str) -> Result<(Query, Option<(String, Map<String, Value>)>), DbError> {
         let description: Value = serde_json::from_str(json)?;

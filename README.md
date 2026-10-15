@@ -15,7 +15,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - **GraphQL without glue code.** Register your operations and point models at them. Responses of queries, mutations and subscription events are normalized into rows by one set of rules. Refetching after mutations, reconnects and app resume is automatic.
 - **No flicker.** One change is one commit. Observers see cascades, replacements and id swaps as a single transition, in order. Pull-to-refresh replaces data in one commit with no empty state in between.
 - **Files built in.** A `file` field stores binary data. You never choose where bytes live: SQLite or disk.
-- **Background delivery.** Observers receive updates from library threads. Disk reads use a bounded WAL connection pool beside the writer. See [threading](docs/threading.md).
+- **Background delivery.** Observers receive updates from library threads. Disk reads use a bounded WAL connection pool beside the writer. Releasing synchronization stops its background work. See [threading](docs/threading.md).
 - **One core, two platforms.** All logic is Rust. Swift and Kotlin contain no business logic.
 - **Versioned cached rows.** Each row sent to Swift or Kotlin includes its stored revision, so readers can reject older values.
 - **Immediate cached entities.** The first reader gets a row already in memory without waiting for a subscription delivery or reading disk.
