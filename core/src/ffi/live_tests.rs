@@ -72,3 +72,15 @@ fn a_live_query_leaves_its_rows_to_peek_and_no_subscription() {
     assert!(after.revision > peeked.revision);
     assert_eq!(after.rows[2].cells, vec![Cell::Text { value: "zz".into() }]);
 }
+
+#[test]
+fn cached_rows_carry_the_revision_of_the_value_after_an_edit() {
+    let (db, ids) = with_rows(1);
+    let before = db.peek_row("Moment".into(), ids[0].clone()).unwrap().unwrap();
+    super::database::executor().unwrap().block_on(db.update("Moment".into(), ids[0].clone(), r#"{"text":"edited"}"#.into(), "{}".into())).unwrap();
+    let stored = db.db.find("Moment", &crate::identity::RowId::new(&ids[0]).unwrap()).unwrap().unwrap();
+    let after = db.peek_row("Moment".into(), ids[0].clone()).unwrap().unwrap();
+    assert!(after.revision > before.revision);
+    assert_eq!(after.revision, stored.revision);
+    assert_eq!(after.cells, vec![Cell::Text { value: "edited".into() }]);
+}

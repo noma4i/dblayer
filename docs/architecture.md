@@ -20,6 +20,18 @@ A query is plain data that the core compiles to SQL. Rows cross as cells, not as
 
 The core hands a row to Swift and Kotlin as a `WireRow`: the id, a layout hash, one cell per field, the sync state and the upload state. A cell is null, a bool, an int, a real, a text, a sequence or a keyed list. An object with a declared type is a sequence of its members in declared order, an array of such objects is a sequence of sequences, and a field without a declared shape (`raw`, an untyped object, a file) is a keyed list or a sequence. A null value and an absent value are the same cell.
 
+Each `WireRow` carries the revision of its stored value, including rows returned by `peekRow`. Compare revisions before replacing a newer value with a cached row.
+
+```swift
+let cached = try DB.database.peekRow(model: "User", rowId: userId)
+let revision = cached?.revision
+```
+
+```kotlin
+val cached = DBlayer.database.peekRow("User", userId)
+val revision = cached?.revision
+```
+
 The generated model reads the cells by position and builds itself once per revision. The layout hash comes from the declared fields (names, keys, shapes, order), and the generated model carries the same hash. A row with another hash is refused with `Invalid`, so an app built from an older `.dbl` never reads cells in the wrong order. A numeric id inside a free-shaped value reads as text.
 
 ## Parts of the core

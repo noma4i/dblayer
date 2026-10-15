@@ -70,7 +70,7 @@ class ListDeltaTest {
     private fun moment(id: String, text: String) = Moment(id = id, uuid = id, text = text, likedByMe = false, media = kotlinx.serialization.json.JsonObject(emptyMap()), createdAt = "x")
 
     private fun wire(row: Moment, cells: List<Cell>? = null) = WireRow(
-        row.id, 1uL, Moment.layout,
+        row.id, 1L, 1uL, Moment.layout,
         cells ?: listOf(Cell.Text(row.uuid), Cell.Null, Cell.Text(row.text ?: ""), Cell.Bool(false), Cell.Keyed(emptyList()), Cell.Null, Cell.Text(row.createdAt)),
         WireSync(WireSyncState.SYNCED, emptyList(), emptyList(), null, 0u, 0L), null,
     )

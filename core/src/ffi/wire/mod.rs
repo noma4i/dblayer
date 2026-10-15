@@ -76,6 +76,7 @@ pub struct WireSync {
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WireRow {
     pub id: String,
+    pub revision: i64,
     pub estimated_bytes: u64,
     pub layout: String,
     pub cells: Vec<Cell>,
@@ -231,6 +232,7 @@ impl WireModel {
         let mut types = Types::new();
         WireRow {
             id: record.id.to_string(),
+            revision: record.revision,
             estimated_bytes: crate::db::row_bytes("", record) as u64,
             layout: self.layout.clone(),
             cells: self.fields.iter().map(|field| cell(field, record.data.get(&field.name), &mut types)).collect(),
