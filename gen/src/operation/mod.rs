@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use dblayer::schema::FieldSpec;
+use dblayer::schema::{FieldKind, FieldSpec};
 use dblayer::value::ScalarKind;
 
 use crate::build::camel;
@@ -9,7 +9,7 @@ use crate::ParseError;
 
 type Found = (usize, ParseError);
 
-const ARG_KINDS: [&str; 6] = ["bool", "int", "num", "string", "id", "ids"];
+const ARG_KINDS: [&str; 7] = ["bool", "int", "long", "num", "string", "id", "ids"];
 const WORDS: [&str; 6] = ["mutation", "query", "wrap", "args", "result", "list"];
 
 /// A server operation that no model owns: a typed call that sends it and reads the declared fields of its answer.
@@ -34,7 +34,21 @@ pub(crate) fn is_input_object(kind: &str) -> bool {
     kind.trim_end_matches('?').chars().next().is_some_and(char::is_uppercase)
 }
 
-pub(crate) fn input_object_names(operations: &[OperationCall]) -> Vec<String> {
+pub(crate) fn resolve_result_enums(operations: &mut [OperationCall], schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
+    fn walk(field: &mut FieldSpec, schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
+        if let (FieldKind::Enum { values }, Some(name)) = (&mut field.kind, field.app_type.clone()) {
+            let Some(schema) = schema else { return Err(format!("result field `{}` names the schema enum `{name}`: pass --schema <schema.graphql> so the generator can read it", field.name)) };
+            match schema.types.get(&name) {
+                Some(crate::schema_check::TypeKind::Enum(known)) => *values = known.clone(),
+                _ => return Err(format!("result field `{}` names `{name}`, which is not an enum of the schema", field.name)),
+            }
+        }
+        field.fields.iter_mut().try_for_each(|inner| walk(inner, schema))
+    }
+    operations.iter_mut().filter_map(|operation| operation.result.as_mut()).try_for_each(|root| walk(root, schema))
+}
+
+pub(crate) fn schema_type_names(operations: &[OperationCall]) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for (_, kind) in operations.iter().flat_map(|operation| &operation.args).filter(|(_, kind)| is_input_object(kind)) {
         let name = kind.trim_end_matches('?').to_string();
@@ -55,13 +69,13 @@ fn kinds(call: &Call, file: usize, errors: &mut Vec<Found>) -> Vec<(String, Stri
         }
         match &pair.value.item {
             Value::Symbol(kind) if ARG_KINDS.contains(&kind.trim_end_matches('?')) || is_input_object(kind) => found.push((pair.key.clone(), kind.clone())),
-            _ => errors.push((file, ParseError::new(pair.line, pair.column, "type must be :bool, :int, :num, :string, :id, :ids or the name of a schema input object like :QrCodeInput, each optionally followed by ?"))),
+            _ => errors.push((file, ParseError::new(pair.line, pair.column, "type must be :bool, :int, :long, :num, :string, :id, :ids or the name of a schema input object or enum like :QrCodeInput, each optionally followed by ?"))),
         }
     }
     found
 }
 
-const RESULT_TYPES: &str = "type must be :bool, :int, :num, :string, :id, :ids or :json, a { ... } object, or a [ ... ] list of one type";
+const RESULT_TYPES: &str = "type must be :bool, :int, :num, :string, :id, :ids, :json or the name of a schema enum, a { ... } object, or a [ ... ] list of one type";
 
 fn scalar_of(kind: &str) -> Option<ScalarKind> {
     match kind {
@@ -86,6 +100,11 @@ fn result_fields(pairs: &[Pair], type_name: &str, file: usize, errors: &mut Vec<
         let field: Result<FieldSpec, &str> = match &pair.value.item {
             Value::Symbol(kind) if kind == "json" => Ok(FieldSpec::raw(&pair.key)),
             Value::Symbol(kind) if kind == "ids" => Ok(FieldSpec::list(&pair.key, ScalarKind::Id)),
+            Value::Symbol(kind) if is_input_object(kind) => {
+                let mut field = FieldSpec::enumeration(&pair.key, &[]);
+                field.app_type = Some(kind.clone());
+                Ok(field)
+            }
             Value::Symbol(kind) => scalar_of(kind).map(|scalar| FieldSpec::scalar(&pair.key, scalar)).ok_or(RESULT_TYPES),
             Value::Hash(inner) if inner.is_empty() => Err("an object needs at least one field"),
             Value::Hash(inner) => Ok(object_of(FieldSpec::object(&pair.key), inner, &nested, file, errors)),

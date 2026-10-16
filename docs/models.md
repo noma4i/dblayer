@@ -12,7 +12,7 @@ The DSL is parsed by Rust. It does not execute Ruby expressions or load Ruby gem
 | Word | Type |
 | ---- | ---- |
 | `string`, `num`, `int`, `bool`, `date`, `id` | scalars (`id` accepts a string or a number and stores a string, `date` accepts an ISO 8601 text or milliseconds and stores UTC text with milliseconds, `2026-01-03T00:00:05Z` becomes `2026-01-03T00:00:05.000Z`, so text order is time order) |
-| `field :name, type: :enum, values: [:a, :b]` | one of the listed values |
+| `field :name, type: :enum, values: [:a, :b]` | one of the listed values, generated as a typed enum (see [Enums](#enums)). `as: Name` names the type |
 | `object`, `array`, `raw` | JSON values |
 | `field :name, type: [:string]` | array of scalars |
 | `field :name, type: :file` | binary attachment, see [files](files.md) |
@@ -37,6 +37,47 @@ Field options:
 Declared queries generate indexes with equality filters first and sort columns next, preserving each sort direction. Duplicate indexes and indexes covered by a longer prefix are removed.
 
 Every scalar and enum field is its own typed SQLite column, indexed or not. An update writes only the columns of the fields that changed. A null value and an absent value are stored the same way (SQL `NULL`), so a field read back is either present or missing, never `null`.
+
+### Enums
+
+Every `type: :enum` field becomes an enum named after its owner and field (`VibeKind` for `Vibe.kind`, `MessageReplyNodeKind` for a nested `kind`). `as: Kind` sets the name. A schema enum used by an input object, an operation arg or an operation result keeps the schema name (`WidgetKind`). Each name is declared once, and the same name with different values stops the run.
+
+Case names come from the values: lowerCamel in Swift (`like`, `fooBar`, `` `default` `` for a keyword) and PascalCase in Kotlin (`Like`, `FooBar`). `HAPPY` and `FOO_BAR` read as words. A value that starts with a digit, becomes an empty name, becomes `unknown` (Swift) or `Unknown` and `Companion` (Kotlin), or gives the same name as another value stops the run with the value in the message.
+
+Every enum has an `unknown` case that keeps the text. A value the declaration lacks is not an error on any path: a server row, a nested JSON value, an input, an argument and a result decode it into `unknown`, and writing it back sends the same text. The SQLite column stays text and is stored as it arrived, so a filter compares the text of the typed value.
+
+```swift
+let loved = Vibe.where(Vibe.kind == .love)
+let vibe = try await Vibe.create(momentId: "m", userId: "u", kind: .love)
+switch vibe.kind {
+case .like, .love, .laugh: break
+case .unknown(let text): print(text)
+}
+```
+
+```kotlin
+val loved = Vibe.where(Vibe.kind eq VibeKind.Love)
+val vibe = Vibe.create(momentId = "m", userId = "u", kind = VibeKind.Love)
+when (val kind = vibe.kind) {
+    VibeKind.Like, VibeKind.Love, VibeKind.Laugh -> Unit
+    is VibeKind.Unknown -> println(kind.value)
+}
+```
+
+The check against the server schema compares the declared values with the schema enum. A field declared `:string` over a schema enum does not fit: declare `:enum`.
+
+### Custom scalars
+
+A schema scalar other than the built-in ones needs one line in a `.dbl` file, next to the models:
+
+```ruby
+scalar :Cursor, as: :string
+scalar :ISO8601Date, as: :date
+scalar :ISO8601DateTime, as: :date
+scalar :Int64, as: :long
+```
+
+`as:` is `:string`, `:date` (the ISO 8601 text, `String` like a `date` field), `:int`, `:long` (`Int` in Swift, `Long` in Kotlin), `:num`, `:bool` or `:json`. A scalar declared twice or with another kind stops the run. A custom scalar without a line stops the run when an input object, an arg or a model field uses it, with the line to add. `JSON` needs no line.
 
 ### Nested objects and lists
 
@@ -71,9 +112,10 @@ For reusable names, recursive lists, unrestricted JSON and typed defaults, see [
 | Wrong type for a present field | decoding error |
 | ID string or signed 64-bit integer | string, for scalar IDs and scalar ID lists |
 | Boolean, fractional number, object or out-of-range integer as an ID | decoding error |
-| Nested date or enum | string, as in the generated model properties |
+| Nested date | string, as in the generated model properties |
+| Nested enum | its generated enum, a value the declaration lacks becomes the `unknown` case with the text |
 
-An enum default must be one of its declared values. Nested enums decode as strings. Unknown server values are preserved. `from` inside a nested block names a literal JSON key, including dots. At the model level, `from` reads a response path.
+An enum default must be one of its declared values. `from` inside a nested block names a literal JSON key, including dots. At the model level, `from` reads a response path.
 
 Declare each named type once. Pass all files that declare or use it to `dblayer-gen`. `type` accepts a named value such as `GiftItem` or a list such as `[GiftItem]`. A missing declaration, duplicate type or invalid default reports its input file and line. Use `type: :raw` for unrestricted values.
 
@@ -272,7 +314,7 @@ Every field of the model, every `from:` path, every `id_from:` and every field o
 Each arg declared by an `args` line inside a model operation is checked against the mutation that sends it. With `wrap :input`, the check reads the input type of the wrapped variable. Without it, the check reads the variables of the operation. The check needs the mutation in the operation documents and reports:
 
 - a variable that `input` binds to an arg but the input type or the operation does not have;
-- an arg whose kind does not fit the type: `:string` fits `String`, `ID`, an enum or a custom scalar, `:id` fits `ID`, `Int`, `String` or a custom scalar, `:int` fits `Int`, `:num` fits `Float` or `Int`, `:bool` fits `Boolean`, `:ids` fits a list of `ID`, `Int` or `String`;
+- an arg whose kind does not fit the type: `:string` fits `String`, `ID` or a scalar mapped to `:string` or `:date`, `:id` fits `ID`, `Int`, `String` or a scalar mapped to `:string`, `:int` or `:long`, `:int` fits `Int` or a scalar mapped to `:int` or `:long`, `:long` fits a scalar mapped to `:long`, `:num` fits `Float`, `Int` or a scalar mapped to `:num`, `:bool` fits `Boolean`, `:ids` fits a list of `ID`, `Int` or `String`, and the name of an input object or enum (`:WidgetKind`) fits that type;
 - an arg with `?` that the schema requires (`String!` without a default).
 
 Fields marked `local: true`, `file` fields and models with `storage: :local` are skipped. Schema fields that the model leaves out are listed as notes, because a model may select a subset.
@@ -287,11 +329,13 @@ Standalone operations require named documents when `--schema` is set. The check 
 
 `dblayer-gen --schema schema.graphql swift models/*.dbl` checks the models as above and also writes the input objects. The same flag does both, so the schema file must satisfy the check.
 
-The generator writes every input object that an operation names, and every input object those fields use, once each, after the models. A name that the schema does not have, a name that is not an input object, or an operation that names one without a schema file stops the run with code 1 and a message.
+The generator writes every input object that an operation names, and every input object those fields use, once each, after the models. A name that the schema does not have, a name that is neither an input object nor an enum, or an operation that names one without a schema file stops the run with code 1 and a message.
 
 | Schema field | Swift | Kotlin |
 | ------------ | ----- | ------ |
-| `String`, `ID`, an enum, a custom scalar | `String` | `String` |
+| `String`, `ID`, a scalar mapped to `:string` or `:date` | `String` | `String` |
+| a scalar mapped to `:long` | `Int` | `Long` |
+| an enum | its enum with an `unknown` case | its sealed class with `Unknown` |
 | the scalar named `JSON` | `JSONValue` | `JsonElement` |
 | `Int`, `Float`, `Boolean` | `Int`, `Double`, `Bool` | `Int`, `Double`, `Boolean` |
 | `[T!]!`, `[T]` | `[T]`, `GraphQLNullable<[T?]>` | `List<T>`, `GraphQLNullable<List<T?>>` |

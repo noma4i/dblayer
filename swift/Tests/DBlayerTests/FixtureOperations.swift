@@ -1,9 +1,71 @@
 import Foundation
 import DBlayer
 
+public enum Mood: Codable, Sendable, Hashable {
+    case happy
+    case sad
+    case unknown(String)
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "HAPPY": self = .happy
+        case "SAD": self = .sad
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .happy: return "HAPPY"
+        case .sad: return "SAD"
+        case .unknown(let raw): return raw
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+public enum WidgetKind: Codable, Sendable, Hashable {
+    case emoji
+    case gif
+    case unknown(String)
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "EMOJI": self = .emoji
+        case "GIF": self = .gif
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .emoji: return "EMOJI"
+        case .gif: return "GIF"
+        case .unknown(let raw): return raw
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 public struct StickerInput: Encodable, Sendable, Equatable {
     public let name: String
-    public let mood: GraphQLNullable<String>
+    public let mood: GraphQLNullable<Mood>
     public let tags: [String]
     public let notes: GraphQLNullable<[String?]>
     public let size: GraphQLNullable<Int>
@@ -11,7 +73,7 @@ public struct StickerInput: Encodable, Sendable, Equatable {
     public let owner: OwnerInput
     public let helpers: GraphQLNullable<[OwnerInput]>
 
-    public init(name: String, mood: GraphQLNullable<String> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, pinned: Bool, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted) {
+    public init(name: String, mood: GraphQLNullable<Mood> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, pinned: Bool, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted) {
         self.name = name
         self.mood = mood
         self.tags = tags
@@ -89,10 +151,10 @@ public struct OwnerInput: Encodable, Sendable, Equatable {
 }
 
 public struct WidgetInput: Encodable, Sendable, Equatable {
-    public let kind: String
+    public let kind: WidgetKind
     public let settings: SettingsInput
 
-    public init(kind: String, settings: SettingsInput) {
+    public init(kind: WidgetKind, settings: SettingsInput) {
         self.kind = kind
         self.settings = settings
     }

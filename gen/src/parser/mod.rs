@@ -59,9 +59,19 @@ pub struct OperationNode {
     pub body: Vec<Call>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScalarNode {
+    pub name: String,
+    pub kind: String,
+    pub line: usize,
+    pub column: usize,
+    pub file: usize,
+}
+
 pub struct Parsed {
     pub models: Vec<ModelNode>,
     pub operations: Vec<OperationNode>,
+    pub scalars: Vec<ScalarNode>,
 }
 
 struct Reader<'a> {
@@ -135,7 +145,7 @@ fn describe(kind: &Kind) -> String {
 
 pub fn parse(tokens: &[Token], file: usize) -> Result<Parsed, ParseError> {
     let mut reader = Reader { tokens, index: 0 };
-    let mut parsed = Parsed { models: Vec::new(), operations: Vec::new() };
+    let mut parsed = Parsed { models: Vec::new(), operations: Vec::new(), scalars: Vec::new() };
     loop {
         reader.skip_newlines();
         if reader.peek().is_none() {
@@ -144,10 +154,26 @@ pub fn parse(tokens: &[Token], file: usize) -> Result<Parsed, ParseError> {
         let call = parse_call(&mut reader)?;
         if call.word == "operation" {
             parsed.operations.push(operation_from(call, file)?);
+        } else if call.word == "scalar" {
+            parsed.scalars.push(scalar_from(call, file)?);
         } else {
             parsed.models.push(model_from(call, file)?);
         }
     }
+}
+
+fn scalar_from(call: Call, file: usize) -> Result<ScalarNode, ParseError> {
+    let at = |message: &str| ParseError::new(call.line, call.column, message.to_string());
+    let usage = "scalar needs a schema scalar name and a kind like `scalar :Cursor, as: :string`";
+    let [Node { item: Value::Symbol(name) | Value::Const(name), .. }] = call.args.as_slice() else { return Err(at(usage)) };
+    let kind = match call.options.as_slice() {
+        [Pair { key, value: Node { item: Value::Symbol(kind), .. }, .. }] if key == "as" => kind.clone(),
+        _ => return Err(at(usage)),
+    };
+    if call.block.is_some() {
+        return Err(at(usage));
+    }
+    Ok(ScalarNode { name: name.clone(), kind, line: call.line, column: call.column, file })
 }
 
 fn operation_from(call: Call, file: usize) -> Result<OperationNode, ParseError> {
@@ -165,7 +191,7 @@ fn operation_from(call: Call, file: usize) -> Result<OperationNode, ParseError> 
 fn model_from(call: Call, file: usize) -> Result<ModelNode, ParseError> {
     let at = |message: String| ParseError::new(call.line, call.column, message);
     if call.word != "model" {
-        return Err(at(format!("expected `model` or `operation`, found `{}`", call.word)));
+        return Err(at(format!("expected `model`, `operation` or `scalar`, found `{}`", call.word)));
     }
     let name = match call.args.as_slice() {
         [Node { item: Value::Const(name), .. }] => name.clone(),

@@ -3,6 +3,7 @@ use super::*;
 
 enum Shape<'a> {
     Scalar(&'static str),
+    Enum(&'a str),
     List(&'static str),
     Object(&'a str),
     Array(&'a str),
@@ -22,7 +23,7 @@ fn converter(kind: ScalarKind) -> &'static str {
 fn shape(field: &FieldSpec) -> Shape<'_> {
     match (&field.kind, field.app_type.as_deref()) {
         (FieldKind::Scalar { kind }, _) => Shape::Scalar(converter(*kind)),
-        (FieldKind::Enum { .. }, _) => Shape::Scalar("asText"),
+        (FieldKind::Enum { .. }, Some(name)) => Shape::Enum(name),
         (FieldKind::List { element }, _) => Shape::List(converter(*element)),
         (FieldKind::Object, Some(name)) => Shape::Object(name),
         (FieldKind::Array, Some(name)) => Shape::Array(name),
@@ -33,6 +34,11 @@ fn shape(field: &FieldSpec) -> Shape<'_> {
 pub(super) fn read_swift(field: &FieldSpec, at: usize, types: &[&FieldSpec]) -> String {
     let optional = is_nullable(field) || field.default.is_some();
     let (method, argument) = match shape(field) {
+        Shape::Enum(name) => {
+            let read = if optional { format!("r.opt({at}, \\.asText).map({name}.init(rawValue:))") } else { format!("{name}(rawValue: r.req({at}, \\.asText))") };
+            let fallback = field.default.as_ref().filter(|value| !value.is_null()).map(|value| format!(" ?? {}", literal(field, value, true, types))).unwrap_or_default();
+            return format!("try {read}{fallback}");
+        }
         Shape::Scalar(convert) => ("", format!("\\.{convert}")),
         Shape::List(convert) => ("list", format!("\\.{convert}")),
         Shape::Object(name) => ("obj", format!("{name}.init(cells:)")),
@@ -54,6 +60,8 @@ pub(super) fn read_swift(field: &FieldSpec, at: usize, types: &[&FieldSpec]) -> 
 pub(super) fn read_kotlin(field: &FieldSpec, at: usize, types: &[&FieldSpec]) -> String {
     let optional = is_nullable(field) || field.default.is_some();
     let call = match (shape(field), optional) {
+        (Shape::Enum(name), false) => format!("req({at}, Cell::asText).let {{ {name}.of(it) }}"),
+        (Shape::Enum(name), true) => format!("opt({at}, Cell::asText)?.let {{ {name}.of(it) }}"),
         (Shape::Scalar(convert), false) => format!("req({at}, Cell::{convert})"),
         (Shape::Scalar(convert), true) => format!("opt({at}, Cell::{convert})"),
         (Shape::List(convert), false) => format!("list({at}, Cell::{convert})"),

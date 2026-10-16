@@ -1,3 +1,4 @@
+use crate::SchemaTypes;
 use crate::{emit_kotlin, emit_swift, parse_models};
 
 fn model(body: &str) -> String {
@@ -42,7 +43,7 @@ fn action_args_accept_a_nullable_kind() {
 fn the_generated_calls_take_the_args_after_the_fields() {
     let source = model("  operation :create do\n    mutation CreateSample\n    input name: :name, signedId: :signedId, momentId: :momentId\n    args signedId: :string, momentId: :id?\n  end\n  operation :update do\n    mutation UpdateSample\n    input sampleId: :id, signedId: :signedId\n    args signedId: :string?\n  end");
     let models = parse_models(&source).unwrap();
-    let swift = emit_swift(&models, &[], &[]);
+    let swift = emit_swift(&models, &[], &SchemaTypes::default());
     for expected in [
         "create(name: String, momentId: String? = nil, signedId: String) async throws -> Self",
         "args[\"signedId\"] = JSONValue.encode(signedId)",
@@ -50,7 +51,7 @@ fn the_generated_calls_take_the_args_after_the_fields() {
     ] {
         assert!(swift.contains(expected), "swift lacks {expected}");
     }
-    let kotlin = emit_kotlin(&models, &[], &[]);
+    let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     for expected in [
         "suspend fun create(name: String, momentId: String? = null, signedId: String): Sample",
         "suspend fun update(name: String? = null, ownerId: String? = null, signedId: String? = null): Sample",
@@ -62,8 +63,8 @@ fn the_generated_calls_take_the_args_after_the_fields() {
 #[test]
 fn a_model_without_args_emits_no_args_variable() {
     let models = parse_models(&model("  operation :create do\n    mutation CreateSample\n    input name: :name\n  end\n  operation :update do\n    mutation UpdateSample\n  end")).unwrap();
-    let swift = emit_swift(&models, &[], &[]);
+    let swift = emit_swift(&models, &[], &SchemaTypes::default());
     assert!(!swift.contains("var args") && !swift.contains("args: args"), "swift keeps an unused args variable");
-    let kotlin = emit_kotlin(&models, &[], &[]);
+    let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     assert!(kotlin.contains("create(\"Sample\", values.toString(), \"{}\")") && kotlin.contains("update(modelName, id, values.toString(), \"{}\")"), "kotlin builds an empty args object");
 }

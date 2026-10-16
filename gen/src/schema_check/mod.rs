@@ -3,14 +3,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::parser::{Call, ModelNode, Node, OperationNode, Pair, Value};
+use crate::scalars::{self, Scalars};
 use crate::{FileError, ParseError};
 
 mod graphql;
 mod inputs;
 mod standalone;
 
-pub use inputs::{InputField, InputObject, Ty, TyKind};
-pub(crate) use inputs::load_input_objects;
+pub use inputs::{InputField, InputObject, SchemaTypes, Ty, TyKind};
+pub(crate) use inputs::load_schema_types;
 
 use graphql::Operations;
 pub(crate) use graphql::{Schema, TypeKind};
@@ -21,7 +22,7 @@ pub struct Outcome {
     pub notes: Vec<String>,
 }
 
-pub fn check_schema(schema: &Schema, operations: &[PathBuf], files: &[String], nodes: &[ModelNode], standalone: &[OperationNode]) -> Result<Outcome, Vec<FileError>> {
+pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], files: &[String], nodes: &[ModelNode], standalone: &[OperationNode]) -> Result<Outcome, Vec<FileError>> {
     let failed = |file: &Path, message: String| vec![FileError { file: file.display().to_string(), error: ParseError::new(0, 0, message) }];
     let mut documents = Operations::default();
     for path in operation_files(operations) {
@@ -33,7 +34,7 @@ pub fn check_schema(schema: &Schema, operations: &[PathBuf], files: &[String], n
             collect_declared(schema_block.block.as_deref().unwrap_or_default(), node.file, &mut declared);
         }
     }
-    let mut run = Run { schema, operations: &documents, files, declared, found: Vec::new(), notes: Vec::new() };
+    let mut run = Run { schema, scalars, operations: &documents, files, declared, found: Vec::new(), notes: Vec::new() };
     for node in nodes.iter().filter(|node| !is_local(node)) {
         run.check_model(node);
     }
@@ -97,6 +98,7 @@ fn name_of(call: &Call) -> &str {
 
 struct Run<'a> {
     schema: &'a Schema,
+    scalars: &'a Scalars,
     operations: &'a Operations,
     files: &'a [String],
     declared: Declared<'a>,
@@ -189,26 +191,33 @@ impl<'a> Run<'a> {
             };
             let base = kind.trim_end_matches('?');
             if !self.arg_fits(base, declared) {
-                self.fail(file, call.line, call.column, format!("arg `{}` of kind `:{base}` does not fit `{variable}: {}`", arg.key, declared.describe()));
+                self.fail(file, call.line, call.column, format!("arg `{}` of kind `:{base}` does not fit `{variable}: {}`{}", arg.key, declared.describe(), self.unmapped_hint(declared.name())));
             } else if kind.ends_with('?') && !declared.optional() {
                 self.fail(file, call.line, call.column, format!("arg `{}` may be nil but `{variable}: {}` is required", arg.key, declared.describe()));
             }
         }
     }
 
+    fn custom_fits(&self, named: &str, kind: &str) -> bool {
+        matches!(self.schema.types.get(named), Some(TypeKind::Scalar)) && self.scalars.get(named).is_some_and(|mapped| scalars::fits(mapped, kind))
+    }
+
+    fn unmapped_hint(&self, named: &str) -> String {
+        if matches!(self.schema.types.get(named), Some(TypeKind::Scalar)) && !Schema::is_builtin_scalar(named) && !self.scalars.contains_key(named) { format!(": {}", scalars::unmapped(named)) } else { String::new() }
+    }
+
     fn arg_fits(&self, kind: &str, declared: &Ty) -> bool {
         let named = declared.name();
-        let custom = matches!(self.schema.types.get(named), Some(TypeKind::Scalar));
-        let enumerated = matches!(self.schema.types.get(named), Some(TypeKind::Enum(_)));
         match kind {
-            "ids" => declared.is_list() && (matches!(named, "ID" | "String" | "Int") || custom),
+            "ids" => declared.is_list() && (matches!(named, "ID" | "String" | "Int") || self.custom_fits(named, "id")),
             _ if declared.is_list() => false,
-            "string" => matches!(named, "String" | "ID") || custom || enumerated,
-            "id" => matches!(named, "ID" | "String" | "Int") || custom,
-            "int" => named == "Int" || custom,
-            "num" => matches!(named, "Float" | "Int") || custom,
-            "bool" => named == "Boolean",
-            _ => named == kind && matches!(self.schema.types.get(named), Some(TypeKind::Input(_))),
+            "string" => matches!(named, "String" | "ID") || self.custom_fits(named, "string"),
+            "id" => matches!(named, "ID" | "String" | "Int") || self.custom_fits(named, "id"),
+            "int" => named == "Int" || self.custom_fits(named, "int"),
+            "long" => self.custom_fits(named, "long"),
+            "num" => matches!(named, "Float" | "Int") || self.custom_fits(named, "num"),
+            "bool" => named == "Boolean" || self.custom_fits(named, "bool"),
+            _ => named == kind && matches!(self.schema.types.get(named), Some(TypeKind::Input(_) | TypeKind::Enum(_))),
         }
     }
 
@@ -354,7 +363,7 @@ impl<'a> Run<'a> {
             let schema_shape = if reached.is_list() { "a list" } else { "not a list" };
             problems.push(format!("`{word}` does not fit `{}`, which is {schema_shape}", reached.describe()));
         } else if !self.named_fits(call, reached.name()) {
-            problems.push(format!("`{word}` does not fit the schema type `{}`", reached.describe()));
+            problems.push(format!("`{word}` does not fit the schema type `{}`{}", reached.describe(), self.unmapped_hint(reached.name())));
         }
         if word == "enum" {
             problems.extend(self.enum_problems(call, reached.name()));
@@ -366,20 +375,19 @@ impl<'a> Run<'a> {
 
     fn named_fits(&self, call: &Call, named: &str) -> bool {
         let kind = self.schema.types.get(named);
-        let custom = matches!(kind, Some(TypeKind::Scalar));
         let builtin = Schema::is_builtin_scalar(named);
-        let structured = matches!(kind, Some(TypeKind::Fields(_) | TypeKind::Union)) || custom;
+        let structured = matches!(kind, Some(TypeKind::Fields(_) | TypeKind::Union)) || self.custom_fits(named, "object");
         let word = match call.word.as_str() {
             "list" => option_text(call, "of").unwrap_or("string"),
             other => other,
         };
         match word {
-            "string" => matches!(named, "String" | "ID") || custom || matches!(kind, Some(TypeKind::Enum(_))),
-            "id" => matches!(named, "ID" | "String" | "Int") || custom,
-            "int" => named == "Int" || custom,
-            "num" => matches!(named, "Float" | "Int") || custom,
-            "bool" => named == "Boolean",
-            "date" => named == "String" || custom,
+            "string" => matches!(named, "String" | "ID") || self.custom_fits(named, "string"),
+            "id" => matches!(named, "ID" | "String" | "Int") || self.custom_fits(named, "id"),
+            "int" => named == "Int" || self.custom_fits(named, "int"),
+            "num" => matches!(named, "Float" | "Int") || self.custom_fits(named, "num"),
+            "bool" => named == "Boolean" || self.custom_fits(named, "bool"),
+            "date" => named == "String" || self.custom_fits(named, "date"),
             "enum" => named == "String" || matches!(kind, Some(TypeKind::Enum(_))),
             "object" => structured,
             "array" => structured || builtin,

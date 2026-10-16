@@ -106,7 +106,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aJsonScalarOfAnInputObjectIsSentAsAnObjectAndAnOmittedListIsNotSent() async throws {
     let transport = try Self.openOperationRig("MomentCreate", document: "mutation MomentCreate($input: MomentInput!) { momentCreate(input: $input) { moment { id } } }", reply: #"{"data":{"momentCreate":{"moment":{"id":9}}}}"#)
-    let widget = WidgetInput(kind: "EMOJI", settings: SettingsInput(itemProps: .object(["emoji": "fire", "size": 3, "tags": .array(["a"])]), rotate: .value(1.5)))
+    let widget = WidgetInput(kind: .emoji, settings: SettingsInput(itemProps: .object(["emoji": "fire", "size": 3, "tags": .array(["a"])]), rotate: .value(1.5)))
 
     let sent = try await Operations.momentCreate(input: MomentInput(file: "s1", widgets: .value([widget])))
     #expect(sent.moment?.id == "9")

@@ -43,7 +43,7 @@ impl Run<'_> {
             };
             let Some(kind) = text(&arg.value.item) else { continue };
             if !self.arg_fits(kind.trim_end_matches('?'), ty) || (kind.ends_with('?') && !ty.optional()) {
-                self.fail(node.file, arg.line, arg.column, format!("arg `{}` of kind `:{kind}` does not fit `{}`", arg.key, ty.describe()));
+                self.fail(node.file, arg.line, arg.column, format!("arg `{}` of kind `:{kind}` does not fit `{}`{}", arg.key, ty.describe(), self.unmapped_hint(ty.name())));
             }
         }
         for (key, ty) in accepted {

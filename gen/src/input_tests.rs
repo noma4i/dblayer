@@ -1,9 +1,9 @@
 use std::fs;
 
-use crate::{emit_kotlin, emit_swift, load_input_objects, parse_all, InputField, Ty, TyKind};
+use crate::{emit_kotlin, emit_swift, load_schema_types, parse_all, SchemaTypes, InputField, Ty, TyKind};
 
 const SCHEMA: &str = "type Query { a: Int }\nscalar DateTime\nenum Mood { HAPPY SAD }\ninput StickerInput { name: String!, mood: Mood, tags: [String!]!, notes: [String], size: Int, scale: Float, pinned: Boolean!, sentAt: DateTime, owner: OwnerInput!, helpers: [OwnerInput!] }\ninput OwnerInput { id: ID!, nickname: String }\ninput Unused { x: Int }\n";
-const SEND: &str = "operation :sticker_send do\n  mutation StickerSend\n  args input: :StickerInput\n  result id: :string\nend\n";
+const SEND: &str = "scalar :DateTime, as: :date\noperation :sticker_send do\n  mutation StickerSend\n  args input: :StickerInput\n  result id: :string\nend\n";
 
 fn field(name: &str, base: &str, list: bool, item_optional: bool, optional: bool) -> InputField {
     let scalar = Ty { kind: TyKind::Named(base.into()), nullable: if list { item_optional } else { optional }, has_default: false };
@@ -11,23 +11,23 @@ fn field(name: &str, base: &str, list: bool, item_optional: bool, optional: bool
     InputField { name: name.into(), ty }
 }
 
-fn read(source: &str) -> Result<Vec<crate::InputObject>, String> {
+fn read(source: &str) -> Result<SchemaTypes, String> {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("schema.graphql");
     fs::write(&path, SCHEMA).unwrap();
     let declared = parse_all(&[source]).unwrap();
-    load_input_objects(Some(&path), &declared.operations)
+    load_schema_types(Some(&path), &declared.scalars, &declared.operations)
 }
 
 #[test]
 fn the_input_objects_an_operation_names_are_read_with_everything_they_nest() {
-    let objects = read(SEND).unwrap();
+    let objects = read(SEND).unwrap().inputs;
     assert_eq!(objects.iter().map(|object| object.name.as_str()).collect::<Vec<_>>(), vec!["StickerInput", "OwnerInput"]);
     assert_eq!(
         objects[0].fields,
         vec![
             field("name", "string", false, false, false),
-            field("mood", "string", false, false, true),
+            field("mood", "Mood", false, false, true),
             field("tags", "string", true, false, false),
             field("notes", "string", true, true, true),
             field("size", "int", false, false, true),
@@ -44,15 +44,14 @@ fn the_input_objects_an_operation_names_are_read_with_everything_they_nest() {
 #[test]
 fn a_name_that_is_not_an_input_object_of_the_schema_fails_and_no_schema_fails_too() {
     for (case, source, expected) in [
-        ("unknown name", "operation :a do\n  mutation A\n  args input: :Nope\nend\n", "`Nope` is not an input object of the schema"),
-        ("an enum", "operation :a do\n  mutation A\n  args input: :Mood\nend\n", "`Mood` is not an input object of the schema"),
+        ("unknown name", "operation :a do\n  mutation A\n  args input: :Nope\nend\n", "`Nope` is not an input object or enum of the schema"),
     ] {
         assert_eq!(read(source).unwrap_err(), expected, "{case}");
     }
     let declared = parse_all(&[SEND]).unwrap();
-    let error = load_input_objects(None, &declared.operations).unwrap_err();
+    let error = load_schema_types(None, &declared.scalars, &declared.operations).unwrap_err();
     assert!(error.contains("`StickerInput`") && error.contains("--schema"), "{error}");
-    assert!(load_input_objects(None, &parse_all(&["operation :out do\n  mutation Out\nend\n"]).unwrap().operations).unwrap().is_empty());
+    assert_eq!(load_schema_types(None, &Default::default(), &parse_all(&["operation :out do\n  mutation Out\nend\n"]).unwrap().operations).unwrap(), SchemaTypes::default());
 }
 
 #[test]
@@ -67,7 +66,7 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
         "    public let scale: GraphQLNullable<Double>",
         "    public let owner: OwnerInput",
         "    public let helpers: GraphQLNullable<[OwnerInput]>",
-        "    public init(name: String, mood: GraphQLNullable<String> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, scale: GraphQLNullable<Double> = .omitted, pinned: Bool, sentAt: GraphQLNullable<String> = .omitted, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted) {",
+        "    public init(name: String, mood: GraphQLNullable<Mood> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, scale: GraphQLNullable<Double> = .omitted, pinned: Bool, sentAt: GraphQLNullable<String> = .omitted, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted) {",
         "public struct OwnerInput: Encodable, Sendable, Equatable {",
         "public static func stickerSend(input: StickerInput) async throws -> StickerSendResult {",
         "variables[\"input\"] = JSONValue.encode(input)",
@@ -76,7 +75,7 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &inputs);
     for line in [
-        "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<String> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Int> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val scale: GraphQLNullable<Double> = GraphQLNullable.Omitted, val pinned: Boolean, @EncodeDefault(EncodeDefault.Mode.NEVER) val sentAt: GraphQLNullable<String> = GraphQLNullable.Omitted, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)",
+        "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Int> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val scale: GraphQLNullable<Double> = GraphQLNullable.Omitted, val pinned: Boolean, @EncodeDefault(EncodeDefault.Mode.NEVER) val sentAt: GraphQLNullable<String> = GraphQLNullable.Omitted, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)",
         "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: GraphQLNullable<String> = GraphQLNullable.Omitted)",
         "import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n",
         "suspend fun stickerSend(input: StickerInput): StickerSendResult {",
@@ -95,7 +94,7 @@ fn nested_input_lists_keep_every_dimension_and_nullability_in_both_languages() {
     let path = directory.path().join("schema.graphql");
     fs::write(&path, "input MatrixInput { cells: [[Int!]!]! sparse: [[String]]! }").unwrap();
     let declared = parse_all(&["operation :send do\n mutation Send\n args input: :MatrixInput\nend\n"]).unwrap();
-    let inputs = load_input_objects(Some(&path), &declared.operations).unwrap();
+    let inputs = load_schema_types(Some(&path), &declared.scalars, &declared.operations).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &inputs);
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &inputs);
     assert!(swift.contains("public let cells: [[Int]]"), "{swift}");
@@ -110,7 +109,8 @@ fn a_json_scalar_in_an_input_object_is_raw_json_on_both_platforms_and_default_li
     let path = directory.path().join("schema.graphql");
     fs::write(&path, MOMENT_SCHEMA).unwrap();
     let declared = parse_all(&[MOMENT]).unwrap();
-    let objects = load_input_objects(Some(&path), &declared.operations).unwrap();
+    let types = load_schema_types(Some(&path), &declared.scalars, &declared.operations).unwrap();
+    let objects = &types.inputs;
     let settings = objects.iter().find(|object| object.name == "SettingsInput").unwrap();
     assert_eq!(settings.fields[0], field("itemProps", "json", false, false, false));
     assert_eq!(settings.fields[1], field("extras", "json", true, false, true));
@@ -118,11 +118,11 @@ fn a_json_scalar_in_an_input_object_is_raw_json_on_both_platforms_and_default_li
     let mut expected = field("widgets", "WidgetInput", true, false, true);
     expected.ty.has_default = true;
     assert_eq!(widgets, expected);
-    let swift = emit_swift(&declared.models, &declared.operations, &objects);
+    let swift = emit_swift(&declared.models, &declared.operations, &types);
     for line in ["    public let itemProps: JSONValue", "    public let extras: GraphQLNullable<[JSONValue]>", "    public let widgets: GraphQLNullable<[WidgetInput]>"] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
-    let kotlin = emit_kotlin(&declared.models, &declared.operations, &objects);
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &types);
     for line in ["val itemProps: JsonElement,", "val extras: GraphQLNullable<List<JsonElement>> = GraphQLNullable.Omitted"] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

@@ -1,3 +1,4 @@
+use crate::SchemaTypes;
 use crate::{emit_kotlin, emit_swift, parse_models};
 use dblayer::db::Db;
 use serde_json::json;
@@ -5,7 +6,7 @@ use serde_json::json;
 #[test]
 fn nested_types_keep_optional_fields_and_work_in_local_models() {
     let models = crate::parse_sources(&[include_str!("../../fixtures/nested_reference.dbl"), include_str!("../../fixtures/nested.dbl")]).unwrap();
-    for (source, read) in [(emit_swift(&models, &[], &[]), "note = try container.decodeIfPresent(String.self, forKey: .note)"), (emit_kotlin(&models, &[], &[]), "val note: String? = null")] {
+    for (source, read) in [(emit_swift(&models, &[], &SchemaTypes::default()), "note = try container.decodeIfPresent(String.self, forKey: .note)"), (emit_kotlin(&models, &[], &SchemaTypes::default()), "val note: String? = null")] {
         assert!(source.contains(read), "optional note was lost: {read}");
     }
     let db = Db::open_in_memory(models, None).unwrap();

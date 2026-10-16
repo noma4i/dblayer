@@ -1,3 +1,4 @@
+use crate::SchemaTypes;
 use crate::{emit_kotlin, emit_swift, parse_all};
 
 const QR: &str = "operation :qr_code_create do\n  mutation QrCodeCreate\n  wrap :input\n  args kind: :string, size: :int?\n  result url: :string\nend\n\noperation :sign_out do\n  mutation SignOut\nend\n";
@@ -6,8 +7,8 @@ const QR: &str = "operation :qr_code_create do\n  mutation QrCodeCreate\n  wrap 
 fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
     let declared = parse_all(&[QR]).unwrap();
     assert!(declared.models.is_empty());
-    assert!(!emit_swift(&declared.models, &declared.operations, &[]).contains("modelsJSON") && !emit_kotlin(&declared.models, &declared.operations, &[]).contains("modelsJSON"), "a file without models has no models constant");
-    let swift = emit_swift(&declared.models, &declared.operations, &[]);
+    assert!(!emit_swift(&declared.models, &declared.operations, &SchemaTypes::default()).contains("modelsJSON") && !emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default()).contains("modelsJSON"), "a file without models has no models constant");
+    let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "public struct QrCodeCreateResult: Codable, Sendable, Equatable {\n    public let url: String?",
         "public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {",
@@ -18,7 +19,7 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
-    let kotlin = emit_kotlin(&declared.models, &declared.operations, &[]);
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "data class QrCodeCreateResult(\n    val url: String? = null,\n)",
         "suspend fun qrCodeCreate(kind: String, size: Int? = null): QrCodeCreateResult {",
@@ -40,8 +41,8 @@ fn a_wrong_operation_declaration_is_named_with_its_line() {
         ("operation :a do\n  mutation A\n  args x: :string, x: :int\nend\n", "arg `x` is declared twice"),
         ("operation :a do\n  args x: :id\nend\n", "needs exactly one `mutation` or `query` line"),
         ("operation :a do\n  mutation A\n  query B\nend\n", "needs exactly one `mutation` or `query` line"),
-        ("operation :a do\n  mutation A\n  args x: :uuid\nend\n", "or the name of a schema input object like :QrCodeInput"),
-        ("operation :a do\n  mutation A\n  result x: :QrCodeInput\nend\n", "type must be :bool, :int, :num, :string, :id, :ids or :json"),
+        ("operation :a do\n  mutation A\n  args x: :uuid\nend\n", "or the name of a schema input object or enum like :QrCodeInput"),
+        ("operation :a do\n  mutation A\n  result x: :uuid\nend\n", "type must be :bool, :int, :num, :string, :id, :ids, :json or the name of a schema enum"),
         ("operation :a do\n  mutation A\n  frob :x\nend\n", "unknown line `frob`"),
         ("operation :a do\n  mutation A\nend\noperation :a do\n  mutation B\nend\n", "operation `a` is declared twice"),
         ("operation :a\n", "needs a `do ... end` block"),
@@ -57,7 +58,7 @@ const GIPHY: &str = "operation :giphy_load do\n  query Giphy\n  list\n  args typ
 #[test]
 fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
     let declared = parse_all(&[GIPHY]).unwrap();
-    let swift = emit_swift(&declared.models, &declared.operations, &[]);
+    let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "public struct GiphyLoadResult: Codable, Sendable, Equatable {",
         "public static func giphyLoad(type: String, limit: Int? = nil) async throws -> [GiphyLoadResult] {",
@@ -65,7 +66,7 @@ fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
-    let kotlin = emit_kotlin(&declared.models, &declared.operations, &[]);
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "suspend fun giphyLoad(type: String, limit: Int? = null): List<GiphyLoadResult> {",
         "return DBlayer.run(\"Giphy\", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()))",

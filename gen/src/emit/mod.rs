@@ -5,12 +5,15 @@ use std::fmt::Write;
 mod nested;
 mod wire;
 mod inputs;
+mod enums;
 mod operations;
 use nested::{emit_kotlin_type, emit_swift_type};
 use inputs::{emit_kotlin_inputs, emit_swift_inputs};
+use enums::{emit_kotlin_enums, emit_swift_enums};
 use operations::{emit_kotlin_operations, emit_swift_operations};
 use crate::operation::OperationCall;
-use crate::schema_check::InputObject;
+use crate::schema_check::SchemaTypes;
+use crate::enums::{merge_enums, EnumDecl};
 
 /// The relation that holds the one row of a model: the only global relation answered as a single record.
 fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
@@ -49,13 +52,24 @@ fn raw_type(swift: bool) -> String {
 fn field_type(field: &FieldSpec, swift: bool) -> String {
     let base = match &field.kind {
         FieldKind::Scalar { kind } => scalar(*kind, swift).to_string(),
-        FieldKind::Enum { .. } => "String".into(),
+        FieldKind::Enum { .. } => field.app_type.clone().expect("an enum field names its type"),
         FieldKind::List { element } => if swift { format!("[{}]", scalar(*element, true)) } else { format!("List<{}>", scalar(*element, false)) },
         FieldKind::Array => field.app_type.as_ref().map(|name| if swift { format!("[{name}]") } else { format!("List<{name}>") }).unwrap_or_else(|| raw_type(swift)),
         FieldKind::Object => field.app_type.clone().unwrap_or_else(|| raw_type(swift)),
         _ => raw_type(swift),
     };
     if field.nullable || field.optional { format!("{base}?") } else { base }
+}
+
+pub(crate) fn enum_decls(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> Vec<EnumDecl> {
+    fn walk(field: &FieldSpec, out: &mut Vec<EnumDecl>) {
+        if let (FieldKind::Enum { values }, Some(name)) = (&field.kind, &field.app_type) { out.push(EnumDecl { name: name.clone(), values: values.clone() }); }
+        field.fields.iter().for_each(|inner| walk(inner, out));
+    }
+    let mut found = schema_types.enums.clone();
+    for model in models { model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)).for_each(|field| walk(field, &mut found)); }
+    for operation in operations { if let Some(root) = &operation.result { walk(root, &mut found); } }
+    merge_enums(found).unwrap_or_default()
 }
 
 pub(crate) fn declared_types(models: &[ModelSpec]) -> Vec<&FieldSpec> {
@@ -109,7 +123,8 @@ fn arg_type(kind: &str, swift: bool) -> &'static str {
     match (kind, swift) {
         ("bool", true) => "Bool",
         ("bool", false) => "Boolean",
-        ("int", _) => "Int",
+        ("int", _) | ("long", true) => "Int",
+        ("long", false) => "Long",
         ("num", _) => "Double",
         ("ids", true) => "[String]",
         ("ids", false) => "List<String>",
@@ -123,7 +138,7 @@ fn swift_default(field: &FieldSpec) -> Option<String> {
         (FieldKind::Scalar { kind: ScalarKind::Bool }, serde_json::Value::Bool(flag)) => Some(flag.to_string()),
         (FieldKind::Scalar { kind: ScalarKind::Int | ScalarKind::Num }, serde_json::Value::Number(number)) => Some(number.to_string()),
         (FieldKind::Scalar { kind: ScalarKind::Str | ScalarKind::Date | ScalarKind::Id }, serde_json::Value::String(text)) => Some(format!("{text:?}")),
-        (FieldKind::Enum { .. }, serde_json::Value::String(text)) => Some(format!("{text:?}")),
+        (FieldKind::Enum { .. }, value @ serde_json::Value::String(_)) => Some(nested::literal(field, value, true, &[])),
         _ => None,
     }
 }
@@ -135,8 +150,8 @@ pub enum Access {
 }
 
 /// Swift source for the models. `Internal` drops `public` for apps that generate the models into their own module.
-pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], inputs: &[InputObject], access: Access) -> String {
-    let source = emit_swift(models, operations, inputs);
+pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes, access: Access) -> String {
+    let source = emit_swift(models, operations, schema_types);
     if access == Access::Public {
         return source;
     }
@@ -149,7 +164,7 @@ pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], input
     }).collect::<Vec<_>>().join("\n") + "\n"
 }
 
-pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], inputs: &[InputObject]) -> String {
+pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> String {
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
     for model in models {
         let class = model.key.as_str();
@@ -250,14 +265,15 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], inputs: &[
     }
     let types = declared_types(models);
     for declaration in &types { emit_swift_type(&mut out, declaration, &types, true); }
-    emit_swift_inputs(&mut out, inputs);
+    emit_swift_enums(&mut out, &enum_decls(models, operations, schema_types));
+    emit_swift_inputs(&mut out, &schema_types.inputs);
     emit_swift_operations(&mut out, operations);
     if !models.is_empty() { writeln!(out, "public let modelsJSON = #\"{}\"#", serde_json::to_string(models).unwrap()).unwrap(); }
     out
 }
 
-pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &[InputObject]) -> String {
-    let encoding = if inputs.is_empty() { "" } else { "import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n" };
+pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> String {
+    let encoding = if schema_types.inputs.is_empty() { "" } else { "import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n" };
     let mut out = format!("package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\n{encoding}import kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n");
     for model in models {
         let class = model.key.as_str();
@@ -349,7 +365,8 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], inputs: &
     }
     let types = declared_types(models);
     for declaration in &types { emit_kotlin_type(&mut out, declaration, &types, true); }
-    emit_kotlin_inputs(&mut out, inputs);
+    emit_kotlin_enums(&mut out, &enum_decls(models, operations, schema_types));
+    emit_kotlin_inputs(&mut out, &schema_types.inputs);
     emit_kotlin_operations(&mut out, operations);
     let models_json = serde_json::to_string(models).unwrap().replace('$', "${'$'}");
     if !models.is_empty() { writeln!(out, "val modelsJSON = \"\"\"{models_json}\"\"\"").unwrap(); }

@@ -5,7 +5,8 @@ use crate::schema_check::{InputField, InputObject, Ty, TyKind};
 fn element(name: &str, swift: bool) -> String {
     match (name, swift) {
         ("string", _) => "String".to_string(),
-        ("int", _) => "Int".to_string(),
+        ("int", _) | ("long", true) => "Int".to_string(),
+        ("long", false) => "Long".to_string(),
         ("num", _) => "Double".to_string(),
         ("bool", true) => "Bool".to_string(),
         ("bool", false) => "Boolean".to_string(),

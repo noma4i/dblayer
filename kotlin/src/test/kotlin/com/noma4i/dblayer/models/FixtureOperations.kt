@@ -7,9 +7,43 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
+@Serializable(with = MoodSerializer::class)
+sealed class Mood(override val raw: String) : RawEnum {
+    data object Happy : Mood("HAPPY")
+    data object Sad : Mood("SAD")
+    data class Unknown(val value: String) : Mood(value)
+
+    companion object {
+        fun of(raw: String): Mood = when (raw) {
+            "HAPPY" -> Happy
+            "SAD" -> Sad
+            else -> Unknown(raw)
+        }
+    }
+}
+
+object MoodSerializer : RawEnumSerializer<Mood>("Mood", { Mood.of(it) })
+
+@Serializable(with = WidgetKindSerializer::class)
+sealed class WidgetKind(override val raw: String) : RawEnum {
+    data object Emoji : WidgetKind("EMOJI")
+    data object Gif : WidgetKind("GIF")
+    data class Unknown(val value: String) : WidgetKind(value)
+
+    companion object {
+        fun of(raw: String): WidgetKind = when (raw) {
+            "EMOJI" -> Emoji
+            "GIF" -> Gif
+            else -> Unknown(raw)
+        }
+    }
+}
+
+object WidgetKindSerializer : RawEnumSerializer<WidgetKind>("WidgetKind", { WidgetKind.of(it) })
+
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<String> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Int> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)
+data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Int> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -21,7 +55,7 @@ data class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) v
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class WidgetInput(val kind: String, val settings: SettingsInput)
+data class WidgetInput(val kind: WidgetKind, val settings: SettingsInput)
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable

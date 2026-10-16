@@ -6,9 +6,13 @@ mod operation;
 mod parser;
 mod schema_check;
 mod emit;
+mod enums;
+mod scalars;
 pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
+pub use enums::EnumDecl;
+pub use scalars::Scalars;
 pub use operation::OperationCall;
-pub use schema_check::{InputField, InputObject, Ty, TyKind};
+pub use schema_check::{InputField, InputObject, SchemaTypes, Ty, TyKind};
 
 use std::fmt;
 use std::fs;
@@ -51,10 +55,12 @@ pub fn parse_models(source: &str) -> Result<Vec<ModelSpec>, Vec<ParseError>> {
     parse_sources(&[source]).map_err(|errors| errors.into_iter().map(|(_, error)| error).collect())
 }
 
+#[derive(Debug)]
 pub struct Declarations {
     pub models: Vec<ModelSpec>,
     pub operations: Vec<OperationCall>,
-    pub inputs: Vec<InputObject>,
+    pub inputs: SchemaTypes,
+    pub scalars: Scalars,
     pub notes: Vec<String>,
 }
 
@@ -69,6 +75,7 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
         found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect::<Vec<_>>()
     };
     let mut parsed = parse_tree(&sources).map_err(&locate)?;
+    let scalars = scalars::build(&parsed.scalars).map_err(&locate)?;
     let loaded = schema.map(schema_check::Schema::load).transpose().map_err(|message| vec![FileError {
         file: schema.unwrap().display().to_string(), error: ParseError::new(0, 0, message),
     }])?;
@@ -77,26 +84,29 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     }
     declarations::prepare(&mut parsed.models).map_err(&locate)?;
     let notes = match &loaded {
-        Some(schema) => schema_check::check_schema(schema, operations, &names, &parsed.models, &parsed.operations)?.notes,
+        Some(schema) => schema_check::check_schema(schema, &scalars, operations, &names, &parsed.models, &parsed.operations)?.notes,
         None => Vec::new(),
     };
     let mut declared = build_declarations(parsed).map_err(locate)?;
-    declared.inputs = inputs_from_schema(loaded.as_ref(), &declared.operations).map_err(|message| vec![FileError { file: names.first().cloned().unwrap_or_default(), error: ParseError::new(0, 0, message) }])?;
+    let failed = |message: String| vec![FileError { file: names.first().cloned().unwrap_or_default(), error: ParseError::new(0, 0, message) }];
+    declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.operations).map_err(&failed)?;
+    operation::resolve_result_enums(&mut declared.operations, loaded.as_ref()).map_err(&failed)?;
+    declared.scalars = scalars;
     declared.notes = notes;
     Ok(declared)
 }
 
-pub fn load_input_objects(schema: Option<&Path>, operations: &[OperationCall]) -> Result<Vec<InputObject>, String> {
+pub fn load_schema_types(schema: Option<&Path>, scalars: &Scalars, operations: &[OperationCall]) -> Result<SchemaTypes, String> {
     let loaded = schema.map(schema_check::Schema::load).transpose()?;
-    inputs_from_schema(loaded.as_ref(), operations)
+    inputs_from_schema(loaded.as_ref(), scalars, operations)
 }
 
-fn inputs_from_schema(schema: Option<&schema_check::Schema>, operations: &[OperationCall]) -> Result<Vec<InputObject>, String> {
-    let wanted = operation::input_object_names(operations);
+fn inputs_from_schema(schema: Option<&schema_check::Schema>, scalars: &Scalars, operations: &[OperationCall]) -> Result<SchemaTypes, String> {
+    let wanted = operation::schema_type_names(operations);
     match (schema, wanted.first()) {
-        (_, None) => Ok(Vec::new()),
-        (None, Some(name)) => Err(format!("an operation names the input object `{name}`: pass --schema <schema.graphql> so the generator can read it")),
-        (Some(schema), Some(_)) => schema_check::load_input_objects(schema, &wanted),
+        (_, None) => Ok(SchemaTypes::default()),
+        (None, Some(name)) => Err(format!("an operation names the schema type `{name}`: pass --schema <schema.graphql> so the generator can read it")),
+        (Some(schema), Some(_)) => schema_check::load_schema_types(schema, scalars, &wanted),
     }
 }
 
@@ -124,18 +134,23 @@ fn parse_sources(sources: &[&str]) -> Result<Vec<ModelSpec>, Vec<(usize, ParseEr
 fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>> {
     let mut parsed = parse_tree(sources)?;
     declarations::prepare(&mut parsed.models)?;
-    build_declarations(parsed)
+    let scalars = scalars::build(&parsed.scalars)?;
+    let mut declared = build_declarations(parsed)?;
+    declared.scalars = scalars;
+    Ok(declared)
 }
 
 fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError)>> {
     let mut nodes = Vec::new();
     let mut operation_nodes = Vec::new();
+    let mut scalar_nodes = Vec::new();
     let mut errors = Vec::new();
     for (file, source) in sources.iter().enumerate() {
         match lexer::lex(source).and_then(|tokens| parser::parse(&tokens, file)) {
             Ok(parsed) => {
                 nodes.extend(parsed.models);
                 operation_nodes.extend(parsed.operations);
+                scalar_nodes.extend(parsed.scalars);
             }
             Err(error) => errors.push((file, error)),
         }
@@ -143,7 +158,7 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
     if !errors.is_empty() {
         return Err(errors);
     }
-    Ok(parser::Parsed { models: nodes, operations: operation_nodes })
+    Ok(parser::Parsed { models: nodes, operations: operation_nodes, scalars: scalar_nodes })
 }
 
 fn build_declarations(parsed: parser::Parsed) -> Result<Declarations, Vec<(usize, ParseError)>> {
@@ -156,7 +171,7 @@ fn build_declarations(parsed: parser::Parsed) -> Result<Declarations, Vec<(usize
             return Err(errors);
         }
     };
-    if errors.is_empty() { Ok(Declarations { models, operations, inputs: Vec::new(), notes: Vec::new() }) } else { Err(errors) }
+    if errors.is_empty() { Ok(Declarations { models, operations, inputs: SchemaTypes::default(), scalars: Scalars::new(), notes: Vec::new() }) } else { Err(errors) }
 }
 
 #[cfg(test)]
@@ -179,6 +194,9 @@ mod operation_tests;
 
 #[cfg(test)]
 mod input_tests;
+
+#[cfg(test)]
+mod enum_tests;
 
 #[cfg(test)]
 mod result_tests;

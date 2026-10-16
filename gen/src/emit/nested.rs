@@ -1,4 +1,5 @@
 use super::*;
+use crate::enums::EnumDecl;
 use serde_json::Value;
 
 pub(super) fn string_literal(text: &str, swift: bool) -> String {
@@ -36,13 +37,20 @@ fn json_literal(value: &Value, swift: bool) -> String {
     }
 }
 
+fn enum_literal(field: &FieldSpec, values: &[String], text: &str, swift: bool) -> String {
+    let name = field.app_type.as_deref().expect("an enum field names its type");
+    let at = values.iter().position(|value| value == text).expect("an enum default is one of its values");
+    format!("{name}.{}", EnumDecl::new(name, values).cases(swift)[at])
+}
+
 pub(super) fn literal(field: &FieldSpec, value: &Value, swift: bool, types: &[&FieldSpec]) -> String {
     if value.is_null() { return if swift { "nil".into() } else { "null".into() }; }
     match (&field.kind, value) {
         (FieldKind::Scalar { kind: ScalarKind::Num }, Value::Number(number)) => format!("{:?}", number.as_f64().unwrap()),
         (FieldKind::Scalar { kind: ScalarKind::Int }, Value::Number(number)) => format!("{}{}", number, if swift { "" } else { "L" }),
         (FieldKind::Scalar { kind: ScalarKind::Id }, _) => string_literal(value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()).as_str(), swift),
-        (FieldKind::Scalar { .. } | FieldKind::Enum { .. }, Value::String(text)) => string_literal(text, swift),
+        (FieldKind::Enum { values }, Value::String(text)) => enum_literal(field, values, text, swift),
+        (FieldKind::Scalar { .. }, Value::String(text)) => string_literal(text, swift),
         (FieldKind::Scalar { .. }, Value::Bool(flag)) => flag.to_string(),
         (FieldKind::List { element }, Value::Array(items)) => {
             let element = FieldSpec::scalar("", *element);

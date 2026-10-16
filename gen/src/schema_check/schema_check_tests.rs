@@ -53,8 +53,10 @@ fn run(source: &str) -> Result<Vec<String>, Vec<(usize, String)>> {
     fs::write(directory.path().join("queries/items.graphql"), OPERATIONS).unwrap();
     let file = directory.path().join("item.dbl");
     fs::write(&file, source).unwrap();
+    let scalars = directory.path().join("scalars.dbl");
+    fs::write(&scalars, "scalar :DateTime, as: :date\n").unwrap();
     let operations: Vec<PathBuf> = vec![directory.path().join("queries")];
-    check_models_against_schema(&schema, &operations, &[file]).map_err(|errors| errors.into_iter().map(|error| (error.error.line, error.error.message)).collect())
+    check_models_against_schema(&schema, &operations, &[scalars, file]).map_err(|errors| errors.into_iter().map(|error| (error.error.line, error.error.message)).collect())
 }
 
 #[test]

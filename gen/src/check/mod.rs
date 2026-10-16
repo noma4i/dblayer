@@ -8,6 +8,7 @@ use crate::parser::{Call, ModelNode, Node, Pair, Value};
 use crate::ParseError;
 
 mod nested;
+mod enums;
 
 type Found = (usize, ParseError);
 
@@ -89,7 +90,7 @@ fn field_keys(word: &str) -> Vec<Key> {
     ];
     match word {
         "file" => keys.retain(|candidate| !matches!(candidate.name, "id_from" | "from" | "merge" | "local")),
-        "enum" => keys.push(key("values", Want::Symbols, true)),
+        "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
         "list" => keys.push(key("of", Want::Symbol, true)),
         "object" | "array" => keys.push(key("as", Want::TypeName, false)),
         _ => {}
@@ -106,7 +107,7 @@ fn field_keys(word: &str) -> Vec<Key> {
 fn nested_keys(word: &str) -> Vec<Key> {
     let mut keys = vec![key("null", Want::Bool, false), key("optional", Want::Bool, false), key("default", Want::Any, false), key("from", Want::Any, false)];
     match word {
-        "enum" => keys.push(key("values", Want::Symbols, true)),
+        "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
         "list" => keys.push(key("of", Want::Symbol, true)),
         "object" | "array" => keys.push(key("as", Want::TypeName, false)),
         _ => {}
@@ -193,6 +194,7 @@ pub fn check(nodes: &[ModelNode]) -> Result<Vec<ModelSpec>, Vec<Found>> {
         check_model(node, nodes, &mut errors);
     }
     check_types(nodes, &mut errors);
+    enums::check_enums(nodes, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }

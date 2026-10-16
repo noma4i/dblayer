@@ -1,4 +1,4 @@
-use dblayer::schema::{MergeRule, Newer, CursorSpec, VariableSource, 
+use dblayer::schema::{FieldKind, MergeRule, Newer, CursorSpec, VariableSource, 
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
     OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
 };
@@ -97,6 +97,9 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
     field.searchable = flag(call, "searchable");
     field.id_from_parent = option(call, "id_from").and_then(|pair| text_of(&pair.value.item));
     field.app_type = option(call, "as").and_then(|pair| text_of(&pair.value.item));
+    if matches!(field.kind, FieldKind::Enum { .. }) && field.app_type.is_none() {
+        field.app_type = Some(format!("{owner}{}", camel(&name)));
+    }
     if let Some(block) = &call.block {
         let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(&name)));
         field.fields = block.iter().map(|child| build_field(child, &type_name)).collect();

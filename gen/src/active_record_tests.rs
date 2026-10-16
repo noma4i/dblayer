@@ -1,3 +1,4 @@
+use crate::SchemaTypes;
 use dblayer::db::Db;
 use dblayer::query::{Order, Query, Where};
 use dblayer::value::SortDirection;
@@ -147,8 +148,8 @@ model Note, storage: :local do
   end
 end
 "#).unwrap();
-    let swift = emit_swift(&models, &[], &[]);
-    let kotlin = emit_kotlin(&models, &[], &[]);
+    let swift = emit_swift(&models, &[], &SchemaTypes::default());
+    let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     assert!(swift.contains("func inFolder(") && swift.contains("func create("), "{swift}");
     assert!(kotlin.contains("fun inFolder(") && kotlin.contains("fun create("), "{kotlin}");
     let db = Db::open_in_memory(models, None).unwrap();

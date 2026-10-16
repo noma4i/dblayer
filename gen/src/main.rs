@@ -44,7 +44,7 @@ fn main() -> ExitCode {
         }
     }
     match compile_files(files, options.schema.as_deref(), &options.operations) {
-        Ok(Declarations { models, operations, inputs, notes }) => {
+        Ok(Declarations { models, operations, inputs, notes, .. }) => {
             for note in notes {
                 eprintln!("note: {note}");
             }

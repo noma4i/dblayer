@@ -1,4 +1,5 @@
 model NestedSample, storage: :local do
+  field :phase, type: :enum, values: [:draft, :live], null: true
   field :value, type: NestedValue, null: true do
     field :title, type: :string
     field :note, type: :string, optional: true

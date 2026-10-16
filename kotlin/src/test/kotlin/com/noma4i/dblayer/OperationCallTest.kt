@@ -6,6 +6,7 @@ import com.noma4i.dblayer.models.OwnerInput
 import com.noma4i.dblayer.models.SettingsInput
 import com.noma4i.dblayer.models.StickerInput
 import com.noma4i.dblayer.models.WidgetInput
+import com.noma4i.dblayer.models.WidgetKind
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -99,7 +100,7 @@ class OperationCallTest {
     fun aJsonScalarOfAnInputObjectIsSentAsAnObjectAndAnOmittedListIsNotSent() = bounded {
         val transport = rig("MomentCreate", "mutation MomentCreate(${'$'}input: MomentInput!) { momentCreate(input: ${'$'}input) { moment { id } } }", """{"data":{"momentCreate":{"moment":{"id":9}}}}""")
         val props = JsonObject(mapOf("emoji" to JsonPrimitive("fire"), "size" to JsonPrimitive(3), "tags" to JsonArray(listOf(JsonPrimitive("a")))))
-        val widget = WidgetInput(kind = "EMOJI", settings = SettingsInput(itemProps = props, rotate = GraphQLNullable.Value(1.5)))
+        val widget = WidgetInput(kind = WidgetKind.Emoji, settings = SettingsInput(itemProps = props, rotate = GraphQLNullable.Value(1.5)))
 
         assertEquals("9", withTimeout(5000) { Operations.momentCreate(MomentInput(file = "s1", widgets = GraphQLNullable.Value(listOf(widget)))) }.moment?.id)
         transport.enqueue("MomentCreate", """{"data":{"momentCreate":{"moment":{"id":9}}}}""")

@@ -1,3 +1,5 @@
+scalar :DateTime, as: :date
+
 operation :qr_code_create do
   mutation QrCodeCreate
   wrap :input
