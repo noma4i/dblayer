@@ -140,6 +140,19 @@ val thread = LiveList(Message.thread(chatId), viewModelScope)   // thread.rows, 
 **Edits.** A delivery also tells how the rows changed: `Snapshot.edits` is the ordered steps `rewrite(index, row)`, `insert(index, row)` and `remove(index, id)` from the rows of the previous delivery to the new rows. Each step carries the value of its own moment, so the steps of several deliveries replay in order (`rows.replay(edits)`) and the last write of an id wins. A slow reader gets the steps of the deliveries it missed joined in order. `LiveList.takeEdits()` returns the steps since the reader last took them and then counts the reader as up to date. A reader that mirrors the rows patches its mirror with the steps and reads only the changed rows. `edits` is nil, and the reader takes `rows` whole, for the first delivery, a whole list, a list that holds a row that did not decode, and a run of steps longer than the list. The library still looks up an id by scan for a replaced, removed or moved row, moves the tail of the array for an insert or remove in the middle, and copies the array once per delivery when a reader still holds the previous one.
 
 ```swift
+for await snapshot in Message.thread(chatId).snapshots {
+  if let edits = snapshot.edits { mirror.replay(edits) } else { mirror = snapshot.rows }
+}
+```
+
+```kotlin
+Message.thread(chatId).snapshots.collect { snapshot ->
+    val edits = snapshot.edits
+    if (edits != null) mirror.replay(edits) else mirror = snapshot.rows.toMutableList()
+}
+```
+
+```swift
 if let edits = thread.takeEdits() { mirror.replay(edits) } else { mirror = thread.rows }
 ```
 
