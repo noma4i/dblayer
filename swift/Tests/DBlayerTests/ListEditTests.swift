@@ -133,12 +133,10 @@ struct ListEditTests {
     let list = LiveList<Moment>(Moment.recent, snapshots: snapshots, state: LiveSource(initial: LoadState()) { _ in {} })
     let feed = ListFeed<Moment>()
     func deliver(_ change: LiveChange) async {
-      for _ in 0 ..< 200 where sink.emit == nil { try? await Task.sleep(for: .milliseconds(10)) }
+      await eventually("the list source starts") { sink.emit != nil }
       let snapshot = Self.snapshot(feed, change)
       sink.emit?(snapshot)
-      for _ in 0 ..< 200 where list.rows.count != snapshot.rows.count || Self.texts(list.rows) != Self.texts(snapshot.rows) {
-        try? await Task.sleep(for: .milliseconds(10))
-      }
+      await eventually("the list shows the snapshot") { Self.texts(list.rows) == Self.texts(snapshot.rows) }
     }
 
     await deliver(Self.change(full: true, size: 3, rows: ["a", "b", "c"].map { Self.moment($0) }))

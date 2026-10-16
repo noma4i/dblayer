@@ -218,7 +218,7 @@ impl Shared {
     fn cannot_enter(&self, query: &Query, previous: &Version, touched: &HashSet<String>) -> Result<bool, DbError> {
         let Body::Rows(body) = &previous.body else { return Ok(false) };
         let plain = query.include.is_empty() && query.scope.is_none() && query.limit.is_none() && query.offset.is_none();
-        if !plain || touched.is_empty() || touched.len() > MAX_PROBED_ROWS || body.entries.iter().any(|entry| touched.contains(entry.id.as_str())) {
+        if !plain || touched.is_empty() || touched.len() > MAX_PROBED_ROWS || touched.iter().any(|id| body.entry(id).is_some()) {
             return Ok(false);
         }
         let ids = touched.iter().map(|id| Value::from(id.as_str())).collect();

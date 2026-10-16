@@ -35,22 +35,26 @@ impl Change {
             rows.clone_from(&self.rows);
             return;
         }
-        for (from, to) in &self.diff.replaced {
-            if let (Some(at), Some(row)) = (rows.iter().position(|row| row.id == *from), self.rows.iter().find(|row| row.id == *to)) {
-                rows[at] = row.clone();
+        let supplied: HashMap<&RowId, &Row> = self.rows.iter().map(|row| (&row.id, row)).collect();
+        for (_, to) in &self.diff.replaced {
+            if let (Some(at), Some(row)) = (self.diff.was.get(to), supplied.get(to)) {
+                rows[*at] = (*row).clone();
             }
         }
-        rows.retain(|row| !self.diff.removed.contains(&row.id));
-        let placed = self.diff.placed();
+        let removed = self.diff.removed.iter().map(|id| (id, false));
+        let moved = self.diff.moved.iter().map(|id| (id, true));
+        let mut leaving: Vec<(usize, &RowId, bool)> = removed.chain(moved).filter_map(|(id, kept)| self.diff.was.get(id).map(|at| (*at, id, kept))).collect();
+        leaving.sort_unstable_by(|left, right| right.0.cmp(&left.0));
         let mut taken: HashMap<&RowId, Row> = HashMap::new();
-        for (id, _) in &placed {
-            if let Some(at) = rows.iter().position(|row| row.id == *id) {
-                taken.insert(id, rows.remove(at));
+        for (at, id, kept) in leaving {
+            let row = rows.remove(at);
+            if kept {
+                taken.insert(id, row);
             }
         }
-        for (id, index) in &placed {
-            let row = taken.remove(id).or_else(|| self.rows.iter().find(|row| row.id == *id).cloned()).expect("a placed row is known");
-            rows.insert(*index, row);
+        for (id, index) in self.diff.placed() {
+            let row = taken.remove(&id).or_else(|| supplied.get(&id).map(|row| (*row).clone())).expect("a placed row is known");
+            rows.insert(index, row);
         }
         for row in &self.rows {
             rows[self.diff.at[&row.id]] = row.clone();
@@ -77,9 +81,43 @@ impl Step {
     }
 }
 
+pub(crate) struct ById(Arc<Entry>);
+
+impl PartialEq for ById {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id.as_str() == other.0.id.as_str()
+    }
+}
+
+impl Eq for ById {}
+
+impl std::hash::Hash for ById {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.id.as_str().hash(state);
+    }
+}
+
+impl std::borrow::Borrow<str> for ById {
+    fn borrow(&self) -> &str {
+        self.0.id.as_str()
+    }
+}
+
 pub(crate) struct RowsBody {
     pub entries: Vec<Arc<Entry>>,
+    pub index: HashSet<ById>,
     pub step: Option<Step>,
+}
+
+impl RowsBody {
+    pub(crate) fn new(entries: Vec<Arc<Entry>>) -> Self {
+        let index = entries.iter().cloned().map(ById).collect();
+        Self { entries, index, step: None }
+    }
+
+    pub(crate) fn entry(&self, id: &str) -> Option<&Arc<Entry>> {
+        self.index.get(id).map(|found| &found.0)
+    }
 }
 
 pub(crate) enum Body {
@@ -273,12 +311,11 @@ impl Shared {
         self.read(&[query.model.as_str()], |reader| {
             let revision = reader.revision_seq()?;
             let keys = self.query_keys(reader, query)?;
-            let prior: HashMap<&str, &Arc<Entry>> = old.entries.iter().map(|entry| (entry.id.as_str(), entry)).collect();
             let mut wanted = Vec::new();
             let slots: Vec<Option<Arc<Entry>>> = keys
                 .iter()
-                .map(|(id, key_revision)| match prior.get(id.as_str()) {
-                    Some(entry) if entry.stamp.revision == *key_revision && !touched.contains(id) => Some((*entry).clone()),
+                .map(|(id, key_revision)| match old.entry(id.as_str()) {
+                    Some(entry) if entry.stamp.revision == *key_revision && !touched.contains(id) => Some(entry.clone()),
                     _ => {
                         wanted.push((id.clone(), *key_revision));
                         None
@@ -293,7 +330,7 @@ impl Shared {
                 .zip(&keys)
                 .filter_map(|(slot, (id, _))| slot.or_else(|| loaded.get(id).map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, Vec::new()) }))))
                 .collect();
-            Ok(Evaluated { version: Version { revision, epoch, body: Body::Rows(RowsBody { entries, step: None }) }, loaded: Loaded { rows: loaded, related: Related::new() } })
+            Ok(Evaluated { version: Version { revision, epoch, body: Body::Rows(RowsBody::new(entries)) }, loaded: Loaded { rows: loaded, related: Related::new() } })
         })
     }
 
@@ -332,7 +369,7 @@ impl Shared {
             .map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, stamps.remove(&row.id).unwrap_or_default()) }))
             .collect();
         let loaded = Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related };
-        Ok((Body::Rows(RowsBody { entries, step: None }), loaded))
+        Ok((Body::Rows(RowsBody::new(entries)), loaded))
     }
 
     fn related_rows(

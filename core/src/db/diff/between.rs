@@ -34,6 +34,7 @@ pub struct Diff {
     pub replaced: Vec<(RowId, RowId)>,
     pub renamed: Vec<(RowId, RowId)>,
     pub at: BTreeMap<RowId, usize>,
+    pub was: BTreeMap<RowId, usize>,
 }
 
 impl Diff {
@@ -96,6 +97,8 @@ impl Diff {
         let mut moved: Vec<usize> = common.iter().enumerate().filter(|(index, _)| !stable.contains(index)).map(|(_, position)| *position).collect();
         moved.sort_unstable();
         diff.moved = moved.into_iter().map(|position| entry_of(&new[position]).id.clone()).collect();
+        let leaving: HashSet<&RowId> = diff.removed.iter().chain(&diff.moved).chain(diff.replaced.iter().map(|(_, to)| to)).collect();
+        diff.was = old.iter().enumerate().map(|(index, entry)| (canonical(&entry_of(entry).id), index)).filter(|(id, _)| leaving.contains(id)).collect();
         let replaced_to = diff.replaced.iter().map(|(_, to)| to);
         diff.at = diff.inserted.iter().chain(&diff.updated).chain(&diff.moved).chain(replaced_to).map(|id| (id.clone(), new_position[id])).collect();
         diff

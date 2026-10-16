@@ -81,7 +81,7 @@ impl Inner {
     }
 
     pub(crate) fn load_kind(&self, scope: &ScopeRef, cursor: Option<&str>) -> LoadKind {
-        let has_rows = self.db.shared.store.scope_members(scope.model.as_str(), scope.key.as_str()).is_ok_and(|members| !members.is_empty());
+        let has_rows = self.db.shared.store.read(&[scope.model.as_str()], |reader| reader.scope_first_key(scope.model.as_str(), scope.key.as_str())).is_ok_and(|first| first.is_some());
         match (cursor, has_rows) {
             (Some(_), _) => LoadKind::More,
             (None, true) => LoadKind::Refresh,

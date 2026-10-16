@@ -7,6 +7,7 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
 use crate::ddl::{manifest_read, ColumnType, REVISION_SEQ_KEY};
+use crate::identity::touches::touch;
 use crate::identity::RowId;
 use crate::value::fractional_between;
 
@@ -181,7 +182,25 @@ impl<'a> Reader<'a> {
             "SELECT row_id, order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 ORDER BY order_key, row_id",
         )?;
         let rows = statement.query_map(params![model, scope_key], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        let members: Vec<(String, String)> = rows.collect::<Result<_, _>>()?;
+        touch(members.len());
+        Ok(members)
+    }
+
+    pub fn scope_has_member(&self, model: &str, scope_key: &str, row_id: &str) -> Result<bool, StoreError> {
+        let found: Option<i64> = self
+            .connection
+            .query_row("SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3", params![model, scope_key, row_id], |row| row.get(0))
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    pub fn scope_first_key(&self, model: &str, scope_key: &str) -> Result<Option<String>, StoreError> {
+        Ok(self.connection.query_row("SELECT MIN(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", params![model, scope_key], |row| row.get(0))?)
+    }
+
+    pub fn scope_last_key(&self, model: &str, scope_key: &str) -> Result<Option<String>, StoreError> {
+        Ok(self.connection.query_row("SELECT MAX(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", params![model, scope_key], |row| row.get(0))?)
     }
 
     pub fn free_order_key(&self, model: &str, scope_key: &str, row_id: &str, wanted: &str, taken: &HashSet<String>) -> Result<String, StoreError> {

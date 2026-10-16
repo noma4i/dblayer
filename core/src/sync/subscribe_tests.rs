@@ -381,3 +381,25 @@ async fn an_event_for_a_child_whose_parent_is_not_stored_reloads_the_watched_lis
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(rig.transport.call_count("CurrentUser"), 2);
 }
+
+async fn join_cost(size: usize) -> usize {
+    let rig = rig_with_subscription();
+    let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();
+    let ids: Vec<String> = (0..size).map(|index| format!("m{index:06}")).collect();
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    rig.transport.enqueue("MomentsByUser", user_list(&ids));
+    let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
+    rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    let before = crate::identity::touches::total();
+    rig.transport.emit("MomentChanged", next(json!({"id": "joined", "text": "new", "userId": "u1"})));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let cost = crate::identity::touches::total() - before;
+    assert_eq!(member_ids(&rig, "moments", "by_user", &params).last().map(String::as_str), Some("joined"));
+    cost
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_event_row_joining_a_loaded_list_reads_the_same_members_at_every_list_size() {
+    assert_eq!(join_cost(100).await, join_cost(10_000).await, "member reads at 100 and 10000 rows");
+}

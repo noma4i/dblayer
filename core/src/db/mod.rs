@@ -75,6 +75,8 @@ mod listeners_tests;
 #[cfg(test)]
 mod list_delta_tests;
 #[cfg(test)]
+mod list_scan_tests;
+#[cfg(test)]
 mod local_write_tests;
 #[cfg(test)]
 mod lookup_tests;

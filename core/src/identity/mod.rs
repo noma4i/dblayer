@@ -1,5 +1,7 @@
 use std::fmt;
 
+pub(crate) mod touches;
+
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 
@@ -9,8 +11,22 @@ pub enum IdentityError {
     MissingId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Eq, PartialOrd, Ord)]
 pub struct RowId(String);
+
+impl PartialEq for RowId {
+    fn eq(&self, other: &Self) -> bool {
+        touches::touch(1);
+        self.0 == other.0
+    }
+}
+
+impl std::hash::Hash for RowId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        touches::touch(1);
+        self.0.hash(state);
+    }
+}
 
 impl RowId {
     pub fn new(value: &str) -> Result<Self, IdentityError> {

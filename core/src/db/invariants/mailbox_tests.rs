@@ -5,7 +5,7 @@ use crate::db::watch::{Body, Loaded, RowsBody, Version};
 use crate::identity::RowId;
 
 fn version(revision: i64) -> Arc<Version> {
-    Arc::new(Version { revision, epoch: 0, body: Body::Rows(RowsBody { entries: Vec::new(), step: None }) })
+    Arc::new(Version { revision, epoch: 0, body: Body::Rows(RowsBody::new(Vec::new())) })
 }
 
 fn id(text: &str) -> RowId {

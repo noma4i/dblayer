@@ -349,11 +349,11 @@ impl Inner {
             if loaded.is_none() {
                 continue;
             }
-            let members = reader.scope_members(model, resolved.scope.key.as_str())?;
-            if members.iter().any(|(member, _)| member == id.as_str()) {
+            if reader.scope_has_member(model, resolved.scope.key.as_str(), id.as_str())? {
                 continue;
             }
-            let order_key = fractional_between(members.last().map(|(_, key)| key.as_str()), None).map_err(|error| SyncError::Event(error.to_string()))?;
+            let last = reader.scope_last_key(model, resolved.scope.key.as_str())?;
+            let order_key = fractional_between(last.as_deref(), None).map_err(|error| SyncError::Event(error.to_string()))?;
             joins.push(ScopeOp::Append { scope: resolved.scope, row: id.clone(), order_key });
         }
         Ok(joins)

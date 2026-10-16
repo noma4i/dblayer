@@ -367,3 +367,41 @@ async fn enum_column_groups_a_relation_and_fills_rows() {
     let row = rig.db.find("moments", &crate::identity::RowId::new("a").unwrap()).unwrap().unwrap();
     assert_eq!(row.text("mood"), Some("calm"));
 }
+
+async fn rig_with_user_list(size: usize) -> (Rig, Map<String, serde_json::Value>) {
+    let rig = rig();
+    let params = json!({"userId": "u1"}).as_object().unwrap().clone();
+    let ids: Vec<String> = (0..size).map(|index| format!("m{index:06}")).collect();
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()})));
+    rig.sync.load("moments", "by_user", &params, LoadOptions::default()).await.unwrap();
+    (rig, params)
+}
+
+fn reads_during(work: impl FnOnce()) -> usize {
+    let before = crate::identity::touches::total();
+    work();
+    crate::identity::touches::total() - before
+}
+
+#[tokio::test(start_paused = true)]
+async fn naming_the_kind_of_a_load_reads_the_same_members_at_every_list_size() {
+    let mut costs = Vec::new();
+    for size in [100, 10_000] {
+        let (rig, params) = rig_with_user_list(size).await;
+        let scope = rig.sync.inner.resolve("moments", "by_user", &params).unwrap().scope;
+        costs.push(reads_during(|| assert_eq!(rig.sync.inner.load_kind(&scope, None), super::state::LoadKind::Refresh)));
+    }
+    assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");
+}
+
+#[tokio::test(start_paused = true)]
+async fn creating_a_row_in_a_loaded_list_reads_the_same_members_at_every_list_size() {
+    let mut costs = Vec::new();
+    for size in [100, 10_000] {
+        let (rig, params) = rig_with_user_list(size).await;
+        costs.push(reads_during(|| drop(rig.db.create("moments", crate::db::fixtures::obj(json!({"userId": "u1", "text": "new"}))).unwrap())));
+        assert_eq!(member_ids(&rig, "moments", "by_user", &params).len(), size + 1);
+    }
+    assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");
+}
