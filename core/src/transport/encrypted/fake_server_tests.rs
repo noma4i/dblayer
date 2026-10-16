@@ -81,7 +81,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
-use super::{CredentialStore, HttpExchange, HttpReply};
+use super::{CredentialSlot, HttpExchange, HttpReply};
 use crate::pacing::Clock;
 use crate::transport::TransportError;
 
@@ -274,7 +274,7 @@ impl MemoryCredentials {
     }
 }
 
-impl CredentialStore for MemoryCredentials {
+impl CredentialSlot for MemoryCredentials {
     fn get(&self) -> Result<Option<String>, TransportError> {
         Ok(self.value())
     }

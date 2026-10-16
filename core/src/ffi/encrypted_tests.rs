@@ -6,7 +6,7 @@ use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, Encrypt
 use crate::pacing::SystemClock;
 use crate::transport::encrypted::fake_server_tests::{config_body, FakeServer, MemoryCredentials};
 use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64, SHORT_KEY_DER_B64, SHORT_KEY_PIN};
-use crate::transport::{CredentialStore as CoreCredentials, HttpExchange, HttpReply, TransportError};
+use crate::transport::{CredentialSlot as CoreCredentials, HttpExchange, HttpReply, TransportError};
 
 struct ThroughServer(Arc<FakeServer>);
 

@@ -32,7 +32,7 @@ pub trait HttpExchange: Send + Sync {
     async fn get(&self, path: &str) -> Result<HttpReply, TransportError>;
 }
 
-pub trait CredentialStore: Send + Sync {
+pub trait CredentialSlot: Send + Sync {
     fn get(&self) -> Result<Option<String>, TransportError>;
     fn set(&self, credential: &str) -> Result<(), TransportError>;
     fn clear(&self) -> Result<(), TransportError>;

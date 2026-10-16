@@ -9,7 +9,7 @@ use super::config::{ConfigError, ServerConfig};
 use super::jwe::{open_response, random_token, seal_request, RequestPlain};
 use super::key::ServerKey;
 use super::state::{self, Pending};
-use super::{CredentialStore, HttpExchange};
+use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
 use crate::pacing::Clock;
 use crate::transport::TransportError;
@@ -36,7 +36,7 @@ pub struct EncryptedClient {
     audience: String,
     key: ServerKey,
     http: Arc<dyn HttpExchange>,
-    credentials: Arc<dyn CredentialStore>,
+    credentials: Arc<dyn CredentialSlot>,
     db: Db,
     clock: Arc<dyn Clock>,
     credential: Mutex<Option<String>>,
@@ -59,7 +59,7 @@ impl EncryptedClient {
     pub fn new(
         config: &EncryptedConfig,
         http: Arc<dyn HttpExchange>,
-        credentials: Arc<dyn CredentialStore>,
+        credentials: Arc<dyn CredentialSlot>,
         db: Db,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, TransportError> {

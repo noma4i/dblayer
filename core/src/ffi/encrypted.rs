@@ -78,7 +78,7 @@ impl core::HttpExchange for ForeignHttp {
 
 struct ForeignCredentials(Arc<dyn CredentialStore>);
 
-impl core::CredentialStore for ForeignCredentials {
+impl core::CredentialSlot for ForeignCredentials {
     fn get(&self) -> Result<Option<String>, core::TransportError> { self.0.get().map_err(transport_error) }
     fn set(&self, credential: &str) -> Result<(), core::TransportError> { self.0.set(credential.to_string()).map_err(transport_error) }
     fn clear(&self) -> Result<(), core::TransportError> { self.0.clear().map_err(transport_error) }
