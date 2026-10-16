@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 - 2026-10-16
+
+### Fixed
+- The `dblayer-gen` crate builds against the core version.
+
 ## 1.0.0 - 2026-10-16
 
 ### Added
