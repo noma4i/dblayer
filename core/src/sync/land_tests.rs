@@ -127,3 +127,27 @@ fn a_row_created_by_another_landing_after_the_fetch_began_still_joins_the_listed
     assert_eq!(text_of(&rig, "moments", "m1"), Some("from another landing".to_string()));
     assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()), ["m1"]);
 }
+
+fn next_page_cost(size: usize) -> usize {
+    let rig = rig();
+    let ids: Vec<String> = (0..size).map(|index| format!("m{index:06}")).collect();
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let mut first = landing(&rig, 100, &ids);
+    first.page_info = Some(crate::store::PageInfo { has_next_page: true, end_cursor: Some("c1".to_string()), total: None });
+    rig.sync.inner.land(first).unwrap();
+    let mut next = landing(&rig, 200, &["next1", "next2"]);
+    next.is_first_page = false;
+    next.plans_as_first = false;
+    next.coverage = crate::schema::Coverage::Page;
+    next.requested_cursor = Some("c1".to_string());
+    let before = crate::identity::touches::total();
+    assert_eq!(rig.sync.inner.land(next).unwrap(), Landed::Applied { rows: 2, invalid: 0 });
+    let cost = crate::identity::touches::total() - before;
+    assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()).len(), size + 2);
+    cost
+}
+
+#[test]
+fn landing_a_next_page_reads_the_same_members_at_every_list_size() {
+    assert_eq!(next_page_cost(100), next_page_cost(10_000), "member reads at 100 and 10000 rows");
+}

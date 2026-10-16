@@ -3,7 +3,7 @@ mod landing;
 mod load_more;
 
 pub use connection::{connection_nodes, connection_page_info, landing_fault, LandingFault};
-pub use landing::{plan_landing, LandingError, LandingPlan, StoredMember};
+pub use landing::{incoming_ids, plan_landing, LandingError, LandingPlan, StoredMember, StoredScope};
 pub use load_more::{LoadMoreVerdict, PageChain};
 
 #[cfg(test)]

@@ -19,12 +19,16 @@ fn object(value: Value) -> Map<String, Value> {
     value.as_object().unwrap().clone()
 }
 
-fn member(id: &str, order_key: &str) -> StoredMember {
-    StoredMember { id: id.into(), order_key: order_key.into() }
+fn member(id: &str, order_key: &str, position: usize) -> StoredMember {
+    StoredMember { id: id.into(), order_key: order_key.into(), position }
 }
 
-fn land(name: &str, current: &[StoredMember], incoming: &[Map<String, Value>], first: bool) -> LandingPlan {
-    plan_landing(&scope(name), &person(), current, incoming, first).unwrap()
+fn stored(last_key: &str, incoming: Vec<StoredMember>) -> StoredScope {
+    StoredScope { last_key: Some(last_key.into()), incoming }
+}
+
+fn land(name: &str, stored: &StoredScope, incoming: &[Map<String, Value>]) -> LandingPlan {
+    plan_landing(&scope(name), &person(), stored, incoming).unwrap()
 }
 
 fn upserted(plan: &LandingPlan) -> Vec<(String, Map<String, Value>)> {
@@ -48,8 +52,8 @@ fn appended(plan: &LandingPlan) -> Vec<(String, String)> {
 }
 
 #[test]
-fn first_page_appends_in_server_order_with_increasing_keys() {
-    let plan = land("order", &[], &[row("b"), row("a")], true);
+fn a_page_without_stored_members_appends_in_server_order_with_increasing_keys() {
+    let plan = land("order", &StoredScope::default(), &[row("b"), row("a")]);
     let members = appended(&plan);
     assert_eq!(members.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
     assert!(members[0].1 < members[1].1);
@@ -60,14 +64,14 @@ fn first_page_appends_in_server_order_with_increasing_keys() {
 fn duplicate_ids_keep_the_first_row() {
     let first = object(json!({"id": "a", "name": "A"}));
     let second = object(json!({"id": "a", "name": "B"}));
-    let rows = upserted(&land("duplicate", &[], &[first, second], true));
+    let rows = upserted(&land("duplicate", &StoredScope::default(), &[first, second]));
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].1["name"], json!("A"));
 }
 
 #[test]
 fn numeric_ids_become_string_ids() {
-    let rows = upserted(&land("numeric", &[], &[object(json!({"id": 42, "name": "n"}))], true));
+    let rows = upserted(&land("numeric", &StoredScope::default(), &[object(json!({"id": 42, "name": "n"}))]));
     assert_eq!(rows[0].0, "42");
     assert_eq!(rows[0].1["id"], json!("42"));
 }
@@ -77,14 +81,14 @@ fn rows_without_a_usable_id_are_dropped() {
     let missing = object(json!({"name": "missing"}));
     let empty = object(json!({"id": "", "name": "empty"}));
     let fractional = object(json!({"id": 1.5}));
-    let plan = land("withoutId", &[], &[missing, empty, fractional, row("valid")], true);
+    let plan = land("withoutId", &StoredScope::default(), &[missing, empty, fractional, row("valid")]);
     assert_eq!(upserted(&plan).iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["valid"]);
     assert_eq!(appended(&plan).len(), 1);
 }
 
 #[test]
 fn entity_ops_target_the_scope_model() {
-    let plan = land("model", &[], &[row("a")], true);
+    let plan = land("model", &StoredScope::default(), &[row("a")]);
     assert_eq!(
         plan.entity_ops[0],
         EntityOp::Upsert { model: person(), id: RowId::new("a").unwrap(), row: row("a") }
@@ -92,16 +96,9 @@ fn entity_ops_target_the_scope_model() {
 }
 
 #[test]
-fn first_page_detaches_members_missing_from_the_page() {
-    let plan = land("replace", &[member("x", "U")], &[row("y")], true);
-    assert!(plan.scope_ops.contains(&ScopeOp::Detach { scope: scope("replace"), row: RowId::new("x").unwrap() }));
-    assert_eq!(appended(&plan).iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["y"]);
-}
-
-#[test]
 fn next_page_appends_after_the_largest_key_and_keeps_existing_keys() {
-    let current = [member("a", "K1"), member("b", "K2")];
-    let plan = land("append", &current, &[row("c"), row("a")], false);
+    let current = stored("K2", vec![member("a", "K1", 0)]);
+    let plan = land("append", &current, &[row("c"), row("a")]);
     let added = appended(&plan);
     assert_eq!(added.len(), 1);
     assert_eq!(added[0].0, "c");
@@ -111,9 +108,16 @@ fn next_page_appends_after_the_largest_key_and_keeps_existing_keys() {
 }
 
 #[test]
-fn first_page_reorder_moves_existing_members() {
-    let current = [member("a", "K1"), member("b", "K2")];
-    let plan = land("reorder", &current, &[row("b"), row("a")], true);
+fn foreign_scope_is_rejected() {
+    let foreign = ScopeRef::new(ModelKey::new("other"), ScopeKey::compose(&["other", "items"]));
+    assert_eq!(plan_landing(&foreign, &person(), &StoredScope::default(), &[row("x")]), Err(LandingError::ScopeModelMismatch));
+}
+
+
+#[test]
+fn next_page_moves_members_whose_position_differs_from_the_page_index() {
+    let current = stored("K2", vec![member("a", "K1", 0), member("b", "K2", 1)]);
+    let plan = land("reorder", &current, &[row("b"), row("a")]);
     let moved: Vec<&RowId> = plan
         .scope_ops
         .iter()
@@ -124,19 +128,4 @@ fn first_page_reorder_moves_existing_members() {
         .collect();
     assert_eq!(moved.len(), 2);
     assert!(appended(&plan).is_empty());
-}
-
-#[test]
-fn foreign_scope_is_rejected() {
-    let foreign = ScopeRef::new(ModelKey::new("other"), ScopeKey::compose(&["other", "items"]));
-    assert_eq!(plan_landing(&foreign, &person(), &[], &[row("x")], true), Err(LandingError::ScopeModelMismatch));
-}
-
-#[test]
-fn detaches_come_before_inserts_and_moves() {
-    let current = [member("a", "k1"), member("b", "k2")];
-    let plan = land("order", &current, &[row("b"), row("c")], true);
-    let first_detach = plan.scope_ops.iter().position(|operation| matches!(operation, ScopeOp::Detach { .. })).unwrap();
-    let first_other = plan.scope_ops.iter().position(|operation| !matches!(operation, ScopeOp::Detach { .. })).unwrap();
-    assert!(first_detach < first_other);
 }

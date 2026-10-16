@@ -14,7 +14,6 @@ mod boot;
 mod error;
 mod file_ops;
 mod maintenance;
-mod membership;
 mod open;
 mod readers;
 mod reset;
@@ -31,7 +30,6 @@ pub(crate) use apply::save_pending;
 pub use boot::BootReport;
 pub use error::StoreError;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
-pub use membership::{MembershipChange, MembershipPlan};
 pub use rows::{Reader, StoredRow};
 #[cfg(test)]
 pub use rows::ScopeRowsResult;
@@ -214,8 +212,6 @@ mod boot_tests;
 mod file_ops_tests;
 #[cfg(test)]
 mod maintenance_tests;
-#[cfg(test)]
-mod membership_tests;
 #[cfg(test)]
 mod memory_tests;
 #[cfg(test)]

@@ -187,6 +187,21 @@ impl<'a> Reader<'a> {
         Ok(members)
     }
 
+    pub fn scope_member_positions(&self, model: &str, scope_key: &str, row_ids: &[&str]) -> Result<Vec<(String, String, usize)>, StoreError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT m.order_key, (SELECT COUNT(*) FROM scope_member AS p WHERE p.model = m.model AND p.scope_key = m.scope_key \
+             AND (p.order_key < m.order_key OR (p.order_key = m.order_key AND p.row_id < m.row_id))) \
+             FROM scope_member AS m WHERE m.model = ?1 AND m.scope_key = ?2 AND m.row_id = ?3",
+        )?;
+        let mut found = Vec::new();
+        for row_id in row_ids {
+            let member: Option<(String, i64)> = statement.query_row(params![model, scope_key, row_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+            found.extend(member.map(|(order_key, position)| (row_id.to_string(), order_key, usize::try_from(position).unwrap_or_default())));
+        }
+        touch(found.len());
+        Ok(found)
+    }
+
     pub fn scope_has_member(&self, model: &str, scope_key: &str, row_id: &str) -> Result<bool, StoreError> {
         let found: Option<i64> = self
             .connection

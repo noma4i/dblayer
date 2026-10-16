@@ -6,7 +6,7 @@ use crate::commit::{CommitEnvelope, EntityOp, EnvelopeFault, ScopeRef, WindowSav
 use crate::identity::{ModelKey, RowId};
 use crate::db::{Db, Prior, ReplaceRequest};
 use crate::schema::Coverage;
-use crate::read::{plan_landing, StoredMember};
+use crate::read::{incoming_ids, plan_landing, StoredMember, StoredScope};
 use crate::store::{admit_upsert, PageInfo, PlanCommitError, Reader, StoreError, UpsertAdmission};
 use crate::transport::FetchAttempt;
 use crate::value::read_id;
@@ -109,12 +109,17 @@ impl Inner {
                 let request = ReplaceRequest::new(scope.clone(), coverage);
                 self.db.replace_plan(reader, &request, &roots, Some(attempt.base_revision)).map_err(|error| SyncError::Malformed(error.to_string()))?
             } else {
-                let current: Vec<StoredMember> = reader
-                    .scope_members(&model, scope.key.as_str())?
-                    .into_iter()
-                    .map(|(id, order_key)| StoredMember { id, order_key })
-                    .collect();
-                plan_landing(&scope, &model_key, &current, &roots, false).map_err(|error| SyncError::Malformed(error.to_string()))?
+                let ids: Vec<String> = incoming_ids(&roots).iter().map(ToString::to_string).collect();
+                let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
+                let stored = StoredScope {
+                    last_key: reader.scope_last_key(&model, scope.key.as_str())?,
+                    incoming: reader
+                        .scope_member_positions(&model, scope.key.as_str(), &wanted)?
+                        .into_iter()
+                        .map(|(id, order_key, position)| StoredMember { id, order_key, position })
+                        .collect(),
+                };
+                plan_landing(&scope, &model_key, &stored, &roots).map_err(|error| SyncError::Malformed(error.to_string()))?
             };
             let planned: BTreeSet<(ModelKey, RowId)> = plan.entity_ops.iter().map(|op| {
                 let row = op.row_ref();
