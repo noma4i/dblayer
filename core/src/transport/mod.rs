@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 mod cancel;
+pub(crate) mod encrypted;
 mod error;
 mod events;
 mod fetch;
@@ -14,6 +15,7 @@ mod retry;
 mod subscription;
 
 pub use cancel::CancelToken;
+pub use encrypted::{Answer, ConfigError, CredentialStore, EncryptedClient, EncryptedConfig, EncryptedTransport, HttpExchange, HttpReply, ServerConfig, ServerKeyInfo, LOGOUT_PATH};
 pub use error::TransportError;
 pub use events::{EventFault, EventSpec};
 pub use fetch::{FetchAttempt, FetchError, FetchReport};

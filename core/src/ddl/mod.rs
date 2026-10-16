@@ -60,7 +60,7 @@ const CACHE_STATEMENTS: [&str; 8] = [
 ) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 21] = [
+const CORE_STATEMENTS: [&str; 23] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -184,6 +184,20 @@ const CORE_STATEMENTS: [&str; 21] = [
   model TEXT NOT NULL
 ) STRICT",
     "CREATE INDEX IF NOT EXISTS quarantine_reason ON quarantine (reason, seq)",
+    "CREATE TABLE IF NOT EXISTS encrypted_session (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  credential_digest TEXT NOT NULL,
+  sequence INTEGER NOT NULL
+) STRICT",
+    "CREATE TABLE IF NOT EXISTS encrypted_pending (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  credential_digest TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  response_key TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  body TEXT NOT NULL
+) STRICT",
     "CREATE TABLE IF NOT EXISTS file (
   id TEXT PRIMARY KEY NOT NULL,
   model TEXT NOT NULL,

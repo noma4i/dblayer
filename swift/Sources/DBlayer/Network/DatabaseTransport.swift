@@ -1,8 +1,8 @@
 import Foundation
 
-/// Serves the database core over the signed HTTP pipeline (`OperationRun`) and the Cable socket.
+/// Serves the Cable socket and uploads, and queries and mutations over the signed HTTP pipeline (`OperationRun`) when one is given.
 public final class DatabaseTransport: Transport, @unchecked Sendable {
-  private let run: @Sendable () async throws -> OperationRun
+  private let run: (@Sendable () async throws -> OperationRun)?
   private let cable: @Sendable () async -> CableClient?
   private let onEvent: @Sendable (String, String) -> Void
   private let uploads = UrlSessionTransport(endpoint: URL(fileURLWithPath: "/"))
@@ -10,7 +10,7 @@ public final class DatabaseTransport: Transport, @unchecked Sendable {
   private var tasks: [String: Task<Void, Never>] = [:]
 
   public init(
-    run: @escaping @Sendable () async throws -> OperationRun,
+    run: (@Sendable () async throws -> OperationRun)? = nil,
     cable: @escaping @Sendable () async -> CableClient?,
     onEvent: @escaping @Sendable (String, String) -> Void = { _, _ in }
   ) {
@@ -71,6 +71,7 @@ public final class DatabaseTransport: Transport, @unchecked Sendable {
   }
 
   private func send(_ request: TransportRequest, kind: GraphQLOperationKind) async throws -> String {
+    guard let run else { throw DbError.Invalid(detail: "queries and mutations run in the encrypted session of the database") }
     do {
       let data = try await run().send(operationName: request.operationName, document: request.document, variables: JSONValue.parse(request.variablesJson), kind: kind)
       return String(decoding: data, as: UTF8.self)

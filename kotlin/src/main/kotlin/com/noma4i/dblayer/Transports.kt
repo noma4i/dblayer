@@ -68,9 +68,9 @@ class NetworkTransport(private val run: OperationRun, private val cable: CableCl
     }
 }
 
-/** Serves the database core over the signed HTTP pipeline and the Cable socket. */
+/** Serves the Cable socket and uploads, and queries and mutations over the signed HTTP pipeline when one is given. */
 class DatabaseTransport(
-    private val run: suspend () -> OperationRun,
+    private val run: (suspend () -> OperationRun)? = null,
     private val cable: suspend () -> CableClient?,
     private val client: OkHttpClient = OkHttpClient(),
     private val onEvent: (operationName: String, json: String) -> Unit = { _, _ -> },
@@ -116,12 +116,15 @@ class DatabaseTransport(
     override suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray, progress: ByteProgress): PutReply =
         putBytes(client, url, headers, bytes, progress)
 
-    private suspend fun send(request: TransportRequest, kind: GraphQLOperationKind): String = try {
-        String(run().send(request.operationName, request.document, parseJson(request.variablesJson), kind))
-    } catch (error: CancellationException) {
-        throw error
-    } catch (error: Exception) {
-        throw classifyTransportFailure(error, kind)
+    private suspend fun send(request: TransportRequest, kind: GraphQLOperationKind): String {
+        val run = run ?: throw DbException.Invalid("queries and mutations run in the encrypted session of the database")
+        return try {
+            String(run().send(request.operationName, request.document, parseJson(request.variablesJson), kind))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            throw classifyTransportFailure(error, kind)
+        }
     }
 }
 

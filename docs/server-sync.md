@@ -27,6 +27,76 @@ object ArchiveChatMutation : GraphQLOperation {
 
 The transport is an interface with three calls: `query`, `mutate` and `subscribe`. Your app gets HTTP and WebSocket implementations for each platform. Tests use a mock transport. A REST transport implements the same interface.
 
+## Encrypted session
+
+A server that takes only encrypted requests (JWE over HTTPS) needs no signing code in the app. The core builds and opens every request. The app gives it three things:
+
+| Piece | What it is |
+| ----- | ---------- |
+| `EncryptedConfig` | `origin` (`https://host`, no path), `serverKey` (the server public key, base64 DER) and `pin` (SHA-256 of that DER, lowercase hex). The key must have at least 3072 bits and match the pin. Ship both with the app. Do not download them |
+| `EncryptedHttp` | `post` sends the request text to `origin + path` as `application/jose`. `get` reads the public config. Both return the status and the body. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
+| `CredentialStore` | `get`, `set` and `clear` keep one string in the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite |
+
+The database opens with its own transport for queries and mutations. The transport you pass serves subscriptions and file uploads.
+
+```swift
+let origin = URL(string: "https://api.example.com")!
+let database = try Database.openEncrypted(
+  config: Config(path: path, dataVersion: nil, cacheRows: 4096),
+  modelsJson: modelsJSON,
+  encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin),
+  http: UrlSessionEncryptedHttp(origin: origin),
+  credentials: KeychainCredentials(),   // your CredentialStore
+  transport: DatabaseTransport(cable: { await cable.current })
+)
+_ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
+let answer = try await database.sessionCall(operation: "confirm", bodyJson: #"{"code":"123456"}"#)
+```
+
+```kotlin
+val origin = "https://api.example.com"
+val database = Database.openEncrypted(
+    Config(path, null, 4096u),
+    modelsJSON,
+    EncryptedConfig(origin, bundledServerKey, bundledServerPin),
+    OkHttpEncryptedHttp(origin),
+    KeystoreCredentials(),   // your CredentialStore
+    DatabaseTransport(cable = { cable.current }),
+)
+database.sessionCall("otp", """{"phone":"+61400000000"}""")
+val answer = database.sessionCall("confirm", """{"code":"123456"}""")
+```
+
+`sessionCall` sends one of the sign-in operations and returns the answer body as JSON text. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`.
+
+| Operation | Body | Answer |
+| --------- | ---- | ------ |
+| `otp` | `phone` | `nextStep` |
+| `confirm` | `code` | `nextStep` |
+| `social` | the Apple or Google sign-in fields of the server API: the source name (`apple` or `google`), `idToken`, optional `authCode` and `name` | `nextStep` |
+| `logout` | `{}` | `revoked`. The core then deletes the credential and the session state |
+
+| Session code | Meaning | Credential and state |
+| ------------ | ------- | -------------------- |
+| `invalidCode`, `invalidPhone`, `invalidProvider`, `providerRejected`, `alreadyAuthenticated` | the server refused the step | kept, the sequence is confirmed |
+| `rateLimited`, `accountUnavailable` | too many codes or a disabled account | kept, the sequence is confirmed |
+| `sequenceConflict`, `unauthenticated`, `sessionEnded` | the server holds another request for this sequence or no session | kept, the pending request stays |
+| `replayedRequest` | a read arrived twice. The core already repeated it once with a new request id | kept |
+| `serverKeyMismatch` | the key in the config differs from the pinned key | kept |
+| `other` | any other `error` value, the text is in `detail` | kept |
+
+`serverConfig()` reads `GET /api/v3/config` and returns `protocolVersion`, `minAppVersion`, `graphqlUrl`, `cableUrl` and `serverKey`. It compares the announced key id with the pin and the announced DER with `EncryptedConfig.serverKey`, and throws `serverKeyMismatch` when either differs or when the algorithms are not RSA-OAEP with A256GCM. Take the addresses and versions from it. Never take the key from it.
+
+Rules of the session:
+
+- Every mutation, including a sign-in operation, carries the next sequence number. A query carries none and gets a new request id each time.
+- The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call, `sessionResume()` or a restart sends the identical request again and the server answers from its record. Only the time stamp changes.
+- While a request is pending, a different mutation fails with a network error and sends nothing. `sessionResume()` sends the pending request and returns its answer.
+- A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
+- A credential with no matching session state (for example a restored Keychain with a new database file) is replaced by a new credential. The next call is unauthenticated.
+- Errors: `503` is a retryable HTTP error, `400` means a bad request or a device clock more than 2 minutes behind or 30 seconds ahead of the server, `413` means more than 256 KiB. A lost connection is a network error.
+- `sessionReset()` deletes the credential and the stored state without contacting the server.
+
 ## Responses become rows
 
 Every response, whether from a query, a mutation or a subscription event, goes through the same rules:

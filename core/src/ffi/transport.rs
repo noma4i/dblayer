@@ -87,7 +87,7 @@ impl OnlineSink {
 
 pub(super) struct ForeignTransport(pub Arc<dyn Transport>);
 
-fn transport_error(error: DbError) -> core::TransportError {
+pub(super) fn transport_error(error: DbError) -> core::TransportError {
     match error {
         DbError::Network { detail } => core::TransportError::Network(detail),
         DbError::Interrupted { detail } => core::TransportError::Interrupted(detail),

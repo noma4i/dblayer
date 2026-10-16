@@ -10,6 +10,7 @@ use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::query::{Query, Where};
 use crate::schema::ModelSpec;
 use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
+use crate::transport::{self as core, EncryptedClient};
 use super::entities::{self, EntityListener, LiveEntities};
 use super::live::LiveHandles;
 use super::transport::ForeignTransport;
@@ -72,17 +73,29 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+
+pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
 impl Database {
     fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
+        Self::start_with(config, models_json, clock, |_, _| Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None)))
+    }
+
+    pub(super) fn start_with(
+        config: Config,
+        models_json: String,
+        clock: Arc<dyn Clock>,
+        wire: impl FnOnce(&Db, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
+    ) -> Result<Arc<Self>, DbError> {
         let models: Vec<ModelSpec> = serde_json::from_str(&models_json)?;
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
         let db = Db::open_with(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), DbConfig { cache_rows: config.cache_rows as usize })?;
         db.set_clock(clock.clone());
-        let sync = transport.map(|transport| Sync::new(db.clone(), Arc::new(ForeignTransport(transport)), clock, SyncConfig::default()));
+        let (transport, session) = wire(&db, &clock)?;
+        let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock, SyncConfig::default()));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { db, sync, wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { db, sync, session, wires: Arc::new(wires) }))
     }
 
     fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {

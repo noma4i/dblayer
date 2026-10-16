@@ -1,4 +1,5 @@
 mod database;
+mod encrypted;
 mod entities;
 mod live;
 mod retention;
@@ -7,6 +8,8 @@ mod transport;
 pub mod wire;
 
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
+pub use encrypted::{CredentialStore, EncryptedHttp, EncryptedReply, SessionCode};
+pub use crate::transport::{EncryptedConfig, ServerConfig, ServerKeyInfo};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
 pub use live::{LiveChange, LiveSubscription, QueryListener};
 pub use retention::{RetentionChange, RetentionPool};
@@ -30,6 +33,8 @@ pub enum DbError {
     Http { status: u16, detail: String },
     #[error("graphql: {}", messages.join("\n"))]
     Graphql { messages: Vec<String> },
+    #[error("session {code:?}: {detail}")]
+    Session { code: SessionCode, detail: String },
 }
 
 impl From<crate::db::DbError> for DbError {
@@ -54,6 +59,8 @@ impl From<serde_json::Error> for DbError {
     fn from(error: serde_json::Error) -> Self { Self::Invalid { detail: error.to_string() } }
 }
 
+#[cfg(test)]
+mod encrypted_tests;
 #[cfg(test)]
 mod executor_tests;
 #[cfg(test)]

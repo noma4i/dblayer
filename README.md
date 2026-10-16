@@ -14,6 +14,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - **Offline writes.** Create, update and destroy are applied optimistically and queued. The queue survives restarts, is sent in order, rolled back on a final failure and replaces temporary ids with server ids.
 - **GraphQL without glue code.** Register your operations and point models at them. Responses of queries, mutations and subscription events are normalized into rows by one set of rules. Refetching after mutations, reconnects and app resume is automatic.
 - **No flicker.** One change is one commit. Observers see cascades, replacements and id swaps as a single transition, in order. Pull-to-refresh replaces data in one commit with no empty state in between.
+- **Encrypted sessions.** The core builds and opens encrypted requests, numbers mutations and stores a pending mutation before it is sent, so a lost answer is repeated unchanged after a restart. The app supplies only the HTTP post and the credential storage. See [server sync](docs/server-sync.md).
 - **Files built in.** A `file` field stores binary data. You never choose where bytes live: SQLite or disk.
 - **Background delivery.** Observers receive updates from library threads. Disk reads use a bounded WAL connection pool beside the writer. Releasing synchronization stops its background work. See [threading](docs/threading.md).
 - **One core, two platforms.** All logic is Rust. Swift and Kotlin contain no business logic.
@@ -107,6 +108,27 @@ fun FeedScreen(me: User) {
 }
 
 val moment = Moment.create(text = "hello")            // optimistic, queued, synced
+```
+
+### Encrypted sign-in
+
+```swift
+let database = try Database.openEncrypted(
+  config: Config(path: path, dataVersion: nil, cacheRows: 4096), modelsJson: modelsJSON,
+  encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin),
+  http: UrlSessionEncryptedHttp(origin: URL(string: "https://api.example.com")!),
+  credentials: KeychainCredentials(), transport: DatabaseTransport(cable: { nil })
+)
+_ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
+```
+
+```kotlin
+val database = Database.openEncrypted(
+  Config(path, null, 4096u), modelsJSON,
+  EncryptedConfig("https://api.example.com", serverKey, serverPin),
+  OkHttpEncryptedHttp("https://api.example.com"), KeystoreCredentials(), DatabaseTransport(cable = { null }),
+)
+database.sessionCall("otp", """{"phone":"+61400000000"}""")
 ```
 
 See [docs/live-data.md](docs/live-data.md) for UIKit, view models, single records, loading state and diffs.
