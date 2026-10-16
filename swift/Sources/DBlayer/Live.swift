@@ -177,6 +177,7 @@ public final class LiveList<Model: DBModel> {
   public private(set) var state = LoadState()
   public private(set) var failure: String?
   @ObservationIgnored private let query: Query<Model>
+  @ObservationIgnored private var pending: [ListEdit<Model>]?
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
   @ObservationIgnored private var initialLoad: Task<Void, Error>?
 
@@ -208,6 +209,7 @@ public final class LiveList<Model: DBModel> {
           if let snapshot = next.snapshot {
             replaced = snapshot.replaced
             if snapshot.failure != failure { failure = snapshot.failure }
+            pending = ListEdit.composing(pending, snapshot.edits, within: snapshot.rows.count)
             rows = snapshot.rows
             if snapshot.reordered { ids = snapshot.rows.map(\.id) }
           }
@@ -215,6 +217,12 @@ public final class LiveList<Model: DBModel> {
         }
       }
     ]
+  }
+
+  /// The steps since the reader last took them, nil when the reader takes `rows` whole.
+  public func takeEdits() -> [ListEdit<Model>]? {
+    defer { pending = [] }
+    return pending
   }
 
   public func refresh() async throws { try await query.refresh() }

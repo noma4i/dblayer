@@ -12,12 +12,27 @@ import java.util.concurrent.atomic.AtomicInteger
 private val decodeLog = java.util.logging.Logger.getLogger("DBlayer")
 private val reopening = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-internal class ListState<Model>(val rows: List<Model>, val reordered: Boolean, val desynced: Boolean = false, val failure: String? = null)
+internal class ListState<Model>(
+    val rows: List<Model>,
+    val reordered: Boolean,
+    val desynced: Boolean = false,
+    val failure: String? = null,
+    /** The steps from the rows of the previous delivery to `rows`, or null when the reader has to take `rows` whole. */
+    val edits: List<ListEdit<Model>>? = null,
+)
 
 internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model>) {
     private class Slot<Model>(val id: String, val row: Model?)
 
+    private sealed class Undo<Model> {
+        class Restore<Model>(val index: Int, val slot: Slot<Model>) : Undo<Model>()
+        class Reinsert<Model>(val index: Int, val slot: Slot<Model>) : Undo<Model>()
+        class Drop<Model>(val index: Int) : Undo<Model>()
+    }
+
     private val slots = ArrayList<Slot<Model>>()
+    private var loaded = ArrayList<Model>()
+    private var missing = 0
     private val decoded = AtomicInteger()
     private val undecodable = AtomicInteger()
     private val desynced = AtomicInteger()
@@ -27,12 +42,14 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
     val desyncs: Int get() = desynced.get()
 
     @get:Synchronized
-    val rows: List<Model> get() = slots.mapNotNull { it.row }
+    val rows: List<Model> get() = current()
+
+    private fun current(): List<Model> = if (missing == 0) ArrayList(loaded) else slots.mapNotNull { it.row }
 
     @OptIn(ExperimentalSerializationApi::class)
     @Synchronized
     fun apply(change: LiveChange): ListState<Model> {
-        if (change.error != null) return ListState(rows, false)
+        if (change.error != null) return ListState(current(), false)
         val carried = change.rows.mapIndexed { position, wire ->
             decoded.incrementAndGet()
             val index = if (change.full) position else change.rowIndexes[position].toInt()
@@ -44,48 +61,88 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
         if (change.full) {
             slots.clear()
             slots.addAll(carried.map { it.first })
-            return ListState(rows, true)
+            missing = slots.count { it.row == null }
+            loaded = if (missing == 0) ArrayList(slots.map { it.row!! }) else ArrayList()
+            return ListState(current(), true)
         }
         val reordered = change.removed.isNotEmpty() || change.placed.isNotEmpty() || change.replaced.isNotEmpty()
-        val next = ArrayList(slots)
-        if (!applyDelta(change, carried, next)) {
+        val held = missing == 0
+        val edits = ArrayList<ListEdit<Model>>()
+        if (!applyDelta(change, carried, edits)) {
             desynced.incrementAndGet()
-            return ListState(rows, reordered, desynced = true)
+            return ListState(current(), reordered, desynced = true)
         }
-        slots.clear()
-        slots.addAll(next)
-        return ListState(rows, reordered)
+        if (!held || missing != 0 || edits.size > slots.size) {
+            loaded = if (missing == 0) ArrayList(slots.map { it.row!! }) else ArrayList()
+            return ListState(current(), reordered)
+        }
+        loaded.replay(edits)
+        return ListState(current(), reordered, edits = edits)
     }
 
-    private fun applyDelta(change: LiveChange, carried: List<Pair<Slot<Model>, Int>>, slots: ArrayList<Slot<Model>>): Boolean {
+    private fun applyDelta(change: LiveChange, carried: List<Pair<Slot<Model>, Int>>, edits: MutableList<ListEdit<Model>>): Boolean {
+        val undo = ArrayList<Undo<Model>>()
+        val missingBefore = missing
+        fun fail(): Boolean {
+            for (step in undo.asReversed()) when (step) {
+                is Undo.Restore -> slots[step.index] = step.slot
+                is Undo.Reinsert -> slots.add(step.index, step.slot)
+                is Undo.Drop -> slots.removeAt(step.index)
+            }
+            missing = missingBefore
+            return false
+        }
+        fun write(index: Int, slot: Slot<Model>) {
+            val old = slots[index]
+            undo.add(Undo.Restore(index, old))
+            if (old.row == null) missing--
+            slots[index] = slot
+            if (slot.row == null) missing++ else edits.add(ListEdit.Rewrite(index, slot.row))
+        }
+        fun take(index: Int): Slot<Model> {
+            val slot = slots.removeAt(index)
+            undo.add(Undo.Reinsert(index, slot))
+            if (slot.row == null) missing--
+            edits.add(ListEdit.Remove(index, slot.id))
+            return slot
+        }
+        fun put(index: Int, slot: Slot<Model>) {
+            slots.add(index, slot)
+            undo.add(Undo.Drop(index))
+            if (slot.row == null) missing++ else edits.add(ListEdit.Insert(index, slot.row))
+        }
         val byId = carried.associate { it.first.id to it.first }
+        val landed = HashSet<String>()
         for (pair in change.replaced) {
             val at = slots.indexOfFirst { it.id == pair.from }
             val slot = byId[pair.to]
-            if (at < 0 || slot == null) return false
-            slots[at] = slot
+            if (at < 0 || slot == null) return fail()
+            write(at, slot)
+            landed.add(pair.to)
         }
         if (change.removed.isNotEmpty()) {
             val gone = change.removed.toSet()
-            val before = slots.size
-            slots.removeAll { it.id in gone }
-            if (before - slots.size != gone.size) return false
+            val found = slots.indices.filter { slots[it].id in gone }
+            if (found.size != gone.size) return fail()
+            for (index in found.asReversed()) take(index)
         }
         val taken = HashMap<String, Slot<Model>>()
         for (place in change.placed) {
             val at = slots.indexOfFirst { it.id == place.id }
-            if (at >= 0) taken[place.id] = slots.removeAt(at)
+            if (at >= 0) taken[place.id] = take(at)
         }
         for (place in change.placed) {
             val slot = taken[place.id] ?: byId[place.id]
-            if (slot == null || place.index.toInt() > slots.size) return false
-            slots.add(place.index.toInt(), slot)
+            if (slot == null || place.index.toInt() > slots.size) return fail()
+            put(place.index.toInt(), slot)
+            if (taken[place.id] == null) landed.add(place.id)
         }
         for ((slot, index) in carried) {
-            if (index >= slots.size) return false
-            slots[index] = slot
+            if (index >= slots.size) return fail()
+            if (slot.id in landed && slots[index].id == slot.id) continue
+            write(index, slot)
         }
-        return slots.size == change.size.toInt()
+        return if (slots.size == change.size.toInt()) true else fail()
     }
 }
 

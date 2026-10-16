@@ -71,7 +71,14 @@ class LiveSource<Value>(
 }
 
 /** The rows of a delivery with the ids it replaced: the real id of a row that replaced a temporary one, to the temporary id. */
-data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, String>, val reordered: Boolean = false, val failure: String? = null) {
+data class Snapshot<Model>(
+    val rows: List<Model>,
+    val replaced: Map<String, String>,
+    val reordered: Boolean = false,
+    val failure: String? = null,
+    /** The steps from the rows of the previous delivery to `rows`, or null when the reader has to take `rows` whole. */
+    val edits: List<ListEdit<Model>>? = null,
+) {
     internal companion object {
         /** The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost. */
         fun <Model> merging(older: Snapshot<Model>, newer: Snapshot<Model>): Snapshot<Model> {
@@ -80,7 +87,7 @@ data class Snapshot<Model>(val rows: List<Model>, val replaced: Map<String, Stri
                 replaced[real] = older.replaced[temporary] ?: temporary
                 if (older.replaced.containsKey(temporary)) replaced.remove(temporary)
             }
-            return Snapshot(newer.rows, replaced, older.reordered || newer.reordered, newer.failure ?: older.failure)
+            return Snapshot(newer.rows, replaced, older.reordered || newer.reordered, newer.failure ?: older.failure, ListEdit.composing(older.edits, newer.edits, newer.rows.size))
         }
     }
 }
@@ -139,6 +146,7 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     private val mutableFailure = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     private val mutableReplaced = kotlinx.coroutines.flow.MutableStateFlow<Map<String, String>>(emptyMap())
     private val mutableState = kotlinx.coroutines.flow.MutableStateFlow(LoadState())
+    private var pending: List<ListEdit<Model>>? = null
 
     init {
         val snapshots = query.snapshots(refreshOnConnect) { result ->
@@ -153,7 +161,7 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
         }
         scope.launch {
             source.flow.collect { update ->
-                update.snapshot?.let { mutableReplaced.value = it.replaced; mutableFailure.value = it.failure; mutableRows.value = it.rows; if (it.reordered) mutableIds.value = it.rows.map { row -> row.id } }
+                update.snapshot?.let { synchronized(this@LiveList) { pending = ListEdit.composing(pending, it.edits, it.rows.size) }; mutableReplaced.value = it.replaced; mutableFailure.value = it.failure; mutableRows.value = it.rows; if (it.reordered) mutableIds.value = it.rows.map { row -> row.id } }
                 update.state?.let { mutableState.value = it }
             }
         }
@@ -165,6 +173,9 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     val replaced: kotlinx.coroutines.flow.StateFlow<Map<String, String>> get() = mutableReplaced
     val failure: kotlinx.coroutines.flow.StateFlow<String?> get() = mutableFailure
     val state: kotlinx.coroutines.flow.StateFlow<LoadState> get() = mutableState
+
+    /** The steps from the rows the reader took last to `rows`, then the reader is up to date. Null means the reader takes `rows` whole: it is the first read, or a delivery came without steps, or the steps outgrew the rows. */
+    fun takeEdits(): List<ListEdit<Model>>? = synchronized(this) { pending.also { pending = emptyList() } }
 
     suspend fun refresh() = query.refresh()
     suspend fun waitForInitialLoad() = initialSubscription.await().waitForInitialLoad()

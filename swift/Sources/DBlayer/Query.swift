@@ -125,7 +125,7 @@ public struct Query<Model: DBModel>: Sendable {
       connected(result)
       return try result.get()
     }) { (applied: ListApplied<Model>, change) in
-      Snapshot(rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, failure: applied.failure)
+      Snapshot(rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, failure: applied.failure, edits: applied.edits)
     }
   }
 
@@ -149,12 +149,15 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public let replaced: [String: String]
   public let reordered: Bool
   public let failure: String?
+  /// The steps from the previous delivery to `rows`, nil when the reader takes `rows` whole.
+  public let edits: [ListEdit<Model>]?
 
-  public init(rows: [Model], replaced: [String: String], reordered: Bool = false, failure: String? = nil) {
+  public init(rows: [Model], replaced: [String: String], reordered: Bool = false, failure: String? = nil, edits: [ListEdit<Model>]? = nil) {
     self.rows = rows
     self.replaced = replaced
     self.reordered = reordered
     self.failure = failure
+    self.edits = edits
   }
 
   /// The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost.
@@ -164,7 +167,8 @@ public struct Snapshot<Model: DBModel>: Sendable {
       replaced[real] = older.replaced[temporary] ?? temporary
       if older.replaced[temporary] != nil { replaced[temporary] = nil }
     }
-    return Snapshot(rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered, failure: newer.failure ?? older.failure)
+    let edits = ListEdit.composing(older.edits, newer.edits, within: newer.rows.count)
+    return Snapshot(rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered, failure: newer.failure ?? older.failure, edits: edits)
   }
 }
 

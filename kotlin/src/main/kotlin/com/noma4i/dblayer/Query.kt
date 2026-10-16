@@ -104,7 +104,7 @@ class Query<Model : DBModel>(
             connected(result)
             result.getOrThrow()
         }) { applied, change ->
-            Snapshot(applied.rows, change.replacedIds(), applied.reordered, applied.failure)
+            Snapshot(applied.rows, change.replacedIds(), applied.reordered, applied.failure, applied.edits)
         }
 
     val count: LiveSource<Long>

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 - 2026-10-16
+
+### Added
+- `Snapshot.edits` and `LiveList.takeEdits()`: the ordered steps from the previous rows to the new rows, joined across deliveries a slow reader missed, in Swift and Kotlin.
+- `replay` applies the steps to a mirror of the rows.
+
+### Changed
+- The list feed keeps the decoded rows between deliveries and undoes a refused delivery without copying the slots.
+
 ## 1.0.1 - 2026-10-16
 
 ### Fixed
