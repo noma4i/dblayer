@@ -34,6 +34,7 @@ pub(crate) struct Event {
     pub models: BTreeSet<ModelKey>,
     pub scopes: BTreeSet<ScopeRef>,
     pub rows: BTreeSet<RowRef>,
+    pub members: BTreeSet<RowRef>,
     pub replaced: Vec<(RowId, RowId)>,
     pub reset_all: bool,
     pub reset_models: BTreeSet<ModelKey>,
@@ -46,6 +47,7 @@ impl Event {
             models: result.changed_models(),
             scopes: result.scopes.clone(),
             rows: result.rows.iter().map(|change| change.row.clone()).collect(),
+            members: result.members.clone(),
             replaced: result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())).collect(),
             ..Self::default()
         }
@@ -66,6 +68,7 @@ impl Event {
         self.models.extend(later.models);
         self.scopes.extend(later.scopes);
         self.rows.extend(later.rows);
+        self.members.extend(later.members);
         self.replaced.extend(later.replaced);
         self.reset_all |= later.reset_all;
         self.reset_models.extend(later.reset_models);

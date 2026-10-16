@@ -505,8 +505,8 @@ pub(crate) fn apply_envelope(
         visible = visible_scope_ops(&envelope.scope_ops, &hidden);
         &visible
     };
-    wrote |= apply_scope_ops(connection, &moves, &mut result.scopes)?;
-    wrote |= apply_scope_ops(connection, scope_ops, &mut result.scopes)?;
+    wrote |= apply_scope_ops(connection, &moves, &mut result.scopes, &mut result.members)?;
+    wrote |= apply_scope_ops(connection, scope_ops, &mut result.scopes, &mut result.members)?;
     if let Some(window) = &envelope.window {
         save_window(connection, window, envelope.generation, now_ms)?;
     }
@@ -521,6 +521,7 @@ pub(crate) fn apply_envelope(
         }
     } else {
         result.scopes.clear();
+        result.members.clear();
     }
     Ok(result)
 }
@@ -575,6 +576,7 @@ fn apply_scope_ops(
     connection: &Connection,
     operations: &[ScopeOp],
     scopes: &mut BTreeSet<ScopeRef>,
+    members: &mut BTreeSet<RowRef>,
 ) -> Result<bool, StoreError> {
     let mut wrote = false;
     for operation in operations {
@@ -605,6 +607,8 @@ fn apply_scope_ops(
         if changed > 0 {
             wrote = true;
             scopes.insert(operation.scope().clone());
+            let (ScopeOp::Append { scope, row, .. } | ScopeOp::Move { scope, row, .. } | ScopeOp::Detach { scope, row }) = operation;
+            members.insert(RowRef::new(scope.model.clone(), row.clone()));
         }
     }
     Ok(wrote)

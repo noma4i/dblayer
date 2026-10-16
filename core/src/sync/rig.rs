@@ -17,7 +17,7 @@ use super::{OperationDef, Sync, SyncConfig};
 
 pub const START_MS: u64 = 1_000_000;
 
-fn remote(operation: &str, shape: RemoteShape, stale: &str) -> RemoteSpec {
+pub fn remote(operation: &str, shape: RemoteShape, stale: &str) -> RemoteSpec {
     let selects_page_info = matches!(shape, RemoteShape::Connection { .. });
     RemoteSpec { operation: operation.to_string(), shape, stale_time: stale.to_string(), empty_stale_time: None, selects_page_info, updates: Vec::new(), page_size: None, variables: Default::default(), root: None }
 }

@@ -112,7 +112,7 @@ impl Observers {
             if event.reset_all || !group.deps.reset_models.is_disjoint(&event.reset_models) {
                 return None;
             }
-            ids.extend(event.rows.iter().filter(|row| row.model == query.model).map(|row| row.id.to_string()));
+            ids.extend(event.rows.iter().chain(&event.members).filter(|row| row.model == query.model).map(|row| row.id.to_string()));
         }
         Some(ids)
     }

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::identity::RowId;
-use crate::query::{compile_ranked, fetch_ranked, ranking, Query, QueryError, RankedRow};
+use crate::query::{compile_ranked, fetch_ranked, windowable, Query, QueryError, RankedRow};
 use crate::store::Reader;
 
 use super::diff::{Entry, Stamp};
@@ -162,7 +162,7 @@ impl Shared {
     }
 
     pub(crate) fn window_body(&self, reader: &Reader<'_>, query: &Query, spec: &WindowSpec) -> Result<(Body, Loaded), DbError> {
-        if !ranking(query) {
+        if !windowable(query) {
             return Err(QueryError::NotWindowable.into());
         }
         let index = self.window_index(reader, query)?;
@@ -263,7 +263,7 @@ impl Shared {
 
 impl Db {
     pub fn observe_window(&self, query: Query, spec: WindowSpec, listener: impl Fn(&Change) + Send + Sync + 'static) -> Result<WindowHandle, DbError> {
-        if !ranking(&query) {
+        if !windowable(&query) {
             return Err(QueryError::NotWindowable.into());
         }
         self.observe_subject(Subject::window(query, spec), listener).map(|observer| WindowHandle { observer })
@@ -272,7 +272,7 @@ impl Db {
 
 impl Db {
     pub fn read_slice(&self, query: &Query, slice: Slice) -> Result<Page, DbError> {
-        if !ranking(query) {
+        if !windowable(query) {
             return Err(QueryError::NotWindowable.into());
         }
         let model = query.model.as_str();

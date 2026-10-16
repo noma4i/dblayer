@@ -1,5 +1,6 @@
 package com.noma4i.dblayer
 
+import com.noma4i.dblayer.models.Message
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
@@ -65,5 +66,44 @@ class ListWindowTest {
         eventually("every row") { live.rows.value.size == 31 }
         assertEquals(WindowEdges(false, false, 31), live.edges.value)
         scope.cancel()
+    }
+
+    private fun node(number: Int, text: String = "t$number") =
+        """{"__typename":"Message","id":"m$number","chatId":"c1","authorId":"a","text":"$text","createdAt":"2026-10-0${number}T00:00:00.000Z","sequenceNumber":$number}"""
+
+    private fun reply(nodes: List<String>) =
+        """{"data":{"chat":{"messages":{"nodes":[${nodes.joinToString(",")}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"""
+
+    @Test
+    fun a_window_over_the_thread_shape_decodes_only_its_rows() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("ChatThread", reply((1..7).map { node(it) }))
+        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"ChatThread","document":"query ChatThread(${'$'}chatId: ID!, ${'$'}first: Int, ${'$'}after: String) { chat(id: ${'$'}chatId) { messages(first: ${'$'}first, after: ${'$'}after) { nodes { id chatId authorId text createdAt sequenceNumber } pageInfo { hasNextPage endCursor } } } }"},{"name":"CreateMessage","document":"mutation CreateMessage(${'$'}chatId: ID!, ${'$'}text: String, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createMessage(chatId: ${'$'}chatId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id chatId authorId text createdAt sequenceNumber } }"}]""")
+        val thread = Message.thread("c1")
+        thread.load()
+        val feed = ListFeed(Message)
+        val states = LinkedBlockingQueue<List<Message>>()
+        val subscription = DBlayer.database.liveWindow(thread.json, 3u, ChangeListener { states.put(feed.apply(it).rows) })
+        fun next(what: String, wanted: List<String>): List<Message> {
+            while (true) {
+                val rows = states.poll(20, TimeUnit.SECONDS) ?: throw AssertionError("timed out waiting for $what")
+                if (rows.map { it.text } == wanted) return rows
+            }
+        }
+        next("the last 3 rows", listOf("t5", "t6", "t7"))
+        val atStart = feed.decodedRows
+
+        transport.enqueue("ChatThread", reply((1..7).map { node(it, if (it == 1 || it == 6) "t${it}x" else "t$it") }))
+        thread.refresh()
+        next("the edited row inside", listOf("t5", "t6x", "t7"))
+        val afterEdits = feed.decodedRows
+
+        transport.enqueue("CreateMessage", """{"data":{"createMessage":{"__typename":"Message","id":"m8","chatId":"c1","authorId":"a","text":"t8","createdAt":"2026-10-08T00:00:00.000Z","sequenceNumber":null}}}""")
+        Message.create(chatId = "c1", authorId = "a", text = "t8")
+        next("the new last row", listOf("t6x", "t7", "t8"))
+        assertEquals(listOf(3, 1), listOf(atStart, afterEdits - atStart))
+        assertEquals(true, feed.decodedRows - afterEdits <= 2)
+        subscription.cancel()
     }
 }

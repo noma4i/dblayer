@@ -179,6 +179,8 @@ mod invariants;
 #[cfg(test)]
 mod land_tests;
 #[cfg(test)]
+mod thread_window_tests;
+#[cfg(test)]
 mod load_more_tests;
 #[cfg(test)]
 mod load_tests;

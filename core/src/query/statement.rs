@@ -24,7 +24,7 @@ pub enum QueryError {
     NoSearchableField(String),
     #[error("a query holds at most one search")]
     SeveralSearches,
-    #[error("a window needs an ordered query without limit, offset, include, scope or search")]
+    #[error("a window needs a query with an order and without limit, offset, include or search; a scope needs a local sort by fields")]
     NotWindowable,
     #[error("sqlite: {0}")]
     Sqlite(String),
@@ -250,6 +250,10 @@ pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatemen
 
 pub fn ranking(query: &Query) -> bool {
     query.scope.is_none() && query.limit.is_none() && query.offset.is_none() && query.include.is_empty() && !query.order.is_empty() && query.r#where.iter().all(|clause| clause.searches().is_empty())
+}
+
+pub fn windowable(query: &Query) -> bool {
+    query.limit.is_none() && query.offset.is_none() && query.include.is_empty() && !query.order.is_empty() && query.r#where.iter().all(|clause| clause.searches().is_empty())
 }
 
 pub struct RankedStatement {
