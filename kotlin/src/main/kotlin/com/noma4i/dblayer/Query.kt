@@ -64,7 +64,7 @@ inline infix fun <Model : DBModel, reified Value> Column<Model, Value>.within(va
 
 class Query<Model : DBModel>(
     private val modelName: String,
-    private val decoder: ModelDecoder<Model>,
+    internal val decoder: ModelDecoder<Model>,
     private val condition: Condition? = null,
     private val orders: List<Order> = emptyList(),
     private val limitCount: Int? = null,
@@ -79,6 +79,8 @@ class Query<Model : DBModel>(
     fun search(text: String, wholeWords: Boolean = false) = where(Condition.search(text, wholeWords))
     fun order(vararg next: Order) = copy(orders = orders + next)
     fun limit(count: Int) = copy(limitCount = count)
+    /** The last [rows] rows of this query, kept live. The query needs an order and no limit, and it reads the local database only. */
+    fun window(tail: Int) = Window(this, tail)
 
     internal val json: String
         get() = json(false)

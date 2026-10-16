@@ -77,6 +77,7 @@ data class Snapshot<Model>(
     val reordered: Boolean = false,
     val failure: String? = null,
     val edits: List<ListEdit<Model>>? = null,
+    val window: WindowEdges? = null,
 ) {
     internal companion object {
         /** The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost. */
@@ -86,7 +87,7 @@ data class Snapshot<Model>(
                 replaced[real] = older.replaced[temporary] ?: temporary
                 if (older.replaced.containsKey(temporary)) replaced.remove(temporary)
             }
-            return Snapshot(newer.rows, replaced, older.reordered || newer.reordered, newer.failure ?: older.failure, ListEdit.composing(older.edits, newer.edits, newer.rows.size))
+            return Snapshot(newer.rows, replaced, older.reordered || newer.reordered, newer.failure ?: older.failure, ListEdit.composing(older.edits, newer.edits, newer.rows.size), newer.window ?: older.window)
         }
     }
 }

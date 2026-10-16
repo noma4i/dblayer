@@ -189,6 +189,21 @@ val thread = LiveList(Message.thread(chatId), viewModelScope, refreshOnConnect =
 thread.waitForInitialLoad()
 ```
 
+**Windows.** A chat shows its last rows, not its whole history. `query.window(tail: n)` keeps the last `n` rows of an ordered query in memory (the query has no limit, include, scope or search). A row outside the window is not decoded and not held, and a change outside the window delivers nothing. `LiveWindow` is to `Window` what `LiveList` is to `Query`: it keeps the rows, `hasBefore`, `hasAfter` and `total`, and it has `takeEdits()` with the steps of [Edits](#in-your-ui) in window positions. `hasBefore` and `hasAfter` tell whether the database holds rows beyond each edge, and `total` is the number of rows of the query. The window follows the tail: a new last row enters and the oldest row of the window leaves. `expand(before:)` adds up to that many older rows from the database, `expand(after:)` adds newer rows, and neither adds a row that does not exist. The window ends with its owner. The library keeps the ids and sort keys of the whole query, not its rows, and the window reads the local database only: a remote relation loads no page for a window yet.
+
+```swift
+let chat = LiveWindow(Message.where(Message.chatId == chatId).order(Message.createdAt.asc).window(tail: 50))
+if chat.hasBefore { chat.expand(before: 50) }                 // chat.rows, chat.total are observable
+if let edits = chat.takeEdits() { mirror.replay(edits) } else { mirror = chat.rows }
+```
+
+```kotlin
+val chat = LiveWindow(Message.where(Message.chatId eq chatId).order(Message.createdAt.asc).window(tail = 50), viewModelScope)
+if (chat.edges.value.hasBefore) chat.expand(before = 50)      // chat.rows, chat.edges are StateFlow
+val edits = chat.takeEdits()
+if (edits != null) mirror.replay(edits) else mirror = chat.rows.value.toMutableList()
+```
+
 **UIKit and Android views.** Apply the diff to a diffable data source or a collection view. The diff already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:
 
 ```swift

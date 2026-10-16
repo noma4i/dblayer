@@ -74,6 +74,8 @@ public struct Query<Model: DBModel>: Sendable {
   public func search(_ text: String, wholeWords: Bool = false) -> Query { `where`(.search(text, wholeWords: wholeWords)) }
   public func order(_ order: Order...) -> Query { var copy = self; copy.orders += order; return copy }
   public func limit(_ count: Int) -> Query { var copy = self; copy.limitCount = count; return copy }
+  /// The last `rows` rows of this query, kept live. The query needs an order and no limit, and it reads the local database only.
+  public func window(tail rows: Int) -> Window<Model> { Window(query: self, tail: rows) }
 
   var json: String {
     json(refreshOnConnect: false)
@@ -150,13 +152,15 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public let reordered: Bool
   public let failure: String?
   public let edits: [ListEdit<Model>]?
+  public let window: WindowEdges?
 
-  public init(rows: [Model], replaced: [String: String], reordered: Bool = false, failure: String? = nil, edits: [ListEdit<Model>]? = nil) {
+  public init(rows: [Model], replaced: [String: String], reordered: Bool = false, failure: String? = nil, edits: [ListEdit<Model>]? = nil, window: WindowEdges? = nil) {
     self.rows = rows
     self.replaced = replaced
     self.reordered = reordered
     self.failure = failure
     self.edits = edits
+    self.window = window
   }
 
   /// The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost.
@@ -167,7 +171,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
       if older.replaced[temporary] != nil { replaced[temporary] = nil }
     }
     let edits = ListEdit.composing(older.edits, newer.edits, within: newer.rows.count)
-    return Snapshot(rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered, failure: newer.failure ?? older.failure, edits: edits)
+    return Snapshot(rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered, failure: newer.failure ?? older.failure, edits: edits, window: newer.window ?? older.window)
   }
 }
 
