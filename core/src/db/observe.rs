@@ -14,6 +14,7 @@ use super::open::{locked, Db, Shared};
 use super::watch::{Body, Change, CountChange, Deps, Evaluated, Loaded, Step, Subject, Version};
 
 const MAX_PROBED_ROWS: usize = 8;
+const MAX_GROW_ATTEMPTS: usize = 8;
 
 struct Group {
     subject: Subject,
@@ -102,7 +103,7 @@ impl Observers {
 
     fn touched_ids(&self, key: &str, batch: &[Event]) -> Option<HashSet<String>> {
         let group = self.groups.get(key)?;
-        let Subject::Rows(query) = &group.subject else { return None };
+        let (Subject::Rows(query) | Subject::Window(query, _, _)) = &group.subject else { return None };
         if !query.include.is_empty() {
             return None;
         }
@@ -156,6 +157,14 @@ pub struct ObserverHandle {
 impl ObserverHandle {
     pub(crate) fn id(&self) -> u64 {
         self.id
+    }
+}
+
+impl ObserverHandle {
+    pub(crate) fn grow(&self, before: usize, after: usize) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.grow_window(&self.group, before, after);
+        }
     }
 }
 
@@ -213,7 +222,17 @@ impl Shared {
             self.refresh_entities(&key, &model, ids);
         }
         for due in due {
-            self.publish_group(&due.key, &due.subject, &due.version, due.touched.as_ref().map(|touched| (touched, due.reached, due.horizon)));
+            self.publish_group(&due.key, &due.subject, &due.version, due.touched.as_ref().map(|touched| (touched, due.reached, due.horizon)), None);
+        }
+    }
+
+    pub(crate) fn grow_window(&self, key: &str, before: usize, after: usize) {
+        for _ in 0..MAX_GROW_ATTEMPTS {
+            let Some((subject, previous)) = locked(&self.observers).groups.get(key).map(|group| (group.subject.clone(), group.version.clone())) else { return };
+            let nothing = HashSet::new();
+            if self.publish_group(key, &subject, &previous, Some((&nothing, None, previous.position())), Some((before, after))) {
+                return;
+            }
         }
     }
 
@@ -228,7 +247,7 @@ impl Shared {
         self.read(&[probe.model.as_str()], |reader| Ok(self.query_keys(reader, &probe)?.is_empty()))
     }
 
-    fn publish_group(&self, key: &str, subject: &Subject, previous: &Arc<Version>, step: Option<(&HashSet<String>, Option<(i64, u64)>, (i64, u64))>) {
+    fn publish_group(&self, key: &str, subject: &Subject, previous: &Arc<Version>, step: Option<(&HashSet<String>, Option<(i64, u64)>, (i64, u64))>, grow: Option<(usize, usize)>) -> bool {
         if let (Subject::Rows(query), Some((touched, Some((revision, epoch)), _))) = (subject, step) {
             if self.cannot_enter(query, previous, touched).unwrap_or(false) {
                 let mut observers = locked(&self.observers);
@@ -236,28 +255,35 @@ impl Shared {
                     group.at = group.at.max(revision);
                     group.epoch = group.epoch.max(epoch);
                 }
-                return;
+                return true;
             }
         }
         locked(&self.counters).observation_reads += 1;
         let evaluated = match (subject, step) {
             (Subject::Rows(query), Some((touched, _, horizon))) if query.include.is_empty() => self.evaluate_step(query, previous, touched, horizon),
+            (Subject::Window(query, _, _), _) => {
+                let horizon = step.map_or_else(|| previous.position(), |(_, _, horizon)| horizon);
+                self.window_next(query, previous, step.map(|(touched, _, _)| touched), horizon, grow.unwrap_or((0, 0)))
+            }
             _ => self.evaluate(subject),
         };
-        let Ok(Evaluated { version: next, loaded }) = evaluated else { return };
+        let Ok(Evaluated { version: next, loaded }) = evaluated else { return true };
         let (revision, epoch) = next.position();
         let replaced = self.dispatch.replaced_between(previous.position().0, revision);
         let replaced = replaced.as_slice();
         let published = next.succeeding(previous, replaced, loaded).map(Arc::new);
         let mut observers = locked(&self.observers);
-        let Some(group) = observers.groups.get_mut(key) else { return };
-        if (group.at >= revision && group.epoch >= epoch) || !Arc::ptr_eq(&group.version, previous) {
-            return;
+        let Some(group) = observers.groups.get_mut(key) else { return true };
+        if (group.at >= revision && group.epoch >= epoch && grow.is_none()) || !Arc::ptr_eq(&group.version, previous) {
+            return false;
         }
         group.at = revision;
         group.epoch = epoch;
-        let Some(version) = published else { return };
+        let Some(version) = published else { return true };
         group.version = version.clone();
+        if !version.announces(previous) {
+            return true;
+        }
         let supply = match &version.body {
             Body::Rows(body) => body.step.as_ref().map(Step::supply).unwrap_or_default(),
             Body::Count(_) => Loaded::default(),
@@ -265,6 +291,7 @@ impl Shared {
         for (_, subscriber) in &group.subscribers {
             subscriber.post(&self.executor, version.clone(), replaced, supply.clone());
         }
+        true
     }
 }
 
@@ -275,7 +302,7 @@ impl Db {
         let subscriber = Subscriber::new(listener, self.shared.counters.clone());
         let current = locked(&self.shared.observers).groups.get(&key).map(|group| (group.at, group.version.clone()));
         if let Some((_, previous)) = current.filter(|(at, _)| self.shared.store.revision_seq().is_ok_and(|latest| latest > *at)) {
-            self.shared.publish_group(&key, &subject, &previous, None);
+            self.shared.publish_group(&key, &subject, &previous, None, None);
         }
         let mut observers = locked(&self.shared.observers);
         let id = observers.next_id;
@@ -301,6 +328,10 @@ impl Db {
         subscriber.post(&self.shared.executor, version, &[], loaded);
         drop(observers);
         Ok(ObserverHandle { shared: Arc::downgrade(&self.shared), group: key, id, subscriber })
+    }
+
+    pub(crate) fn observe_subject(&self, subject: Subject, listener: impl Fn(&Change) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
+        self.subscribe(subject, Listener::Rows(Box::new(listener)))
     }
 
     pub fn observe(&self, query: Query, listener: impl Fn(&Change) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {

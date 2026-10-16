@@ -84,3 +84,33 @@ fn cached_rows_carry_the_revision_of_the_value_after_an_edit() {
     assert_eq!(after.revision, stored.revision);
     assert_eq!(after.cells, vec![Cell::Text { value: "edited".into() }]);
 }
+
+#[test]
+fn a_live_window_puts_only_its_rows_on_the_wire_at_every_list_size() {
+    let costs: Vec<_> = [20, 200, 2000]
+        .into_iter()
+        .map(|count| {
+            let (db, ids) = with_rows(count);
+            let tape = Arc::new(Tape(Mutex::default()));
+            let live = db.live_window(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 10, tape.clone()).unwrap();
+            db.db.settle();
+            let first = tape.0.lock().unwrap()[0].clone();
+            let edge = first.window.clone().unwrap();
+            assert_eq!((first.rows.len(), first.full, edge.has_before, edge.has_after, edge.total), (10, true, true, false, Some(count as u32)));
+            let update = |at: usize| {
+                super::database::executor().unwrap().block_on(db.update("Moment".into(), ids[at].clone(), format!(r#"{{"text":"t{at:05}x"}}"#), "{}".into())).unwrap();
+                db.db.settle();
+            };
+            let calls = tape.0.lock().unwrap().len();
+            update(0);
+            assert_eq!(tape.0.lock().unwrap().len(), calls, "a row before the window is not on the wire");
+            update(count - 1);
+            let inside = tape.0.lock().unwrap().last().unwrap().clone();
+            live.expand_before(5);
+            db.db.settle();
+            let wider = tape.0.lock().unwrap().last().unwrap().clone();
+            (inside.rows.len(), inside.full, wider.rows.len(), wider.window.unwrap().has_before)
+        })
+        .collect();
+    assert_eq!(costs, vec![(1, false, 5, true); 3], "(rows of an update inside, full, rows of an expand, has_before) at 20, 200, 2000 rows");
+}

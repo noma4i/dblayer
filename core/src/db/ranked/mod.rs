@@ -36,6 +36,22 @@ impl Ranked {
         self.ordered.rank(key)
     }
 
+    pub(crate) fn slice(&self, start: usize, end: usize) -> Vec<Arc<Entry>> {
+        let rows = self.ordered.slice(start, end);
+        touch(rows.len());
+        rows
+    }
+
+    pub(crate) fn after(&self, cursor: &OrderKey, limit: usize) -> Vec<Arc<Entry>> {
+        let first = self.position(cursor) + usize::from(self.ordered.contains(cursor));
+        self.slice(first, first.saturating_add(limit))
+    }
+
+    pub(crate) fn before(&self, cursor: &OrderKey, limit: usize) -> Vec<Arc<Entry>> {
+        let end = self.position(cursor);
+        self.slice(end.saturating_sub(limit), end)
+    }
+
     pub(crate) fn with(&self, key: Arc<OrderKey>, entry: Arc<Entry>) -> Self {
         let cleared = self.without(entry.id.as_str());
         Self { ordered: cleared.ordered.with(key.clone(), entry.clone()), by_id: cleared.by_id.with(Arc::from(entry.id.as_str()), (key, entry)) }

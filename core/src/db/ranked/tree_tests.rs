@@ -14,6 +14,10 @@ impl Dice {
 fn agrees(tree: &Tree<u64, u64>, model: &BTreeMap<u64, u64>) {
     assert_eq!(tree.len(), model.len());
     assert_eq!(tree.values(), model.values().copied().collect::<Vec<_>>());
+    let values: Vec<u64> = model.values().copied().collect();
+    for (start, end) in [(0, 0), (0, 3), (2, 9), (5, 5), (model.len().saturating_sub(4), model.len()), (1, model.len() + 5), (model.len() + 1, model.len() + 3)] {
+        assert_eq!(tree.slice(start, end), values[start.min(values.len())..end.min(values.len()).max(start.min(values.len()))].to_vec(), "slice {start}..{end}");
+    }
     for (rank, (key, value)) in model.iter().enumerate() {
         assert_eq!(tree.get(key), Some(value));
         assert_eq!(tree.rank(key), rank);

@@ -175,7 +175,7 @@ impl Subscriber {
                 diff.map(|diff| {
                     let (rows, related) = if first { whole_rows(body, &mut taken.loaded) } else { changed_rows(&diff, &mut taken.loaded.rows, &mut taken.loaded.related) };
                     locked(&self.counters).rows_delivered += rows.len();
-                    let change = Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.len() };
+                    let change = Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.len(), window: body.window.as_ref().map(|part| part.edge) };
                     catch_unwind(AssertUnwindSafe(|| call(&change)))
                 })
             }
@@ -195,7 +195,7 @@ impl Subscriber {
 
     pub(crate) fn rows_diff(&self, previous: &Version, taken: &Taken, new: &RowsBody) -> Option<Diff> {
         let Body::Rows(old) = &previous.body else { return None };
-        if previous.position() >= taken.latest.position() {
+        if previous.position() >= taken.latest.position() && !new.reshaped_from(old) {
             return None;
         }
         let diff = match &new.step {
@@ -208,7 +208,7 @@ impl Subscriber {
                 }
             }
         };
-        (!diff.is_empty()).then_some(diff)
+        (!diff.is_empty() || new.edge_differs(old)).then_some(diff)
     }
 }
 

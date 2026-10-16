@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 use tokio::sync::watch;
-use crate::db::{Change, ObserverHandle};
+use crate::db::{Change, ObserverHandle, WindowHandle};
 use super::wire::{WireModel, WireRow};
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -13,6 +13,14 @@ pub struct Placement {
 pub struct Replacement {
     pub from: String,
     pub to: String,
+}
+
+/// The edges of a window: whether the query has local rows before or after it, and how many rows the query has.
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct LiveWindowEdge {
+    pub has_before: bool,
+    pub has_after: bool,
+    pub total: Option<u32>,
 }
 
 /// With `full` the `rows` are the whole list in order. Otherwise they are the rows that were inserted, updated or replaced, `row_indexes` holds the final index of each, and the wrapper rebuilds its array in this order:
@@ -30,6 +38,8 @@ pub struct LiveChange {
     pub renamed: Vec<Replacement>,
     pub count: Option<i64>,
     pub error: Option<String>,
+    #[uniffi(default = None)]
+    pub window: Option<LiveWindowEdge>,
 }
 
 impl LiveChange {
@@ -43,11 +53,12 @@ impl LiveChange {
             replaced: diff.replaced.iter().map(|(from, to)| Replacement { from: from.to_string(), to: to.to_string() }).collect(),
             renamed: diff.renamed.iter().map(|(from, to)| Replacement { from: from.to_string(), to: to.to_string() }).collect(),
             count: None, error: None,
+            window: change.window.map(|edge| LiveWindowEdge { has_before: edge.has_before, has_after: edge.has_after, total: edge.total.map(|total| total as u32) }),
         }
     }
 
     fn empty(revision: i64) -> Self {
-        Self { revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None }
+        Self { revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None, window: None }
     }
 
     pub(super) fn whole(revision: i64, rows: Vec<WireRow>) -> Self {
@@ -67,7 +78,8 @@ impl LiveChange {
 pub trait QueryListener: Send + Sync { fn changed(&self, change: LiveChange); }
 
 pub(super) struct LiveHandles {
-    pub _observer: ObserverHandle,
+    pub _observer: Option<ObserverHandle>,
+    pub window: Option<WindowHandle>,
     pub _watch: Option<crate::sync::Watch>,
     pub load: Option<tokio::task::AbortHandle>,
 }
@@ -101,4 +113,10 @@ impl LiveSubscription {
         value
     }
     pub fn cancel(&self) { crate::db::locked(&self.handles).take(); }
+    pub fn expand_before(&self, rows: u32) {
+        if let Some(window) = crate::db::locked(&self.handles).as_ref().and_then(|handles| handles.window.as_ref()) { window.expand_before(rows as usize); }
+    }
+    pub fn expand_after(&self, rows: u32) {
+        if let Some(window) = crate::db::locked(&self.handles).as_ref().and_then(|handles| handles.window.as_ref()) { window.expand_after(rows as usize); }
+    }
 }

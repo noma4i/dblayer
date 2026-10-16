@@ -19,6 +19,7 @@ use super::dispatch::Event;
 use super::error::DbError;
 use super::open::{locked, Shared};
 use super::row::Row;
+use super::window::{WindowEdge, WindowPart, WindowSpec};
 
 const MAX_STEP_IDS: usize = 500;
 
@@ -33,6 +34,7 @@ pub struct Change {
     pub diff: Diff,
     pub full: bool,
     pub size: usize,
+    pub window: Option<WindowEdge>,
 }
 
 impl Change {
@@ -110,8 +112,20 @@ impl std::borrow::Borrow<str> for ById {
     }
 }
 
+pub(crate) struct Shown {
+    pub entries: Vec<Arc<Entry>>,
+    pub index: HashSet<ById>,
+}
+
+impl Shown {
+    pub(crate) fn of(entries: Vec<Arc<Entry>>) -> Arc<Self> {
+        let index = entries.iter().cloned().map(ById).collect();
+        Arc::new(Self { entries, index })
+    }
+}
+
 pub(crate) enum Listing {
-    Whole { entries: Vec<Arc<Entry>>, index: HashSet<ById> },
+    Whole(Arc<Shown>),
     Ranked(Ranked),
 }
 
@@ -119,42 +133,46 @@ pub(crate) struct RowsBody {
     pub list: Listing,
     pub changed: Option<HashSet<String>>,
     pub step: Option<Step>,
+    pub window: Option<WindowPart>,
 }
 
 impl RowsBody {
     pub(crate) fn new(entries: Vec<Arc<Entry>>) -> Self {
-        let index = entries.iter().cloned().map(ById).collect();
-        Self { list: Listing::Whole { entries, index }, changed: None, step: None }
+        Self { list: Listing::Whole(Shown::of(entries)), changed: None, step: None, window: None }
     }
 
     pub(crate) fn ranked(list: Ranked, changed: Option<HashSet<String>>) -> Self {
-        Self { list: Listing::Ranked(list), changed, step: None }
+        Self { list: Listing::Ranked(list), changed, step: None, window: None }
+    }
+
+    pub(crate) fn same_rows(&self, other: &Self) -> bool {
+        matches!((&self.list, &other.list), (Listing::Whole(left), Listing::Whole(right)) if Arc::ptr_eq(left, right))
     }
 
     pub(crate) fn ranking(&self) -> Option<&Ranked> {
         match &self.list {
             Listing::Ranked(list) => Some(list),
-            Listing::Whole { .. } => None,
+            Listing::Whole(_) => None,
         }
     }
 
     pub(crate) fn entries(&self) -> Cow<'_, [Arc<Entry>]> {
         match &self.list {
-            Listing::Whole { entries, .. } => Cow::Borrowed(entries),
+            Listing::Whole(shown) => Cow::Borrowed(&shown.entries),
             Listing::Ranked(list) => Cow::Owned(list.entries()),
         }
     }
 
     pub(crate) fn len(&self) -> usize {
         match &self.list {
-            Listing::Whole { entries, .. } => entries.len(),
+            Listing::Whole(shown) => shown.entries.len(),
             Listing::Ranked(list) => list.len(),
         }
     }
 
     pub(crate) fn entry(&self, id: &str) -> Option<Arc<Entry>> {
         match &self.list {
-            Listing::Whole { index, .. } => index.get(id).map(|found| found.0.clone()),
+            Listing::Whole(shown) => shown.index.get(id).map(|found| found.0.clone()),
             Listing::Ranked(list) => list.get(id).map(|(_, entry)| entry.clone()),
         }
     }
@@ -192,9 +210,10 @@ impl Version {
             (Body::Rows(old), Body::Rows(new)) => {
                 let diff = match (old.ranking(), new.ranking(), &new.changed) {
                     (Some(before), Some(after), Some(changed)) => Diff::stepping(before, after, changed, replaced),
+                    _ if old.same_rows(&new) => Diff::default(),
                     _ => Diff::between(&old.entries()[..], &new.entries()[..], replaced),
                 };
-                if diff.is_empty() {
+                if diff.is_empty() && new.window.is_none() {
                     return None;
                 }
                 let (rows, related) = changed_rows(&diff, &mut loaded.rows, &mut loaded.related);
@@ -234,6 +253,7 @@ pub(crate) enum Subject {
     Rows(Query),
     Row(RowRef),
     Count(Query),
+    Window(Query, WindowSpec, u64),
 }
 
 impl Subject {
@@ -242,6 +262,7 @@ impl Subject {
             Subject::Rows(query) => format!("rows:{}", serde_json::to_string(query).expect("query serializes")),
             Subject::Row(row) => format!("row:{}:{}", row.model, row.id),
             Subject::Count(query) => format!("count:{}", serde_json::to_string(query).expect("query serializes")),
+            Subject::Window(query, _, nonce) => format!("window:{nonce}:{}", serde_json::to_string(query).expect("query serializes")),
         }
     }
 }
@@ -297,7 +318,7 @@ impl Shared {
                 self.spec(row.model.as_str())?;
                 Ok(Deps { rows: BTreeSet::from([row.clone()]), reset_models: BTreeSet::from([row.model.clone()]), ..Deps::default() })
             }
-            Subject::Rows(query) | Subject::Count(query) => {
+            Subject::Rows(query) | Subject::Count(query) | Subject::Window(query, _, _) => {
                 let spec = self.spec(query.model.as_str())?;
                 let mut deps = Deps { reset_models: BTreeSet::from([query.model.clone()]), ..Deps::default() };
                 if let (Subject::Rows(_), Some(ids)) = (subject, pinned_ids(query)) {
@@ -328,13 +349,14 @@ impl Shared {
         let epoch = self.ephemeral.lock().epoch;
         let models = match subject {
             Subject::Rows(query) => self.query_models(query.model.as_str(), &query.include)?,
-            Subject::Count(query) => vec![query.model.as_str()],
+            Subject::Count(query) | Subject::Window(query, _, _) => vec![query.model.as_str()],
             Subject::Row(row) => vec![row.model.as_str()],
         };
         self.read(&models, |reader| {
             let revision = reader.revision_seq()?;
             let (body, loaded) = match subject {
                 Subject::Rows(query) if ranking(query) => self.ranked_body(reader, query)?,
+                Subject::Window(query, spec, _) => self.window_body(reader, query, spec)?,
                 Subject::Rows(query) => {
                     let keys = self.query_keys(reader, query)?;
                     let rows = self.rows_for_keys(reader, query.model.as_str(), &keys)?;
@@ -448,7 +470,7 @@ impl Shared {
         let (model, include) = match subject {
             Subject::Rows(query) => (query.model.clone(), query.include.clone()),
             Subject::Row(row) => (row.model.clone(), Vec::new()),
-            Subject::Count(_) => return Ok(Loaded::default()),
+            Subject::Count(_) | Subject::Window(..) => return Ok(Loaded::default()),
         };
         let keys: Vec<(String, i64)> = body.entries().iter().map(|entry| (entry.id.to_string(), entry.stamp.revision)).collect();
         let models = self.query_models(model.as_str(), &include)?;

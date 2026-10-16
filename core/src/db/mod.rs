@@ -30,6 +30,7 @@ mod row;
 mod swap;
 mod threads;
 mod watch;
+mod window;
 
 pub use diff::Diff;
 pub use entities::{EntityChange, EntityObserver};
@@ -44,6 +45,7 @@ pub(crate) use local_write::read_outbox;
 pub(crate) use open::locked;
 pub(crate) use prior::Prior;
 pub use watch::{Change, CountChange, Related};
+pub use window::{Page, Slice, WindowEdge, WindowHandle, WindowSpec};
 
 #[cfg(test)]
 pub(crate) mod fixtures;
@@ -103,3 +105,5 @@ mod reset_tests;
 mod roll_back_tests;
 #[cfg(test)]
 mod watch_tests;
+#[cfg(test)]
+mod window_tests;

@@ -109,13 +109,40 @@ fn build<K: Clone, V: Clone>(items: &[(K, V)]) -> Link<K, V> {
     Some(make(key, value, build(&items[..middle]), build(&items[middle + 1..])))
 }
 
+fn collect<K, V: Clone>(link: &Link<K, V>, start: usize, end: usize, found: &mut Vec<V>) {
+    let Some(node) = link else { return };
+    let left = size(&node.left);
+    if start < left {
+        collect(&node.left, start, end.min(left), found);
+    }
+    if start <= left && left < end {
+        found.push(node.value.clone());
+    }
+    if end > left + 1 {
+        collect(&node.right, start.saturating_sub(left + 1), end - left - 1, found);
+    }
+}
+
 impl<K: Ord + Clone, V: Clone> Tree<K, V> {
+    pub(crate) fn slice(&self, start: usize, end: usize) -> Vec<V> {
+        let mut found = Vec::with_capacity(end.min(self.len()).saturating_sub(start));
+        collect(&self.root, start, end.min(self.len()), &mut found);
+        found
+    }
+
     pub(crate) fn from_sorted(items: &[(K, V)]) -> Self {
         Self { root: build(items) }
     }
 
     pub(crate) fn len(&self) -> usize {
         size(&self.root)
+    }
+
+    pub(crate) fn contains<Q: Ord + ?Sized>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+    {
+        self.get(key).is_some()
     }
 
     pub(crate) fn get<Q: Ord + ?Sized>(&self, key: &Q) -> Option<&V>

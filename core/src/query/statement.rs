@@ -24,6 +24,8 @@ pub enum QueryError {
     NoSearchableField(String),
     #[error("a query holds at most one search")]
     SeveralSearches,
+    #[error("a window needs an ordered query without limit, offset, include, scope or search")]
+    NotWindowable,
     #[error("sqlite: {0}")]
     Sqlite(String),
 }
