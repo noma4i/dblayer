@@ -38,6 +38,8 @@ public final class Entity<Model: DBModel> {
   }
 
   fileprivate func accept(_ next: Model?, revision incoming: Int64, bytes: UInt64 = 0) {
+    // TEMPORARY: Remove after the list return measurement.
+    GapLog.record("entity", "accept model=\(Model.modelName) id=\(id) entity=\(ObjectIdentifier(self)) nil=\(next == nil) incoming=\(incoming) revision=\(revision)")
     guard incoming >= revision else { return }
     revision = incoming
     self.bytes = bytes
@@ -114,13 +116,23 @@ public final class Entities<Model: DBModel> {
   /// The entity of an id. Hold it for as long as the value is shown. The value is there at once when the id is live or retained.
   public func entity(_ id: String) -> Entity<Model> {
     follow(DB.database)
-    if let existing = live[id]?.entity { return existing }
+    if let existing = live[id]?.entity {
+      // TEMPORARY: Remove after the list return measurement.
+      GapLog.record("entity", "reuse model=\(Model.modelName) id=\(id) entity=\(ObjectIdentifier(existing)) revision=\(existing.revision) nil=\(existing.value == nil)")
+      return existing
+    }
     let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
     var seed = retained
+    // TEMPORARY: Remove after the list return measurement.
+    var origin = retained == nil ? "none" : "retained"
     if let cached = source.cachedRow(id), cached.revision > (seed?.revision ?? Int64.min), let value = try? Model.decode(cached) {
       seed = Retained(value: value, revision: cached.revision, bytes: cached.estimatedBytes)
+      // TEMPORARY: Remove after the list return measurement.
+      origin = "peekRow"
     }
     let made = Entity<Model>(id: id, seed: seed, registry: self)
+    // TEMPORARY: Remove after the list return measurement.
+    GapLog.record("entity", "create model=\(Model.modelName) id=\(id) entity=\(ObjectIdentifier(made)) origin=\(origin) revision=\(made.revision) nil=\(made.value == nil) readers=\(liveCount + 1)")
     live[id] = Weak(entity: made)
     steps[id] = (retained != nil || steps[id] == .release) ? .refresh : .retain
     scheduleFlush()
@@ -185,6 +197,8 @@ public final class Entities<Model: DBModel> {
   var liveCount: Int { live.values.filter { $0.entity != nil }.count }
 
   fileprivate func released(id: String, value: Model?, revision: Int64, bytes: UInt64, epoch entityEpoch: Int) {
+    // TEMPORARY: Remove after the list return measurement.
+    GapLog.record("entity", "release model=\(Model.modelName) id=\(id) revision=\(revision) nil=\(value == nil) epoch=\(entityEpoch) currentEpoch=\(epoch) readers=\(liveCount)")
     guard entityEpoch == epoch, live[id]?.entity == nil else { return }
     live[id] = nil
     steps[id] = .release
@@ -193,6 +207,8 @@ public final class Entities<Model: DBModel> {
   }
 
   func receive(from database: Database, delivery: EntityDecoding.Decoded<Model>) {
+    // TEMPORARY: Remove after the list return measurement.
+    GapLog.record("entity", "delivery model=\(Model.modelName) revision=\(delivery.revision) ids=\(delivery.rows.map { $0.0.id }) removed=\(delivery.removed) accepted=\(self.database === database && DB.database === database)")
     guard self.database === database, DB.database === database else { return }
     apply(delivery)
   }
@@ -284,13 +300,23 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
 
   var decodedRows: Int { lock.withLock { total } }
 
+  // TEMPORARY: Remove after the list return measurement.
+  deinit {
+    GapLog.record("source", "destroy model=\(Model.modelName) source=\(ObjectIdentifier(self)) readers=\(leased.count)")
+  }
+
   func cachedRow(_ id: String) -> WireRow? {
-    try? DB.database?.peekRow(model: Model.modelName, rowId: id)
+    let row = try? DB.database?.peekRow(model: Model.modelName, rowId: id)
+    // TEMPORARY: Remove after the list return measurement.
+    GapLog.record("cache", "peek model=\(Model.modelName) id=\(id) hit=\(row != nil) revision=\(row?.revision ?? Int64.min)")
+    return row
   }
 
   func retain(_ ids: [String]) {
     queue.async {
       self.leased.formUnion(ids)
+      // TEMPORARY: Remove after the list return measurement.
+      GapLog.record("source", "retain model=\(Model.modelName) ids=\(ids) readers=\(self.leased.count)")
       try? self.open()?.retain(ids: ids)
     }
   }
@@ -298,6 +324,8 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
   func release(_ ids: [String]) {
     queue.async {
       self.leased.subtract(ids)
+      // TEMPORARY: Remove after the list return measurement.
+      GapLog.record("source", "release model=\(Model.modelName) ids=\(ids) readers=\(self.leased.count)")
       try? self.open()?.release(ids: ids)
     }
   }

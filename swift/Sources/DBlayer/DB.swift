@@ -36,6 +36,8 @@ public enum DB {
   }
 
   public static func open(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
+    // TEMPORARY: Remove after the list return measurement.
+    installGapLogger(logger: GapLog())
     try install(try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport), transport: transport, operations: operations)
   }
 
