@@ -100,12 +100,6 @@ fn attempt(inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(Com
         transaction.rollback()?;
     } else {
         transaction.commit()?;
-        // TEMPORARY: Remove after the list return measurement.
-        for row in &outcome.rows {
-            if crate::gap::tracks(row.row.model.as_str()) {
-                crate::gap::record(|| format!("write-committed tx={:?} revision={:?} origin={:?} row={row:?}", envelope.tx_id, outcome.revision, envelope.origin));
-            }
-        }
     }
     let acks = outcome.unknown_operation_acks;
     Ok((outcome, acks))
@@ -440,22 +434,6 @@ pub(crate) fn apply_envelope(
     let mut prefetched = prefetch_stored(connection, models, &envelope.entity_ops, &hidden)?;
 
     for operation in &envelope.entity_ops {
-        // TEMPORARY: Remove after the list return measurement.
-        {
-            let model = match operation {
-                EntityOp::Upsert { model, .. } | EntityOp::Touch { model, .. } | EntityOp::Destroy { model, .. } => model,
-            };
-            if crate::gap::tracks(model.as_str()) {
-                crate::gap::record(|| {
-                    let detail = match operation {
-                        EntityOp::Upsert { row, .. } => format!("upsert id={:?} fields={:?} createdAt={:?} userId={:?}", row.get("id"), row.keys().collect::<Vec<_>>(), row.get("createdAt"), row.get("userId")),
-                        EntityOp::Touch { id, .. } => format!("touch id={id}"),
-                        EntityOp::Destroy { id, reason, .. } => format!("destroy id={id} reason={reason:?}"),
-                    };
-                    format!("write-attempt model={model} revision={revision} tx={:?} origin={:?} {detail}", envelope.tx_id, envelope.origin)
-                });
-            }
-        }
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;

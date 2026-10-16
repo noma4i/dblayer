@@ -72,10 +72,6 @@ impl Observers {
 
     pub(crate) fn remove_entities(&mut self, key: &str) {
         let Some(group) = self.entities.remove(key) else { return };
-        // TEMPORARY: Remove after the list return measurement.
-        if crate::gap::tracks(group.model().as_str()) {
-            crate::gap::record(|| format!("source-drop source={key} model={} readers={}", group.model(), group.ids().count()));
-        }
         let ids: Vec<RowId> = group.ids().cloned().collect();
         self.unindex_rows(key, group.model(), ids.iter());
     }

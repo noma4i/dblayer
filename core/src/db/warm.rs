@@ -104,10 +104,6 @@ impl Db {
     /// The row from the row cache, or `None` when it is not cached (which does not mean that it does not exist).
     pub fn peek_row(&self, model: &str, id: &RowId) -> Option<Row> {
         let found = locked(&self.shared.cache).get(model, id.as_str());
-        // TEMPORARY: Remove after the list return measurement.
-        if crate::gap::tracks(model) {
-            crate::gap::record(|| format!("peek model={model} id={id} hit={} revision={:?}", found.is_some(), found.as_ref().map(|row| row.revision)));
-        }
         self.count_peek(found.is_some());
         found
     }

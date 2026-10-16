@@ -19,8 +19,6 @@ pub mod files;
 pub mod sync;
 pub mod upload;
 pub mod ffi;
-// TEMPORARY: Remove after the list return measurement.
-pub mod gap;
 
 #[cfg(test)]
 mod lib_tests;

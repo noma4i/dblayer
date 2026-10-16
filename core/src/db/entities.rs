@@ -187,10 +187,6 @@ impl EntityObserver {
             group.known.insert(id.clone(), Known { position: (i64::MIN, 0), stamp: None, told: false });
         }
         let changes = group.settle(position, &loaded, fresh.iter().cloned());
-        // TEMPORARY: Remove after the list return measurement.
-        if crate::gap::tracks(model.as_str()) {
-            crate::gap::record(|| format!("retain source={} model={model} ids={fresh:?} readers={} revision={}", self.key, group.known.len(), position.0));
-        }
         let subscriber = group.subscriber.clone();
         observers.index_rows(&self.key, &model, fresh.iter());
         subscriber.post(&shared.executor, changes);
@@ -208,10 +204,6 @@ impl EntityObserver {
         }
         let subscriber = group.subscriber.clone();
         observers.unindex_rows(&self.key, &model, gone.iter());
-        // TEMPORARY: Remove after the list return measurement.
-        if crate::gap::tracks(model.as_str()) {
-            crate::gap::record(|| format!("release source={} model={model} ids={gone:?} readers={}", self.key, observers.entities.get(&self.key).map_or(0, |group| group.known.len())));
-        }
         subscriber.discard(&gone);
     }
 }
