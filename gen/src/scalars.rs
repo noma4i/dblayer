@@ -5,7 +5,6 @@ use crate::ParseError;
 
 const KINDS: [&str; 7] = ["string", "date", "int", "long", "num", "bool", "json"];
 
-/// Schema scalar name to the kind the generated code uses for it.
 pub type Scalars = BTreeMap<String, String>;
 
 pub(crate) fn build(nodes: &[ScalarNode]) -> Result<Scalars, Vec<(usize, ParseError)>> {

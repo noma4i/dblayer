@@ -4,7 +4,6 @@ const SWIFT_KEYWORDS: [&str; 24] = [
 const SWIFT_REJECTED: [&str; 5] = ["self", "Type", "Protocol", "init", "unknown"];
 const KOTLIN_REJECTED: [&str; 2] = ["Unknown", "Companion"];
 
-/// A typed enum of the generated code: its type name and the wire values in declaration order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumDecl {
     pub name: String,
@@ -81,7 +80,6 @@ impl EnumDecl {
     }
 }
 
-/// Keeps the first declaration of each name and reports a name declared with different values.
 pub fn merge_enums(found: impl IntoIterator<Item = EnumDecl>) -> Result<Vec<EnumDecl>, String> {
     let mut merged: Vec<EnumDecl> = Vec::new();
     for declared in found {
