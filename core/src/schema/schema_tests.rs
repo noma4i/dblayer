@@ -93,7 +93,8 @@ fn list_object_array_and_enum_fields_keep_only_valid_shapes() {
     assert_eq!(array.decode(&array_value), Some(array_value.clone()));
     assert_eq!(array.decode(&json!(2)), None);
     assert_eq!(media.decode(&json!("image")), Some(json!("image")));
-    assert_eq!(media.decode(&json!("audio")), None);
+    assert_eq!(media.decode(&json!("audio")), Some(json!("audio")));
+    assert_eq!(media.decode(&json!(3)), None);
     assert_eq!(FieldSpec::raw("any").decode(&Value::Null), None);
 }
 

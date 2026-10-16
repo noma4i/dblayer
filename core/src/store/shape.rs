@@ -16,7 +16,7 @@ pub(crate) type Cells = Vec<SqlValue>;
 pub(crate) fn normalize_leaf(leaf: &Leaf, value: &Value) -> Option<Value> {
     match (&leaf.scalar, &leaf.values) {
         (Some(kind), _) => read_scalar(value, *kind),
-        (None, Some(values)) => read_enum(value, values).map(Value::String),
+        (None, Some(_)) => read_enum(value).map(Value::String),
         _ => None,
     }
 }

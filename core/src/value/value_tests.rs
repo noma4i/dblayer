@@ -85,10 +85,10 @@ fn required_values_report_missing_and_rejected() {
 
 #[test]
 fn enum_and_raw_values_convert_supported_values_only() {
-    let allowed = vec!["image".to_string(), "video".to_string()];
-    assert_eq!(read_enum(&json!("image"), &allowed), Some("image".to_string()));
-    assert_eq!(read_enum(&json!("audio"), &allowed), None);
-    assert_eq!(read_enum(&Value::Null, &allowed), None);
+    assert_eq!(read_enum(&json!("image")), Some("image".to_string()));
+    assert_eq!(read_enum(&json!("audio")), Some("audio".to_string()));
+    assert_eq!(read_enum(&json!(3)), None);
+    assert_eq!(read_enum(&Value::Null), None);
     assert_eq!(read_raw(&json!("a")), Some(json!("a")));
     assert_eq!(read_raw(&json!([])), Some(json!([])));
     assert_eq!(read_raw(&Value::Null), None);

@@ -157,9 +157,8 @@ pub fn read_date(value: &Value) -> Option<String> {
     }
 }
 
-pub fn read_enum(value: &Value, allowed: &[String]) -> Option<String> {
-    let text = value.as_str()?;
-    allowed.iter().any(|candidate| candidate == text).then(|| text.to_string())
+pub fn read_enum(value: &Value) -> Option<String> {
+    value.as_str().map(str::to_string)
 }
 
 pub fn read_raw(value: &Value) -> Option<Value> {

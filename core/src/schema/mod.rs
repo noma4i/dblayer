@@ -285,7 +285,7 @@ impl FieldSpec {
     pub fn decode(&self, value: &Value) -> Option<Value> {
         match &self.kind {
             FieldKind::Scalar { kind } => read_scalar(value, *kind),
-            FieldKind::Enum { values } => read_enum(value, values).map(Value::String),
+            FieldKind::Enum { .. } => read_enum(value).map(Value::String),
             FieldKind::Raw => read_raw(value),
             FieldKind::Object => value.is_object().then(|| value.clone()),
             FieldKind::Array => value.is_array().then(|| value.clone()),
