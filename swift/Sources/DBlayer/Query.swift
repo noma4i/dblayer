@@ -149,7 +149,6 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public let replaced: [String: String]
   public let reordered: Bool
   public let failure: String?
-  /// The steps from the previous delivery to `rows`, nil when the reader takes `rows` whole.
   public let edits: [ListEdit<Model>]?
 
   public init(rows: [Model], replaced: [String: String], reordered: Bool = false, failure: String? = nil, edits: [ListEdit<Model>]? = nil) {

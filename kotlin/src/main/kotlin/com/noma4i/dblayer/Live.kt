@@ -76,7 +76,6 @@ data class Snapshot<Model>(
     val replaced: Map<String, String>,
     val reordered: Boolean = false,
     val failure: String? = null,
-    /** The steps from the rows of the previous delivery to `rows`, or null when the reader has to take `rows` whole. */
     val edits: List<ListEdit<Model>>? = null,
 ) {
     internal companion object {
@@ -174,7 +173,6 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     val failure: kotlinx.coroutines.flow.StateFlow<String?> get() = mutableFailure
     val state: kotlinx.coroutines.flow.StateFlow<LoadState> get() = mutableState
 
-    /** The steps from the rows the reader took last to `rows`, then the reader is up to date. Null means the reader takes `rows` whole: it is the first read, or a delivery came without steps, or the steps outgrew the rows. */
     fun takeEdits(): List<ListEdit<Model>>? = synchronized(this) { pending.also { pending = emptyList() } }
 
     suspend fun refresh() = query.refresh()

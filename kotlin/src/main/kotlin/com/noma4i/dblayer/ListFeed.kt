@@ -17,7 +17,6 @@ internal class ListState<Model>(
     val reordered: Boolean,
     val desynced: Boolean = false,
     val failure: String? = null,
-    /** The steps from the rows of the previous delivery to `rows`, or null when the reader has to take `rows` whole. */
     val edits: List<ListEdit<Model>>? = null,
 )
 

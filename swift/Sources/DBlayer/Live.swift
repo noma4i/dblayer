@@ -219,7 +219,6 @@ public final class LiveList<Model: DBModel> {
     ]
   }
 
-  /// The steps since the reader last took them, nil when the reader takes `rows` whole.
   public func takeEdits() -> [ListEdit<Model>]? {
     defer { pending = [] }
     return pending
