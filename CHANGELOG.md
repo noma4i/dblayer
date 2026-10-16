@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 - 2026-10-17
+
+### Added
+- `Query.window(tail:)` and `LiveWindow` keep only the last rows of an ordered query live.
+- Window snapshots carry `hasBefore`, `hasAfter` and `total`; `expand(before:)` grows the window.
+- Windows work over sorted relations with a parameter column and joins.
+- `Database.openEncrypted` sends GraphQL V3 requests as JWE with a pinned server key.
+- `sessionCall`, `sessionResume`, `sessionReset` and `serverConfig` run the V3 sign-in session.
+- A V3 mutation is stored before sending and resent unchanged after a restart.
+- Typed session errors in Swift and Kotlin, with `CredentialStore` and `EncryptedHttp` hooks.
+
+### Changed
+- One change to an ordered list reads the touched rows, not the whole list.
+- A landing page looks up its members by id instead of loading the list.
+
 ## 1.1.0 - 2026-10-16
 
 ### Added
