@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -11,7 +11,7 @@ use super::open::locked;
 use super::DbError;
 use super::diff::Diff;
 use super::dispatch::{mark_core_thread, Busy};
-use super::watch::{changed_rows, Body, Change, CountChange, Loaded, Related, RowsBody, Version};
+use super::watch::{changed_rows, Body, Change, CountChange, Loaded, Related, RowsBody, Step, Version};
 
 const MAX_WORKERS: usize = 64;
 pub(crate) const MAX_REPLACED_PAIRS: usize = 10_000;
@@ -26,6 +26,7 @@ pub(crate) struct Taken {
     pub replaced: Vec<(RowId, RowId)>,
     pub overflowed: bool,
     pub steps: usize,
+    pub touched: Option<HashSet<String>>,
     pub loaded: Loaded,
 }
 
@@ -36,6 +37,8 @@ pub(crate) struct Mailbox {
     replaced: Vec<(RowId, RowId)>,
     overflowed: bool,
     steps: usize,
+    touched: HashSet<String>,
+    unmergeable: bool,
     scheduled: bool,
     delivered: Option<Arc<Version>>,
 }
@@ -49,6 +52,10 @@ impl Mailbox {
         }
         for (from, to) in replaced {
             self.record_replacement(from, to);
+        }
+        match &self.latest.as_ref().map(|latest| &latest.body) {
+            Some(Body::Rows(RowsBody { step: Some(Step { touched: Some(ids), .. }), .. })) => self.touched.extend(ids.iter().cloned()),
+            _ => self.unmergeable = true,
         }
         self.steps += 1;
         !std::mem::replace(&mut self.scheduled, true)
@@ -76,6 +83,7 @@ impl Mailbox {
             replaced: std::mem::take(&mut self.replaced),
             overflowed: std::mem::take(&mut self.overflowed),
             steps: std::mem::take(&mut self.steps),
+            touched: (!std::mem::take(&mut self.unmergeable)).then(|| std::mem::take(&mut self.touched)),
             loaded: std::mem::take(&mut self.loaded),
         })
     }
@@ -89,6 +97,8 @@ impl Mailbox {
         self.replaced.clear();
         self.overflowed = false;
         self.steps = 0;
+        self.touched.clear();
+        self.unmergeable = false;
         self.loaded = Loaded::default();
     }
 }
@@ -154,18 +164,18 @@ impl Subscriber {
         }
     }
 
-    fn deliver(&self, taken: &mut Taken) {
+    pub(crate) fn deliver(&self, taken: &mut Taken) {
         let outcome = match (&self.listener, &taken.latest.body) {
             (Listener::Rows(call), Body::Rows(body)) => {
                 let first = taken.delivered.is_none();
                 let diff = match &taken.delivered {
-                    None => Some(Diff::inserting(&body.entries, if taken.overflowed { &[] } else { &taken.replaced })),
+                    None => Some(Diff::inserting(&body.entries(), if taken.overflowed { &[] } else { &taken.replaced })),
                     Some(previous) => self.rows_diff(previous, taken, body),
                 };
                 diff.map(|diff| {
                     let (rows, related) = if first { whole_rows(body, &mut taken.loaded) } else { changed_rows(&diff, &mut taken.loaded.rows, &mut taken.loaded.related) };
                     locked(&self.counters).rows_delivered += rows.len();
-                    let change = Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.entries.len() };
+                    let change = Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.len() };
                     catch_unwind(AssertUnwindSafe(|| call(&change)))
                 })
             }
@@ -183,21 +193,27 @@ impl Subscriber {
         }
     }
 
-    fn rows_diff(&self, previous: &Version, taken: &Taken, new: &RowsBody) -> Option<Diff> {
+    pub(crate) fn rows_diff(&self, previous: &Version, taken: &Taken, new: &RowsBody) -> Option<Diff> {
         let Body::Rows(old) = &previous.body else { return None };
         if previous.position() >= taken.latest.position() {
             return None;
         }
         let diff = match &new.step {
             Some(step) if taken.steps == 1 && step.from == previous.position() => step.diff.clone(),
-            _ => Diff::between(&old.entries, &new.entries, if taken.overflowed { &[] } else { &taken.replaced }),
+            _ => {
+                let replaced = if taken.overflowed { &[] } else { &taken.replaced[..] };
+                match (&taken.touched, old.ranking(), new.ranking()) {
+                    (Some(touched), Some(before), Some(after)) => Diff::stepping(before, after, touched, replaced),
+                    _ => Diff::between(&old.entries()[..], &new.entries()[..], replaced),
+                }
+            }
         };
         (!diff.is_empty()).then_some(diff)
     }
 }
 
 fn whole_rows(body: &RowsBody, loaded: &mut Loaded) -> (Vec<Row>, Related) {
-    let rows = body.entries.iter().filter_map(|entry| loaded.rows.remove(entry.id.as_str())).collect();
+    let rows = body.entries().iter().filter_map(|entry| loaded.rows.remove(entry.id.as_str())).collect();
     (rows, std::mem::take(&mut loaded.related))
 }
 

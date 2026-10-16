@@ -19,6 +19,7 @@ mod maintain;
 mod observe;
 mod open;
 mod parent_pointer;
+mod ranked;
 mod prior;
 mod replace;
 mod record_sync;
@@ -75,7 +76,11 @@ mod listeners_tests;
 #[cfg(test)]
 mod list_delta_tests;
 #[cfg(test)]
+mod list_oracle_tests;
+#[cfg(test)]
 mod list_scan_tests;
+#[cfg(test)]
+mod list_step_tests;
 #[cfg(test)]
 mod local_write_tests;
 #[cfg(test)]

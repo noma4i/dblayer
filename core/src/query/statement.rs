@@ -177,6 +177,28 @@ fn searching(query: &Query) -> bool {
     query.r#where.iter().any(|clause| clause.searches().iter().any(|(text, whole_words)| fts_expression(text, *whole_words).is_some()))
 }
 
+struct SortTerm {
+    clause: String,
+    expression: String,
+    descending: bool,
+}
+
+fn sort_terms(query: &Query, model: &ModelSpec) -> Result<Vec<SortTerm>, QueryError> {
+    let mut terms = Vec::new();
+    for order in &query.order {
+        let column = column_sql(model, &order.field)?;
+        let flag = |expression: String| SortTerm { clause: expression.clone(), expression, descending: false };
+        let value = |suffix: &str, descending: bool| SortTerm { clause: format!("{column} {suffix}"), expression: column.clone(), descending };
+        match order.direction {
+            SortDirection::Asc => terms.push(value("ASC", false)),
+            SortDirection::Desc => terms.push(value("DESC", true)),
+            SortDirection::AscNullsLast => terms.extend([flag(format!("{column} IS NULL")), value("ASC", false)]),
+            SortDirection::DescNullsFirst => terms.extend([flag(format!("{column} IS NOT NULL")), value("DESC", true)]),
+        }
+    }
+    Ok(terms)
+}
+
 fn order_clause(query: &Query, model: &ModelSpec) -> Result<String, QueryError> {
     if query.order.is_empty() {
         return Ok(match (query.scope.is_some(), searching(query)) {
@@ -185,16 +207,7 @@ fn order_clause(query: &Query, model: &ModelSpec) -> Result<String, QueryError> 
             (false, false) => String::new(),
         });
     }
-    let mut parts = Vec::new();
-    for order in &query.order {
-        let column = column_sql(model, &order.field)?;
-        parts.push(match order.direction {
-            SortDirection::Asc => format!("{column} ASC"),
-            SortDirection::Desc => format!("{column} DESC"),
-            SortDirection::AscNullsLast => format!("{column} IS NULL, {column} ASC"),
-            SortDirection::DescNullsFirst => format!("{column} IS NOT NULL, {column} DESC"),
-        });
-    }
+    let mut parts: Vec<String> = sort_terms(query, model)?.into_iter().map(|term| term.clause).collect();
     if !query.order.iter().any(|order| order.field == "id") {
         parts.push("r.id".to_string());
     }
@@ -231,6 +244,37 @@ fn compile_columns(query: &Query, model: &ModelSpec, columns: &str) -> Result<Co
 
 pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
     compile_columns(query, model, KEY_COLUMNS)
+}
+
+pub fn ranking(query: &Query) -> bool {
+    query.scope.is_none() && query.limit.is_none() && query.offset.is_none() && query.include.is_empty() && !query.order.is_empty() && query.r#where.iter().all(|clause| clause.searches().is_empty())
+}
+
+pub struct RankedStatement {
+    pub statement: CompiledStatement,
+    pub descending: Vec<bool>,
+}
+
+pub fn compile_ranked(query: &Query, model: &ModelSpec, only: Option<&[String]>) -> Result<RankedStatement, QueryError> {
+    check_model(query, model)?;
+    let terms = sort_terms(query, model)?;
+    let columns: Vec<&str> = std::iter::once(KEY_COLUMNS).chain(terms.iter().map(|term| term.expression.as_str())).collect();
+    let mut bindings = Vec::new();
+    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
+    let (filter, order) = match only {
+        None => (filter_clause(query, model, &mut bindings)?, order_clause(query, model)?),
+        Some(ids) => {
+            let mut parts = Vec::new();
+            if let Some(clause) = &query.r#where {
+                parts.push(format!("({})", clause.compile(model, &mut bindings)?));
+            }
+            bindings.extend(ids.iter().map(|id| SqlValue::Text(id.clone())));
+            parts.push(format!("r.id IN ({})", vec!["?"; ids.len()].join(", ")));
+            (format!(" WHERE {}", parts.join(" AND ")), String::new())
+        }
+    };
+    let sql = format!("SELECT {} FROM {} AS r{join}{filter}{order}", columns.join(", "), table_name(query.model.as_str()));
+    Ok(RankedStatement { statement: CompiledStatement { sql, bindings }, descending: terms.iter().map(|term| term.descending).collect() })
 }
 
 pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {

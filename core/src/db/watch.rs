@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -5,16 +6,21 @@ use serde_json::{json, Value};
 
 use crate::commit::ScopeRef;
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::query::{compile_count, fetch_count, Order, Query, Where};
+use crate::identity::touches::touch;
+use crate::query::{compile_count, compile_ranked, fetch_count, fetch_ranked, ranking, Order, Query, RankedRow, Where};
 use crate::schema::{AssociationKind, AssociationSpec, ModelSpec};
 use crate::store::Reader;
 use crate::value::{read_id, SortDirection};
 
 use super::diff::{Diff, Entry, Stamp};
+use super::lookup::RowKey;
+use super::ranked::{OrderKey, Ranked};
 use super::dispatch::Event;
 use super::error::DbError;
 use super::open::{locked, Shared};
 use super::row::Row;
+
+const MAX_STEP_IDS: usize = 500;
 
 pub type Related = BTreeMap<String, BTreeMap<RowId, Vec<Row>>>;
 type ParentStamps = HashMap<RowId, Vec<(RowRef, Stamp)>>;
@@ -73,6 +79,7 @@ pub(crate) struct Step {
     pub diff: Diff,
     pub rows: Vec<Row>,
     pub related: Related,
+    pub touched: Option<HashSet<String>>,
 }
 
 impl Step {
@@ -103,20 +110,53 @@ impl std::borrow::Borrow<str> for ById {
     }
 }
 
+pub(crate) enum Listing {
+    Whole { entries: Vec<Arc<Entry>>, index: HashSet<ById> },
+    Ranked(Ranked),
+}
+
 pub(crate) struct RowsBody {
-    pub entries: Vec<Arc<Entry>>,
-    pub index: HashSet<ById>,
+    pub list: Listing,
+    pub changed: Option<HashSet<String>>,
     pub step: Option<Step>,
 }
 
 impl RowsBody {
     pub(crate) fn new(entries: Vec<Arc<Entry>>) -> Self {
         let index = entries.iter().cloned().map(ById).collect();
-        Self { entries, index, step: None }
+        Self { list: Listing::Whole { entries, index }, changed: None, step: None }
     }
 
-    pub(crate) fn entry(&self, id: &str) -> Option<&Arc<Entry>> {
-        self.index.get(id).map(|found| &found.0)
+    pub(crate) fn ranked(list: Ranked, changed: Option<HashSet<String>>) -> Self {
+        Self { list: Listing::Ranked(list), changed, step: None }
+    }
+
+    pub(crate) fn ranking(&self) -> Option<&Ranked> {
+        match &self.list {
+            Listing::Ranked(list) => Some(list),
+            Listing::Whole { .. } => None,
+        }
+    }
+
+    pub(crate) fn entries(&self) -> Cow<'_, [Arc<Entry>]> {
+        match &self.list {
+            Listing::Whole { entries, .. } => Cow::Borrowed(entries),
+            Listing::Ranked(list) => Cow::Owned(list.entries()),
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        match &self.list {
+            Listing::Whole { entries, .. } => entries.len(),
+            Listing::Ranked(list) => list.len(),
+        }
+    }
+
+    pub(crate) fn entry(&self, id: &str) -> Option<Arc<Entry>> {
+        match &self.list {
+            Listing::Whole { index, .. } => index.get(id).map(|found| found.0.clone()),
+            Listing::Ranked(list) => list.get(id).map(|(_, entry)| entry.clone()),
+        }
     }
 }
 
@@ -150,18 +190,26 @@ impl Version {
     pub(crate) fn succeeding(self, previous: &Version, replaced: &[(RowId, RowId)], mut loaded: Loaded) -> Option<Version> {
         match (&previous.body, self.body) {
             (Body::Rows(old), Body::Rows(new)) => {
-                let diff = Diff::between(&old.entries, &new.entries, replaced);
+                let diff = match (old.ranking(), new.ranking(), &new.changed) {
+                    (Some(before), Some(after), Some(changed)) => Diff::stepping(before, after, changed, replaced),
+                    _ => Diff::between(&old.entries()[..], &new.entries()[..], replaced),
+                };
                 if diff.is_empty() {
                     return None;
                 }
                 let (rows, related) = changed_rows(&diff, &mut loaded.rows, &mut loaded.related);
-                let step = Step { from: previous.position(), diff, rows, related };
+                let step = Step { from: previous.position(), diff, rows, related, touched: new.changed.clone() };
                 Some(Version { revision: self.revision, epoch: self.epoch, body: Body::Rows(RowsBody { step: Some(step), ..new }) })
             }
             (Body::Count(old), Body::Count(new)) => (*old != new).then_some(Version { revision: self.revision, epoch: self.epoch, body: Body::Count(new) }),
             _ => None,
         }
     }
+}
+
+fn ranked_entry(record: RankedRow, row: &Row, descending: &[bool]) -> (Arc<OrderKey>, Arc<Entry>) {
+    let key = Arc::new(OrderKey::new(record.cells, descending, record.id));
+    (key, Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, Vec::new()) }))
 }
 
 pub(crate) fn changed_rows(diff: &Diff, rows: &mut HashMap<String, Row>, related: &mut Related) -> (Vec<Row>, Related) {
@@ -286,6 +334,7 @@ impl Shared {
         self.read(&models, |reader| {
             let revision = reader.revision_seq()?;
             let (body, loaded) = match subject {
+                Subject::Rows(query) if ranking(query) => self.ranked_body(reader, query)?,
                 Subject::Rows(query) => {
                     let keys = self.query_keys(reader, query)?;
                     let rows = self.rows_for_keys(reader, query.model.as_str(), &keys)?;
@@ -305,8 +354,18 @@ impl Shared {
         })
     }
 
-    pub(crate) fn evaluate_step(&self, query: &Query, previous: &Version, touched: &HashSet<String>) -> Result<Evaluated, DbError> {
+    pub(crate) fn evaluate_step(&self, query: &Query, previous: &Version, touched: &HashSet<String>, horizon: (i64, u64)) -> Result<Evaluated, DbError> {
         let Body::Rows(old) = &previous.body else { return self.evaluate(&Subject::Rows(query.clone())) };
+        if ranking(query) {
+            let stepped = match old.ranking() {
+                Some(ranked) => self.rank_step(query, previous, ranked, touched, horizon)?,
+                None => None,
+            };
+            return match stepped {
+                Some(evaluated) => Ok(evaluated),
+                None => self.evaluate(&Subject::Rows(query.clone())),
+            };
+        }
         let epoch = self.ephemeral.lock().epoch;
         self.read(&[query.model.as_str()], |reader| {
             let revision = reader.revision_seq()?;
@@ -315,7 +374,7 @@ impl Shared {
             let slots: Vec<Option<Arc<Entry>>> = keys
                 .iter()
                 .map(|(id, key_revision)| match old.entry(id.as_str()) {
-                    Some(entry) if entry.stamp.revision == *key_revision && !touched.contains(id) => Some(entry.clone()),
+                    Some(entry) if entry.stamp.revision == *key_revision && !touched.contains(id) => Some(entry),
                     _ => {
                         wanted.push((id.clone(), *key_revision));
                         None
@@ -334,6 +393,56 @@ impl Shared {
         })
     }
 
+    fn rank_step(&self, query: &Query, previous: &Version, old: &Ranked, touched: &HashSet<String>, horizon: (i64, u64)) -> Result<Option<Evaluated>, DbError> {
+        let model = query.model.as_str();
+        let spec = self.spec(model)?;
+        let epoch = self.ephemeral.lock().epoch;
+        self.read(&[model], |reader| {
+            let revision = reader.revision_seq()?;
+            if (revision, epoch) != horizon {
+                return Ok(None);
+            }
+            let mut changed = touched.clone();
+            changed.extend(self.dispatch.replaced_between(previous.revision, revision).iter().flat_map(|(from, to)| [from.to_string(), to.to_string()]));
+            let wanted: Vec<String> = changed.iter().cloned().collect();
+            let (mut found, mut descending) = (Vec::with_capacity(wanted.len()), Vec::new());
+            for chunk in wanted.chunks(MAX_STEP_IDS) {
+                let statement = compile_ranked(query, spec, Some(chunk))?;
+                found.extend(fetch_ranked(reader.connection(), &statement.statement)?);
+                descending = statement.descending;
+            }
+            let keys: Vec<RowKey> = found.iter().map(|record| (record.id.clone(), record.revision)).collect();
+            let rows = self.rows_for_keys(reader, model, &keys)?;
+            locked(&self.counters).rows_loaded += rows.len();
+            let mut records: HashMap<String, RankedRow> = found.into_iter().map(|record| (record.id.clone(), record)).collect();
+            let mut next = old.clone();
+            for row in &rows {
+                if let Some(record) = records.remove(row.id.as_str()) {
+                    let (key, entry) = ranked_entry(record, row, &descending);
+                    next = next.with(key, entry);
+                }
+            }
+            let loaded = Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related: Related::new() };
+            for id in changed.iter().filter(|id| !loaded.rows.contains_key(*id)) {
+                next = next.without(id);
+            }
+            Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(RowsBody::ranked(next, Some(changed))) }, loaded }))
+        })
+    }
+
+    fn ranked_body(&self, reader: &Reader<'_>, query: &Query) -> Result<(Body, Loaded), DbError> {
+        let statement = compile_ranked(query, self.spec(query.model.as_str())?, None)?;
+        let found = fetch_ranked(reader.connection(), &statement.statement)?;
+        touch(found.len());
+        let keys: Vec<RowKey> = found.iter().map(|record| (record.id.clone(), record.revision)).collect();
+        let rows = self.rows_for_keys(reader, query.model.as_str(), &keys)?;
+        locked(&self.counters).rows_loaded += rows.len();
+        let mut records = found.into_iter();
+        let sorted = rows.iter().filter_map(|row| records.find(|record| record.id == row.id.as_str()).map(|record| ranked_entry(record, row, &statement.descending))).collect();
+        let loaded = Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related: Related::new() };
+        Ok((Body::Rows(RowsBody::ranked(Ranked::from_sorted(sorted), None)), loaded))
+    }
+
     pub(crate) fn load_whole(&self, subject: &Subject, version: &Version) -> Result<Loaded, DbError> {
         let Body::Rows(body) = &version.body else { return Ok(Loaded::default()) };
         let (model, include) = match subject {
@@ -341,7 +450,7 @@ impl Shared {
             Subject::Row(row) => (row.model.clone(), Vec::new()),
             Subject::Count(_) => return Ok(Loaded::default()),
         };
-        let keys: Vec<(String, i64)> = body.entries.iter().map(|entry| (entry.id.to_string(), entry.stamp.revision)).collect();
+        let keys: Vec<(String, i64)> = body.entries().iter().map(|entry| (entry.id.to_string(), entry.stamp.revision)).collect();
         let models = self.query_models(model.as_str(), &include)?;
         self.read(&models, |reader| {
             let rows = self.rows_for_keys(reader, model.as_str(), &keys)?;

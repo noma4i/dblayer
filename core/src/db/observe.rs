@@ -179,6 +179,7 @@ struct Due {
     version: Arc<Version>,
     touched: Option<HashSet<String>>,
     reached: Option<(i64, u64)>,
+    horizon: (i64, u64),
 }
 
 impl Shared {
@@ -200,6 +201,7 @@ impl Shared {
                 .map(|(key, group)| Due {
                     touched: observers.touched_ids(&key, batch),
                     reached: (!batch.iter().any(|event| event.epoch > group.epoch)).then(|| (batch.iter().map(|event| event.revision).max().unwrap_or(0), group.epoch)),
+                    horizon: (batch.iter().map(|event| event.revision).max().unwrap_or(0).max(group.at), batch.iter().map(|event| event.epoch).max().unwrap_or(0).max(group.epoch)),
                     subject: group.subject.clone(),
                     version: group.version.clone(),
                     key,
@@ -211,7 +213,7 @@ impl Shared {
             self.refresh_entities(&key, &model, ids);
         }
         for due in due {
-            self.publish_group(&due.key, &due.subject, &due.version, due.touched.as_ref().map(|touched| (touched, due.reached)));
+            self.publish_group(&due.key, &due.subject, &due.version, due.touched.as_ref().map(|touched| (touched, due.reached, due.horizon)));
         }
     }
 
@@ -226,8 +228,8 @@ impl Shared {
         self.read(&[probe.model.as_str()], |reader| Ok(self.query_keys(reader, &probe)?.is_empty()))
     }
 
-    fn publish_group(&self, key: &str, subject: &Subject, previous: &Arc<Version>, step: Option<(&HashSet<String>, Option<(i64, u64)>)>) {
-        if let (Subject::Rows(query), Some((touched, Some((revision, epoch))))) = (subject, step) {
+    fn publish_group(&self, key: &str, subject: &Subject, previous: &Arc<Version>, step: Option<(&HashSet<String>, Option<(i64, u64)>, (i64, u64))>) {
+        if let (Subject::Rows(query), Some((touched, Some((revision, epoch)), _))) = (subject, step) {
             if self.cannot_enter(query, previous, touched).unwrap_or(false) {
                 let mut observers = locked(&self.observers);
                 if let Some(group) = observers.groups.get_mut(key).filter(|group| Arc::ptr_eq(&group.version, previous)) {
@@ -237,10 +239,9 @@ impl Shared {
                 return;
             }
         }
-        let touched = step.map(|(touched, _)| touched);
         locked(&self.counters).observation_reads += 1;
-        let evaluated = match (subject, touched) {
-            (Subject::Rows(query), Some(touched)) if query.include.is_empty() => self.evaluate_step(query, previous, touched),
+        let evaluated = match (subject, step) {
+            (Subject::Rows(query), Some((touched, _, horizon))) if query.include.is_empty() => self.evaluate_step(query, previous, touched, horizon),
             _ => self.evaluate(subject),
         };
         let Ok(Evaluated { version: next, loaded }) = evaluated else { return };

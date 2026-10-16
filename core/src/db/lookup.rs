@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 use std::sync::Arc;
 
+use crate::identity::touches::touch;
 use crate::identity::RowId;
 use crate::query::{compile_count, compile_keys, fetch_count, fetch_keys, Order, Query};
 use crate::schema::Sort;
@@ -61,7 +62,9 @@ impl Shared {
 
     pub(crate) fn query_keys(&self, reader: &Reader<'_>, query: &Query) -> Result<Vec<RowKey>, DbError> {
         let statement = compile_keys(query, self.spec(query.model.as_str())?)?;
-        Ok(fetch_keys(reader.connection(), &statement)?)
+        let keys = fetch_keys(reader.connection(), &statement)?;
+        touch(keys.len());
+        Ok(keys)
     }
 }
 

@@ -1,3 +1,4 @@
+use rusqlite::types::Value;
 use rusqlite::{params_from_iter, Connection};
 
 use super::statement::{CompiledStatement, QueryError};
@@ -11,4 +12,20 @@ pub fn fetch_keys(connection: &Connection, statement: &CompiledStatement) -> Res
     let mut prepared = connection.prepare_cached(&statement.sql)?;
     let keys = prepared.query_map(params_from_iter(statement.bindings.iter()), |row| Ok((row.get(0)?, row.get(1)?)))?;
     Ok(keys.collect::<Result<_, _>>()?)
+}
+
+pub struct RankedRow {
+    pub id: String,
+    pub revision: i64,
+    pub cells: Vec<Value>,
+}
+
+pub fn fetch_ranked(connection: &Connection, statement: &CompiledStatement) -> Result<Vec<RankedRow>, QueryError> {
+    let mut prepared = connection.prepare_cached(&statement.sql)?;
+    let width = prepared.column_count();
+    let rows = prepared.query_map(params_from_iter(statement.bindings.iter()), |row| {
+        let cells = (2..width).map(|index| row.get::<_, Value>(index)).collect::<Result<_, _>>()?;
+        Ok(RankedRow { id: row.get(0)?, revision: row.get(1)?, cells })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
