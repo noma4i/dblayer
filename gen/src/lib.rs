@@ -8,6 +8,7 @@ mod schema_check;
 mod emit;
 mod enums;
 mod scalars;
+mod unions;
 pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
 pub use enums::EnumDecl;
 pub use scalars::Scalars;
@@ -203,3 +204,6 @@ mod result_tests;
 
 #[cfg(test)]
 mod active_record_tests;
+
+#[cfg(test)]
+mod union_tests;

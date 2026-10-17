@@ -25,7 +25,7 @@ fn shape(field: &FieldSpec) -> Shape<'_> {
         (FieldKind::Scalar { kind }, _) => Shape::Scalar(converter(*kind)),
         (FieldKind::Enum { .. }, Some(name)) => Shape::Enum(name),
         (FieldKind::List { element }, _) => Shape::List(converter(*element)),
-        (FieldKind::Object, Some(name)) => Shape::Object(name),
+        (FieldKind::Object | FieldKind::Union, Some(name)) => Shape::Object(name),
         (FieldKind::Array, Some(name)) => Shape::Array(name),
         _ => Shape::Json,
     }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use graphql_parser::query::{self, Definition as QueryDefinition, OperationDefinition, Selection};
+use graphql_parser::query::{self, Definition as QueryDefinition, OperationDefinition, Selection, SelectionSet};
 use graphql_parser::schema::{self, Definition, Type, TypeDefinition};
 
 const BUILTIN_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
@@ -51,7 +51,7 @@ impl Ty {
 pub enum TypeKind {
     Fields(HashMap<String, Ty>),
     Enum(Vec<String>),
-    Union,
+    Union(Vec<String>),
     Scalar,
     Input(Vec<(String, Ty)>),
 }
@@ -86,7 +86,7 @@ impl Schema {
             TypeDefinition::Object(object) => (&object.name, TypeKind::Fields(fields_of(&object.fields))),
             TypeDefinition::Interface(interface) => (&interface.name, TypeKind::Fields(fields_of(&interface.fields))),
             TypeDefinition::Enum(declared) => (&declared.name, TypeKind::Enum(declared.values.iter().map(|value| value.name.clone()).collect())),
-            TypeDefinition::Union(union) => (&union.name, TypeKind::Union),
+            TypeDefinition::Union(union) => (&union.name, TypeKind::Union(union.types.clone())),
             TypeDefinition::Scalar(scalar) => (&scalar.name, TypeKind::Scalar),
             TypeDefinition::InputObject(input) => (&input.name, TypeKind::Input(input.fields.iter().map(|field| (field.name.clone(), Ty { has_default: field.default_value.is_some(), ..Ty::of(&field.value_type) })).collect())),
         };
@@ -137,6 +137,7 @@ pub struct Root {
 #[derive(Debug, Default)]
 pub struct Operations {
     pub named: HashMap<String, Operation>,
+    pub fragments: HashMap<String, (String, Select)>,
 }
 
 #[derive(Debug)]
@@ -144,6 +145,44 @@ pub struct Operation {
     pub kind: &'static str,
     pub root: Option<Root>,
     pub variables: HashMap<String, Ty>,
+    pub select: Select,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Select {
+    pub fields: Vec<SelectedField>,
+    pub typename: bool,
+    pub on: Vec<(String, Select)>,
+    pub spreads: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectedField {
+    pub key: String,
+    pub name: String,
+    pub select: Select,
+}
+
+fn select_of(set: &SelectionSet<'_, String>) -> Select {
+    let mut found = Select::default();
+    for selection in &set.items {
+        match selection {
+            Selection::Field(field) if field.name == "__typename" => found.typename = true,
+            Selection::Field(field) => found.fields.push(SelectedField { key: field.alias.clone().unwrap_or_else(|| field.name.clone()), name: field.name.clone(), select: select_of(&field.selection_set) }),
+            Selection::InlineFragment(fragment) => match &fragment.type_condition {
+                Some(query::TypeCondition::On(name)) => found.on.push((name.clone(), select_of(&fragment.selection_set))),
+                None => {
+                    let inner = select_of(&fragment.selection_set);
+                    found.typename |= inner.typename;
+                    found.fields.extend(inner.fields);
+                    found.on.extend(inner.on);
+                    found.spreads.extend(inner.spreads);
+                }
+            },
+            Selection::FragmentSpread(spread) => found.spreads.push(spread.fragment_name.clone()),
+        }
+    }
+    found
 }
 
 impl Operations {
@@ -151,6 +190,11 @@ impl Operations {
         let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
         let document = query::parse_query::<String>(&text).map_err(|error| error.to_string())?;
         for definition in &document.definitions {
+            if let QueryDefinition::Fragment(fragment) = definition {
+                let query::TypeCondition::On(on) = &fragment.type_condition;
+                self.fragments.insert(fragment.name.clone(), (on.clone(), select_of(&fragment.selection_set)));
+                continue;
+            }
             let (kind, name, variables, selection) = match definition {
                 QueryDefinition::Operation(OperationDefinition::Query(operation)) => ("query", &operation.name, &operation.variable_definitions, &operation.selection_set),
                 QueryDefinition::Operation(OperationDefinition::Mutation(operation)) => ("mutation", &operation.name, &operation.variable_definitions, &operation.selection_set),
@@ -167,7 +211,7 @@ impl Operations {
                 Root { key, field: field.name.clone() }
             });
             let variables = variables.iter().map(|variable| (variable.name.clone(), Ty { has_default: variable.default_value.is_some(), ..Ty::of(&variable.var_type) })).collect();
-            if self.named.insert(name.clone(), Operation { kind, root, variables }).is_some() {
+            if self.named.insert(name.clone(), Operation { kind, root, variables, select: select_of(selection) }).is_some() {
                 return Err(format!("operation `{name}` is declared twice in operation documents"));
             }
         }

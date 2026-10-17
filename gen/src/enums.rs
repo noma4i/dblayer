@@ -55,9 +55,13 @@ impl EnumDecl {
     }
 
     pub fn check(&self) -> Result<(), String> {
+        self.check_as("enum", "value")
+    }
+
+    pub fn check_as(&self, noun: &str, item: &str) -> Result<(), String> {
         let name = &self.name;
         if self.values.is_empty() {
-            return Err(format!("enum `{name}` has no values"));
+            return Err(format!("{noun} `{name}` has no {item}s"));
         }
         for swift in [true, false] {
             let platform = if swift { "Swift" } else { "Kotlin" };
@@ -65,13 +69,13 @@ impl EnumDecl {
             for value in &self.values {
                 let case = plain_case(value, swift);
                 if case.is_empty() || case.starts_with(|character: char| character.is_ascii_digit()) {
-                    return Err(format!("enum `{name}`: value `{value}` cannot become a {platform} case name"));
+                    return Err(format!("{noun} `{name}`: {item} `{value}` cannot become a {platform} case name"));
                 }
                 if (swift && SWIFT_REJECTED.contains(&case.as_str())) || (!swift && KOTLIN_REJECTED.contains(&case.as_str())) {
-                    return Err(format!("enum `{name}`: value `{value}` becomes the reserved {platform} case `{case}`"));
+                    return Err(format!("{noun} `{name}`: {item} `{value}` becomes the reserved {platform} case `{case}`"));
                 }
                 if let Some((_, other)) = seen.iter().find(|(known, _)| *known == case) {
-                    return Err(format!("enum `{name}`: values `{other}` and `{value}` both become the {platform} case `{case}`"));
+                    return Err(format!("{noun} `{name}`: {item}s `{other}` and `{value}` both become the {platform} case `{case}`"));
                 }
                 seen.push((case, value));
             }

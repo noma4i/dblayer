@@ -13,7 +13,7 @@ mod standalone;
 pub use inputs::{InputField, InputObject, SchemaTypes, Ty, TyKind};
 pub(crate) use inputs::load_schema_types;
 
-use graphql::Operations;
+use graphql::{Operations, Select};
 pub(crate) use graphql::{Schema, TypeKind};
 
 type Declared<'a> = HashMap<&'a str, (usize, &'a [Call])>;
@@ -62,7 +62,8 @@ fn operation_files(paths: &[PathBuf]) -> Vec<PathBuf> {
 
 fn collect_declared<'a>(calls: &'a [Call], file: usize, declared: &mut Declared<'a>) {
     for call in calls {
-        if let (Some(block), Some(name)) = (&call.block, option_text(call, "as")) {
+        let declared_name = if call.word == "variant" { Some(name_of(call)) } else { option_text(call, "as") };
+        if let (Some(block), Some(name)) = (&call.block, declared_name) {
             declared.entry(name).or_insert((file, block.as_slice()));
         }
         collect_declared(call.block.as_deref().unwrap_or_default(), file, declared);
@@ -130,6 +131,7 @@ impl<'a> Run<'a> {
             let mut covered = BTreeSet::new();
             self.check_fields(node, &fields, &element, &Scope { file: node.file, keys, top: true, lists: false }, &mut covered, &mut Vec::new());
             self.check_associations(node, &element);
+            self.check_union_selections(node, remote);
             self.list_unmodeled(node, remote, &element, &covered);
         }
         self.check_mutation_args(node);
@@ -301,6 +303,10 @@ impl<'a> Run<'a> {
                 _ => None,
             };
             let Some((file, children)) = block else { continue };
+            if children.iter().any(|child| child.word == "variant") {
+                self.check_union(node, call, reached.0.name(), children, file, stack);
+                continue;
+            }
             let marker = (option_text(call, "as").unwrap_or(name).to_string(), reached.0.name().to_string());
             if !matches!(self.schema.types.get(reached.0.name()), Some(TypeKind::Fields(_))) || stack.contains(&marker) {
                 continue;
@@ -308,6 +314,95 @@ impl<'a> Run<'a> {
             stack.push(marker);
             let inner: Vec<&Call> = children.iter().collect();
             self.check_fields(node, &inner, reached.0.name(), &Scope { file, keys: HashSet::new(), top: false, lists: false }, &mut BTreeSet::new(), stack);
+            stack.pop();
+        }
+    }
+
+    fn each_select<'b>(&'b self, select: &'b Select, on: Option<&'b str>, visit: &mut impl FnMut(&'b Select, Option<&'b str>), seen: &mut Vec<&'b str>) {
+        visit(select, on);
+        for (on, inner) in &select.on {
+            self.each_select(inner, Some(on), visit, seen);
+        }
+        for spread in &select.spreads {
+            if let (false, Some((on, inner))) = (seen.contains(&spread.as_str()), self.operations.fragments.get(spread)) {
+                seen.push(spread);
+                self.each_select(inner, Some(on), visit, seen);
+            }
+        }
+    }
+
+    fn element_select(&self, remote: &Call) -> Option<&Select> {
+        let lines = remote.block.as_deref().unwrap_or_default();
+        let query = lines.iter().find(|call| call.word == "query")?;
+        let operation = self.operations.named.get(name_of(query))?;
+        let root = operation.root.as_ref()?;
+        let path = option_text(query, "root").unwrap_or(&root.key);
+        let mut select = &operation.select.fields.iter().find(|field| field.key == root.key)?.select;
+        for segment in path.split('.').skip(1) {
+            select = &select.fields.iter().find(|field| field.key == segment)?.select;
+        }
+        if lines.iter().any(|call| call.word == "paginate") {
+            select = match select.fields.iter().find(|field| field.name == "nodes") {
+                Some(nodes) => &nodes.select,
+                None => &select.fields.iter().find(|field| field.name == "edges")?.select.fields.iter().find(|field| field.name == "node")?.select,
+            };
+        }
+        Some(select)
+    }
+
+    fn check_union_selections(&mut self, node: &'a ModelNode, remote: &Call) {
+        let Some(element) = self.element_select(remote) else { return };
+        let mut selected: Vec<&graphql::SelectedField> = Vec::new();
+        self.each_select(element, None, &mut |select, _| selected.extend(select.fields.iter()), &mut Vec::new());
+        let mut problems = Vec::new();
+        for call in node.body.iter().filter(|call| call.word == "schema").flat_map(|call| call.block.iter().flatten()) {
+            let variants: &[Call] = match (&call.block, call.word.as_str()) {
+                (Some(block), "union") => block,
+                (None, "object") => option_text(call, "as").and_then(|name| self.declared.get(name)).map(|(_, block)| *block).filter(|block| block.iter().any(|child| child.word == "variant")).unwrap_or_default(),
+                _ => continue,
+            };
+            let union = option_text(call, "as").unwrap_or_default();
+            let schema_name = option_text(call, "from").unwrap_or(name_of(call)).split('.').next().unwrap_or_default();
+            for field in selected.iter().filter(|field| field.name == schema_name) {
+                let mut found: (bool, Vec<&str>) = (false, Vec::new());
+                self.each_select(&field.select, None, &mut |select, on| {
+                    found.0 |= select.typename;
+                    found.1.extend(on.filter(|on| *on != union));
+                }, &mut Vec::new());
+                if !found.0 {
+                    problems.push((call.line, call.column, format!("field `{}`: the selection of `{schema_name}` must select `__typename`", name_of(call))));
+                }
+                for on in found.1.iter().filter(|on| !variants.iter().any(|variant| name_of(variant) == **on)) {
+                    problems.push((call.line, call.column, format!("field `{}`: `... on {on}` is not a declared variant of union `{union}`", name_of(call))));
+                }
+            }
+        }
+        for (line, column, message) in problems {
+            self.fail(node.file, line, column, message);
+        }
+    }
+
+    fn check_union(&mut self, node: &'a ModelNode, call: &Call, union: &str, variants: &'a [Call], file: usize, stack: &mut Vec<(String, String)>) {
+        let Some(TypeKind::Union(members)) = self.schema.types.get(union) else { return };
+        let declared: Vec<&str> = variants.iter().map(name_of).collect();
+        for variant in variants {
+            if !members.iter().any(|member| member == name_of(variant)) {
+                self.fail(file, variant.line, variant.column, format!("variant `{}` is not a member of union `{union}`", name_of(variant)));
+            }
+        }
+        for member in members.iter().filter(|member| !declared.contains(&member.as_str())) {
+            let at = variants.first().unwrap_or(call);
+            self.fail(file, at.line, at.column, format!("variant `{member}` of union `{union}` is not declared"));
+        }
+        for variant in variants.iter().filter(|variant| members.iter().any(|member| member == name_of(variant))) {
+            let Some(block) = &variant.block else { continue };
+            let marker = (name_of(variant).to_string(), union.to_string());
+            if stack.contains(&marker) {
+                continue;
+            }
+            stack.push(marker);
+            let inner: Vec<&Call> = block.iter().collect();
+            self.check_fields(node, &inner, name_of(variant), &Scope { file, keys: HashSet::new(), top: false, lists: false }, &mut BTreeSet::new(), stack);
             stack.pop();
         }
     }
@@ -368,6 +463,9 @@ impl<'a> Run<'a> {
         if word == "enum" {
             problems.extend(self.enum_problems(call, reached.name()));
         }
+        if word == "union" && !matches!(self.schema.types.get(reached.name()), Some(TypeKind::Union(_))) {
+            problems.push(format!("is not a union: schema type `{}` is not one", reached.name()));
+        }
         for problem in problems {
             self.fail(file, call.line, call.column, format!("field `{name}` {problem}"));
         }
@@ -376,7 +474,7 @@ impl<'a> Run<'a> {
     fn named_fits(&self, call: &Call, named: &str) -> bool {
         let kind = self.schema.types.get(named);
         let builtin = Schema::is_builtin_scalar(named);
-        let structured = matches!(kind, Some(TypeKind::Fields(_) | TypeKind::Union)) || self.custom_fits(named, "object");
+        let structured = matches!(kind, Some(TypeKind::Fields(_) | TypeKind::Union(_))) || self.custom_fits(named, "object");
         let word = match call.word.as_str() {
             "list" => option_text(call, "of").unwrap_or("string"),
             other => other,
@@ -390,6 +488,7 @@ impl<'a> Run<'a> {
             "date" => named == "String" || self.custom_fits(named, "date"),
             "enum" => named == "String" || matches!(kind, Some(TypeKind::Enum(_))),
             "object" => structured,
+            "union" => true,
             "array" => structured || builtin,
             _ => true,
         }
@@ -428,3 +527,6 @@ impl<'a> Run<'a> {
 
 #[cfg(test)]
 mod schema_check_tests;
+
+#[cfg(test)]
+mod union_tests;

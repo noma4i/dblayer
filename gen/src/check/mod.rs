@@ -18,9 +18,9 @@ pub(crate) fn check_source(source: &str) -> Result<Vec<ModelSpec>, Vec<ParseErro
 }
 
 const SCALAR_WORDS: [&str; 6] = ["string", "num", "int", "bool", "date", "id"];
-const FIELD_WORDS: [&str; 12] =
-    ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list", "file"];
-const NESTED_WORDS: [&str; 11] = ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list"];
+const FIELD_WORDS: [&str; 13] =
+    ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list", "file", "union"];
+const NESTED_WORDS: [&str; 12] = ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list", "union"];
 const EPHEMERAL_WORDS: [&str; 11] = ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list"];
 const ASSOCIATION_WORDS: [&str; 4] = ["belongs_to", "has_many", "has_one", "references"];
 
@@ -30,6 +30,7 @@ enum Context {
     Schema,
     Ephemeral,
     Nested,
+    Union,
     Remote,
     Action,
 }
@@ -93,9 +94,13 @@ fn field_keys(word: &str) -> Vec<Key> {
         "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
         "list" => keys.push(key("of", Want::Symbol, true)),
         "object" | "array" => keys.push(key("as", Want::TypeName, false)),
+        "union" => {
+            keys.retain(|candidate| !matches!(candidate.name, "default" | "id_from"));
+            keys.push(key("as", Want::TypeName, false));
+        }
         _ => {}
     }
-    if word != "file" {
+    if word != "file" && word != "union" {
         keys.push(key("index", Want::Bool, false));
     }
     if matches!(word, "string" | "list") {
@@ -110,6 +115,10 @@ fn nested_keys(word: &str) -> Vec<Key> {
         "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
         "list" => keys.push(key("of", Want::Symbol, true)),
         "object" | "array" => keys.push(key("as", Want::TypeName, false)),
+        "union" => {
+            keys.retain(|candidate| candidate.name != "default");
+            keys.push(key("as", Want::TypeName, false));
+        }
         _ => {}
     }
     keys
@@ -175,6 +184,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Schema, field) if FIELD_WORDS.contains(&field) => plain(Shape::Name, field_keys(field)),
         (Context::Nested, field) if NESTED_WORDS.contains(&field) => plain(Shape::Name, nested_keys(field)),
         (Context::Ephemeral, field) if EPHEMERAL_WORDS.contains(&field) => plain(Shape::Name, ephemeral_keys(field)),
+        (Context::Union, "variant") => plain(Shape::Const, vec![key("case", Want::Symbol, false)]),
         (Context::Remote, "query") => plain(Shape::Const, vec![key("root", Want::Any, false)]),
         (Context::Remote, "paginate") => plain(Shape::Int, vec![key("backward", Want::Bool, false), key("cursor", Want::Symbol, false), key("from", Want::Any, false), key("cursor_type", Want::Symbol, false)]),
         (Context::Remote, "list") => plain(Shape::Nothing, vec![]),
@@ -201,7 +211,9 @@ pub fn check(nodes: &[ModelNode]) -> Result<Vec<ModelSpec>, Vec<Found>> {
     let models = build(nodes);
     nested::check_defaults(nodes, &models, &mut errors);
     if !errors.is_empty() { return Err(errors); }
-    let faults = validate_models(&models, &[]);
+    let mut resolved = models.clone();
+    dblayer::schema::resolve_types(&mut resolved);
+    let faults = validate_models(&resolved, &[]);
     if faults.is_empty() {
         return Ok(models);
     }
@@ -224,14 +236,21 @@ struct TypeUse<'a> {
 }
 
 fn collect_types<'a>(calls: &'a [Call], owner: &str, file: usize, out: &mut Vec<TypeUse<'a>>) {
-    for call in calls.iter().filter(|call| matches!(call.word.as_str(), "object" | "array")) {
+    for call in calls.iter().filter(|call| matches!(call.word.as_str(), "object" | "array" | "union")) {
         let named = call.options.iter().find(|pair| pair.key == "as").and_then(|pair| match &pair.value.item {
             Value::Const(name) => Some(name.clone()),
             _ => None,
         });
         let field = symbol_name(call.args.first()).unwrap_or_default();
         let name = named.clone().unwrap_or_else(|| format!("{owner}{}", crate::build::camel(field)));
-        if let Some(block) = &call.block {
+        if call.word == "union" {
+            out.push(TypeUse { name: name.clone(), call, file, declares: call.block.is_some() });
+            for variant in call.block.iter().flatten() {
+                let Some(Node { item: Value::Const(typename), .. }) = variant.args.first() else { continue };
+                out.push(TypeUse { name: typename.clone(), call: variant, file, declares: variant.block.is_some() });
+                collect_types(variant.block.as_deref().unwrap_or_default(), typename, file, out);
+            }
+        } else if let Some(block) = &call.block {
             out.push(TypeUse { name: name.clone(), call, file, declares: true });
             collect_types(block, &name, file, out);
         } else if named.is_some() {
@@ -258,6 +277,10 @@ fn check_types(nodes: &[ModelNode], errors: &mut Vec<Found>) {
     }
     for item in uses.iter().filter(|item| !item.declares && !declared.contains(item.name.as_str())) {
         errors.push(at(item.file, item.call.line, item.call.column, format!("type `{}` is not declared by any `do ... end` block", item.name)));
+    }
+    let unions: HashSet<&str> = uses.iter().filter(|item| item.declares && item.call.word == "union").map(|item| item.name.as_str()).collect();
+    for item in uses.iter().filter(|item| item.call.word == "array" && unions.contains(item.name.as_str())) {
+        errors.push(at(item.file, item.call.line, item.call.column, format!("union lists are not supported: `{}` is a union", item.name)));
     }
 }
 
@@ -468,7 +491,7 @@ fn check_schema(schema: &Call, report: &mut impl FnMut(usize, usize, String)) {
             check_list_element(call, report);
         }
         check_local(call, report);
-        if call.block.is_some() && matches!(call.word.as_str(), "object" | "array") {
+        if call.block.is_some() && matches!(call.word.as_str(), "object" | "array" | "union") {
             check_nested_block(call, report);
         }
     }
@@ -480,6 +503,46 @@ fn check_schema(schema: &Call, report: &mut impl FnMut(usize, usize, String)) {
 fn check_nested_block(owner: &Call, report: &mut impl FnMut(usize, usize, String)) {
     let name = symbol_name(owner.args.first()).unwrap_or_default();
     let calls: &[Call] = owner.block.as_deref().unwrap_or_default();
+    if owner.word == "union" {
+        return check_union_block(owner, name, report);
+    }
+    check_field_block(owner, name, calls, report);
+}
+
+fn check_union_block(owner: &Call, name: &str, report: &mut impl FnMut(usize, usize, String)) {
+    let calls: &[Call] = owner.block.as_deref().unwrap_or_default();
+    let mut typenames: Vec<&str> = Vec::new();
+    let mut repeated = false;
+    for call in calls {
+        check_call(call, Context::Union, report);
+        let Some(Node { item: Value::Const(typename), .. }) = call.args.first() else { continue };
+        if typenames.contains(&typename.as_str()) {
+            repeated = true;
+            report(call.line, call.column, format!("variant `{typename}` is declared twice"));
+            continue;
+        }
+        typenames.push(typename);
+        if let Some(block) = &call.block {
+            check_field_block(call, typename, block, report);
+        }
+    }
+    if repeated {
+        return;
+    }
+    let union = option_const(owner, "as").unwrap_or(name);
+    if let Err(message) = crate::unions::check_cases(union, &crate::unions::cases_of(calls)) {
+        report(owner.line, owner.column, message);
+    }
+}
+
+fn option_const<'a>(call: &'a Call, key: &str) -> Option<&'a str> {
+    call.options.iter().find(|pair| pair.key == key).and_then(|pair| match &pair.value.item {
+        Value::Const(name) => Some(name.as_str()),
+        _ => None,
+    })
+}
+
+fn check_field_block(owner: &Call, name: &str, calls: &[Call], report: &mut impl FnMut(usize, usize, String)) {
     if calls.is_empty() {
         report(owner.line, owner.column, format!("`{name}` block needs at least 1 field"));
     }
@@ -625,7 +688,8 @@ fn check_call(call: &Call, context: Context, report: &mut impl FnMut(usize, usiz
     match (&call.block, word.block) {
         (None, true) if call.word == "action" && call.options.iter().any(|pair| pair.key == "mutation") => {}
         (None, true) => report(call.line, call.column, format!("`{}` needs a `do ... end` block", call.word)),
-        (Some(_), false) if matches!(context, Context::Schema | Context::Nested) && matches!(call.word.as_str(), "object" | "array") => {}
+        (Some(_), false) if matches!(context, Context::Schema | Context::Nested) && matches!(call.word.as_str(), "object" | "array" | "union") => {}
+        (Some(_), false) if context == Context::Union => {}
         (Some(_), false) => report(call.line, call.column, format!("`{}` takes no block", call.word)),
         _ => {}
     }

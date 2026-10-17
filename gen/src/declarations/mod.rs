@@ -19,7 +19,7 @@ fn inferred_type(schema: &Schema, ty: &Ty) -> Result<Value, String> {
             "Float" => Value::Symbol("num".into()),
             "Boolean" => Value::Symbol("bool".into()),
             _ => match schema.types.get(name) {
-                Some(TypeKind::Fields(_)) => Value::Const(name.clone()),
+                Some(TypeKind::Fields(_) | TypeKind::Union(_)) => Value::Const(name.clone()),
                 _ => return Err(format!("GraphQL type `{name}` needs an explicit storage type")),
             },
         }),
@@ -27,7 +27,8 @@ fn inferred_type(schema: &Schema, ty: &Ty) -> Result<Value, String> {
 }
 
 fn needs_inference(call: &Call) -> bool {
-    call.word == "field" && (!call.options.iter().any(|pair| pair.key == "type") || call.block.as_ref().is_some_and(|children| children.iter().any(needs_inference)))
+    let inside = |children: &Vec<Call>| children.iter().any(|child| needs_inference(child) || (child.word == "on" && child.block.as_ref().is_some_and(|block| block.iter().any(needs_inference))));
+    call.word == "field" && (!call.options.iter().any(|pair| pair.key == "type") || call.block.as_ref().is_some_and(inside))
 }
 
 fn infer_fields(calls: &mut [Call], owner: &str, schema: &Schema) -> Result<(), ParseError> {
@@ -54,7 +55,16 @@ fn infer_fields(calls: &mut [Call], owner: &str, schema: &Schema) -> Result<(), 
             }
         }
         if let Some(children) = &mut call.block {
-            infer_fields(children, ty.name(), schema)?;
+            if children.iter().any(|child| child.word == "on") {
+                for variant in children.iter_mut().filter(|child| child.word == "on") {
+                    let Some(Node { item: Value::Const(name), .. }) = variant.args.first().cloned() else { continue };
+                    if let Some(block) = &mut variant.block {
+                        infer_fields(block, &name, schema)?;
+                    }
+                }
+            } else {
+                infer_fields(children, ty.name(), schema)?;
+            }
         }
     }
     Ok(())
@@ -108,10 +118,14 @@ fn field(mut call: Call) -> Result<Call, ParseError> {
         return Err(fail(&call, "field needs `type:` when no GraphQL schema supplies its type"));
     };
     let ty = call.options.remove(at).value.item;
+    let variants = call.block.as_ref().is_some_and(|children| children.iter().any(|child| child.word == "on"));
+    if variants && !matches!(ty, Value::Const(_)) {
+        return Err(fail(&call, "`on` is allowed only inside a union field with a type name"));
+    }
     match ty {
         Value::Symbol(kind) => call.word = kind,
         Value::Const(name) => {
-            call.word = "object".into();
+            call.word = if variants { "union" } else { "object" }.into();
             call.options.push(pair(&call, "as", Value::Const(name)));
         }
         Value::Array(items) if items.len() == 1 => match &items[0].item {
@@ -127,6 +141,19 @@ fn field(mut call: Call) -> Result<Call, ParseError> {
         },
         _ => return Err(fail(&call, "field type needs a scalar, named value type or list")),
     }
+    if let Some(children) = call.block.take() {
+        let convert = if variants { variant } else { field };
+        call.block = Some(children.into_iter().map(convert).collect::<Result<_, _>>()?);
+    }
+    Ok(call)
+}
+
+fn variant(mut call: Call) -> Result<Call, ParseError> {
+    if call.word != "on" { return Err(fail(&call, "a union holds only `on` variants")); }
+    if !matches!(call.args.as_slice(), [Node { item: Value::Const(_), .. }]) {
+        return Err(fail(&call, "`on` needs a type name like `GiftAttachment`"));
+    }
+    call.word = "variant".into();
     if let Some(children) = call.block.take() {
         call.block = Some(children.into_iter().map(field).collect::<Result<_, _>>()?);
     }

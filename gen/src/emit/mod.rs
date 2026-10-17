@@ -7,6 +7,8 @@ mod wire;
 mod inputs;
 mod enums;
 mod operations;
+mod unions;
+use unions::{emit_kotlin_union, emit_swift_union};
 use nested::{emit_kotlin_type, emit_swift_type};
 use inputs::{emit_kotlin_inputs, emit_swift_inputs};
 use enums::{emit_kotlin_enums, emit_swift_enums};
@@ -49,13 +51,20 @@ fn raw_type(swift: bool) -> String {
     if swift { "JSONValue".into() } else { "JsonElement".into() }
 }
 
+fn column_type(field: &FieldSpec, swift: bool) -> String {
+    match (&field.kind, &field.app_type) {
+        (FieldKind::Union, Some(name)) => format!("{name}Kind"),
+        _ => field_type(field, swift),
+    }
+}
+
 fn field_type(field: &FieldSpec, swift: bool) -> String {
     let base = match &field.kind {
         FieldKind::Scalar { kind } => scalar(*kind, swift).to_string(),
         FieldKind::Enum { .. } => field.app_type.clone().expect("an enum field names its type"),
         FieldKind::List { element } => if swift { format!("[{}]", scalar(*element, true)) } else { format!("List<{}>", scalar(*element, false)) },
         FieldKind::Array => field.app_type.as_ref().map(|name| if swift { format!("[{name}]") } else { format!("List<{name}>") }).unwrap_or_else(|| raw_type(swift)),
-        FieldKind::Object => field.app_type.clone().unwrap_or_else(|| raw_type(swift)),
+        FieldKind::Object | FieldKind::Union => field.app_type.clone().unwrap_or_else(|| raw_type(swift)),
         _ => raw_type(swift),
     };
     if field.nullable || field.optional { format!("{base}?") } else { base }
@@ -187,7 +196,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         for (at, field) in wire::wired(model).into_iter().enumerate() { writeln!(out, "        self.{} = {}", field.name, wire::read_swift(field, at, &declared_types(models))).unwrap(); }
         out.push_str("        self.sync = SyncInfo(wire: row.sync)\n        self.upload = row.upload.map(UploadInfo.init(wire:))\n    }\n\n");
         for field in &model.fields {
-            if field.name != "id" { writeln!(out, "    public static let {} = Column<{class}, {}>(\"{}\")", field.name, field_type(field, true), field.name).unwrap(); }
+            if field.name != "id" { writeln!(out, "    public static let {} = Column<{class}, {}>(\"{}\")", field.name, column_type(field, true), field.name).unwrap(); }
         }
         out.push_str("    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }\n    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }\n");
         for relation in &model.relations {
@@ -264,7 +273,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         }
     }
     let types = declared_types(models);
-    for declaration in &types { emit_swift_type(&mut out, declaration, &types, true); }
+    for declaration in &types { if declaration.kind == FieldKind::Union { emit_swift_union(&mut out, declaration); } else { emit_swift_type(&mut out, declaration, &types, true); } }
     emit_swift_enums(&mut out, &enum_decls(models, operations, schema_types));
     emit_swift_inputs(&mut out, &schema_types.inputs);
     emit_swift_operations(&mut out, operations);
@@ -284,7 +293,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             writeln!(out, "    {}val {}: {}{},", if field.name == "id" { "override " } else { "" }, field.name, field_type(field, false), if field.nullable || field.optional { " = null" } else { "" }).unwrap();
         }
         writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val upload: UploadInfo? = null\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val layout = \"{}\"\n        override val modelName = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                upload = row.upload?.let {{ UploadInfo.of(it) }},\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", field.name, wire::read_kotlin(field, at, &declared_types(models)))).collect::<String>()).unwrap();
-        for field in model.fields.iter().filter(|field| field.name != "id") { writeln!(out, "        val {} = Column<{class}, {}>(\"{}\")", field.name, field_type(field, false), field.name).unwrap(); }
+        for field in model.fields.iter().filter(|field| field.name != "id") { writeln!(out, "        val {} = Column<{class}, {}>(\"{}\")", field.name, column_type(field, false), field.name).unwrap(); }
         writeln!(out, "        fun find(id: String) = Query(\"{class}\", this).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", this).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", this, ids)\n        fun entity(id: String) = entityOf(\"{class}\", this, id)").unwrap();
         for relation in &model.relations {
             let method = name(&relation.name);
@@ -364,7 +373,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         }
     }
     let types = declared_types(models);
-    for declaration in &types { emit_kotlin_type(&mut out, declaration, &types, true); }
+    for declaration in &types { if declaration.kind == FieldKind::Union { emit_kotlin_union(&mut out, declaration); } else { emit_kotlin_type(&mut out, declaration, &types, true); } }
     emit_kotlin_enums(&mut out, &enum_decls(models, operations, schema_types));
     emit_kotlin_inputs(&mut out, &schema_types.inputs);
     emit_kotlin_operations(&mut out, operations);

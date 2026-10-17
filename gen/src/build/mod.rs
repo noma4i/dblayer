@@ -24,7 +24,28 @@ pub fn build(nodes: &[ModelNode]) -> Vec<ModelSpec> {
             }
         }
     }
+    let unions = union_names(&models);
+    models.iter_mut().flat_map(|model| model.fields.iter_mut()).for_each(|field| retag_references(field, &unions));
     models
+}
+
+fn union_names(models: &[ModelSpec]) -> Vec<String> {
+    fn walk(field: &FieldSpec, out: &mut Vec<String>) {
+        if let (FieldKind::Union, Some(name)) = (&field.kind, &field.app_type) {
+            if !field.fields.is_empty() { out.push(name.clone()); }
+        }
+        field.fields.iter().for_each(|inner| walk(inner, out));
+    }
+    let mut found = Vec::new();
+    models.iter().flat_map(|model| model.fields.iter()).for_each(|field| walk(field, &mut found));
+    found
+}
+
+fn retag_references(field: &mut FieldSpec, unions: &[String]) {
+    if field.kind == FieldKind::Object && field.fields.is_empty() && field.app_type.as_ref().is_some_and(|name| unions.contains(name)) {
+        field.kind = FieldKind::Union;
+    }
+    field.fields.iter_mut().for_each(|inner| retag_references(inner, unions));
 }
 
 fn build_model(node: &ModelNode) -> ModelSpec {
@@ -82,6 +103,7 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
         "date" => FieldSpec::scalar(&name, ScalarKind::Date),
         "id" => FieldSpec::scalar(&name, ScalarKind::Id),
         "object" => FieldSpec::object(&name),
+        "union" => FieldSpec::union(&name, "", Vec::new()),
         "array" => FieldSpec::array(&name),
         "raw" => FieldSpec::raw(&name),
         "file" => FieldSpec::file(&name),
@@ -102,7 +124,10 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
     }
     if let Some(block) = &call.block {
         let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(&name)));
-        field.fields = block.iter().map(|child| build_field(child, &type_name)).collect();
+        field.fields = match field.kind {
+            FieldKind::Union => block.iter().zip(crate::unions::cases_of(block)).map(|(variant, case)| build_variant(variant, &case)).collect(),
+            _ => block.iter().map(|child| build_field(child, &type_name)).collect(),
+        };
         field.app_type = Some(type_name);
     }
     field.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));
@@ -112,6 +137,12 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
         field.merge = Some(MergeRule::Local);
     }
     field
+}
+
+fn build_variant(call: &Call, case: &str) -> FieldSpec {
+    let type_name = text_of(&call.args[0].item).unwrap_or_default();
+    let fields = call.block.iter().flatten().map(|child| build_field(child, &type_name)).collect();
+    FieldSpec::variant(case, &type_name, fields)
 }
 
 fn merge_of(value: &Value) -> Option<MergeRule> {

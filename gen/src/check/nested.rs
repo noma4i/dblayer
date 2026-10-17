@@ -22,7 +22,7 @@ fn fits(field: &FieldSpec, value: &Json, types: &[&FieldSpec]) -> bool {
         }),
         FieldKind::Array => value.as_array().is_some_and(|items| field.app_type.is_none() || items.iter().all(|item| fits(&FieldSpec { kind: FieldKind::Object, ..field.clone() }, item, types))),
         FieldKind::Raw => true,
-        FieldKind::File => false,
+        FieldKind::Union | FieldKind::File => false,
     }
 }
 
@@ -30,13 +30,19 @@ fn object_cycle(name: &str, types: &[&FieldSpec], seen: &mut Vec<String>) -> boo
     if seen.iter().any(|prior| prior == name) { return true; }
     let Some(target) = types.iter().find(|field| field.app_type.as_deref() == Some(name)) else { return false };
     seen.push(name.to_string());
-    let cycle = target.fields.iter().filter(|field| field.kind == FieldKind::Object).filter_map(|field| field.app_type.as_deref()).any(|child| object_cycle(child, types, seen));
+    let cycle = target.fields.iter().filter(|field| matches!(field.kind, FieldKind::Object | FieldKind::Union)).filter_map(|field| field.app_type.as_deref()).any(|child| object_cycle(child, types, seen));
     seen.pop();
     cycle
 }
 
 fn walk(calls: &[Call], fields: &[FieldSpec], file: usize, types: &[&FieldSpec], errors: &mut Vec<Found>, in_type: bool) {
     for call in calls {
+        if let (true, Some(Node { item: Value::Const(typename), .. }), Some(block)) = (call.word == "variant", call.args.first(), &call.block) {
+            if let Some(variant) = fields.iter().find(|field| field.app_type.as_deref() == Some(typename.as_str())) {
+                walk(block, &variant.fields, file, types, errors, true);
+            }
+            continue;
+        }
         let Some(name) = symbol_name(call.args.first()) else { continue };
         let Some(field) = fields.iter().find(|field| field.name == name) else { continue };
         if in_type {
