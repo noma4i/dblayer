@@ -41,9 +41,9 @@ impl Run<'_> {
                 self.fail(node.file, arg.line, arg.column, format!("`{}` is not an input of operation `{name}`", arg.key));
                 continue;
             };
-            let Some(kind) = text(&arg.value.item) else { continue };
+            let Some(kind) = crate::operation::arg_kind_text(&arg.value.item) else { continue };
             if !self.arg_fits(kind.trim_end_matches('?'), ty) || (kind.ends_with('?') && !ty.optional()) {
-                self.fail(node.file, arg.line, arg.column, format!("arg `{}` of kind `:{kind}` does not fit `{}`{}", arg.key, ty.describe(), self.unmapped_hint(ty.name())));
+                self.fail(node.file, arg.line, arg.column, format!("arg `{}` of kind `{}` does not fit `{}`{}", arg.key, crate::operation::display_kind(&kind), ty.describe(), self.unmapped_hint(ty.name())));
             }
         }
         for (key, ty) in accepted {

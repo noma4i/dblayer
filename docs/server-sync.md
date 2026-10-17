@@ -311,6 +311,28 @@ val sent = Operations.stickerSend(StickerInput(name = "wave", tags = listOf("a")
 println(sent.id)
 ```
 
+A list of schema input objects or enums takes the name in brackets. `[:WidgetInput]` is a list that holds no nil, `[:WidgetInput?]` may hold nil items, a `?` after the bracket (`[:WidgetInput]?`) makes the whole list optional and an omitted one is not sent. The check compares the list with the variable of the mutation: an arg that may hold nil items does not fit `[WidgetInput!]`.
+
+```ruby
+operation :widgets_send do
+  mutation WidgetsSend
+  args     widgets: [:StickerWidgetInput]?
+  result   id: :string
+end
+```
+
+```swift
+let widget = StickerWidgetInput(kind: .emoji, props: .emoji(StickerEmojiInput(code: "fire")))
+let answer = try await Operations.widgetsSend(widgets: [widget])
+print(answer.id)
+```
+
+```kotlin
+val widget = StickerWidgetInput(kind = WidgetKind.Emoji, props = StickerPropsInput.Emoji(StickerEmojiInput(code = "fire")))
+val answer = Operations.widgetsSend(widgets = listOf(widget))
+println(answer.id)
+```
+
 ## Subscriptions
 
 ```ruby

@@ -421,7 +421,11 @@ fn on_failure_of(policy: &str) -> OnFailure {
 }
 
 fn variable_binding(pair: &Pair) -> Option<(String, String)> {
-    text_of(&pair.value.item).map(|field| (pair.key.clone(), field))
+    let kind = match &pair.value.item {
+        Value::Array(_) | Value::OptionalArray(_) => crate::operation::arg_kind_text(&pair.value.item),
+        other => text_of(other),
+    };
+    kind.map(|field| (pair.key.clone(), field))
 }
 
 fn option<'a>(call: &'a Call, name: &str) -> Option<&'a Pair> {

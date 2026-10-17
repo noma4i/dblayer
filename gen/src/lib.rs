@@ -212,3 +212,6 @@ mod model_enum_args_tests;
 
 #[cfg(test)]
 mod interface_tests;
+
+#[cfg(test)]
+mod input_list_tests;

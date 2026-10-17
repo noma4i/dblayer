@@ -1,0 +1,10 @@
+model Clip do
+  field :title, type: :string, null: true
+
+  operation :upload do
+    mutation ClipCreateFile
+    local_effect :none, reason: "the row exists from the create with an upload"
+    args widgets: [:StickerWidgetInput]?
+    root "clipCreate.clip"
+  end
+end

@@ -1,5 +1,7 @@
 type Query { ping: Int, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]! }
-type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker, momentCreate(input: MomentInput!): MomentCreated }
+type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker, momentCreate(input: MomentInput!): MomentCreated, widgetsSend(widgets: [StickerWidgetInput!]): Sticker, clipCreate(signedId: String!, widgets: [StickerWidgetInput!]): ClipCreated }
+type ClipCreated { clip: Clip }
+type Clip { id: ID!, title: String }
 type MomentCreated { moment: Moment }
 type Moment { id: ID! }
 type Pricing { gifts: [Gift!]!, videoIntro: VideoIntro, tags: [String!], spec: JSON }
@@ -18,3 +20,8 @@ enum WidgetKind { EMOJI GIF }
 input SettingsInput { itemProps: JSON!, rotate: Float }
 input WidgetInput { kind: WidgetKind!, settings: SettingsInput! }
 input MomentInput { file: String!, widgets: [WidgetInput!] = [] }
+directive @oneOf on INPUT_OBJECT
+input StickerTextInput { body: String!, sizes: [Int!] }
+input StickerEmojiInput { code: String!, kind: WidgetKind }
+input StickerPropsInput @oneOf { text: StickerTextInput, emoji: StickerEmojiInput, tags: [String!] }
+input StickerWidgetInput { kind: WidgetKind!, props: StickerPropsInput!, extras: [StickerPropsInput!] }

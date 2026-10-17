@@ -384,6 +384,8 @@ Each arg declared by an `args` line inside a model operation is checked against 
 - an arg whose kind does not fit the type: `:string` fits `String`, `ID` or a scalar mapped to `:string` or `:date`, `:id` fits `ID`, `Int`, `String` or a scalar mapped to `:string`, `:int` or `:long`, `:int` fits `Int` or a scalar mapped to `:int` or `:long`, `:long` fits a scalar mapped to `:long`, `:num` fits `Float`, `Int` or a scalar mapped to `:num`, `:bool` fits `Boolean`, `:ids` fits a list of `ID`, `Int` or `String`, and the name of an input object or enum (`:WidgetKind`) fits that type;
 - an arg with `?` that the schema requires (`String!` without a default).
 
+A list kind (`[:WidgetInput]`, `[:WidgetInput?]`, `[:WidgetInput]?`) fits a list of that type. The `?` inside the brackets is the nil of an item and needs a schema item without `!`. The `?` after the bracket makes the list optional and needs a schema variable without `!`.
+
 An `args` line inside a model operation takes the same kinds as an operation without a model, including the name of a schema enum or input object. The call gets a typed parameter, and an `optimistic` line can write an enum arg into an enum field of the model. Without `--schema` the generator stops and names the type.
 
 ```ruby
@@ -416,6 +418,16 @@ Standalone operations require named documents when `--schema` is set. The check 
 
 `dblayer-gen --schema schema.graphql swift models/*.dbl` checks the models as above and also writes the input objects. The same flag does both, so the schema file must satisfy the check.
 
+A schema input object with `@oneOf` sets exactly one field, so it is an enum and not a struct. The case holds the value of its field. Both platforms send one key.
+
+```swift
+let props: StickerPropsInput = .emoji(StickerEmojiInput(code: "fire"))   // {"emoji":{"code":"fire"}}
+```
+
+```kotlin
+val props: StickerPropsInput = StickerPropsInput.Emoji(StickerEmojiInput(code = "fire"))   // {"emoji":{"code":"fire"}}
+```
+
 The generator writes every input object that an operation names, and every input object those fields use, once each, after the models. A name that the schema does not have, a name that is neither an input object nor an enum, or an operation that names one without a schema file stops the run with code 1 and a message.
 
 | Schema field | Swift | Kotlin |
@@ -427,5 +439,6 @@ The generator writes every input object that an operation names, and every input
 | `Int`, `Float`, `Boolean` | `Int`, `Double`, `Bool` | `Int`, `Double`, `Boolean` |
 | `[T!]!`, `[T]` | `[T]`, `GraphQLNullable<[T?]>` | `List<T>`, `GraphQLNullable<List<T?>>` |
 | another input object | its struct | its data class |
+| an input object with `@oneOf` | an enum with one case per field | a sealed interface with one class per field |
 | a field without `!` | `.omitted`, `.null`, `.value(value)` | `Omitted`, `Null`, `Value(value)` |
 | a required field with a schema default | optional, omitted when nil | nullable, omitted when null |

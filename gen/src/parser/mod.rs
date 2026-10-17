@@ -12,6 +12,7 @@ pub enum Value {
     Const(String),
     Duration { amount: u64, unit: String },
     Array(Vec<Node<Value>>),
+    OptionalArray(Vec<Node<Value>>),
     Hash(Vec<Pair>),
 }
 
@@ -135,6 +136,7 @@ fn describe(kind: &Kind) -> String {
         Kind::Duration { amount, unit } => format!("`{amount}.{unit}`"),
         Kind::LeftBracket => "`[`".to_string(),
         Kind::RightBracket => "`]`".to_string(),
+        Kind::OptionalRightBracket => "`]?`".to_string(),
         Kind::LeftBrace => "`{`".to_string(),
         Kind::RightBrace => "`}`".to_string(),
         Kind::Comma => "`,`".to_string(),
@@ -296,9 +298,10 @@ fn parse_array(reader: &mut Reader) -> Result<Node<Value>, ParseError> {
     let mut items = Vec::new();
     loop {
         reader.skip_newlines();
-        if matches!(reader.peek_kind(0), Some(Kind::RightBracket)) {
+        if let Some(close @ (Kind::RightBracket | Kind::OptionalRightBracket)) = reader.peek_kind(0) {
+            let item = if *close == Kind::RightBracket { Value::Array(items) } else { Value::OptionalArray(items) };
             reader.next();
-            return Ok(Node { item: Value::Array(items), line: open.line, column: open.column });
+            return Ok(Node { item, line: open.line, column: open.column });
         }
         items.push(parse_value(reader)?);
         reader.skip_newlines();
@@ -306,7 +309,7 @@ fn parse_array(reader: &mut Reader) -> Result<Node<Value>, ParseError> {
             Some(Kind::Comma) => {
                 reader.next();
             }
-            Some(Kind::RightBracket) => {}
+            Some(Kind::RightBracket | Kind::OptionalRightBracket) => {}
             _ => return Err(reader.unexpected()),
         }
     }

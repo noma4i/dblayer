@@ -13,6 +13,7 @@ pub enum Kind {
     Duration { amount: u64, unit: String },
     LeftBracket,
     RightBracket,
+    OptionalRightBracket,
     LeftBrace,
     RightBrace,
     Comma,
@@ -92,6 +93,10 @@ pub fn lex(source: &str) -> Result<Vec<Token>, ParseError> {
                 cursor.advance();
                 match character {
                     '[' => Kind::LeftBracket,
+                    ']' if cursor.peek(0) == Some('?') => {
+                        cursor.advance();
+                        Kind::OptionalRightBracket
+                    }
                     ']' => Kind::RightBracket,
                     '{' => Kind::LeftBrace,
                     '}' => Kind::RightBrace,

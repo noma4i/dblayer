@@ -1,34 +1,47 @@
 import Foundation
 import DBlayer
 
-public enum Mood: Codable, Sendable, Hashable {
-    case happy
-    case sad
-    case unknown(String)
+public struct Clip: DBModel {
+    public static let modelName = "Clip"
+    public let id: String
+    public let title: String?
+    public let sync: SyncInfo
+    public let upload: UploadInfo?
 
-    public init(rawValue: String) {
-        switch rawValue {
-        case "HAPPY": self = .happy
-        case "SAD": self = .sad
-        default: self = .unknown(rawValue)
-        }
+    public init(id: String, title: String? = nil, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil) {
+        self.id = id
+        self.title = title
+        self.sync = sync
+        self.upload = upload
     }
 
-    public var rawValue: String {
-        switch self {
-        case .happy: return "HAPPY"
-        case .sad: return "SAD"
-        case .unknown(let raw): return raw
-        }
+    public static let wireLayout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.title = try r.opt(0, \.asText)
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
     }
 
-    public init(from decoder: Decoder) throws {
-        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    public static let title = Column<Clip, String?>("title")
+    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
+    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
+    public static func uploadVariables(widgets: [StickerWidgetInput]? = nil) -> [String: JSONValue] {
+        var variables: [String: JSONValue] = [:]
+        if let value = widgets { variables["widgets"] = JSONValue.encode(value) }
+        return variables
     }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
+    public static func create(title: String? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = title { values["title"] = JSONValue.encode(value) }
+        return try await create(values: values)
+    }
+    public func update(title: String?? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = title { values["title"] = JSONValue.encode(value) }
+        return try await update(values: values)
     }
 }
 
@@ -60,6 +73,62 @@ public enum WidgetKind: Codable, Sendable, Hashable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(rawValue)
+    }
+}
+
+public enum Mood: Codable, Sendable, Hashable {
+    case happy
+    case sad
+    case unknown(String)
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "HAPPY": self = .happy
+        case "SAD": self = .sad
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .happy: return "HAPPY"
+        case .sad: return "SAD"
+        case .unknown(let raw): return raw
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+public struct StickerWidgetInput: Encodable, Sendable, Equatable {
+    public let kind: WidgetKind
+    public let props: StickerPropsInput
+    public let extras: GraphQLNullable<[StickerPropsInput]>
+
+    public init(kind: WidgetKind, props: StickerPropsInput, extras: GraphQLNullable<[StickerPropsInput]> = .omitted) {
+        self.kind = kind
+        self.props = props
+        self.extras = extras
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case props
+        case extras
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(props, forKey: .props)
+        try container.encode(extras, forKey: .extras)
     }
 }
 
@@ -129,6 +198,27 @@ public struct MomentInput: Encodable, Sendable, Equatable {
     }
 }
 
+public enum StickerPropsInput: Encodable, Sendable, Equatable {
+    case text(StickerTextInput)
+    case emoji(StickerEmojiInput)
+    case tags([String])
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case emoji
+        case tags
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let value): try container.encode(value, forKey: .text)
+        case .emoji(let value): try container.encode(value, forKey: .emoji)
+        case .tags(let value): try container.encode(value, forKey: .tags)
+        }
+    }
+}
+
 public struct OwnerInput: Encodable, Sendable, Equatable {
     public let id: String
     public let nickname: GraphQLNullable<String>
@@ -168,6 +258,48 @@ public struct WidgetInput: Encodable, Sendable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(kind, forKey: .kind)
         try container.encode(settings, forKey: .settings)
+    }
+}
+
+public struct StickerTextInput: Encodable, Sendable, Equatable {
+    public let body: String
+    public let sizes: GraphQLNullable<[Int]>
+
+    public init(body: String, sizes: GraphQLNullable<[Int]> = .omitted) {
+        self.body = body
+        self.sizes = sizes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case body
+        case sizes
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(body, forKey: .body)
+        try container.encode(sizes, forKey: .sizes)
+    }
+}
+
+public struct StickerEmojiInput: Encodable, Sendable, Equatable {
+    public let code: String
+    public let kind: GraphQLNullable<WidgetKind>
+
+    public init(code: String, kind: GraphQLNullable<WidgetKind> = .omitted) {
+        self.code = code
+        self.kind = kind
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case code
+        case kind
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(code, forKey: .code)
+        try container.encode(kind, forKey: .kind)
     }
 }
 
@@ -356,6 +488,23 @@ public struct GiphyLoadResult: Codable, Sendable, Equatable {
     }
 }
 
+public struct WidgetsSendResult: Codable, Sendable, Equatable {
+    public let id: String?
+
+    public init(id: String? = nil) {
+        self.id = id
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+    }
+}
+
 public enum Operations {
     public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {
         var variables: [String: JSONValue] = [:]
@@ -386,5 +535,10 @@ public enum Operations {
         variables["type"] = JSONValue.encode(type)
         if let value = limit { variables["limit"] = JSONValue.encode(value) }
         return try await DB.run("Giphy", variables: variables, as: [GiphyLoadResult].self)
+    }
+    public static func widgetsSend(widgets: [StickerWidgetInput]? = nil) async throws -> WidgetsSendResult {
+        var variables: [String: JSONValue] = [:]
+        if let value = widgets { variables["widgets"] = JSONValue.encode(value) }
+        return try await DB.run("WidgetsSend", variables: variables, as: WidgetsSendResult.self)
     }
 }

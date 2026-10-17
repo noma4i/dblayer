@@ -3,26 +3,58 @@ package com.noma4i.dblayer.models
 import com.noma4i.dblayer.*
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.buildClassSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
-@Serializable(with = MoodSerializer::class)
-sealed class Mood(override val raw: String) : RawEnum {
-    data object Happy : Mood("HAPPY")
-    data object Sad : Mood("SAD")
-    data class Unknown(val value: String) : Mood(value)
+data class Clip(
+    override val id: String,
+    val title: String? = null,
+    override val sync: SyncInfo = SyncInfo(),
+    override val upload: UploadInfo? = null
+) : DBModel {
+    override val modelName get() = "Clip"
+    companion object : ModelDecoder<Clip> {
+        override val layout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
+        override val modelName = "Clip"
+        override fun decode(row: WireRow): Clip {
+            val r = CellReader(row.cells)
+            return Clip(
+                id = row.id,
+                title = r.opt(0, Cell::asText),
+                sync = SyncInfo.of(row.sync),
+                upload = row.upload?.let { UploadInfo.of(it) },
+            )
+        }
 
-    companion object {
-        fun of(raw: String): Mood = when (raw) {
-            "HAPPY" -> Happy
-            "SAD" -> Sad
-            else -> Unknown(raw)
+        val title = Column<Clip, String?>("title")
+        fun find(id: String) = Query("Clip", this).find(id)
+        fun where(condition: Condition) = Query("Clip", this).where(condition)
+        fun ids(ids: List<String>) = idsQuery("Clip", this, ids)
+        fun entity(id: String) = entityOf("Clip", this, id)
+        fun uploadVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
+            if (widgets != null) put("widgets", jsonValue(widgets))
+        }
+        suspend fun create(title: String? = null): Clip {
+            val values = buildJsonObject {
+                title?.let { put("title", jsonValue(it)) }
+            }
+            return read(DBlayer.database.create("Clip", values.toString(), "{}"))
         }
     }
+    suspend fun update(title: String? = null): Clip {
+        val values = buildJsonObject {
+            title?.let { put("title", jsonValue(it)) }
+        }
+        return Clip.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
+    }
 }
-
-object MoodSerializer : RawEnumSerializer<Mood>("Mood", { Mood.of(it) })
 
 @Serializable(with = WidgetKindSerializer::class)
 sealed class WidgetKind(override val raw: String) : RawEnum {
@@ -41,6 +73,27 @@ sealed class WidgetKind(override val raw: String) : RawEnum {
 
 object WidgetKindSerializer : RawEnumSerializer<WidgetKind>("WidgetKind", { WidgetKind.of(it) })
 
+@Serializable(with = MoodSerializer::class)
+sealed class Mood(override val raw: String) : RawEnum {
+    data object Happy : Mood("HAPPY")
+    data object Sad : Mood("SAD")
+    data class Unknown(val value: String) : Mood(value)
+
+    companion object {
+        fun of(raw: String): Mood = when (raw) {
+            "HAPPY" -> Happy
+            "SAD" -> Sad
+            else -> Unknown(raw)
+        }
+    }
+}
+
+object MoodSerializer : RawEnumSerializer<Mood>("Mood", { Mood.of(it) })
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class StickerWidgetInput(val kind: WidgetKind, val props: StickerPropsInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val extras: GraphQLNullable<List<StickerPropsInput>> = GraphQLNullable.Omitted)
+
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Int> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)
@@ -49,6 +102,28 @@ data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVE
 @Serializable
 data class MomentInput(val file: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val widgets: GraphQLNullable<List<WidgetInput>> = GraphQLNullable.Omitted)
 
+@Serializable(with = StickerPropsInputSerializer::class)
+sealed interface StickerPropsInput {
+    data class Text(val value: StickerTextInput) : StickerPropsInput
+    data class Emoji(val value: StickerEmojiInput) : StickerPropsInput
+    data class Tags(val value: List<String>) : StickerPropsInput
+}
+
+object StickerPropsInputSerializer : KSerializer<StickerPropsInput> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("StickerPropsInput")
+
+    override fun serialize(encoder: Encoder, value: StickerPropsInput) {
+        val (key, element) = when (value) {
+            is StickerPropsInput.Text -> "text" to jsonValue(value.value)
+            is StickerPropsInput.Emoji -> "emoji" to jsonValue(value.value)
+            is StickerPropsInput.Tags -> "tags" to jsonValue(value.value)
+        }
+        (encoder as JsonEncoder).encodeJsonElement(JsonObject(mapOf(key to element)))
+    }
+
+    override fun deserialize(decoder: Decoder): StickerPropsInput = throw SerializationException("StickerPropsInput is only sent")
+}
+
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: GraphQLNullable<String> = GraphQLNullable.Omitted)
@@ -56,6 +131,14 @@ data class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) v
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class WidgetInput(val kind: WidgetKind, val settings: SettingsInput)
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class StickerTextInput(val body: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val sizes: GraphQLNullable<List<Int>> = GraphQLNullable.Omitted)
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class StickerEmojiInput(val code: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val kind: GraphQLNullable<WidgetKind> = GraphQLNullable.Omitted)
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -108,6 +191,11 @@ data class GiphyLoadResult(
     val isSticker: Boolean? = null,
 )
 
+@Serializable
+data class WidgetsSendResult(
+    val id: String? = null,
+)
+
 object Operations {
     suspend fun qrCodeCreate(kind: String, size: Int? = null): QrCodeCreateResult {
         val variables = mutableMapOf<String, JsonElement>()
@@ -138,5 +226,10 @@ object Operations {
         variables["type"] = jsonValue(type)
         if (limit != null) variables["limit"] = jsonValue(limit)
         return DBlayer.run("Giphy", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()))
+    }
+    suspend fun widgetsSend(widgets: List<StickerWidgetInput>? = null): WidgetsSendResult {
+        val variables = mutableMapOf<String, JsonElement>()
+        if (widgets != null) variables["widgets"] = jsonValue(widgets)
+        return DBlayer.run("WidgetsSend", JsonObject(variables), WidgetsSendResult.serializer())
     }
 }

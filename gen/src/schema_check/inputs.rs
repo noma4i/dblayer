@@ -13,6 +13,7 @@ pub struct InputField {
 pub struct InputObject {
     pub name: String,
     pub fields: Vec<InputField>,
+    pub one_of: bool,
 }
 
 /// The schema types an operation names: input objects with everything they nest, and the enums they reach.
@@ -78,7 +79,8 @@ pub(crate) fn load_schema_types(schema: &Schema, scalars: &Scalars, wanted: &[St
         for (field, ty) in declared {
             fields.push(InputField { name: field.clone(), ty: walk.ty(&name, field, ty)? });
         }
-        found.inputs.push(InputObject { name, fields });
+        let one_of = schema.one_of.contains(&name);
+        found.inputs.push(InputObject { name, fields, one_of });
     }
     Ok(found)
 }

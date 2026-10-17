@@ -155,6 +155,10 @@ fn standard_args<'a>(model: &'a ModelSpec, action: &str) -> Vec<(&'a str, &'a st
 
 fn arg_type(kind: &str, swift: bool) -> String {
     let kind = kind.trim_end_matches('?');
+    if let Some(inner) = kind.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+        let item = format!("{}{}", arg_type(inner, swift), if inner.ends_with('?') { "?" } else { "" });
+        return if swift { format!("[{item}]") } else { format!("List<{item}>") };
+    }
     let name = match (kind, swift) {
         ("bool", true) => "Bool",
         ("bool", false) => "Boolean",
@@ -246,6 +250,16 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             writeln!(out, "        return {built}\n    }}").unwrap();
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var singleton: Query<Self> {{ {} }}", name(&relation.name)).unwrap(); }
+        let upload_args = standard_args(model, "upload");
+        if !upload_args.is_empty() {
+            let params = upload_args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
+            writeln!(out, "    public static func uploadVariables({params}) -> [String: JSONValue] {{\n        var variables: [String: JSONValue] = [:]").unwrap();
+            for (arg, kind) in &upload_args {
+                if kind.ends_with('?') { writeln!(out, "        if let value = {arg} {{ variables[\"{arg}\"] = JSONValue.encode(value) }}").unwrap(); }
+                else { writeln!(out, "        variables[\"{arg}\"] = JSONValue.encode({arg})").unwrap(); }
+            }
+            writeln!(out, "        return variables\n    }}").unwrap();
+        }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local()).collect();
         let create_fields = create_fields(model, &fields);
         let args = local_name(model, "args");
@@ -284,7 +298,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let target = association.target.as_str();
             writeln!(out, "    public var {}: LiveSource<[{}]> {{ related(\"{}\", as: {}.self) }}", association.name, target, association.name, target).unwrap();
         }
-        for action in model.actions.iter().filter(|action| !["create", "update", "destroy"].contains(&action.name.as_str())) {
+        for action in model.actions.iter().filter(|action| !["create", "update", "destroy", "upload"].contains(&action.name.as_str())) {
             let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let returns = if action.result.is_empty() { "Self".to_string() } else { format!("ActionAnswer<Self, {}>", result_type(class, &action.name)) };
@@ -312,7 +326,8 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
 }
 
 pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> String {
-    let encoding = if schema_types.inputs.is_empty() { "" } else { "import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n" };
+    let one_of = if schema_types.inputs.iter().any(|input| input.one_of) { "import kotlinx.serialization.KSerializer\nimport kotlinx.serialization.SerializationException\nimport kotlinx.serialization.descriptors.SerialDescriptor\nimport kotlinx.serialization.descriptors.buildClassSerialDescriptor\nimport kotlinx.serialization.encoding.Decoder\nimport kotlinx.serialization.encoding.Encoder\n" } else { "" };
+    let encoding = if schema_types.inputs.is_empty() { String::new() } else { format!("import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n{one_of}") };
     let mut out = format!("package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\n{encoding}import kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n");
     for model in models {
         let class = model.key.as_str();
@@ -341,6 +356,16 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             writeln!(out, "            return {built}\n        }}").unwrap();
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", this, {})", name(&relation.name)).unwrap(); }
+        let upload_args = standard_args(model, "upload");
+        if !upload_args.is_empty() {
+            let params = upload_args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
+            writeln!(out, "        fun uploadVariables({params}): JsonObject = buildJsonObject {{").unwrap();
+            for (arg, kind) in &upload_args {
+                if kind.ends_with('?') { writeln!(out, "            if ({arg} != null) put(\"{arg}\", jsonValue({arg}))").unwrap(); }
+                else { writeln!(out, "            put(\"{arg}\", jsonValue({arg}))").unwrap(); }
+            }
+            writeln!(out, "        }}").unwrap();
+        }
         let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local()).collect();
         let create_fields = create_fields(model, &fields);
         let args = local_name(model, "args");
@@ -383,7 +408,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             for field in &model.ephemeral { writeln!(out, "            {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.field.name, field.field.name).unwrap(); }
             out.push_str("        }.toString())\n    }\n");
         }
-        for action in model.actions.iter().filter(|action| !["create", "update", "destroy"].contains(&action.name.as_str())) {
+        for action in model.actions.iter().filter(|action| !["create", "update", "destroy", "upload"].contains(&action.name.as_str())) {
             let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let from_args = action.optimistic.iter().filter_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({arg})"))).collect::<Vec<_>>().join(", ");

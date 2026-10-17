@@ -171,7 +171,9 @@ impl<'a> Run<'a> {
                     let name = line("mutation").map(name_of).or_else(|| option_text(call, "mutation"));
                     let wrap = line("wrap").map(name_of);
                     let pairs = |word: &str| line(word).map_or(&[][..], |found| found.options.as_slice());
-                    self.check_args_of(node.file, call, name, wrap, pairs("args"), pairs("input"));
+                    let same_names: Vec<Pair> = pairs("args").iter().map(|arg| Pair { value: Node { item: Value::Symbol(arg.key.clone()), ..arg.value.clone() }, ..arg.clone() }).collect();
+                    let input = if name_of(call) == "upload" && pairs("input").is_empty() { same_names.as_slice() } else { pairs("input") };
+                    self.check_args_of(node.file, call, name, wrap, pairs("args"), input);
                 }
                 _ => {}
             }
@@ -203,7 +205,7 @@ impl<'a> Run<'a> {
             }
         };
         for arg in args {
-            let Value::Symbol(kind) = &arg.value.item else { continue };
+            let Some(kind) = &crate::operation::arg_kind_text(&arg.value.item) else { continue };
             let Some(variable) = input.iter().find(|pair| matches!(&pair.value.item, Value::Symbol(source) if *source == arg.key)).map(|pair| pair.key.as_str()) else { continue };
             let Some(declared) = accepted.get(variable) else {
                 self.fail(file, call.line, call.column, format!("`{variable}` is not an input of {owner}"));
@@ -211,7 +213,7 @@ impl<'a> Run<'a> {
             };
             let base = kind.trim_end_matches('?');
             if !self.arg_fits(base, declared) {
-                self.fail(file, call.line, call.column, format!("arg `{}` of kind `:{base}` does not fit `{variable}: {}`{}", arg.key, declared.describe(), self.unmapped_hint(declared.name())));
+                self.fail(file, call.line, call.column, format!("arg `{}` of kind `{}` does not fit `{variable}: {}`{}", arg.key, crate::operation::display_kind(kind), declared.describe(), self.unmapped_hint(declared.name())));
             } else if kind.ends_with('?') && !declared.optional() {
                 self.fail(file, call.line, call.column, format!("arg `{}` may be nil but `{variable}: {}` is required", arg.key, declared.describe()));
             }
@@ -229,6 +231,11 @@ impl<'a> Run<'a> {
     fn arg_fits(&self, kind: &str, declared: &Ty) -> bool {
         let named = declared.name();
         match kind {
+            _ if kind.starts_with('[') => {
+                let TyKind::List(item) = &declared.kind else { return false };
+                let inner = kind.trim_start_matches('[').trim_end_matches(']');
+                (!inner.ends_with('?') || item.optional()) && !item.is_list() && self.arg_fits(inner.trim_end_matches('?'), item)
+            }
             "ids" => declared.is_list() && (matches!(named, "ID" | "String" | "Int") || self.custom_fits(named, "id")),
             _ if declared.is_list() => false,
             "string" => matches!(named, "String" | "ID") || self.custom_fits(named, "string"),

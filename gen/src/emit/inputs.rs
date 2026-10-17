@@ -35,8 +35,40 @@ fn type_name(ty: &Ty, swift: bool) -> String {
     if ty.optional() { format!("{base}?") } else { base }
 }
 
+fn payload(field: &InputField, swift: bool) -> String {
+    type_name(&Ty { nullable: false, has_default: false, ..field.ty.clone() }, swift)
+}
+
+fn case_name(field: &InputField) -> String {
+    let mut letters = field.name.chars();
+    letters.next().map(|first| first.to_uppercase().chain(letters).collect()).unwrap_or_default()
+}
+
+fn emit_swift_one_of(out: &mut String, input: &InputObject) {
+    writeln!(out, "public enum {}: Encodable, Sendable, Equatable {{", input.name).unwrap();
+    for field in &input.fields { writeln!(out, "    case {}({})", field.name, payload(field, true)).unwrap(); }
+    writeln!(out, "\n    enum CodingKeys: String, CodingKey {{").unwrap();
+    for field in &input.fields { writeln!(out, "        case {}", field.name).unwrap(); }
+    writeln!(out, "    }}\n\n    public func encode(to encoder: any Encoder) throws {{\n        var container = encoder.container(keyedBy: CodingKeys.self)\n        switch self {{").unwrap();
+    for field in &input.fields { writeln!(out, "        case .{0}(let value): try container.encode(value, forKey: .{0})", field.name).unwrap(); }
+    writeln!(out, "        }}\n    }}\n}}\n").unwrap();
+}
+
+fn emit_kotlin_one_of(out: &mut String, input: &InputObject) {
+    let name = &input.name;
+    writeln!(out, "@Serializable(with = {name}Serializer::class)\nsealed interface {name} {{").unwrap();
+    for field in &input.fields { writeln!(out, "    data class {}(val value: {}) : {name}", case_name(field), payload(field, false)).unwrap(); }
+    writeln!(out, "}}\n\nobject {name}Serializer : KSerializer<{name}> {{\n    override val descriptor: SerialDescriptor = buildClassSerialDescriptor(\"{name}\")\n\n    override fun serialize(encoder: Encoder, value: {name}) {{\n        val (key, element) = when (value) {{").unwrap();
+    for field in &input.fields { writeln!(out, "            is {name}.{} -> \"{}\" to jsonValue(value.value)", case_name(field), field.name).unwrap(); }
+    writeln!(out, "        }}\n        (encoder as JsonEncoder).encodeJsonElement(JsonObject(mapOf(key to element)))\n    }}\n\n    override fun deserialize(decoder: Decoder): {name} = throw SerializationException(\"{name} is only sent\")\n}}\n").unwrap();
+}
+
 pub(super) fn emit_swift_inputs(out: &mut String, inputs: &[InputObject]) {
     for input in inputs {
+        if input.one_of {
+            emit_swift_one_of(out, input);
+            continue;
+        }
         writeln!(out, "public struct {}: Encodable, Sendable, Equatable {{", input.name).unwrap();
         for field in &input.fields { writeln!(out, "    public let {}: {}", field.name, field_type(field, true)).unwrap(); }
         let params = input.fields.iter().map(|field| format!("{}: {}{}", field.name, field_type(field, true), if field.ty.nullable { " = .omitted" } else if field.ty.has_default { " = nil" } else { "" })).collect::<Vec<_>>().join(", ");
@@ -55,6 +87,10 @@ pub(super) fn emit_swift_inputs(out: &mut String, inputs: &[InputObject]) {
 
 pub(super) fn emit_kotlin_inputs(out: &mut String, inputs: &[InputObject]) {
     for input in inputs {
+        if input.one_of {
+            emit_kotlin_one_of(out, input);
+            continue;
+        }
         let fields = input.fields.iter().map(|field| {
             if field.ty.optional() { format!("@EncodeDefault(EncodeDefault.Mode.NEVER) val {}: {} = {}", field.name, field_type(field, false), if field.ty.nullable { "GraphQLNullable.Omitted" } else { "null" }) }
             else { format!("val {}: {}", field.name, field_type(field, false)) }

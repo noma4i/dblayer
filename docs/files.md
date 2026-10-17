@@ -85,6 +85,31 @@ moment.upload?.percent      // 42.0
 moment.confirmedId()
 ```
 
+### Typed variables of the content mutation
+
+The library sets `signedId` itself. Other variables of the mutation go in `variables`. When the content mutation takes schema input objects, declare them as `args` of the `upload` operation. The generator checks them against the variables of the mutation and writes `uploadVariables` on the model, so the app passes typed values and builds no JSON. `signedId` is never declared.
+
+```ruby
+operation :upload do
+  mutation     MomentCreateFile
+  local_effect :none, reason: "the row exists locally from the create with an upload"
+  args         widgets: [:MomentWidgetInput]?
+  root         "momentCreate.moment"
+end
+```
+
+```swift
+let widgets = [MomentWidgetInput(kind: .emoji, props: .emoji(MomentEmojiInput(code: "fire")))]
+let request = UploadRequest(path: url.path, mutation: "MomentCreateFile", createBlob: "CreateBlob", variables: Moment.uploadVariables(widgets: widgets))
+let moment = try await Moment.create(values: ["text": .string("hello")], uploading: request)
+```
+
+```kotlin
+val widgets = listOf(MomentWidgetInput(kind = WidgetKind.Emoji, props = MomentWidgetProps.Emoji(MomentEmojiInput(code = "fire"))))
+val request = UploadRequest(path = file.path, mutation = "MomentCreateFile", createBlob = "CreateBlob", variables = Moment.uploadVariables(widgets = widgets))
+val moment = uploadCreate("Moment", values, request, Moment)
+```
+
 ### Scenarios
 
 | Scenario | Steps |

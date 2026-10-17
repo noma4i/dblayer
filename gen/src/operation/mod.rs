@@ -30,14 +30,41 @@ fn symbol(value: Option<&Node<Value>>) -> Option<&str> {
     }
 }
 
-pub(crate) fn is_input_object(kind: &str) -> bool {
-    kind.trim_end_matches('?').chars().next().is_some_and(char::is_uppercase)
+pub(crate) fn element_name(kind: &str) -> &str {
+    kind.trim_start_matches('[').trim_end_matches('?').trim_end_matches(']').trim_end_matches('?')
 }
 
-pub(crate) const ARG_KIND_MESSAGE: &str = "arg type must be :bool, :int, :long, :num, :string, :id, :ids or the name of a schema input object or enum like :QrCodeInput, each optionally followed by ?";
+pub(crate) fn is_list_kind(kind: &str) -> bool {
+    kind.starts_with('[')
+}
+
+pub(crate) fn is_input_object(kind: &str) -> bool {
+    element_name(kind).chars().next().is_some_and(char::is_uppercase)
+}
+
+pub(crate) fn display_kind(kind: &str) -> String {
+    let base = kind.trim_end_matches('?');
+    if is_list_kind(base) { format!("[:{}]", base.trim_start_matches('[').trim_end_matches(']')) } else { format!(":{base}") }
+}
+
+pub(crate) const ARG_KIND_MESSAGE: &str = "arg type must be :bool, :int, :long, :num, :string, :id, :ids or the name of a schema input object or enum like :QrCodeInput, or a list of schema input objects or enums like [:WidgetInput], each optionally followed by ?";
+
+pub(crate) fn arg_kind_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Symbol(kind) => Some(kind.clone()),
+        Value::Array(items) | Value::OptionalArray(items) => match items.as_slice() {
+            [Node { item: Value::Symbol(kind), .. }] if is_input_object(kind) => Some(format!("[{kind}]{}", if matches!(value, Value::OptionalArray(_)) { "?" } else { "" })),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 pub(crate) fn is_arg_kind(value: &Value) -> bool {
-    matches!(value, Value::Symbol(kind) if ARG_KINDS.contains(&kind.trim_end_matches('?')) || is_input_object(kind))
+    match value {
+        Value::Symbol(kind) => ARG_KINDS.contains(&kind.trim_end_matches('?')) || is_input_object(kind),
+        _ => arg_kind_text(value).is_some(),
+    }
 }
 
 pub(crate) fn resolve_result_enums(operations: &mut [OperationCall], schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
@@ -59,7 +86,7 @@ pub(crate) fn schema_type_names(models: &[ModelSpec], operations: &[OperationCal
     let model_args = models.iter().flat_map(|model| &model.actions).flat_map(|action| action.args.iter());
     let operation_args = operations.iter().flat_map(|operation| operation.args.iter().map(|(name, kind)| (name, kind)));
     for (_, kind) in model_args.chain(operation_args).filter(|(_, kind)| is_input_object(kind)) {
-        let name = kind.trim_end_matches('?').to_string();
+        let name = element_name(kind).to_string();
         if !names.contains(&name) {
             names.push(name);
         }
@@ -75,9 +102,9 @@ fn kinds(call: &Call, file: usize, errors: &mut Vec<Found>) -> Vec<(String, Stri
             errors.push((file, ParseError::new(pair.line, pair.column, format!("arg `{}` is declared twice", pair.key))));
             continue;
         }
-        match &pair.value.item {
-            Value::Symbol(kind) if is_arg_kind(&pair.value.item) => found.push((pair.key.clone(), kind.clone())),
-            _ => errors.push((file, ParseError::new(pair.line, pair.column, ARG_KIND_MESSAGE))),
+        match arg_kind_text(&pair.value.item).filter(|_| is_arg_kind(&pair.value.item)) {
+            Some(kind) => found.push((pair.key.clone(), kind)),
+            None => errors.push((file, ParseError::new(pair.line, pair.column, ARG_KIND_MESSAGE))),
         }
     }
     found

@@ -9,7 +9,7 @@ swift_operations_out="$root/swift/Tests/DBlayerTests/FixtureOperations.swift"
 kotlin_operations_out="$root/kotlin/src/test/kotlin/com/noma4i/dblayer/models/FixtureOperations.kt"
 
 gen() { cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- "$1" "$root"/fixtures/*.dbl; }
-gen_operations() { cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" "$1" "$root"/fixtures/operations/*.dbl; }
+gen_operations() { cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" "$1" "$root"/fixtures/operations/*.dbl | grep -v -e '^public let modelsJSON = ' -e '^val modelsJSON = '; }
 
 swift="$(gen swift)"
 kotlin="$(gen kotlin)"

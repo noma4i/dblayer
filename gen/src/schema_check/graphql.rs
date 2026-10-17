@@ -61,6 +61,7 @@ pub struct Schema {
     pub types: HashMap<String, TypeKind>,
     pub query: String,
     pub implementers: HashMap<String, Vec<String>>,
+    pub one_of: std::collections::HashSet<String>,
 }
 
 impl Schema {
@@ -101,6 +102,9 @@ impl Schema {
             TypeDefinition::Scalar(scalar) => (&scalar.name, TypeKind::Scalar),
             TypeDefinition::InputObject(input) => (&input.name, TypeKind::Input(input.fields.iter().map(|field| (field.name.clone(), Ty { has_default: field.default_value.is_some(), ..Ty::of(&field.value_type) })).collect())),
         };
+        if matches!(declared, TypeDefinition::InputObject(input) if input.directives.iter().any(|directive| directive.name == "oneOf")) {
+            self.one_of.insert(name.clone());
+        }
         self.types.insert(name.clone(), kind);
     }
 

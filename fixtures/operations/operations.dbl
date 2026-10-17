@@ -34,3 +34,9 @@ operation :giphy_load do
   args type: :string, limit: :int?
   result id: :id, url: :string, isSticker: :bool
 end
+
+operation :widgets_send do
+  mutation WidgetsSend
+  args widgets: [:StickerWidgetInput]?
+  result id: :string
+end
