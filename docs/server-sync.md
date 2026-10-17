@@ -39,6 +39,8 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 
 The database opens with its own transport for queries and mutations. The transport you pass serves subscriptions and file uploads.
 
+The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin for V3 hello and encrypted frames.
+
 ```swift
 let origin = URL(string: "https://api.example.com")!
 let database = try Database.openEncrypted(

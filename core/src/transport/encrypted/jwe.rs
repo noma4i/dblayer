@@ -56,15 +56,19 @@ pub fn seal_request(key: &ServerKey, plain: &RequestPlain) -> Result<String, Jwe
         "sequence": plain.sequence, "body": plain.body,
     })
     .to_string();
-    let mut cek = [0_u8; 32];
+    seal_plain(key, text.as_bytes())
+}
+
+pub(super) fn seal_plain(key: &ServerKey, text: &[u8]) -> Result<String, JweError> {
+    let mut cek = zeroize::Zeroizing::new([0_u8; 32]);
     let mut iv = [0_u8; IV_LEN];
-    OsRng.fill_bytes(&mut cek);
+    OsRng.fill_bytes(&mut *cek);
     OsRng.fill_bytes(&mut iv);
     let header = URL_SAFE_NO_PAD.encode(REQUEST_HEADER);
-    let wrapped = key.public.encrypt(&mut OsRng, Oaep::new::<Sha1>(), &cek).map_err(invalid)?;
-    let sealed = Aes256Gcm::new_from_slice(&cek)
+    let wrapped = key.public.encrypt(&mut OsRng, Oaep::new::<Sha1>(), &*cek).map_err(invalid)?;
+    let sealed = Aes256Gcm::new_from_slice(&*cek)
         .map_err(invalid)?
-        .encrypt(Nonce::from_slice(&iv), Payload { msg: text.as_bytes(), aad: header.as_bytes() })
+        .encrypt(Nonce::from_slice(&iv), Payload { msg: text, aad: header.as_bytes() })
         .map_err(invalid)?;
     let (ciphertext, tag) = sealed.split_at(sealed.len() - TAG_LEN);
     Ok([header, URL_SAFE_NO_PAD.encode(wrapped), URL_SAFE_NO_PAD.encode(iv), URL_SAFE_NO_PAD.encode(ciphertext), URL_SAFE_NO_PAD.encode(tag)].join("."))

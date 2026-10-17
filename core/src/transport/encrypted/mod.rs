@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use super::error::TransportError;
 
 mod client;
+pub mod cable;
 mod config;
 #[cfg(test)]
 pub(crate) mod fake_server_tests;

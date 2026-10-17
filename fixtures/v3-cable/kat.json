@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "note": "Test vectors only. The RSA key is generated for these vectors and protects nothing. Change only together with the protocol version v.",
+  "method": "x25519 vectors are RFC 7748 section 6.1. HKDF: HKDF-SHA256(ikm = dh || responseKey, salt = challenge, info = \"yupi-v3-ws-v1\" 0x00 label 0x00 kid 0x00 audience 0x00 path, length 32). Frame: compact JWE alg dir enc A256GCM, protected header is the literal text of header, AAD is its base64url, empty encrypted key.",
+  "header": "{\"alg\":\"dir\",\"enc\":\"A256GCM\"}",
+  "x25519": {
+    "server_private": "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+    "server_public": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+    "client_private": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+    "client_public": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+    "shared_secret": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+  },
+  "hkdf": {
+    "challenge": "533833fcbcfe98e052e85fa934edca8a8fbc3f665e28acf0e55a78e580489921",
+    "response_key": "99ba23329d1faac3f3b81cb826ca323c906c11c2be2f4d0866889485ba193a50",
+    "kid": "9dcdb9c348bb8cb50f45f5264114ff8f605e3fb5c470b4cce93f7a5dbc45474e",
+    "audience": "https://api.example.com",
+    "path": "/api/v3/cable",
+    "info_c2s": "797570692d76332d77732d76310063327300396463646239633334386262386362353066343566353236343131346666386636303565336662356334373062346363653933663761356462633435343734650068747470733a2f2f6170692e6578616d706c652e636f6d002f6170692f76332f6361626c65",
+    "info_s2c": "797570692d76332d77732d76310073326300396463646239633334386262386362353066343566353236343131346666386636303565336662356334373062346363653933663761356462633435343734650068747470733a2f2f6170692e6578616d706c652e636f6d002f6170692f76332f6361626c65",
+    "client_to_server": "230a7edb3b1eab20c96b32173439b026d7b93fa42107e66690a8867bdd47728d",
+    "server_to_client": "b22d87535d5c9c2e85a45d29374814aea336b2d23b41522ef4d7999dfb4629be"
+  },
+  "frames": [
+    {
+      "direction": "s2c",
+      "n": 0,
+      "iv": "754aa656d5e704c8ff05bb5f",
+      "plaintext": "{\"n\":0,\"t\":\"ready\",\"connectionId\":\"11111111-2222-4333-8444-555555555555\",\"challengeDigest\":\"9660e715b64050285402711a21d3d0bbe9cbdfe0725b1df51aedf43c93e45869\"}",
+      "token": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..dUqmVtXnBMj_Bbtf.DCZjRSQLfvLKWPhEDdeludRv6xF8WeCxPON6rlbr_Di4C2ckvAcFT0RAebdVIW1G8pyr2pC9GZFSl_mGJizfyiKJxehmWsPnPv5t5qvNc6fPJ6Js_VS2X-dvCLnwgf0XWBoNxNIspvzKEuRXekqN3a0Nt178j1VdtmzT6WXZKqgd_DHRRwKL79Ba6PeudNIv-na3bg8LsMviF_bhRr4.hdkQZOY8gpSvrgXZnPte3g"
+    },
+    {
+      "direction": "s2c",
+      "n": 1,
+      "iv": "cdef52ee6448a8a625cb84e6",
+      "plaintext": "{\"n\":1,\"t\":\"next\",\"id\":\"chat-1\",\"result\":{\"data\":{\"viewerChanges\":{\"occurredAt\":\"2026-10-17T00:00:00Z\"}}}}",
+      "token": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..ze9S7mRIqKYly4Tm.HMEeYkTn-Tw7FhROTqi6NKH6uWNVHPgFNCsjBJHTaE-fTeTrL_N9zuJDVkiitcUccOMEYeaMsSqo4IOvwmno8wAAZ7razjxHOVKVHi3HFKTLz6w1C9sIV6jZBVXELf-XtkXgVC8Mvnb-4Q.l6DNJSv3FwqFpZZNQQA9UA"
+    },
+    {
+      "direction": "c2s",
+      "n": 0,
+      "iv": "9a3a623492f4961ac9b51435",
+      "plaintext": "{\"n\":0,\"t\":\"subscribe\",\"id\":\"chat-1\",\"query\":\"subscription { viewerChanges { occurredAt } }\",\"variables\":{},\"operationName\":null}",
+      "token": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..mjpiNJL0lhrJtRQ1.Us0h5toeKD6r4mrz10niGMoLn_cg6fE7KK6SzAaGCGTPdF5dUkxFRZAKpbiQ4VlnAodgQmCAEPphnSiJ5uaQ5J9MW4DrLNEf9ErZ5u7uu64VDdUOSCSmRon39lKGufibg5egtzHIf_aDuVoOHwW7lJ-hMmSVAQu4hL3G4Fw7X8tn.J6qToWCh5IOgToXYP4qQBw"
+    },
+    {
+      "direction": "c2s",
+      "n": 1,
+      "iv": "3f43f6f71e110b35bd1c0d79",
+      "plaintext": "{\"n\":1,\"t\":\"unsubscribe\",\"id\":\"chat-1\"}",
+      "token": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..P0P29x4RCzW9HA15.m-ArxpqwCuKQpYqXPmG5ui8siMI--vhhyo-gBWh-SblQOZ1XE_vr.Y1gQbhL1jhivlCqF7CHQ6Q"
+    }
+  ],
+  "hello": {
+    "rsa_private_pem": "-----BEGIN RSA PRIVATE KEY-----\n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\n-----END RSA PRIVATE KEY-----\n",
+    "credential": "555edb4d144fcbfcb1b6fa54892be77eed84631af65325791cece7a4706d6367",
+    "plaintext": "{\"v\":1,\"purpose\":\"v3.ws.hello\",\"audience\":\"https://api.example.com\",\"kid\":\"9dcdb9c348bb8cb50f45f5264114ff8f605e3fb5c470b4cce93f7a5dbc45474e\",\"method\":\"GET\",\"path\":\"/api/v3/cable\",\"challenge\":\"Uzgz_Lz-mOBS6F-pNO3Kio-8P2ZeKKzw5Vp45YBImSE\",\"clientKey\":\"hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo\",\"credential\":\"VV7bTRRPy_yxtvpUiSvnfu2EYxr2UyV5HOznpHBtY2c\",\"responseKey\":\"mbojMp0fqsPzuBy4JsoyPJBsEcK-L00IZoiUhboZOlA\"}",
+    "token": "eyJhbGciOiJSU0EtT0FFUCIsImVuYyI6IkEyNTZHQ00ifQ.GH5S_kYxII1nNEt4eQ5f4fGxUCbW85RU0pQ-h7TMf-c4hjHDmuJLGer0y07Er8ARJ87iBP-TaL4ar3WlqNDSnl8IK1KEL6g2qcoJANPO9hC7pBYNfLBG0KEdboBWrCMaEE5guxcr7kPqWGldLZLMX9JSg7u8BKQ-F2t5H0HUSVn4Niy7NaOTUPQlvv2Lo0xpYPkTw99gK4r7k86Tljqg7_De-hs1qhlljB-WBzT-39z_q0pVw7RQbzkeTuAZCYy5dOgOKnnINJNOKBupNmFtvzwC9Q5ZjnH2Dkfqw_4IkDJpKl6ExXfp0AqVlNTLz-e603XOG9hJYStxrzgbXJKk-q0aT2N1OeVDn9sqq3I7RCr4alBkA80Ksm3a8apiNR9mV3RgiugQrteUq6_lytoMCfg791qwXmJXDRqN-G5zH_1s6cuzLvHofcia43JKd81kS3H8b3Ce7wAwxqtiSJSnm2LCz7fMtS-ONCMdXsrrjLrBmVXv9HIjlOBKa4wHVOuJ.fgTox-Sajvqq9jhC.W5bhhxmBCimxYsZao49tCRfxCvzip6f-a7FbRoo7IabYupSU2ha_MeYVLUHHyqhErjNTI5Xon6_UR7P-_1Abzs_j_g0TEskBwbMU4WB0PY1zFXska5itgUQ4oKtRsheENj3IfGfM4IZwau0qGYcFqojD2ga8i2U8Que_V_hhkXzrlR9B7ah2i5eNqvK6EF-2AGs_OPyBBtHcMCXSCrQtpN57-V8dJUvn24gqNR_gkOXXVhDKRKOhV6_uwJ0BLl_Rg1nhbXzEz7f2fk_w28DzERckWzPurLKruMVKPF7VTEPN4h7TCznnKhyohMS-LWbH6HV9lXfRChdOmUn2slrfFTVZ4Z8BjZf4wRj3skeatMcMCL-lcYj6siN6wK6yVRzXCAKM4aBpLQE5nO-L_mFYJGMdf6H8WpziI52Z9ve_AKqm9kSM-afXAPCBbJrWONgbKTy_j59G_0rXjsOK5qlqlyDb6rnPkY7WVuADBNKzd5YoK368oBTqAV2YjQM2Ztb-2l_Vdxg9wM1wS0Qagc7vtBCFl9ILY4ECyfWjeMWP.aZUN6d1AVeBTH7_q8eSfdg"
+  }
+}
