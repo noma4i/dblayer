@@ -70,14 +70,24 @@ async fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry
     }
 }
 
-#[test]
-fn failed_openings_increase_backoff_without_spending_attempts_offline() {
+#[tokio::test(start_paused = true)]
+async fn failed_openings_increase_backoff_only_with_online_subscribers() {
     use std::time::Duration;
     let mut retry = CableSession::new();
+    assert_eq!(retry.failed_open(true), None);
+    let request = GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}));
+    let (_, subscription) = retry.subscribe(request.clone());
     assert_eq!(retry.failed_open(true), Some(Duration::from_secs(1)));
     assert_eq!(retry.failed_open(false), None);
     assert_eq!(retry.failed_open(true), Some(Duration::from_secs(2)));
     assert_eq!(retry.failed_open(true), Some(Duration::from_secs(4)));
     retry.ready();
     assert_eq!(retry.failed_open(true), Some(Duration::from_secs(1)));
+    subscription.cancel();
+    retry.cancelled().await.unwrap();
+    assert_eq!(retry.failed_open(true), None);
+    let (_, _subscription) = retry.subscribe(request);
+    assert_eq!(retry.failed_open(true), Some(Duration::from_secs(2)));
+    retry.closed(4401, "UNAUTHENTICATED");
+    assert_eq!(retry.failed_open(true), None);
 }

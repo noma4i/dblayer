@@ -265,10 +265,9 @@ async fn closing_the_last_subscription_or_transport_releases_the_socket() {
                 assert_eq!(frame["t"], "unsubscribe");
                 assert_eq!(frame["id"], subscribe["id"]);
             }
+            tokio::time::sleep(std::time::Duration::from_secs(100)).await;
             cable.settled().await.unwrap();
-            tokio::time::advance(std::time::Duration::from_secs(100)).await;
-            cable.settled().await.unwrap();
-            assert_eq!(cable.wake_count(), 0);
+            assert_eq!(cable.wake_count(), 0, "ready={ready}");
         }
         tokio::task::yield_now().await;
         assert_eq!(socket.closes.load(Ordering::SeqCst), 1, "drop_transport={drop_transport}, ready={ready}");

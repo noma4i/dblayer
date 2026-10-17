@@ -73,7 +73,7 @@ impl CableSession {
     pub fn traffic(&mut self) { self.last_traffic = Instant::now(); }
 
     pub fn failed_open(&mut self, online: bool) -> Option<Duration> {
-        if !online { return None; }
+        if !online || self.is_empty() { return None; }
         self.retry = self.retry.record_failure(SubscriptionFault::Transient).state;
         Some(RETRY_BACKOFF.delay(self.retry.attempts.saturating_sub(1)))
     }
