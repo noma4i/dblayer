@@ -75,12 +75,12 @@ fn include_of_has_many_follows_new_children() {
 fn a_scope_query_reads_in_the_server_order_and_follows_its_scope() {
     let db = booted();
     seed_tree(&db);
-    land_scope(&db, vec![append("m2", "a"), append("m1", "b")]);
+    land_scope(&db, vec![append("m2", "a0"), append("m1", "a1")]);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").in_scope(feed().key), callback).unwrap();
     db.settle();
     assert_eq!(ids(&changes(&log)[0]), ["m2", "m1"]);
-    land_scope(&db, vec![ScopeOp::Move { scope: feed(), row: rid("m1"), order_key: "0".to_string() }]);
+    land_scope(&db, vec![ScopeOp::Move { scope: feed(), row: rid("m1"), order_key: "Zz".to_string() }]);
     let all = changes(&log);
     assert_eq!(ids(&all[1]), ["m1", "m2"]);
     assert_eq!(all[1].diff.moved.len(), 1);
@@ -90,7 +90,7 @@ fn a_scope_query_reads_in_the_server_order_and_follows_its_scope() {
 fn a_scope_query_ignores_other_scopes_and_rows_outside_its_scope() {
     let db = booted();
     seed_tree(&db);
-    land_scope(&db, vec![append("m1", "a")]);
+    land_scope(&db, vec![append("m1", "a0")]);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").in_scope(feed().key), callback).unwrap();
     db.settle();
@@ -382,7 +382,7 @@ fn model_test_with_threads_ends_every_observer_on_the_fresh_state() {
     for seed_value in [0x2545F4914F6CDD1D_u64, 0x9E3779B97F4A7C15, 0xD1B54A32D192ED03] {
         let db = booted();
         seed_tree(&db);
-        land_scope(&db, vec![append("m1", "a")]);
+        land_scope(&db, vec![append("m1", "a0")]);
         let queries = [
             Query::new("moments"),
             Query::new("moments").filtered(Where::equal("text", json!("a"))),

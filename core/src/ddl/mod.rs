@@ -21,17 +21,19 @@ pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
 const CACHE_TABLES: [&str; 5] = ["scope_member", "scope_edge", "tombstone", "query_window", "query_window_row"];
 
-const CACHE_STATEMENTS: [&str; 11] = [
+const CACHE_STATEMENTS: [&str; 12] = [
     "CREATE TABLE IF NOT EXISTS scope_member (
   model TEXT NOT NULL,
   scope_key TEXT NOT NULL,
   row_id TEXT NOT NULL,
   order_key TEXT NOT NULL,
+  place TEXT,
   PRIMARY KEY (model, scope_key, row_id)
 ) STRICT",
     "CREATE UNIQUE INDEX IF NOT EXISTS scope_walk ON scope_member (model, scope_key, order_key, row_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS scope_order_unique ON scope_member (model, scope_key, order_key)",
-    "CREATE INDEX IF NOT EXISTS scope_member_row ON scope_member (model, row_id)",
+    "CREATE INDEX IF NOT EXISTS scope_member_row ON scope_member (model, row_id, scope_key)",
+    "CREATE INDEX IF NOT EXISTS scope_member_place ON scope_member (model, scope_key, place, row_id) WHERE place IS NOT NULL",
     "CREATE TABLE IF NOT EXISTS scope_edge (
   model TEXT NOT NULL,
   scope_key TEXT NOT NULL,

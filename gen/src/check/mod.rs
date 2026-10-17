@@ -138,7 +138,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
     let free = || Some(Word { shape: Shape::Nothing, keys: vec![], block: false, free_keys: true });
     match (context, word) {
         (Context::Model, "schema") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
-        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("text", Want::TextParams, false), key("defaults", Want::Hash, false), key("order", Want::Hash, false), key("joins", Want::Symbol, false), key("node", Want::Symbol, false)], block: true, free_keys: false }),
+        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("text", Want::TextParams, false), key("defaults", Want::Hash, false), key("order", Want::Hash, false), key("joins", Want::Symbol, false), key("order_stable", Want::Bool, false), key("node", Want::Symbol, false)], block: true, free_keys: false }),
         (Context::Model, "action") => Some(Word { shape: Shape::Name, keys: vec![key("mutation", Want::Operation, false), key("optimistic", Want::Hash, false)], block: true, free_keys: false }),
         (Context::Model, "create" | "update") => {
             plain(
@@ -700,6 +700,12 @@ fn check_remote(remote: &Call, report: &mut impl FnMut(usize, usize, String)) {
     }
     if let Some(pair) = remote.options.iter().find(|pair| pair.key == "joins" && matches!(&pair.value.item, Value::Symbol(kind) if kind == "events")).filter(|_| remote.options.iter().any(|pair| pair.key == "text")) {
         report(pair.line, pair.column, format!("scope `{}`: `joins: :events` joins rows by their `where` columns and a scope with `text:` params has none, remove `joins:` and the server answer decides the members", symbol_name(remote.args.first()).unwrap_or_default()));
+    }
+    if let Some(pair) = remote.options.iter().find(|pair| pair.key == "order_stable" && pair.value.item == Value::Bool(true)) {
+        let declared = |key: &str| remote.options.iter().any(|option| option.key == key);
+        if !declared("order") || !declared("params") || declared("text") {
+            report(pair.line, pair.column, format!("scope `{}`: `order_stable: true` keeps the shown order of the rows that `where` selects and needs `order` and `where`, without `text:` params", symbol_name(remote.args.first()).unwrap_or_default()));
+        }
     }
     if let Some(call) = lines.iter().find(|call| call.word == "max_pages").filter(|_| !has("paginate")) {
         report(call.line, call.column, "`max_pages` needs `paginate`".to_string());

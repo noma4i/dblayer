@@ -21,6 +21,7 @@ mod rows;
 mod scopes;
 mod search;
 mod shape;
+mod stable;
 mod tombstones;
 mod windows;
 

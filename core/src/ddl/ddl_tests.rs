@@ -189,6 +189,7 @@ fn core_migration_creates_tables_and_indexes() {
         "scope_walk",
         "scope_order_unique",
         "scope_member_row",
+        "scope_member_place",
         "tombstone_age",
         "op_open",
         "op_temp",

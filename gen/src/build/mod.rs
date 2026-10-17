@@ -345,6 +345,7 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
     let joins = option(call, "joins").and_then(|pair| text_of(&pair.value.item));
     relation.joins_events = joins.as_deref() == Some("events");
     relation.joins_created = joins.as_deref() == Some("created");
+    relation.order_stable = flag(call, "order_stable");
     relation.remote = Some(remote);
     relation.edge_fields = lines.iter().filter(|candidate| candidate.word == "edge").flat_map(|edge| edge.block.iter().flatten()).map(|field| build_field(field, owner)).collect();
     relation

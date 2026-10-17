@@ -185,6 +185,8 @@ mod land_tests;
 #[cfg(test)]
 mod thread_window_tests;
 #[cfg(test)]
+pub(crate) mod stable_order;
+#[cfg(test)]
 mod load_more_tests;
 #[cfg(test)]
 mod load_tests;

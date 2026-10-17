@@ -165,6 +165,7 @@ impl Inner {
             let listed = normalized.roots.iter().any(|root| root.get("id").and_then(read_id).is_some_and(|id| id.as_str() == last));
             (!listed).then(|| WindowTail { anchor: last.clone(), cursor: window.cursor.clone(), has_next: window.has_next })
         });
+        let keeps_member_order = self.db.spec(&model)?.stable_order(&scope.key).is_some();
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
         let committed = self.db.commit_following(generation, |reader| {
@@ -180,7 +181,7 @@ impl Inner {
                 let stored = StoredScope {
                     last_key: reader.scope_last_key(&model, scope.key.as_str())?,
                     incoming: reader
-                        .scope_member_positions(&model, scope.key.as_str(), &wanted)?
+                        .scope_member_positions(&model, scope.key.as_str(), if keeps_member_order { &[] } else { &wanted })?
                         .into_iter()
                         .map(|(id, order_key, position)| StoredMember { id, order_key, position })
                         .collect(),

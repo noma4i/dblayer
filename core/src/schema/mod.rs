@@ -144,6 +144,8 @@ pub enum DeclarationError {
     UnknownSetField { relation: String, field: String },
     #[error("relation {relation} sets {field}, which has no reset_after")]
     SetWithoutReset { relation: String, field: String },
+    #[error("relation {relation} keeps a stable order and needs {needs}")]
+    StableOrderNeeds { relation: String, needs: &'static str },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -601,6 +603,8 @@ pub struct RelationSpec {
     pub joins_events: bool,
     #[serde(default)]
     pub joins_created: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub order_stable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node: Option<NodeRead>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -620,6 +624,7 @@ impl RelationSpec {
             sort: Sort::ServerOrder,
             joins_events: false,
             joins_created: false,
+            order_stable: false,
             node: None,
             edge_fields: Vec::new(),
         }
@@ -668,6 +673,17 @@ impl RelationSpec {
             return Err(DeclarationError::Remote { relation: self.name.clone(), fault });
         }
         let relation = || self.name.clone();
+        if self.order_stable {
+            let needs = match (&self.remote, &self.sort) {
+                (None, _) => Some("a fetch"),
+                (_, Sort::ServerOrder) => Some("an order"),
+                _ if self.by_columns.is_empty() || !self.text_params.is_empty() => Some("where columns and no text params"),
+                _ => None,
+            };
+            if let Some(needs) = needs {
+                return Err(DeclarationError::StableOrderNeeds { relation: relation(), needs });
+            }
+        }
         if let Some(param) = self.text_params.iter().find(|param| model.field(param).is_some()) {
             return Err(DeclarationError::TextParamIsField { relation: relation(), param: param.clone() });
         }
@@ -894,6 +910,16 @@ impl ModelSpec {
                 relation_scope_key_from_values(self.key.as_str(), &relation.name, &params, &kinds).ok()
             })
             .collect()
+    }
+
+    pub fn stable_order(&self, scope: &ScopeKey) -> Option<&[SortField]> {
+        let relation = self.relations.iter().filter(|relation| relation.order_stable).find(|relation| {
+            scope.as_str().starts_with(ScopeKey::compose(&[self.key.as_str(), relation.name.as_str()]).as_str())
+        })?;
+        match &relation.sort {
+            Sort::Fields(fields) => Some(fields),
+            Sort::ServerOrder => None,
+        }
     }
 
     pub fn has_remote(&self, relation: &str) -> bool {
@@ -1124,6 +1150,8 @@ mod merge_tests;
 mod newer_tests;
 #[cfg(test)]
 mod schema_tests;
+#[cfg(test)]
+mod stable_order_tests;
 #[cfg(test)]
 mod union_tests;
 

@@ -80,11 +80,13 @@ pub struct Query {
     pub include: Vec<String>,
     #[serde(default)]
     pub scope: Option<ScopeKey>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stable: bool,
 }
 
 impl Query {
     pub fn new(model: &str) -> Self {
-        Self { model: ModelKey::new(model), r#where: None, order: Vec::new(), limit: None, offset: None, include: Vec::new(), scope: None }
+        Self { model: ModelKey::new(model), r#where: None, order: Vec::new(), limit: None, offset: None, include: Vec::new(), scope: None, stable: false }
     }
 
     #[cfg(test)]
@@ -144,10 +146,11 @@ fn filter_clause(query: &Query, model: &ModelSpec, bindings: &mut Vec<SqlValue>)
     }
 }
 
-fn join_clause(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
+fn join_clause(query: &Query, bindings: &mut Vec<SqlValue>, from_rows: bool) -> String {
     let Some(scope) = &query.scope else { return String::new() };
     bindings.extend(scope_bindings(&query.model, scope));
-    " JOIN scope_member AS m ON m.row_id = r.id AND m.model = ? AND m.scope_key = ?".to_string()
+    let join = if from_rows { "CROSS JOIN" } else { "JOIN" };
+    format!(" {join} scope_member AS m ON m.row_id = r.id AND m.model = ? AND m.scope_key = ?")
 }
 
 fn sync_join(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
@@ -185,7 +188,14 @@ struct SortTerm {
     descending: bool,
 }
 
+fn keeps_member_order(query: &Query) -> bool {
+    query.stable && query.scope.is_some()
+}
+
 fn sort_terms(query: &Query, model: &ModelSpec) -> Result<Vec<SortTerm>, QueryError> {
+    if keeps_member_order(query) {
+        return Ok(vec![SortTerm { clause: "m.order_key".to_string(), expression: "m.order_key".to_string(), descending: false }]);
+    }
     let mut terms = Vec::new();
     for order in &query.order {
         let column = column_sql(model, &order.field)?;
@@ -236,7 +246,7 @@ fn window_clause(query: &Query, bindings: &mut Vec<SqlValue>) -> String {
 fn compile_columns(query: &Query, model: &ModelSpec, columns: &str) -> Result<CompiledStatement, QueryError> {
     check_model(query, model)?;
     let mut bindings = Vec::new();
-    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
+    let join = join_clause(query, &mut bindings, false) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
     let filter = filter_clause(query, model, &mut bindings)?;
     let order = order_clause(query, model)?;
     let window = window_clause(query, &mut bindings);
@@ -266,7 +276,7 @@ pub fn compile_ranked(query: &Query, model: &ModelSpec, only: Option<&[String]>)
     let terms = sort_terms(query, model)?;
     let columns: Vec<&str> = std::iter::once(KEY_COLUMNS).chain(terms.iter().map(|term| term.expression.as_str())).collect();
     let mut bindings = Vec::new();
-    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
+    let join = join_clause(query, &mut bindings, only.is_some()) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
     let (filter, order) = match only {
         None => (filter_clause(query, model, &mut bindings)?, order_clause(query, model)?),
         Some(ids) => {
@@ -286,7 +296,7 @@ pub fn compile_ranked(query: &Query, model: &ModelSpec, only: Option<&[String]>)
 pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStatement, QueryError> {
     check_model(query, model)?;
     let mut bindings = Vec::new();
-    let join = join_clause(query, &mut bindings) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
+    let join = join_clause(query, &mut bindings, false) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
     let filter = filter_clause(query, model, &mut bindings)?;
     let sql = format!("SELECT COUNT(*) FROM {} AS r{join}{filter}", table_name(query.model.as_str()));
     Ok(CompiledStatement { sql, bindings })

@@ -144,6 +144,6 @@ impl Db {
             Sort::ServerOrder => Vec::new(),
             Sort::Fields(fields) => fields.iter().map(|field| Order::new(&field.column, field.direction)).collect(),
         };
-        Ok(Some(Query::new(model).in_scope(scope).ordered(order)))
+        Ok(Some(Query { stable: relation.order_stable, ..Query::new(model).in_scope(scope).ordered(order) }))
     }
 }

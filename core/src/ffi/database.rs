@@ -401,6 +401,7 @@ impl Database {
             let relation_query = self.db.remote_relation_query(query.model.as_str(), name, &params).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
             Ok(relation_query.map(|relation_query| {
                 query.scope = relation_query.scope;
+                query.stable = relation_query.stable;
                 if query.order.is_empty() { query.order = relation_query.order; }
                 (name.to_string(), params)
             }))

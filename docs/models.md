@@ -332,6 +332,19 @@ val primary = Chat.list(ChatList.Primary)
 val secondary = Chat.list(ChatList.Secondary)
 ```
 
+**Stable order.** A chat thread must not reorder rows the user has seen. `order_stable: true` on a scope with `fetch`, `where` columns and an `order` (and no `text:` params) gives each row a place in the list when it joins, and later changes of the `order` values never move it. A message that the server confirms with a lower `sequenceNumber`, the answer that replaces its temporary id, an event that edits the number and a reloaded first page leave the rows where the user saw them. A row from the server (a page, an event) that is not in the list takes the place its `order` values give it among the rows already listed, so a page of older messages lands before the rows shown. A row this device creates goes after the last row. The places live in the cache: they survive a restart, and a reset or `logout()` drops them, so the pages that load afterwards come in the order of the server. Finding the place of a row costs work that does not grow with the size of the list.
+
+```ruby
+model Message do
+  scope :thread, joins: :events, order_stable: true do
+    order sequenceNumber: :asc_nulls_last, createdAt: :asc
+    where :chatId
+    fetch ChatThread, root: "chat.messages"
+    paginate 30
+  end
+end
+```
+
 `joins: :events` adds a row from an event to the windows whose `where` columns the row matches. A scope with `text:` has no columns to match, so the combination stops the run: remove `joins:`. The window reloads from the server when it is stale or marked by `refetch`, and the new answer replaces its members.
 
 | Line | Meaning | Default |
@@ -346,6 +359,7 @@ val secondary = Chat.list(ChatList.Secondary)
 | `fresh_for 5.minutes` | how long a response counts as fresh | `5.minutes` |
 | `fresh_for 5.minutes, empty: 30.seconds` | shorter freshness for an empty response | same |
 | `max_pages 5` | page limit per load | none |
+| `order_stable: true` (on the `scope` line) | the list keeps the order the rows were shown in, see [stable order](#scopes) | sorted by the `order` values on every read |
 | `variables statusFilter: :status, includeGifts: false` | name the GraphQL variables: a symbol takes the value of a relation param, any other value is sent as written | every param under its own name |
 | `edge :impressionUuid, type: :string, null: true` | a value of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |
 | `updates Subscription, deleted_by: :field` | keep the relation current with a subscription. Write the line again for each subscription. `removes: true` makes every event delete its row, `debounce: 300.milliseconds` merges bursts | none |

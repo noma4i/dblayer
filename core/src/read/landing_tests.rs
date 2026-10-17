@@ -97,13 +97,13 @@ fn entity_ops_target_the_scope_model() {
 
 #[test]
 fn next_page_appends_after_the_largest_key_and_keeps_existing_keys() {
-    let current = stored("K2", vec![member("a", "K1", 0)]);
+    let current = stored("a2", vec![member("a", "a1", 0)]);
     let plan = land("append", &current, &[row("c"), row("a")]);
     let added = appended(&plan);
     assert_eq!(added.len(), 1);
     assert_eq!(added[0].0, "c");
-    assert!(added[0].1.as_str() > "K2");
-    assert!(plan.scope_ops.contains(&ScopeOp::Move { scope: scope("append"), row: RowId::new("a").unwrap(), order_key: "K1".into() }));
+    assert!(added[0].1.as_str() > "a2");
+    assert!(plan.scope_ops.contains(&ScopeOp::Move { scope: scope("append"), row: RowId::new("a").unwrap(), order_key: "a1".into() }));
     assert!(!plan.scope_ops.iter().any(|operation| matches!(operation, ScopeOp::Detach { .. })));
 }
 

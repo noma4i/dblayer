@@ -11,7 +11,11 @@ use time::{OffsetDateTime, UtcOffset};
 
 use crate::identity::{RowId, ScopeKey};
 
-const ORDER_ALPHABET: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+mod fractional;
+
+pub use fractional::{fractional_between, fractional_keys_between, ORDER_KEY_LIMIT};
+
+pub(crate) const ORDER_ALPHABET: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const INT_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -275,40 +279,6 @@ pub fn null_compare(value: Option<&Value>, bound: &Value, keeps_greater: bool, o
     }
 }
 
-pub fn fractional_between(lower: Option<&str>, upper: Option<&str>) -> Result<String, OrderKeyError> {
-    let alphabet = ORDER_ALPHABET.as_bytes();
-    let lower = lower.unwrap_or("").as_bytes();
-    let upper = upper.unwrap_or("").as_bytes();
-    let mut prefix: Vec<u8> = Vec::new();
-    let mut index = 0;
-    loop {
-        let lower_byte = lower.get(index).copied().unwrap_or(alphabet[0]);
-        let upper_byte = upper.get(index).copied().unwrap_or(alphabet[alphabet.len() - 1]);
-        if lower_byte == upper_byte {
-            prefix.push(lower_byte);
-            index += 1;
-            continue;
-        }
-        let position = |byte: u8| alphabet.iter().position(|candidate| *candidate == byte);
-        let (Some(lower_index), Some(upper_index)) = (position(lower_byte), position(upper_byte)) else {
-            return Err(OrderKeyError::InvalidBounds);
-        };
-        if lower_index >= upper_index {
-            return Err(OrderKeyError::InvalidBounds);
-        }
-        if upper_index - lower_index > 1 {
-            prefix.push(alphabet[(lower_index + upper_index) / 2]);
-        } else {
-            prefix.push(lower_byte);
-            if index + 1 < lower.len() {
-                prefix.extend_from_slice(&lower[index + 1..]);
-            }
-            prefix.push(alphabet[alphabet.len() / 2]);
-        }
-        return Ok(String::from_utf8(prefix).expect("alphabet is ascii"));
-    }
-}
-
 /// Scope-key text of a relation parameter that was passed as null (for example the unfiltered feed).
 const NULL_PARAM: &str = "\u{0}null";
 
@@ -381,6 +351,8 @@ pub fn relation_scope_key_from_values(
 
 #[cfg(test)]
 mod value_tests;
+#[cfg(test)]
+mod fractional_tests;
 
 pub fn same_fields(left: &Map<String, Value>, right: &Map<String, Value>) -> bool {
     let present = |row: &Map<String, Value>| row.values().filter(|value| !value.is_null()).count();

@@ -73,4 +73,6 @@ impl Ranked {
 #[cfg(test)]
 mod order_key_tests;
 #[cfg(test)]
+mod place_tests;
+#[cfg(test)]
 mod tree_tests;

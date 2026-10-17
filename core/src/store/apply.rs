@@ -16,6 +16,7 @@ use crate::upload::UploadState;
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, fetch_stored, placeholders, Reader, StoredRow, CHUNK};
 use super::search::{reindex, touches_search, unindex};
+use super::stable;
 use crate::nodes::{delete_trees, read_trees, texts, write_tree};
 use super::shape::{delete_tables, insert_children, member_values, normalize, normalize_leaf};
 use crate::ddl::FieldPlan;
@@ -505,8 +506,13 @@ pub(crate) fn apply_envelope(
         visible = visible_scope_ops(&envelope.scope_ops, &hidden);
         &visible
     };
-    wrote |= apply_scope_ops(connection, &moves, &mut result.scopes, &mut result.members)?;
-    wrote |= apply_scope_ops(connection, scope_ops, &mut result.scopes, &mut result.members)?;
+    wrote |= apply_scope_ops(connection, models, &moves, &mut result.scopes, &mut result.members)?;
+    wrote |= apply_scope_ops(connection, models, scope_ops, &mut result.scopes, &mut result.members)?;
+    let renamed: Vec<RowChange> = replaced
+        .iter()
+        .map(|(from, by)| RowChange { row: RowRef::new(from.model.clone(), by.clone()), kind: RowChangeKind::Inserted, fields: BTreeSet::new() })
+        .collect();
+    refresh_places(connection, models, changes.changes.iter().chain(&renamed))?;
     apply_edge_writes(connection, &envelope.edge_writes)?;
     if let Some(window) = &envelope.window {
         save_window(connection, window, envelope.generation, now_ms)?;
@@ -593,15 +599,33 @@ fn apply_edge_writes(connection: &Connection, writes: &[EdgeWrite]) -> Result<()
     Ok(())
 }
 
+fn refresh_places<'a>(connection: &Connection, models: &BTreeMap<String, ModelInfo>, changes: impl Iterator<Item = &'a RowChange> + Clone) -> Result<(), StoreError> {
+    for info in models.values().filter(|info| info.spec.relations.iter().any(|relation| relation.order_stable)) {
+        let own: Vec<&RowChange> = changes.clone().filter(|change| change.row.model.as_str() == info.spec.key.as_str() && change.kind != RowChangeKind::Destroyed).collect();
+        if !own.is_empty() {
+            stable::refresh_places(connection, info, &own)?;
+        }
+    }
+    Ok(())
+}
+
 fn apply_scope_ops(
     connection: &Connection,
+    models: &BTreeMap<String, ModelInfo>,
     operations: &[ScopeOp],
     scopes: &mut BTreeSet<ScopeRef>,
     members: &mut BTreeSet<RowRef>,
 ) -> Result<bool, StoreError> {
+    let stable_fields = |scope: &ScopeRef| {
+        let info = models.get(scope.model.as_str())?;
+        info.spec.stable_order(&scope.key).map(|fields| (info, fields))
+    };
     let mut wrote = false;
     for operation in operations {
         if let ScopeOp::Move { scope, row, .. } = operation {
+            if stable_fields(scope).is_some() {
+                continue;
+            }
             connection.execute(
                 "UPDATE scope_member SET order_key = ?1 WHERE model = ?2 AND scope_key = ?3 AND row_id = ?4",
                 params![format!("~parked~{}", row.as_str()), scope.model.as_str(), scope.key.as_str(), row.as_str()],
@@ -609,18 +633,24 @@ fn apply_scope_ops(
         }
     }
     for operation in operations {
-        let changed = match operation {
-            ScopeOp::Append { scope, row, order_key } => connection.execute(
+        let changed = match (operation, stable_fields(operation.scope())) {
+            (ScopeOp::Move { .. }, Some(_)) => 0,
+            (ScopeOp::Append { scope, row, .. }, Some((info, fields))) => {
+                let joined = stable::join(connection, info, fields, scope, row)?;
+                members.extend(joined.moved.iter().filter_map(|moved| crate::identity::RowId::new(moved).ok()).map(|moved| RowRef::new(scope.model.clone(), moved)));
+                usize::from(joined.joined)
+            }
+            (ScopeOp::Append { scope, row, order_key }, None) => connection.execute(
                 "INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES (?1, ?2, ?3, ?4) \
                  ON CONFLICT (model, scope_key, row_id) DO UPDATE SET order_key = excluded.order_key \
                  WHERE order_key IS NOT excluded.order_key",
                 params![scope.model.as_str(), scope.key.as_str(), row.as_str(), order_key],
             )?,
-            ScopeOp::Move { scope, row, order_key } => connection.execute(
+            (ScopeOp::Move { scope, row, order_key }, None) => connection.execute(
                 "UPDATE scope_member SET order_key = ?1 WHERE model = ?2 AND scope_key = ?3 AND row_id = ?4",
                 params![order_key, scope.model.as_str(), scope.key.as_str(), row.as_str()],
             )?,
-            ScopeOp::Detach { scope, row } => connection.execute(
+            (ScopeOp::Detach { scope, row }, _) => connection.execute(
                 "DELETE FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3",
                 params![scope.model.as_str(), scope.key.as_str(), row.as_str()],
             )?,

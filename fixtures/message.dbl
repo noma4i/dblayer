@@ -39,7 +39,7 @@ model Message do
     order createdAt: :asc
   end
 
-  scope :thread, joins: :events do
+  scope :thread, joins: :events, order_stable: true do
     order sequenceNumber: :asc_nulls_last, createdAt: :asc
     where :chatId
     fetch ChatThread, root: "chat.messages"

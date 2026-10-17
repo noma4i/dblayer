@@ -84,6 +84,8 @@ mod load_tests;
 #[cfg(test)]
 mod live_tests;
 #[cfg(test)]
+mod stable_order_tests;
+#[cfg(test)]
 mod local_open_tests;
 #[cfg(test)]
 mod write_calls_tests;

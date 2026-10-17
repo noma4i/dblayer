@@ -100,11 +100,11 @@ fn local_rows_stay_in_the_list_on_their_places() {
     start(&db, "feed", &[("m1", "1"), ("m2", "2")]);
     let local = db.create("moments", obj(json!({"userId": "u1", "text": "mine"}))).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    envelope.scope_ops.push(ScopeOp::Append { scope: scope("feed"), row: local.id.clone(), order_key: "0".to_string() });
+    envelope.scope_ops.push(ScopeOp::Append { scope: scope("feed"), row: local.id.clone(), order_key: "Zz".to_string() });
     db.land(envelope).unwrap();
     let pending = db.create("moments", obj(json!({"id": "m5", "userId": "u1", "text": "pending"}))).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    envelope.scope_ops.push(ScopeOp::Append { scope: scope("feed"), row: pending.id.clone(), order_key: "zz".to_string() });
+    envelope.scope_ops.push(ScopeOp::Append { scope: scope("feed"), row: pending.id.clone(), order_key: "b00".to_string() });
     db.land(envelope).unwrap();
     db.replace(&request("feed", Coverage::Complete), rows(&[("m2", "2"), ("m3", "3")])).unwrap();
     let after = members(&db, "feed");
@@ -151,7 +151,7 @@ fn destroy_spares_local_rows() {
     start(&db, "feed", &[("m1", "1")]);
     let local = db.create("moments", obj(json!({"userId": "u1", "text": "mine"}))).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    envelope.scope_ops.push(ScopeOp::Append { scope: scope("feed"), row: local.id.clone(), order_key: "zz".to_string() });
+    envelope.scope_ops.push(ScopeOp::Append { scope: scope("feed"), row: local.id.clone(), order_key: "b00".to_string() });
     db.land(envelope).unwrap();
     let mut destroying = request("feed", Coverage::Complete);
     destroying.on_absent = OnAbsent::Destroy;
