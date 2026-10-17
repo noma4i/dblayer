@@ -199,6 +199,10 @@ mod enum_scope_tests;
 #[cfg(test)]
 mod node_tests;
 #[cfg(test)]
+mod opponent_null_tests;
+#[cfg(test)]
+mod null_object_tests;
+#[cfg(test)]
 mod normalize_tests;
 #[cfg(test)]
 mod resume_tests;

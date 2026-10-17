@@ -68,8 +68,14 @@ pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, rela
         match association.kind {
             AssociationKind::BelongsTo => {
                 let key = ids.first().and_then(Value::as_str).map(str::to_string).or_else(|| bare_id.map(|id| id.as_str().to_string()));
-                if let Some(id) = key {
-                    input.insert(association.foreign_key.clone(), Value::String(id));
+                match key {
+                    Some(id) => {
+                        input.insert(association.foreign_key.clone(), Value::String(id));
+                    }
+                    None if is_explicit_null(node, path) && spec.field(&association.foreign_key).is_some_and(|field| field.nullable) => {
+                        input.insert(association.foreign_key.clone(), Value::Null);
+                    }
+                    None => {}
                 }
             }
             AssociationKind::References => {
@@ -94,6 +100,18 @@ fn nested_values<'a>(node: &'a Map<String, Value>, path: &str) -> Option<Vec<&'a
     }
     let found: Vec<&Value> = flatten(current).into_iter().flat_map(connection_items).filter(|value| !value.is_null()).collect();
     Some(found)
+}
+
+fn is_explicit_null(node: &Map<String, Value>, path: &str) -> bool {
+    let mut current = node;
+    for segment in path.split('.') {
+        match current.get(segment) {
+            Some(Value::Null) => return true,
+            Some(Value::Object(next)) => current = next,
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn flatten(values: Vec<&Value>) -> Vec<&Value> {
