@@ -52,6 +52,11 @@ pub(super) fn literal(field: &FieldSpec, value: &Value, swift: bool, types: &[&F
         (FieldKind::Enum { values }, Value::String(text)) => enum_literal(field, values, text, swift),
         (FieldKind::Scalar { .. }, Value::String(text)) => string_literal(text, swift),
         (FieldKind::Scalar { .. }, Value::Bool(flag)) => flag.to_string(),
+        (FieldKind::List { .. }, Value::Array(items)) if !field.values.is_empty() => {
+            let element = FieldSpec { kind: FieldKind::Enum { values: field.values.clone() }, ..field.clone() };
+            let items = items.iter().map(|item| literal(&element, item, swift, types)).collect::<Vec<_>>().join(", ");
+            if swift { format!("[{items}]") } else { format!("listOf({items})") }
+        }
         (FieldKind::List { element }, Value::Array(items)) => {
             let element = FieldSpec::scalar("", *element);
             let items = items.iter().map(|item| literal(&element, item, swift, types)).collect::<Vec<_>>().join(", ");

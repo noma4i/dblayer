@@ -56,6 +56,67 @@ data class Clip(
     }
 }
 
+data class Inbox(
+    override val id: String,
+    val title: String,
+    override val sync: SyncInfo = SyncInfo(),
+    override val upload: UploadInfo? = null
+) : DBModel {
+    override val modelName get() = "Inbox"
+    companion object : ModelDecoder<Inbox> {
+        override val layout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
+        override val modelName = "Inbox"
+        override fun decode(row: WireRow): Inbox {
+            val r = CellReader(row.cells)
+            return Inbox(
+                id = row.id,
+                title = r.req(0, Cell::asText),
+                sync = SyncInfo.of(row.sync),
+                upload = row.upload?.let { UploadInfo.of(it) },
+            )
+        }
+
+        val title = Column<Inbox, String>("title")
+        fun find(id: String) = Query("Inbox", this).find(id)
+        fun where(condition: Condition) = Query("Inbox", this).where(condition)
+        fun ids(ids: List<String>) = idsQuery("Inbox", this, ids)
+        fun entity(id: String) = entityOf("Inbox", this, id)
+        fun shelf(list: ChatShelfKind): Query<Inbox> {
+            var built = Query("Inbox", this, relation = "shelf", params = buildJsonObject { put("list", jsonValue(list)) })
+            return built
+        }
+        suspend fun create(title: String): Inbox {
+            val values = buildJsonObject {
+                put("title", jsonValue(title))
+            }
+            return read(DBlayer.database.create("Inbox", values.toString(), "{}"))
+        }
+    }
+    suspend fun update(title: String? = null): Inbox {
+        val values = buildJsonObject {
+            title?.let { put("title", jsonValue(it)) }
+        }
+        return Inbox.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
+    }
+}
+
+@Serializable(with = ChatShelfKindSerializer::class)
+sealed class ChatShelfKind(override val raw: String) : RawEnum {
+    data object Primary : ChatShelfKind("PRIMARY")
+    data object Secondary : ChatShelfKind("SECONDARY")
+    data class Unknown(val value: String) : ChatShelfKind(value)
+
+    companion object {
+        fun of(raw: String): ChatShelfKind = when (raw) {
+            "PRIMARY" -> Primary
+            "SECONDARY" -> Secondary
+            else -> Unknown(raw)
+        }
+    }
+}
+
+object ChatShelfKindSerializer : RawEnumSerializer<ChatShelfKind>("ChatShelfKind", { ChatShelfKind.of(it) })
+
 @Serializable(with = WidgetKindSerializer::class)
 sealed class WidgetKind(override val raw: String) : RawEnum {
     data object Emoji : WidgetKind("EMOJI")

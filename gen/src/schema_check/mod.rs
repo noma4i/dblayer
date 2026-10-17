@@ -150,6 +150,9 @@ impl<'a> Run<'a> {
     fn check_model(&mut self, node: &'a ModelNode) {
         let mut seen = HashSet::new();
         for remote in node.body.iter().filter(|call| call.word == "remote") {
+            self.check_text_types(node, remote);
+        }
+        for remote in node.body.iter().filter(|call| call.word == "remote") {
             self.edge = None;
             let Some(element) = self.resolve(node, remote) else { continue };
             if let Some(edge) = self.edge.take() {
@@ -198,6 +201,34 @@ impl<'a> Run<'a> {
     fn edge_select(&self, remote: &Call) -> Option<&'a Select> {
         let select = self.root_select(remote)?;
         Some(&select.fields.iter().find(|field| field.name == "edges")?.select)
+    }
+
+    fn check_text_types(&mut self, node: &ModelNode, remote: &Call) {
+        let Some(Pair { value, .. }) = option(remote, "text") else { return };
+        let Value::Array(items) = &value.item else { return };
+        let lines = remote.block.as_deref().unwrap_or_default();
+        let document = lines.iter().find(|call| call.word == "query").and_then(|call| call.args.first()).and_then(|arg| text(&arg.item));
+        let mapped = |param: &str| {
+            let renamed = lines.iter().filter(|call| call.word == "variables").flat_map(|call| &call.options).find(|pair| matches!(&pair.value.item, Value::Symbol(source) if source == param));
+            renamed.map_or(param.to_string(), |pair| pair.key.clone())
+        };
+        for item in items {
+            let Value::Hash(pairs) = &item.item else { continue };
+            for pair in pairs {
+                let Some(kind) = text(&pair.value.item) else { continue };
+                if !matches!(self.schema.types.get(kind), Some(TypeKind::Enum(_))) {
+                    self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` names `{kind}`, which is not an enum of the schema", name_of(remote), pair.key));
+                    continue;
+                }
+                let variable = mapped(&pair.key);
+                let Some(operation) = document.and_then(|name| self.operations.named.get(name)) else { continue };
+                match operation.variables.get(&variable) {
+                    None => self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` is `{kind}` but operation `{}` has no variable `${variable}`", name_of(remote), pair.key, document.unwrap_or_default())),
+                    Some(declared) if declared.is_list() || declared.name() != kind => self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` is `{kind}` but the variable `${variable}` of `{}` is `{}`", name_of(remote), pair.key, document.unwrap_or_default(), declared.describe())),
+                    Some(_) => {}
+                }
+            }
+        }
     }
 
     fn check_mutation_args(&mut self, node: &'a ModelNode) {
@@ -641,7 +672,7 @@ impl<'a> Run<'a> {
         } else if !self.named_fits(call, reached.name()) {
             problems.push(format!("`{word}` does not fit the schema type `{}`{}", reached.describe(), self.unmapped_hint(reached.name())));
         }
-        if word == "enum" {
+        if word == "enum" || (word == "list" && option_text(call, "of") == Some("enum")) {
             problems.extend(self.enum_problems(call, reached.name()));
         }
         if crate::unions::is_union_call(call) && !matches!(self.schema.types.get(reached.name()), Some(TypeKind::Union(_))) && !self.schema.is_interface(reached.name()) {

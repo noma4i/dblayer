@@ -184,6 +184,8 @@ pub struct FieldSpec {
     pub from: Option<String>,
     #[serde(default)]
     pub app_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
     #[serde(default)]
     pub merge: Option<MergeRule>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -206,6 +208,7 @@ impl FieldSpec {
             id_from_parent: None,
             from: None,
             app_type: None,
+            values: Vec::new(),
             merge: None,
             searchable: false,
             fields: Vec::new(),
@@ -584,6 +587,8 @@ pub struct RelationSpec {
     pub by_columns: Vec<String>,
     #[serde(default)]
     pub text_params: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub text_types: BTreeMap<String, String>,
     #[serde(default)]
     pub remote: Option<RemoteSpec>,
     #[serde(default)]
@@ -606,6 +611,7 @@ impl RelationSpec {
             name: name.to_string(),
             by_columns: by_columns.iter().map(|column| column.to_string()).collect(),
             text_params: Vec::new(),
+            text_types: BTreeMap::new(),
             remote: None,
             is_global: false,
             sort: Sort::ServerOrder,

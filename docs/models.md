@@ -13,6 +13,7 @@ The DSL is parsed by Rust. It does not execute Ruby expressions or load Ruby gem
 | ---- | ---- |
 | `string`, `num`, `int`, `bool`, `date`, `id` | scalars (`id` accepts a string or a number and stores a string, `date` accepts an ISO 8601 text or milliseconds and stores UTC text with milliseconds, `2026-01-03T00:00:05Z` becomes `2026-01-03T00:00:05.000Z`, so text order is time order) |
 | `field :name, type: :enum, values: [:a, :b]` | one of the listed values, generated as a typed enum (see [Enums](#enums)). `as: Name` names the type |
+| `field :name, type: [:enum], values: [:a, :b], as: Name` | list of enum values, `[Name]` in Swift and `List<Name>` in Kotlin, stored like `[:string]` (see [Enums](#enums)) |
 | `object`, `array`, `raw` | JSON values |
 | `field :name, type: [:string]` | array of scalars |
 | `field :name, type: :file` | binary attachment, see [files](files.md) |
@@ -65,6 +66,26 @@ when (val kind = vibe.kind) {
 ```
 
 The check against the server schema compares the declared values with the schema enum. A field declared `:string` over a schema enum does not fit: declare `:enum`.
+
+A list of enum values is `type: [:enum]` with the same `values:` and `as:`. It is stored as a list of strings and reads back as a list of the enum, each value outside the declaration as `unknown`. The schema check needs a list type (`[ChatList!]!`), and `null: true` for a nullable one. A `default:` lists values from `values`. The block form of a nested type takes the same line.
+
+```ruby
+model Chat do
+  field :lists, type: [:enum], values: [:PRIMARY, :SECONDARY], as: ChatList
+end
+```
+
+```swift
+let chat = try await Chat.create(lists: [.primary, .secondary])
+let secondary = chat.lists.contains(.secondary)
+```
+
+```kotlin
+val chat = Chat.create(lists = listOf(ChatList.Primary, ChatList.Secondary))
+val secondary = ChatList.Secondary in chat.lists
+```
+
+A default outside the values stops the run with the line of the field.
 
 ### Custom scalars
 
@@ -271,6 +292,29 @@ When a response row has no value for a column the relation groups by, the param 
 A `fetch Operation` line connects a scope to the server. A relation that depends on columns names them: `where :userId` loads and lists the rows whose `userId` equals the param. `order createdAt: :desc` sorts the rows locally, otherwise the server order is kept. A row whose param column changes (a message moving to another `chatId`) leaves the list of the old value and joins the head of the list of the new value in the same commit, for relations that list every row of their params. `joins: :created` on a relation without params makes the list take the rows this device creates, at its head; `joins: :events` makes it take rows from its subscription events.
 
 `where` accepts scalar and enum columns. A param passed as `nil` is a value of its own: `Moment.by_user(nil)` is the unfiltered list and has its own window. A param column gives the row one owner list: a row that belongs to several lists at once (a moment in the default feed and in a vibe feed) needs one relation per list, and the vibe id goes in `text: [:vibeId]`, not in a column param. `text: [:query]` declares params that are not columns, such as a search string. They are sent as variables, always strings, and each value gets its own window: `scope :search, text: [:query] do ... end` generates `Model.search("cats")`.
+
+A text param takes the name of a schema enum as its type: `text: [list: :ChatList]`, mixed with plain ones as `text: [:chatId, list: :ChatList]`. The call takes the generated enum and sends its text, and each value has its own window and its own members, the rows of the server answer. The schema check needs the enum in the schema and a document variable with the same name (or the name on the left of `variables name: :param`) typed with that enum, nullable or not.
+
+```ruby
+model Chat do
+  scope :list, text: [list: :ChatList] do
+    fetch "chats", root: "viewer.chats"
+    paginate 25
+  end
+end
+```
+
+```swift
+let primary = Chat.list(.primary)
+let secondary = Chat.list(.secondary)   // a premium chat is a member of both windows
+```
+
+```kotlin
+val primary = Chat.list(ChatList.Primary)
+val secondary = Chat.list(ChatList.Secondary)
+```
+
+`joins: :events` adds a row from an event to the windows whose `where` columns the row matches. A scope with `text:` has no columns to match, so the combination stops the run: remove `joins:`. The window reloads from the server when it is stale or marked by `refetch`, and the new answer replaces its members.
 
 | Line | Meaning | Default |
 | ---- | ------- | ------- |

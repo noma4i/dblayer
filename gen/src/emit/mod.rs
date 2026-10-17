@@ -66,7 +66,10 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
     let base = match &field.kind {
         FieldKind::Scalar { kind } => scalar(*kind, swift).to_string(),
         FieldKind::Enum { .. } => field.app_type.clone().expect("an enum field names its type"),
-        FieldKind::List { element } => if swift { format!("[{}]", scalar(*element, true)) } else { format!("List<{}>", scalar(*element, false)) },
+        FieldKind::List { element } => {
+            let item = field.app_type.as_deref().filter(|_| !field.values.is_empty()).unwrap_or_else(|| scalar(*element, swift));
+            if swift { format!("[{item}]") } else { format!("List<{item}>") }
+        }
         FieldKind::Array | FieldKind::UnionArray => field.app_type.as_ref().map(|name| if swift { format!("[{name}]") } else { format!("List<{name}>") }).unwrap_or_else(|| raw_type(swift)),
         FieldKind::Object | FieldKind::Union => field.app_type.clone().unwrap_or_else(|| raw_type(swift)),
         _ => raw_type(swift),
@@ -76,7 +79,11 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
 
 pub(crate) fn enum_decls(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> Vec<EnumDecl> {
     fn walk(field: &FieldSpec, out: &mut Vec<EnumDecl>) {
-        if let (FieldKind::Enum { values }, Some(name)) = (&field.kind, &field.app_type) { out.push(EnumDecl { name: name.clone(), values: values.clone() }); }
+        match (&field.kind, &field.app_type) {
+            (FieldKind::Enum { values }, Some(name)) => out.push(EnumDecl { name: name.clone(), values: values.clone() }),
+            (FieldKind::List { .. }, Some(name)) if !field.values.is_empty() => out.push(EnumDecl { name: name.clone(), values: field.values.clone() }),
+            _ => {}
+        }
         field.fields.iter().chain(field.shared.iter()).for_each(|inner| walk(inner, out));
     }
     let mut found = schema_types.enums.clone();
@@ -239,7 +246,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             if let Some(kind) = relation.node { swift_node(&mut out, &method, relation, kind); continue; }
             if relation.by_columns.is_empty() && relation.text_params.is_empty() { writeln!(out, "    public static var {method}: Query<Self> {{").unwrap(); }
             else {
-                let params = relation.by_columns.iter().map(|key| format!("_ {key}: {}", model.field(key).map(|field| field_type(field, true)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| format!("_ {key}: String"))).collect::<Vec<_>>().join(", ");
+                let params = relation.by_columns.iter().map(|key| format!("_ {key}: {}", model.field(key).map(|field| field_type(field, true)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| format!("_ {key}: {}", relation.text_types.get(key).map_or("String", String::as_str)))).collect::<Vec<_>>().join(", ");
                 writeln!(out, "    public static func {method}({params}) -> Query<Self> {{").unwrap();
             }
             let params = relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("\"{key}\": JSONValue.encode({key})")).collect::<Vec<_>>().join(", ");
@@ -349,7 +356,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         for relation in &model.relations {
             let method = name(&relation.name);
             if let Some(kind) = relation.node { kotlin_node(&mut out, &class, &method, relation, kind); continue; }
-            let params = relation.by_columns.iter().map(|key| format!("{key}: {}", model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| format!("{key}: String"))).collect::<Vec<_>>().join(", ");
+            let params = relation.by_columns.iter().map(|key| format!("{key}: {}", model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| format!("{key}: {}", relation.text_types.get(key).map_or("String", String::as_str)))).collect::<Vec<_>>().join(", ");
             if params.is_empty() { writeln!(out, "        val {method}: Query<{class}> get() {{").unwrap(); }
             else { writeln!(out, "        fun {method}({params}): Query<{class}> {{").unwrap(); }
             let params = relation.by_columns.iter().map(|key| format!("\"{key}\" to jsonValue({key})")).collect::<Vec<_>>().join(", ");

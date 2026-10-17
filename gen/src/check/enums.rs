@@ -18,7 +18,7 @@ fn collect<'a>(calls: &'a [Call], owner: &str, file: usize, out: &mut Vec<Declar
     for call in calls {
         let option = |key: &str| call.options.iter().find(|pair| pair.key == key).map(|pair| &pair.value.item);
         match call.word.as_str() {
-            "enum" => {
+            "enum" | "list" if call.word == "enum" || matches!(option("of"), Some(Value::Symbol(kind)) if kind == "enum") => {
                 let field = symbol_name(call.args.first()).unwrap_or_default();
                 let name = option("as").and_then(text_of).map(str::to_string).unwrap_or_else(|| format!("{owner}{}", crate::build::camel(field)));
                 let values: Vec<String> = match option("values") {

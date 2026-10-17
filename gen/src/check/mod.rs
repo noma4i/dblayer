@@ -56,6 +56,7 @@ enum Want {
     Operation,
     TypeName,
     Symbols,
+    TextParams,
     Hash,
     Duration,
     Policy,
@@ -93,7 +94,7 @@ fn field_keys(word: &str) -> Vec<Key> {
     match word {
         "file" => keys.retain(|candidate| !matches!(candidate.name, "id_from" | "from" | "merge" | "local")),
         "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
-        "list" => keys.push(key("of", Want::Symbol, true)),
+        "list" => keys.extend([key("of", Want::Symbol, true), key("values", Want::Symbols, false), key("as", Want::TypeName, false)]),
         "object" | "array" => keys.push(key("as", Want::TypeName, false)),
         "union" => {
             keys.retain(|candidate| !matches!(candidate.name, "default" | "id_from"));
@@ -114,7 +115,7 @@ fn nested_keys(word: &str) -> Vec<Key> {
     let mut keys = vec![key("null", Want::Bool, false), key("optional", Want::Bool, false), key("default", Want::Any, false), key("from", Want::Any, false)];
     match word {
         "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
-        "list" => keys.push(key("of", Want::Symbol, true)),
+        "list" => keys.extend([key("of", Want::Symbol, true), key("values", Want::Symbols, false), key("as", Want::TypeName, false)]),
         "object" | "array" => keys.push(key("as", Want::TypeName, false)),
         "union" => {
             keys.retain(|candidate| candidate.name != "default");
@@ -137,7 +138,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
     let free = || Some(Word { shape: Shape::Nothing, keys: vec![], block: false, free_keys: true });
     match (context, word) {
         (Context::Model, "schema") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
-        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("text", Want::Symbols, false), key("order", Want::Hash, false), key("joins", Want::Symbol, false), key("node", Want::Symbol, false)], block: true, free_keys: false }),
+        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("text", Want::TextParams, false), key("order", Want::Hash, false), key("joins", Want::Symbol, false), key("node", Want::Symbol, false)], block: true, free_keys: false }),
         (Context::Model, "action") => Some(Word { shape: Shape::Name, keys: vec![key("mutation", Want::Operation, false), key("optimistic", Want::Hash, false)], block: true, free_keys: false }),
         (Context::Model, "create" | "update") => {
             plain(
@@ -627,10 +628,19 @@ fn check_ephemeral(block: &Call, names: &mut HashSet<String>, report: &mut impl 
 
 fn check_list_element(call: &Call, report: &mut impl FnMut(usize, usize, String)) {
     let Some(pair) = call.options.iter().find(|pair| pair.key == "of") else { return };
-    let valid = matches!(&pair.value.item, Value::Symbol(name) if SCALAR_WORDS.contains(&name.as_str()));
+    let valid = matches!(&pair.value.item, Value::Symbol(name) if SCALAR_WORDS.contains(&name.as_str()) || name == "enum");
     if !valid {
-        let message = format!("`of` must be one of {}", SCALAR_WORDS.join(", "));
+        let message = format!("`of` must be one of {}, enum", SCALAR_WORDS.join(", "));
         report(pair.value.line, pair.value.column, message);
+        return;
+    }
+    let enumeration = matches!(&pair.value.item, Value::Symbol(name) if name == "enum");
+    let has = |key: &str| call.options.iter().any(|candidate| candidate.key == key);
+    if enumeration && !has("values") {
+        report(call.line, call.column, "a list of `:enum` needs `values:`".to_string());
+    }
+    if !enumeration && (has("values") || has("as")) {
+        report(call.line, call.column, "`values:` and `as:` belong to a list of `:enum`".to_string());
     }
 }
 
@@ -686,6 +696,9 @@ fn check_remote(remote: &Call, report: &mut impl FnMut(usize, usize, String)) {
     let has = |word: &str| lines.iter().any(|call| call.word == word);
     if has("paginate") && has("list") {
         report(remote.line, remote.column, "`paginate` and `list` cannot be used together".to_string());
+    }
+    if let Some(pair) = remote.options.iter().find(|pair| pair.key == "joins" && matches!(&pair.value.item, Value::Symbol(kind) if kind == "events")).filter(|_| remote.options.iter().any(|pair| pair.key == "text")) {
+        report(pair.line, pair.column, format!("scope `{}`: `joins: :events` joins rows by their `where` columns and a scope with `text:` params has none, remove `joins:` and the server answer decides the members", symbol_name(remote.args.first()).unwrap_or_default()));
     }
     if let Some(call) = lines.iter().find(|call| call.word == "max_pages").filter(|_| !has("paginate")) {
         report(call.line, call.column, "`max_pages` needs `paginate`".to_string());
@@ -788,6 +801,7 @@ fn check_value(pair: &Pair, want: Want, report: &mut impl FnMut(usize, usize, St
             format!("`{key}` must be an operation name like `CreateMoment` or \"likeMoment\"")
         }
         Want::Symbols if !is_symbol_list(value) => format!("`{key}` must be a list of symbols"),
+        Want::TextParams if !is_text_params(value) => format!("`{key}` must be a list of names like `[:query]` or typed names like `[list: :ChatList]`"),
         Want::Hash if !matches!(value, Value::Hash(_)) => format!("`{key}` must be a hash like `{{ field: :param }}`"),
         Want::Duration if !matches!(value, Value::Duration { .. }) => format!("`{key}` must be a duration like `5.minutes`"),
         Want::Policy if !matches!(value, Value::Symbol(name) if is_policy(name)) => format!("`{key}` must be `:keep` or `:rollback`"),
@@ -808,6 +822,17 @@ fn is_merge(value: &Value) -> bool {
 
 fn is_policy(name: &str) -> bool {
     matches!(name, "keep" | "rollback")
+}
+
+fn is_text_params(value: &Value) -> bool {
+    match value {
+        Value::Array(items) => items.iter().all(|item| match &item.item {
+            Value::Symbol(_) | Value::Str(_) => true,
+            Value::Hash(pairs) => matches!(pairs.as_slice(), [Pair { value: Node { item: Value::Symbol(kind), .. }, .. }] if kind.starts_with(char::is_uppercase)),
+            _ => false,
+        }),
+        _ => false,
+    }
 }
 
 fn is_symbol_list(value: &Value) -> bool {

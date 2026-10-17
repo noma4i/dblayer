@@ -115,7 +115,11 @@ fn field(mut call: Call) -> Result<Call, ParseError> {
     if call.options.iter().any(|pair| matches!(pair.key.as_str(), "index" | "searchable")) {
         return Err(fail(&call, "declare indexes with `index` and full-text fields with `search`"));
     }
-    let enumeration = call.options.iter().any(|pair| pair.key == "type" && matches!(&pair.value.item, Value::Symbol(kind) if kind == "enum"));
+    let enumeration = call.options.iter().any(|pair| pair.key == "type" && match &pair.value.item {
+        Value::Symbol(kind) => kind == "enum",
+        Value::Array(items) => matches!(items.as_slice(), [Node { item: Value::Symbol(kind), .. }] if kind == "enum"),
+        _ => false,
+    });
     if call.options.iter().any(|pair| pair.key == "of" || (pair.key == "as" && !enumeration)) {
         return Err(fail(&call, "declare named objects and lists with `type:`"));
     }

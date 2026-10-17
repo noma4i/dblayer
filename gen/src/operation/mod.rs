@@ -69,11 +69,12 @@ pub(crate) fn is_arg_kind(value: &Value) -> bool {
 
 pub(crate) fn resolve_result_enums(operations: &mut [OperationCall], schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
     fn walk(field: &mut FieldSpec, schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
-        if let (FieldKind::Enum { values }, Some(name)) = (&mut field.kind, field.app_type.clone()) {
+        if let (true, Some(name)) = (matches!(field.kind, FieldKind::Enum { .. } | FieldKind::List { .. }), field.app_type.clone()) {
             let Some(schema) = schema else { return Err(format!("result field `{}` names the schema enum `{name}`: pass --schema <schema.graphql> so the generator can read it", field.name)) };
-            match schema.types.get(&name) {
-                Some(crate::schema_check::TypeKind::Enum(known)) => *values = known.clone(),
-                _ => return Err(format!("result field `{}` names `{name}`, which is not an enum of the schema", field.name)),
+            let Some(crate::schema_check::TypeKind::Enum(known)) = schema.types.get(&name) else { return Err(format!("result field `{}` names `{name}`, which is not an enum of the schema", field.name)) };
+            match &mut field.kind {
+                FieldKind::Enum { values } => *values = known.clone(),
+                _ => field.values = known.clone(),
             }
         }
         field.fields.iter_mut().try_for_each(|inner| walk(inner, schema))
@@ -89,6 +90,11 @@ pub(crate) fn schema_type_names(models: &[ModelSpec], operations: &[OperationCal
         let name = element_name(kind).to_string();
         if !names.contains(&name) {
             names.push(name);
+        }
+    }
+    for kind in models.iter().flat_map(|model| &model.relations).flat_map(|relation| relation.text_types.values()) {
+        if !names.contains(kind) {
+            names.push(kind.clone());
         }
     }
     names
@@ -144,6 +150,11 @@ fn result_fields(pairs: &[Pair], type_name: &str, file: usize, errors: &mut Vec<
             Value::Hash(inner) if inner.is_empty() => Err("an object needs at least one field"),
             Value::Hash(inner) => Ok(object_of(FieldSpec::object(&pair.key), inner, &nested, file, errors)),
             Value::Array(items) => match items.as_slice() {
+                [Node { item: Value::Symbol(kind), .. }] if is_input_object(kind) => {
+                    let mut field = FieldSpec::list(&pair.key, ScalarKind::Str);
+                    field.app_type = Some(kind.clone());
+                    Ok(field)
+                }
                 [Node { item: Value::Symbol(kind), .. }] => scalar_of(kind).map(|scalar| FieldSpec::list(&pair.key, scalar)).ok_or(RESULT_TYPES),
                 [Node { item: Value::Hash(inner), .. }] if !inner.is_empty() => Ok(object_of(FieldSpec::array(&pair.key), inner, &nested, file, errors)),
                 _ => Err("a list holds one type: [:string] or [{ ... }] with at least one field"),

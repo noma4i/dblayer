@@ -45,6 +45,80 @@ public struct Clip: DBModel {
     }
 }
 
+public struct Inbox: DBModel {
+    public static let modelName = "Inbox"
+    public let id: String
+    public let title: String
+    public let sync: SyncInfo
+    public let upload: UploadInfo?
+
+    public init(id: String, title: String, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil) {
+        self.id = id
+        self.title = title
+        self.sync = sync
+        self.upload = upload
+    }
+
+    public static let wireLayout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.title = try r.req(0, \.asText)
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
+    }
+
+    public static let title = Column<Inbox, String>("title")
+    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
+    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
+    public static func shelf(_ list: ChatShelfKind) -> Query<Self> {
+        let built = Query<Self>(relation: "shelf", params: ["list": JSONValue.encode(list)])
+        return built
+    }
+    public static func create(title: String) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        values["title"] = JSONValue.encode(title)
+        return try await create(values: values)
+    }
+    public func update(title: String? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = title { values["title"] = JSONValue.encode(value) }
+        return try await update(values: values)
+    }
+}
+
+public enum ChatShelfKind: Codable, Sendable, Hashable {
+    case primary
+    case secondary
+    case unknown(String)
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "PRIMARY": self = .primary
+        case "SECONDARY": self = .secondary
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .primary: return "PRIMARY"
+        case .secondary: return "SECONDARY"
+        case .unknown(let raw): return raw
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 public enum WidgetKind: Codable, Sendable, Hashable {
     case emoji
     case gif

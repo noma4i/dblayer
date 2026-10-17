@@ -54,7 +54,7 @@ fn missing_required_key() {
 #[test]
 fn wrong_value_types() {
     assert_eq!(field_failure("string :a, null: 1"), (3, "`null` must be true or false".to_string()));
-    assert_eq!(field_failure("list :a, of: :blob"), (3, "`of` must be one of string, num, int, bool, date, id".to_string()));
+    assert_eq!(field_failure("list :a, of: :blob"), (3, "`of` must be one of string, num, int, bool, date, id, enum".to_string()));
     assert_eq!(
         failure_in("  has_many :samples, key: :ownerId, dependent: :nullify"),
         (7, "`dependent` must be `:destroy`".to_string())

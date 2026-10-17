@@ -4,6 +4,7 @@ model Chat do
   field :lastMessageId, type: :id, null: true
   field :shareUrl, type: :string, null: true
   field :isPublic, type: :bool, null: true
+  field :shelves, type: [:enum], values: [:PRIMARY, :SECONDARY], as: ChatShelf, null: true
 
   has_many   :messages, dependent: :destroy
   belongs_to :lastMessage, model: Message

@@ -303,7 +303,12 @@ fn parse_array(reader: &mut Reader) -> Result<Node<Value>, ParseError> {
             reader.next();
             return Ok(Node { item, line: open.line, column: open.column });
         }
-        items.push(parse_value(reader)?);
+        if matches!((reader.peek_kind(0), reader.peek_kind(1)), (Some(Kind::Word(_)), Some(Kind::Colon))) {
+            let pair = parse_pair(reader)?;
+            items.push(Node { line: pair.line, column: pair.column, item: Value::Hash(vec![pair]) });
+        } else {
+            items.push(parse_value(reader)?);
+        }
         reader.skip_newlines();
         match reader.peek_kind(0) {
             Some(Kind::Comma) => {

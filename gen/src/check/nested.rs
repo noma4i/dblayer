@@ -14,6 +14,7 @@ fn fits(field: &FieldSpec, value: &Json, types: &[&FieldSpec]) -> bool {
             _ => value.is_string(),
         },
         FieldKind::Enum { values } => value.as_str().is_some_and(|text| values.iter().any(|candidate| candidate == text)),
+        FieldKind::List { .. } if !field.values.is_empty() => value.as_array().is_some_and(|items| items.iter().all(|item| item.as_str().is_some_and(|text| field.values.iter().any(|candidate| candidate == text)))),
         FieldKind::List { element } => value.as_array().is_some_and(|items| items.iter().all(|item| fits(&FieldSpec::scalar("", *element), item, types))),
         FieldKind::Object => value.as_object().is_some_and(|values| {
             if field.app_type.is_none() { return true; }
@@ -45,11 +46,11 @@ fn walk(calls: &[Call], fields: &[FieldSpec], file: usize, types: &[&FieldSpec],
         }
         let Some(name) = symbol_name(call.args.first()) else { continue };
         let Some(field) = fields.iter().find(|field| field.name == name) else { continue };
-        if in_type {
-            if let Some(pair) = call.options.iter().find(|pair| pair.key == "default") {
-                if field.default.as_ref().is_some_and(|value| !fits(field, value, types)) {
-                    errors.push(at(file, pair.value.line, pair.value.column, format!("nested field `{name}` default must match its type and required fields")));
-                }
+        let enumerated = matches!(field.kind, FieldKind::Enum { .. }) || !field.values.is_empty();
+        if let Some(pair) = call.options.iter().find(|pair| pair.key == "default").filter(|_| in_type || enumerated) {
+            if field.default.as_ref().is_some_and(|value| !fits(field, value, types)) {
+                let owner = if in_type { "nested field" } else { "field" };
+                errors.push(at(file, pair.value.line, pair.value.column, format!("{owner} `{name}` default must match its type and required fields")));
             }
         }
         if let Some(block) = &call.block {

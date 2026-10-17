@@ -116,7 +116,14 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
             let values = list_of(call, "values");
             FieldSpec::enumeration(&name, &values.iter().map(String::as_str).collect::<Vec<_>>())
         }
-        _ => FieldSpec::list(&name, scalar_kind(&symbol_of(call, "of"))),
+        _ => {
+            let element = symbol_of(call, "of");
+            let mut list = FieldSpec::list(&name, scalar_kind(&element));
+            if element == "enum" {
+                list.values = list_of(call, "values");
+            }
+            list
+        }
     };
     field.nullable = flag(call, "null");
     field.optional = flag(call, "optional");
@@ -124,7 +131,7 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
     field.searchable = flag(call, "searchable");
     field.id_from_parent = option(call, "id_from").and_then(|pair| text_of(&pair.value.item));
     field.app_type = option(call, "as").and_then(|pair| text_of(&pair.value.item));
-    if matches!(field.kind, FieldKind::Enum { .. }) && field.app_type.is_none() {
+    if (matches!(field.kind, FieldKind::Enum { .. }) || !field.values.is_empty()) && field.app_type.is_none() {
         field.app_type = Some(format!("{owner}{}", camel(&name)));
     }
     if let Some(block) = &call.block {
@@ -310,11 +317,17 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         None => Vec::new(),
     };
     let mut relation = RelationSpec::new(&first_name(call), &columns.iter().map(String::as_str).collect::<Vec<_>>());
-    relation.text_params = match option(call, "text").map(|pair| &pair.value.item) {
-        Some(Value::Array(items)) => items.iter().filter_map(|item| text_of(&item.item)).collect(),
-        Some(single) => text_of(single).into_iter().collect(),
-        None => Vec::new(),
-    };
+    if let Some(Value::Array(items)) = option(call, "text").map(|pair| &pair.value.item) {
+        for item in items {
+            match &item.item {
+                Value::Hash(pairs) => for pair in pairs {
+                    relation.text_params.push(pair.key.clone());
+                    if let Some(kind) = text_of(&pair.value.item) { relation.text_types.insert(pair.key.clone(), kind); }
+                },
+                other => relation.text_params.extend(text_of(other)),
+            }
+        }
+    }
     relation.is_global = columns.is_empty() && relation.text_params.is_empty();
     relation.node = match option(call, "node").and_then(|pair| text_of(&pair.value.item)).as_deref() {
         Some("one") => Some(NodeRead::One),
