@@ -176,8 +176,13 @@ impl<'a> Run<'a> {
 
     fn check_edge_fields(&mut self, node: &'a ModelNode, remote: &'a Call, edge: &str) {
         let select = self.edge_select(remote);
+        let documented = self.root_select(remote).is_some();
         for field in remote.block.iter().flatten().filter(|call| call.word == "edge").flat_map(|call| call.block.iter().flatten()) {
             let name = name_of(field);
+            if documented && select.is_none() {
+                self.fail(node.file, field.line, field.column, format!("field `{name}`: the document does not select `edges`"));
+                continue;
+            }
             let key = option_text(field, "from").unwrap_or(name);
             let segments: Vec<&str> = key.split('.').collect();
             let selected = select.map(|select| self.operations.fields_in(select, segments[0], &[]));
@@ -474,12 +479,10 @@ impl<'a> Run<'a> {
     fn connection_node(&mut self, node: &ModelNode, line: &Call, connection: &Ty, remote: &Call) -> Option<String> {
         let nodes = self.schema.field(connection.name(), "nodes").ok().filter(Ty::is_list);
         let edges = self.schema.field(connection.name(), "edges").ok();
+        self.edge = edges.as_ref().map(|edges| edges.name().to_string());
         let by_edges = nodes.is_none() || (self.edge_select(remote).is_some() && !self.selects_nodes(remote));
         let found = match (edges, nodes) {
-            (Some(edges), _) if by_edges => {
-                self.edge = Some(edges.name().to_string());
-                self.schema.field(edges.name(), "node").ok().map(|edge| edge.name().to_string())
-            }
+            (Some(edges), _) if by_edges => self.schema.field(edges.name(), "node").ok().map(|edge| edge.name().to_string()),
             (_, Some(nodes)) => Some(nodes.name().to_string()),
             _ => None,
         };

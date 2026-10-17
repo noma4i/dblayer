@@ -16,12 +16,18 @@ const MESSAGE: &str = "model Message do\n  field :text, type: :string\n  scope :
 
 const DOCUMENT: &str = "query ChatThread($first: Int, $after: String) { chat(id: \"c\") { messages(first: $first, after: $after) { edges { EDGE node { id text } } pageInfo { hasNextPage endCursor } } } }\n";
 
+const NODES_DOCUMENT: &str = "query ChatThread($first: Int, $after: String) { chat(id: \"c\") { messages(first: $first, after: $after) { nodes { id text } pageInfo { hasNextPage endCursor } } } }\n";
+
 fn run(edges: &str, edge: &str) -> Result<(), Vec<String>> {
+    run_document(edges, &DOCUMENT.replace("EDGE", edge))
+}
+
+fn run_document(edges: &str, document: &str) -> Result<(), Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
     let schema = directory.path().join("schema.graphql");
     fs::write(&schema, SCHEMA).unwrap();
     fs::create_dir(directory.path().join("queries")).unwrap();
-    fs::write(directory.path().join("queries/all.graphql"), DOCUMENT.replace("EDGE", edge)).unwrap();
+    fs::write(directory.path().join("queries/all.graphql"), document).unwrap();
     let model: PathBuf = directory.path().join("message.dbl");
     fs::write(&model, MESSAGE.replace("EDGES", edges)).unwrap();
     check_models_against_schema(&schema, &[directory.path().join("queries")], &[model]).map(|_| ()).map_err(|errors| errors.into_iter().map(|error| error.error.message).collect())
@@ -34,4 +40,11 @@ fn a_connection_with_nodes_and_edges_in_its_schema_checks_the_edges_the_document
     assert!(errors.iter().any(|text| text.contains("typo")), "{errors:?}");
     let errors = run("edge :impressionUuid, type: :int, null: true", "impressionUuid").unwrap_err();
     assert!(errors.iter().any(|text| text.contains("does not fit the schema type `String`")), "{errors:?}");
+}
+
+#[test]
+fn an_edge_needs_a_document_that_selects_the_edges_even_when_the_schema_has_nodes() {
+    run_document("", NODES_DOCUMENT).unwrap();
+    let errors = run_document("edge :impressionUuid, type: :string, null: true", NODES_DOCUMENT).unwrap_err();
+    assert!(errors.iter().any(|text| text.contains("does not select `edges`")), "{errors:?}");
 }
