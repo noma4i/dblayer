@@ -55,6 +55,31 @@ struct EncryptedSessionTests {
   static let origin = URL(string: "https://api.example.com")!
 
   @Test
+  func oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() async throws {
+    let http = RecordedHttp(status: 400)
+    let database = try Database.openEncrypted(
+      config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON,
+      encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin),
+      http: http, credentials: HeldCredential(), transport: DatabaseTransport(cable: { nil })
+    )
+    do {
+      _ = try await database.sessionCall(operation: "otp", bodyJson: "{\"phone\":\"\(String(repeating: "x", count: 260_000))\"}")
+      Issue.record("expected a local size refusal")
+    } catch DbError.RequestTooLarge(let size, let limit) {
+      #expect(size > limit && limit == 256 * 1024)
+    }
+    #expect(http.posts.isEmpty)
+    #expect(try await database.sessionResume() == nil)
+    do {
+      _ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
+      Issue.record("expected the scripted HTTP refusal")
+    } catch DbError.Http(let status, _) {
+      #expect(status == 400)
+    }
+    #expect(http.posts.count == 1)
+  }
+
+  @Test
   func postsTheJoseTextToTheOriginPathAndReturnsAnyStatusUnchanged() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
     ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 503, headers: [:], body: Data("busy".utf8), url: Self.origin)

@@ -40,7 +40,7 @@ fn step_error(error: TransportError, cancelled: bool) -> StepError {
         }
         TransportError::Session { code, detail } => fatal(FailureKind::Session(code), detail),
         TransportError::Graphql { messages, extensions } => StepError::Fatal(OperationFailure { kind: FailureKind::Rejected, message: messages.join("\n"), extensions }),
-        TransportError::Http { .. } | TransportError::Unscripted(_) => fatal(FailureKind::Rejected, message),
+        TransportError::RequestTooLarge { .. } | TransportError::Http { .. } | TransportError::Unscripted(_) => fatal(FailureKind::Rejected, message),
         TransportError::Decode(_) => fatal(FailureKind::Unrecognized, message),
     }
 }
@@ -94,7 +94,8 @@ impl Runner {
         if response.shape().outcome() != ResponseOutcome::Commit {
             let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
             let message = response.errors.first().map_or("empty response".to_string(), |error| error.message.clone());
-            return Err(if RetryClass::classify(false, None, &codes) == RetryClass::Retriable {
+            let retryable = response.errors.iter().any(|error| error.extensions.as_ref().and_then(|fields| fields.get("retryable")).and_then(Value::as_bool) == Some(true));
+            return Err(if retryable || RetryClass::classify(false, None, &codes) == RetryClass::Retriable {
                 StepError::Retry(OperationFailure { kind: FailureKind::Server, message, extensions: response.extensions() })
             } else {
                 StepError::Fatal(OperationFailure { kind: FailureKind::Rejected, message, extensions: response.extensions() })

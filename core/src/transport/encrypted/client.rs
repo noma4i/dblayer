@@ -92,8 +92,11 @@ impl EncryptedClient {
         check_path(path)?;
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
-        let pending = match self.with_connection(state::pending)? {
-            Some(pending) if pending.path == path && serde_json::from_str::<Value>(&pending.body).ok().as_ref() == Some(&body) => pending,
+        let (pending, token) = match self.with_connection(state::pending)? {
+            Some(pending) if pending.path == path && serde_json::from_str::<Value>(&pending.body).ok().as_ref() == Some(&body) => {
+                let token = self.pending_token(&credential, &pending)?;
+                (pending, token)
+            }
             Some(_) => return Err(TransportError::Network("another encrypted request is pending, resolve it first".into())),
             None => {
                 let sequence = self.with_connection(state::session)?.map_or(1, |session| session.sequence + 1);
@@ -105,11 +108,12 @@ impl EncryptedClient {
                     path: path.to_string(),
                     body: body.to_string(),
                 };
+                let token = self.pending_token(&credential, &pending)?;
                 self.with_connection(|connection| state::store_pending(connection, &pending))?;
-                pending
+                (pending, token)
             }
         };
-        self.settle(&credential, pending).await
+        self.settle(pending, token).await
     }
 
     pub fn pending_call(&self) -> Result<Option<(String, Value)>, TransportError> {
@@ -120,7 +124,8 @@ impl EncryptedClient {
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
         let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
-        self.settle(&credential, pending).await.map(Some)
+        let token = self.pending_token(&credential, &pending)?;
+        self.settle(pending, token).await.map(Some)
     }
 
     pub async fn read(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -147,9 +152,13 @@ impl EncryptedClient {
         self.with_connection(state::clear)
     }
 
-    async fn settle(&self, credential: &str, pending: Pending) -> Result<Answer, TransportError> {
+    fn pending_token(&self, credential: &str, pending: &Pending) -> Result<String, TransportError> {
         let body: Value = serde_json::from_str(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))?;
-        let answer = self.exchange(credential, &pending.request_id, &pending.response_key, Some(pending.sequence), &pending.path, &body).await?;
+        self.request_token(credential, &pending.request_id, &pending.response_key, Some(pending.sequence), &pending.path, &body)
+    }
+
+    async fn settle(&self, pending: Pending, token: String) -> Result<Answer, TransportError> {
+        let answer = self.post(&pending.path, token, &pending.request_id, &pending.response_key).await?;
         if answer.sequence != Some(pending.sequence) {
             return Err(match confirmed_error(&answer.body) {
                 Some(code) => TransportError::refusal(code),
@@ -164,6 +173,11 @@ impl EncryptedClient {
     }
 
     async fn exchange(&self, credential: &str, request_id: &str, response_key: &str, sequence: Option<i64>, path: &str, body: &Value) -> Result<Answer, TransportError> {
+        let token = self.request_token(credential, request_id, response_key, sequence, path, body)?;
+        self.post(path, token, request_id, response_key).await
+    }
+
+    fn request_token(&self, credential: &str, request_id: &str, response_key: &str, sequence: Option<i64>, path: &str, body: &Value) -> Result<String, TransportError> {
         let plain = RequestPlain {
             audience: self.audience.clone(),
             kid: self.key.pin().to_string(),
@@ -177,8 +191,12 @@ impl EncryptedClient {
         };
         let token = seal_request(&self.key, &plain).map_err(|error| TransportError::Decode(error.to_string()))?;
         if token.len() > MAX_REQUEST_BYTES {
-            return Err(TransportError::Http { status: 413, body: String::new() });
+            return Err(TransportError::RequestTooLarge { size: token.len() as u64, limit: MAX_REQUEST_BYTES as u64 });
         }
+        Ok(token)
+    }
+
+    async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str) -> Result<Answer, TransportError> {
         let reply = self.http.post(path, token).await?;
         if reply.status != 200 {
             return Err(TransportError::Http { status: reply.status, body: reply.body });

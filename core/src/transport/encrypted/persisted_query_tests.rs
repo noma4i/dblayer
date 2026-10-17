@@ -61,6 +61,17 @@ fn ids(requests: &[Value]) -> Vec<Value> {
 }
 
 #[tokio::test]
+async fn local_413_after_apq_miss_leaves_the_next_sequence_available() {
+    let rig = Rig::signed_in().await;
+    let transport = rig.transport();
+    assert!(transport.mutate(request(&format!("mutation Huge {{ {} }}", "x".repeat(260_000)))).await.is_err());
+    assert_eq!(documents(&rig.graphql_requests()), [false]);
+    assert_eq!(rig.pending_sequence(), None);
+    transport.mutate(request(WRITE)).await.unwrap();
+    assert_eq!(rig.server.executed().len(), 2);
+}
+
+#[tokio::test]
 async fn a_read_missing_from_the_registry_is_sent_again_once_with_the_document_and_a_new_request_id() {
     let rig = Rig::signed_in().await;
 

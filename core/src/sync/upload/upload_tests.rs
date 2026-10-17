@@ -112,6 +112,27 @@ fn stored_state(rig: &Rig) -> UploadState {
 const TWELVE: &[u8] = b"0123456789ab";
 
 #[tokio::test(start_paused = true)]
+async fn retryable_storage_refusal_retries_upload() {
+    for code in ["UPLOAD_STORAGE_FAILURE", "IN_PROGRESS", "RATE_LIMITED", "INVALID_RECEIPT", "INVALID_OPERATION", "SERVICE_UNAVAILABLE"] {
+        let rig = upload_rig(small());
+        let response = serde_json::from_value(json!({"errors":[{"message":"retry", "extensions":{"code":code,"retryable":true}}]})).unwrap();
+        rig.transport.enqueue("CreateBlob", Reply::response(response));
+        single_replies(&rig);
+        rig.transport.enqueue_put("https://s3/single", PutReply::etag("e"));
+        let source = file(b"abcdef");
+        let started = tokio::time::Instant::now();
+        rig.sync.upload_create("moments", params(json!({"text":"clip"})), input(&source)).await.unwrap();
+        rig.sync.wait_uploads().await;
+        assert_eq!(rig.transport.call_count("CreateBlob"), 2, "{code}");
+        assert!(started.elapsed() >= Duration::from_secs(1));
+        assert_eq!(rig.transport.put_count("https://s3/single"), 1);
+        assert_eq!(rig.transport.call_count("CreateMoment"), 1);
+        assert_eq!(text_of(&rig, "moments", "m9"), Some("clip".to_string()));
+        assert!(rig.db.outbox().unwrap().is_empty());
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn uploads_use_the_declared_result_of_each_content_mutation() {
     let mut chat = crate::schema::ModelSpec::new("Chat", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::scalar("text", crate::value::ScalarKind::Str)]);
     for (name, mutation, root) in [("create_photo", "ChatGroupCreateFile", "groupChatCreate.chat"), ("update_photo", "ChatGroupUpdateFile", "groupChatUpdate.chat")] {

@@ -32,6 +32,8 @@ pub enum DbError {
     Interrupted { detail: String },
     #[error("http {status}: {detail}")]
     Http { status: u16, detail: String },
+    #[error("request is {size} bytes, exceeding the local limit of {limit} bytes")]
+    RequestTooLarge { size: u64, limit: u64 },
     #[error("graphql: {}", messages.join("\n"))]
     Graphql { messages: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     #[error("session {code:?}: {detail}")]
@@ -48,6 +50,7 @@ impl From<crate::sync::SyncError> for DbError {
         use crate::transport::TransportError;
         match error {
             SyncError::Transport(TransportError::Http { status, body }) => Self::Http { status, detail: body },
+            SyncError::Transport(TransportError::RequestTooLarge { size, limit }) => Self::RequestTooLarge { size, limit },
             SyncError::Transport(TransportError::Network(detail)) => Self::Network { detail },
             SyncError::Transport(TransportError::Interrupted(detail)) => Self::Interrupted { detail },
             SyncError::Transport(TransportError::Session { code, detail }) => Self::Session { code, detail },

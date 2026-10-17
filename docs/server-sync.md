@@ -100,6 +100,10 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 
 `flush()` and `retry()` do not throw for the refusal of one operation. `sessionResume()` throws the refusal of the stored request. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. A refusal with a code outside the `SessionCode` table (for example `INTERNAL_SERVER_ERROR`) stays a `Graphql` error. Errors inside `data` and `errors` of a normal answer stay `Graphql` too.
 
+Ошибки `UNAUTHENTICATED` и `ACCOUNT_UNAVAILABLE` внутри `errors[].extensions.code` также сохраняют optimistic-строку и операцию `Failed`.
+Это относится к ответу GraphQL и типизированному исключению `Graphql`.
+`settled()`, `confirmedId()` и `answer()` возвращают `Session` с соответствующим кодом на обеих платформах.
+
 ### Recover a queued mutation
 
 One rule decides, the sequence of the refusal:
@@ -211,7 +215,32 @@ Rules of the session:
 - While a request is pending, a different mutation fails with a network error and sends nothing. `sessionResume()` sends the pending request and returns its answer. When a queued operation owns the request, the answer also closes that operation.
 - A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
 - A credential with no matching session state (for example a restored Keychain with a new database file) is replaced by a new credential. The next call is unauthenticated.
-- Errors: `503` is a retryable HTTP error, `400` means a bad request or a device clock more than 2 minutes behind or 30 seconds ahead of the server, `413` means more than 256 KiB. A lost connection is a network error.
+- Errors: `503` is a retryable HTTP error, `400` means a bad request or a device clock more than 2 minutes behind or 30 seconds ahead of the server. A lost connection is a network error.
+
+Размер JWE проверяется до сохранения pending и отправки HTTP.
+Если размер превышает 256 KiB, Swift получает `DbError.RequestTooLarge(size:limit:)`, Kotlin получает `DbException.RequestTooLarge` с полями `size` и `limit`.
+Этот локальный отказ не меняет sequence существующей сессии и не создаёт pending.
+Следующий короткий запрос отправляется без `sessionReset()`.
+Проверка действует для чтения, `sessionCall`, logout и повторного APQ-запроса с полным документом.
+При APQ miss hash-only запрос уже подтвердил свой sequence, локальный отказ полного документа следующий sequence не расходует.
+Настоящий HTTP 413 остаётся `Http` и сохраняет pending, как остальные неподтверждённые HTTP-ответы.
+
+### Повтор шагов загрузки
+
+Шаги передачи файла повторяются по `pacing::Backoff`, когда GraphQL-ошибка содержит `extensions.retryable: true`.
+Оффлайн ждёт восстановления сети и не расходует попытки.
+Правило действует для создания загрузки, multipart init, presign и complete.
+Abort сохраняет прежнее поведение: после отказа сохраняется uploadId, следующий запуск повторяет очистку.
+Финальная мутация содержимого следует [правилам записи](files.md#rules-1): подтверждённый отказ сохраняет `Failed` без автоматического повтора.
+
+| Код с retryable:true | Шаг передачи | Финальная и обычная мутация |
+| --- | --- | --- |
+| `UPLOAD_STORAGE_FAILURE` | повтор с паузой | `Failed` |
+| `IN_PROGRESS` | повтор с паузой | `Failed` |
+| `RATE_LIMITED` | повтор с паузой | `Failed` |
+| `INVALID_RECEIPT` | повтор с паузой, если этот код вернул шаг | `Failed`, сохраняется transactionDisposition |
+| `INVALID_OPERATION` | повтор с паузой, если этот код вернул шаг | `Failed` |
+| `SERVICE_UNAVAILABLE` | повтор с паузой | `Failed` |
 - `sessionReset()` deletes the credential and the stored state without contacting the server.
 - A `logout` answer with `revoked` clears the credential and the state in one step, without confirming the sequence first. If your `CredentialStore.clear` fails, the pending logout stays and `sessionResume()` finishes it with the answer the server stored.
 - The core never clears the credential for a refusal code, an HTTP error, a key mismatch or a closed cable.

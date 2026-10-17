@@ -53,6 +53,32 @@ private suspend inline fun <reified Failure : Throwable> failsWith(block: () -> 
 
 class EncryptedSessionTest {
     @Test
+    fun oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() = bounded {
+        val http = RecordedHttp(400u)
+        val database = Database.openEncrypted(
+            Config(null, null, 32u), modelsJSON,
+            EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN),
+            http, HeldCredential(), DatabaseTransport(cable = { null }),
+        )
+        try {
+            database.sessionCall("otp", """{"phone":"${"x".repeat(260_000)}"}""")
+            throw AssertionError("expected a local size refusal")
+        } catch (error: DbException.RequestTooLarge) {
+            org.junit.Assert.assertTrue(error.size > error.limit)
+            assertEquals((256 * 1024).toULong(), error.limit)
+        }
+        assertEquals(0, http.posts.size)
+        assertNull(database.sessionResume())
+        try {
+            database.sessionCall("otp", """{"phone":"+61400000000"}""")
+            throw AssertionError("expected the scripted HTTP refusal")
+        } catch (error: DbException.Http) {
+            assertEquals(400.toUShort(), error.status)
+        }
+        assertEquals(1, http.posts.size)
+    }
+
+    @Test
     fun postsTheJoseTextToTheOriginPathAndReturnsAnyStatusUnchanged() = bounded {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(503).setBody("busy"))

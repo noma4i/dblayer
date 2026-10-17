@@ -33,6 +33,11 @@ pub struct Reply {
 }
 
 impl Reply {
+    #[cfg(test)]
+    pub(crate) fn response(response: Response) -> Self {
+        Self { delay: Duration::ZERO, result: Ok(response) }
+    }
+
     pub fn data(value: Value) -> Self {
         Self { delay: Duration::ZERO, result: Ok(Response::data(value)) }
     }

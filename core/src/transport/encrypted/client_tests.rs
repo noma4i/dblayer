@@ -267,8 +267,26 @@ async fn a_request_over_256_kib_is_refused_without_being_sent() {
 
     let outcome = rig.client(&memory_db()).read("/api/v3/graphql", graphql(&"q".repeat(300 * 1024))).await;
 
-    assert!(matches!(outcome, Err(TransportError::Http { status: 413, .. })));
+    assert!(matches!(outcome, Err(TransportError::RequestTooLarge { size, limit }) if size > limit && limit == 256 * 1024));
     assert!(rig.server.seen().is_empty());
+}
+
+#[tokio::test]
+async fn local_413_does_not_poison_the_session() {
+    for path in ["/api/v3/graphql", "/api/v3/logout", "/api/v3/auth/provider"] {
+        let rig = Rig::new();
+        let db = memory_db();
+        let client = rig.client(&db);
+        client.mutate("/api/v3/auth/provider", json!({"provider":"google","idToken":"t"})).await.unwrap();
+        let before = rows(&db);
+        let sent = rig.server.seen().len();
+        assert!(matches!(client.mutate(path, graphql(&"x".repeat(260_000))).await, Err(TransportError::RequestTooLarge { size, limit }) if size > limit && limit == 256 * 1024));
+        assert_eq!(rig.server.seen().len(), sent);
+        assert_eq!(rows(&db), before, "{path}");
+        assert_eq!(client.resume().await.unwrap(), None);
+        client.mutate("/api/v3/graphql", graphql("mutation Small { x }")).await.unwrap();
+        assert_eq!(rows(&db).0.unwrap().sequence, 2);
+    }
 }
 
 #[tokio::test]

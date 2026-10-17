@@ -2,9 +2,32 @@ use serde_json::json;
 
 use crate::commit::OperationStatus;
 use crate::identity::RowId;
-use crate::transport::Reply;
+use crate::transport::{GraphqlExtensions, Reply, SessionCode, TransportError};
 
 use super::super::rig::*;
+
+#[tokio::test(start_paused = true)]
+async fn graphql_auth_refusals_keep_unsent_rows_failed() {
+    for code in ["UNAUTHENTICATED", "ACCOUNT_UNAVAILABLE"] {
+        for reply in [
+            Reply::graphql_error("refused", code),
+            Reply::fail(TransportError::refusal(code)),
+            Reply::fail(TransportError::Graphql {
+                messages: vec!["refused".into()],
+                extensions: Some(GraphqlExtensions { code: Some(code.into()), transaction_disposition: None }),
+            }),
+        ] {
+            let rig = rig();
+            let row = rig.db.create("moments", params(json!({"text":"unsent"}))).unwrap();
+            rig.transport.enqueue("CreateMoment", reply);
+            rig.sync.flush().await.unwrap();
+            assert!(rig.db.find("moments", &row.id).unwrap().is_some(), "{code} removed the row");
+            assert_eq!(rig.db.outbox().unwrap()[0].operation.status, OperationStatus::Failed);
+            assert!(matches!(rig.sync.settled("moments", &row.id).await,
+                Err(super::super::SyncError::Transport(TransportError::Session { code: actual, .. })) if actual == SessionCode::of(code)));
+        }
+    }
+}
 
 #[tokio::test(start_paused = true)]
 async fn an_answer_that_cannot_be_stored_parks_the_operation_as_unknown_instead_of_leaving_it_sending() {

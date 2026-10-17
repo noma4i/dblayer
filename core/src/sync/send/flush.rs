@@ -91,14 +91,18 @@ fn delivery_of(result: Result<Response, TransportError>) -> Delivery {
         Ok(response) if response.shape().outcome() == ResponseOutcome::Commit => Delivery::Response(response),
         Ok(response) => {
             let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
-            let kind = if RetryClass::classify(false, None, &codes) == RetryClass::Retriable { FailureKind::Server } else { FailureKind::Rejected };
+            let auth = codes.iter().filter_map(|code| crate::transport::SessionCode::from_wire(code)).find(|code| code.keeps_queue());
+            let kind = auth.map(FailureKind::Session).unwrap_or_else(|| if RetryClass::classify(false, None, &codes) == RetryClass::Retriable { FailureKind::Server } else { FailureKind::Rejected });
             Delivery::Rejected(OperationFailure { kind, message: message_of(&response), extensions: response.extensions() })
         }
         Err(error @ TransportError::Network(_)) => Delivery::Unreached(OperationFailure::new(FailureKind::Network, error.to_string())),
         Err(error @ TransportError::Interrupted(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, error.to_string())),
         Err(error @ TransportError::Http { status, .. }) if status >= 500 => Delivery::Unknown(OperationFailure::new(FailureKind::Server, error.to_string())),
         Err(TransportError::Session { code, detail }) => Delivery::Rejected(OperationFailure::new(FailureKind::Session(code), detail)),
-        Err(TransportError::Graphql { messages, extensions }) => Delivery::Rejected(OperationFailure { kind: FailureKind::Rejected, message: messages.join("\n"), extensions }),
+        Err(TransportError::Graphql { messages, extensions }) => {
+            let auth = extensions.as_ref().and_then(|fields| fields.code.as_deref()).and_then(crate::transport::SessionCode::from_wire).filter(|code| code.keeps_queue());
+            Delivery::Rejected(OperationFailure { kind: auth.map_or(FailureKind::Rejected, FailureKind::Session), message: messages.join("\n"), extensions })
+        }
         Err(error @ TransportError::Decode(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),
         Err(error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string())),
     }

@@ -4,6 +4,8 @@ pub enum TransportError {
     Network(String),
     #[error("http {status}: {body}")]
     Http { status: u16, body: String },
+    #[error("request is {size} bytes, exceeding the local limit of {limit} bytes")]
+    RequestTooLarge { size: u64, limit: u64 },
     #[error("graphql: {}", messages.join("\n"))]
     Graphql { messages: Vec<String>, extensions: Option<super::GraphqlExtensions> },
     #[error("session {code:?}: {detail}")]
