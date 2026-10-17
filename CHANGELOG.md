@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0.0 - 2026-10-17
+
+### Added
+- Typed enums in Swift and Kotlin, with an `unknown` case that keeps the server text.
+- `scalar :Name, as: :kind` maps a custom scalar to a generated type.
+- Union fields declared with `on` blocks become a Swift enum and a Kotlin sealed class.
+- A union with an unknown `__typename` is read as `unknown` and keeps the type name.
+- A union is stored in columns, so `where` by variant kind works.
+
+### Changed
+- Enum fields, inputs, arguments and results are typed enums instead of strings.
+- A model enum column keeps a value outside its declared list.
+- A custom scalar without a mapping fails generation.
+
+### Removed
+- The string form of enum values in generated code.
+
 ## 1.2.0 - 2026-10-17
 
 ### Added
