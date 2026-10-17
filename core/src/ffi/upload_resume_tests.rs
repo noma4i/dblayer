@@ -36,6 +36,43 @@ fn open(rig: &Rig, path: &std::path::Path) -> Arc<Database> {
     database
 }
 
+#[tokio::test(start_paused = true)]
+async fn resume_does_not_repeat_a_step_owned_by_an_active_upload() {
+    use std::future::Future;
+    use std::task::{Context, Waker};
+
+    let rig = Rig::new();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("clip.mp4");
+    std::fs::write(&source, b"abc").unwrap();
+    let database = open(&rig, &directory.path().join("db.sqlite"));
+    database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
+    rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"}}));
+    let sync = database.sync.as_ref().unwrap().clone();
+    let lost = Arc::new(tokio::sync::Notify::new());
+    let notified = lost.clone();
+    let paused = sync.clone();
+    let server = Arc::downgrade(&rig.server);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    rig.server.on_request(move || {
+        if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            paused.set_online(false);
+            server.upgrade().unwrap().lose_next_answer();
+            notified.notify_one();
+        }
+    });
+    let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
+    sync.upload("Moment", &crate::identity::RowId::new("42").unwrap(), input).await.unwrap();
+    lost.notified().await;
+    let mut resume = Box::pin(super::encrypted::resume(database.session.clone().unwrap(), Some(sync.clone())));
+    assert!(resume.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+    sync.set_online(true);
+    sync.wait_uploads().await;
+    resume.await.unwrap();
+    assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "CreateBlob").count(), 1);
+    assert!(database.db.outbox().unwrap().is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn upload_resume_and_retry_execute_the_saved_step_once_after_reopen() {
     for (step, fault_at, multipart) in [("CreateBlob", 0, false), ("MakeMoment", 1, false), ("InitMultipart", 0, true), ("PresignParts", 1, true), ("CompleteMultipart", 2, true)] {

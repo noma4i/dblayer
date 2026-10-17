@@ -116,6 +116,11 @@ One rule decides, the sequence of the refusal:
 
 `sessionResume()` closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
 
+В Swift и Kotlin `sessionResume()` удерживает право отправки от чтения сохранённого запроса до закрытия операции.
+Параллельные `flush`, `retry`, `retryAll` и автоматические повторы ждут завершения восстановления.
+Для загрузки восстановление сначала ждёт активного отправителя и занимает его запись в `uploads.active`.
+Если отправитель уже завершил сохранённый запрос, восстановление возвращает `nil` в Swift и `null` в Kotlin.
+
 Для мутаций с `clientMutationId` во входном типе SDL генератор выставляет `client_mutation_id` в spec действия.
 Объявлять поле в модели не нужно. Без SDL автоматическая передача ключа отключена.
 SQLite присваивает каждой новой операции случайный 128-битный ключ и хранит его в колонке `op.client_mutation_id`.

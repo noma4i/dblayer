@@ -23,7 +23,10 @@ async fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts
     rig.transport.enqueue("CompleteMultipart", Reply::data(json!({"completeMultipart": {"signedId": "sid", "blobId": "blob"}})));
     rig.transport.enqueue("CreateMoment", upload_tests::created("m9"));
     let resumed = Response::data(json!({"presignParts": {"parts": [{"partNumber": 2, "url": "https://s3/p2"}]}}));
-    rig.sync.inner.settle_resumed(&|candidate| *candidate == request.graphql(), Ok(resumed)).await.unwrap();
+    let serial = rig.sync.inner.outbox_gate.lock().await;
+    let upload = rig.sync.inner.claim_upload_resume(&|candidate| *candidate == request.graphql()).await.unwrap();
+    rig.sync.inner.settle_resumed(&serial, upload, &|candidate| *candidate == request.graphql(), Ok(resumed)).await.unwrap();
+    drop(serial);
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.put_calls().len(), 3);
     let calls: Vec<_> = rig.transport.calls().into_iter().filter(|call| call.operation_name == "PresignParts").collect();

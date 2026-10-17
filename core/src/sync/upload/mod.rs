@@ -33,6 +33,20 @@ pub(crate) struct UploadRuns {
     tasks: JoinSet<()>,
 }
 
+pub(crate) struct UploadResume {
+    inner: Arc<Inner>,
+    seq: i64,
+    run: u64,
+    token: CancelToken,
+    permits: Arc<Semaphore>,
+}
+
+impl Drop for UploadResume {
+    fn drop(&mut self) {
+        self.inner.finish_run(self.seq, self.run);
+    }
+}
+
 impl UploadRuns {
     pub(crate) fn new(max_files: usize) -> Self {
         Self { permits: Arc::new(Semaphore::new(max_files.max(1))), active: HashMap::new(), next_run: 0, tasks: JoinSet::new() }
@@ -131,20 +145,30 @@ impl Inner {
         Some((run, token, runs.permits.clone()))
     }
 
-    pub(crate) async fn resume_upload(self: &Arc<Self>, seq: i64, result: Result<crate::transport::Response, crate::transport::TransportError>) {
-        let waiting = locked(&self.uploads).active.get(&seq).map(|active| active.done.subscribe());
-        if let Some(mut done) = waiting {
-            let _ = done.wait_for(|finished| *finished).await;
+    pub(crate) async fn claim_upload_resume(self: &Arc<Self>, repeats: &(dyn Fn(&crate::transport::GraphQLRequest) -> bool + Send + std::marker::Sync)) -> Result<Option<UploadResume>, SyncError> {
+        loop {
+            let owner = self.db.outbox()?.into_iter().find(|entry| entry.operation.upload.as_ref().and_then(|state| state.request.as_ref()).is_some_and(|request| repeats(&request.graphql())));
+            let Some(owner) = owner else { return Ok(None) };
+            let seq = owner.operation.id.0;
+            if let Some((run, token, permits)) = self.register(seq) {
+                return Ok(Some(UploadResume { inner: self.clone(), seq, run, token, permits }));
+            }
+            let waiting = locked(&self.uploads).active.get(&seq).map(|active| active.done.subscribe());
+            if let Some(mut done) = waiting {
+                let _ = done.wait_for(|finished| *finished).await;
+            }
         }
+    }
+
+    pub(crate) async fn resume_upload(self: &Arc<Self>, owner: UploadResume, result: Result<crate::transport::Response, crate::transport::TransportError>) {
+        let seq = owner.seq;
         let mode = self.db.outbox().ok().and_then(|entries| entries.into_iter().find(|entry| entry.operation.id.0 == seq))
             .and_then(|entry| entry.operation.upload).map_or(Mode::Transfer, |state| match (state.stage, state.phase) {
                 (crate::upload::UploadStage::Abort, crate::upload::UploadStatus::Cancelled) => Mode::Cancel,
                 (crate::upload::UploadStage::Abort, _) => Mode::Orphan,
                 _ => Mode::Transfer,
             });
-        let Some((run, token, permits)) = self.register(seq) else { return };
-        run::drive(self.clone(), seq, run, token, permits, mode, Some(result)).await;
-        self.finish_run(seq, run);
+        run::drive(self.clone(), seq, owner.run, owner.token.clone(), owner.permits.clone(), mode, Some(result)).await;
     }
 }
 

@@ -205,15 +205,14 @@ impl Inner {
         settled
     }
 
-    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, repeats: &(dyn Fn(&GraphQLRequest) -> bool + Send + Sync), result: Result<Response, TransportError>) -> Result<(), SyncError> {
-        let _serial = self.outbox_gate.lock().await;
+    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, _serial: &tokio::sync::MutexGuard<'_, ()>, upload: Option<super::super::upload::UploadResume>, repeats: &(dyn Fn(&GraphQLRequest) -> bool + Send + Sync), result: Result<Response, TransportError>) -> Result<(), SyncError> {
         let Some(owner) = self.owner_of(repeats)? else { return Ok(()) };
         if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) && owner.operation.upload.as_ref().is_none_or(|state| state.stage != crate::upload::UploadStage::Abort) {
             self.db.retry_operations(vec![owner.clone()])?;
         }
         let Some(entry) = self.db.outbox()?.into_iter().find(|entry| entry.operation.id == owner.operation.id) else { return Ok(()) };
         if entry.operation.upload.is_some() {
-            self.resume_upload(entry.operation.id.0, result).await;
+            if let Some(upload) = upload { self.resume_upload(upload, result).await; }
             return Ok(());
         }
         let sent = self.send(&entry, Some(result)).await?;

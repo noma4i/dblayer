@@ -70,6 +70,27 @@ fn path_of(operation: &str) -> Result<String, DbError> {
     }
 }
 
+pub(super) async fn resume(client: Arc<EncryptedClient>, sync: Option<crate::sync::Sync>) -> Result<Option<String>, DbError> {
+    let serial = match &sync {
+        Some(sync) => Some(sync.inner.outbox_gate.lock().await),
+        None => None,
+    };
+    let stored = client.pending_call().map_err(typed)?;
+    let upload = match (&sync, &stored) {
+        (Some(sync), Some((path, body))) => sync.inner.claim_upload_resume(&|request| core::repeats(request, path, body)).await?,
+        _ => None,
+    };
+    if client.pending_call().map_err(typed)? != stored { return Ok(None); }
+    let Some(answer) = client.resume().await.map_err(typed)? else { return Ok(None) };
+    if let (Some(sync), Some(serial), Some((path, body))) = (&sync, &serial, stored) {
+        let result = core::response_of(answer.clone());
+        if !matches!(&result, Ok(response) if core::missing_from_registry(response)) {
+            sync.inner.settle_resumed(serial, upload, &move |request| core::repeats(request, &path, &body), result).await?;
+        }
+    }
+    refused(answer).map(|answer| Some(answer.body.to_string()))
+}
+
 #[uniffi::export]
 impl Database {
     #[uniffi::constructor]
@@ -98,17 +119,8 @@ impl Database {
 
     pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
         let client = self.session()?.clone();
-        let stored = client.pending_call().map_err(typed)?;
-        let resumed = client.clone();
-        let answer = executor()?.spawn(async move { resumed.resume().await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(typed)?;
-        let Some(answer) = answer else { return Ok(None) };
-        if let (Some(sync), Some((path, body))) = (self.sync.clone(), stored) {
-            let result = core::response_of(answer.clone());
-            if !matches!(&result, Ok(response) if core::missing_from_registry(response)) {
-                executor()?.spawn(async move { sync.inner.settle_resumed(&move |request| core::repeats(request, &path, &body), result).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })??;
-            }
-        }
-        refused(answer).map(|answer| Some(answer.body.to_string()))
+        let sync = self.sync.clone();
+        executor()?.spawn(resume(client, sync)).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
     }
 
     #[uniffi::method(default(platform = None, version = None))]
