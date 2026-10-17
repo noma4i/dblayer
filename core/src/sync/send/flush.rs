@@ -271,6 +271,7 @@ impl Inner {
                 match self.db.roll_back_at(seq, generation) {
                     Ok(_) => return Ok(SendResult::Rejected(failure)),
                     Err(DbError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => continue,
+                    Err(DbError::UnknownOperation(_)) => return Ok(SendResult::Discarded),
                     Err(error) => return Err(error.into()),
                 }
             }
@@ -441,7 +442,7 @@ impl Inner {
     async fn roll_back(&self, sending: &Sending<'_>, failure: OperationFailure) -> Result<SendResult, SyncError> {
         match self.db.roll_back_at(sending.entry.operation.id.0, sending.generation) {
             Ok(_) => {}
-            Err(DbError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(SendResult::Discarded),
+            Err(DbError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration)) | DbError::UnknownOperation(_)) => return Ok(SendResult::Discarded),
             Err(error) => return Err(error.into()),
         }
         Ok(SendResult::Rejected(failure))

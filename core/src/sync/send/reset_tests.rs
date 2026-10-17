@@ -59,7 +59,7 @@ async fn a_success_answered_after_a_reset_closes_the_operation_and_does_not_brin
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_network_failure_after_a_reset_defers_the_operation_and_it_is_sent_again() {
+async fn a_network_failure_after_a_reset_finds_no_operation_and_nothing_is_sent_again() {
     let rig = rig_with_pending_update();
     rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Network("down".to_string())).after(Duration::from_secs(5)));
     rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
@@ -67,11 +67,11 @@ async fn a_network_failure_after_a_reset_defers_the_operation_and_it_is_sent_aga
     rig.clock.advance(Duration::from_secs(3600));
     rig.sync.flush().await.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
-    assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_refusal_answered_after_a_reset_rolls_the_operation_back_like_any_refusal() {
+async fn a_refusal_answered_after_a_reset_discards_the_closed_operation() {
     let rig = rig_with_pending_update();
     flush_while_resetting(&rig, Reply::graphql_error("not allowed", "FORBIDDEN").after(Duration::from_secs(5))).await;
     assert!(rig.db.outbox().unwrap().is_empty());

@@ -1,5 +1,17 @@
 # Writing data
 
+Resetting a model clears its cached rows and closes its queued changes without sending or rolling them back.
+A full reset applies this to every model. Replies for closed changes are discarded.
+Logout performs a full reset:
+
+```swift
+try await DB.logout()
+```
+
+```kotlin
+DBlayer.logout()
+```
+
 All writes are optimistic: they apply to the local database at once, so every live read updates immediately. A write that must reach the server is also placed in a durable queue in the same commit.
 
 ```swift

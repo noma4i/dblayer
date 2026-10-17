@@ -231,11 +231,8 @@ impl Worker {
                     1 => &["users"],
                     _ => &["moments"],
                 };
-                if models.contains(&"moments") {
-                    world.moments_reset.store(true, Ordering::SeqCst);
-                }
                 world.findings.trace(|| format!("reset {models:?}"));
-                world.expect("reset", rig.db.reset(models));
+                world.reset(models);
             }
             Op::Connectivity => {
                 let offline = !world.is_offline();

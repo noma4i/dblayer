@@ -44,3 +44,23 @@ async fn cancelled_local_writes_are_not_lost_but_pending_writes_are() {
     oracle::lost_writes(&world);
     assert_eq!(findings.all().len(), 1);
 }
+
+#[tokio::test]
+async fn reset_cancels_previous_issues_but_not_later_ones() {
+    let transport = MockTransport::new();
+    let findings = Findings::default();
+    let server = FakeServer::install(&transport, 7, findings.clone());
+    let rig = rig_on(Db::open_in_memory(specs(), None).unwrap(), transport, SyncConfig::default());
+    let scratch = scratch_dir();
+    let world = World::new(rig, server, findings.clone(), Universe::default(), Aliases::default(), scratch.path().to_path_buf());
+    world.go_offline(true);
+    let mut worker = Worker::new(0, 7);
+    worker.run(&world, Op::Create).await;
+    world.reset(&["moments"]);
+    assert!(world.rig.db.outbox().unwrap().is_empty());
+    oracle::lost_writes(&world);
+    assert!(findings.all().is_empty(), "{:?}", findings.all());
+    worker.run(&world, Op::Create).await;
+    oracle::lost_writes(&world);
+    assert_eq!(findings.all().len(), 1);
+}

@@ -134,6 +134,7 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
                 let table = crate::ddl::table_name(model);
                 wipe_model_cache(&transaction, model, &table, true)?;
             }
+            retire_operations(&transaction, Some(&models), None)?;
         }
         _ => {
             wipe_all_cache(&transaction, true)?;
@@ -163,6 +164,7 @@ impl Store {
         for (model, table) in &tables {
             wipe_model_cache(&transaction, model, table, false)?;
         }
+        retire_operations(&transaction, Some(&names), None)?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
         transaction.commit()?;

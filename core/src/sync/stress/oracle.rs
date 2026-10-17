@@ -17,7 +17,7 @@ fn liked(row: &Row) -> bool {
 
 pub fn lost_writes(world: &World) {
     for issued in world.issued() {
-        if world.server.deliveries_of(&issued.token) > 0 {
+        if world.server.deliveries_of(&issued.token) > 0 || world.was_cancelled(&issued.token) {
             continue;
         }
         if issued.target.as_deref().is_some_and(|target| world.was_discarded(target)) {

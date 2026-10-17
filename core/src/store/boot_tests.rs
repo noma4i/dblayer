@@ -193,6 +193,7 @@ fn interrupted_cache_only_reset_is_completed_before_manifest_check() {
     assert!(report.finished_interrupted_reset);
     assert_eq!(store.row_count("messages").unwrap(), 0);
     assert_eq!(store.row_count("items").unwrap(), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
     assert_eq!(store.reset_intent().unwrap(), None);
 }
 

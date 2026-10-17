@@ -28,6 +28,7 @@ pub struct World {
     pub scratch: PathBuf,
     pub scratch_files: AtomicU64,
     issued: Mutex<Vec<Issued>>,
+    cancelled: Mutex<BTreeSet<String>>,
     created: Mutex<HashMap<String, String>>,
     discarded: Mutex<BTreeSet<String>>,
     touched: Mutex<BTreeSet<String>>,
@@ -47,6 +48,7 @@ impl World {
             scratch,
             scratch_files: AtomicU64::new(0),
             issued: Mutex::new(Vec::new()),
+            cancelled: Mutex::new(BTreeSet::new()),
             created: Mutex::new(HashMap::new()),
             discarded: Mutex::new(BTreeSet::new()),
             touched: Mutex::new(BTreeSet::new()),
@@ -63,6 +65,10 @@ impl World {
 
     pub fn issued(&self) -> Vec<Issued> {
         Self::locked(&self.issued).iter().map(|issued| Issued { token: issued.token.clone(), kind: issued.kind, target: issued.target.clone() }).collect()
+    }
+
+    pub fn was_cancelled(&self, token: &str) -> bool {
+        Self::locked(&self.cancelled).contains(token)
     }
 
     pub fn created_as(&self, id: &str, token: &str) {
@@ -125,6 +131,16 @@ impl World {
             }
         }
         self.expect("replace", outcome.map(|_| ()));
+    }
+
+    pub fn reset(&self, models: &[&str]) {
+        let issued = if models.contains(&"moments") { self.issued() } else { Vec::new() };
+        let outcome = self.rig.db.reset(models);
+        if outcome.is_ok() && models.contains(&"moments") {
+            self.moments_reset.store(true, Ordering::SeqCst);
+            Self::locked(&self.cancelled).extend(issued.into_iter().map(|issued| issued.token));
+        }
+        self.expect("reset", outcome);
     }
 
     pub fn expect(&self, step: &str, outcome: Result<(), DbError>) {
