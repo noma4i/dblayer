@@ -548,7 +548,7 @@ A path that a declaration writes names keys of the response, so the check follow
 | `root:` of `fetch`, `create`, `update`, `destroy`, and the `root` line of an action | top of the operation | the path |
 | `lands Model, root:` | top of the operation | the path |
 | `result` fields of an action or an `operation` block | the first part of `root`, or the first field | each key, and the keys of nested objects and lists |
-| `total from:` | top of the operation | the path |
+| `total from:` | top of the operation | the path, an alias of the document resolves to its schema field |
 | `paginate ..., from:` | the connection | the path |
 | `root:` and `id:` of `updates` and `listen` | top of the subscription, or the row | the path |
 

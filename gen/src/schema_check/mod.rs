@@ -362,50 +362,17 @@ impl<'a> Run<'a> {
             return None;
         };
         let path = option_text(query, "root").unwrap_or(&root.key).to_string();
-        let mut segments = path.split('.');
-        if segments.next() != Some(root.key.as_str()) {
-            self.fail(node.file, query.line, query.column, format!("root `{path}` must start with the first field `{}` of operation `{name}`", root.key));
-            return None;
-        }
-        let mut reached = match self.schema.field(&self.schema.query, &root.field) {
-            Ok(reached) => reached,
-            Err(message) => {
-                self.fail(node.file, query.line, query.column, message);
-                return None;
-            }
-        };
-        if self.schema.is_interface(reached.name()) {
-            reached = self.enter_implementation(node.file, query, &name, &root.key, reached)?;
-        }
-        let keys: Vec<&str> = path.split('.').collect();
-        let followed = paths::segments_of(&path).and_then(|_| self.follow_quiet(&name, None, &keys));
-        let names: Vec<&str> = match &followed {
-            Some(Ok(found)) => found.names.clone(),
-            _ => keys.clone(),
-        };
-        for segment in names.into_iter().skip(1) {
-            reached = match self.schema.field(reached.name(), segment) {
-                Ok(next) if !reached.is_list() => next,
-                Ok(_) => {
-                    self.fail(node.file, query.line, query.column, format!("root `{path}` crosses the list `{}`", reached.describe()));
-                    return None;
-                }
-                Err(message) => {
-                    self.fail(node.file, query.line, query.column, message);
-                    return None;
-                }
-            };
-        }
-        if let Some(Err(miss)) = followed {
+        let (reached, miss) = self.follow_schema_path(node.file, query, "root", &name, &root, &path)?;
+        if let Some(miss) = miss {
             let at = option(query, "root").map_or((query.line, query.column), |pair| (pair.value.line, pair.value.column));
-            self.report_miss(node.file, at, "root", &name, &path, &[], &keys, miss);
+            self.report_miss(node.file, at, "root", &name, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
             return None;
         }
         let paginates = lines.iter().any(|call| call.word == "paginate");
         let lists = lines.iter().any(|call| call.word == "list");
         let line = lines.iter().find(|call| matches!(call.word.as_str(), "paginate" | "list")).unwrap_or(query);
         if paginates {
-            let element = self.connection_node(node, line, &reached)?;
+            let element = self.connection_node(node, line, &reached, remote)?;
             self.check_total(node, lines, &name, &root)?;
             return Some(element);
         }
@@ -420,41 +387,53 @@ impl<'a> Run<'a> {
     fn check_total(&mut self, node: &ModelNode, lines: &[Call], operation: &str, root: &graphql::Root) -> Option<()> {
         let Some(total) = lines.iter().find(|call| call.word == "total") else { return Some(()) };
         let path = option_text(total, "from")?.to_string();
-        let mut segments = path.split('.');
-        if segments.next() != Some(root.key.as_str()) {
-            self.fail(node.file, total.line, total.column, format!("total `{path}` must start with the first field `{}` of operation `{operation}`", root.key));
+        let (reached, miss) = self.follow_schema_path(node.file, total, "total", operation, root, &path)?;
+        if reached.name() != "Int" || reached.is_list() || !path.contains('.') {
+            self.fail(node.file, total.line, total.column, format!("total `{path}` must be an `Int` but is `{}`", reached.describe()));
             return None;
         }
-        let segments: Vec<&str> = segments.collect();
+        if let Some(miss) = miss {
+            self.report_miss(node.file, (total.line, total.column), "total", operation, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
+            return None;
+        }
+        Some(())
+    }
+
+    fn follow_schema_path(&mut self, file: usize, call: &Call, label: &str, operation: &str, root: &graphql::Root, path: &str) -> Option<(Ty, Option<graphql::Miss>)> {
+        let keys: Vec<&str> = path.split('.').collect();
+        if keys[0] != root.key {
+            self.fail(file, call.line, call.column, format!("{label} `{path}` must start with the first field `{}` of operation `{operation}`", root.key));
+            return None;
+        }
         let mut reached = match self.schema.field(&self.schema.query, &root.field) {
             Ok(reached) => reached,
             Err(message) => {
-                self.fail(node.file, total.line, total.column, message);
+                self.fail(file, call.line, call.column, message);
                 return None;
             }
         };
         if self.schema.is_interface(reached.name()) {
-            reached = self.enter_implementation(node.file, total, operation, &root.key, reached)?;
+            reached = self.enter_implementation(file, call, operation, &root.key, reached)?;
         }
-        for segment in &segments {
+        let followed = paths::segments_of(path).and_then(|_| self.follow_quiet(operation, None, &keys));
+        let names: Vec<&str> = match &followed {
+            Some(Ok(found)) => found.names.clone(),
+            _ => keys.clone(),
+        };
+        for segment in names.into_iter().skip(1) {
             reached = match self.schema.field(reached.name(), segment) {
                 Ok(next) if !reached.is_list() => next,
                 Ok(_) => {
-                    self.fail(node.file, total.line, total.column, format!("total `{path}` crosses the list `{}`", reached.describe()));
+                    self.fail(file, call.line, call.column, format!("{label} `{path}` crosses the list `{}`", reached.describe()));
                     return None;
                 }
                 Err(message) => {
-                    self.fail(node.file, total.line, total.column, message);
+                    self.fail(file, call.line, call.column, message);
                     return None;
                 }
             };
         }
-        if reached.name() != "Int" || reached.is_list() || segments.is_empty() {
-            self.fail(node.file, total.line, total.column, format!("total `{path}` must be an `Int` but is `{}`", reached.describe()));
-            return None;
-        }
-        self.follow_operation(node.file, (total.line, total.column), "total", operation, &path)?;
-        Some(())
+        Some((reached, followed.and_then(Result::err)))
     }
 
     fn enter_implementation(&mut self, file: usize, query: &Call, operation: &str, key: &str, reached: Ty) -> Option<Ty> {
@@ -492,13 +471,17 @@ impl<'a> Run<'a> {
         implementation.map(|name| Ty { nullable: reached.nullable, ..if reached.is_list() { named(name).into_list() } else { named(name) } })
     }
 
-    fn connection_node(&mut self, node: &ModelNode, line: &Call, connection: &Ty) -> Option<String> {
-        let found = match self.schema.field(connection.name(), "nodes") {
-            Ok(nodes) if nodes.is_list() => Some(nodes.name().to_string()),
-            _ => self.schema.field(connection.name(), "edges").and_then(|edges| {
+    fn connection_node(&mut self, node: &ModelNode, line: &Call, connection: &Ty, remote: &Call) -> Option<String> {
+        let nodes = self.schema.field(connection.name(), "nodes").ok().filter(Ty::is_list);
+        let edges = self.schema.field(connection.name(), "edges").ok();
+        let by_edges = nodes.is_none() || (self.edge_select(remote).is_some() && !self.selects_nodes(remote));
+        let found = match (edges, nodes) {
+            (Some(edges), _) if by_edges => {
                 self.edge = Some(edges.name().to_string());
-                self.schema.field(edges.name(), "node")
-            }).ok().map(|edge| edge.name().to_string()),
+                self.schema.field(edges.name(), "node").ok().map(|edge| edge.name().to_string())
+            }
+            (_, Some(nodes)) => Some(nodes.name().to_string()),
+            _ => None,
         };
         if found.is_none() {
             self.fail(node.file, line.line, line.column, format!("`paginate` needs `nodes` or `edges {{ node }}` on `{}`", connection.name().to_string()));
@@ -512,7 +495,7 @@ impl<'a> Run<'a> {
             if matches!(call.word.as_str(), "index" | "ephemeral" | "file") || flag(call, "local") || name.is_empty() {
                 continue;
             }
-            let Some(path) = self.path_of(node, call, name, scope) else { continue };
+            let Some(path) = self.path_of(node, call, name) else { continue };
             let segments: Vec<&str> = path.iter().map(String::as_str).collect();
             let Some(reached) = self.walk(scope.file, call, owner, &segments, scope, name) else { continue };
             covered.insert(reached.first.clone());
@@ -551,6 +534,10 @@ impl<'a> Run<'a> {
             };
         }
         Some(select)
+    }
+
+    fn selects_nodes(&self, remote: &Call) -> bool {
+        self.root_select(remote).is_some_and(|select| select.fields.iter().any(|field| field.name == "nodes"))
     }
 
     fn root_select(&self, remote: &Call) -> Option<&'a Select> {
@@ -635,13 +622,12 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn path_of(&mut self, node: &ModelNode, call: &Call, name: &str, scope: &Scope) -> Option<Vec<String>> {
+    fn path_of(&mut self, node: &ModelNode, call: &Call, name: &str) -> Option<Vec<String>> {
         if let Some(parent) = option_text(call, "id_from") {
             let association = node.body.iter().find(|candidate| matches!(candidate.word.as_str(), "belongs_to" | "has_one") && name_of(candidate) == parent);
             let base = association.and_then(|association| option_text(association, "from")).unwrap_or(parent);
             return Some(base.split('.').map(str::to_string).chain(["id".to_string()]).collect());
         }
-        let _ = scope;
         Some(option_text(call, "from").unwrap_or(name).split('.').map(str::to_string).collect())
     }
 
@@ -785,3 +771,9 @@ mod edge_tests;
 
 #[cfg(test)]
 mod paths_tests;
+
+#[cfg(test)]
+mod total_alias_tests;
+
+#[cfg(test)]
+mod edge_nodes_tests;
