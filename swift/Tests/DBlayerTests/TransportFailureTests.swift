@@ -42,6 +42,13 @@ struct TransportFailureTests {
   }
 
   @Test
+  func aSubscriptionEndsAsNetworkUnlessTheServerRejectedIt() {
+    #expect(Self.shape(TransportFailure.classifySubscription(CableClientError.rejected)) == "Graphql \(CableClientError.rejected)")
+    #expect(Self.shape(TransportFailure.classifySubscription(URLError(.networkConnectionLost))) == "Network")
+    #expect(Self.shape(TransportFailure.subscriptionCompleted) == "Network")
+  }
+
+  @Test
   func onlyTheClassifierAndTheBlobPutBuildTheRetryableNetworkError() throws {
     let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent("Sources/DBlayer")

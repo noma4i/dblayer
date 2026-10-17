@@ -96,14 +96,14 @@ private func runSubscription<Operation: GraphQLSubscription>(
       )
     }
     guard !Task.isCancelled else { return }
-    onError(SubscriptionFailure(error: .Network(detail: "subscription completed")))
+    onError(SubscriptionFailure(error: TransportFailure.subscriptionCompleted))
   } catch is CancellationError {
     return
   } catch {
     guard !Task.isCancelled else { return }
     onError(
       SubscriptionFailure(
-        error: error as? CableClientError == .rejected ? .Graphql(messages: [String(describing: error)], extensions: nil) : TransportFailure.classify(error, kind: .query)
+        error: TransportFailure.classifySubscription(error)
       )
     )
   }

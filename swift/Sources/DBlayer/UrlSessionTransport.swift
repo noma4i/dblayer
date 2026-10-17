@@ -78,7 +78,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
         }
       }
     } catch {
-      sink.failed(error: .Network(detail: error.localizedDescription))
+      sink.failed(error: TransportFailure.classifySubscription(error))
       sink.closed()
     }
   }

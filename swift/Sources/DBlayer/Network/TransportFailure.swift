@@ -17,6 +17,17 @@ enum TransportFailure {
     }
   }
 
+  static func classifySubscription(_ error: Error) -> DbError {
+    if error as? CableClientError == .rejected { return .Graphql(messages: [String(describing: error)], extensions: nil) }
+    return classify(error, kind: .query)
+  }
+
+  static let subscriptionCompleted = classify(SubscriptionCompleted(), kind: .query)
+
+  private struct SubscriptionCompleted: Error, CustomStringConvertible {
+    var description: String { "subscription completed" }
+  }
+
   private static func answered(_ failure: GraphQLTransportError, detail: String) -> DbError {
     switch failure {
     case .unauthenticated: .Http(status: 401, detail: detail)

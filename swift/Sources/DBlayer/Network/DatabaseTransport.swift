@@ -55,10 +55,10 @@ public final class DatabaseTransport: Transport, @unchecked Sendable {
         case .completed: break
         }
       }
-      if !Task.isCancelled { sink.failed(error: .Network(detail: "subscription completed")) }
+      if !Task.isCancelled { sink.failed(error: TransportFailure.subscriptionCompleted) }
     } catch is CancellationError {
     } catch {
-      if !Task.isCancelled { sink.failed(error: error as? CableClientError == .rejected ? .Graphql(messages: [String(describing: error)], extensions: nil) : .Network(detail: String(describing: error))) }
+      if !Task.isCancelled { sink.failed(error: TransportFailure.classifySubscription(error)) }
     }
   }
 
