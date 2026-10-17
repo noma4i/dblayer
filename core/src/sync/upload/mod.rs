@@ -181,3 +181,5 @@ impl Sync {
 
 #[cfg(test)]
 mod upload_tests;
+#[cfg(test)]
+mod generation_tests;

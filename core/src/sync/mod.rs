@@ -201,6 +201,8 @@ mod enum_scope_tests;
 #[cfg(test)]
 mod node_tests;
 #[cfg(test)]
+mod generation_tests;
+#[cfg(test)]
 mod opponent_null_tests;
 #[cfg(test)]
 mod null_object_tests;

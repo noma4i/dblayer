@@ -14,11 +14,11 @@ use crate::upload::{UploadConfig, UploadInput, UploadPart, UploadScenario, Uploa
 use super::super::rig::*;
 use super::super::{OperationDef, SyncConfig};
 
-fn rid(text: &str) -> RowId {
+pub(super) fn rid(text: &str) -> RowId {
     RowId::new(text).unwrap()
 }
 
-fn small() -> UploadConfig {
+pub(super) fn small() -> UploadConfig {
     UploadConfig {
         multipart_threshold: 10,
         part_size: 5,
@@ -28,7 +28,7 @@ fn small() -> UploadConfig {
     }
 }
 
-fn upload_rig(config: UploadConfig) -> Rig {
+pub(super) fn upload_rig(config: UploadConfig) -> Rig {
     let rig = rig_with(SyncConfig { upload: config, ..SyncConfig::default() });
     for (name, root) in [
         ("CreateBlob", "createBlob"),
@@ -48,17 +48,17 @@ fn steps() -> UploadSteps {
     UploadSteps::new("CreateMoment").single("CreateBlob").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart")
 }
 
-fn file(bytes: &[u8]) -> tempfile::NamedTempFile {
+pub(super) fn file(bytes: &[u8]) -> tempfile::NamedTempFile {
     let mut file = tempfile::Builder::new().suffix(".mp4").tempfile().unwrap();
     file.write_all(bytes).unwrap();
     file
 }
 
-fn input(file: &tempfile::NamedTempFile) -> UploadInput {
+pub(super) fn input(file: &tempfile::NamedTempFile) -> UploadInput {
     UploadInput::new(file.path().to_str().unwrap(), steps()).variable("text", json!("clip"))
 }
 
-fn blob() -> Reply {
+pub(super) fn blob() -> Reply {
     Reply::data(json!({"createBlob": {"url": "https://s3/single", "headers": {"x-a": "1"}, "signedId": "sid", "blobId": "b1"}}))
 }
 
@@ -79,7 +79,7 @@ fn abort() -> Reply {
     Reply::data(json!({"abortMultipart": {"ok": true}}))
 }
 
-fn created(id: &str) -> Reply {
+pub(super) fn created(id: &str) -> Reply {
     Reply::data(json!({"createMoment": {"id": id, "text": "clip", "userId": null}}))
 }
 
@@ -91,7 +91,7 @@ fn multipart_replies(rig: &Rig) {
     rig.transport.enqueue("CreateMoment", created("m9"));
 }
 
-fn single_replies(rig: &Rig) {
+pub(super) fn single_replies(rig: &Rig) {
     rig.transport.enqueue("CreateBlob", blob());
     rig.transport.enqueue("CreateMoment", created("m9"));
 }

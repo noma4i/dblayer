@@ -498,6 +498,7 @@ val chats = Chat.nodes(ids)
 - Calls for one id that overlap share one request. Nothing needs to be started or released.
 - The result is nil when the answer is `null`, has another type than the `... on` fragment (an empty object), or the id has no entity. Nothing is written then and the stored row stays as it was.
 - `nodes` skips every `null` and empty entry, keeps the order of the answer, writes each row once and keeps no list of its own, so every call asks the server.
+- An answer that arrives after the database was reset (a logout or a cache reset of the model) is dropped. Nothing is written, `node` returns nil and `nodes` returns an empty list.
 - `Model.entity(id)` and `Model.find(id)` stay the way to watch a row. A node read fills them.
 - The generator stops with file and line when a field is selected under `node` outside `... on`, when the `... on` type is not an implementation of the interface, when one `node` selects two types, or when the model has a field that the `... on` type lacks. A selection outside `... on` would give a row for a foreign type, so it is an error.
 

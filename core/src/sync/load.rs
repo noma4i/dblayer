@@ -145,6 +145,12 @@ impl Inner {
         Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: declared.edge_fields.clone() })
     }
 
+    pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
+        let generation = self.db.generation();
+        let base_revision = self.db.revision_seq()?;
+        Ok(FetchAttempt::new(key, self.next_issued(), generation, base_revision))
+    }
+
     fn next_issued(&self) -> i64 {
         let now = self.now_ms();
         let update = |previous: i64| Some(previous.max(now - 1) + 1);
@@ -216,9 +222,7 @@ impl Inner {
     }
 
     async fn execute(&self, resolved: &Resolved, cursor: Option<String>, force: bool) -> FlightResult {
-        let generation = self.db.generation();
-        let base_revision = self.db.revision_seq()?;
-        let issued = self.next_issued();
+        let attempt = self.begin_attempt(&resolved.window_key)?;
         let has_window = self.db.shared.store.window(&resolved.window_key)?.is_some();
         let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &resolved.remote.variables);
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);
@@ -248,7 +252,7 @@ impl Inner {
             requested_cursor: cursor,
             page_info: extracted.page_info,
             keeps_total: resolved.remote.total_from.is_some(),
-            attempt: FetchAttempt::new(&resolved.window_key, issued, generation, base_revision),
+            attempt,
         };
         Ok(match self.land(landing)? {
             Landed::Applied { rows, invalid } => LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts },

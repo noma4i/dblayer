@@ -57,7 +57,7 @@ fn messages_spec() -> ModelSpec {
     spec
 }
 
-fn node_rig() -> Rig {
+pub(super) fn node_rig() -> Rig {
     let rig = rig_on(Db::open_in_memory(vec![chats_spec(), messages_spec()], None).unwrap(), MockTransport::new(), SyncConfig::default());
     for (name, document) in [
         ("ChatNode", "query chat($id: ID!) { node(id: $id) { ... on Chat { id title shareUrl isPublic } } }"),
@@ -70,11 +70,11 @@ fn node_rig() -> Rig {
     rig
 }
 
-fn stored(rig: &Rig, model: &str, id: &str) -> Option<crate::db::Row> {
+pub(super) fn stored(rig: &Rig, model: &str, id: &str) -> Option<crate::db::Row> {
     rig.db.find(model, &RowId::new(id).unwrap()).unwrap()
 }
 
-fn data(value: Value) -> Reply {
+pub(super) fn data(value: Value) -> Reply {
     Reply::data(value)
 }
 

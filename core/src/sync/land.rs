@@ -114,16 +114,16 @@ impl Inner {
         Ok(ops)
     }
 
-    pub(crate) fn land_rows(&self, model: &str, normalized: &Normalized, base_revision: i64) -> Result<usize, SyncError> {
+    pub(crate) fn land_rows(&self, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
-        let generation = self.db.generation();
         let mut drops = 0;
-        let mut admitted_roots = 0;
-        let committed = self.db.commit_following(generation, |reader| {
-            let Admitted { rows: roots, .. } = admit(&self.db, reader, base_revision, None, model, &normalized.roots, &mut drops)?;
+        let (mut admitted_roots, mut invalid_roots) = (0, 0);
+        let committed = self.db.commit_following(attempt.generation, |reader| {
+            let Admitted { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
-            let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, generation);
-            envelope.entity_ops = self.related_upserts(reader, base_revision, &normalized.related, &BTreeSet::new(), &mut drops)?;
+            invalid_roots = invalid;
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, attempt.generation);
+            envelope.entity_ops = self.related_upserts(reader, attempt.base_revision, &normalized.related, &BTreeSet::new(), &mut drops)?;
             for row in roots {
                 let Some(id) = row.get("id").and_then(read_id) else { continue };
                 envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
@@ -133,18 +133,18 @@ impl Inner {
         match committed {
             Ok(_) => {}
             Err(PlanCommitError::Plan(error)) => return Err(error),
-            Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(0),
+            Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(Landed::Discarded(DiscardReason::StaleGeneration)),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
         }
         locked(&self.counters).record_stale_version_drops(drops);
-        Ok(admitted_roots)
+        Ok(Landed::Applied { rows: admitted_roots, invalid: invalid_roots })
     }
 
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
         let Landing { model, scope, window_key, normalized, is_first_page, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
-        let generation = self.db.generation();
-        if !attempt.applies_to(generation) {
+        let generation = attempt.generation;
+        if !attempt.applies_to(self.db.generation()) {
             return Ok(Landed::Discarded(DiscardReason::StaleGeneration));
         }
         let store = &self.db.shared.store;

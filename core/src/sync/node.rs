@@ -8,6 +8,7 @@ use crate::value::read_id;
 
 use super::error::SyncError;
 use super::extract::extract;
+use super::land::Landed;
 use super::load::Resolved;
 use super::normalize::normalize_nodes;
 use super::Sync;
@@ -23,14 +24,16 @@ impl Sync {
 
     pub async fn nodes(&self, model: &str, relation: &str, ids: &[&str]) -> Result<Vec<Row>, SyncError> {
         let resolved = self.resolve_node(model, relation, NodeRead::Many, Map::new())?;
-        let base_revision = self.inner.db.revision_seq()?;
+        let attempt = self.inner.begin_attempt(&resolved.window_key)?;
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, json!({ "ids": ids }));
         let (response, _) = self.inner.query_with_retry(request).await?;
         let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;
         let root = resolved.remote.root.as_deref().unwrap_or(&resolved.operation.root_path);
         let extracted = extract(&data, root, &RemoteShape::List { coverage: Coverage::Complete }, None)?;
         let normalized = normalize_nodes(&self.inner.db, model, &extracted.nodes)?;
-        self.inner.land_rows(model, &normalized, base_revision)?;
+        if let Landed::Discarded(_) = self.inner.land_rows(model, &normalized, &attempt)? {
+            return Ok(Vec::new());
+        }
         let mut rows: Vec<Row> = Vec::new();
         for root in &normalized.roots {
             let Some(id) = root.get("id").and_then(read_id) else { continue };
