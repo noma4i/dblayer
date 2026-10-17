@@ -94,6 +94,7 @@ struct Faults {
     pub replay_next_read: bool,
     pub forget_registrations: bool,
     pub refuse_hashes: bool,
+    pub refuse_next: Option<(String, bool)>,
 }
 
 #[derive(Default)]
@@ -225,6 +226,10 @@ impl FakeServer {
         self.state.lock().unwrap().faults.replay_next_read = true;
     }
 
+    pub fn refuse_next(&self, code: &str, confirmed: bool) {
+        self.state.lock().unwrap().faults.refuse_next = Some((code.to_string(), confirmed));
+    }
+
     pub fn reply_to_other_request(&self) {
         self.state.lock().unwrap().faults.reply_to_other_request = true;
     }
@@ -240,6 +245,9 @@ impl FakeServer {
         };
         let (forget, refuse) = (state.faults.forget_registrations, state.faults.refuse_hashes);
         let resolved = if path == "/api/v3/graphql" && forget { Err("PERSISTED_QUERY_NOT_FOUND") } else if path == "/api/v3/graphql" && refuse { Err("INVALID_INPUT") } else if path == "/api/v3/graphql" { document_of(&mut state.registry, &data["body"]) } else { Ok(Value::Null) };
+        if let Some((code, confirmed)) = state.faults.refuse_next.take() {
+            return seal_response(data, data["sequence"].as_i64().filter(|_| confirmed), json!({ "error": code }));
+        }
         let Some(sequence) = data["sequence"].as_i64() else {
             let document = match resolved {
                 Ok(document) => document,

@@ -130,6 +130,8 @@ Rules of the session:
 - A credential with no matching session state (for example a restored Keychain with a new database file) is replaced by a new credential. The next call is unauthenticated.
 - Errors: `503` is a retryable HTTP error, `400` means a bad request or a device clock more than 2 minutes behind or 30 seconds ahead of the server, `413` means more than 256 KiB. A lost connection is a network error.
 - `sessionReset()` deletes the credential and the stored state without contacting the server.
+- A `logout` answer with `revoked` clears the credential and the state in one step, without confirming the sequence first. If your `CredentialStore.clear` fails, the pending logout stays and `sessionResume()` finishes it with the answer the server stored.
+- The core never clears the credential for a refusal code, an HTTP error, a key mismatch or a closed cable.
 
 ### Persisted queries
 

@@ -8,9 +8,9 @@ use crate::transport::encrypted::fake_server_tests::{config_body, FakeServer, Me
 use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64, SHORT_KEY_DER_B64, SHORT_KEY_PIN};
 use crate::transport::{CredentialSlot as CoreCredentials, HttpExchange, HttpReply, TransportError};
 
-struct ThroughServer(Arc<FakeServer>);
+pub(super) struct ThroughServer(pub(super) Arc<FakeServer>);
 
-fn failure(error: TransportError) -> DbError {
+pub(super) fn failure(error: TransportError) -> DbError {
     DbError::Network { detail: error.to_string() }
 }
 
@@ -34,7 +34,7 @@ impl CredentialStore for Held {
     fn clear(&self) -> Result<(), DbError> { self.0.clear().map_err(failure) }
 }
 
-struct SubscriptionsOnly;
+pub(super) struct SubscriptionsOnly;
 
 #[async_trait]
 impl Transport for SubscriptionsOnly {
@@ -61,7 +61,7 @@ fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<FakeServer>, Arc<Memo
     (database, server, credentials)
 }
 
-fn code(error: DbError) -> SessionCode {
+pub(super) fn code(error: DbError) -> SessionCode {
     let DbError::Session { code, .. } = error else { panic!("expected a session error, got {error:?}") };
     code
 }

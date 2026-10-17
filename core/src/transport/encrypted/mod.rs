@@ -53,3 +53,5 @@ mod key_tests;
 mod origin_tests;
 #[cfg(test)]
 mod persisted_query_tests;
+#[cfg(test)]
+mod session_guards_tests;

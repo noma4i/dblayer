@@ -152,9 +152,9 @@ impl EncryptedClient {
                 None => TransportError::Decode("the answer does not confirm the sequence".into()),
             });
         }
-        self.with_connection(|connection| state::commit(connection, pending.sequence))?;
-        if pending.path == LOGOUT_PATH && answer.body.get("revoked") == Some(&Value::Bool(true)) {
-            self.reset()?;
+        match pending.path == LOGOUT_PATH && answer.body.get("revoked") == Some(&Value::Bool(true)) {
+            true => self.reset()?,
+            false => self.with_connection(|connection| state::commit(connection, pending.sequence))?,
         }
         Ok(answer)
     }
