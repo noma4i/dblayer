@@ -28,9 +28,13 @@ fn stored(connection: &Connection, seq: i64) -> Option<(String, String, i64)> {
 #[test]
 fn append_stores_action_and_status_then_status_applies() {
     let connection = database();
-    let first = append_operation(&connection, &operation("m1", OperationStatus::Pending), &json!({})).unwrap();
-    let second = append_operation(&connection, &operation("m2", OperationStatus::Pending), &json!({})).unwrap();
+    let first = append_operation(&connection, &mut operation("m1", OperationStatus::Pending), &json!({})).unwrap();
+    let second = append_operation(&connection, &mut operation("m2", OperationStatus::Pending), &json!({})).unwrap();
     assert_eq!((first, second), (1, 2));
+    let operations = open_operations(&connection).unwrap();
+    assert!(!operations[0].client_mutation_id.is_empty());
+    assert!(!operations[1].client_mutation_id.is_empty());
+    assert_ne!(operations[0].client_mutation_id, operations[1].client_mutation_id);
     assert_eq!(stored(&connection, first), Some(("messages.send".into(), "pending".into(), 0)));
     set_status(&connection, first, OperationStatus::Committed).unwrap();
     assert_eq!(stored(&connection, first).unwrap().1, "committed");
@@ -50,7 +54,7 @@ fn open_operations_restores_pending_operation_and_excludes_committed() {
     pending.dedupe_key = Some("k".into());
     pending.created_at = 9;
     pending.since = 9;
-    let seq = append_operation(&connection, &pending, &json!({})).unwrap();
+    let seq = append_operation(&connection, &mut pending, &json!({})).unwrap();
     let loaded = open_operations(&connection).unwrap();
     assert_eq!(loaded.len(), 1);
     pending.id = OperationId(seq);
@@ -62,7 +66,7 @@ fn open_operations_restores_pending_operation_and_excludes_committed() {
 #[test]
 fn input_is_stored_and_read_back() {
     let connection = database();
-    let seq = append_operation(&connection, &operation("1", OperationStatus::Pending), &json!({"a": 1})).unwrap();
+    let seq = append_operation(&connection, &mut operation("1", OperationStatus::Pending), &json!({"a": 1})).unwrap();
     assert_eq!(operation_input(&connection, seq).unwrap(), Some(json!({"a": 1})));
     assert_eq!(operation_input(&connection, 99).unwrap(), None);
 }
@@ -71,7 +75,7 @@ fn input_is_stored_and_read_back() {
 fn apply_fsck_counts_only_status_actions() {
     let connection = database();
     assert_eq!(apply_fsck(&connection, &[], &Orphans::new()).unwrap(), 0);
-    let seq = append_operation(&connection, &operation("row-1", OperationStatus::Pending), &json!({})).unwrap();
+    let seq = append_operation(&connection, &mut operation("row-1", OperationStatus::Pending), &json!({})).unwrap();
     let skipped = [FsckAction::Keep(OperationId(seq)), FsckAction::QuarantineOrphan(RowId::new("orphan-1").unwrap())];
     assert_eq!(apply_fsck(&connection, &skipped, &Orphans::new()).unwrap(), 0);
     assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Pending);
@@ -88,7 +92,7 @@ fn op_columns_match_spec_and_nullability() {
     assert_eq!(
         names,
         [
-            "seq", "action_key", "status", "temp_id", "transport_started", "base_revision", "created_at", "dedupe_key", "attempts", "since", "error_kind", "error_message", "error_code", "error_disposition", "up_phase", "up_stage",
+            "seq", "action_key", "status", "temp_id", "transport_started", "base_revision", "created_at", "dedupe_key", "client_mutation_id", "attempts", "since", "error_kind", "error_message", "error_code", "error_disposition", "up_phase", "up_stage",
             "up_scenario", "up_total", "up_sent", "up_retries", "up_key", "up_upload_id", "up_signed_id", "up_blob_id", "up_document", "up_operation"
         ]
     );
@@ -147,7 +151,7 @@ fn apply_fsck_quarantines_and_removes_orphan_temp_rows() {
 fn create_operation(connection: &Connection, temp: &str, input: &serde_json::Value) -> OperationId {
     let mut operation = Operation::new("messages:create", vec![RowId::new(temp).unwrap()], 0, 1);
     operation.temp_id = Some(RowId::new(temp).unwrap());
-    let seq = append_operation(connection, &operation, input).unwrap();
+    let seq = append_operation(connection, &mut operation, input).unwrap();
     OperationId(seq)
 }
 

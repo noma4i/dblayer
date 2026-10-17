@@ -1,0 +1,17 @@
+{
+  "models": [{
+    "key": "Message",
+    "fields": [
+      {"name": "id", "kind": {"type": "scalar", "kind": "id"}},
+      {"name": "text", "kind": {"type": "scalar", "kind": "str"}}
+    ],
+    "actions": [{
+      "name": "create", "root_shape": "upsert", "mutation": "MessageSend",
+      "on_failure": "keep", "wrap": "input", "variables": {"text": "text"},
+      "client_mutation_id": true
+    }]
+  }],
+  "operations": [{"name": "MessageSend", "document": "mutation MessageSend($input: MessageInput!) { messageSend(input: $input) { id text } }"}],
+  "refusal": {"errors": [{"message": "in progress", "extensions": {"code": "IN_PROGRESS", "retryable": true}}]},
+  "answer": {"data": {"messageSend": {"id": "m1", "text": "hello"}}}
+}

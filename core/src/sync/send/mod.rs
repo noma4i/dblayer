@@ -7,6 +7,7 @@ mod variables;
 
 pub(crate) use flush::{Delivery, Sending};
 pub(crate) use outcomes::Outcomes;
+pub(crate) use variables::upload_variables;
 pub use report::{FlushReport, SendResult, SentOperation, SkipReason};
 
 use crate::commit::OperationStatus;
@@ -148,5 +149,7 @@ mod settle_wait_tests;
 mod rollback_tests;
 #[cfg(test)]
 mod variables_tests;
+#[cfg(test)]
+mod idempotency_tests;
 #[cfg(test)]
 mod created_rows_tests;

@@ -103,6 +103,14 @@ Every queued change keeps what it replaced: the old field values, or the destroy
 
 ## Failures
 
+Если входной тип мутации принимает `clientMutationId`, генератор отмечает это в spec без дополнительного поля модели.
+Библиотека сохраняет ключ в колонке операции до первой отправки. Повтор той же операции использует прежний ключ после перезапуска.
+Новая операция получает новый ключ. Явное значение приложения имеет приоритет.
+Это правило одинаково для Swift и Kotlin, включая финальную мутацию загрузки.
+При `on_failure: :keep` ошибки `IN_PROGRESS` и `DUPLICATE_CLIENT_KEY` сохраняют строку в `failed`.
+`retry()` и `retryAll()` повторяют сохранённый ключ. Успех подтверждает ответ с серверной строкой.
+Срок хранения результата V3 составляет 1 день. Ключ не гарантирует повторный успешный ответ после истечения этого срока.
+
 - If the network is unreachable before the transfer starts (no connection, connection refused, offline), the record stays `pending` and is sent again by itself with a growing pause, up to 40 attempts. Offline spends no attempts: the change waits for `setOnline(true)`. After 40 attempts the change fails like a refusal.
 - If the connection breaks after the transfer started, or no readable answer arrives, the record is marked `deliveryUnknown` and is never sent again by itself, because the server may have applied it.
 - A server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for you.

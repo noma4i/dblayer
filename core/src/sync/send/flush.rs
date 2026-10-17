@@ -22,7 +22,7 @@ use super::super::registry::OperationDef;
 use super::super::{locked, Inner};
 use super::report::{FlushReport, SendResult, SentOperation, SkipReason};
 use super::settle::response_ops;
-use super::variables::mutation_variables;
+use super::variables::{idempotent_variables, mutation_variables};
 
 const SETTLE_ATTEMPTS: usize = 3;
 
@@ -179,6 +179,7 @@ impl Inner {
         let Some(mutation) = declaration.mutation.clone() else { return Ok(None) };
         let is_id = |field: &str| spec.field(field).is_some_and(|field| matches!(field.kind, crate::schema::FieldKind::Scalar { kind: crate::value::ScalarKind::Id }));
         let variables = mutation_variables(&declaration, &entry.input, entry.operation.temp_id.as_ref(), &is_id);
+        let variables = idempotent_variables(&declaration, &entry.input, variables, &entry.operation.client_mutation_id);
         Ok(Some(Bound { model, action, declaration, mutation, variables }))
     }
 

@@ -84,17 +84,19 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
         declarations::infer(&mut parsed.models, schema).map_err(&locate)?;
     }
     declarations::prepare(&mut parsed.models).map_err(&locate)?;
-    let notes = match &loaded {
-        Some(schema) => schema_check::check_schema(schema, &scalars, operations, &names, &parsed.models, &parsed.operations)?.notes,
-        None => Vec::new(),
-    };
+    let checked = loaded.as_ref().map(|schema| schema_check::check_schema(schema, &scalars, operations, &names, &parsed.models, &parsed.operations)).transpose()?;
     let mut declared = build_declarations(parsed).map_err(locate)?;
+    if let Some(checked) = &checked {
+        for action in declared.models.iter_mut().flat_map(|model| &mut model.actions) {
+            action.client_mutation_id = action.mutation.as_ref().is_some_and(|name| checked.idempotent_inputs.contains(&(name.clone(), action.wrap.clone().unwrap_or_else(|| "input".into()))));
+        }
+    }
     let failed = |message: String| vec![FileError { file: names.first().cloned().unwrap_or_default(), error: ParseError::new(0, 0, message) }];
     declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.models, &declared.operations).map_err(&failed)?;
     operation::resolve_result_enums(&mut declared.operations, loaded.as_ref()).map_err(&failed)?;
     emit::enum_decls(&declared.models, &declared.operations, &declared.inputs).map_err(&failed)?;
     declared.scalars = scalars;
-    declared.notes = notes;
+    declared.notes = checked.map_or_else(Vec::new, |checked| checked.notes);
     Ok(declared)
 }
 

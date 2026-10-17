@@ -6,10 +6,32 @@ use crate::schema::ActionDeclaration;
 pub(crate) fn mutation_variables(declaration: &ActionDeclaration, input: &Value, temp: Option<&RowId>, is_id: &dyn Fn(&str) -> bool) -> Value {
     let is_id = |name: &str| declaration.args.get(name).map_or_else(|| is_id(name), |kind| kind.starts_with("id") && !kind.starts_with("ids"));
     let variables = plain_variables(declaration, input, temp, &is_id);
+    wrap_variables(declaration, variables)
+}
+
+fn wrap_variables(declaration: &ActionDeclaration, variables: Value) -> Value {
     match &declaration.wrap {
         Some(key) => Value::Object(Map::from_iter([(key.clone(), variables)])),
         None => variables,
     }
+}
+
+pub(crate) fn idempotent_variables(declaration: &ActionDeclaration, input: &Value, mut variables: Value, key: &str) -> Value {
+    if declaration.client_mutation_id {
+        let target = match &declaration.wrap {
+            Some(wrap) => variables.get_mut(wrap),
+            None => variables.get_mut("input"),
+        };
+        if let Some(target) = target.and_then(Value::as_object_mut) {
+            let explicit = input.get("clientMutationId").or_else(|| input.get("input").and_then(|input| input.get("clientMutationId")));
+            target.entry("clientMutationId").or_insert_with(|| explicit.cloned().unwrap_or_else(|| Value::String(key.to_string())));
+        }
+    }
+    variables
+}
+
+pub(crate) fn upload_variables(declaration: &ActionDeclaration, input: Value, key: &str) -> Value {
+    idempotent_variables(declaration, &input, wrap_variables(declaration, input.clone()), key)
 }
 
 fn plain_variables(declaration: &ActionDeclaration, input: &Value, temp: Option<&RowId>, is_id: &dyn Fn(&str) -> bool) -> Value {

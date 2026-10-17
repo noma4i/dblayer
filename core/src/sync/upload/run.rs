@@ -229,15 +229,21 @@ impl Runner {
         if let Some(name) = &self.input.steps.blob_id_variable {
             variables.insert(name.clone(), json!(blob));
         }
-        let request = crate::transport::GraphQLRequest::new(&operation.document, &operation.name, serde_json::Value::Object(variables));
         let Some(entry) = self.inner.db.outbox().ok().and_then(|entries| entries.into_iter().find(|entry| entry.operation.id.0 == self.seq)) else {
             return Err(Stop::Superseded);
         };
+        let spec = self.inner.db.spec(&self.model).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+        let declaration = spec.actions.iter().find(|action| action.mutation.as_deref() == Some(&operation.name));
+        let variables = serde_json::Value::Object(variables);
+        let variables = match declaration {
+            Some(declaration) => super::super::send::upload_variables(declaration, variables, &entry.operation.client_mutation_id),
+            None => variables,
+        };
+        let request = crate::transport::GraphQLRequest::new(&operation.document, &operation.name, variables);
         let sending = Sending {
             entry: &entry,
             model: self.model.clone(),
-            action: self.inner.db.spec(&self.model).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?
-                .actions.iter().find(|action| action.mutation.as_deref() == Some(&operation.name)).map_or_else(|| operation.name.clone(), |action| action.name.clone()),
+            action: declaration.map_or_else(|| operation.name.clone(), |action| action.name.clone()),
             generation: self.inner.db.generation(),
             base_revision: self.inner.db.revision_seq().unwrap_or_default(),
         };

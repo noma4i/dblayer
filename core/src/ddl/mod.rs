@@ -85,6 +85,7 @@ const CORE_STATEMENTS: [&str; 23] = [
   base_revision INTEGER,
   created_at INTEGER NOT NULL,
   dedupe_key TEXT,
+  client_mutation_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
   attempts INTEGER NOT NULL DEFAULT 0,
   since INTEGER NOT NULL,
   error_kind TEXT,

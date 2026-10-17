@@ -736,6 +736,8 @@ pub enum RootShape {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActionDeclaration {
+    #[serde(default)]
+    pub client_mutation_id: bool,
     pub name: String,
     pub root_shape: RootShape,
     #[serde(default)]
@@ -789,6 +791,7 @@ pub struct ActionLanding {
 impl ActionDeclaration {
     pub fn new(name: &str, root_shape: RootShape) -> Self {
         Self {
+            client_mutation_id: false,
             name: name.to_string(),
             root_shape,
             on_failure: OnFailure::Rollback,

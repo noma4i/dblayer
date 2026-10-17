@@ -12,7 +12,7 @@ use crate::identity::RowId;
 const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
 
 #[cfg(test)]
-pub fn append_operation(connection: &Connection, operation: &Operation, input: &Value) -> rusqlite::Result<i64> {
+pub fn append_operation(connection: &Connection, operation: &mut Operation, input: &Value) -> rusqlite::Result<i64> {
     connection.execute(
         "INSERT INTO op (action_key, status, temp_id, transport_started, base_revision, dedupe_key, created_at, since) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
@@ -27,6 +27,7 @@ pub fn append_operation(connection: &Connection, operation: &Operation, input: &
         ],
     )?;
     let seq = connection.last_insert_rowid();
+    operation.client_mutation_id = connection.query_row("SELECT client_mutation_id FROM op WHERE seq = ?", [seq], |row| row.get(0))?;
     write_rows(connection, seq, &operation.row_ids)?;
     write_value(connection, seq, "input", Some(input))?;
     Ok(seq)
@@ -43,7 +44,7 @@ pub fn operation_input(connection: &Connection, sequence: i64) -> rusqlite::Resu
 
 pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operation>> {
     let sql = format!(
-        "SELECT seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_code, error_disposition, since, {UPLOAD_COLUMNS} \
+        "SELECT seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_code, error_disposition, since, {UPLOAD_COLUMNS}, client_mutation_id \
          FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq"
     );
     let mut rows_of = read_all_rows(connection)?;
@@ -68,6 +69,7 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
                 error: failure_at(row, 9)?,
                 since: row.get(13)?,
                 upload: upload_at(row, 14)?,
+                client_mutation_id: row.get(26)?,
             },
             OperationStatus::from_sql(&status).is_some(),
         ))

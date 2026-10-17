@@ -8,6 +8,8 @@ use crate::{FileError, ParseError};
 
 mod graphql;
 mod inputs;
+#[cfg(test)]
+mod idempotency_tests;
 mod paths;
 mod standalone;
 
@@ -21,6 +23,7 @@ type Declared<'a> = HashMap<&'a str, (usize, &'a [Call])>;
 
 pub struct Outcome {
     pub notes: Vec<String>,
+    pub idempotent_inputs: HashSet<(String, String)>,
 }
 
 pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], files: &[String], nodes: &[ModelNode], standalone: &[OperationNode]) -> Result<Outcome, Vec<FileError>> {
@@ -46,7 +49,13 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     let mut found = run.found;
     found.sort_by(|left, right| (&left.file, left.error.line, &left.error.message).cmp(&(&right.file, right.error.line, &right.error.message)));
     found.dedup();
-    if found.is_empty() { Ok(Outcome { notes: run.notes }) } else { Err(found) }
+    if !found.is_empty() { return Err(found); }
+    let idempotent_inputs = documents.named.iter().filter(|(_, operation)| operation.kind == "mutation")
+        .flat_map(|(name, operation)| operation.variables.iter().filter_map(move |(variable, ty)| {
+            schema.input_fields(ty.name()).filter(|fields| fields.contains_key("clientMutationId"))
+                .map(|_| (name.clone(), variable.clone()))
+        })).collect();
+    Ok(Outcome { notes: run.notes, idempotent_inputs })
 }
 
 fn operation_files(paths: &[PathBuf]) -> Vec<PathBuf> {

@@ -255,6 +255,7 @@ fn core_table_columns_match_spec() {
         "base_revision",
         "created_at",
         "dedupe_key",
+        "client_mutation_id",
         "attempts",
         "since",
         "error_kind",

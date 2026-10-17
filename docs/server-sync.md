@@ -116,6 +116,20 @@ One rule decides, the sequence of the refusal:
 
 `sessionResume()` closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
 
+Для мутаций с `clientMutationId` во входном типе SDL генератор выставляет `client_mutation_id` в spec действия.
+Объявлять поле в модели не нужно. Без SDL автоматическая передача ключа отключена.
+SQLite присваивает каждой новой операции случайный 128-битный ключ и хранит его в колонке `op.client_mutation_id`.
+Ключ сохраняется при перезапуске, `flush`, `retry`, `retryAll`, `sessionResume` и повторе финальной мутации загрузки.
+Новый зашифрованный запрос получает прежний ключ операции. Новая операция получает новый ключ.
+Значение приложения в `input.clientMutationId` имеет приоритет, включая явно переданный `null`.
+Технические шаги загрузки используют прежние `key`, `uploadId` и сохранённый зашифрованный запрос.
+
+V3 хранит результат по пользователю, имени мутации и ключу 1 день. Повтор при живом ключе получает прежний успешный результат.
+`IN_PROGRESS` с `on_failure: :keep` оставляет строку в `failed`. Ручной `retry` повторяет тот же ключ.
+`DUPLICATE_CLIENT_KEY` с `on_failure: :keep` также сохраняет строку в `failed`.
+Библиотека не объявляет успех без серверной строки и не пытается найти её через неполный список.
+Ключи `messageAlbumSend.items[].clientKey` задаёт приложение. Библиотека их не меняет.
+
 Uploads also own their saved requests, including blob creation, multipart signing, completion, abort and the final mutation.
 After reopening the database, `sessionResume()` passes the answer to the same upload step and continues its remaining work.
 The saved request identifies the exact part numbers when an upload URL needs renewal.

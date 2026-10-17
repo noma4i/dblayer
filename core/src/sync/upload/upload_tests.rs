@@ -163,6 +163,34 @@ async fn uploads_use_the_declared_result_of_each_content_mutation() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn idempotency_upload_final_mutation_keeps_its_key_on_retry() {
+    let mut models = keeping_specs();
+    let action = &mut models[1].actions[0];
+    action.wrap = Some("input".into());
+    let mut encoded = serde_json::to_value(&action).unwrap();
+    encoded["client_mutation_id"] = json!(true);
+    *action = serde_json::from_value(encoded).unwrap();
+    let db = crate::db::Db::open_in_memory(models, None).unwrap();
+    let rig = rig_on(db, crate::transport::MockTransport::new(), SyncConfig::default());
+    rig.sync.register(OperationDef::new("CreateBlob", "mutation B { createBlob }", "createBlob"));
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Interrupted("lost response".into())));
+    rig.transport.enqueue("CreateMoment", created("m9"));
+    let source = file(b"photo");
+    let row = rig.sync.upload_create("moments", params(json!({"text": "clip"})), input(&source)).await.unwrap();
+    rig.sync.wait_uploads().await;
+    rig.sync.retry("moments", &row).await.unwrap();
+    rig.sync.wait_uploads().await;
+    let calls = variables(&rig, "CreateMoment");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0], calls[1]);
+    assert!(calls[0]["input"]["clientMutationId"].as_str().is_some());
+    assert_eq!(calls[0]["input"]["signedId"], "sid");
+    assert!(variables(&rig, "CreateBlob")[0].get("clientMutationId").is_none());
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn dropping_sync_stops_uploads_before_the_next_request() {
     let rig = upload_rig(small());
     rig.transport.enqueue("CreateBlob", blob().after(Duration::from_secs(60)));
