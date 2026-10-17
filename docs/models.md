@@ -365,7 +365,9 @@ val chats = Chat.nodes(ids)
 
 `dblayer-gen --schema schema.graphql models/*.dbl` checks the declarations against the GraphQL schema of the server. It prints nothing but notes when every check passes, and exits with code 1 and a file and line for each mismatch.
 
-For each scope with `fetch`, the check finds the named operation, takes its first field (the alias when there is one) and follows `root:` from there, through connections (`nodes` or `edges { node }`) to the type that holds the rows. Operations are read from the `queries`, `mutations` and `subscriptions` directories next to the schema file, or from every `--operations <file or directory>` you pass. Without operation documents the operation name is read as the schema field.
+For each scope with `fetch`, the check finds the named operation, takes its first field (the alias when there is one) and follows `root:` from there, through connections (`nodes` or `edges { node }`) to the type that holds the rows. Operations and fragments are read from the `queries`, `mutations`, `subscriptions` and `fragments` directories next to the schema file, or from every `--operations <file or directory>` you pass. A spread of a fragment that no document declares is an error.
+
+`from:` names the key of the response, which is the alias when the operation gives one (`giftTier: kind` is read with `from: "giftTier"`). The check follows each key through the selection of the operation, into inline fragments and named fragments, and tests the schema field behind it. The key of a field that the operation does not select is taken as the schema field name. A union or interface field must select `__typename` somewhere in its own selection, also inside a fragment. Without operation documents the operation name is read as the schema field.
 
 Every field of the model, every `from:` path, every `id_from:` and every field of a nested type must exist on that type. The check reports:
 

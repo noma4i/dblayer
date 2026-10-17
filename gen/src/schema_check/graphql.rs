@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -201,6 +201,42 @@ fn select_of(set: &SelectionSet<'_, String>) -> Select {
 }
 
 impl Operations {
+    pub fn each_select<'b>(&'b self, select: &'b Select, on: Option<&'b str>, visit: &mut impl FnMut(&'b Select, Option<&'b str>), seen: &mut Vec<&'b str>) {
+        visit(select, on);
+        for (on, inner) in &select.on {
+            self.each_select(inner, Some(on), visit, seen);
+        }
+        for spread in &select.spreads {
+            if let (false, Some((on, inner))) = (seen.contains(&spread.as_str()), self.fragments.get(spread)) {
+                seen.push(spread);
+                self.each_select(inner, Some(on), visit, seen);
+            }
+        }
+    }
+
+    pub fn fields_in<'b>(&'b self, select: &'b Select, key: &str, apart: &[String]) -> Vec<&'b SelectedField> {
+        let mut found = Vec::new();
+        self.each_select(select, None, &mut |inner, on| {
+            if !on.is_some_and(|on| apart.iter().any(|other| other == on)) {
+                found.extend(inner.fields.iter().filter(|field| field.key == key));
+            }
+        }, &mut Vec::new());
+        found
+    }
+
+    pub fn missing_spreads(&self) -> BTreeSet<&str> {
+        let mut missing = BTreeSet::new();
+        let roots = self.named.values().map(|operation| &operation.select).chain(self.fragments.values().map(|(_, select)| select));
+        roots.for_each(|select| self.collect_missing(select, &mut missing));
+        missing
+    }
+
+    fn collect_missing<'b>(&'b self, select: &'b Select, missing: &mut BTreeSet<&'b str>) {
+        missing.extend(select.spreads.iter().map(String::as_str).filter(|spread| !self.fragments.contains_key(*spread)));
+        select.fields.iter().for_each(|field| self.collect_missing(&field.select, missing));
+        select.on.iter().for_each(|(_, inner)| self.collect_missing(inner, missing));
+    }
+
     pub fn load(&mut self, path: &Path) -> Result<(), String> {
         let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
         let document = query::parse_query::<String>(&text).map_err(|error| error.to_string())?;

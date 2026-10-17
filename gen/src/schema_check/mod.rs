@@ -28,6 +28,9 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     for path in operation_files(operations) {
         documents.load(&path).map_err(|message| failed(&path, message))?;
     }
+    if let Some(spread) = documents.missing_spreads().into_iter().next() {
+        return Err(vec![FileError { file: "operation documents".to_string(), error: ParseError::new(0, 0, format!("fragment `{spread}` is not in the operation documents")) }]);
+    }
     let mut declared = Declared::new();
     for node in nodes {
         for schema_block in node.body.iter().filter(|call| call.word == "schema") {
@@ -107,11 +110,26 @@ struct Run<'a> {
     notes: Vec<String>,
 }
 
-struct Scope {
+struct Scope<'a> {
     file: usize,
     keys: HashSet<String>,
     top: bool,
     lists: bool,
+    selects: Vec<&'a Select>,
+    apart: Vec<String>,
+}
+
+struct Walked<'a> {
+    ty: Ty,
+    nullable_hop: bool,
+    first: String,
+    selects: Vec<&'a Select>,
+}
+
+impl<'a> Scope<'a> {
+    fn inside(file: usize, selects: Vec<&'a Select>) -> Self {
+        Self { file, keys: HashSet::new(), top: false, lists: false, selects, apart: Vec::new() }
+    }
 }
 
 impl<'a> Run<'a> {
@@ -129,9 +147,9 @@ impl<'a> Run<'a> {
             let keys = node.body.iter().filter(|call| matches!(call.word.as_str(), "belongs_to" | "has_one" | "has_many" | "references")).map(|call| crate::build::association_key(call, &node.name)).collect();
             let fields: Vec<&Call> = node.body.iter().filter(|call| call.word == "schema").flat_map(|call| call.block.iter().flatten()).collect();
             let mut covered = BTreeSet::new();
-            self.check_fields(node, &fields, &element, &Scope { file: node.file, keys, top: true, lists: false }, &mut covered, &mut Vec::new());
-            self.check_associations(node, &element);
-            self.check_union_selections(node, remote);
+            let selects: Vec<&'a Select> = node.body.iter().filter(|call| call.word == "remote").filter_map(|call| self.element_select(call)).collect();
+            self.check_fields(node, &fields, &element, &Scope { keys, top: true, ..Scope::inside(node.file, selects.clone()) }, &mut covered, &mut Vec::new());
+            self.check_associations(node, &element, selects);
             self.list_unmodeled(node, remote, &element, &covered);
         }
         self.check_mutation_args(node);
@@ -286,7 +304,7 @@ impl<'a> Run<'a> {
         };
         let mut types: Vec<&str> = Vec::new();
         let mut bare: Vec<&str> = Vec::new();
-        self.each_select(select, None, &mut |inner, on| match on {
+        self.operations.each_select(select, None, &mut |inner, on| match on {
             Some(on) if on != interface => types.extend((!types.contains(&on)).then_some(on)),
             _ => bare.extend(inner.fields.iter().map(|field| field.key.as_str())),
         }, &mut Vec::new());
@@ -324,7 +342,7 @@ impl<'a> Run<'a> {
         found
     }
 
-    fn check_fields(&mut self, node: &'a ModelNode, calls: &[&'a Call], owner: &str, scope: &Scope, covered: &mut BTreeSet<String>, stack: &mut Vec<(String, String)>) {
+    fn check_fields(&mut self, node: &'a ModelNode, calls: &[&'a Call], owner: &str, scope: &Scope<'a>, covered: &mut BTreeSet<String>, stack: &mut Vec<(String, String)>) {
         for call in calls {
             let name = name_of(call);
             if matches!(call.word.as_str(), "index" | "ephemeral" | "file") || flag(call, "local") || name.is_empty() {
@@ -333,8 +351,8 @@ impl<'a> Run<'a> {
             let Some(path) = self.path_of(node, call, name, scope) else { continue };
             let segments: Vec<&str> = path.iter().map(String::as_str).collect();
             let Some(reached) = self.walk(scope.file, call, owner, &segments, scope, name) else { continue };
-            covered.insert(segments[0].to_string());
-            self.check_kind(node, call, name, &reached.0, reached.1, scope.file);
+            covered.insert(reached.first.clone());
+            self.check_kind(node, call, name, &reached.ty, reached.nullable_hop, scope.file);
             let block: Option<(usize, &'a [Call])> = match (&call.block, option_text(call, "as")) {
                 (Some(block), _) => Some((scope.file, block.as_slice())),
                 (None, Some(declared)) => self.declared.get(declared).copied(),
@@ -342,48 +360,33 @@ impl<'a> Run<'a> {
             };
             let Some((file, children)) = block else { continue };
             if children.iter().any(|child| child.word == "variant") {
-                self.check_union(node, call, reached.0.name(), children, file, stack);
+                for select in &reached.selects {
+                    self.check_union_selection(scope.file, call, reached.ty.name(), children, select);
+                }
+                self.check_union(node, call, reached.ty.name(), children, file, &reached.selects, stack);
                 continue;
             }
-            let marker = (option_text(call, "as").unwrap_or(name).to_string(), reached.0.name().to_string());
-            if !matches!(self.schema.types.get(reached.0.name()), Some(TypeKind::Fields(_))) || stack.contains(&marker) {
+            let marker = (option_text(call, "as").unwrap_or(name).to_string(), reached.ty.name().to_string());
+            if !matches!(self.schema.types.get(reached.ty.name()), Some(TypeKind::Fields(_))) || stack.contains(&marker) {
                 continue;
             }
             stack.push(marker);
             let inner: Vec<&Call> = children.iter().collect();
-            self.check_fields(node, &inner, reached.0.name(), &Scope { file, keys: HashSet::new(), top: false, lists: false }, &mut BTreeSet::new(), stack);
+            self.check_fields(node, &inner, reached.ty.name(), &Scope::inside(file, reached.selects), &mut BTreeSet::new(), stack);
             stack.pop();
         }
     }
 
-    fn each_select<'b>(&'b self, select: &'b Select, on: Option<&'b str>, visit: &mut impl FnMut(&'b Select, Option<&'b str>), seen: &mut Vec<&'b str>) {
-        visit(select, on);
-        for (on, inner) in &select.on {
-            self.each_select(inner, Some(on), visit, seen);
-        }
-        for spread in &select.spreads {
-            if let (false, Some((on, inner))) = (seen.contains(&spread.as_str()), self.operations.fragments.get(spread)) {
-                seen.push(spread);
-                self.each_select(inner, Some(on), visit, seen);
-            }
-        }
-    }
-
-    fn field_in<'b>(&'b self, select: &'b Select, key: &str) -> Option<&'b graphql::SelectedField> {
-        let mut found = None;
-        self.each_select(select, None, &mut |inner, _| found = found.or_else(|| inner.fields.iter().find(|field| field.key == key)), &mut Vec::new());
-        found
-    }
-
-    fn element_select(&self, remote: &Call) -> Option<&Select> {
+    fn element_select(&self, remote: &Call) -> Option<&'a Select> {
+        let operations: &'a Operations = self.operations;
         let lines = remote.block.as_deref().unwrap_or_default();
         let query = lines.iter().find(|call| call.word == "query")?;
-        let operation = self.operations.named.get(name_of(query))?;
+        let operation = operations.named.get(name_of(query))?;
         let root = operation.root.as_ref()?;
         let path = option_text(query, "root").unwrap_or(&root.key);
         let mut select = &operation.select.fields.iter().find(|field| field.key == root.key)?.select;
         for segment in path.split('.').skip(1) {
-            select = &self.field_in(select, segment)?.select;
+            select = &operations.fields_in(select, segment, &[]).first().copied()?.select;
         }
         if lines.iter().any(|call| call.word == "paginate") {
             select = match select.fields.iter().find(|field| field.name == "nodes") {
@@ -394,52 +397,22 @@ impl<'a> Run<'a> {
         Some(select)
     }
 
-    fn check_union_selections(&mut self, node: &'a ModelNode, remote: &Call) {
-        let Some(element) = self.element_select(remote) else { return };
-        let mut selected: Vec<&graphql::SelectedField> = Vec::new();
-        self.each_select(element, None, &mut |select, _| selected.extend(select.fields.iter()), &mut Vec::new());
-        let mut at = 0;
-        while let Some(field) = selected.get(at).copied() {
-            at += 1;
-            self.each_select(&field.select, None, &mut |select, _| selected.extend(select.fields.iter()), &mut Vec::new());
+    fn check_union_selection(&mut self, file: usize, call: &Call, union: &str, children: &[Call], select: &Select) {
+        let noun = if self.schema.is_interface(union) { "interface" } else { "union" };
+        let mut found: (bool, Vec<&str>) = (false, Vec::new());
+        self.operations.each_select(select, None, &mut |inner, on| {
+            found.0 |= inner.typename;
+            found.1.extend(on.filter(|on| *on != union));
+        }, &mut Vec::new());
+        if !found.0 {
+            self.fail(file, call.line, call.column, format!("field `{}`: the selection of `{}` must select `__typename`", name_of(call), option_text(call, "from").unwrap_or(name_of(call))));
         }
-        let mut problems = Vec::new();
-        for call in node.body.iter().filter(|call| call.word == "schema") {
-            self.union_selection_problems(call.block.as_deref().unwrap_or_default(), &selected, &mut problems);
-        }
-        for (line, column, message) in problems {
-            self.fail(node.file, line, column, message);
+        for on in found.1.iter().filter(|on| !children.iter().any(|variant| variant.word == "variant" && name_of(variant) == **on)) {
+            self.fail(file, call.line, call.column, format!("field `{}`: `... on {on}` is not a declared variant of {noun} `{union}`", name_of(call)));
         }
     }
 
-    fn union_selection_problems(&self, calls: &'a [Call], selected: &[&graphql::SelectedField], problems: &mut Vec<(usize, usize, String)>) {
-        for call in calls {
-            let variants: &[Call] = match (&call.block, call.word.as_str()) {
-                (Some(block), _) if crate::unions::is_union_call(call) => block,
-                (None, "object" | "array") => option_text(call, "as").and_then(|name| self.declared.get(name)).map(|(_, block)| *block).filter(|block| block.iter().any(|child| child.word == "variant")).unwrap_or_default(),
-                _ => &[],
-            };
-            let union = option_text(call, "as").unwrap_or_default();
-            let noun = if self.schema.is_interface(union) { "interface" } else { "union" };
-            let schema_name = option_text(call, "from").unwrap_or(name_of(call)).split('.').next().unwrap_or_default();
-            for field in selected.iter().filter(|field| !variants.is_empty() && field.name == schema_name) {
-                let mut found: (bool, Vec<&str>) = (false, Vec::new());
-                self.each_select(&field.select, None, &mut |select, on| {
-                    found.0 |= select.typename;
-                    found.1.extend(on.filter(|on| *on != union));
-                }, &mut Vec::new());
-                if !found.0 {
-                    problems.push((call.line, call.column, format!("field `{}`: the selection of `{schema_name}` must select `__typename`", name_of(call))));
-                }
-                for on in found.1.iter().filter(|on| !variants.iter().any(|variant| variant.word == "variant" && name_of(variant) == **on)) {
-                    problems.push((call.line, call.column, format!("field `{}`: `... on {on}` is not a declared variant of {noun} `{union}`", name_of(call))));
-                }
-            }
-            self.union_selection_problems(call.block.as_deref().unwrap_or_default(), selected, problems);
-        }
-    }
-
-    fn check_union(&mut self, node: &'a ModelNode, call: &Call, union: &str, children: &'a [Call], file: usize, stack: &mut Vec<(String, String)>) {
+    fn check_union(&mut self, node: &'a ModelNode, call: &Call, union: &str, children: &'a [Call], file: usize, selects: &[&'a Select], stack: &mut Vec<(String, String)>) {
         let interface = self.schema.is_interface(union);
         let members: Vec<String> = match self.schema.types.get(union) {
             Some(TypeKind::Union(members)) => members.clone(),
@@ -460,7 +433,7 @@ impl<'a> Run<'a> {
             self.fail(file, at.line, at.column, message);
         }
         if let Some(shared) = children.iter().find(|child| child.word == "shared") {
-            self.check_shared(node, shared, union, &members, interface, file, stack);
+            self.check_shared(node, shared, union, &members, interface, file, selects, stack);
         }
         for variant in variants.iter().filter(|variant| members.iter().any(|member| member == name_of(variant))) {
             let Some(block) = &variant.block else { continue };
@@ -470,22 +443,27 @@ impl<'a> Run<'a> {
             }
             stack.push(marker);
             let inner: Vec<&Call> = block.iter().collect();
-            self.check_fields(node, &inner, name_of(variant), &Scope { file, keys: HashSet::new(), top: false, lists: false }, &mut BTreeSet::new(), stack);
+            let apart = declared.iter().filter(|other| **other != name_of(variant)).map(|other| other.to_string()).collect();
+            self.check_fields(node, &inner, name_of(variant), &Scope { apart, ..Scope::inside(file, selects.to_vec()) }, &mut BTreeSet::new(), stack);
             stack.pop();
         }
     }
 
-    fn check_shared(&mut self, node: &'a ModelNode, shared: &'a Call, union: &str, members: &[String], interface: bool, file: usize, stack: &mut Vec<(String, String)>) {
+    fn check_shared(&mut self, node: &'a ModelNode, shared: &'a Call, union: &str, members: &[String], interface: bool, file: usize, selects: &[&'a Select], stack: &mut Vec<(String, String)>) {
         if !interface {
             self.fail(file, shared.line, shared.column, format!("`shared` needs an interface: `{union}` is a union"));
             return;
         }
         let fields: Vec<&Call> = shared.block.iter().flatten().collect();
-        self.check_fields(node, &fields, union, &Scope { file, keys: HashSet::new(), top: false, lists: false }, &mut BTreeSet::new(), stack);
+        self.check_fields(node, &fields, union, &Scope::inside(file, selects.to_vec()), &mut BTreeSet::new(), stack);
         for field in &fields {
             let key = option_text(field, "from").unwrap_or(name_of(field)).split('.').next().unwrap_or_default();
-            for member in members.iter().filter(|member| self.schema.field(member, key).is_err()) {
-                self.fail(file, field.line, field.column, format!("implementation `{member}` of interface `{union}` has no field `{key}`"));
+            for member in members {
+                let apart: Vec<String> = members.iter().filter(|other| *other != member).cloned().collect();
+                let name = selects.iter().find_map(|select| self.operations.fields_in(select, key, &apart).first().map(|found| found.name.as_str())).unwrap_or(key);
+                if self.schema.field(member, name).is_err() {
+                    self.fail(file, field.line, field.column, format!("implementation `{member}` of interface `{union}` has no field `{name}`"));
+                }
             }
         }
     }
@@ -500,11 +478,20 @@ impl<'a> Run<'a> {
         Some(option_text(call, "from").unwrap_or(name).split('.').map(str::to_string).collect())
     }
 
-    fn walk(&mut self, file: usize, call: &Call, owner: &str, segments: &[&str], scope: &Scope, name: &str) -> Option<(Ty, bool)> {
+    fn walk(&mut self, file: usize, call: &Call, owner: &str, segments: &[&str], scope: &Scope<'a>, name: &str) -> Option<Walked<'a>> {
+        let operations: &'a Operations = self.operations;
+        let mut selects = scope.selects.clone();
+        let mut first = String::new();
         let mut current = owner.to_string();
         let mut nullable_hop = false;
         let mut crossed = false;
-        for (index, segment) in segments.iter().enumerate() {
+        for (index, key) in segments.iter().enumerate() {
+            let selected: Vec<&'a graphql::SelectedField> = selects.iter().flat_map(|inside| operations.fields_in(inside, key, &scope.apart)).collect();
+            let segment = selected.first().map_or(*key, |field| field.name.as_str());
+            selects = selected.iter().map(|field| &field.select).collect();
+            if index == 0 {
+                first = segment.to_string();
+            }
             let reached = match self.schema.field(&current, segment) {
                 Ok(reached) => reached,
                 Err(_) if scope.top && scope.keys.contains(name) => return None,
@@ -514,7 +501,7 @@ impl<'a> Run<'a> {
                 }
             };
             if index + 1 == segments.len() {
-                return Some((if crossed && !reached.is_list() { reached.into_list() } else { reached }, nullable_hop));
+                return Some(Walked { ty: if crossed && !reached.is_list() { reached.into_list() } else { reached }, nullable_hop, first, selects });
             }
             if reached.is_list() && !scope.lists {
                 self.fail(file, call.line, call.column, format!("field `{name}`: path `{}` crosses the list `{segment}`", segments.join(".")));
@@ -585,12 +572,11 @@ impl<'a> Run<'a> {
         if missing.is_empty() { Vec::new() } else { vec![format!("lists values {} that enum `{named}` does not have", missing.join(", "))] }
     }
 
-    fn check_associations(&mut self, node: &ModelNode, element: &str) {
+    fn check_associations(&mut self, node: &ModelNode, element: &str, selects: Vec<&'a Select>) {
         for call in node.body.iter().filter(|call| matches!(call.word.as_str(), "belongs_to" | "has_one" | "has_many" | "references")) {
             let Some(path) = option_text(call, "from") else { continue };
             let segments: Vec<&str> = path.split('.').collect();
-            let keys = HashSet::new();
-            let Some((reached, _)) = self.walk(node.file, call, element, &segments, &Scope { file: node.file, keys, top: false, lists: true }, name_of(call)) else { continue };
+            let Some(Walked { ty: reached, .. }) = self.walk(node.file, call, element, &segments, &Scope { lists: true, ..Scope::inside(node.file, selects.clone()) }, name_of(call)) else { continue };
             let one = matches!(call.word.as_str(), "belongs_to" | "has_one");
             if one == reached.is_list() {
                 let expected = if one { "one object" } else { "a list" };
@@ -619,3 +605,6 @@ mod union_tests;
 
 #[cfg(test)]
 mod interface_tests;
+
+#[cfg(test)]
+mod alias_tests;

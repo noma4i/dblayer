@@ -39,7 +39,7 @@ fn main() -> ExitCode {
     }
     if let Some(schema) = &options.schema {
         if options.operations.is_empty() {
-            let beside = ["queries", "mutations", "subscriptions"].map(|name| schema.parent().map(|parent| parent.join(name)));
+            let beside = ["queries", "mutations", "subscriptions", "fragments"].map(|name| schema.parent().map(|parent| parent.join(name)));
             options.operations.extend(beside.into_iter().flatten().filter(|beside| beside.is_dir()));
         }
     }
