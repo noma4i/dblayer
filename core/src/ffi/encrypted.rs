@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use crate::sync::SyncError;
-use crate::transport::{self as core, EncryptedClient, EncryptedConfig, EncryptedTransport, ServerConfig};
+use crate::transport::{self as core, EncryptedClient, EncryptedConfig, EncryptedTransport, ServerConfig, SessionCode};
 use super::database::{executor, Config, Database};
 use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
@@ -23,43 +23,6 @@ pub trait CredentialStore: Send + Sync {
     fn set(&self, credential: String) -> Result<(), DbError>;
     fn clear(&self) -> Result<(), DbError>;
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum SessionCode {
-    SequenceConflict,
-    ReplayedRequest,
-    RateLimited,
-    AccountUnavailable,
-    Unauthenticated,
-    SessionEnded,
-    InvalidCode,
-    InvalidPhone,
-    InvalidProvider,
-    ProviderRejected,
-    AlreadyAuthenticated,
-    ServerKeyMismatch,
-    Other,
-}
-
-impl SessionCode {
-    fn of(code: &str) -> Self {
-        match code {
-            "SEQUENCE_CONFLICT" => Self::SequenceConflict,
-            "REPLAYED_REQUEST" => Self::ReplayedRequest,
-            "RATE_LIMITED" => Self::RateLimited,
-            "ACCOUNT_UNAVAILABLE" => Self::AccountUnavailable,
-            "UNAUTHENTICATED" => Self::Unauthenticated,
-            "SESSION_ENDED" => Self::SessionEnded,
-            "INVALID_CODE" => Self::InvalidCode,
-            "INVALID_PHONE" => Self::InvalidPhone,
-            "INVALID_PROVIDER" => Self::InvalidProvider,
-            "PROVIDER_REJECTED" => Self::ProviderRejected,
-            "ALREADY_AUTHENTICATED" => Self::AlreadyAuthenticated,
-            _ => Self::Other,
-        }
-    }
-}
-
 
 struct ForeignHttp(Arc<dyn EncryptedHttp>);
 

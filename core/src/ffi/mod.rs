@@ -8,7 +8,8 @@ mod transport;
 pub mod wire;
 
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
-pub use encrypted::{CredentialStore, EncryptedHttp, EncryptedReply, SessionCode};
+pub use encrypted::{CredentialStore, EncryptedHttp, EncryptedReply};
+pub use crate::transport::SessionCode;
 pub use crate::transport::{EncryptedConfig, ServerConfig, ServerKeyInfo};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
 pub use live::{LiveChange, LiveSubscription, QueryListener};
@@ -49,6 +50,7 @@ impl From<crate::sync::SyncError> for DbError {
             SyncError::Transport(TransportError::Http { status, body }) => Self::Http { status, detail: body },
             SyncError::Transport(TransportError::Network(detail)) => Self::Network { detail },
             SyncError::Transport(TransportError::Interrupted(detail)) => Self::Interrupted { detail },
+            SyncError::Transport(TransportError::Session { code, detail }) => Self::Session { code, detail },
             SyncError::Transport(TransportError::Graphql { messages }) | SyncError::Graphql(messages) => Self::Graphql { messages },
             other => Self::Sync { detail: other.to_string() },
         }
@@ -60,7 +62,9 @@ impl From<serde_json::Error> for DbError {
 }
 
 #[cfg(test)]
-mod encrypted_tests;
+pub(super) mod encrypted_tests;
+#[cfg(test)]
+mod sealed_errors_tests;
 #[cfg(test)]
 mod session_guards_tests;
 #[cfg(test)]

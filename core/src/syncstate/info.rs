@@ -38,6 +38,7 @@ pub enum FailureKind {
     Network,
     Server,
     Rejected,
+    Session,
     Unrecognized,
 }
 

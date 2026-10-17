@@ -1,0 +1,137 @@
+use std::sync::Arc;
+
+use super::encrypted_tests::{SubscriptionsOnly, ThroughServer};
+use super::session_guards_tests::{Rig, SOCIAL_BODY};
+use super::{Config, Database, DbError, EncryptedConfig, SessionCode, Transport};
+use crate::schema::{ActionDeclaration, Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec, RootShape};
+use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
+use crate::value::ScalarKind;
+
+const TABLE: [(&str, SessionCode); 11] = [
+    ("SEQUENCE_CONFLICT", SessionCode::SequenceConflict),
+    ("REPLAYED_REQUEST", SessionCode::ReplayedRequest),
+    ("RATE_LIMITED", SessionCode::RateLimited),
+    ("ACCOUNT_UNAVAILABLE", SessionCode::AccountUnavailable),
+    ("UNAUTHENTICATED", SessionCode::Unauthenticated),
+    ("SESSION_ENDED", SessionCode::SessionEnded),
+    ("INVALID_CODE", SessionCode::InvalidCode),
+    ("INVALID_PHONE", SessionCode::InvalidPhone),
+    ("INVALID_PROVIDER", SessionCode::InvalidProvider),
+    ("PROVIDER_REJECTED", SessionCode::ProviderRejected),
+    ("ALREADY_AUTHENTICATED", SessionCode::AlreadyAuthenticated),
+];
+
+const OPERATIONS: &str = r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"},{"name":"MakeMoment","document":"mutation MakeMoment { makeMoment { id text } }","rootPath":"makeMoment"}]"#;
+
+fn moment_spec() -> ModelSpec {
+    let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+    let mut feed = RelationSpec::global("feed");
+    feed.remote = Some(RemoteSpec {
+        operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: "5.minutes".into(),
+        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None, total_from: None,
+    });
+    model.relations.push(feed);
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.mutation = Some("MakeMoment".to_string());
+    create.has_optimistic = true;
+    create.has_temp_row_retention = true;
+    model.actions.push(create);
+    model
+}
+
+async fn signed_in(rig: &Rig) -> Arc<Database> {
+    let database = Database::open_encrypted(
+        Config { path: None, data_version: None, cache_rows: 8 },
+        serde_json::to_string(&vec![moment_spec()]).unwrap(),
+        EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: PIN.to_string() },
+        Arc::new(ThroughServer(rig.server.clone())),
+        rig.credentials.clone(),
+        Arc::new(SubscriptionsOnly),
+    )
+    .unwrap();
+    database.register_operations(OPERATIONS.into()).unwrap();
+    database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
+    rig.server.register("query Feed { moments { id text } }");
+    rig.server.register("mutation MakeMoment { makeMoment { id text } }");
+    database
+}
+
+fn session(error: DbError) -> (SessionCode, String) {
+    let DbError::Session { code, detail } = error else { panic!("expected a session error, got {error:?}") };
+    (code, detail)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_entry_point_and_keeps_the_credential() {
+    for (wire, code) in TABLE {
+        for entry in ["load", "refresh", "run query", "run mutation"] {
+            for confirmed in [false, true] {
+                if wire == "REPLAYED_REQUEST" && entry != "run mutation" {
+                    continue;
+                }
+                let rig = Rig::new();
+                let database = signed_in(&rig).await;
+                let credential = rig.credentials.inner.value();
+                rig.server.refuse_next(wire, confirmed);
+
+                let error = match entry {
+                    "load" => database.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
+                    "refresh" => database.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
+                    "run query" => database.run("Feed".into(), "{}".into()).await.unwrap_err(),
+                    _ => database.run("MakeMoment".into(), "{}".into()).await.unwrap_err(),
+                };
+
+                let case = format!("{wire} {entry} confirmed={confirmed}");
+                assert_eq!(session(error), (code, wire.to_string()), "{case}");
+                assert_eq!((rig.credentials.inner.value(), rig.touched().1), (credential, 0), "{case}");
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the_credential() {
+    for (wire, code) in TABLE {
+        for confirmed in [false, true] {
+            let rig = Rig::new();
+            let database = signed_in(&rig).await;
+            let credential = rig.credentials.inner.value();
+            let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+            rig.server.refuse_next(wire, confirmed);
+
+            let error = database.settled("Moment".into(), row.id.clone()).await.unwrap_err();
+
+            let case = format!("{wire} confirmed={confirmed}");
+            assert_eq!(session(error), (code, wire.to_string()), "{case}");
+            assert_eq!((rig.credentials.inner.value(), rig.touched().1), (credential, 0), "{case}");
+        }
+    }
+}
+
+struct Refusing(SessionCode);
+
+#[async_trait::async_trait]
+impl Transport for Refusing {
+    async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> { Err(DbError::Session { code: self.0, detail: "wire".into() }) }
+    async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { Err(DbError::Session { code: self.0, detail: "wire".into() }) }
+    async fn subscribe(&self, _: super::TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<String, DbError> { unreachable!() }
+    fn unsubscribe(&self, _: String) {}
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_load_run_and_settled() {
+    for (_, code) in TABLE {
+        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Refusing(code)))).unwrap();
+        database.register_operations(OPERATIONS.into()).unwrap();
+
+        let load = database.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
+        let run = database.run("MakeMoment".into(), "{}".into()).await.unwrap_err();
+        let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+        let settled = database.settled("Moment".into(), row.id).await.unwrap_err();
+
+        for error in [load, run, settled] {
+            assert_eq!(session(error).0, code, "{code:?}");
+        }
+    }
+}

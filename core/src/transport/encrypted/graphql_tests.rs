@@ -40,8 +40,8 @@ fn an_answer_maps_to_a_response_and_a_server_error_code_becomes_a_graphql_error(
     let data = response_of(Answer { sequence: None, body: json!({ "data": { "x": 1 } }) }).unwrap();
     assert_eq!(data.data, Some(json!({ "x": 1 })));
 
-    let refused = response_of(Answer { sequence: None, body: json!({ "error": "UNAUTHENTICATED" }) }).unwrap();
-    assert_eq!((refused.data, refused.errors[0].code()), (None, Some("UNAUTHENTICATED")));
+    let refused = response_of(Answer { sequence: None, body: json!({ "error": "INTERNAL_SERVER_ERROR" }) }).unwrap();
+    assert_eq!((refused.data, refused.errors[0].code()), (None, Some("INTERNAL_SERVER_ERROR")));
     let failed = response_of(Answer { sequence: Some(2), body: json!({ "errors": [{ "message": "boom", "extensions": { "code": "PERSISTED_QUERY_NOT_FOUND" } }] }) }).unwrap();
     assert_eq!(failed.errors[0].code(), Some("PERSISTED_QUERY_NOT_FOUND"));
 }

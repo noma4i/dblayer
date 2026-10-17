@@ -38,7 +38,7 @@ fn step_error(error: TransportError, cancelled: bool) -> StepError {
         TransportError::Http { status, .. } if status >= 500 || status == 408 || status == 429 => {
             StepError::Retry(OperationFailure::new(FailureKind::Server, message))
         }
-        TransportError::Http { .. } | TransportError::Graphql { .. } | TransportError::Unscripted(_) => fatal(FailureKind::Rejected, message),
+        TransportError::Http { .. } | TransportError::Graphql { .. } | TransportError::Session { .. } | TransportError::Unscripted(_) => fatal(FailureKind::Rejected, message),
         TransportError::Decode(_) => fatal(FailureKind::Unrecognized, message),
     }
 }

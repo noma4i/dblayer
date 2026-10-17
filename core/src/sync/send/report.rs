@@ -1,3 +1,5 @@
+use crate::syncstate::OperationFailure;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkipReason {
     NotBound,
@@ -9,7 +11,7 @@ pub enum SkipReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendResult {
     Committed,
-    Rejected(String),
+    Rejected(OperationFailure),
     DeliveryUnknown,
     Deferred,
     Quarantined,
@@ -40,7 +42,7 @@ impl FlushReport {
         self.operations
             .iter()
             .filter_map(|sent| match &sent.result {
-                SendResult::Rejected(message) => Some(message.as_str()),
+                SendResult::Rejected(failure) => Some(failure.message.as_str()),
                 _ => None,
             })
             .collect()

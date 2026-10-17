@@ -40,6 +40,9 @@ pub fn graphql_body(request: &GraphQLRequest, with_document: bool) -> Value {
 
 pub fn response_of(answer: Answer) -> Result<Response, TransportError> {
     if let Some(code) = answer.body.get("error").and_then(Value::as_str) {
+        if let session @ TransportError::Session { .. } = TransportError::refusal(code) {
+            return Err(session);
+        }
         let error = GraphQLError { message: code.to_string(), path: None, extensions: json!({ "code": code }).as_object().cloned() };
         return Ok(Response { data: None, errors: vec![error] });
     }

@@ -4,6 +4,9 @@ use serde_json::{Map, Value};
 
 use crate::identity::RowId;
 
+use crate::syncstate::FailureKind;
+use crate::transport::{SessionCode, TransportError};
+
 use super::super::error::SyncError;
 use super::report::SendResult;
 
@@ -75,7 +78,8 @@ impl Outcomes {
 
 fn error_of(model: &str, result: &SendResult, subject: &str) -> SyncError {
     match result {
-        SendResult::Rejected(message) => SyncError::Graphql(vec![message.clone()]),
+        SendResult::Rejected(failure) if failure.kind == FailureKind::Session => SyncError::Transport(TransportError::Session { code: SessionCode::of(&failure.message), detail: failure.message.clone() }),
+        SendResult::Rejected(failure) => SyncError::Graphql(vec![failure.message.clone()]),
         SendResult::Discarded => SyncError::Cancelled,
         _ => SyncError::Store(format!("{model} {subject}: the answer is unknown")),
     }

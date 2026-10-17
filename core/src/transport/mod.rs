@@ -12,6 +12,7 @@ mod put;
 mod request;
 mod response;
 mod retry;
+mod session_code;
 mod subscription;
 
 pub use cancel::CancelToken;
@@ -26,6 +27,7 @@ pub use put::{ByteSink, PutRequest, PutResponse};
 pub use request::{GraphQLError, GraphQLRequest, Response};
 pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryClass, RETRY_BACKOFF};
+pub use session_code::SessionCode;
 pub use subscription::{
     Subscription, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionFault,
     SubscriptionHandle, SubscriptionOutcome, SubscriptionRetry,

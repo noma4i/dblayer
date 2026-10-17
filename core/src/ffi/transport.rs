@@ -94,6 +94,7 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
         DbError::Interrupted { detail } => core::TransportError::Interrupted(detail),
         DbError::Http { status, detail } => core::TransportError::Http { status, body: detail },
         DbError::Graphql { messages } => core::TransportError::Graphql { messages },
+        DbError::Session { code, detail } => core::TransportError::Session { code, detail },
         other => core::TransportError::Decode(other.to_string()),
     }
 }

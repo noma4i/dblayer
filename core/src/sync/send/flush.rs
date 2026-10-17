@@ -155,8 +155,8 @@ impl Inner {
         let variables = mutation_variables(declaration, &entry.input, entry.operation.temp_id.as_ref(), &is_id);
         let sending = Sending { entry, model, action, generation: self.db.generation(), base_revision: self.db.revision_seq()? };
         let Some(operation) = locked(&self.operations).get(&mutation).cloned() else {
-            let message = format!("operation {mutation} is not registered");
-            return self.fail(&sending, OperationStatus::Failed, OperationFailure::new(FailureKind::Rejected, message.clone()), SendResult::Rejected(message));
+            let failure = OperationFailure::new(FailureKind::Rejected, format!("operation {mutation} is not registered"));
+            return self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure));
         };
         if !self.start(&sending)? {
             return Ok(SendResult::Discarded);
@@ -202,14 +202,14 @@ impl Inner {
             let generation = self.db.generation();
             if rejected && !stays_failed {
                 match self.db.roll_back_at(seq, generation) {
-                    Ok(_) => return Ok(SendResult::Rejected(failure.message.clone())),
+                    Ok(_) => return Ok(SendResult::Rejected(failure)),
                     Err(DbError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => continue,
                     Err(error) => return Err(error.into()),
                 }
             }
             let (transition, result) = match (unreached, rejected) {
                 (true, _) => (OperationTransition::Postpone { seq, failure: failure.clone() }, SendResult::Deferred),
-                (false, true) => (OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }, SendResult::Rejected(failure.message.clone())),
+                (false, true) => (OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }, SendResult::Rejected(failure.clone())),
                 (false, false) => (OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() }, SendResult::DeliveryUnknown),
             };
             let committed = self.commit(generation, |_| {
@@ -226,14 +226,13 @@ impl Inner {
 
     async fn refuse(&self, sending: &Sending<'_>, failure: OperationFailure, keep: bool) -> Result<SendResult, SyncError> {
         if keep || sending.action == "destroy" {
-            let message = failure.message.clone();
-            let result = self.fail(sending, OperationStatus::Failed, failure, SendResult::Rejected(message))?;
+            let result = self.fail(sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure))?;
             if sending.action == "destroy" && result != SendResult::Discarded {
                 self.reload_lists_after_refused_destroy(&sending.model).await?;
             }
             return Ok(result);
         }
-        self.roll_back(sending, failure.message).await
+        self.roll_back(sending, failure).await
     }
 
     fn postpone(&self, sending: &Sending<'_>, failure: OperationFailure) -> Result<SendResult, SyncError> {
@@ -270,6 +269,7 @@ impl Inner {
             Err(error @ TransportError::Http { status, .. }) if status >= 500 => {
                 Delivery::Unknown(OperationFailure::new(FailureKind::Server, error.to_string()))
             }
+            Err(TransportError::Session { code, .. }) => Delivery::Rejected(OperationFailure::new(FailureKind::Session, code.name())),
             Err(error @ TransportError::Decode(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),
             Err(error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string())),
         }
@@ -378,13 +378,13 @@ impl Inner {
         Ok(if committed.is_some() { result } else { SendResult::Discarded })
     }
 
-    async fn roll_back(&self, sending: &Sending<'_>, message: String) -> Result<SendResult, SyncError> {
+    async fn roll_back(&self, sending: &Sending<'_>, failure: OperationFailure) -> Result<SendResult, SyncError> {
         match self.db.roll_back_at(sending.entry.operation.id.0, sending.generation) {
             Ok(_) => {}
             Err(DbError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(SendResult::Discarded),
             Err(error) => return Err(error.into()),
         }
-        Ok(SendResult::Rejected(message))
+        Ok(SendResult::Rejected(failure))
     }
 
     pub(crate) fn commit(

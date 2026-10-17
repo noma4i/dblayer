@@ -85,6 +85,47 @@ val answer = database.sessionCall("confirm", """{"code":"123456"}""")
 | `serverKeyMismatch` | the key in the config differs from the pinned key | kept |
 | `other` | any other `error` value, the text is in `detail` | kept |
 
+### Session errors in loads and mutations
+
+A sealed answer of the encrypted session that carries an `error` field with a session code throws `DbError.Session(code:detail:)` (`DbException.Session` with `code` and `detail` in Kotlin). It is the same case that `sessionCall` throws, with the same `SessionCode`. No `Graphql` error and no text is parsed. `detail` holds the code text of the server.
+
+| Where | When it throws |
+| ----- | -------------- |
+| `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
+| `DB.run(_:variables:)` and generated `Operations.*` calls (`DBlayer.database.run` in Kotlin) | the call got the sealed refusal |
+| `settled()`, `confirmedId()` and `answer()` of a row or an action that has a mutation | the queued mutation got the sealed refusal. The row rolls back or stays failed by its `onFailure` rule, as for any refusal |
+| live reads (`live`, `LiveList`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
+
+`flush()`, `retry()` and `resume()` do not throw for the refusal of one operation. The core keeps the credential and the pending request for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. A refusal with a code outside the `SessionCode` table (for example `INTERNAL_SERVER_ERROR`) stays a `Graphql` error. Errors inside `data` and `errors` of a normal answer stay `Graphql` too.
+
+A platform transport (`MockTransport` and your own `Transport`) throws `DbError.Session` to the same effect.
+
+```swift
+do {
+  try await Moment.feed.load()
+} catch DbError.Session(let code, _) where code == .accountUnavailable {
+  showBlocked()
+} catch DbError.Session(let code, _) where code == .unauthenticated {
+  signOut()
+} catch DbError.Network {
+  showOffline()
+}
+```
+
+```kotlin
+try {
+    Moment.feed.load()
+} catch (error: DbException.Session) {
+    when (error.code) {
+        SessionCode.ACCOUNT_UNAVAILABLE -> showBlocked()
+        SessionCode.UNAUTHENTICATED -> signOut()
+        else -> show(error.detail)
+    }
+} catch (error: DbException.Network) {
+    showOffline()
+}
+```
+
 `serverConfig(platform:version:)` (`serverConfig(platform, version)` in Kotlin) reads `GET /api/v3/config`. Both arguments are optional. When set, the core sends them as the URL-encoded query `?platform=ios&version=1.2.3`; the server decides what an unknown platform means. Encrypted paths (`/api/v3/graphql`, sign-in) never carry a query: the core refuses them. The answer is not cached by the server and depends on the request address.
 
 | Field | Meaning |
@@ -280,7 +321,7 @@ println(code.url)
 - A required field with a schema default can be omitted. Nullable fields with defaults still distinguish omission from explicit null.
 - `args kind: :WidgetKind` and `result kind: :WidgetKind` name a schema enum. It becomes a typed enum with an `unknown` case, in inputs too (see [models](models.md#enums)). A custom scalar needs a `scalar` line (see [models](models.md#custom-scalars)). The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.
 - The call is sent at once. It is not queued, stored or retried, and it fails when the device is offline, when the transport fails or when the answer carries errors. The error text holds every message.
-- A failed call or load throws a typed error. `Http` carries the status and the body (401, 503), `Graphql` carries every message of an answer with errors in order, `Network` and `Interrupted` tell whether the request left the device. Any other failure is a `Sync` error with its text.
+- A failed call or load throws a typed error. `Http` carries the status and the body (401, 503), `Graphql` carries every message of an answer with errors in order, `Session` carries the session code of a refusal of the encrypted session (see [session errors in loads and mutations](#session-errors-in-loads-and-mutations)), `Network` and `Interrupted` tell whether the request left the device. Any other failure is a `Sync` error with its text.
 
 ```swift
 do {

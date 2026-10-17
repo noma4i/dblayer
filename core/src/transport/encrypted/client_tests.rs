@@ -10,6 +10,7 @@ use super::vectors::*;
 use super::*;
 use crate::db::Db;
 use crate::pacing::ManualClock;
+use crate::transport::SessionCode;
 
 const START: u64 = 1_800_000_000;
 
@@ -182,7 +183,7 @@ async fn a_sequence_conflict_is_an_error_and_keeps_the_pending_request() {
 
     let outcome = client.mutate("/api/v3/graphql", graphql("mutation { x }")).await;
 
-    assert_eq!(outcome, Err(TransportError::Graphql { messages: vec!["SEQUENCE_CONFLICT".to_string()] }));
+    assert_eq!(outcome, Err(TransportError::Session { code: SessionCode::SequenceConflict, detail: "SEQUENCE_CONFLICT".to_string() }));
     assert_eq!(rows(&db).1.unwrap().sequence, 1);
 }
 

@@ -34,7 +34,7 @@ impl RetryClass {
             TransportError::Network(_) => RetryClass::Network,
             TransportError::Http { status, .. } => RetryClass::classify(false, Some(*status), &[]),
             TransportError::Graphql { .. } => RetryClass::classify(false, Some(200), &[]),
-            TransportError::Interrupted(_) | TransportError::Decode(_) | TransportError::Unscripted(_) => RetryClass::Fatal,
+            TransportError::Session { .. } | TransportError::Interrupted(_) | TransportError::Decode(_) | TransportError::Unscripted(_) => RetryClass::Fatal,
         }
     }
 

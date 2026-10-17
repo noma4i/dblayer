@@ -113,7 +113,7 @@ async fn a_refusal_code_keeps_the_credential_the_session_row_and_the_pending_req
             let case = format!("{code} confirmed={confirmed}");
             match confirmed {
                 true => assert_eq!(outcome.unwrap().body, json!({ "error": code }), "{case}"),
-                false => assert_eq!(outcome, Err(TransportError::Graphql { messages: vec![code.to_string()] }), "{case}"),
+                false => assert_eq!(outcome, Err(TransportError::refusal(code)), "{case}"),
             }
             let (session, pending) = rows(&db);
             assert_eq!((rig.credentials.inner.value(), session.unwrap().credential_digest, pending.is_some(), rig.touched()), (Some(credential), digest, !confirmed, (1, 0)), "{case}");

@@ -148,7 +148,7 @@ impl EncryptedClient {
         let answer = self.exchange(credential, &pending.request_id, &pending.response_key, Some(pending.sequence), &pending.path, &body).await?;
         if answer.sequence != Some(pending.sequence) {
             return Err(match confirmed_error(&answer.body) {
-                Some(code) => TransportError::Graphql { messages: vec![code.to_string()] },
+                Some(code) => TransportError::refusal(code),
                 None => TransportError::Decode("the answer does not confirm the sequence".into()),
             });
         }

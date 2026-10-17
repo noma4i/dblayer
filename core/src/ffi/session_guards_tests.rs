@@ -9,11 +9,11 @@ use crate::transport::encrypted::fake_server_tests::{config_body, FakeServer, Me
 use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64, SHORT_KEY_PIN};
 use crate::transport::{CredentialSlot as CoreCredentials, HttpReply};
 
-const SOCIAL_BODY: &str = r#"{"provider":"google","idToken":"t"}"#;
+pub(super) const SOCIAL_BODY: &str = r#"{"provider":"google","idToken":"t"}"#;
 
 #[derive(Default)]
-struct WatchedHeld {
-    inner: MemoryCredentials,
+pub(super) struct WatchedHeld {
+    pub(super) inner: MemoryCredentials,
     sets: AtomicUsize,
     clears: AtomicUsize,
     fail_next_clear: AtomicBool,
@@ -36,17 +36,17 @@ impl CredentialStore for WatchedHeld {
     }
 }
 
-struct Rig {
-    server: Arc<FakeServer>,
-    credentials: Arc<WatchedHeld>,
+pub(super) struct Rig {
+    pub(super) server: Arc<FakeServer>,
+    pub(super) credentials: Arc<WatchedHeld>,
 }
 
 impl Rig {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self { server: FakeServer::new(Arc::new(SystemClock)), credentials: Arc::default() }
     }
 
-    fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
+    pub(super) fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
         Database::open_encrypted(
             Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 },
             "[]".to_string(),
@@ -57,7 +57,7 @@ impl Rig {
         )
     }
 
-    fn touched(&self) -> (usize, usize) {
+    pub(super) fn touched(&self) -> (usize, usize) {
         (self.credentials.sets.load(Ordering::SeqCst), self.credentials.clears.load(Ordering::SeqCst))
     }
 }
