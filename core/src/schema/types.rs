@@ -38,6 +38,9 @@ fn resolve(field: &mut FieldSpec, arrays: &mut Vec<String>, registry: &Registry)
     let variants = matches!(field.kind, FieldKind::Union | FieldKind::UnionArray);
     for child in field.fields.iter_mut() {
         if variants {
+            if let (true, Some((declared, _))) = (child.fields.is_empty(), child.app_type.as_ref().and_then(|name| registry.get(name))) {
+                child.fields = declared.clone();
+            }
             child.fields.iter_mut().for_each(|member| resolve(member, arrays, registry));
         } else {
             resolve(child, arrays, registry);

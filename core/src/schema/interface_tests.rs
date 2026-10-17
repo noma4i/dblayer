@@ -40,3 +40,12 @@ fn a_reference_without_a_block_takes_the_variants_and_the_shared_fields_of_the_d
     resolve_types(std::slice::from_mut(&mut model));
     assert_eq!((model.fields[2].fields.len(), model.fields[2].shared.len()), (4, 3));
 }
+
+#[test]
+fn a_variant_named_without_members_takes_them_from_its_declaration_and_an_empty_declared_variant_keeps_its_type() {
+    let reused = FieldSpec::union("alias", "OtherAction", vec![FieldSpec::variant("navigate", "ScreenNavigateAction", vec![]), FieldSpec::variant("pressable", "ScreenPressable", vec![])]);
+    let mut model = ModelSpec::new("screens", vec![FieldSpec::scalar("id", ScalarKind::Id), elements(screen_variants()), crate::schema::screens_fixture::action(), reused]);
+    resolve_types(std::slice::from_mut(&mut model));
+    let alias = &model.fields[3].fields;
+    assert_eq!((alias[0].fields.len(), alias[1].app_type.as_deref()), (2, Some("ScreenPressable")));
+}
