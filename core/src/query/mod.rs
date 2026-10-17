@@ -14,3 +14,5 @@ mod filter_tests;
 mod run_tests;
 #[cfg(test)]
 mod statement_tests;
+#[cfg(test)]
+mod union_tests;

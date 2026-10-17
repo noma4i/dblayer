@@ -23,6 +23,9 @@ pub use merge::MergeRule;
 pub use search::{search_text, SearchPath};
 pub use types::resolve_types;
 
+pub const TYPENAME: &str = "__typename";
+pub const COLUMN_LIMIT: usize = 2000;
+
 const FORBIDDEN_ACTION_MEMBERS: [&str; 6] = ["after", "invalidate", "onCommit", "extract", "complete", "resume"];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -49,6 +52,10 @@ pub enum DeclarationError {
     DuplicateField(String),
     #[error("indexed field {0} is not a scalar or enum")]
     IndexedFieldNotScalar(String),
+    #[error("table {table} would have {count} columns, above the SQLite limit of {COLUMN_LIMIT}")]
+    TooManyColumns { table: String, count: usize },
+    #[error("union field {0} declares a variant twice")]
+    DuplicateVariant(String),
     #[error("column of field {0} collides with another column")]
     ColumnCollision(String),
     #[error("index needs at least 1 field")]
@@ -154,6 +161,7 @@ pub enum FieldKind {
     Object,
     Array,
     List { element: ScalarKind },
+    Union,
     File,
 }
 
@@ -225,6 +233,14 @@ impl FieldSpec {
         Self::with_kind(name, FieldKind::List { element })
     }
 
+    pub fn union(name: &str, type_name: &str, variants: Vec<FieldSpec>) -> Self {
+        Self { app_type: Some(type_name.to_string()), fields: variants, ..Self::with_kind(name, FieldKind::Union) }
+    }
+
+    pub fn variant(case: &str, type_name: &str, fields: Vec<FieldSpec>) -> Self {
+        Self { app_type: Some(type_name.to_string()), fields, ..Self::with_kind(case, FieldKind::Object) }
+    }
+
     pub fn enumeration(name: &str, values: &[&str]) -> Self {
         Self::with_kind(name, FieldKind::Enum { values: values.iter().map(|value| value.to_string()).collect() })
     }
@@ -278,7 +294,7 @@ impl FieldSpec {
             FieldKind::Enum { values } => values.first().cloned().map(Value::String),
             FieldKind::Object => Some(Value::Object(Map::new())),
             FieldKind::Array | FieldKind::List { .. } => Some(Value::Array(Vec::new())),
-            FieldKind::Raw | FieldKind::File => None,
+            FieldKind::Raw | FieldKind::File | FieldKind::Union => None,
         }
     }
 
@@ -289,6 +305,7 @@ impl FieldSpec {
             FieldKind::Raw => read_raw(value),
             FieldKind::Object => value.is_object().then(|| value.clone()),
             FieldKind::Array => value.is_array().then(|| value.clone()),
+            FieldKind::Union => value.get(TYPENAME).is_some_and(Value::is_string).then(|| value.clone()),
             FieldKind::File => is_file_descriptor(value).then(|| value.clone()),
             FieldKind::List { element } => {
                 read_array(value, |item| read_scalar(item, *element)).map(Value::Array)
@@ -932,7 +949,22 @@ impl ModelSpec {
             relation.check(self)?;
         }
         self.check_names(reserved_members)?;
+        self.check_unions()?;
         self.check_actions(reserved_members)
+    }
+
+    fn check_unions(&self) -> Result<(), DeclarationError> {
+        for field in self.fields.iter().filter(|field| field.kind == FieldKind::Union) {
+            let cases: Vec<&str> = field.fields.iter().map(|variant| variant.name.as_str()).collect();
+            let typenames: Vec<&str> = field.fields.iter().filter_map(|variant| variant.app_type.as_deref()).collect();
+            if !duplicates(&cases).is_empty() || !duplicates(&typenames).is_empty() {
+                return Err(DeclarationError::DuplicateVariant(field.name.clone()));
+            }
+        }
+        match crate::ddl::table_widths(self).into_iter().find(|(_, count)| *count > COLUMN_LIMIT) {
+            Some((table, count)) => Err(DeclarationError::TooManyColumns { table, count }),
+            None => Ok(()),
+        }
     }
 
     fn check_fields(&self) -> Result<(), DeclarationError> {
@@ -1048,3 +1080,5 @@ mod merge_tests;
 mod newer_tests;
 #[cfg(test)]
 mod schema_tests;
+#[cfg(test)]
+mod union_tests;

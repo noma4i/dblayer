@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 
 use crate::db::Record;
 use crate::operation::enum_text;
-use crate::schema::{FieldKind, FieldSpec, ModelSpec};
+use crate::schema::{FieldKind, FieldSpec, ModelSpec, TYPENAME};
 use crate::syncstate::{OperationFailure, SyncInfo, SyncState};
 use crate::upload::{UploadInfo, UploadStatus};
 
@@ -113,6 +113,16 @@ fn describe(field: &FieldSpec, out: &mut String) {
         (FieldKind::Object, true) => members_text(field, out, "o"),
         (FieldKind::Array, true) if field.fields.is_empty() => out.push_str(&format!("a^{}", field.app_type.as_deref().unwrap_or_default())),
         (FieldKind::Array, true) => members_text(field, out, "a"),
+        (FieldKind::Union, _) => {
+            out.push_str("u{");
+            for variant in &field.fields {
+                out.push_str(variant.app_type.as_deref().unwrap_or_default());
+                out.push('=');
+                describe(variant, out);
+                out.push(',');
+            }
+            out.push('}');
+        }
         (FieldKind::Object, false) => out.push('o'),
         (FieldKind::Array, false) => out.push('a'),
     }
@@ -159,6 +169,12 @@ fn cell<'a>(field: &'a FieldSpec, value: Option<&Value>, types: &mut Types<'a>) 
         (FieldKind::Scalar { .. } | FieldKind::Enum { .. }, _) => scalar_cell(value),
         (FieldKind::List { .. }, _) => value.as_array().map_or(Cell::Null, |items| Cell::Seq { items: items.iter().map(scalar_cell).collect() }),
         (FieldKind::Object, Some(_)) => value.as_object().map_or(Cell::Null, |object| Cell::Seq { items: member_cells(&field.fields, object, types) }),
+        (FieldKind::Union, _) => {
+            let Some(typename) = value.get(TYPENAME).and_then(Value::as_str) else { return Cell::Null };
+            let members = field.fields.iter().find(|variant| variant.app_type.as_deref() == Some(typename)).zip(value.as_object());
+            let body = members.map_or(Cell::Null, |(variant, object)| Cell::Seq { items: member_cells(&variant.fields, object, types) });
+            Cell::Seq { items: vec![Cell::Text { value: typename.to_string() }, body] }
+        }
         (FieldKind::Array, Some(name)) => {
             let Some(items) = value.as_array() else { return Cell::Null };
             let own: &'a [FieldSpec] = if field.fields.is_empty() {
@@ -244,3 +260,6 @@ impl WireModel {
 
 #[cfg(test)]
 mod wire_tests;
+
+#[cfg(test)]
+mod union_tests;

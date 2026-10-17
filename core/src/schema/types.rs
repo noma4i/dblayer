@@ -10,7 +10,7 @@ fn collect(field: &FieldSpec, registry: &mut HashMap<String, Vec<FieldSpec>>) {
 }
 
 fn resolve(field: &mut FieldSpec, arrays: &mut Vec<String>, registry: &HashMap<String, Vec<FieldSpec>>) {
-    if !matches!(field.kind, FieldKind::Object | FieldKind::Array) {
+    if !matches!(field.kind, FieldKind::Object | FieldKind::Array | FieldKind::Union) {
         return;
     }
     let Some(name) = field.app_type.clone() else { return };
@@ -50,7 +50,7 @@ impl FieldSpec {
     pub fn is_structured(&self) -> bool {
         match self.kind {
             FieldKind::List { .. } => true,
-            FieldKind::Object | FieldKind::Array => self.app_type.is_some(),
+            FieldKind::Object | FieldKind::Array | FieldKind::Union => self.app_type.is_some(),
             _ => false,
         }
     }

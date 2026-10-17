@@ -227,6 +227,8 @@ mod shape_tests;
 #[cfg(test)]
 mod value_tests;
 #[cfg(test)]
+mod union_tests;
+#[cfg(test)]
 mod outbox_storage_tests;
 #[cfg(test)]
 mod cache_storage_tests;

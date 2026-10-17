@@ -4,9 +4,9 @@ use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection};
 use serde_json::{Map, Number, Value};
 
-use crate::ddl::{Layout, Leaf, Member, Table, TableShape};
+use crate::ddl::{Layout, Leaf, Member, Table, TableShape, Variant};
 use crate::value::{read_array, read_enum, read_scalar, ScalarKind};
-use crate::schema::FieldKind;
+use crate::schema::{FieldKind, TYPENAME};
 
 use super::rows::{column_value, placeholders};
 use super::StoreError;
@@ -32,6 +32,14 @@ fn normalize_nested_leaf(leaf: &Leaf, value: &Value) -> Option<Value> {
     }
 }
 
+fn typename(value: &Value) -> Option<&str> {
+    value.get(TYPENAME).and_then(Value::as_str)
+}
+
+fn variant_of<'a>(variants: &'a [Variant], name: &str) -> Option<&'a Variant> {
+    variants.iter().find(|variant| variant.typename == name)
+}
+
 /// The value as storage returns it: known members only, scalars read by their kind, nulls and wrong types removed.
 pub(crate) fn normalize(member: &Member, layout: &Layout, value: &Value) -> Option<Value> {
     match member {
@@ -42,6 +50,14 @@ pub(crate) fn normalize(member: &Member, layout: &Layout, value: &Value) -> Opti
             _ => Some(value.clone()),
         },
         Member::Object { members, .. } => value.as_object().map(|source| Value::Object(normalize_members(members, layout, source))),
+        Member::Union { variants, .. } => {
+            let (name, source) = (typename(value)?, value.as_object()?);
+            let mut kept = Map::from_iter([(TYPENAME.to_string(), Value::String(name.to_string()))]);
+            if let Some(variant) = variant_of(variants, name) {
+                kept.extend(normalize_members(&variant.members, layout, source));
+            }
+            Some(Value::Object(kept))
+        }
         Member::List { table, .. } => match &layout.tables[*table].shape {
             TableShape::Values(leaf) => read_array(value, |item| normalize_nested_leaf(leaf, item)).map(Value::Array),
             TableShape::Elements(_) | TableShape::Nodes => None,
@@ -69,6 +85,16 @@ pub(crate) fn member_values(member: &Member, value: Option<&Value>, out: &mut Ve
             out.push((column.clone(), present(source.is_some())));
             for child in members {
                 member_values(child, source.and_then(|source| source.get(child.key())), out);
+            }
+        }
+        Member::Union { present: column, variants, .. } => {
+            let name = value.and_then(typename);
+            out.push((column.clone(), name.map_or(SqlValue::Null, |name| SqlValue::Text(name.to_string()))));
+            for variant in variants {
+                let source = value.filter(|_| name == Some(variant.typename.as_str())).and_then(Value::as_object);
+                for child in &variant.members {
+                    member_values(child, source.and_then(|source| source.get(child.key())), out);
+                }
             }
         }
         Member::List { present: column, .. } | Member::Array { present: column, .. } => out.push((column.clone(), present(value.is_some_and(Value::is_array)))),
@@ -101,6 +127,13 @@ pub(crate) fn insert_children(
         Member::Object { members, .. } => {
             let source = value.and_then(Value::as_object);
             for child in members {
+                insert_children(connection, layout, child, source.and_then(|source| source.get(child.key())), row_id, owner, nodes)?;
+            }
+        }
+        Member::Union { variants, .. } => {
+            let Some(variant) = value.and_then(typename).and_then(|name| variant_of(variants, name)) else { return Ok(()) };
+            let source = value.and_then(Value::as_object);
+            for child in &variant.members {
                 insert_children(connection, layout, child, source.and_then(|source| source.get(child.key())), row_id, owner, nodes)?;
             }
         }
@@ -178,6 +211,14 @@ pub(crate) fn assemble(member: &Member, layout: &Layout, cells: &Cells, tables: 
                 return None;
             }
             Some(Value::Object(assemble_members(members, layout, cells, tables, owner)))
+        }
+        Member::Union { at, variants, .. } => {
+            let Some(SqlValue::Text(name)) = cells.get(*at) else { return None };
+            let mut object = Map::from_iter([(TYPENAME.to_string(), Value::String(name.clone()))]);
+            if let Some(variant) = variant_of(variants, name) {
+                object.extend(assemble_members(&variant.members, layout, cells, tables, owner));
+            }
+            Some(Value::Object(object))
         }
         Member::List { at, table, .. } => {
             if !present(cells, *at) {

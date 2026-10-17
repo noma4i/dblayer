@@ -1,7 +1,7 @@
 use crate::schema::{FieldKind, FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
-use super::{column_name, column_type, rev_column, table_name, ColumnType};
+use super::{column_name, column_type, rev_column, table_name, ColumnType, SERVICE_COLUMNS};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Leaf {
@@ -15,19 +15,26 @@ pub struct Leaf {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Variant {
+    pub typename: String,
+    pub members: Vec<Member>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Member {
     Leaf(Leaf),
     Object { key: String, present: String, at: usize, members: Vec<Member> },
     List { key: String, present: String, at: usize, table: usize },
     Array { key: String, present: String, at: usize, table: usize },
     Raw { key: String, present: String, at: usize, table: usize, kind: FieldKind },
+    Union { key: String, present: String, at: usize, variants: Vec<Variant> },
 }
 
 impl Member {
     pub fn key(&self) -> &str {
         match self {
             Member::Leaf(leaf) => &leaf.key,
-            Member::Object { key, .. } | Member::List { key, .. } | Member::Array { key, .. } | Member::Raw { key, .. } => key,
+            Member::Object { key, .. } | Member::List { key, .. } | Member::Array { key, .. } | Member::Raw { key, .. } | Member::Union { key, .. } => key,
         }
     }
 }
@@ -99,6 +106,19 @@ impl Builder {
                     members.push(self.member(child, child.from.as_deref().unwrap_or(&child.name), &format!("{base}__{}", column_name(&child.name)), &format!("{path}__{}", column_name(&child.name)))?);
                 }
                 Some(Member::Object { key: key.to_string(), present, at: 0, members })
+            }
+            FieldKind::Union if field.app_type.is_some() => {
+                let mut variants = Vec::new();
+                for variant in &field.fields {
+                    let case = column_name(&variant.name);
+                    let mut members = Vec::new();
+                    for child in &variant.fields {
+                        let name = column_name(&child.name);
+                        members.push(self.member(child, child.from.as_deref().unwrap_or(&child.name), &format!("{base}__{case}__{name}"), &format!("{path}__{case}__{name}"))?);
+                    }
+                    variants.push(Variant { typename: variant.app_type.clone()?, members });
+                }
+                Some(Member::Union { key: key.to_string(), present: base.to_string(), at: 0, variants })
             }
             FieldKind::List { element } => {
                 let value = leaf(&FieldSpec::scalar("value", *element), "value", "value")?;
@@ -200,6 +220,11 @@ fn number(member: &mut Member, next: &mut usize) {
             *next += 1;
             members.iter_mut().for_each(|child| number(child, next));
         }
+        Member::Union { at, variants, .. } => {
+            *at = *next;
+            *next += 1;
+            variants.iter_mut().flat_map(|variant| variant.members.iter_mut()).for_each(|child| number(child, next));
+        }
         Member::List { at, .. } | Member::Array { at, .. } | Member::Raw { at, .. } => {
             *at = *next;
             *next += 1;
@@ -207,9 +232,22 @@ fn number(member: &mut Member, next: &mut usize) {
     }
 }
 
+pub fn table_widths(model: &ModelSpec) -> Vec<(String, usize)> {
+    let layout = layout(model);
+    let mut widths = vec![(layout.table.clone(), SERVICE_COLUMNS.len() + layout.row_columns.len() + layout.revs.len())];
+    for table in &layout.tables {
+        if let TableShape::Elements(members) = &table.shape {
+            let mut columns = Vec::new();
+            members.iter().for_each(|member| member_columns(member, &mut columns));
+            widths.push((table.name.clone(), 4 + columns.len()));
+        }
+    }
+    widths
+}
+
 pub fn member_present(member: &Member) -> &str {
     match member {
-        Member::Object { present, .. } | Member::List { present, .. } | Member::Array { present, .. } | Member::Raw { present, .. } => present,
+        Member::Object { present, .. } | Member::List { present, .. } | Member::Array { present, .. } | Member::Raw { present, .. } | Member::Union { present, .. } => present,
         Member::Leaf(leaf) => &leaf.column,
     }
 }
@@ -220,6 +258,10 @@ pub fn member_columns(member: &Member, out: &mut Vec<(String, ColumnType)>) {
         Member::Object { present, members, .. } => {
             out.push((present.clone(), ColumnType::Integer));
             members.iter().for_each(|child| member_columns(child, out));
+        }
+        Member::Union { present, variants, .. } => {
+            out.push((present.clone(), ColumnType::Text));
+            variants.iter().flat_map(|variant| variant.members.iter()).for_each(|child| member_columns(child, out));
         }
         Member::List { present, .. } | Member::Array { present, .. } | Member::Raw { present, .. } => out.push((present.clone(), ColumnType::Integer)),
     }
