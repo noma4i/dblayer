@@ -57,6 +57,9 @@ fn walk(calls: &[Call], fields: &[FieldSpec], file: usize, types: &[&FieldSpec],
                 errors.push(at(file, call.line, call.column, "recursive objects need an array between repeated types".to_string()));
             }
             walk(block, &field.fields, file, types, errors, true);
+            for shared in block.iter().filter(|child| child.word == "shared") {
+                walk(shared.block.as_deref().unwrap_or_default(), &field.shared, file, types, errors, true);
+            }
         }
     }
 }

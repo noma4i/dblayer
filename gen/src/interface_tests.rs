@@ -121,3 +121,31 @@ fn a_list_of_variants_too_wide_for_one_sqlite_table_is_rejected_with_the_table_a
     let expected = "model Screen: table row_Screen__spec would have 2406 columns, above the SQLite limit of 2000. A union stores its variants in the columns of one table: declare fewer variants or fields, or split the model";
     assert!(errors.iter().any(|found| found.message == expected), "{errors:?}");
 }
+
+#[test]
+fn a_variant_reuses_a_type_declared_inside_the_shared_block() {
+    let source = "model Sample do
+  field :items, type: [Item] do
+    shared do
+      field :tag, type: Mark, null: true do
+        on Gold do
+          field :weight, type: :int
+        end
+        on Silver do
+          field :purity, type: :num
+        end
+      end
+    end
+    on First do
+      field :extra, type: Medal, null: true do
+        on Gold
+        on Silver
+      end
+    end
+  end
+end
+";
+    let models = parse_models(source).unwrap();
+    let first = &models[0].field("items").unwrap().fields[0];
+    assert_eq!(names(&first.fields), ["extra"]);
+}

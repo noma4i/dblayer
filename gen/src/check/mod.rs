@@ -249,6 +249,10 @@ fn collect_types<'a>(calls: &'a [Call], owner: &str, file: usize, out: &mut Vec<
         if crate::unions::is_union_call(call) {
             out.push(TypeUse { name: name.clone(), call, file, declares: call.block.is_some() });
             for variant in call.block.iter().flatten() {
+                if variant.word == "shared" {
+                    collect_types(variant.block.as_deref().unwrap_or_default(), &name, file, out);
+                    continue;
+                }
                 let Some(Node { item: Value::Const(typename), .. }) = variant.args.first() else { continue };
                 out.push(TypeUse { name: typename.clone(), call: variant, file, declares: variant.block.is_some() });
                 collect_types(variant.block.as_deref().unwrap_or_default(), typename, file, out);

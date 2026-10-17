@@ -65,3 +65,9 @@ fn interface_declarations_are_checked_against_the_schema_interface_and_its_imple
         }
     }
 }
+
+#[test]
+fn an_interface_list_takes_its_field_types_from_the_schema() {
+    let inferred = "model Screen do\n  field :spec do\n    field :root\n    field :elements do\n      shared do\n        field :id\n        field :children\n        field :note\n      end\n      on Box do\n        field :gap\n      end\n      on Text do\n        field :body\n      end\n    end\n  end\n  scope :all do\n    fetch \"screens\"\n    paginate 20\n  end\nend\n";
+    assert_eq!(run(inferred, SCHEMA, SELECTION), Ok(()));
+}
