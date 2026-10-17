@@ -16,6 +16,8 @@ type ReadValue = for<'a> fn(&'a Map<String, Value>, &str) -> Option<&'a Value>;
 
 impl Store {
     pub(crate) fn response_values(&self, model: &str, row: &mut Map<String, Value>) -> Result<(), StoreError> {
+        #[cfg(test)]
+        assert!(!self.require_unlocked_responses.load(std::sync::atomic::Ordering::SeqCst) || self.inner.try_lock().is_ok(), "response normalization acquired models while holding inner");
         let models = self.models.read().unwrap_or_else(|error| error.into_inner());
         let info = models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
         for plan in &info.layout.fields {

@@ -27,6 +27,21 @@ fn upsert_def() -> SubscriptionDef {
     SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "moments", EventEffect::Upsert)
 }
 
+#[tokio::test(start_paused = true)]
+async fn subscription_normalization_does_not_invert_reset_locks() {
+    for effect in [EventEffect::Upsert, EventEffect::Patch] {
+        let rig = rig_with_subscription();
+        put(&rig, "moments", json!({"id": "m1", "text": "before", "userId": null}));
+        rig.db.shared.store.require_unlocked_responses.store(true, std::sync::atomic::Ordering::SeqCst);
+        let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "moments", effect)).await.unwrap();
+        rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "after", "author": {"id": "u1", "name": "Ann"}})));
+        settle().await;
+        assert_eq!(subscription.status().applied, 1);
+        let row = rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap();
+        assert_eq!(row.text("text"), Some("after"));
+    }
+}
+
 fn failed(kind: SubscriptionFailureKind) -> SubscriptionEvent {
     SubscriptionEvent::Failed(SubscriptionFailure::new(kind, "boom"))
 }

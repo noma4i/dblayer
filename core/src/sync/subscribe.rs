@@ -188,6 +188,15 @@ impl Feed {
         let db = &self.inner.db;
         let model = self.def.model.as_str();
         let spec = db.spec(model)?;
+        let items = items.into_iter().map(|item| {
+            let deleted = self.def.deleted_by.as_ref().and_then(|field| item.node.get(field)).is_some_and(is_truthy);
+            let normalized = if deleted || self.def.effect == EventEffect::Destroy {
+                None
+            } else {
+                Some(normalize_nodes(db, model, std::slice::from_ref(&item.node))?)
+            };
+            Ok::<_, SyncError>((item, normalized))
+        }).collect::<Result<Vec<_>, _>>()?;
         let mut count = 0;
         let mut announced: Vec<RowId> = Vec::new();
         let mut held_files: Vec<String> = Vec::new();
@@ -196,24 +205,16 @@ impl Feed {
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut joins: Vec<ScopeOp> = Vec::new();
             let mut destroyed: BTreeSet<(String, String)> = BTreeSet::new();
-            for item in items {
+            for (item, normalized) in items {
                 let key = (model.to_string(), item.id.as_str().to_string());
-                let deleted = self.def.deleted_by.as_ref().and_then(|field| item.node.get(field)).is_some_and(is_truthy);
-                if !deleted && self.def.effect != EventEffect::Destroy && !self.def.set.is_empty() {
+                if normalized.is_some() && !self.def.set.is_empty() {
                     announced.push(item.id.clone());
                 }
-                if deleted || self.def.effect == EventEffect::Destroy {
-                    let own = RowRef::new(ModelKey::new(model), item.id);
-                    for target in db.destroy_targets(reader, &own, WriteOrigin::Event)? {
-                        destroyed.insert((target.model.to_string(), target.id.to_string()));
-                        operations.insert((target.model.to_string(), target.id.to_string()), EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Server });
-                    }
-                } else {
+                if let Some(normalized) = normalized {
                     let stored = reader.point(model, item.id.as_str())?;
                     if stored.is_none() && self.def.effect == EventEffect::Patch {
                         continue;
                     }
-                    let normalized = normalize_nodes(db, model, std::slice::from_ref(&item.node))?;
                     let Some(patch) = normalized.roots.first() else { continue };
                     let Some(row) = db.merged(model, stored.as_ref(), patch)? else { continue };
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
@@ -228,6 +229,12 @@ impl Feed {
                         joins.extend(self.inner.joins_of(reader, model, &item.id, &row)?);
                     }
                     operations.insert(key, EntityOp::Upsert { model: ModelKey::new(model), id: item.id, row });
+                } else {
+                    let own = RowRef::new(ModelKey::new(model), item.id);
+                    for target in db.destroy_targets(reader, &own, WriteOrigin::Event)? {
+                        destroyed.insert((target.model.to_string(), target.id.to_string()));
+                        operations.insert((target.model.to_string(), target.id.to_string()), EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Server });
+                    }
                 }
                 count += 1;
             }

@@ -96,6 +96,8 @@ pub struct Store {
     recreated: Option<RecreateReason>,
     #[cfg(test)]
     failing_entity_reads: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    pub(crate) require_unlocked_responses: std::sync::atomic::AtomicBool,
 }
 
 impl Store {
@@ -118,6 +120,8 @@ impl Store {
             poison,
             readers: None,
             hook: OnceLock::new(),
+            #[cfg(test)]
+            require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
             recreated: None,
             #[cfg(test)]
             failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),
