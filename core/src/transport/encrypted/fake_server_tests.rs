@@ -92,6 +92,8 @@ struct Faults {
     pub status_next: Option<u16>,
     pub reply_to_other_request: bool,
     pub replay_next_read: bool,
+    pub forget_registrations: bool,
+    pub refuse_hashes: bool,
 }
 
 #[derive(Default)]
@@ -104,12 +106,34 @@ struct Session {
     reads: HashSet<String>,
 }
 
+fn document_of(registry: &mut HashSet<(String, String)>, body: &Value) -> Result<Value, &'static str> {
+    let Some(persisted) = body.get("extensions").and_then(|extensions| extensions.get("persistedQuery")) else { return Ok(body["query"].clone()) };
+    let hash = persisted["sha256Hash"].as_str().unwrap_or_default().to_string();
+    match body["query"].as_str() {
+        Some(query) if hex_of(query) == hash => {
+            registry.insert((hash, query.to_string()));
+            Ok(json!(query))
+        }
+        Some(_) => Err("INVALID_INPUT"),
+        None => registry.iter().find(|(known, _)| *known == hash).map(|(_, query)| json!(query)).ok_or("PERSISTED_QUERY_NOT_FOUND"),
+    }
+}
+
+fn hex_of(text: &str) -> String {
+    Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn persisted_failure(code: &str) -> Value {
+    json!({ "errors": [{ "message": code, "extensions": { "code": code } }] })
+}
+
 #[derive(Default)]
 struct State {
     session: Option<Session>,
     faults: Faults,
     seen: Vec<Value>,
     executed: Vec<Value>,
+    registry: HashSet<(String, String)>,
 }
 
 pub struct FakeServer {
@@ -140,6 +164,19 @@ impl FakeServer {
         let mut state = self.state.lock().unwrap();
         let session = state.session.as_mut().filter(|session| session.digest == digest).expect("session of the credential");
         session.sequence = sequence;
+    }
+
+    pub fn register(&self, document: &str) {
+        let hash = hex_of(document);
+        self.state.lock().unwrap().registry.insert((hash, document.to_string()));
+    }
+
+    pub fn forget_registrations(&self) {
+        self.state.lock().unwrap().faults.forget_registrations = true;
+    }
+
+    pub fn refuse_hashes(&self) {
+        self.state.lock().unwrap().faults.refuse_hashes = true;
     }
 
     pub fn config_paths(&self) -> Vec<String> {
@@ -201,11 +238,17 @@ impl FakeServer {
         let Some(session) = state.session.as_mut().filter(|session| session.digest == credential_digest) else {
             return seal_response(data, None, json!({ "error": "UNAUTHENTICATED" }));
         };
+        let (forget, refuse) = (state.faults.forget_registrations, state.faults.refuse_hashes);
+        let resolved = if path == "/api/v3/graphql" && forget { Err("PERSISTED_QUERY_NOT_FOUND") } else if path == "/api/v3/graphql" && refuse { Err("INVALID_INPUT") } else if path == "/api/v3/graphql" { document_of(&mut state.registry, &data["body"]) } else { Ok(Value::Null) };
         let Some(sequence) = data["sequence"].as_i64() else {
+            let document = match resolved {
+                Ok(document) => document,
+                Err(code) => return seal_response(data, None, persisted_failure(code)),
+            };
             if !session.reads.insert(data["requestId"].as_str().unwrap().to_string()) || std::mem::take(&mut state.faults.replay_next_read) {
                 return seal_response(data, None, json!({ "error": "REPLAYED_REQUEST" }));
             }
-            return seal_response(data, None, json!({ "data": { "read": data["body"]["query"] } }));
+            return seal_response(data, None, json!({ "data": { "read": document } }));
         };
         let digest = digest_of(data);
         if session.sequence == sequence && session.request_digest == digest {
@@ -223,14 +266,19 @@ impl FakeServer {
                 json!({ "revoked": true })
             }
             "/api/v3/auth/confirm" => json!({ "error": "INVALID_CODE" }),
-            "/api/v3/graphql" => json!({ "data": { "done": data["body"]["query"] } }),
+            "/api/v3/graphql" => match &resolved {
+                Ok(document) => json!({ "data": { "done": document } }),
+                Err(code) => persisted_failure(code),
+            },
             _ => json!({ "nextStep": "authenticated" }),
         };
         let answer = seal_response(data, Some(sequence), result);
         session.sequence = sequence;
         session.request_digest = digest;
         session.answer = Some(answer.clone());
-        state.executed.push(data["body"].clone());
+        if resolved.is_ok() {
+            state.executed.push(data["body"].clone());
+        }
         answer
     }
 }

@@ -21,16 +21,17 @@ async fn transport(rest: MockTransport) -> (EncryptedTransport, Arc<FakeServer>)
 }
 
 #[test]
-fn the_body_carries_the_document_with_its_sha256_hash_and_omits_empty_fields() {
+fn the_body_carries_the_sha256_hash_and_the_document_only_when_asked_and_omits_empty_fields() {
     let request = GraphQLRequest::new("query Me { me { id } }", "Me", json!({ "a": 1 }));
 
-    let body = graphql_body(&request);
+    let body = graphql_body(&request, true);
+    assert!(graphql_body(&request, false).get("query").is_none());
 
     assert_eq!(body["query"], "query Me { me { id } }");
     assert_eq!((body["operationName"].clone(), body["variables"].clone()), (json!("Me"), json!({ "a": 1 })));
     assert_eq!(body["extensions"]["persistedQuery"]["version"], 1);
     assert_eq!(body["extensions"]["persistedQuery"]["sha256Hash"], "2e3e49f19828396c35f7f9415f5558239d37f5d85b674851f58bf43337f5aaab");
-    let bare = graphql_body(&GraphQLRequest::new("query { x }", "", serde_json::Value::Null));
+    let bare = graphql_body(&GraphQLRequest::new("query { x }", "", serde_json::Value::Null), true);
     assert!(bare.get("operationName").is_none() && bare.get("variables").is_none());
 }
 
@@ -50,6 +51,8 @@ async fn queries_and_mutations_go_through_the_encrypted_client_and_subscriptions
     let rest = MockTransport::new();
     rest.enqueue("Watch", Reply::data(json!({ "w": 1 })));
     let (transport, server) = transport(rest.clone()).await;
+    server.register("query Q { q }");
+    server.register("mutation M { m }");
 
     let read = transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
     let written = transport.mutate(GraphQLRequest::new("mutation M { m }", "M", json!({}))).await.unwrap();

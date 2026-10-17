@@ -131,6 +131,24 @@ Rules of the session:
 - Errors: `503` is a retryable HTTP error, `400` means a bad request or a device clock more than 2 minutes behind or 30 seconds ahead of the server, `413` means more than 256 KiB. A lost connection is a network error.
 - `sessionReset()` deletes the credential and the stored state without contacting the server.
 
+### Persisted queries
+
+The core sends a GraphQL call as its SHA-256 hash first, without the document. This keeps the body small: the body loses the whole `query` field (for a 545 byte document the body drops from 724 to 162 bytes before encryption).
+
+| Server answer | Core |
+| ------------- | ---- |
+| result | returns it |
+| `PERSISTED_QUERY_NOT_FOUND` (HTTP 200, `errors[].extensions.code`) | sends the call once more with the document and the hash, returns that answer |
+| `INVALID_INPUT` or any other error | returns it, no second send |
+
+The second answer is final: a second `PERSISTED_QUERY_NOT_FOUND` goes to your app and the core sends no third request. Swift and Kotlin code does not change: the generated operations and `sessionResume()` behave as before and return the answer of the last send.
+
+- A query is sent again as a new request: new request id, new response key. The server reports the miss before it records the request id, so nothing is spent.
+- A mutation is sent again as a new mutation. The server has already taken the first sequence number `N` and answers the miss with it, so the core confirms `N` and removes the pending request. The second send takes `N+1`, new request id and response key, and the core stores it before it sends it, like any mutation. The same `N` with another body would get `SEQUENCE_CONFLICT`.
+- After a restart `sessionResume()` sends the stored request unchanged. A stored hash-only request that is answered with a miss returns that answer, and your app sends the mutation again as usual.
+
+The server registry fills itself. The first call of a document after the app is installed (or after the server lost the registry) costs 2 requests: the miss and the send with the document, which the server stores. Every later call of that document, from any device, is one hash-only request. If the server registers the documents in advance with `rake v3:persisted_queries:register[/path/to/GraphQL]`, there are no misses and every call is one hash-only request.
+
 ## Responses become rows
 
 Every response, whether from a query, a mutation or a subscription event, goes through the same rules:
