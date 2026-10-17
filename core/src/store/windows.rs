@@ -11,7 +11,6 @@ pub struct WindowRecord {
     pub cursor: Option<String>,
     pub has_next: bool,
     pub total: Option<i64>,
-    pub ids: Vec<String>,
     pub issued: i64,
     pub applied: i64,
     pub generation: i64,
@@ -62,11 +61,11 @@ pub struct PageInfo {
 
 pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, landed_at: i64) -> Result<(), StoreError> {
     connection.execute(
-        "INSERT INTO query_window (key, cursor, has_next, total, issued, applied, generation, count, landed_at) \
-         VALUES (?1, ?2, ?3, ?9, ?4, ?5, ?6, ?7, ?8) \
+        "INSERT INTO query_window (key, cursor, has_next, total, issued, applied, generation, landed_at) \
+         VALUES (?1, ?2, ?3, ?8, ?4, ?5, ?6, ?7) \
          ON CONFLICT (key) DO UPDATE SET cursor = excluded.cursor, has_next = excluded.has_next, total = excluded.total, \
          issued = excluded.issued, applied = excluded.applied, \
-         generation = excluded.generation, count = excluded.count",
+         generation = excluded.generation",
         params![
             record.key,
             record.cursor,
@@ -74,16 +73,10 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
             record.issued,
             record.applied,
             record.generation,
-            record.ids.len() as i64,
             landed_at,
             record.total,
         ],
     )?;
-    connection.prepare_cached("DELETE FROM query_window_row WHERE key = ?1")?.execute(params![record.key])?;
-    let mut insert = connection.prepare_cached("INSERT INTO query_window_row (key, pos, row_id) VALUES (?1, ?2, ?3)")?;
-    for (pos, id) in record.ids.iter().enumerate() {
-        insert.execute(params![record.key, pos as i64, id])?;
-    }
     Ok(())
 }
 
@@ -117,9 +110,7 @@ impl Store {
             )
             .optional()?;
         let Some((key, cursor, has_next, issued, applied, generation, total)) = found else { return Ok(None) };
-        let mut statement = inner.connection.prepare_cached("SELECT row_id FROM query_window_row WHERE key = ?1 ORDER BY pos")?;
-        let ids = statement.query_map(params![key], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
-        Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, ids, issued, applied, generation }))
+        Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, issued, applied, generation }))
     }
 
     pub fn window_freshness(&self, key: &str) -> Result<Option<WindowFreshness>, StoreError> {

@@ -160,7 +160,7 @@ impl Inner {
     fn window_is_fresh(&self, resolved: &Resolved) -> Result<bool, SyncError> {
         let store = &self.db.shared.store;
         let Some(freshness) = store.window_freshness(&resolved.window_key)? else { return Ok(false) };
-        let is_empty = store.window(&resolved.window_key)?.is_none_or(|window| window.ids.is_empty());
+        let is_empty = store.read(&[&resolved.model], |reader| reader.scope_last_id(&resolved.model, resolved.scope.key.as_str()))?.is_none();
         let policy = selected_policy(is_empty, &resolved.remote.stale_time, resolved.remote.empty_stale_time.as_deref());
         let window = stale_window(policy)?;
         Ok(freshness.is_fresh(self.now_ms(), i64::try_from(window.as_millis()).unwrap_or(i64::MAX)))
@@ -304,7 +304,9 @@ impl Inner {
         let chain = PageChain {
             cursor: window.cursor.clone(),
             has_next: window.has_next,
-            loaded_pages: window.ids.len().div_ceil(resolved.page_size().max(1) as usize),
+            loaded_pages: if max_pages.is_some() {
+                self.db.shared.store.read(&[&resolved.model], |reader| reader.count_members(&resolved.model, resolved.scope.key.as_str()))? as usize
+            } else { 0 }.div_ceil(resolved.page_size().max(1) as usize),
             is_loading: self.is_loading(resolved),
         };
         let verdict = LoadMoreVerdict::of(&chain, max_pages.map(|pages| pages as usize));

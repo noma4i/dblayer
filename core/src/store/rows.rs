@@ -283,13 +283,19 @@ impl<'a> Reader<'a> {
         Ok(keys.collect::<Result<_, _>>()?)
     }
 
-    #[cfg(test)]
     pub fn count_members(&self, model: &str, scope_key: &str) -> Result<i64, StoreError> {
         Ok(self.connection.query_row(
             "SELECT COUNT(*) FROM scope_member WHERE model = ?1 AND scope_key = ?2",
             params![model, scope_key],
             |row| row.get(0),
         )?)
+    }
+
+    pub fn scope_last_id(&self, model: &str, scope_key: &str) -> Result<Option<String>, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 ORDER BY order_key DESC, row_id DESC LIMIT 1",
+            params![model, scope_key], |row| row.get(0),
+        ).optional()?)
     }
 
     pub fn tombstone_seq(&self, model: &str, id: &str) -> Result<Option<i64>, StoreError> {

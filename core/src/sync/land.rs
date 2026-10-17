@@ -160,10 +160,12 @@ impl Inner {
         }
         let model_key = ModelKey::new(&model);
         let applied = if is_first_page { attempt.issued } else { applied_before.unwrap_or(attempt.issued) };
-        let tail = window.as_ref().filter(|_| plans_as_first && coverage == Coverage::Page).and_then(|window| {
-            let last = window.ids.last()?;
+        let last = if plans_as_first && coverage == Coverage::Page && window.is_some() {
+            store.read(&[&model], |reader| reader.scope_last_id(&model, scope.key.as_str()))?
+        } else { None };
+        let tail = window.as_ref().zip(last).and_then(|(window, last)| {
             let listed = normalized.roots.iter().any(|root| root.get("id").and_then(read_id).is_some_and(|id| id.as_str() == last));
-            (!listed).then(|| WindowTail { anchor: last.clone(), cursor: window.cursor.clone(), has_next: window.has_next })
+            (!listed).then(|| WindowTail { anchor: last, cursor: window.cursor.clone(), has_next: window.has_next })
         });
         let keeps_member_order = self.db.spec(&model)?.stable_order(&scope.key).is_some();
         let mut drops = 0;

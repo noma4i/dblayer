@@ -1,7 +1,4 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
-
-use rusqlite::trace::{TraceEvent, TraceEventCodes};
 use serde_json::json;
 
 use super::super::rig::*;
@@ -15,14 +12,6 @@ const FIRST_SEQUENCE: i64 = 1000;
 const WINDOW: usize = 20;
 
 static STEPS: AtomicUsize = AtomicUsize::new(0);
-static STARTS: Mutex<Vec<(bool, usize)>> = Mutex::new(Vec::new());
-
-fn note_statement(event: TraceEvent<'_>) {
-    if let TraceEvent::Stmt(statement, _) = event {
-        let snapshot = statement.sql().contains("query_window") || statement.sql().starts_with("SELECT row_id FROM scope_member");
-        STARTS.lock().unwrap().push((snapshot, STEPS.load(Ordering::SeqCst)));
-    }
-}
 
 struct Work {
     steps: usize,
@@ -44,11 +33,9 @@ fn enqueue_chat(rig: &Rig, size: usize) {
 async fn measured<F: std::future::Future<Output = ()>>(rig: &Rig, directory: tempfile::TempDir, operation: F) -> Work {
     rig.db.settle();
     STEPS.store(0, Ordering::SeqCst);
-    STARTS.lock().unwrap().clear();
     {
         let inner = rig.db.shared.store.lock();
         inner.connection.progress_handler(1, Some(|| STEPS.fetch_add(1, Ordering::SeqCst) == usize::MAX)).unwrap();
-        inner.connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(note_statement));
     }
     let loaded = rig.db.counters().rows_loaded;
     operation.await;
@@ -56,10 +43,8 @@ async fn measured<F: std::future::Future<Output = ()>>(rig: &Rig, directory: tem
     {
         let inner = rig.db.shared.store.lock();
         inner.connection.progress_handler(0, None::<fn() -> bool>).unwrap();
-        inner.connection.trace_v2(TraceEventCodes::empty(), None);
     }
-    let (end, starts) = (STEPS.load(Ordering::SeqCst), STARTS.lock().unwrap().clone());
-    let steps = starts.iter().enumerate().filter(|(_, (snapshot, _))| !snapshot).map(|(index, (_, at))| starts.get(index + 1).map_or(end, |next| next.1) - at).sum();
+    let steps = STEPS.load(Ordering::SeqCst);
     Work { steps, rows_loaded: rig.db.counters().rows_loaded - loaded, _directory: directory }
 }
 
@@ -99,7 +84,7 @@ async fn one_change_costs_the_same_work_at_every_list_size() {
         ("a confirmed row", confirmed_row(SMALL).await, confirmed_row(LARGE).await),
         ("an older page that repeats shown rows", older_page(SMALL).await, older_page(LARGE).await),
     ] {
-        assert!(large.steps <= small.steps + small.steps / 10, "{name}: {} write steps outside the window snapshot at {SMALL} rows, {} at {LARGE}", small.steps, large.steps);
+        assert!(large.steps <= small.steps + small.steps / 10, "{name}: {} write steps at {SMALL} rows, {} at {LARGE}", small.steps, large.steps);
         assert!(small.rows_loaded <= WINDOW && large.rows_loaded <= WINDOW, "{name}: rows read {} at {SMALL} rows, {} at {LARGE}, window of {WINDOW}", small.rows_loaded, large.rows_loaded);
     }
 }

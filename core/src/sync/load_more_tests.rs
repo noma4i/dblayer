@@ -22,7 +22,7 @@ async fn next_page_uses_the_cursor_and_appends_in_server_order() {
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["a", "b", "c", "d"]);
     let key = rig.sync.window_key("moments", "feed", &none()).unwrap();
     let stored = rig.db.shared.store.window(&key).unwrap().unwrap();
-    assert_eq!((stored.cursor.as_deref(), stored.has_next, stored.ids.len()), (Some("c4"), false, 4));
+    assert_eq!((stored.cursor.as_deref(), stored.has_next), (Some("c4"), false));
 }
 
 #[tokio::test(start_paused = true)]

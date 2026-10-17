@@ -106,10 +106,6 @@ pub fn lists(db: &Db, findings: &Findings) {
                 problems.push(format!("scope {scope} holds row {id} that is not stored"));
             }
         }
-        let mut windows = connection.prepare("SELECT key FROM query_window_row GROUP BY key HAVING COUNT(*) != COUNT(DISTINCT row_id)")?;
-        for key in windows.query_map([], |row| row.get::<_, String>(0))? {
-            problems.push(format!("window {} lists a row twice", key?));
-        }
         Ok(problems)
     });
     match outcome {

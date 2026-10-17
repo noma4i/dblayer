@@ -24,7 +24,7 @@ async fn first_page_lands_rows_members_and_window() {
     assert_eq!((outcome.rows, outcome.has_next, outcome.attempts), (2, true, 1));
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m1", "m2"]);
     let stored = window(&rig, "feed", &none()).unwrap();
-    assert_eq!((stored.cursor.as_deref(), stored.has_next, stored.ids.len()), (Some("c2"), true, 2));
+    assert_eq!((stored.cursor.as_deref(), stored.has_next), (Some("c2"), true));
     assert_eq!(rig.transport.calls()[0].variables, json!({"first": 2}));
 }
 

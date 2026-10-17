@@ -72,9 +72,7 @@ pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str
     clear_model(connection, model)?;
     connection.execute("DELETE FROM tombstone WHERE model = ?1", params![model])?;
     connection.execute("DELETE FROM local_pending WHERE model = ?1", params![model])?;
-    for table in ["query_window_row", "query_window"] {
-        connection.execute(&format!("DELETE FROM {table} WHERE key LIKE ?1 ESCAPE '\\'"), params![like_pattern(ScopeKey::compose(&[model]).as_str())])?;
-    }
+    connection.execute("DELETE FROM query_window WHERE key LIKE ?1 ESCAPE '\\'", params![like_pattern(ScopeKey::compose(&[model]).as_str())])?;
     Ok(())
 }
 
@@ -109,7 +107,7 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
             connection.execute_batch(&format!("DELETE FROM {table}"))?;
         }
     }
-    connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window; DELETE FROM query_window_row; DELETE FROM local_pending;")?;
+    connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window; DELETE FROM local_pending;")?;
     clear_sync(connection, None)?;
     clear_all(connection)?;
     Ok(())

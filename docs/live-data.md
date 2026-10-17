@@ -2,6 +2,8 @@
 
 Every read of a model is live. A read gives you the current value and a stream of changes. There is no snapshot-only read and no separate observe call: connecting to data is reading it.
 
+In Swift and Kotlin, saved page metadata reads membership and the last member from the current stored scope, without a separate copy of ids.
+
 ## What a change contains
 
 | Field | Meaning |

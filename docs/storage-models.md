@@ -10,6 +10,9 @@ Choose storage in the model declaration. Both platforms use the same rules.
 
 Local and synced models can share a database. A local model needs no separate database file.
 
+Swift and Kotlin store list membership and order once in `scope_member`. Page metadata stores cursors and freshness without copying member ids.
+Saving a page touches its changed rows and metadata. Tail and membership reads use indexes, and page limits count current members when needed.
+
 `storage: :local` rejects `fetch`, `listen`, and model `operation` blocks.
 Declare fields, nested values, scopes and associations as usual. Generated create, update and destroy calls still work.
 

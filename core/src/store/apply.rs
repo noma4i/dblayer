@@ -534,11 +534,15 @@ pub(crate) fn apply_envelope(
 }
 
 fn save_window(connection: &Connection, window: &WindowSave, generation: Generation, now_ms: i64) -> Result<(), StoreError> {
-    let mut statement = connection.prepare_cached("SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 ORDER BY order_key, row_id")?;
-    let ids: Vec<String> = statement.query_map(params![window.scope.model.as_str(), window.scope.key.as_str()], |row| row.get(0))?.collect::<Result<_, _>>()?;
-    let kept = window.tail.as_ref().filter(|tail| ids.contains(&tail.anchor));
+    let kept = match &window.tail {
+        Some(tail) => connection.query_row(
+            "SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3",
+            params![window.scope.model.as_str(), window.scope.key.as_str(), tail.anchor], |_| Ok(()),
+        ).optional()?.map(|_| tail),
+        None => None,
+    };
     let (cursor, has_next) = kept.map_or((window.cursor.clone(), window.has_next), |tail| (tail.cursor.clone(), tail.has_next));
-    let record = WindowRecord { key: window.key.clone(), cursor, has_next, total: window.total, ids, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
+    let record = WindowRecord { key: window.key.clone(), cursor, has_next, total: window.total, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
     upsert_window(connection, &record, now_ms)?;
     if let Some(landed_at) = window.cleared_at {
         connection.execute("UPDATE query_window SET invalidated = 0, landed_at = ?1 WHERE key = ?2", params![landed_at, window.key])?;

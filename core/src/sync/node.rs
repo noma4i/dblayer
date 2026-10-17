@@ -18,7 +18,7 @@ impl Sync {
         let row_id = RowId::new(id).map_err(|error| SyncError::Params(error.to_string()))?;
         let resolved = self.resolve_node(model, relation, NodeRead::One, Map::from_iter([(NODE_PARAM.to_string(), json!(id))]))?;
         self.inner.fetch(&resolved, None, force).await?;
-        let listed = self.inner.db.shared.store.window(&resolved.window_key)?.is_some_and(|window| window.ids.iter().any(|member| member == id));
+        let listed = self.inner.db.shared.store.read(&[model], |reader| reader.scope_has_member(model, resolved.scope.key.as_str(), id))?;
         Ok(if listed { self.inner.db.find(model, &row_id)? } else { None })
     }
 
