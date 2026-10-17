@@ -324,6 +324,34 @@ query ChatMedia($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) {
 query ChatsByIds($ids: [ID!]!) { nodes(ids: $ids) { ... on Chat { id title shareUrl } } }
 ```
 
+A paged list of the entities under a node, such as the members of a chat, is a scope of the listed model with a text parameter. It has no `order`: the rows keep the order of the server across pages, a restart and a refresh of a row by another list.
+
+```ruby
+model User do
+  scope :chat_members, text: [:chatId] do
+    fetch ChatMembers, root: "node.members"
+    paginate 30
+    fresh_for 5.minutes
+  end
+end
+```
+
+```graphql
+query ChatMembers($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { members(first: $first, after: $after) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }
+```
+
+```swift
+let members = LiveList(User.chatMembers(chatId))   // members.rows, members.state.hasMore
+try await User.chatMembers(chatId).loadMore()      // true while another page exists
+```
+
+```kotlin
+val members = User.chatMembers(chatId)
+members.loadMore()                                 // true while another page exists
+```
+
+`total` is set only when the connection selects `totalCount`. Without it `total` stays nil and `hasMore` comes from `pageInfo`.
+
 | Line | Meaning |
 | ---- | ------- |
 | `node Operation` | one entity by id, generates `Model.node(id)`. The operation sends the id as `$id` |

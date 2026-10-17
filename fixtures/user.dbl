@@ -12,4 +12,10 @@ model User do
     fetch UserProfile
     updates UserTyping, set: { typing: true }
   end
+
+  scope :chat_members, text: [:chatId] do
+    fetch ChatMembers, root: "node.members"
+    paginate 30
+    fresh_for 5.minutes
+  end
 end

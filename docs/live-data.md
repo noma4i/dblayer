@@ -125,6 +125,21 @@ Moment.feed.state.flow.collect { state -> if (state.isLoading) showSpinner() }
 
 While a load runs the state also tells which load it is: `isInitialLoading` (the first load of a list without rows, for a skeleton), `isRefreshing` (a reload of a list with rows) and `isFetchingMore` (the next page, for a footer spinner). Concurrent loads of the same list do not mix, each flag follows its own loads.
 
+**Pages of a related list.** A list that lives under a node, such as the members of a chat, pages with `loadMore()` and shows `hasMore` and `total` in its state (`total` is nil when the connection has no `totalCount`). See [node reads](models.md#node-reads).
+
+```swift
+let members = User.chatMembers(chatId)
+try await members.load()
+for await state in await members.state.stream() { footer.isHidden = !state.hasMore }
+try await members.loadMore()                       // true while another page exists
+```
+
+```kotlin
+val members = User.chatMembers(chatId)
+members.load()
+members.loadMore()
+```
+
 **Replaced ids.** A record created offline is shown under a temporary id until the server answers (or a row that matches it lands first, see `correlate` in [writing data](writing-data.md)). The delivery that swaps the ids tells it: `query.snapshots` yields the rows with `replaced`, a map from the real id to the temporary id that it replaced, and `LiveList` keeps the map of its last delivery. A list that animates insertions uses it to move the existing row instead of removing one and inserting another.
 
 ```swift

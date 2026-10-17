@@ -606,6 +606,8 @@ mod schema_check_tests;
 
 #[cfg(test)]
 mod node_tests;
+#[cfg(test)]
+mod members_tests;
 
 #[cfg(test)]
 mod union_tests;
