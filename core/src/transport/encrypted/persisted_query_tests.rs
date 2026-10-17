@@ -12,47 +12,47 @@ use crate::pacing::ManualClock;
 use crate::transport::{GraphQLRequest, MockTransport, Transport};
 
 const READ: &str = "query Me { me { id } }";
-const WRITE: &str = "mutation Rename { rename { id } }";
+pub(super) const WRITE: &str = "mutation Rename { rename { id } }";
 
-struct Rig {
-    server: Arc<FakeServer>,
-    credentials: Arc<MemoryCredentials>,
-    clock: Arc<ManualClock>,
-    db: Db,
+pub(super) struct Rig {
+    pub(super) server: Arc<FakeServer>,
+    pub(super) credentials: Arc<MemoryCredentials>,
+    pub(super) clock: Arc<ManualClock>,
+    pub(super) db: Db,
 }
 
 impl Rig {
-    async fn signed_in() -> Self {
+    pub(super) async fn signed_in() -> Self {
         let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
         let rig = Self { server: FakeServer::new(clock.clone()), credentials: Arc::new(MemoryCredentials::default()), clock, db: Db::open_in_memory(Vec::new(), None).unwrap() };
         rig.client().mutate("/api/v3/auth/provider", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
         rig
     }
 
-    fn client(&self) -> Arc<EncryptedClient> {
+    pub(super) fn client(&self) -> Arc<EncryptedClient> {
         let config = EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: PIN.to_string() };
         Arc::new(EncryptedClient::new(&config, self.server.clone(), self.credentials.clone(), self.db.clone(), self.clock.clone()).unwrap())
     }
 
-    fn transport(&self) -> EncryptedTransport {
+    pub(super) fn transport(&self) -> EncryptedTransport {
         EncryptedTransport::new(self.client(), Arc::new(MockTransport::new()))
     }
 
-    fn graphql_requests(&self) -> Vec<Value> {
+    pub(super) fn graphql_requests(&self) -> Vec<Value> {
         self.server.seen().into_iter().filter(|request| request["path"] == "/api/v3/graphql").collect()
     }
 
-    fn pending_sequence(&self) -> Option<i64> {
+    pub(super) fn pending_sequence(&self) -> Option<i64> {
         let inner = self.db.shared.store.lock();
         state::pending(&inner.connection).unwrap().map(|pending| pending.sequence)
     }
 }
 
-fn request(document: &str) -> GraphQLRequest {
+pub(super) fn request(document: &str) -> GraphQLRequest {
     GraphQLRequest::new(document, "", json!({}))
 }
 
-fn documents(requests: &[Value]) -> Vec<bool> {
+pub(super) fn documents(requests: &[Value]) -> Vec<bool> {
     requests.iter().map(|request| request["body"].get("query").is_some()).collect()
 }
 

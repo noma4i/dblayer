@@ -112,6 +112,10 @@ impl EncryptedClient {
         self.settle(&credential, pending).await
     }
 
+    pub fn pending_call(&self) -> Result<Option<(String, Value)>, TransportError> {
+        Ok(self.with_connection(state::pending)?.and_then(|pending| Some((pending.path, serde_json::from_str(&pending.body).ok()?))))
+    }
+
     pub async fn resume(&self) -> Result<Option<Answer>, TransportError> {
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;

@@ -38,6 +38,10 @@ pub fn graphql_body(request: &GraphQLRequest, with_document: bool) -> Value {
     Value::Object(body)
 }
 
+pub fn repeats(request: &GraphQLRequest, path: &str, body: &Value) -> bool {
+    path == GRAPHQL_PATH && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
+}
+
 pub fn response_of(answer: Answer) -> Result<Response, TransportError> {
     if let Some(code) = answer.body.get("error").and_then(Value::as_str) {
         if let session @ TransportError::Session { .. } = TransportError::refusal(code) {
@@ -49,7 +53,7 @@ pub fn response_of(answer: Answer) -> Result<Response, TransportError> {
     serde_json::from_value(answer.body).map_err(|error| TransportError::Decode(error.to_string()))
 }
 
-fn missing_from_registry(response: &Response) -> bool {
+pub fn missing_from_registry(response: &Response) -> bool {
     response.errors.iter().any(|error| error.code() == Some(PERSISTED_QUERY_NOT_FOUND))
 }
 
@@ -64,6 +68,10 @@ impl Transport for EncryptedTransport {
     }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
+        let stored = graphql_body(&request, true);
+        if self.client.pending_call()?.is_some_and(|(path, body)| path == GRAPHQL_PATH && body == stored) {
+            return response_of(self.client.mutate(GRAPHQL_PATH, stored).await?);
+        }
         let response = response_of(self.client.mutate(GRAPHQL_PATH, graphql_body(&request, false)).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);

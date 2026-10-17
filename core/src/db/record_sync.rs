@@ -45,7 +45,7 @@ impl Db {
         self.retry_operations(stuck)
     }
 
-    fn retry_operations(&self, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
+    pub(crate) fn retry_operations(&self, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
         if stuck.is_empty() {
             return Ok(0);
         }

@@ -64,9 +64,15 @@ impl From<serde_json::Error> for DbError {
 #[cfg(test)]
 pub(super) mod encrypted_tests;
 #[cfg(test)]
+mod lost_session_recovery_tests;
+#[cfg(test)]
+mod queued_detail_tests;
+#[cfg(test)]
 mod sealed_errors_tests;
 #[cfg(test)]
 mod session_guards_tests;
+#[cfg(test)]
+mod session_resume_effect_tests;
 #[cfg(test)]
 mod executor_tests;
 #[cfg(test)]

@@ -21,9 +21,9 @@ const TABLE: [(&str, SessionCode); 11] = [
     ("ALREADY_AUTHENTICATED", SessionCode::AlreadyAuthenticated),
 ];
 
-const OPERATIONS: &str = r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"},{"name":"MakeMoment","document":"mutation MakeMoment { makeMoment { id text } }","rootPath":"makeMoment"}]"#;
+pub(super) const OPERATIONS: &str = r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"},{"name":"MakeMoment","document":"mutation MakeMoment { makeMoment { id text } }","rootPath":"makeMoment"}]"#;
 
-fn moment_spec() -> ModelSpec {
+pub(super) fn moment_spec() -> ModelSpec {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     let mut feed = RelationSpec::global("feed");
     feed.remote = Some(RemoteSpec {
@@ -39,7 +39,7 @@ fn moment_spec() -> ModelSpec {
     model
 }
 
-async fn signed_in(rig: &Rig) -> Arc<Database> {
+pub(super) async fn signed_in(rig: &Rig) -> Arc<Database> {
     let database = Database::open_encrypted(
         Config { path: None, data_version: None, cache_rows: 8 },
         serde_json::to_string(&vec![moment_spec()]).unwrap(),
@@ -56,7 +56,7 @@ async fn signed_in(rig: &Rig) -> Arc<Database> {
     database
 }
 
-fn session(error: DbError) -> (SessionCode, String) {
+pub(super) fn session(error: DbError) -> (SessionCode, String) {
     let DbError::Session { code, detail } = error else { panic!("expected a session error, got {error:?}") };
     (code, detail)
 }
@@ -136,7 +136,7 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_l
     }
 }
 
-fn graphql_posts(rig: &Rig) -> usize {
+pub(super) fn graphql_posts(rig: &Rig) -> usize {
     rig.server.seen().iter().filter(|request| request["path"] == "/api/v3/graphql").count()
 }
 

@@ -98,8 +98,17 @@ impl Database {
 
     pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
         let client = self.session()?.clone();
-        let answer = executor()?.spawn(async move { client.resume().await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(typed)?;
-        answer.map(|answer| refused(answer).map(|answer| answer.body.to_string())).transpose()
+        let stored = client.pending_call().map_err(typed)?;
+        let resumed = client.clone();
+        let answer = executor()?.spawn(async move { resumed.resume().await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(typed)?;
+        let Some(answer) = answer else { return Ok(None) };
+        if let (Some(sync), Some((path, body))) = (self.sync.clone(), stored) {
+            let result = core::response_of(answer.clone());
+            if !matches!(&result, Ok(response) if core::missing_from_registry(response)) {
+                executor()?.spawn(async move { sync.inner.settle_resumed(&move |request| core::repeats(request, &path, &body), result).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })??;
+            }
+        }
+        refused(answer).map(|answer| Some(answer.body.to_string()))
     }
 
     #[uniffi::method(default(platform = None, version = None))]

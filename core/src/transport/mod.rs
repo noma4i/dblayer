@@ -16,7 +16,7 @@ mod session_code;
 mod subscription;
 
 pub use cancel::CancelToken;
-pub use encrypted::{Answer, ConfigError, Country, CredentialSlot, EncryptedClient, EncryptedConfig, EncryptedTransport, HttpExchange, HttpReply, ServerConfig, ServerKeyInfo, LOGOUT_PATH};
+pub use encrypted::{missing_from_registry, repeats, response_of, Answer, ConfigError, Country, CredentialSlot, EncryptedClient, EncryptedConfig, EncryptedTransport, HttpExchange, HttpReply, ServerConfig, ServerKeyInfo, LOGOUT_PATH};
 pub use error::TransportError;
 pub use events::{EventFault, EventSpec};
 pub use fetch::{FetchAttempt, FetchError, FetchReport};

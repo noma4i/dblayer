@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::transport::SessionCode;
 use crate::upload::UploadInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -32,14 +33,50 @@ impl SyncState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureKind {
     Network,
     Server,
     Rejected,
-    Session,
+    Session(SessionCode),
     Unrecognized,
+}
+
+const SESSION_PREFIX: &str = "session:";
+
+impl FailureKind {
+    fn text(self) -> String {
+        match self {
+            FailureKind::Network => "network".into(),
+            FailureKind::Server => "server".into(),
+            FailureKind::Rejected => "rejected".into(),
+            FailureKind::Session(code) => format!("{SESSION_PREFIX}{}", code.name()),
+            FailureKind::Unrecognized => "unrecognized".into(),
+        }
+    }
+
+    fn from_text(text: &str) -> Option<Self> {
+        match text {
+            "network" => Some(FailureKind::Network),
+            "server" => Some(FailureKind::Server),
+            "rejected" => Some(FailureKind::Rejected),
+            "unrecognized" => Some(FailureKind::Unrecognized),
+            _ => text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session),
+        }
+    }
+}
+
+impl Serialize for FailureKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.text())
+    }
+}
+
+impl<'de> Deserialize<'de> for FailureKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::from_text(&text).ok_or_else(|| serde::de::Error::custom(format!("unknown failure kind {text}")))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

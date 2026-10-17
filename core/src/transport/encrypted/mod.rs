@@ -17,7 +17,7 @@ pub(crate) mod vectors;
 
 pub use client::{Answer, EncryptedClient, EncryptedConfig, LOGOUT_PATH};
 pub use config::{ConfigError, Country, ServerConfig, ServerKeyInfo};
-pub use graphql::EncryptedTransport;
+pub use graphql::{missing_from_registry, repeats, response_of, EncryptedTransport};
 #[cfg(test)]
 use {jwe::{open_response, seal_request, RequestPlain, ResponsePlain}, key::ServerKey};
 
@@ -52,7 +52,11 @@ mod key_tests;
 #[cfg(test)]
 mod origin_tests;
 #[cfg(test)]
+mod persisted_query_retry_tests;
+#[cfg(test)]
 mod persisted_query_tests;
+#[cfg(test)]
+mod refused_sequence_tests;
 #[cfg(test)]
 mod sealed_errors_tests;
 #[cfg(test)]

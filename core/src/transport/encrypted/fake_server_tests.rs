@@ -135,6 +135,7 @@ struct State {
     seen: Vec<Value>,
     executed: Vec<Value>,
     registry: HashSet<(String, String)>,
+    reply: Option<Value>,
 }
 
 pub struct FakeServer {
@@ -170,6 +171,10 @@ impl FakeServer {
     pub fn register(&self, document: &str) {
         let hash = hex_of(document);
         self.state.lock().unwrap().registry.insert((hash, document.to_string()));
+    }
+
+    pub fn reply_with(&self, data: Value) {
+        self.state.lock().unwrap().reply = Some(data);
     }
 
     pub fn forget_registrations(&self) {
@@ -237,7 +242,7 @@ impl FakeServer {
     fn answer(&self, state: &mut State, path: &str, data: &Value) -> String {
         let credential_digest: String = Sha256::digest(data["credential"].as_str().unwrap().as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
         let auth = path.starts_with("/api/v3/auth/");
-        if state.session.is_none() && auth && data["sequence"] == 1 {
+        if auth && data["sequence"] == 1 && state.session.as_ref().is_none_or(|session| session.digest != credential_digest) {
             state.session = Some(Session { digest: credential_digest.clone(), ..Session::default() });
         }
         let Some(session) = state.session.as_mut().filter(|session| session.digest == credential_digest) else {
@@ -246,7 +251,14 @@ impl FakeServer {
         let (forget, refuse) = (state.faults.forget_registrations, state.faults.refuse_hashes);
         let resolved = if path == "/api/v3/graphql" && forget { Err("PERSISTED_QUERY_NOT_FOUND") } else if path == "/api/v3/graphql" && refuse { Err("INVALID_INPUT") } else if path == "/api/v3/graphql" { document_of(&mut state.registry, &data["body"]) } else { Ok(Value::Null) };
         if let Some((code, confirmed)) = state.faults.refuse_next.take() {
-            return seal_response(data, data["sequence"].as_i64().filter(|_| confirmed), json!({ "error": code }));
+            let spent = data["sequence"].as_i64().filter(|_| confirmed);
+            let answer = seal_response(data, spent, json!({ "error": code }));
+            if let Some(sequence) = spent {
+                session.sequence = sequence;
+                session.request_digest = digest_of(data);
+                session.answer = Some(answer.clone());
+            }
+            return answer;
         }
         let Some(sequence) = data["sequence"].as_i64() else {
             let document = match resolved {
@@ -275,7 +287,7 @@ impl FakeServer {
             }
             "/api/v3/auth/confirm" => json!({ "error": "INVALID_CODE" }),
             "/api/v3/graphql" => match &resolved {
-                Ok(document) => json!({ "data": { "done": document } }),
+                Ok(document) => json!({ "data": state.reply.clone().unwrap_or_else(|| json!({ "done": document })) }),
                 Err(code) => persisted_failure(code),
             },
             _ => json!({ "nextStep": "authenticated" }),
