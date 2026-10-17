@@ -21,8 +21,8 @@ pub enum SyncError {
     Transport(crate::transport::TransportError),
     #[error("offline")]
     Offline,
-    #[error("graphql: {}", .0.join("\n"))]
-    Graphql(Vec<String>),
+    #[error("graphql: {}", messages.join("\n"))]
+    Graphql { messages: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     #[error("malformed response: {0}")]
     Malformed(String),
     #[error("event is invalid: {0}")]

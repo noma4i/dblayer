@@ -83,11 +83,12 @@ impl<'de> Deserialize<'de> for FailureKind {
 pub struct OperationFailure {
     pub kind: FailureKind,
     pub message: String,
+    pub extensions: Option<crate::transport::GraphqlExtensions>,
 }
 
 impl OperationFailure {
     pub fn new(kind: FailureKind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into() }
+        Self { kind, message: message.into(), extensions: None }
     }
 }
 

@@ -259,6 +259,8 @@ fn core_table_columns_match_spec() {
         "since",
         "error_kind",
         "error_message",
+        "error_code",
+        "error_disposition",
         "up_phase",
         "up_stage",
         "up_scenario",

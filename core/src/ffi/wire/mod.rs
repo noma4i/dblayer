@@ -50,6 +50,7 @@ pub enum WireUploadStatus {
 pub struct WireFailure {
     pub kind: String,
     pub message: String,
+    pub extensions: Option<crate::transport::GraphqlExtensions>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -202,7 +203,7 @@ fn cell<'a>(field: &'a FieldSpec, value: Option<&Value>, types: &mut Types<'a>) 
 }
 
 fn failure(failure: &OperationFailure) -> WireFailure {
-    WireFailure { kind: enum_text(&failure.kind).unwrap_or_default(), message: failure.message.clone() }
+    WireFailure { kind: enum_text(&failure.kind).unwrap_or_default(), message: failure.message.clone(), extensions: failure.extensions.clone() }
 }
 
 fn upload(info: &UploadInfo) -> WireUpload {

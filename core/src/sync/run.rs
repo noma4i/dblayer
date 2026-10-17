@@ -18,7 +18,7 @@ impl Sync {
             .map_err(SyncError::Transport)?;
         if response.shape().outcome() != ResponseOutcome::Commit {
             let messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
-            return Err(SyncError::Graphql(if messages.is_empty() { vec!["empty response".to_string()] } else { messages }));
+            return Err(SyncError::Graphql { messages: if messages.is_empty() { vec!["empty response".to_string()] } else { messages }, extensions: response.extensions() });
         }
         let data = response.data.unwrap_or(Value::Null);
         Ok(data.get(&definition.root_path).cloned().unwrap_or(Value::Null))

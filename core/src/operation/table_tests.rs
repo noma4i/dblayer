@@ -88,7 +88,7 @@ fn op_columns_match_spec_and_nullability() {
     assert_eq!(
         names,
         [
-            "seq", "action_key", "status", "temp_id", "transport_started", "base_revision", "created_at", "dedupe_key", "attempts", "since", "error_kind", "error_message", "up_phase", "up_stage",
+            "seq", "action_key", "status", "temp_id", "transport_started", "base_revision", "created_at", "dedupe_key", "attempts", "since", "error_kind", "error_message", "error_code", "error_disposition", "up_phase", "up_stage",
             "up_scenario", "up_total", "up_sent", "up_retries", "up_key", "up_upload_id", "up_signed_id", "up_blob_id", "up_document", "up_operation"
         ]
     );
@@ -96,7 +96,7 @@ fn op_columns_match_spec_and_nullability() {
     assert_eq!(
         nullable,
         [
-            "temp_id", "base_revision", "dedupe_key", "error_kind", "error_message", "up_phase", "up_stage", "up_scenario", "up_total", "up_sent", "up_retries", "up_key", "up_upload_id", "up_signed_id",
+            "temp_id", "base_revision", "dedupe_key", "error_kind", "error_message", "error_code", "error_disposition", "up_phase", "up_stage", "up_scenario", "up_total", "up_sent", "up_retries", "up_key", "up_upload_id", "up_signed_id",
             "up_blob_id", "up_document", "up_operation"
         ]
     );

@@ -9,7 +9,7 @@ Every record knows whether the server has seen it. The state is live like everyt
 | `sync.state` | `synced`, `pending`, `sending`, `failed` or `deliveryUnknown` |
 | `sync.actions` | actions waiting for the server, in order (`create`, `update`, `destroy`, custom actions) |
 | `sync.dirtyFields` | fields changed locally and not yet confirmed |
-| `sync.error` | the last error (`kind` and `message`) when the state is `failed` or `deliveryUnknown` |
+| `sync.error` | the last error (`kind`, `message` and optional GraphQL `extensions`) when the state is `failed` or `deliveryUnknown` |
 | `sync.attempts` | how many times sending was tried since the last `retry()` |
 | `sync.since` | when the record entered this state |
 | `isLocal` | the record has a temporary id and the server does not know it yet |
@@ -24,6 +24,9 @@ Every record knows whether the server has seen it. The state is live like everyt
 | `deliveryUnknown` | the request was sent and no answer was seen: the connection broke, the server returned an error status, or the answer could not be understood |
 
 The error `kind` is `network`, `server`, `rejected`, `unrecognized` or `session:<CODE>`. A sealed session refusal of the encrypted session gives the wire name of its code, for example `session:UNAUTHENTICATED`, and `message` holds the detail text.
+
+GraphQL `extensions.code` and `extensions.transactionDisposition` use the same types as [operation errors](models.md#graphql-errors) on Swift and Kotlin.
+They persist in separate SQLite columns for queued operations, record sync state and upload failures. Retrying clears them with the previous failure.
 
 ## Example: a moment that is still being sent
 

@@ -5,7 +5,7 @@ pub enum TransportError {
     #[error("http {status}: {body}")]
     Http { status: u16, body: String },
     #[error("graphql: {}", messages.join("\n"))]
-    Graphql { messages: Vec<String> },
+    Graphql { messages: Vec<String>, extensions: Option<super::GraphqlExtensions> },
     #[error("session {code:?}: {detail}")]
     Session { code: super::SessionCode, detail: String },
     #[error("interrupted: {0}")]
@@ -20,7 +20,7 @@ impl TransportError {
     pub fn refusal(code: &str) -> Self {
         match super::SessionCode::from_wire(code) {
             Some(session) => Self::Session { code: session, detail: code.to_string() },
-            None => Self::Graphql { messages: vec![code.to_string()] },
+            None => Self::Graphql { messages: vec![code.to_string()], extensions: None },
         }
     }
 }

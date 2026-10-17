@@ -2,7 +2,11 @@ import Foundation
 
 public enum SyncState: String, Codable, Sendable { case synced, pending, sending, failed, deliveryUnknown = "delivery_unknown" }
 
-public struct OperationFailure: Codable, Sendable, Equatable { public let kind: String; public let message: String }
+public struct OperationFailure: Codable, Sendable, Equatable {
+  public let kind: String
+  public let message: String
+  public let extensions: GraphqlExtensions?
+}
 
 public struct SyncInfo: Codable, Sendable, Equatable {
   public var state: SyncState = .synced
@@ -62,7 +66,7 @@ extension UploadStatus {
 }
 
 extension OperationFailure {
-  init(wire: WireFailure) { self.init(kind: wire.kind, message: wire.message) }
+  init(wire: WireFailure) { self.init(kind: wire.kind, message: wire.message, extensions: wire.extensions) }
 }
 
 extension SyncInfo {

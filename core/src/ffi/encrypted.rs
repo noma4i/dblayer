@@ -49,7 +49,7 @@ impl core::CredentialSlot for ForeignCredentials {
 
 fn typed(error: core::TransportError) -> DbError {
     match error {
-        core::TransportError::Graphql { messages } if messages.len() == 1 => DbError::Session { code: SessionCode::of(&messages[0]), detail: messages[0].clone() },
+        core::TransportError::Graphql { messages, .. } if messages.len() == 1 => DbError::Session { code: SessionCode::of(&messages[0]), detail: messages[0].clone() },
         other => DbError::from(SyncError::Transport(other)),
     }
 }

@@ -79,10 +79,10 @@ class WireVectorsTest {
 
     @Test
     fun statusAndMessagesClassifyTransportErrors() {
-        assertEquals(GraphQLTransportError.Server(502), GraphQLTransportError.classify(502, emptyList()))
-        assertEquals(GraphQLTransportError.Unauthenticated, GraphQLTransportError.classify(401, emptyList()))
-        assertEquals(GraphQLTransportError.GraphQL(listOf("no")), GraphQLTransportError.classify(200, listOf("no")))
-        assertNull(GraphQLTransportError.classify(200, emptyList()))
+        assertEquals(GraphQLTransportError.Server(502), GraphQLTransportError.classify(502, emptyList(), null))
+        assertEquals(GraphQLTransportError.Unauthenticated, GraphQLTransportError.classify(401, emptyList(), null))
+        assertEquals(GraphQLTransportError.GraphQL(listOf("no"), null), GraphQLTransportError.classify(200, listOf("no"), null))
+        assertNull(GraphQLTransportError.classify(200, emptyList(), null))
     }
 
     @Test

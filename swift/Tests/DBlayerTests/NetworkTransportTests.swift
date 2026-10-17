@@ -83,7 +83,7 @@ struct NetworkTransportTests {
     let run = OperationRun(transport: httpTransport, hashes: PersistedQueryHashes())
     let transport: any GraphQLTransport = NetworkTransport(run: run, cable: makeCableClient())
 
-    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Rejected"])) {
+    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Rejected"], extensions: GraphqlExtensions(code: "REGISTRATION_REQUIRED", transactionDisposition: nil))) {
       _ = try await transport.query(ProbeQuery.self, variables: ProbeQuery.Variables())
     }
     #expect(ScriptedURLProtocol.recordedRequests(scriptId: scriptId).count == 1)
@@ -135,7 +135,7 @@ struct NetworkTransportTests {
       )
       #expect(result == body)
     } else {
-      await #expect(throws: GraphQLTransportError.graphQL(messages: ["Rejected"])) {
+      await #expect(throws: GraphQLTransportError.graphQL(messages: ["Rejected"], extensions: nil)) {
         _ = try await run.send(
           operationName: ProbeMutation.operationName,
           document: ProbeMutation.document,

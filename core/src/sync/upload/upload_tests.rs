@@ -424,6 +424,26 @@ async fn a_rejected_mutation_fails_without_repeating_and_discard_removes_the_ope
 }
 
 #[tokio::test(start_paused = true)]
+async fn graphql_extensions_survive_upload_step_failures() {
+    use crate::transport::{GraphqlExtensions, TransactionDisposition};
+    let fields = GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: Some(TransactionDisposition::Keep) };
+    for (reply, expected) in [
+        (Reply::graphql_error("nope", "DUPLICATE_CLIENT_KEY"), GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: None }),
+        (Reply::fail(TransportError::Graphql { messages: vec!["nope".into()], extensions: Some(fields.clone()) }), fields),
+    ] {
+        let rig = upload_rig(small());
+        rig.transport.enqueue("CreateBlob", reply);
+        let source = file(b"abcdef");
+        rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
+        rig.sync.wait_uploads().await;
+        let failed = upload_of(&rig, "m1").unwrap();
+        assert_eq!(failed.error.unwrap().extensions, Some(expected));
+        assert_eq!(rig.transport.call_count("CreateBlob"), 1);
+        assert_eq!(rig.transport.call_count("CreateMoment"), 0);
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn cancel_stops_the_transfer_aborts_the_multipart_and_skips_the_mutation() {
     let rig = upload_rig(small());
     multipart_replies(&rig);

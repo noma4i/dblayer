@@ -63,7 +63,7 @@ async fn a_load_refused_with_http_401_keeps_its_status_and_is_sent_once() {
 async fn a_run_answered_with_graphql_errors_keeps_every_message_and_is_sent_once() {
     let (db, transport) = rig(Ok(REFUSED));
     let error = db.run("Feed".into(), "{}".into()).await.unwrap_err();
-    assert!(matches!(&error, DbError::Graphql { messages } if messages == &["nope", "bad"]), "{error:?}");
+    assert!(matches!(&error, DbError::Graphql { messages, .. } if messages == &["nope", "bad"]), "{error:?}");
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
 }
 
@@ -71,6 +71,6 @@ async fn a_run_answered_with_graphql_errors_keeps_every_message_and_is_sent_once
 async fn a_load_answered_with_graphql_errors_keeps_every_message_and_is_sent_once() {
     let (db, transport) = rig(Ok(REFUSED));
     let error = db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
-    assert!(matches!(&error, DbError::Graphql { messages } if messages == &["nope", "bad"]), "{error:?}");
+    assert!(matches!(&error, DbError::Graphql { messages, .. } if messages == &["nope", "bad"]), "{error:?}");
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
 }

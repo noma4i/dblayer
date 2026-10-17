@@ -3,6 +3,7 @@ use async_trait::async_trait;
 mod cancel;
 pub(crate) mod encrypted;
 mod error;
+mod extensions;
 mod events;
 mod fetch;
 #[cfg(any(test, feature = "stress"))]
@@ -19,6 +20,7 @@ pub use cancel::CancelToken;
 pub use encrypted::cable::{CableError, CableLink, CABLE_PATH};
 pub use encrypted::{missing_from_registry, repeats, response_of, Answer, ConfigError, Country, CredentialSlot, EncryptedClient, EncryptedConfig, EncryptedTransport, HttpExchange, HttpReply, ServerConfig, ServerKeyInfo, LOGOUT_PATH};
 pub use error::TransportError;
+pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDisposition};
 pub use events::{EventFault, EventSpec};
 pub use fetch::{FetchAttempt, FetchError, FetchReport};
 #[cfg(any(test, feature = "stress"))]

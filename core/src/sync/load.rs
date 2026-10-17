@@ -282,7 +282,7 @@ impl Inner {
                     if messages.is_empty() {
                         messages.push("empty response".to_string());
                     }
-                    (RetryClass::classify(false, None, &codes), SyncError::Graphql(messages))
+                    (RetryClass::classify(false, None, &codes), SyncError::Graphql { messages, extensions: response.extensions() })
                 }
                 Err(error) => (RetryClass::of_error(&error), SyncError::Transport(error)),
             };

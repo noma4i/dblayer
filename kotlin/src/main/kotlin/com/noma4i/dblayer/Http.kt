@@ -46,13 +46,13 @@ sealed class GraphQLTransportError(val errorClass: String, override val message:
     data object Unauthenticated : GraphQLTransportError("unauthenticated", "UNAUTHENTICATED")
     data class PayloadTransport(val code: String, val status: Int) : GraphQLTransportError("payloadTransport", "$code (HTTP $status)")
     data class Server(val status: Int) : GraphQLTransportError("server", "SERVER_ERROR (HTTP $status)")
-    data class GraphQL(val messages: List<String>) : GraphQLTransportError("graphQL", messages.joinToString(", "))
+    data class GraphQL(val messages: List<String>, val extensions: GraphqlExtensions?) : GraphQLTransportError("graphQL", messages.joinToString(", "))
 
     companion object {
-        fun classify(status: Int, errorMessages: List<String>): GraphQLTransportError? = when {
+        fun classify(status: Int, errorMessages: List<String>, extensions: GraphqlExtensions?): GraphQLTransportError? = when {
             status in 500..599 -> Server(status)
             status == 401 -> Unauthenticated
-            errorMessages.isNotEmpty() -> GraphQL(errorMessages)
+            errorMessages.isNotEmpty() -> GraphQL(errorMessages, extensions)
             status == 403 -> Unauthenticated
             status in 200..299 -> null
             else -> Server(status)
@@ -339,7 +339,7 @@ class OperationRun(
                 if (response?.errors?.isNotEmpty() == true) onFailure(RequestFailure(operationName, result.status, "graphQL"))
                 return result.body
             }
-            val error = GraphQLTransportError.classify(result.status, response?.errors?.map { it.message }.orEmpty())
+            val error = GraphQLTransportError.classify(result.status, response?.errors?.map { it.message }.orEmpty(), response?.takeIf { it.errors.isNotEmpty() }?.let { graphqlExtensions(String(result.body)) })
             if (error != null) {
                 onFailure(RequestFailure(operationName, result.status, error.errorClass))
                 throw error

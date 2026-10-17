@@ -78,8 +78,8 @@ impl Outcomes {
 
 fn error_of(model: &str, result: &SendResult, subject: &str) -> SyncError {
     match result {
-        SendResult::Rejected(OperationFailure { kind: FailureKind::Session(code), message }) => SyncError::Transport(TransportError::Session { code: *code, detail: message.clone() }),
-        SendResult::Rejected(failure) => SyncError::Graphql(vec![failure.message.clone()]),
+        SendResult::Rejected(OperationFailure { kind: FailureKind::Session(code), message, .. }) => SyncError::Transport(TransportError::Session { code: *code, detail: message.clone() }),
+        SendResult::Rejected(failure) => SyncError::Graphql { messages: vec![failure.message.clone()], extensions: failure.extensions.clone() },
         SendResult::Discarded => SyncError::Cancelled,
         _ => SyncError::Store(format!("{model} {subject}: the answer is unknown")),
     }

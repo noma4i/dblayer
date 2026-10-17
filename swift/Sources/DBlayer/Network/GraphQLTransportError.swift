@@ -4,9 +4,9 @@ public enum GraphQLTransportError: Error, Equatable, Sendable {
   case unauthenticated
   case payloadTransport(code: String, status: Int)
   case server(status: Int)
-  case graphQL(messages: [String])
+  case graphQL(messages: [String], extensions: GraphqlExtensions?)
 
-  public static func classify(status: Int, errorMessages: [String]) -> GraphQLTransportError? {
+  public static func classify(status: Int, errorMessages: [String], extensions: GraphqlExtensions?) -> GraphQLTransportError? {
     if (500 ... 599).contains(status) {
       return .server(status: status)
     }
@@ -14,7 +14,7 @@ public enum GraphQLTransportError: Error, Equatable, Sendable {
       return .unauthenticated
     }
     if !errorMessages.isEmpty {
-      return .graphQL(messages: errorMessages)
+      return .graphQL(messages: errorMessages, extensions: extensions)
     }
     if status == 403 {
       return .unauthenticated
@@ -42,7 +42,7 @@ public enum GraphQLTransportError: Error, Equatable, Sendable {
       "\(code) (HTTP \(status))"
     case let .server(status):
       "SERVER_ERROR (HTTP \(status))"
-    case let .graphQL(messages):
+    case let .graphQL(messages, _):
       messages.joined(separator: ", ")
     }
   }

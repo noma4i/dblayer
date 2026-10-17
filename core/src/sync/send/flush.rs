@@ -92,12 +92,13 @@ fn delivery_of(result: Result<Response, TransportError>) -> Delivery {
         Ok(response) => {
             let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
             let kind = if RetryClass::classify(false, None, &codes) == RetryClass::Retriable { FailureKind::Server } else { FailureKind::Rejected };
-            Delivery::Rejected(OperationFailure::new(kind, message_of(&response)))
+            Delivery::Rejected(OperationFailure { kind, message: message_of(&response), extensions: response.extensions() })
         }
         Err(error @ TransportError::Network(_)) => Delivery::Unreached(OperationFailure::new(FailureKind::Network, error.to_string())),
         Err(error @ TransportError::Interrupted(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, error.to_string())),
         Err(error @ TransportError::Http { status, .. }) if status >= 500 => Delivery::Unknown(OperationFailure::new(FailureKind::Server, error.to_string())),
         Err(TransportError::Session { code, detail }) => Delivery::Rejected(OperationFailure::new(FailureKind::Session(code), detail)),
+        Err(TransportError::Graphql { messages, extensions }) => Delivery::Rejected(OperationFailure { kind: FailureKind::Rejected, message: messages.join("\n"), extensions }),
         Err(error @ TransportError::Decode(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),
         Err(error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string())),
     }

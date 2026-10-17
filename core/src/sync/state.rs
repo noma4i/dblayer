@@ -58,7 +58,7 @@ impl LoadError {
     fn of(error: &SyncError) -> Self {
         let kind = match error {
             SyncError::Offline | SyncError::Transport(_) => "network",
-            SyncError::Graphql(_) => "server",
+            SyncError::Graphql { .. } => "server",
             SyncError::Malformed(_) => "unrecognized",
             _ => "other",
         };

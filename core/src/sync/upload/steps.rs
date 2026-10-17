@@ -39,7 +39,8 @@ fn step_error(error: TransportError, cancelled: bool) -> StepError {
             StepError::Retry(OperationFailure::new(FailureKind::Server, message))
         }
         TransportError::Session { code, detail } => fatal(FailureKind::Session(code), detail),
-        TransportError::Http { .. } | TransportError::Graphql { .. } | TransportError::Unscripted(_) => fatal(FailureKind::Rejected, message),
+        TransportError::Graphql { messages, extensions } => StepError::Fatal(OperationFailure { kind: FailureKind::Rejected, message: messages.join("\n"), extensions }),
+        TransportError::Http { .. } | TransportError::Unscripted(_) => fatal(FailureKind::Rejected, message),
         TransportError::Decode(_) => fatal(FailureKind::Unrecognized, message),
     }
 }
@@ -94,9 +95,9 @@ impl Runner {
             let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
             let message = response.errors.first().map_or("empty response".to_string(), |error| error.message.clone());
             return Err(if RetryClass::classify(false, None, &codes) == RetryClass::Retriable {
-                StepError::Retry(OperationFailure::new(FailureKind::Server, message))
+                StepError::Retry(OperationFailure { kind: FailureKind::Server, message, extensions: response.extensions() })
             } else {
-                fatal(FailureKind::Rejected, message)
+                StepError::Fatal(OperationFailure { kind: FailureKind::Rejected, message, extensions: response.extensions() })
             });
         }
         response

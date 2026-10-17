@@ -12,7 +12,7 @@ use crate::syncstate::OperationFailure;
 use crate::upload::{UploadInfo, UploadPart, UploadRequest, UploadState};
 
 pub const UPLOAD_COLUMNS: &str = "up_phase, up_stage, up_scenario, up_total, up_sent, up_retries, up_key, up_upload_id, up_signed_id, up_blob_id, up_document, up_operation";
-pub const INFO_COLUMNS: &str = "up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message";
+pub const INFO_COLUMNS: &str = "up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_code, up_error_disposition";
 
 pub fn enum_text<T: Serialize>(value: &T) -> Option<String> {
     match serde_json::to_value(value) {
@@ -29,14 +29,26 @@ fn text_cell(text: Option<String>) -> SqlValue {
     text.map_or(SqlValue::Null, SqlValue::Text)
 }
 
-pub fn failure_cells(failure: Option<&OperationFailure>) -> [SqlValue; 2] {
-    [text_cell(failure.and_then(|failure| enum_text(&failure.kind))), text_cell(failure.map(|failure| failure.message.clone()))]
+pub fn failure_cells(failure: Option<&OperationFailure>) -> [SqlValue; 4] {
+    let extensions = failure.and_then(|failure| failure.extensions.as_ref());
+    [
+        text_cell(failure.and_then(|failure| enum_text(&failure.kind))),
+        text_cell(failure.map(|failure| failure.message.clone())),
+        text_cell(extensions.and_then(|fields| fields.code.clone())),
+        text_cell(extensions.and_then(|fields| fields.transaction_disposition.as_ref()).map(|value| value.as_text().to_string())),
+    ]
 }
 
 pub fn failure_at(row: &Row<'_>, first: usize) -> Result<Option<OperationFailure>> {
     let kind: Option<String> = row.get(first)?;
     let message: Option<String> = row.get(first + 1)?;
-    Ok(kind.and_then(|kind| enum_from(&kind)).zip(message).map(|(kind, message)| OperationFailure { kind, message }))
+    let code: Option<String> = row.get(first + 2)?;
+    let disposition: Option<String> = row.get(first + 3)?;
+    let extensions = (code.is_some() || disposition.is_some()).then(|| crate::transport::GraphqlExtensions {
+        code,
+        transaction_disposition: disposition.as_deref().map(crate::transport::TransactionDisposition::from_text),
+    });
+    Ok(kind.and_then(|kind| enum_from(&kind)).zip(message).map(|(kind, message)| OperationFailure { kind, message, extensions }))
 }
 
 pub fn upload_cells(state: Option<&UploadState>) -> Vec<SqlValue> {
@@ -78,8 +90,8 @@ pub fn upload_at(row: &Row<'_>, first: usize) -> Result<Option<UploadState>> {
 }
 
 pub fn info_cells(info: Option<&UploadInfo>) -> Vec<SqlValue> {
-    let Some(info) = info else { return vec![SqlValue::Null; 8] };
-    let [kind, message] = failure_cells(info.error.as_ref());
+    let Some(info) = info else { return vec![SqlValue::Null; 10] };
+    let [kind, message, code, disposition] = failure_cells(info.error.as_ref());
     vec![
         text_cell(enum_text(&info.status)),
         text_cell(enum_text(&info.stage)),
@@ -89,6 +101,8 @@ pub fn info_cells(info: Option<&UploadInfo>) -> Vec<SqlValue> {
         SqlValue::Integer(i64::from(info.attempts)),
         kind,
         message,
+        code,
+        disposition,
     ]
 }
 

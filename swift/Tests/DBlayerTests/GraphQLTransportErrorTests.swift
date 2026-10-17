@@ -6,19 +6,19 @@ import Testing
 struct GraphQLTransportErrorTests {
   @Test
   func classifiesByStatusAndGraphQLMessages() {
-    #expect(GraphQLTransportError.classify(status: 500, errorMessages: []) == .server(status: 500))
-    #expect(GraphQLTransportError.classify(status: 503, errorMessages: []) == .server(status: 503))
-    #expect(GraphQLTransportError.classify(status: 401, errorMessages: []) == .unauthenticated)
-    #expect(GraphQLTransportError.classify(status: 403, errorMessages: []) == .unauthenticated)
-    #expect(GraphQLTransportError.classify(status: 200, errorMessages: []) == nil)
-    #expect(GraphQLTransportError.classify(status: 204, errorMessages: []) == nil)
+    #expect(GraphQLTransportError.classify(status: 500, errorMessages: [], extensions: nil) == .server(status: 500))
+    #expect(GraphQLTransportError.classify(status: 503, errorMessages: [], extensions: nil) == .server(status: 503))
+    #expect(GraphQLTransportError.classify(status: 401, errorMessages: [], extensions: nil) == .unauthenticated)
+    #expect(GraphQLTransportError.classify(status: 403, errorMessages: [], extensions: nil) == .unauthenticated)
+    #expect(GraphQLTransportError.classify(status: 200, errorMessages: [], extensions: nil) == nil)
+    #expect(GraphQLTransportError.classify(status: 204, errorMessages: [], extensions: nil) == nil)
     #expect(
-      GraphQLTransportError.classify(status: 200, errorMessages: ["PersistedQueryNotFound"])
-        == .graphQL(messages: ["PersistedQueryNotFound"])
+      GraphQLTransportError.classify(status: 200, errorMessages: ["PersistedQueryNotFound"], extensions: nil)
+        == .graphQL(messages: ["PersistedQueryNotFound"], extensions: nil)
     )
     #expect(
-      GraphQLTransportError.classify(status: 400, errorMessages: ["A", "B"])
-        == .graphQL(messages: ["A", "B"])
+      GraphQLTransportError.classify(status: 400, errorMessages: ["A", "B"], extensions: nil)
+        == .graphQL(messages: ["A", "B"], extensions: nil)
     )
   }
 
@@ -30,6 +30,6 @@ struct GraphQLTransportErrorTests {
         == "PAYLOAD_DECRYPTION_FAILED (HTTP 403)"
     )
     #expect(GraphQLTransportError.server(status: 500).message == "SERVER_ERROR (HTTP 500)")
-    #expect(GraphQLTransportError.graphQL(messages: ["A", "B"]).message == "A, B")
+    #expect(GraphQLTransportError.graphQL(messages: ["A", "B"], extensions: nil).message == "A, B")
   }
 }

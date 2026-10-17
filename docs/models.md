@@ -39,6 +39,43 @@ Declared queries generate indexes with equality filters first and sort columns n
 
 Every scalar and enum field is its own typed SQLite column, indexed or not. An update writes only the columns of the fields that changed. A null value and an absent value are stored the same way (SQL `NULL`), so a field read back is either present or missing, never `null`.
 
+### GraphQL errors
+
+GraphQL failures expose `extensions` on Swift `DbError.Graphql` and Kotlin `DbException.Graphql`, including failures from `settled()`.
+`GraphqlExtensions.code` is the optional server string, such as `UNKNOWN_PRODUCT`, `REACTIVATION_GRANT_MISSING` or `DUPLICATE_CLIENT_KEY`.
+`transactionDisposition` is an optional `TransactionDisposition`: `finish` / `Finish`, `keep` / `Keep`, or `unknown(value:)` / `Unknown(value)`.
+Unknown values retain their original text, just like model enums.
+Only `errors[0].extensions` supplies these fields. Missing, null and non-string fields remain absent, even when later errors have values.
+Messages remain available separately. Transaction disposition describes the server decision, and does not change queue retry or rollback rules.
+
+```swift
+do {
+  _ = try await DB.database.run(operation: "PurchaseCreate", variablesJson: inputJSON)
+} catch let DbError.Graphql(messages, extensions) {
+  let code = extensions?.code
+  switch extensions?.transactionDisposition {
+  case .finish: finishTransaction()
+  case .keep: keepTransaction()
+  case .unknown(let value): reportUnknown(value)
+  case nil: reportFailure(code, messages)
+  }
+}
+```
+
+```kotlin
+try {
+    DBlayer.database.run("PurchaseCreate", inputJSON)
+} catch (error: DbException.Graphql) {
+    val code = error.extensions?.code
+    when (val disposition = error.extensions?.transactionDisposition) {
+        TransactionDisposition.Finish -> finishTransaction()
+        TransactionDisposition.Keep -> keepTransaction()
+        is TransactionDisposition.Unknown -> reportUnknown(disposition.value)
+        null -> reportFailure(code, error.messages)
+    }
+}
+```
+
 ### Enums
 
 Every `type: :enum` field becomes an enum named after its owner and field (`VibeKind` for `Vibe.kind`, `MessageReplyNodeKind` for a nested `kind`). `as: Kind` sets the name. A schema enum used by an input object, an operation arg or an operation result keeps the schema name (`WidgetKind`). Each name is declared once, and the same name with different values stops the run, wherever the two declarations sit: a field, a nested type, a union variant, a shared field or an `edge`. The message names the enum and points at both declarations.

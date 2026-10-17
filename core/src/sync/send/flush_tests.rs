@@ -310,7 +310,10 @@ async fn kept_update_stays_failed_with_the_error_and_blocks_only_its_own_record(
     let report = rig.sync.flush().await.unwrap();
     assert_eq!(report.rejections(), ["not allowed"]);
     let failed = info(&rig, "m1");
-    assert_eq!((failed.state, failed.attempts, failed.error), (SyncState::Failed, 1, Some(OperationFailure::new(FailureKind::Rejected, "not allowed"))));
+    assert_eq!((failed.state, failed.attempts, failed.error), (SyncState::Failed, 1, Some(OperationFailure {
+        kind: FailureKind::Rejected, message: "not allowed".into(),
+        extensions: Some(crate::transport::GraphqlExtensions { code: Some("FORBIDDEN".into()), transaction_disposition: None }),
+    })));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("new".to_string()));
     assert!(info(&rig, "m2").is_synced());
     rig.db.update("moments", &rid("m1"), params(json!({"text": "newer"}))).unwrap();
@@ -411,7 +414,7 @@ async fn kinds_follow_the_failure_class() {
         ("m3", Reply::fail(TransportError::Http { status: 400, body: "bad".into() }), SyncState::Failed, FailureKind::Rejected),
         ("m4", Reply::fail(TransportError::Decode("junk".into())), SyncState::DeliveryUnknown, FailureKind::Unrecognized),
         ("m5", Reply::fail(TransportError::Interrupted("reset".into())), SyncState::DeliveryUnknown, FailureKind::Network),
-        ("m6", Reply::fail(TransportError::Graphql { messages: vec!["no".into()] }), SyncState::Failed, FailureKind::Rejected),
+        ("m6", Reply::fail(TransportError::Graphql { messages: vec!["no".into()], extensions: None }), SyncState::Failed, FailureKind::Rejected),
     ] {
         let rig = keeping_rig();
         put(&rig, "moments", moment(id, "old"));

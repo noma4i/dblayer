@@ -13,7 +13,7 @@ struct TransportFailureTests {
   }
 
   static let cases: [Case] = [
-    Case(name: "graphQL errors", error: GraphQLTransportError.graphQL(messages: ["too large"]), kind: .mutation, expected: "Graphql too large"),
+    Case(name: "graphQL errors", error: GraphQLTransportError.graphQL(messages: ["too large"], extensions: nil), kind: .mutation, expected: "Graphql too large"),
     Case(name: "unauthenticated", error: GraphQLTransportError.unauthenticated, kind: .mutation, expected: "Http 401"),
     Case(name: "server 503", error: GraphQLTransportError.server(status: 503), kind: .mutation, expected: "Http 503"),
     Case(name: "server 503", error: GraphQLTransportError.server(status: 503), kind: .query, expected: "Http 503"),
@@ -31,7 +31,7 @@ struct TransportFailureTests {
     case .Network: "Network"
     case .Interrupted: "Interrupted"
     case let .Http(status, _): "Http \(status)"
-    case let .Graphql(messages): "Graphql \(messages.joined(separator: ","))"
+    case let .Graphql(messages, _): "Graphql \(messages.joined(separator: ","))"
     default: "other"
     }
   }

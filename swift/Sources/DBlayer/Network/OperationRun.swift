@@ -57,7 +57,8 @@ public struct OperationRun: Sendable {
       }
       if let error = GraphQLTransportError.classify(
         status: result.status,
-        errorMessages: response?.errors.map(\.message) ?? []
+        errorMessages: response?.errors.map(\.message) ?? [],
+        extensions: response?.errors.isEmpty == false ? try graphqlExtensions(responseJson: String(decoding: result.body, as: UTF8.self)) : nil
       ) {
         onFailure(RequestFailure(operationName: operationName, status: result.status, errorClass: error.errorClass))
         throw error

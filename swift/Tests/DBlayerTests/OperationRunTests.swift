@@ -35,7 +35,7 @@ struct OperationRunTests {
   @Test(arguments: [
     (401, "", GraphQLTransportError.unauthenticated, "unauthenticated"),
     (500, "", GraphQLTransportError.server(status: 500), "server"),
-    (200, #"{"errors":[{"message":"Rejected"}]}"#, GraphQLTransportError.graphQL(messages: ["Rejected"]), "graphQL")
+    (200, #"{"errors":[{"message":"Rejected"}]}"#, GraphQLTransportError.graphQL(messages: ["Rejected"], extensions: nil), "graphQL")
   ])
   func rejectsFailedResponseAndReportsOneFailure(
     status: Int,
@@ -89,7 +89,7 @@ struct OperationRunTests {
       )
     }
     if repeatedMiss {
-      await #expect(throws: GraphQLTransportError.graphQL(messages: ["PersistedQueryNotFound"])) {
+      await #expect(throws: GraphQLTransportError.graphQL(messages: ["PersistedQueryNotFound"], extensions: nil)) {
         _ = try await send()
       }
     } else {
@@ -180,7 +180,7 @@ extension OperationRunTests {
     defer { ScriptedURLProtocol.reset(scriptId: scriptId) }
     let run = try makeSignatureRun(scriptId: scriptId, code: "SIGNATURE_REPLAY", responseBody: nil)
 
-    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Signature error"])) {
+    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Signature error"], extensions: GraphqlExtensions(code: "SIGNATURE_REPLAY", transactionDisposition: nil))) {
       _ = try await run.send(
         operationName: "AuthSignIn",
         document: "mutation AuthSignIn { authSignIn { userId } }",

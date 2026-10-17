@@ -12,6 +12,49 @@ const THROWN: [(SessionCode, &str); 4] = [
 
 struct Refusing(SessionCode, String);
 
+struct GraphqlRefusal(String);
+
+#[async_trait::async_trait]
+impl Transport for GraphqlRefusal {
+    async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> {
+        Ok(self.0.clone())
+    }
+    async fn mutate(&self, request: super::TransportRequest) -> Result<String, DbError> { self.query(request).await }
+    async fn subscribe(&self, _: super::TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<String, DbError> { unreachable!() }
+    fn unsubscribe(&self, _: String) {}
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn graphql_extensions_reach_run_refresh_and_settled() {
+    use crate::transport::{GraphqlExtensions, TransactionDisposition};
+    for (fields, expected) in [
+        (serde_json::json!({"code":"UNKNOWN_PRODUCT","transactionDisposition":"FINISH"}), Some(GraphqlExtensions { code: Some("UNKNOWN_PRODUCT".into()), transaction_disposition: Some(TransactionDisposition::Finish) })),
+        (serde_json::json!({"code":"REACTIVATION_GRANT_MISSING","transactionDisposition":"KEEP"}), Some(GraphqlExtensions { code: Some("REACTIVATION_GRANT_MISSING".into()), transaction_disposition: Some(TransactionDisposition::Keep) })),
+        (serde_json::json!({"code":"DUPLICATE_CLIENT_KEY","transactionDisposition":"LATER"}), Some(GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: Some(TransactionDisposition::Unknown { value: "LATER".into() }) })),
+        (serde_json::json!({"code":"DUPLICATE_CLIENT_KEY"}), Some(GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: None })),
+        (serde_json::json!({"transactionDisposition":"KEEP"}), Some(GraphqlExtensions { code: None, transaction_disposition: Some(TransactionDisposition::Keep) })),
+        (serde_json::json!({"code":42,"transactionDisposition":false}), None),
+        (serde_json::Value::Null, None),
+    ] {
+        for entry in ["run", "refresh", "settled"] {
+            let response = serde_json::json!({"errors":[{"message":"purchase refused","extensions":fields},{"message":"secondary","extensions":{"code":"SECONDARY","transactionDisposition":"KEEP"}}]}).to_string();
+            let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(GraphqlRefusal(response)))).unwrap();
+            database.register_operations(OPERATIONS.into()).unwrap();
+            let error = match entry {
+                "run" => database.run("MakeMoment".into(), "{}".into()).await.unwrap_err(),
+                "refresh" => database.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
+                _ => {
+                    let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+                    database.settled("Moment".into(), row.id).await.unwrap_err()
+                }
+            };
+            let DbError::Graphql { extensions, .. } = error else { panic!("{entry}: {error:?}") };
+            assert_eq!(extensions, expected, "{entry}: {fields}");
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl Transport for Refusing {
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> { Err(DbError::Session { code: self.0, detail: self.1.clone() }) }

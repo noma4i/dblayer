@@ -33,7 +33,7 @@ pub enum DbError {
     #[error("http {status}: {detail}")]
     Http { status: u16, detail: String },
     #[error("graphql: {}", messages.join("\n"))]
-    Graphql { messages: Vec<String> },
+    Graphql { messages: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     #[error("session {code:?}: {detail}")]
     Session { code: SessionCode, detail: String },
 }
@@ -51,7 +51,7 @@ impl From<crate::sync::SyncError> for DbError {
             SyncError::Transport(TransportError::Network(detail)) => Self::Network { detail },
             SyncError::Transport(TransportError::Interrupted(detail)) => Self::Interrupted { detail },
             SyncError::Transport(TransportError::Session { code, detail }) => Self::Session { code, detail },
-            SyncError::Transport(TransportError::Graphql { messages }) | SyncError::Graphql(messages) => Self::Graphql { messages },
+            SyncError::Transport(TransportError::Graphql { messages, extensions }) | SyncError::Graphql { messages, extensions } => Self::Graphql { messages, extensions },
             other => Self::Sync { detail: other.to_string() },
         }
     }

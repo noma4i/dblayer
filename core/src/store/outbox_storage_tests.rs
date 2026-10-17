@@ -76,6 +76,32 @@ fn a_failure_and_the_upload_progress_are_columns() {
 }
 
 #[test]
+fn graphql_extensions_survive_stored_failures_and_retry_clears_them() {
+    use crate::transport::{GraphqlExtensions, TransactionDisposition};
+    for disposition in [TransactionDisposition::Finish, TransactionDisposition::Keep, TransactionDisposition::Unknown { value: "LATER".into() }] {
+        let (store, seq) = begun();
+        let failure = OperationFailure {
+            kind: FailureKind::Rejected,
+            message: "purchase refused".into(),
+            extensions: Some(GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: Some(disposition) }),
+        };
+        send(&store, vec![OperationTransition::Start { seq }]);
+        send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
+        store.read(&[], |reader| {
+            let stored = crate::operation::open_operations(reader.connection())?;
+            assert_eq!(stored[0].error.as_ref(), Some(&failure));
+            let rows = crate::syncstate::read_sync(reader.connection(), "messages", &["m1".into(), "m2".into()])?;
+            assert_eq!(rows.len(), 2);
+            assert!(rows.values().all(|row| row.error.as_ref() == Some(&failure)));
+            Ok(())
+        }).unwrap();
+        send(&store, vec![OperationTransition::Retry { seq }]);
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NULL AND error_message IS NULL AND error_code IS NULL AND error_disposition IS NULL"), 1);
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync WHERE error_kind IS NULL AND error_message IS NULL AND error_code IS NULL AND error_disposition IS NULL"), 2);
+    }
+}
+
+#[test]
 fn row_sync_keeps_actions_and_dirty_fields_in_child_tables() {
     let (store, _) = begun();
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_action WHERE row_id = 'm1' AND name = 'update'"), 1);
