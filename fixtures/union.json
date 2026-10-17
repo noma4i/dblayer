@@ -1,0 +1,10 @@
+[
+  {"name": "gift", "attachment": {"__typename": "GiftAttachment", "id": "g1", "giftTier": "gold", "status": "sent", "tags": ["a", "b"]}, "output": {"__typename": "GiftAttachment", "id": "g1", "giftTier": "gold", "status": "sent", "tags": ["a", "b"]}},
+  {"name": "moment", "attachment": {"__typename": "MomentAttachment", "momentId": 7, "caption": null}, "output": {"__typename": "MomentAttachment", "momentId": "7"}},
+  {"name": "profile with a user", "attachment": {"__typename": "ProfileAttachment", "user": {"id": "u1", "name": "Ada"}}, "output": {"__typename": "ProfileAttachment", "user": {"id": "u1", "name": "Ada"}}},
+  {"name": "profile without a visible user", "attachment": {"__typename": "ProfileAttachment", "user": null}, "output": {"__typename": "ProfileAttachment"}},
+  {"name": "reaction", "attachment": {"__typename": "ReactionAttachment", "body": "+1"}, "output": {"__typename": "ReactionAttachment", "body": "+1"}},
+  {"name": "unknown typename keeps only its name", "attachment": {"__typename": "FutureAttachment", "size": 3}, "output": {"__typename": "FutureAttachment"}},
+  {"name": "null attachment", "attachment": null, "output": null},
+  {"name": "absent attachment", "output": null}
+]

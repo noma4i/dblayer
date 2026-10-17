@@ -4,6 +4,27 @@ model Message do
   field :text, type: :string
   field :createdAt, type: :date
   field :sequenceNumber, type: :int, null: true
+  field :attachment, type: MessageAttachment, null: true do
+    on GiftAttachment do
+      field :id, type: :id
+      field :tier, type: :string, from: "giftTier"
+      field :status, type: :string, null: true
+      field :tags, type: [:string], default: []
+    end
+    on MomentAttachment do
+      field :momentId, type: :id
+      field :caption, type: :string, null: true
+    end
+    on ProfileAttachment do
+      field :user, type: AttachmentUser, null: true do
+        field :id, type: :id
+        field :name, type: :string, null: true
+      end
+    end
+    on ReactionAttachment do
+      field :body, type: :string
+    end
+  end
 
   belongs_to :chat, sets: { lastMessageId: :id, lastMessageAt: :createdAt }, newer: { createdAt: :lastMessageAt }
 
