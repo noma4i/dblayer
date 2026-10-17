@@ -50,7 +50,7 @@ class InputListTest {
 
     @Test
     fun theUploadArgsOfAModelBecomeTypedVariables() {
-        assertEquals(parseJson("""{"widgets":$widgetsJson}"""), Clip.uploadVariables(widgets))
-        assertEquals(JsonObject(emptyMap()), Clip.uploadVariables())
+        assertEquals(parseJson("""{"widgets":$widgetsJson}"""), Clip.createFileVariables(widgets))
+        assertEquals(JsonObject(emptyMap()), Clip.createFileVariables())
     }
 }

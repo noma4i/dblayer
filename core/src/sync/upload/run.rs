@@ -236,7 +236,8 @@ impl Runner {
         let sending = Sending {
             entry: &entry,
             model: self.model.clone(),
-            action: "upload".to_string(),
+            action: self.inner.db.spec(&self.model).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?
+                .actions.iter().find(|action| action.mutation.as_deref() == Some(&operation.name)).map_or_else(|| operation.name.clone(), |action| action.name.clone()),
             generation: self.inner.db.generation(),
             base_revision: self.inner.db.revision_seq().unwrap_or_default(),
         };

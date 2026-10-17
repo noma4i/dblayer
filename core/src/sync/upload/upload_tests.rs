@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use super::*;
 
 use serde_json::{json, Value};
 
@@ -109,6 +110,36 @@ fn stored_state(rig: &Rig) -> UploadState {
 }
 
 const TWELVE: &[u8] = b"0123456789ab";
+
+#[tokio::test(start_paused = true)]
+async fn uploads_use_the_declared_result_of_each_content_mutation() {
+    let mut chat = crate::schema::ModelSpec::new("Chat", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::scalar("text", crate::value::ScalarKind::Str)]);
+    for (name, mutation, root) in [("create_photo", "ChatGroupCreateFile", "groupChatCreate.chat"), ("update_photo", "ChatGroupUpdateFile", "groupChatUpdate.chat")] {
+        let mut action = crate::schema::ActionDeclaration::new(name, crate::schema::RootShape::Upsert);
+        action.mutation = Some(mutation.into());
+        action.upload = true;
+        action.root = Some(root.into());
+        chat.actions.push(action);
+    }
+    let db = crate::db::Db::open_in_memory(vec![chat], None).unwrap();
+    let rig = rig_on(db, crate::transport::MockTransport::new(), SyncConfig::default());
+    rig.sync.register(OperationDef::new("CreateBlob", "mutation B { createBlob }", "createBlob"));
+    let source = file(b"photo");
+    for (mutation, root, title) in [("ChatGroupCreateFile", "groupChatCreate", "created"), ("ChatGroupUpdateFile", "groupChatUpdate", "updated")] {
+        rig.sync.register(OperationDef::new(mutation, "mutation C { chat }", root));
+        rig.transport.enqueue("CreateBlob", blob());
+        rig.transport.enqueue(mutation, Reply::data(json!({root: {"chat": {"id": "c1", "text": title}}})));
+        let input = UploadInput::new(source.path().to_str().unwrap(), UploadSteps::new(mutation).single("CreateBlob"));
+        if title == "created" {
+            rig.sync.upload_create("Chat", params(json!({"text": "pending"})), input).await.unwrap();
+        } else {
+            rig.sync.upload("Chat", &rid("c1"), input).await.unwrap();
+        }
+        rig.sync.wait_uploads().await;
+        assert_eq!(text_of(&rig, "Chat", "c1"), Some(title.into()), "{mutation}");
+        assert!(rig.db.outbox().unwrap().is_empty());
+    }
+}
 
 #[tokio::test(start_paused = true)]
 async fn dropping_sync_stops_uploads_before_the_next_request() {
@@ -625,7 +656,7 @@ async fn a_held_create_shows_its_row_at_once_and_one_mutation_swaps_the_temp_id(
     assert!(temp.is_temp());
     assert_eq!(text_of(&rig, "moments", temp.as_str()), Some("clip".to_string()));
     let queued: Vec<String> = rig.db.outbox().unwrap().into_iter().map(|entry| entry.operation.action_key).collect();
-    assert_eq!(queued, [crate::operation::Operation::action_key("moments", "upload")]);
+    assert_eq!(queued, [Operation::action_key("moments", "upload")]);
     rig.sync.wait_uploads().await;
     assert_eq!(variables(&rig, "CreateMoment"), [json!({"text": "clip", "signedId": "sid", "blobId": "b1"})]);
     assert_eq!(text_of(&rig, "moments", temp.as_str()), None);

@@ -161,7 +161,7 @@ fn action_correlate_takes_fields_and_dotted_paths() {
 
 #[test]
 fn action_block_rules() {
-    assert_eq!(failure_in("  action :x do\n    input a: :id\n    local_effect :none, reason: \"test\"\n  end"), (7, "`action` needs a `mutation` line".to_string()));
+    assert_eq!(failure_in("  action :x do\n    input a: :id\n    local_effect :none, reason: \"test\"\n  end"), (7, "`action` needs exactly one `mutation` or `upload` line".to_string()));
     assert_eq!(failure_in("  action :x\n"), (7, "`action` needs a `do ... end` block".to_string()));
     assert_eq!(failure_in("  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    mutation N\n  end"), (10, "`mutation` is declared twice".to_string()));
     assert_eq!(failure_in("  action :x do\n    mutation M\n    local_effect :none, reason: \"test\"\n    bogus 1\n  end"), (10, "unknown word `bogus`".to_string()));

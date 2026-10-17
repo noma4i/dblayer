@@ -164,6 +164,8 @@ end
 
 The element replaces the stored element with the same `by` value, or is appended when there is none. When every field of the element except the key is empty (`null`, `""`, `[]`, `{}`), the stored element is removed instead. A refused mutation restores the whole row like any other optimistic change.
 
+`by` and `element` name declared fields. A field such as `userId` with `from: "user.id"` reads that nested response path and keeps the same key for optimistic replacement and removal.
+
 ```swift
 try await chat.mute(mute: true)
 ```

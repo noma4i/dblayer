@@ -19,4 +19,16 @@ model Chat do
   operation :create do
     mutation CreateChat
   end
+
+  operation :create_photo do
+    upload ChatGroupCreateFile
+    local_effect :none, reason: "the pending row is created with its photo"
+    root "groupChatCreate.chat"
+  end
+
+  operation :update_photo do
+    upload ChatGroupUpdateFile
+    local_effect :none, reason: "the answer updates the existing photo"
+    root "groupChatUpdate.chat"
+  end
 end

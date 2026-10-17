@@ -400,6 +400,7 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
     for line in call.block.iter().flatten() {
         match line.word.as_str() {
             "mutation" => action.mutation = Some(first_name(line)),
+            "upload" => { action.mutation = Some(first_name(line)); action.upload = true; }
             "input" => action.variables = line.options.iter().filter_map(variable_binding).collect(),
             "optimistic" => action.optimistic = line.options.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
             "on_failure" => action.on_failure = on_failure_of(&first_name(line)),

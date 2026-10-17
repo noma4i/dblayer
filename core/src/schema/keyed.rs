@@ -1,4 +1,5 @@
 use serde_json::{Map, Value};
+use super::FieldSpec;
 
 const MARK: &str = "$keyed";
 
@@ -30,13 +31,14 @@ fn resolved(value: &Value, args: &Map<String, Value>) -> Value {
     }
 }
 
-pub fn apply(current: Option<&Value>, op: &Map<String, Value>, args: &Map<String, Value>) -> Option<Value> {
-    let by = op.get("by")?.as_str()?;
-    let element: Map<String, Value> = op.get("element")?.as_object()?.iter().map(|(name, value)| (name.clone(), resolved(value, args))).collect();
-    let key = element.get(by)?;
+pub fn apply(field: &FieldSpec, current: Option<&Value>, op: &Map<String, Value>, args: &Map<String, Value>) -> Option<Value> {
+    let stored_name = |name: &str| field.shared.iter().chain(&field.fields).find(|field| field.name == name).and_then(|field| field.from.clone()).unwrap_or_else(|| name.to_string());
+    let by = stored_name(op.get("by")?.as_str()?);
+    let element: Map<String, Value> = op.get("element")?.as_object()?.iter().map(|(name, value)| (stored_name(name), resolved(value, args))).collect();
+    let key = element.get(&by)?;
     let mut items: Vec<Value> = current.and_then(Value::as_array).cloned().unwrap_or_default();
-    let at = items.iter().position(|item| item.get(by) == Some(key));
-    let removes = element.iter().filter(|(name, _)| name.as_str() != by).all(|(_, value)| is_blank(value));
+    let at = items.iter().position(|item| item.get(&by) == Some(key));
+    let removes = element.iter().filter(|(name, _)| **name != by).all(|(_, value)| is_blank(value));
     match (at, removes) {
         (Some(index), true) => {
             items.remove(index);

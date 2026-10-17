@@ -74,7 +74,7 @@ impl<'a> Run<'a> {
     fn check_action_paths(&mut self, node: &'a ModelNode, action: &'a Call) {
         let lines = action.block.as_deref().unwrap_or_default();
         let line = |word: &str| lines.iter().find(|candidate| candidate.word == word);
-        let Some(operation) = line("mutation").map(name_of).or_else(|| option_text(action, "mutation")) else { return };
+        let Some(operation) = line("mutation").or_else(|| line("upload")).map(name_of).or_else(|| option_text(action, "mutation")) else { return };
         let Some(declared) = self.operations.named.get(operation) else { return };
         let root = line("root").map(|call| (name_of(call), (call.line, call.column)));
         if let Some((path, at)) = root {

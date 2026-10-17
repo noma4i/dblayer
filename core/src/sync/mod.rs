@@ -218,3 +218,5 @@ mod run_tests;
 mod subscribe_tests;
 #[cfg(test)]
 mod variables_tests;
+#[cfg(test)]
+mod response_paths_tests;

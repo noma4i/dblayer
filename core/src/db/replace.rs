@@ -44,7 +44,11 @@ struct Member {
 impl Db {
     pub fn replace(&self, request: &ReplaceRequest, rows: Vec<Map<String, Value>>) -> Result<CommitResult, DbError> {
         let spec = self.shared.spec(request.scope.model.as_str())?;
-        let rows = rows.iter().map(|row| spec.patch(row)).collect::<Vec<_>>();
+        let rows = rows.iter().map(|row| {
+            let mut patch = spec.patch(row);
+            self.shared.store.response_values(request.scope.model.as_str(), &mut patch)?;
+            Ok(patch)
+        }).collect::<Result<Vec<_>, DbError>>()?;
         let generation = self.generation();
         self.commit_following(generation, |reader| {
                 let model = request.scope.model.as_str();

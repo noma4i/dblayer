@@ -262,6 +262,9 @@ fn operation(mut call: Call) -> Result<Call, ParseError> {
         [Node { item: Value::Symbol(name), .. }] => name.clone(),
         _ => return Err(fail(&call, "operation needs a name")),
     };
+    if name == "upload" {
+        return Err(fail(&call, "name each upload operation and declare `upload MutationName` inside its block"));
+    }
     if !matches!(name.as_str(), "create" | "update" | "destroy") {
         call.word = "action".into();
         return Ok(call);

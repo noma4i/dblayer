@@ -9,7 +9,7 @@ Start with the [model syntax and decode rules](models.md#nested-objects-and-list
 | `field :gift, type: GiftItem` without a block | reuse a type declared anywhere in the same generator invocation |
 | `type: :object`, `type: :array` without a block | unrestricted JSON values |
 | `field :value, type: :raw` | any JSON value, including mixed objects and arrays |
-| `field :name, type: :string, from: "full_name"` inside a block | property `name`, JSON key `full_name` |
+| `field :name, type: :string, from: "full_name"` inside a block | property `name`, server response path and canonical key `full_name` |
 | `field :owners, type: [:id]` inside a block | string IDs, including numeric input |
 | `field :attachment, type: MessageAttachment do on GiftAttachment do ... end ... end` | a union, see [unions](#unions) |
 | `field :elements, type: [ScreenElement] do shared do ... end on Button do ... end end` | a list of interface values, see [interfaces and lists](#interfaces-and-lists-of-unions) |

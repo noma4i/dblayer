@@ -12,7 +12,7 @@ fn operation(arg: &str) -> String {
 }
 
 fn upload(arg: &str) -> String {
-    format!("model Moment do\n  field :text, type: :string, null: true\n  operation :upload do\n    mutation MomentCreateFile\n    local_effect :none, reason: \"the row exists from the create with an upload\"\n    args widgets: {arg}\n    root \"momentCreate.moment\"\n  end\nend\n")
+    format!("model Moment do\n  field :text, type: :string, null: true\n  operation :create_file do\n    upload MomentCreateFile\n    local_effect :none, reason: \"the row exists from the create with an upload\"\n    args widgets: {arg}\n    root \"momentCreate.moment\"\n  end\nend\n")
 }
 
 fn compile(source: &str, mutation: &str, schema: &str) -> Result<Declarations, Vec<String>> {
@@ -90,21 +90,21 @@ fn a_one_of_input_becomes_an_enum_with_one_case_per_field() {
 fn the_upload_args_of_a_model_become_a_typed_variables_builder_and_not_an_action_call() {
     let declared = compile(&upload("[:WidgetInput]?"), UPLOAD_MUTATION, SCHEMA).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
-    assert!(swift.contains("public static func uploadVariables(widgets: [WidgetInput]? = nil) -> [String: JSONValue] {"), "{swift}");
+    assert!(swift.contains("public static func createFileVariables(widgets: [WidgetInput]? = nil) -> [String: JSONValue] {"), "{swift}");
     assert!(swift.contains("if let value = widgets { variables[\"widgets\"] = JSONValue.encode(value) }"), "{swift}");
     assert!(!swift.contains("func upload(") && !swift.contains("act(\"upload\""), "{swift}");
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
-    assert!(kotlin.contains("fun uploadVariables(widgets: List<WidgetInput>? = null): JsonObject = buildJsonObject {"), "{kotlin}");
+    assert!(kotlin.contains("fun createFileVariables(widgets: List<WidgetInput>? = null): JsonObject = buildJsonObject {"), "{kotlin}");
     assert!(kotlin.contains("if (widgets != null) put(\"widgets\", jsonValue(widgets))"), "{kotlin}");
     assert!(!kotlin.contains("suspend fun upload(") && !kotlin.contains("act(\"upload\""), "{kotlin}");
 }
 
 #[test]
 fn an_upload_without_args_needs_neither_the_signed_id_nor_a_builder() {
-    let source = "model Moment do\n  field :text, type: :string, null: true\n  operation :upload do\n    mutation MomentCreateFile\n    local_effect :none, reason: \"the row exists from the create with an upload\"\n    root \"momentCreate.moment\"\n  end\nend\n";
+    let source = "model Moment do\n  field :text, type: :string, null: true\n  operation :create_file do\n    upload MomentCreateFile\n    local_effect :none, reason: \"the row exists from the create with an upload\"\n    root \"momentCreate.moment\"\n  end\nend\n";
     let declared = compile(source, UPLOAD_MUTATION, SCHEMA).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
-    assert!(!swift.contains("uploadVariables") && !swift.contains("act(\"upload\""), "{swift}");
+    assert!(!swift.contains("createFileVariables") && !swift.contains("act(\"upload\""), "{swift}");
 }
 
 #[test]

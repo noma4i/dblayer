@@ -35,7 +35,7 @@ extension BridgeProbeTests {
 
   @Test
   func theUploadArgsOfAModelBecomeTypedVariables() {
-    #expect(Clip.uploadVariables(widgets: Self.widgets) == ["widgets": JSONValue.parse(Self.widgetsJSON)])
-    #expect(Clip.uploadVariables().isEmpty)
+    #expect(Clip.createFileVariables(widgets: Self.widgets) == ["widgets": JSONValue.parse(Self.widgetsJSON)])
+    #expect(Clip.createFileVariables().isEmpty)
   }
 }

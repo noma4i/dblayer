@@ -1,7 +1,37 @@
-use crate::SchemaTypes;
-use crate::{emit_kotlin, emit_swift, parse_models};
 use dblayer::db::Db;
 use serde_json::json;
+use super::*;
+
+#[test]
+fn keyed_reactions_use_the_declared_field_with_a_nested_source() {
+    let source = r#"model Message do
+  field :reactions, type: [MessageReactionNode], default: [] do
+    field :body, type: :string, null: true
+    field :userId, type: :id, null: true, from: "user.id"
+    field :user, type: MessageUserRef, null: true do
+      field :id, type: :id, null: true
+    end
+  end
+  operation :react do
+    mutation MessageReact
+    args reactionBody: :string, userId: :id
+    optimistic reactions: { by: :userId, element: { userId: :userId, body: :reactionBody } }
+  end
+end"#;
+    let models = parse_models(source).unwrap();
+    let patch = models[0].actions[0].optimistic.clone();
+    let db = Db::open_in_memory(models, None).unwrap();
+    let id = dblayer::identity::RowId::new("m1").unwrap();
+    let scope = dblayer::commit::ScopeRef::new(dblayer::identity::ModelKey::new("Message"), dblayer::identity::ScopeKey::from_raw("all"));
+    let request = dblayer::db::ReplaceRequest::new(scope, dblayer::schema::Coverage::Complete);
+    db.replace(&request, vec![json!({"id": "m1", "reactions": [{"user": {"id": "u1"}, "body": "A"}, {"user": {"id": "u2"}, "body": "B"}]}).as_object().unwrap().clone()]).unwrap();
+    for (body, expected) in [("C", vec!["C", "B"]), ("", vec!["B"])] {
+        db.act("Message", "react", &id, patch.clone(), json!({"userId": "u1", "reactionBody": body}).as_object().unwrap().clone()).unwrap();
+        let found = db.find("Message", &id).unwrap().unwrap();
+        let reactions = found.data["reactions"].as_array().unwrap();
+        assert_eq!(reactions.iter().map(|reaction| reaction["body"].as_str().unwrap()).collect::<Vec<_>>(), expected);
+    }
+}
 
 #[test]
 fn nested_types_keep_optional_fields_and_work_in_local_models() {
@@ -24,6 +54,7 @@ fn nested_declarations_reject_invalid_fields_names_references_and_defaults_at_th
         ("field :v, type: Sample do\nfield :a, type: :string\nend", "name of a model"),
         ("field :v, type: :object do\nfield :a, type: :string, default: 3\nend", "default must"),
         ("field :v, type: :object do\nfield :a, type: :num, from: \"\"\nend", "non-empty"),
+        ("field :v, type: :object do\nfield :a, type: :num, from: \"user..id\"\nend", "empty segment"),
         ("field :v, type: :object do\nfield :a, type: :enum, values: [:yes], default: :no\nend", "default must"),
         ("field :v, type: :object do\nfield :a, type: [:bool], default: [1]\nend", "default must"),
         ("field :v, type: :object do\nfield :child, type: :object, default: {} do\nfield :required, type: :string\nend\nend", "default must"),

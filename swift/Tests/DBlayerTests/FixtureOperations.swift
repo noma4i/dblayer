@@ -28,7 +28,7 @@ public struct Clip: DBModel {
     public static let title = Column<Clip, String?>("title")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func uploadVariables(widgets: [StickerWidgetInput]? = nil) -> [String: JSONValue] {
+    public static func createFileVariables(widgets: [StickerWidgetInput]? = nil) -> [String: JSONValue] {
         var variables: [String: JSONValue] = [:]
         if let value = widgets { variables["widgets"] = JSONValue.encode(value) }
         return variables

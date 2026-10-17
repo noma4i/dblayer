@@ -2,6 +2,7 @@ package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.Chat
 import com.noma4i.dblayer.models.Message
+import com.noma4i.dblayer.models.MessageReactionNode
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
@@ -17,6 +18,41 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class BridgeProbeTest {
+    @Test
+    fun namedUploadsLandBothNestedChatRoots() = bounded {
+        val transport = MockTransport()
+        repeat(2) {
+            transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://s3/x","signedId":"sid","blobId":"b1"}}}""")
+        }
+        transport.enqueue("ChatGroupCreateFile", """{"data":{"groupChatCreate":{"chat":{"id":"c77","title":"created"}}}}""")
+        transport.enqueue("ChatGroupUpdateFile", """{"data":{"groupChatUpdate":{"chat":{"id":"c77","title":"updated"}}}}""")
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url signedId blobId } }"},{"name":"ChatGroupCreateFile","document":"mutation ChatGroupCreateFile { groupChatCreate { chat { id title } } }"},{"name":"ChatGroupUpdateFile","document":"mutation ChatGroupUpdateFile { groupChatUpdate { chat { id title } } }"}]""")
+        val file = java.io.File.createTempFile("chat-", ".jpg")
+        try {
+            file.writeText("photo")
+            val local = uploadCreate("Chat", parseJsonObject("""{"title":"pending"}"""), UploadRequest(file.path, "ChatGroupCreateFile", createBlob = "CreateBlob"), Chat)
+            val id = withTimeout(5000) { local.confirmedId() }
+            val entity = Chat.entity(id)
+            val chat = withTimeout(5000) { entity.value.first { it?.title == "created" } }!!
+            assertEquals("created", chat.title)
+            chat.upload(UploadRequest(file.path, "ChatGroupUpdateFile", createBlob = "CreateBlob"))
+            assertEquals("updated", withTimeout(5000) { entity.value.first { it?.title == "updated" } }?.title)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() = bounded {
+        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        val initial = Message.create(chatId = "c1", authorId = "u1", text = "hello")
+        val row = initial.update(reactions = listOf(MessageReactionNode(body = "A", userId = "u1")))
+        val changed = row.react(reactionBody = "C", userId = "u1")
+        assertEquals(listOf("u1"), changed.reactions.map { it.userId })
+        assertEquals(listOf("C"), changed.reactions.map { it.body })
+    }
+
     @Test
     fun releasedEntitiesRespectTheSharedMemoryBudget() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)

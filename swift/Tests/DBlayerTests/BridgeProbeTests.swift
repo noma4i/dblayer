@@ -379,6 +379,37 @@ struct BridgeProbeTests {
     #expect(transport.calls.filter { $0.operationName == "CreateMoment" }.count == 1)
   }
 
+  @Test
+  func aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() async throws {
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let initial = try await Message.create(chatId: "c1", authorId: "u1", text: "hello")
+    let row = try await initial.update(reactions: [MessageReactionNode(body: "A", userId: "u1")])
+    let changed = try await row.react(reactionBody: "C", userId: "u1")
+    #expect(changed.reactions.map(\.userId) == ["u1"])
+    #expect(changed.reactions.map(\.body) == ["C"])
+  }
+
+  @Test
+  func namedUploadsLandBothNestedChatRoots() async throws {
+    let transport = MockTransport()
+    for _ in 0..<2 {
+      transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://s3/x","signedId":"sid","blobId":"b1"}}}"#)
+    }
+    transport.enqueue("ChatGroupCreateFile", reply: #"{"data":{"groupChatCreate":{"chat":{"id":"c77","title":"created"}}}}"#)
+    transport.enqueue("ChatGroupUpdateFile", reply: #"{"data":{"groupChatUpdate":{"chat":{"id":"c77","title":"updated"}}}}"#)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url signedId blobId } }"},{"name":"ChatGroupCreateFile","document":"mutation ChatGroupCreateFile { groupChatCreate { chat { id title } } }"},{"name":"ChatGroupUpdateFile","document":"mutation ChatGroupUpdateFile { groupChatUpdate { chat { id title } } }"}]"#)
+    let file = FileManager.default.temporaryDirectory.appending(path: "chat-\(UUID().uuidString).jpg")
+    try Data("photo".utf8).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let local = try await Chat.create(values: ["title": .string("pending")], uploading: UploadRequest(path: file.path, mutation: "ChatGroupCreateFile", createBlob: "CreateBlob"))
+    let chat = try #require(await Chat.find(try await local.confirmedId()).current())
+    #expect(chat.title == "created")
+    try await chat.upload(UploadRequest(path: file.path, mutation: "ChatGroupUpdateFile", createBlob: "CreateBlob"))
+    await eventually("the update upload changes the chat") { await Chat.find("c77").current()?.title == "updated" }
+    #expect(await Chat.find("c77").current()?.title == "updated")
+  }
+
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() async throws {

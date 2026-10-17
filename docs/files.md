@@ -69,7 +69,7 @@ sync.cancelUpload(moment)
 
 A record that does not exist yet can be created together with its upload. The record appears at once with a temporary id and its `upload` state. No create operation is queued: after the file is stored, the content mutation creates the record on the server and its id replaces the temporary one. A failed upload leaves the record failed, `retry()` sends again and `discard()` removes it.
 
-The model declares `operation :upload` with the `root` of the created record, so the answer of the content mutation lands on the record.
+Declare a named operation for each content mutation, with `upload MutationName` and its record `root`. Uploads use the same response normalization as other actions. Create and update uploads can have different nested roots on the same model.
 
 ```swift
 let request = UploadRequest(path: url.path, mutation: "CreateMoment", createBlob: "CreateBlob", variables: ["text": .string("hello")])
@@ -87,11 +87,11 @@ moment.confirmedId()
 
 ### Typed variables of the content mutation
 
-The library sets `signedId` itself. Other variables of the mutation go in `variables`. When the content mutation takes schema input objects, declare them as `args` of the `upload` operation. The generator checks them against the variables of the mutation and writes `uploadVariables` on the model, so the app passes typed values and builds no JSON. `signedId` is never declared.
+The library sets `signedId` itself. Other mutation variables go in `variables`. Declare schema input objects in the named operation's `args`. The generator checks mutation variables and writes a typed builder named after the operation, such as `createFileVariables`. Do not declare `signedId`.
 
 ```ruby
-operation :upload do
-  mutation     MomentCreateFile
+operation :create_file do
+  upload       MomentCreateFile
   local_effect :none, reason: "the row exists locally from the create with an upload"
   args         widgets: [:MomentWidgetInput]?
   root         "momentCreate.moment"
@@ -100,13 +100,13 @@ end
 
 ```swift
 let widgets = [MomentWidgetInput(kind: .emoji, props: .emoji(MomentEmojiInput(code: "fire")))]
-let request = UploadRequest(path: url.path, mutation: "MomentCreateFile", createBlob: "CreateBlob", variables: Moment.uploadVariables(widgets: widgets))
+let request = UploadRequest(path: url.path, mutation: "MomentCreateFile", createBlob: "CreateBlob", variables: Moment.createFileVariables(widgets: widgets))
 let moment = try await Moment.create(values: ["text": .string("hello")], uploading: request)
 ```
 
 ```kotlin
 val widgets = listOf(MomentWidgetInput(kind = WidgetKind.Emoji, props = MomentWidgetProps.Emoji(MomentEmojiInput(code = "fire"))))
-val request = UploadRequest(path = file.path, mutation = "MomentCreateFile", createBlob = "CreateBlob", variables = Moment.uploadVariables(widgets = widgets))
+val request = UploadRequest(path = file.path, mutation = "MomentCreateFile", createBlob = "CreateBlob", variables = Moment.createFileVariables(widgets = widgets))
 val moment = uploadCreate("Moment", values, request, Moment)
 ```
 

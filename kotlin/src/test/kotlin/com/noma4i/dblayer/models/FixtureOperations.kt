@@ -38,7 +38,7 @@ data class Clip(
         fun where(condition: Condition) = Query("Clip", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Clip", this, ids)
         fun entity(id: String) = entityOf("Clip", this, id)
-        fun uploadVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
+        fun createFileVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
             if (widgets != null) put("widgets", jsonValue(widgets))
         }
         suspend fun create(title: String? = null): Clip {

@@ -149,7 +149,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Model, "destroy") => {
             plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false)])
         }
-        (Context::Action, "mutation") => plain(Shape::Const, vec![]),
+        (Context::Action, "mutation" | "upload") => plain(Shape::Const, vec![]),
         (Context::Action, "local_effect") => plain(Shape::Name, vec![key("reason", Want::Any, false)]),
         (Context::Action, "on_failure") => plain(Shape::Name, vec![]),
         (Context::Action, "wrap" | "response") => plain(Shape::Name, vec![]),
@@ -411,8 +411,8 @@ fn check_action(action: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, 
         }
         check_action_line(call, fields, remotes, report);
     }
-    if action.block.is_some() && !seen.contains("mutation") {
-        report(action.line, action.column, "`action` needs a `mutation` line".to_string());
+    if action.block.is_some() && seen.contains("mutation") == seen.contains("upload") {
+        report(action.line, action.column, "`action` needs exactly one `mutation` or `upload` line".to_string());
     }
     check_local_effect(action, &seen, report);
 }
@@ -576,7 +576,7 @@ fn check_field_block(owner: &Call, name: &str, calls: &[Call], report: &mut impl
         }
         if let Some(pair) = call.options.iter().find(|pair| pair.key == "from") {
             if !matches!(&pair.value.item, Value::Str(key) | Value::Symbol(key) if !key.is_empty()) {
-                report(pair.value.line, pair.value.column, "nested `from:` must be a non-empty JSON key".to_string());
+                report(pair.value.line, pair.value.column, "nested `from:` must be a non-empty response path".to_string());
             }
         }
         if call.word == "list" {
@@ -772,6 +772,7 @@ fn check_call(call: &Call, context: Context, report: &mut impl FnMut(usize, usiz
 
 fn check_response_paths(call: &Call, context: Context, report: &mut impl FnMut(usize, usize, String)) {
     let option_paths: &[(&str, &str)] = match (context, call.word.as_str()) {
+        (Context::Nested, _) => &[("from", "from")],
         (Context::Model, "create" | "update" | "destroy") => &[("root", "root")],
         (Context::Model, "listen") => &[("root", "listen root"), ("id", "listen id")],
         (Context::Remote, "updates") => &[("root", "updates root"), ("id", "updates id")],

@@ -268,10 +268,11 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             swift_accessors(&mut out, &mut edge_types, model, relation, &decls);
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var singleton: Query<Self> {{ {} }}", name(&relation.name)).unwrap(); }
-        let upload_args = standard_args(model, "upload");
-        if !upload_args.is_empty() {
+        for action in model.actions.iter().filter(|action| action.upload && !action.args.is_empty()) {
+            let upload_args = standard_args(model, &action.name);
+            let method = name(&action.name);
             let params = upload_args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
-            writeln!(out, "    public static func uploadVariables({params}) -> [String: JSONValue] {{\n        var variables: [String: JSONValue] = [:]").unwrap();
+            writeln!(out, "    public static func {method}Variables({params}) -> [String: JSONValue] {{\n        var variables: [String: JSONValue] = [:]").unwrap();
             for (arg, kind) in &upload_args {
                 if kind.ends_with('?') { writeln!(out, "        if let value = {arg} {{ variables[\"{arg}\"] = JSONValue.encode(value) }}").unwrap(); }
                 else { writeln!(out, "        variables[\"{arg}\"] = JSONValue.encode({arg})").unwrap(); }
@@ -316,7 +317,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let target = association.target.as_str();
             writeln!(out, "    public var {}: LiveSource<[{}]> {{ related(\"{}\", as: {}.self) }}", association.name, target, association.name, target).unwrap();
         }
-        for action in model.actions.iter().filter(|action| !["create", "update", "destroy", "upload"].contains(&action.name.as_str())) {
+        for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
             let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let returns = if action.result.is_empty() { "Self".to_string() } else { format!("ActionAnswer<Self, {}>", result_type(class, &action.name)) };
@@ -378,10 +379,11 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             kotlin_accessors(&mut out, &mut edge_types, model, relation, &decls);
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", this, {})", name(&relation.name)).unwrap(); }
-        let upload_args = standard_args(model, "upload");
-        if !upload_args.is_empty() {
+        for action in model.actions.iter().filter(|action| action.upload && !action.args.is_empty()) {
+            let upload_args = standard_args(model, &action.name);
+            let method = name(&action.name);
             let params = upload_args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
-            writeln!(out, "        fun uploadVariables({params}): JsonObject = buildJsonObject {{").unwrap();
+            writeln!(out, "        fun {method}Variables({params}): JsonObject = buildJsonObject {{").unwrap();
             for (arg, kind) in &upload_args {
                 if kind.ends_with('?') { writeln!(out, "            if ({arg} != null) put(\"{arg}\", jsonValue({arg}))").unwrap(); }
                 else { writeln!(out, "            put(\"{arg}\", jsonValue({arg}))").unwrap(); }
@@ -430,7 +432,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             for field in &model.ephemeral { writeln!(out, "            {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.field.name, field.field.name).unwrap(); }
             out.push_str("        }.toString())\n    }\n");
         }
-        for action in model.actions.iter().filter(|action| !["create", "update", "destroy", "upload"].contains(&action.name.as_str())) {
+        for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
             let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let from_args = action.optimistic.iter().filter_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({arg})"))).collect::<Vec<_>>().join(", ");

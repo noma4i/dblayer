@@ -233,7 +233,7 @@ impl Db {
             let mut merged = current.clone();
             merged.extend(patch.clone());
             for (field, op) in &keyed {
-                if let Some(next) = crate::schema::keyed::apply(current.get(field), op, &input_args) {
+                if let Some(next) = spec.field(field).and_then(|declared| crate::schema::keyed::apply(declared, current.get(field), op, &input_args)) {
                     merged.insert(field.clone(), next);
                 }
             }

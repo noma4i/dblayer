@@ -141,7 +141,7 @@ scalar :Int64, as: :long
 
 Declare nested values with `field :name, type: NamedType do ... end`. Use `type: [NamedType]` for a list.
 An object generates a Swift `Codable`, `Sendable`, `Equatable` struct and a Kotlin serializable data class.
-Models decode from row cells. Both platforms use the same type and property names. Use generated values when creating or updating a model, or decode a response with the platform serializer of the nested type. Do not write another struct, data class or decoder with the same fields.
+Models decode from row cells. Both platforms use the same type and property names. Use generated values when creating or updating a model. Their serializers read and write canonical nested JSON. Server response paths are resolved in the core before storing rows. Do not write another struct, data class or decoder with the same fields.
 
 ```swift
 let reply = MessageReplyNode(body: "Hello", userId: "u1", user: MessageUserRef(id: "u1", fullName: "Ada"))
@@ -173,7 +173,7 @@ For reusable names, recursive lists, unrestricted JSON, typed defaults, GraphQL 
 | Nested date | string, as in the generated model properties |
 | Nested enum | its generated enum, a value the declaration lacks becomes the `unknown` case with the text |
 
-An enum default must be one of its declared values. `from` inside a nested block names a literal JSON key, including dots. At the model level, `from` reads a response path.
+An enum default must be one of its declared values. `from` reads a server response path at every nesting level. A path such as `user.id` traverses the `user` object, never a literal server key containing a dot. The core reads the path once and stores its value under the canonical key `user.id`. Swift `Codable` and Kotlin serializers use that canonical key for local values. SQLite, row cells and optimistic changes keep that representation and never interpret it as a server path again.
 
 Declare each named type once. Pass all files that declare or use it to `dblayer-gen`. `type` accepts a named value such as `GiftItem` or a list such as `[GiftItem]`. A missing declaration, duplicate type or invalid default reports its input file and line. Use `type: :raw` for unrestricted values.
 
@@ -629,6 +629,8 @@ Each arg declared by an `args` line inside a model operation is checked against 
 A list kind (`[:WidgetInput]`, `[:WidgetInput?]`, `[:WidgetInput]?`) fits a list of that type. The `?` inside the brackets is the nil of an item and needs a schema item without `!`. The `?` after the bracket makes the list optional and needs a schema variable without `!`.
 
 An `args` line inside a model operation takes the same kinds as an operation without a model, including the name of a schema enum or input object. The call gets a typed parameter, and an `optimistic` line can write an enum arg into an enum field of the model. Without `--schema` the generator stops and names the type.
+
+For file uploads, name each operation and replace its `mutation` line with `upload MutationName`. Each operation declares its own `root`, `lands`, and `args`. The sent mutation selects that declaration for the same response processing used by other actions. The generator emits `<operationName>Variables` on Swift and Kotlin when the operation has args. See [uploads](files.md#uploads).
 
 ```ruby
 operation :answer_connection do

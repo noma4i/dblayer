@@ -274,11 +274,11 @@ impl<'a> Run<'a> {
                 "action" => {
                     let lines = call.block.as_deref().unwrap_or_default();
                     let line = |word: &str| lines.iter().find(|candidate| candidate.word == word);
-                    let name = line("mutation").map(name_of).or_else(|| option_text(call, "mutation"));
+                    let name = line("mutation").or_else(|| line("upload")).map(name_of).or_else(|| option_text(call, "mutation"));
                     let wrap = line("wrap").map(name_of);
                     let pairs = |word: &str| line(word).map_or(&[][..], |found| found.options.as_slice());
                     let same_names: Vec<Pair> = pairs("args").iter().map(|arg| Pair { value: Node { item: Value::Symbol(arg.key.clone()), ..arg.value.clone() }, ..arg.clone() }).collect();
-                    let input = if name_of(call) == "upload" && pairs("input").is_empty() { same_names.as_slice() } else { pairs("input") };
+                    let input = if line("upload").is_some() && pairs("input").is_empty() { same_names.as_slice() } else { pairs("input") };
                     self.check_args_of(node.file, call, name, wrap, pairs("args"), input);
                 }
                 _ => {}

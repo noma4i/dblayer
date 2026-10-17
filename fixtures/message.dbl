@@ -4,6 +4,13 @@ model Message do
   field :text, type: :string
   field :createdAt, type: :date
   field :sequenceNumber, type: :int, null: true
+  field :reactions, type: [MessageReactionNode], default: [] do
+    field :body, type: :string, null: true
+    field :userId, type: :id, null: true, from: "user.id"
+    field :user, type: MessageReactionUser, null: true do
+      field :id, type: :id, null: true
+    end
+  end
   field :attachment, type: MessageAttachment, null: true do
     on GiftAttachment do
       field :id, type: :id
@@ -54,6 +61,12 @@ model Message do
   end
 
   node MessageTranscodeStatus, as: :transcode_status
+
+  operation :react do
+    mutation MessageReact
+    args reactionBody: :string, userId: :id
+    optimistic reactions: { by: :userId, element: { userId: :userId, body: :reactionBody } }
+  end
 
   scope :chat_media do
     where :chatId

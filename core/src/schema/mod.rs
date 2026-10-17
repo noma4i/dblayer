@@ -293,7 +293,7 @@ impl FieldSpec {
             return Some(value.clone());
         }
         if let Some(path) = &self.from {
-            return read_path(input, path);
+            return read_path(input, path).cloned();
         }
         let parent = self.id_from_parent.as_ref()?;
         input.get(parent)?.as_object()?.get("id").cloned()
@@ -331,13 +331,13 @@ impl FieldSpec {
     }
 }
 
-fn read_path(input: &Map<String, Value>, path: &str) -> Option<Value> {
+pub(crate) fn read_path<'a>(input: &'a Map<String, Value>, path: &str) -> Option<&'a Value> {
     let mut parts = path.split('.');
     let mut current = input.get(parts.next()?)?;
     for part in parts {
         current = current.as_object()?.get(part)?;
     }
-    (!current.is_null()).then(|| current.clone())
+    (!current.is_null()).then_some(current)
 }
 
 fn is_file_descriptor(value: &Value) -> bool {
@@ -755,6 +755,8 @@ pub struct ActionDeclaration {
     #[serde(default)]
     pub mutation: Option<String>,
     #[serde(default)]
+    pub upload: bool,
+    #[serde(default)]
     pub variables: BTreeMap<String, String>,
     #[serde(default)]
     pub optimistic: Map<String, Value>,
@@ -797,6 +799,7 @@ impl ActionDeclaration {
             dedupe_key: None,
             members: Vec::new(),
             mutation: None,
+            upload: false,
             variables: BTreeMap::new(),
             optimistic: Map::new(),
             refetch: Vec::new(),
