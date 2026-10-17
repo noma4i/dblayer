@@ -3,9 +3,8 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-@Suite(.serialized)
-struct InterfaceTests {
-  private static let document = """
+extension BridgeProbeTests {
+  private static let screenDocument = """
   query ScreenNode($id: ID!) { node(id: $id) { ... on CustomScreen { id slug spec { root \
   elements { __typename id children press { __typename ... on ScreenNavigateAction { slug title } ... on ScreenOpenChatAction { chatId } ... on ScreenOpenExternalAction { url } ... on ScreenOpenProfileAction { userId } } \
   visible { __typename ... on ScreenCondition { comparison negated operand { __typename ... on ScreenTextLiteral { text } ... on ScreenStateRef { path } } path } ... on ScreenVisibleAll { conditions { comparison negated path } } ... on ScreenVisibleFlag { flag } } \
@@ -15,7 +14,7 @@ struct InterfaceTests {
   state { path value { __typename ... on ScreenTextLiteral { text } ... on ScreenNumberLiteral { number } } } } } } }
   """
 
-  private static let firstElements = #"""
+  private static let screenElements = #"""
   [
     {"__typename":"ScreenColumn","id":"root","children":["b1","h1","p1","sw1","sp1","f1"],"press":null,"visible":{"__typename":"ScreenVisibleAll","conditions":[{"comparison":"EQ","negated":false,"operand":{"__typename":"ScreenTextLiteral","text":"x"},"path":"user.name"}]},"gap":{"__typename":"ScreenNumberLiteral","number":8},"alignItems":"center"},
     {"__typename":"ScreenButton","id":"b1","children":[],"press":{"__typename":"ScreenNavigateAction","slug":"home","title":"Home"},"visible":null,"label":{"__typename":"ScreenStateRef","path":"user.name"},"disabled":{"__typename":"ScreenFlagLiteral","flag":true}},
@@ -27,21 +26,21 @@ struct InterfaceTests {
   ]
   """#
 
-  private static func reply(elements: String, state: String = #"[{"path":"user.name","value":{"__typename":"ScreenTextLiteral","text":"Ada"}},{"path":"n","value":{"__typename":"ScreenNumberLiteral","number":3}}]"#) -> String {
+  private static func screenReply(elements: String, state: String = #"[{"path":"user.name","value":{"__typename":"ScreenTextLiteral","text":"Ada"}},{"path":"n","value":{"__typename":"ScreenNumberLiteral","number":3}}]"#) -> String {
     #"{"data":{"node":{"__typename":"CustomScreen","id":"s1","slug":"main","spec":{"root":"root","elements":\#(elements),"state":\#(state)}}}}"#
   }
 
-  private func openRig() throws -> MockTransport {
+  private func openScreenRig() throws -> MockTransport {
     let transport = MockTransport()
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ScreenNode"), "document": .string(Self.document)])]).text)
+    try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ScreenNode"), "document": .string(Self.screenDocument)])]).text)
     return transport
   }
 
   @Test(.timeLimit(.minutes(1)))
   func aServerAnswerCarriesEveryElementVariantAndALaterAnswerReplacesTheList() async throws {
-    let transport = try openRig()
-    transport.enqueue("ScreenNode", reply: Self.reply(elements: Self.firstElements))
+    let transport = try openScreenRig()
+    transport.enqueue("ScreenNode", reply: Self.screenReply(elements: Self.screenElements))
     let screen = try #require(try await CustomScreen.node("s1"))
     let spec = try #require(screen.spec)
     #expect(spec.root == "root" && spec.elements.count == 7)
@@ -68,7 +67,7 @@ struct InterfaceTests {
       {"__typename":"ScreenColumn","id":"root","children":["b1"],"press":null,"visible":null,"gap":null,"alignItems":null}
     ]
     """#
-    transport.enqueue("ScreenNode", reply: Self.reply(elements: second, state: "[]"))
+    transport.enqueue("ScreenNode", reply: Self.screenReply(elements: second, state: "[]"))
     _ = try await CustomScreen.node("s1", force: true)
     let again = try #require(await CustomScreen.find("s1").current()?.spec)
     #expect(again.elements.map(\.id) == ["b1", "root"])
@@ -81,7 +80,7 @@ struct InterfaceTests {
 
   @Test(.timeLimit(.minutes(1)))
   func aScreenWrittenWithTypedElementsReadsBackAndAnElementCanChangeItsVariant() async throws {
-    _ = try openRig()
+    _ = try openScreenRig()
     let button = ScreenElement.button(ScreenButton(id: "b1", children: [], press: .openProfile(ScreenOpenProfileAction(userId: "u1")), label: .textLiteral(ScreenTextLiteral(text: "Go"))))
     let pressable = ScreenElement.pressable(ScreenPressable(id: "p1", children: ["b1"]))
     let spec = ScreenSpec(root: "b1", elements: [button, pressable, .unknown(typename: "ScreenFuture")], state: [])
