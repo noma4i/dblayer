@@ -115,7 +115,7 @@ fn updates_set_must_name_ephemeral_fields() {
             selects_page_info: false,
             updates: vec![UpdatesSpec { subscription: "UserTyping".into(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None }],
             page_size: None,
-            variables: Default::default(), root: None,
+            variables: Default::default(), root: None, total_from: None,
         };
         remote.updates[0].set.insert(field.into(), json!(true));
         let mut relation = RelationSpec::global("current");

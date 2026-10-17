@@ -233,6 +233,7 @@ fn thread_remote(variables: std::collections::BTreeMap<String, VariableSource>) 
         page_size: None,
         variables,
         root: None,
+        total_from: None,
     }
 }
 

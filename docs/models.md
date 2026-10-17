@@ -279,6 +279,7 @@ A `fetch Operation` line connects a scope to the server. A relation that depends
 | `paginate 20` | Relay-style pages of 20, forward | whole response |
 | `paginate 20, backward: true` | pages backward | forward |
 | `paginate 20, cursor: :afterSequence, from: "lastSequenceNumber", cursor_type: :int` | the server pages by its own variable: the next page sends `afterSequence`, taken from `lastSequenceNumber` of the connection. No page size is sent | Relay `first`/`after` |
+| `total from: "node.membersCount"` | `total` of the list state comes from this field of the response, after `paginate` | `totalCount` of the connection |
 | `list` | response is a plain list | single record |
 | `fresh_for 5.minutes` | how long a response counts as fresh | `5.minutes` |
 | `fresh_for 5.minutes, empty: 30.seconds` | shorter freshness for an empty response | same |
@@ -373,13 +374,14 @@ model User do
   scope :chat_members, text: [:chatId] do
     fetch ChatMembers, root: "node.members"
     paginate 30
+    total from: "node.membersCount"
     fresh_for 5.minutes
   end
 end
 ```
 
 ```graphql
-query ChatMembers($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { members(first: $first, after: $after) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }
+query ChatMembers($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { membersCount members(first: $first, after: $after) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }
 ```
 
 ```swift
@@ -393,6 +395,16 @@ members.loadMore()                                 // true while another page ex
 ```
 
 `total` is set only when the connection selects `totalCount`. Without it `total` stays nil and `hasMore` comes from `pageInfo`.
+
+`total from: "node.membersCount"` takes `total` from a field beside the connection: the path starts at the first field of the operation, like `root:`. The group size `Chat.membersCount` counts every member, `totalCount` of the connection counts only the members the viewer can see. The document must select the field and the schema check refuses a path that is not an `Int`. Each page that carries the field sets `total`, a page without it keeps the last value, and the value survives a restart. The line needs `paginate`.
+
+```swift
+let state = await User.chatMembers(chatId).state.stream()   // state.total is Chat.membersCount, 53 for a group of 53
+```
+
+```kotlin
+val total = User.chatMembers(chatId).state.flow.first { it.total != null }.total   // Chat.membersCount
+```
 
 | Line | Meaning |
 | ---- | ------- |

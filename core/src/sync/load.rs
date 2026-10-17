@@ -224,7 +224,7 @@ impl Inner {
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);
         let fetched = self.query_with_retry(request).await.and_then(|(response, attempts)| {
             let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;
-            Ok((extract(&data, resolved.remote.root.as_deref().unwrap_or(&resolved.operation.root_path), &resolved.remote.shape)?, attempts))
+            Ok((extract(&data, resolved.remote.root.as_deref().unwrap_or(&resolved.operation.root_path), &resolved.remote.shape, resolved.remote.total_from.as_deref())?, attempts))
         });
         let (extracted, attempts) = match fetched {
             Ok(fetched) => fetched,
@@ -247,6 +247,7 @@ impl Inner {
             edge_fields: resolved.edge_fields.clone(),
             requested_cursor: cursor,
             page_info: extracted.page_info,
+            keeps_total: resolved.remote.total_from.is_some(),
             attempt: FetchAttempt::new(&resolved.window_key, issued, generation, base_revision),
         };
         Ok(match self.land(landing)? {

@@ -28,7 +28,7 @@ impl Sync {
         let (response, _) = self.inner.query_with_retry(request).await?;
         let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;
         let root = resolved.remote.root.as_deref().unwrap_or(&resolved.operation.root_path);
-        let extracted = extract(&data, root, &RemoteShape::List { coverage: Coverage::Complete })?;
+        let extracted = extract(&data, root, &RemoteShape::List { coverage: Coverage::Complete }, None)?;
         let normalized = normalize_nodes(&self.inner.db, model, &extracted.nodes)?;
         self.inner.land_rows(model, &normalized, base_revision)?;
         let mut rows: Vec<Row> = Vec::new();

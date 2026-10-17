@@ -193,6 +193,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Remote, "list") => plain(Shape::Nothing, vec![]),
         (Context::Remote, "fresh_for") => plain(Shape::Duration, vec![key("empty", Want::Duration, false)]),
         (Context::Remote, "max_pages") => plain(Shape::Int, vec![]),
+        (Context::Remote, "total") => plain(Shape::Nothing, vec![key("from", Want::Any, true)]),
         _ => None,
     }
 }
@@ -690,6 +691,9 @@ fn check_remote(remote: &Call, report: &mut impl FnMut(usize, usize, String)) {
         report(call.line, call.column, "`max_pages` needs `paginate`".to_string());
     }
     check_edges(&lines, has("paginate"), report);
+    if let Some(call) = lines.iter().find(|call| call.word == "total").filter(|_| !has("paginate")) {
+        report(call.line, call.column, "`total` needs `paginate`".to_string());
+    }
     let mut seen = HashSet::new();
     for call in &lines {
         if !matches!(call.word.as_str(), "updates" | "edge") && !seen.insert(call.word.as_str()) {

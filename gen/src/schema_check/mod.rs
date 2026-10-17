@@ -338,7 +338,9 @@ impl<'a> Run<'a> {
         let lists = lines.iter().any(|call| call.word == "list");
         let line = lines.iter().find(|call| matches!(call.word.as_str(), "paginate" | "list")).unwrap_or(query);
         if paginates {
-            return self.connection_node(node, line, &reached);
+            let element = self.connection_node(node, line, &reached)?;
+            self.check_total(node, lines, &name, &root)?;
+            return Some(element);
         }
         if lists != reached.is_list() {
             let expected = if lists { "a list" } else { "one object" };
@@ -346,6 +348,54 @@ impl<'a> Run<'a> {
             return None;
         }
         Some(reached.name().to_string())
+    }
+
+    fn check_total(&mut self, node: &ModelNode, lines: &[Call], operation: &str, root: &graphql::Root) -> Option<()> {
+        let Some(total) = lines.iter().find(|call| call.word == "total") else { return Some(()) };
+        let path = option_text(total, "from")?.to_string();
+        let mut segments = path.split('.');
+        if segments.next() != Some(root.key.as_str()) {
+            self.fail(node.file, total.line, total.column, format!("total `{path}` must start with the first field `{}` of operation `{operation}`", root.key));
+            return None;
+        }
+        let segments: Vec<&str> = segments.collect();
+        let mut reached = match self.schema.field(&self.schema.query, &root.field) {
+            Ok(reached) => reached,
+            Err(message) => {
+                self.fail(node.file, total.line, total.column, message);
+                return None;
+            }
+        };
+        if self.schema.is_interface(reached.name()) {
+            reached = self.enter_implementation(node.file, total, operation, &root.key, reached)?;
+        }
+        for segment in &segments {
+            reached = match self.schema.field(reached.name(), segment) {
+                Ok(next) if !reached.is_list() => next,
+                Ok(_) => {
+                    self.fail(node.file, total.line, total.column, format!("total `{path}` crosses the list `{}`", reached.describe()));
+                    return None;
+                }
+                Err(message) => {
+                    self.fail(node.file, total.line, total.column, message);
+                    return None;
+                }
+            };
+        }
+        if reached.name() != "Int" || reached.is_list() || segments.is_empty() {
+            self.fail(node.file, total.line, total.column, format!("total `{path}` must be an `Int` but is `{}`", reached.describe()));
+            return None;
+        }
+        let operations: &Operations = self.operations;
+        let mut select = operations.named.get(operation).and_then(|found| found.select.fields.iter().find(|field| field.key == root.key)).map(|field| &field.select);
+        for segment in &segments {
+            select = select.and_then(|inner| operations.fields_in(inner, segment, &[]).first().copied()).map(|field| &field.select);
+        }
+        if select.is_none() {
+            self.fail(node.file, total.line, total.column, format!("operation `{operation}` does not select `{path}`: the server counts it only when selected"));
+            return None;
+        }
+        Some(())
     }
 
     fn enter_implementation(&mut self, file: usize, query: &Call, operation: &str, key: &str, reached: Ty) -> Option<Ty> {
@@ -662,6 +712,8 @@ mod schema_check_tests;
 mod node_tests;
 #[cfg(test)]
 mod members_tests;
+#[cfg(test)]
+mod total_tests;
 
 #[cfg(test)]
 mod union_tests;

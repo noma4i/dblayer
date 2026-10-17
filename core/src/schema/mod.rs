@@ -527,6 +527,8 @@ pub struct RemoteSpec {
     pub variables: BTreeMap<String, VariableSource>,
     #[serde(default)]
     pub root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_from: Option<String>,
 }
 
 impl RemoteSpec {

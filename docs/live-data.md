@@ -113,7 +113,7 @@ struct ProfileView: View {
 
 **Equality.** Two snapshots of a row are equal when every field and the sync state match (a Swift model compares like a Kotlin data class), so a view that diffs by value sees a field change. Hashing uses the id only.
 
-**Loading state.** A remote relation reports `idle`, `loading` or `failed`, whether another page exists, when it last loaded and the `total` the server reports for the whole list (`totalCount` of the connection, nil when the document does not select it):
+**Loading state.** A remote relation reports `idle`, `loading` or `failed`, whether another page exists, when it last loaded and the `total` the server reports for the whole list (`totalCount` of the connection, or the field named by `total from:` of the scope, nil when the document does not select it):
 
 ```swift
 for await state in await Moment.feed.state.stream() { if state.isLoading { showSpinner() } }
@@ -125,7 +125,7 @@ Moment.feed.state.flow.collect { state -> if (state.isLoading) showSpinner() }
 
 While a load runs the state also tells which load it is: `isInitialLoading` (the first load of a list without rows, for a skeleton), `isRefreshing` (a reload of a list with rows) and `isFetchingMore` (the next page, for a footer spinner). Concurrent loads of the same list do not mix, each flag follows its own loads.
 
-**Pages of a related list.** A list that lives under a node, such as the members of a chat, pages with `loadMore()` and shows `hasMore` and `total` in its state (`total` is nil when the connection has no `totalCount`). See [node reads](models.md#node-reads).
+**Pages of a related list.** A list that lives under a node, such as the members of a chat, pages with `loadMore()` and shows `hasMore` and `total` in its state (`total` is nil when the connection has no `totalCount` and the scope has no `total from:`). See [node reads](models.md#node-reads).
 
 ```swift
 let members = User.chatMembers(chatId)

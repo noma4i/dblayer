@@ -39,7 +39,7 @@ fn relation(name: &str, stale: &str) -> RelationSpec {
     let mut relation = RelationSpec::global(name);
     relation.remote = Some(RemoteSpec {
         operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: stale.into(),
-        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None,
+        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     relation
 }

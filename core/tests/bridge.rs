@@ -44,7 +44,7 @@ async fn bridge_state_needs_a_sync_to_report_on() {
     let mut feed = RelationSpec::global("feed");
     feed.remote = Some(RemoteSpec {
         operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: "5.minutes".into(),
-        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None,
+        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(feed);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 },

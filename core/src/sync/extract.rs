@@ -16,7 +16,7 @@ pub(crate) fn root_value<'a>(data: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.').try_fold(data, |value, segment| value.get(segment))
 }
 
-pub(crate) fn extract(data: &Value, root_path: &str, shape: &RemoteShape) -> Result<Extracted, SyncError> {
+pub(crate) fn extract(data: &Value, root_path: &str, shape: &RemoteShape, total_from: Option<&str>) -> Result<Extracted, SyncError> {
     let root = root_value(data, root_path);
     let malformed = |reason: &str| SyncError::Malformed(format!("{root_path}: {reason}"));
     match shape {
@@ -34,7 +34,11 @@ pub(crate) fn extract(data: &Value, root_path: &str, shape: &RemoteShape) -> Res
             if let Some(fault) = landing_fault(connection, cursor) {
                 return Err(malformed(&format!("{fault:?}")));
             }
-            Ok(Extracted { nodes: objects(&connection_rows(connection)), page_info: Some(connection_page_info(connection, cursor)) })
+            let mut page_info = connection_page_info(connection, cursor);
+            if let Some(path) = total_from {
+                page_info.total = root_value(data, path).and_then(Value::as_i64);
+            }
+            Ok(Extracted { nodes: objects(&connection_rows(connection)), page_info: Some(page_info) })
         }
     }
 }

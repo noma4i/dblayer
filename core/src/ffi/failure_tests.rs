@@ -27,7 +27,7 @@ fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<Database>, Arc<Ref
     let mut relation = RelationSpec::global("feed");
     relation.remote = Some(RemoteSpec {
         operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: "5.minutes".into(),
-        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None,
+        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(relation);
     let transport = Arc::new(Refusing { calls: AtomicUsize::new(0), answer });

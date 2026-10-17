@@ -21,6 +21,7 @@ fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
         edge_fields: Vec::new(),
         requested_cursor: None,
         page_info: None,
+        keeps_total: false,
         attempt: FetchAttempt::new(key, issued, rig.db.generation(), rig.db.revision_seq().unwrap()),
     }
 }

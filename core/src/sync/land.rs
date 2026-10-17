@@ -28,6 +28,7 @@ pub(crate) struct Landing {
     pub edge_fields: Vec<FieldSpec>,
     pub requested_cursor: Option<String>,
     pub page_info: Option<PageInfo>,
+    pub keeps_total: bool,
     pub attempt: FetchAttempt,
 }
 
@@ -141,7 +142,7 @@ impl Inner {
 
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
-        let Landing { model, scope, window_key, normalized, is_first_page, plans_as_first, coverage, edge_fields, requested_cursor, page_info, attempt } = landing;
+        let Landing { model, scope, window_key, normalized, is_first_page, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
         let generation = self.db.generation();
         if !attempt.applies_to(generation) {
             return Ok(Landed::Discarded(DiscardReason::StaleGeneration));
@@ -200,7 +201,7 @@ impl Inner {
                 scope: scope.clone(),
                 cursor: page_info.as_ref().and_then(|info| info.end_cursor.clone()),
                 has_next: page_info.as_ref().is_some_and(|info| info.has_next_page),
-                total: page_info.as_ref().and_then(|info| info.total),
+                total: page_info.as_ref().and_then(|info| info.total).or(window.as_ref().filter(|_| keeps_total).and_then(|window| window.total)),
                 tail: tail.clone(),
                 issued: attempt.issued,
                 applied,

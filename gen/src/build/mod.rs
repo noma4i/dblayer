@@ -302,6 +302,7 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         variables: line("variables").map(variables_of).unwrap_or_default(),
         root: line("query").and_then(|query| option(query, "root")).and_then(|pair| text_of(&pair.value.item)),
         updates: lines.iter().filter(|candidate| candidate.word == "updates").map(updates_spec).collect(),
+        total_from: line("total").and_then(|total| option(total, "from")).and_then(|pair| text_of(&pair.value.item)),
     };
     let columns: Vec<String> = match option(call, "params").map(|pair| &pair.value.item) {
         Some(Value::Array(items)) => items.iter().filter_map(|item| text_of(&item.item)).collect(),

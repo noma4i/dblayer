@@ -193,6 +193,8 @@ mod merge_tests;
 #[cfg(test)]
 mod members_tests;
 #[cfg(test)]
+mod total_from_tests;
+#[cfg(test)]
 mod node_tests;
 #[cfg(test)]
 mod normalize_tests;
