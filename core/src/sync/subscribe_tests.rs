@@ -391,10 +391,10 @@ async fn join_cost(size: usize) -> usize {
     let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
     rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
-    let before = crate::identity::touches::total();
+    let before = crate::identity::touches::member_reads();
     rig.transport.emit("MomentChanged", next(json!({"id": "joined", "text": "new", "userId": "u1"})));
     tokio::time::sleep(Duration::from_secs(3)).await;
-    let cost = crate::identity::touches::total() - before;
+    let cost = crate::identity::touches::member_reads() - before;
     assert_eq!(member_ids(&rig, "moments", "by_user", &params).last().map(String::as_str), Some("joined"));
     cost
 }

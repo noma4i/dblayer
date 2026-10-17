@@ -29,6 +29,19 @@ class SingletonEntityTest {
 
     private val registry get() = EntityRegistries.of("User", User)
 
+    @Test
+    fun singletonRefreshStoresBeforeAnyReaderExists() = bounded {
+        open()
+        assertEquals(0uL, DBlayer.subscriptionCensus().observedQueries)
+        login("1", "Ann")
+        User.profile.warm()
+        val rows = User.profile.cached()!!.value
+        assertEquals(listOf("1"), rows.map { it.id })
+        assertEquals("Ann", rows.firstOrNull()?.name)
+        assertEquals(0uL, DBlayer.subscriptionCensus().observedQueries)
+        assertEquals("Ann", loaded(User.entity())?.name)
+    }
+
     /** REL-01 for the singleton and REL-08: 10 readers share 1 object, 1 value and 1 core subscription. */
     @Test
     fun tenReadersCostOneSubscriptionAndSeeOneValue() = bounded {

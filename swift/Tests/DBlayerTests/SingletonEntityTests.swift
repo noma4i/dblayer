@@ -7,6 +7,21 @@ import Testing
 /// The tests share `DB.database` with the rest of `BridgeProbeTests`, so they run in its serialized suite.
 extension BridgeProbeTests {
   @MainActor
+  @Test
+  func singletonRefreshStoresBeforeAnyReaderExists() async throws {
+    let transport = try Self.openSingletonRig()
+    #expect(DB.subscriptionCensus().observedQueries == 0)
+    try await Self.login(transport, "1", "Ann")
+    try await User.profile.warm()
+    let rows = try #require(User.profile.cached()).value
+    #expect(rows.map(\.id) == ["1"])
+    #expect(rows.first?.name == "Ann")
+    #expect(DB.subscriptionCensus().observedQueries == 0)
+    let entity = User.entity()
+    await eventually("the stored singleton reaches its first reader") { entity.value?.name == "Ann" }
+  }
+
+  @MainActor
   static func openSingletonRig() throws -> MockTransport {
     let transport = MockTransport()
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)

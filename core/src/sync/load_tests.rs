@@ -246,12 +246,20 @@ async fn null_param_loads_its_own_list_and_sends_null() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn single_load_lands_one_row() {
-    let rig = rig();
-    rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));
-    let outcome = rig.sync.load("users", "current", &none(), LoadOptions::default()).await.unwrap();
-    assert_eq!(outcome.rows, 1);
-    assert_eq!(member_ids(&rig, "users", "current", &none()), ["u1"]);
+async fn singleton_load_and_refresh_store_without_observers() {
+    for force in [false, true] {
+        let rig = rig();
+        rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));
+        let outcome = if force {
+            rig.sync.refresh("users", "current", &none()).await
+        } else {
+            rig.sync.load("users", "current", &none(), LoadOptions::default()).await
+        }.unwrap();
+        assert_eq!(outcome.rows, 1, "force={force}");
+        assert_eq!(member_ids(&rig, "users", "current", &none()), ["u1"]);
+        let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
+        assert_eq!(user.text("name"), Some("Ann"));
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -379,9 +387,9 @@ async fn rig_with_user_list(size: usize) -> (Rig, Map<String, serde_json::Value>
 }
 
 fn reads_during(work: impl FnOnce()) -> usize {
-    let before = crate::identity::touches::total();
+    let before = crate::identity::touches::member_reads();
     work();
-    crate::identity::touches::total() - before
+    crate::identity::touches::member_reads() - before
 }
 
 #[tokio::test(start_paused = true)]

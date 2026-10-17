@@ -142,9 +142,9 @@ fn next_page_cost(size: usize) -> usize {
     next.plans_as_first = false;
     next.coverage = crate::schema::Coverage::Page;
     next.requested_cursor = Some("c1".to_string());
-    let before = crate::identity::touches::total();
+    let before = crate::identity::touches::member_reads();
     assert_eq!(rig.sync.inner.land(next).unwrap(), Landed::Applied { rows: 2, invalid: 0 });
-    let cost = crate::identity::touches::total() - before;
+    let cost = crate::identity::touches::member_reads() - before;
     assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()).len(), size + 2);
     cost
 }

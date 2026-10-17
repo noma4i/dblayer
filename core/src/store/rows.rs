@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::EdgeValue;
 use crate::ddl::{manifest_read, ColumnType, REVISION_SEQ_KEY};
-use crate::identity::touches::touch;
+use crate::identity::touches::read_members;
 use crate::identity::RowId;
 use crate::value::fractional_between;
 
@@ -191,7 +191,7 @@ impl<'a> Reader<'a> {
         )?;
         let rows = statement.query_map(params![model, scope_key], |row| Ok((row.get(0)?, row.get(1)?)))?;
         let members: Vec<(String, String)> = rows.collect::<Result<_, _>>()?;
-        touch(members.len());
+        read_members(members.len());
         Ok(members)
     }
 
@@ -240,7 +240,7 @@ impl<'a> Reader<'a> {
             let member: Option<(String, i64)> = statement.query_row(params![model, scope_key, row_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
             found.extend(member.map(|(order_key, position)| (row_id.to_string(), order_key, usize::try_from(position).unwrap_or_default())));
         }
-        touch(found.len());
+        read_members(found.len());
         Ok(found)
     }
 
