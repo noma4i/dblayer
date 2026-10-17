@@ -3,7 +3,8 @@ use std::fmt::Write;
 use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, RelationSpec};
 use dblayer::value::ScalarKind;
 
-use super::{field_type, name};
+use super::{field_type, name, text_param};
+use crate::EnumDecl;
 
 fn pascal(text: &str) -> String {
     let mut chars = text.chars();
@@ -35,21 +36,20 @@ fn type_name(model: &ModelSpec, relation: &RelationSpec) -> String {
     format!("{}{}Edge", model.key.as_str(), pascal(&name(&relation.name)))
 }
 
-fn parameters(model: &ModelSpec, relation: &RelationSpec, swift: bool) -> (String, String) {
+fn parameters(model: &ModelSpec, relation: &RelationSpec, decls: &[EnumDecl], swift: bool) -> (String, String) {
     let columns = relation.by_columns.iter().map(|key| (key.as_str(), model.field(key).map(|field| field_type(field, swift)).unwrap_or("String".into())));
-    let texts = relation.text_params.iter().map(|key| (key.as_str(), "String".to_string()));
-    let all: Vec<(&str, String)> = columns.chain(texts).collect();
-    let declared = all.iter().map(|(key, kind)| if swift { format!("_ {key}: {kind}, ") } else { format!("{key}: {kind}, ") }).collect::<String>();
-    let passed = all.iter().map(|(key, _)| key.to_string()).collect::<Vec<_>>().join(", ");
+    let all: Vec<(String, String)> = columns.map(|(key, kind)| (if swift { format!("_ {key}: {kind}") } else { format!("{key}: {kind}") }, key.to_string())).chain(relation.text_params.iter().map(|key| (text_param(relation, key, decls, swift), if swift && relation.text_types.contains_key(key) { format!("{key}: {key}") } else { key.clone() }))).collect();
+    let declared = all.iter().map(|(parameter, _)| format!("{parameter}, ")).collect::<String>();
+    let passed = all.iter().map(|(_, argument)| argument.as_str()).collect::<Vec<_>>().join(", ");
     (declared, passed)
 }
 
-pub(super) fn swift_accessors(out: &mut String, types: &mut String, model: &ModelSpec, relation: &RelationSpec) {
+pub(super) fn swift_accessors(out: &mut String, types: &mut String, model: &ModelSpec, relation: &RelationSpec, decls: &[EnumDecl]) {
     if relation.edge_fields.is_empty() {
         return;
     }
     let (method, class) = (name(&relation.name), type_name(model, relation));
-    let (declared, passed) = parameters(model, relation, true);
+    let (declared, passed) = parameters(model, relation, decls, true);
     let scope = if passed.is_empty() { method.clone() } else { format!("{method}({passed})") };
     writeln!(out, "    public static func {method}Edge({declared}of id: String) throws -> {class}? {{ try {scope}.edgeValues(of: id).map({class}.init) }}").unwrap();
     writeln!(out, "    public static func read{}Edge({declared}of id: String) async throws -> {class}? {{ try await {scope}.readEdgeValues(of: id).map({class}.init) }}", pascal(&method)).unwrap();
@@ -64,12 +64,12 @@ pub(super) fn swift_accessors(out: &mut String, types: &mut String, model: &Mode
     types.push_str("    }\n}\n\n");
 }
 
-pub(super) fn kotlin_accessors(out: &mut String, types: &mut String, model: &ModelSpec, relation: &RelationSpec) {
+pub(super) fn kotlin_accessors(out: &mut String, types: &mut String, model: &ModelSpec, relation: &RelationSpec, decls: &[EnumDecl]) {
     if relation.edge_fields.is_empty() {
         return;
     }
     let (method, class) = (name(&relation.name), type_name(model, relation));
-    let (declared, passed) = parameters(model, relation, false);
+    let (declared, passed) = parameters(model, relation, decls, false);
     let scope = if passed.is_empty() { method.clone() } else { format!("{method}({passed})") };
     writeln!(out, "        fun {method}Edge({declared}id: String): {class}? = {scope}.edgeValues(id)?.let {{ {class}(it) }}").unwrap();
     writeln!(out, "        suspend fun read{}Edge({declared}id: String): {class}? = {scope}.readEdgeValues(id)?.let {{ {class}(it) }}", pascal(&method)).unwrap();

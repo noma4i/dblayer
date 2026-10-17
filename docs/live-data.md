@@ -125,17 +125,17 @@ Moment.feed.state.flow.collect { state -> if (state.isLoading) showSpinner() }
 
 While a load runs the state also tells which load it is: `isInitialLoading` (the first load of a list without rows, for a skeleton), `isRefreshing` (a reload of a list with rows) and `isFetchingMore` (the next page, for a footer spinner). Concurrent loads of the same list do not mix, each flag follows its own loads.
 
-**Pages of a related list.** A list that lives under a node, such as the members of a chat, pages with `loadMore()` and shows `hasMore` and `total` in its state (`total` is nil when the connection has no `totalCount` and the scope has no `total from:`). See [node reads](models.md#node-reads).
+**Pages of a related list.** A list that lives under a node, such as the members of a chat, pages with `loadMore()` and shows `hasMore` and `total` in its state (each order of the list, `order: .ownerFirst`, has its own window) (`total` is nil when the connection has no `totalCount` and the scope has no `total from:`). See [node reads](models.md#node-reads).
 
 ```swift
-let members = User.chatMembers(chatId)
+let members = User.chatMembers(chatId, order: .ownerFirst)
 try await members.load()
 for await state in await members.state.stream() { footer.isHidden = !state.hasMore }
 try await members.loadMore()                       // true while another page exists
 ```
 
 ```kotlin
-val members = User.chatMembers(chatId)
+val members = User.chatMembers(chatId, order = ChatMemberOrder.OwnerFirst)
 members.load()
 members.loadMore()
 ```

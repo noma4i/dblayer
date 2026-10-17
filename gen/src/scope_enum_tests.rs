@@ -37,7 +37,7 @@ fn a_scope_param_of_a_schema_enum_is_a_typed_argument_on_both_platforms() {
     let declared = compile(MODEL, OPERATIONS, Some(SCHEMA)).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
-        "public static func list(_ list: ChatList) -> Query<Self> {",
+        "public static func list(list: ChatList) -> Query<Self> {",
         "let built = Query<Self>(relation: \"list\", params: [\"list\": JSONValue.encode(list)])",
         "public enum ChatList: Codable, Sendable, Hashable {",
     ] {
@@ -60,7 +60,7 @@ fn string_and_enum_text_params_mix_in_declared_order() {
     let declared = compile(source, OPERATIONS, Some(SCHEMA)).unwrap();
     assert_eq!(declared.models[0].relations[0].text_params, ["ownerId", "list"]);
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
-    assert!(swift.contains("public static func owned(_ ownerId: String, _ list: ChatList) -> Query<Self> {"), "{swift}");
+    assert!(swift.contains("public static func owned(_ ownerId: String, list: ChatList) -> Query<Self> {"), "{swift}");
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     assert!(kotlin.contains("fun owned(ownerId: String, list: ChatList): Query<Chat> {"), "{kotlin}");
 }

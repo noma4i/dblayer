@@ -100,6 +100,50 @@ data class Inbox(
     }
 }
 
+data class Roster(
+    override val id: String,
+    val title: String,
+    override val sync: SyncInfo = SyncInfo(),
+    override val upload: UploadInfo? = null
+) : DBModel {
+    override val modelName get() = "Roster"
+    companion object : ModelDecoder<Roster> {
+        override val layout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
+        override val modelName = "Roster"
+        override fun decode(row: WireRow): Roster {
+            val r = CellReader(row.cells)
+            return Roster(
+                id = row.id,
+                title = r.req(0, Cell::asText),
+                sync = SyncInfo.of(row.sync),
+                upload = row.upload?.let { UploadInfo.of(it) },
+            )
+        }
+
+        val title = Column<Roster, String>("title")
+        fun find(id: String) = Query("Roster", this).find(id)
+        fun where(condition: Condition) = Query("Roster", this).where(condition)
+        fun ids(ids: List<String>) = idsQuery("Roster", this, ids)
+        fun entity(id: String) = entityOf("Roster", this, id)
+        fun chatMembers(chatId: String, order: ChatMemberOrder = ChatMemberOrder.Joined): Query<Roster> {
+            var built = Query("Roster", this, relation = "chat_members", params = buildJsonObject { put("chatId", jsonValue(chatId)); put("order", jsonValue(order)) })
+            return built
+        }
+        suspend fun create(title: String): Roster {
+            val values = buildJsonObject {
+                put("title", jsonValue(title))
+            }
+            return read(DBlayer.database.create("Roster", values.toString(), "{}"))
+        }
+    }
+    suspend fun update(title: String? = null): Roster {
+        val values = buildJsonObject {
+            title?.let { put("title", jsonValue(it)) }
+        }
+        return Roster.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
+    }
+}
+
 @Serializable(with = ChatShelfKindSerializer::class)
 sealed class ChatShelfKind(override val raw: String) : RawEnum {
     data object Primary : ChatShelfKind("PRIMARY")
@@ -116,6 +160,23 @@ sealed class ChatShelfKind(override val raw: String) : RawEnum {
 }
 
 object ChatShelfKindSerializer : RawEnumSerializer<ChatShelfKind>("ChatShelfKind", { ChatShelfKind.of(it) })
+
+@Serializable(with = ChatMemberOrderSerializer::class)
+sealed class ChatMemberOrder(override val raw: String) : RawEnum {
+    data object Joined : ChatMemberOrder("JOINED")
+    data object OwnerFirst : ChatMemberOrder("OWNER_FIRST")
+    data class Unknown(val value: String) : ChatMemberOrder(value)
+
+    companion object {
+        fun of(raw: String): ChatMemberOrder = when (raw) {
+            "JOINED" -> Joined
+            "OWNER_FIRST" -> OwnerFirst
+            else -> Unknown(raw)
+        }
+    }
+}
+
+object ChatMemberOrderSerializer : RawEnumSerializer<ChatMemberOrder>("ChatMemberOrder", { ChatMemberOrder.of(it) })
 
 @Serializable(with = WidgetKindSerializer::class)
 sealed class WidgetKind(override val raw: String) : RawEnum {

@@ -34,9 +34,9 @@ extension EnumTests {
 
   @Test
   func aScopeParamOfASchemaEnumIsSentAsItsText() {
-    #expect(Inbox.shelf(.primary).relation == "shelf")
-    #expect(Inbox.shelf(.primary).params == ["list": .string("PRIMARY")])
-    #expect(Inbox.shelf(.secondary).params != Inbox.shelf(.primary).params)
-    #expect(Inbox.shelf(.unknown("LATER")).params == ["list": .string("LATER")])
+    #expect(Inbox.shelf(list: .primary).relation == "shelf")
+    #expect(Inbox.shelf(list: .primary).params == ["list": .string("PRIMARY")])
+    #expect(Inbox.shelf(list: .secondary).params != Inbox.shelf(list: .primary).params)
+    #expect(Inbox.shelf(list: .unknown("LATER")).params == ["list": .string("LATER")])
   }
 }

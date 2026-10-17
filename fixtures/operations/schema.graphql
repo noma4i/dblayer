@@ -1,4 +1,4 @@
-type Query { ping: Int, inbox(list: ChatShelfKind, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]! }
+type Query { ping: Int, inbox(list: ChatShelfKind, first: Int, after: String): InboxConnection!, chatMembers(chatId: ID!, order: ChatMemberOrder = JOINED, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]! }
 type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker, momentCreate(input: MomentInput!): MomentCreated, widgetsSend(widgets: [StickerWidgetInput!]): Sticker, clipCreate(signedId: String!, widgets: [StickerWidgetInput!]): ClipCreated }
 type ClipCreated { clip: Clip }
 type Clip { id: ID!, title: String }
@@ -30,3 +30,4 @@ type Inbox { id: ID!, title: String! }
 type InboxConnection { edges: [InboxEdge!]!, pageInfo: InboxPageInfo! }
 type InboxEdge { cursor: String!, node: Inbox! }
 type InboxPageInfo { hasNextPage: Boolean!, endCursor: String }
+enum ChatMemberOrder { JOINED OWNER_FIRST }

@@ -328,6 +328,11 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
             }
         }
     }
+    if let Some(Value::Hash(pairs)) = option(call, "defaults").map(|pair| &pair.value.item) {
+        for pair in pairs {
+            if let Some(value) = text_of(&pair.value.item) { relation.text_defaults.insert(pair.key.clone(), value); }
+        }
+    }
     relation.is_global = columns.is_empty() && relation.text_params.is_empty();
     relation.node = match option(call, "node").and_then(|pair| text_of(&pair.value.item)).as_deref() {
         Some("one") => Some(NodeRead::One),

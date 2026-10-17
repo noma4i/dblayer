@@ -589,6 +589,8 @@ pub struct RelationSpec {
     pub text_params: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub text_types: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub text_defaults: BTreeMap<String, String>,
     #[serde(default)]
     pub remote: Option<RemoteSpec>,
     #[serde(default)]
@@ -612,6 +614,7 @@ impl RelationSpec {
             by_columns: by_columns.iter().map(|column| column.to_string()).collect(),
             text_params: Vec::new(),
             text_types: BTreeMap::new(),
+            text_defaults: BTreeMap::new(),
             remote: None,
             is_global: false,
             sort: Sort::ServerOrder,

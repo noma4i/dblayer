@@ -205,9 +205,32 @@ impl<'a> Run<'a> {
         Some(&select.fields.iter().find(|field| field.name == "edges")?.select)
     }
 
+    fn check_text_defaults(&mut self, node: &ModelNode, remote: &Call, items: &[Node<Value>]) {
+        let Some(Pair { value: Node { item: Value::Hash(defaults), .. }, .. }) = option(remote, "defaults") else { return };
+        let typed: Vec<&Pair> = items.iter().filter_map(|item| match &item.item { Value::Hash(pairs) => Some(pairs.iter()), _ => None }).flatten().collect();
+        for default in defaults {
+            let (line, column) = (default.value.line, default.value.column);
+            let scope = name_of(remote);
+            let declared = items.iter().any(|item| matches!(&item.item, Value::Symbol(name) | Value::Str(name) if *name == default.key));
+            let Some(param) = typed.iter().find(|pair| pair.key == default.key) else {
+                let message = if declared { format!("scope `{scope}` default for `{}` needs an enum param", default.key) } else { format!("scope `{scope}` default for `{}` names no param", default.key) };
+                self.fail(node.file, line, column, message);
+                continue;
+            };
+            let (Some(TypeKind::Enum(values)), Some(value)) = (text(&param.value.item).and_then(|kind| self.schema.types.get(kind)), text(&default.value.item)) else { continue };
+            if !values.iter().any(|candidate| candidate == value) {
+                let kind = text(&param.value.item).unwrap_or_default();
+                self.fail(node.file, line, column, format!("scope `{scope}` default `{value}` is not a value of `{kind}`"));
+            }
+        }
+    }
+
     fn check_text_types(&mut self, node: &ModelNode, remote: &Call) {
-        let Some(Pair { value, .. }) = option(remote, "text") else { return };
-        let Value::Array(items) = &value.item else { return };
+        let items: &[Node<Value>] = match option(remote, "text") {
+            Some(Pair { value: Node { item: Value::Array(items), .. }, .. }) => items,
+            _ => &[],
+        };
+        self.check_text_defaults(node, remote, items);
         let lines = remote.block.as_deref().unwrap_or_default();
         let document = lines.iter().find(|call| call.word == "query").and_then(|call| call.args.first()).and_then(|arg| text(&arg.item));
         let mapped = |param: &str| {

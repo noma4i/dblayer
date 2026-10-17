@@ -1,0 +1,8 @@
+model Roster do
+  field :title, type: :string
+
+  scope :chat_members, text: [:chatId, order: :ChatMemberOrder], defaults: { order: :JOINED } do
+    fetch "chatMembers", root: "chatMembers"
+    paginate 30
+  end
+end

@@ -309,7 +309,9 @@ A `fetch Operation` line connects a scope to the server. A relation that depends
 
 `where` accepts scalar and enum columns. A param passed as `nil` is a value of its own: `Moment.by_user(nil)` is the unfiltered list and has its own window. A param column gives the row one owner list: a row that belongs to several lists at once (a moment in the default feed and in a vibe feed) needs one relation per list, and the vibe id goes in `text: [:vibeId]`, not in a column param. `text: [:query]` declares params that are not columns, such as a search string. They are sent as variables, always strings, and each value gets its own window: `scope :search, text: [:query] do ... end` generates `Model.search("cats")`.
 
-A text param takes the name of a schema enum as its type: `text: [list: :ChatList]`, mixed with plain ones as `text: [:chatId, list: :ChatList]`. The call takes the generated enum and sends its text, and each value has its own window and its own members, the rows of the server answer. The schema check needs the enum in the schema and a document variable with the same name (or the name on the left of `variables name: :param`) typed with that enum, nullable or not.
+A text param takes the name of a schema enum as its type: `text: [list: :ChatList]`, mixed with plain ones as `text: [:chatId, list: :ChatList]`. The call takes the generated enum and sends its text, and each value has its own window and its own members, the rows of the server answer. The schema check needs the enum in the schema and a document variable with the same name (or the name on the left of `variables name: :param`) typed with that enum, nullable or not. An enum param is a labeled argument in Swift (`list: .primary`) and a named one in Kotlin.
+
+`defaults: { list: :PRIMARY }` on the scope gives an enum param a default value in the call: `Chat.list()` sends `PRIMARY`. The value must be one of the schema enum and the key a typed param, or the generator stops. The param is always sent, so a call with and without the default share one window.
 
 ```ruby
 model Chat do
@@ -321,8 +323,8 @@ end
 ```
 
 ```swift
-let primary = Chat.list(.primary)
-let secondary = Chat.list(.secondary)   // a premium chat is a member of both windows
+let primary = Chat.list(list: .primary)
+let secondary = Chat.list(list: .secondary)   // a premium chat is a member of both windows
 ```
 
 ```kotlin
@@ -427,11 +429,11 @@ query ChatMedia($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) {
 query ChatsByIds($ids: [ID!]!) { nodes(ids: $ids) { ... on Chat { id title shareUrl } } }
 ```
 
-A paged list of the entities under a node, such as the members of a chat, is a scope of the listed model with a text parameter. It has no `order`: the rows keep the order of the server across pages, a restart and a refresh of a row by another list.
+A paged list of the entities under a node, such as the members of a chat, is a scope of the listed model with a text parameter. It has no local `order`: the rows keep the order of the server across pages, a restart and a refresh of a row by another list. When the server orders the list by a param, such as `order: ChatMemberOrder` (`JOINED` or `OWNER_FIRST`), the param is an enum text param: each pair of chat and order has its own window, its own members, its own cursor and its own total, and a cursor is never sent with another order.
 
 ```ruby
 model User do
-  scope :chat_members, text: [:chatId] do
+  scope :chat_members, text: [:chatId, order: :ChatMemberOrder], defaults: { order: :JOINED } do
     fetch ChatMembers, root: "node.members"
     paginate 30
     total from: "node.membersCount"
@@ -441,16 +443,18 @@ end
 ```
 
 ```graphql
-query ChatMembers($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { membersCount members(first: $first, after: $after) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }
+query ChatMembers($chatId: ID!, $order: ChatMemberOrder = JOINED, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { membersCount members(first: $first, after: $after, order: $order) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }
 ```
 
 ```swift
-let members = LiveList(User.chatMembers(chatId))   // members.rows, members.state.hasMore
-try await User.chatMembers(chatId).loadMore()      // true while another page exists
+let members = LiveList(User.chatMembers(chatId))                      // JOINED, members.rows, members.state.hasMore
+let owners = LiveList(User.chatMembers(chatId, order: .ownerFirst))   // its own window and cursor
+try await User.chatMembers(chatId).loadMore()                         // true while another page exists
 ```
 
 ```kotlin
-val members = User.chatMembers(chatId)
+val members = User.chatMembers(chatId)                                  // JOINED
+val owners = User.chatMembers(chatId, order = ChatMemberOrder.OwnerFirst)  // its own window and cursor
 members.loadMore()                                 // true while another page exists
 ```
 
