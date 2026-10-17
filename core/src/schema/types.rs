@@ -2,15 +2,17 @@ use std::collections::HashMap;
 
 use super::{FieldKind, FieldSpec, ModelSpec};
 
-fn collect(field: &FieldSpec, registry: &mut HashMap<String, Vec<FieldSpec>>) {
+type Registry = HashMap<String, (Vec<FieldSpec>, Vec<FieldSpec>)>;
+
+fn collect(field: &FieldSpec, registry: &mut Registry) {
     if let (true, Some(name)) = (!field.fields.is_empty(), &field.app_type) {
-        registry.entry(name.clone()).or_insert_with(|| field.fields.clone());
+        registry.entry(name.clone()).or_insert_with(|| (field.fields.clone(), field.shared.clone()));
     }
-    field.fields.iter().for_each(|child| collect(child, registry));
+    field.fields.iter().chain(field.shared.iter()).for_each(|child| collect(child, registry));
 }
 
-fn resolve(field: &mut FieldSpec, arrays: &mut Vec<String>, registry: &HashMap<String, Vec<FieldSpec>>) {
-    if !matches!(field.kind, FieldKind::Object | FieldKind::Array | FieldKind::Union) {
+fn resolve(field: &mut FieldSpec, arrays: &mut Vec<String>, registry: &Registry) {
+    if !matches!(field.kind, FieldKind::Object | FieldKind::Array | FieldKind::Union | FieldKind::UnionArray) {
         return;
     }
     let Some(name) = field.app_type.clone() else { return };
@@ -20,7 +22,10 @@ fn resolve(field: &mut FieldSpec, arrays: &mut Vec<String>, registry: &HashMap<S
             return;
         }
         match registry.get(&name) {
-            Some(declared) => field.fields = declared.clone(),
+            Some((declared, shared)) => {
+                field.fields = declared.clone();
+                field.shared = shared.clone();
+            }
             None => {
                 field.app_type = None;
                 return;
@@ -30,7 +35,15 @@ fn resolve(field: &mut FieldSpec, arrays: &mut Vec<String>, registry: &HashMap<S
     if is_array {
         arrays.push(name);
     }
-    field.fields.iter_mut().for_each(|child| resolve(child, arrays, registry));
+    let variants = matches!(field.kind, FieldKind::Union | FieldKind::UnionArray);
+    for child in field.fields.iter_mut() {
+        if variants {
+            child.fields.iter_mut().for_each(|member| resolve(member, arrays, registry));
+        } else {
+            resolve(child, arrays, registry);
+        }
+    }
+    field.shared.iter_mut().for_each(|child| resolve(child, arrays, registry));
     if is_array {
         arrays.pop();
     }
@@ -50,7 +63,7 @@ impl FieldSpec {
     pub fn is_structured(&self) -> bool {
         match self.kind {
             FieldKind::List { .. } => true,
-            FieldKind::Object | FieldKind::Array | FieldKind::Union => self.app_type.is_some(),
+            FieldKind::Object | FieldKind::Array | FieldKind::Union | FieldKind::UnionArray => self.app_type.is_some(),
             _ => false,
         }
     }

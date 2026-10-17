@@ -236,3 +236,5 @@ mod cache_storage_tests;
 mod tombstones_tests;
 #[cfg(test)]
 mod windows_tests;
+#[cfg(test)]
+mod interface_tests;

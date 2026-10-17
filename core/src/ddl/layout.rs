@@ -27,14 +27,15 @@ pub enum Member {
     List { key: String, present: String, at: usize, table: usize },
     Array { key: String, present: String, at: usize, table: usize },
     Raw { key: String, present: String, at: usize, table: usize, kind: FieldKind },
-    Union { key: String, present: String, at: usize, variants: Vec<Variant> },
+    Union { key: String, present: String, at: usize, shared: Vec<Member>, variants: Vec<Variant> },
+    UnionArray { key: String, present: String, at: usize, table: usize },
 }
 
 impl Member {
     pub fn key(&self) -> &str {
         match self {
             Member::Leaf(leaf) => &leaf.key,
-            Member::Object { key, .. } | Member::List { key, .. } | Member::Array { key, .. } | Member::Raw { key, .. } | Member::Union { key, .. } => key,
+            Member::Object { key, .. } | Member::List { key, .. } | Member::Array { key, .. } | Member::Raw { key, .. } | Member::Union { key, .. } | Member::UnionArray { key, .. } => key,
         }
     }
 }
@@ -108,6 +109,11 @@ impl Builder {
                 Some(Member::Object { key: key.to_string(), present, at: 0, members })
             }
             FieldKind::Union if field.app_type.is_some() => {
+                let mut shared = Vec::new();
+                for child in &field.shared {
+                    let name = column_name(&child.name);
+                    shared.push(self.member(child, child.from.as_deref().unwrap_or(&child.name), &format!("{base}__shared__{name}"), &format!("{path}__shared__{name}"))?);
+                }
                 let mut variants = Vec::new();
                 for variant in &field.fields {
                     let case = column_name(&variant.name);
@@ -118,7 +124,14 @@ impl Builder {
                     }
                     variants.push(Variant { typename: variant.app_type.clone()?, members });
                 }
-                Some(Member::Union { key: key.to_string(), present: base.to_string(), at: 0, variants })
+                Some(Member::Union { key: key.to_string(), present: base.to_string(), at: 0, shared, variants })
+            }
+            FieldKind::UnionArray if field.app_type.is_some() => {
+                let index = self.tables.len();
+                self.tables.push(Table { name: format!("{}__{path}", self.row_table), shape: TableShape::Elements(Vec::new()) });
+                let union = self.member(&FieldSpec { kind: FieldKind::Union, ..field.clone() }, "", "u", path)?;
+                self.tables[index].shape = TableShape::Elements(vec![union]);
+                Some(Member::UnionArray { key: key.to_string(), present, at: 0, table: index })
             }
             FieldKind::List { element } => {
                 let value = leaf(&FieldSpec::scalar("value", *element), "value", "value")?;
@@ -220,12 +233,13 @@ fn number(member: &mut Member, next: &mut usize) {
             *next += 1;
             members.iter_mut().for_each(|child| number(child, next));
         }
-        Member::Union { at, variants, .. } => {
+        Member::Union { at, shared, variants, .. } => {
             *at = *next;
             *next += 1;
+            shared.iter_mut().for_each(|child| number(child, next));
             variants.iter_mut().flat_map(|variant| variant.members.iter_mut()).for_each(|child| number(child, next));
         }
-        Member::List { at, .. } | Member::Array { at, .. } | Member::Raw { at, .. } => {
+        Member::List { at, .. } | Member::Array { at, .. } | Member::UnionArray { at, .. } | Member::Raw { at, .. } => {
             *at = *next;
             *next += 1;
         }
@@ -247,7 +261,7 @@ pub fn table_widths(model: &ModelSpec) -> Vec<(String, usize)> {
 
 pub fn member_present(member: &Member) -> &str {
     match member {
-        Member::Object { present, .. } | Member::List { present, .. } | Member::Array { present, .. } | Member::Raw { present, .. } | Member::Union { present, .. } => present,
+        Member::Object { present, .. } | Member::List { present, .. } | Member::Array { present, .. } | Member::Raw { present, .. } | Member::Union { present, .. } | Member::UnionArray { present, .. } => present,
         Member::Leaf(leaf) => &leaf.column,
     }
 }
@@ -259,11 +273,12 @@ pub fn member_columns(member: &Member, out: &mut Vec<(String, ColumnType)>) {
             out.push((present.clone(), ColumnType::Integer));
             members.iter().for_each(|child| member_columns(child, out));
         }
-        Member::Union { present, variants, .. } => {
+        Member::Union { present, shared, variants, .. } => {
             out.push((present.clone(), ColumnType::Text));
+            shared.iter().for_each(|child| member_columns(child, out));
             variants.iter().flat_map(|variant| variant.members.iter()).for_each(|child| member_columns(child, out));
         }
-        Member::List { present, .. } | Member::Array { present, .. } | Member::Raw { present, .. } => out.push((present.clone(), ColumnType::Integer)),
+        Member::List { present, .. } | Member::Array { present, .. } | Member::UnionArray { present, .. } | Member::Raw { present, .. } => out.push((present.clone(), ColumnType::Integer)),
     }
 }
 

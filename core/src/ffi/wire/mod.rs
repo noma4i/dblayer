@@ -113,8 +113,11 @@ fn describe(field: &FieldSpec, out: &mut String) {
         (FieldKind::Object, true) => members_text(field, out, "o"),
         (FieldKind::Array, true) if field.fields.is_empty() => out.push_str(&format!("a^{}", field.app_type.as_deref().unwrap_or_default())),
         (FieldKind::Array, true) => members_text(field, out, "a"),
-        (FieldKind::Union, _) => {
-            out.push_str("u{");
+        (FieldKind::Union | FieldKind::UnionArray, _) => {
+            out.push_str(if field.kind == FieldKind::Union { "u{" } else { "ua{" });
+            if !field.shared.is_empty() {
+                members_text_of(&field.shared, out, "s");
+            }
             for variant in &field.fields {
                 out.push_str(variant.app_type.as_deref().unwrap_or_default());
                 out.push('=');
@@ -129,9 +132,13 @@ fn describe(field: &FieldSpec, out: &mut String) {
 }
 
 fn members_text(field: &FieldSpec, out: &mut String, tag: &str) {
+    members_text_of(&field.fields, out, tag);
+}
+
+fn members_text_of(members: &[FieldSpec], out: &mut String, tag: &str) {
     out.push_str(tag);
     out.push('{');
-    for member in &field.fields {
+    for member in members {
         out.push_str(member_key(member));
         out.push('=');
         describe(member, out);
@@ -163,18 +170,21 @@ fn member_cells<'a>(members: &'a [FieldSpec], object: &Map<String, Value>, types
     members.iter().map(|member| cell(member, object.get(member_key(member)), types)).collect()
 }
 
+fn union_cell<'a>(field: &'a FieldSpec, value: &Value, types: &mut Types<'a>) -> Cell {
+    let Some(typename) = value.get(TYPENAME).and_then(Value::as_str) else { return Cell::Null };
+    let members = field.fields.iter().find(|variant| variant.app_type.as_deref() == Some(typename)).zip(value.as_object());
+    let body = members.map_or(Cell::Null, |(variant, object)| Cell::Seq { items: member_cells(&field.shared, object, types).into_iter().chain(member_cells(&variant.fields, object, types)).collect() });
+    Cell::Seq { items: vec![Cell::Text { value: typename.to_string() }, body] }
+}
+
 fn cell<'a>(field: &'a FieldSpec, value: Option<&Value>, types: &mut Types<'a>) -> Cell {
     let Some(value) = value.filter(|value| !value.is_null()) else { return Cell::Null };
     match (&field.kind, field.app_type.as_deref()) {
         (FieldKind::Scalar { .. } | FieldKind::Enum { .. }, _) => scalar_cell(value),
         (FieldKind::List { .. }, _) => value.as_array().map_or(Cell::Null, |items| Cell::Seq { items: items.iter().map(scalar_cell).collect() }),
         (FieldKind::Object, Some(_)) => value.as_object().map_or(Cell::Null, |object| Cell::Seq { items: member_cells(&field.fields, object, types) }),
-        (FieldKind::Union, _) => {
-            let Some(typename) = value.get(TYPENAME).and_then(Value::as_str) else { return Cell::Null };
-            let members = field.fields.iter().find(|variant| variant.app_type.as_deref() == Some(typename)).zip(value.as_object());
-            let body = members.map_or(Cell::Null, |(variant, object)| Cell::Seq { items: member_cells(&variant.fields, object, types) });
-            Cell::Seq { items: vec![Cell::Text { value: typename.to_string() }, body] }
-        }
+        (FieldKind::Union, _) => union_cell(field, value, types),
+        (FieldKind::UnionArray, _) => value.as_array().map_or(Cell::Null, |items| Cell::Seq { items: items.iter().filter(|item| item.get(TYPENAME).is_some_and(Value::is_string)).map(|item| union_cell(field, item, types)).collect() }),
         (FieldKind::Array, Some(name)) => {
             let Some(items) = value.as_array() else { return Cell::Null };
             let own: &'a [FieldSpec] = if field.fields.is_empty() {
@@ -263,3 +273,6 @@ mod wire_tests;
 
 #[cfg(test)]
 mod union_tests;
+
+#[cfg(test)]
+mod interface_tests;

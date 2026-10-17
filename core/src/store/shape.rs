@@ -22,7 +22,11 @@ pub(crate) fn normalize_leaf(leaf: &Leaf, value: &Value) -> Option<Value> {
 }
 
 fn normalize_members(members: &[Member], layout: &Layout, source: &Map<String, Value>) -> Map<String, Value> {
-    members.iter().filter_map(|member| source.get(member.key()).and_then(|value| normalize(member, layout, value)).map(|value| (member.key().to_string(), value))).collect()
+    normalize_each(members.iter(), layout, source)
+}
+
+fn normalize_each<'a>(members: impl Iterator<Item = &'a Member>, layout: &Layout, source: &Map<String, Value>) -> Map<String, Value> {
+    members.filter_map(|member| source.get(member.key()).and_then(|value| normalize(member, layout, value)).map(|value| (member.key().to_string(), value))).collect()
 }
 
 fn normalize_nested_leaf(leaf: &Leaf, value: &Value) -> Option<Value> {
@@ -40,6 +44,17 @@ fn variant_of<'a>(variants: &'a [Variant], name: &str) -> Option<&'a Variant> {
     variants.iter().find(|variant| variant.typename == name)
 }
 
+fn active_members<'a>(shared: &'a [Member], variants: &'a [Variant], name: &str) -> Option<impl Iterator<Item = &'a Member>> {
+    variant_of(variants, name).map(|variant| shared.iter().chain(variant.members.iter()))
+}
+
+fn union_of(layout: &Layout, table: usize) -> Option<&Member> {
+    match &layout.tables[table].shape {
+        TableShape::Elements(members) => members.first(),
+        TableShape::Values(_) | TableShape::Nodes => None,
+    }
+}
+
 /// The value as storage returns it: known members only, scalars read by their kind, nulls and wrong types removed.
 pub(crate) fn normalize(member: &Member, layout: &Layout, value: &Value) -> Option<Value> {
     match member {
@@ -50,13 +65,17 @@ pub(crate) fn normalize(member: &Member, layout: &Layout, value: &Value) -> Opti
             _ => Some(value.clone()),
         },
         Member::Object { members, .. } => value.as_object().map(|source| Value::Object(normalize_members(members, layout, source))),
-        Member::Union { variants, .. } => {
+        Member::Union { shared, variants, .. } => {
             let (name, source) = (typename(value)?, value.as_object()?);
             let mut kept = Map::from_iter([(TYPENAME.to_string(), Value::String(name.to_string()))]);
-            if let Some(variant) = variant_of(variants, name) {
-                kept.extend(normalize_members(&variant.members, layout, source));
+            if let Some(members) = active_members(shared, variants, name) {
+                kept.extend(normalize_each(members, layout, source));
             }
             Some(Value::Object(kept))
+        }
+        Member::UnionArray { table, .. } => {
+            let union = union_of(layout, *table)?;
+            value.as_array().map(|items| Value::Array(items.iter().filter_map(|item| normalize(union, layout, item)).collect()))
         }
         Member::List { table, .. } => match &layout.tables[*table].shape {
             TableShape::Values(leaf) => read_array(value, |item| normalize_nested_leaf(leaf, item)).map(Value::Array),
@@ -87,9 +106,13 @@ pub(crate) fn member_values(member: &Member, value: Option<&Value>, out: &mut Ve
                 member_values(child, source.and_then(|source| source.get(child.key())), out);
             }
         }
-        Member::Union { present: column, variants, .. } => {
+        Member::Union { present: column, shared, variants, .. } => {
             let name = value.and_then(typename);
             out.push((column.clone(), name.map_or(SqlValue::Null, |name| SqlValue::Text(name.to_string()))));
+            let known = value.filter(|_| name.is_some_and(|name| variant_of(variants, name).is_some())).and_then(Value::as_object);
+            for child in shared {
+                member_values(child, known.and_then(|source| source.get(child.key())), out);
+            }
             for variant in variants {
                 let source = value.filter(|_| name == Some(variant.typename.as_str())).and_then(Value::as_object);
                 for child in &variant.members {
@@ -97,7 +120,7 @@ pub(crate) fn member_values(member: &Member, value: Option<&Value>, out: &mut Ve
                 }
             }
         }
-        Member::List { present: column, .. } | Member::Array { present: column, .. } => out.push((column.clone(), present(value.is_some_and(Value::is_array)))),
+        Member::List { present: column, .. } | Member::Array { present: column, .. } | Member::UnionArray { present: column, .. } => out.push((column.clone(), present(value.is_some_and(Value::is_array)))),
     }
 }
 
@@ -105,6 +128,13 @@ pub(crate) fn delete_tables(connection: &Connection, layout: &Layout, tables: &[
     for index in tables {
         connection.prepare_cached(&format!("DELETE FROM {} WHERE row_id = ?1", layout.tables[*index].name))?.execute([row_id])?;
     }
+    Ok(())
+}
+
+fn insert_element(connection: &Connection, table: &str, columns: Vec<(String, SqlValue)>, head: [SqlValue; 4]) -> Result<(), StoreError> {
+    let names: Vec<&str> = ["row_id", "node", "owner", "pos"].into_iter().chain(columns.iter().map(|(name, _)| name.as_str())).collect();
+    let sql = format!("INSERT INTO {table} ({}) VALUES ({})", names.join(", "), placeholders(names.len()));
+    connection.prepare_cached(&sql)?.execute(params_from_iter(head.into_iter().chain(columns.into_iter().map(|(_, value)| value))))?;
     Ok(())
 }
 
@@ -130,10 +160,10 @@ pub(crate) fn insert_children(
                 insert_children(connection, layout, child, source.and_then(|source| source.get(child.key())), row_id, owner, nodes)?;
             }
         }
-        Member::Union { variants, .. } => {
-            let Some(variant) = value.and_then(typename).and_then(|name| variant_of(variants, name)) else { return Ok(()) };
+        Member::Union { shared, variants, .. } => {
+            let Some(members) = value.and_then(typename).and_then(|name| active_members(shared, variants, name)) else { return Ok(()) };
             let source = value.and_then(Value::as_object);
-            for child in &variant.members {
+            for child in members {
                 insert_children(connection, layout, child, source.and_then(|source| source.get(child.key())), row_id, owner, nodes)?;
             }
         }
@@ -145,6 +175,17 @@ pub(crate) fn insert_children(
                 statement.execute(params_from_iter([SqlValue::Text(row_id.to_string()), owner.into(), (position as i64).into(), leaf_sql(leaf, Some(item))]))?;
             }
         }
+        Member::UnionArray { table, .. } => {
+            let (Some(items), Some(union)) = (value.and_then(Value::as_array), union_of(layout, *table)) else { return Ok(()) };
+            for (position, item) in items.iter().filter(|item| typename(item).is_some()).enumerate() {
+                nodes[*table] += 1;
+                let node = nodes[*table];
+                let mut columns: Vec<(String, SqlValue)> = Vec::new();
+                member_values(union, Some(item), &mut columns);
+                insert_element(connection, &layout.tables[*table].name, columns, [SqlValue::Text(row_id.to_string()), node.into(), owner.into(), (position as i64).into()])?;
+                insert_children(connection, layout, union, Some(item), row_id, node, nodes)?;
+            }
+        }
         Member::Array { table, .. } => {
             let (Some(items), TableShape::Elements(members)) = (value.and_then(Value::as_array), &layout.tables[*table].shape) else { return Ok(()) };
             for (position, item) in items.iter().enumerate() {
@@ -154,10 +195,7 @@ pub(crate) fn insert_children(
                 for child in members {
                     member_values(child, item.as_object().and_then(|source| source.get(child.key())), &mut columns);
                 }
-                let names: Vec<&str> = ["row_id", "node", "owner", "pos"].into_iter().chain(columns.iter().map(|(name, _)| name.as_str())).collect();
-                let sql = format!("INSERT INTO {} ({}) VALUES ({})", layout.tables[*table].name, names.join(", "), placeholders(names.len()));
-                let head = [SqlValue::Text(row_id.to_string()), node.into(), owner.into(), (position as i64).into()];
-                connection.prepare_cached(&sql)?.execute(params_from_iter(head.into_iter().chain(columns.into_iter().map(|(_, value)| value))))?;
+                insert_element(connection, &layout.tables[*table].name, columns, [SqlValue::Text(row_id.to_string()), node.into(), owner.into(), (position as i64).into()])?;
                 for child in members {
                     insert_children(connection, layout, child, item.as_object().and_then(|source| source.get(child.key())), row_id, node, nodes)?;
                 }
@@ -212,13 +250,21 @@ pub(crate) fn assemble(member: &Member, layout: &Layout, cells: &Cells, tables: 
             }
             Some(Value::Object(assemble_members(members, layout, cells, tables, owner)))
         }
-        Member::Union { at, variants, .. } => {
+        Member::Union { at, shared, variants, .. } => {
             let Some(SqlValue::Text(name)) = cells.get(*at) else { return None };
             let mut object = Map::from_iter([(TYPENAME.to_string(), Value::String(name.clone()))]);
-            if let Some(variant) = variant_of(variants, name) {
-                object.extend(assemble_members(&variant.members, layout, cells, tables, owner));
+            if let Some(members) = active_members(shared, variants, name) {
+                object.extend(members.filter_map(|member| assemble(member, layout, cells, tables, owner).map(|value| (member.key().to_string(), value))));
             }
             Some(Value::Object(object))
+        }
+        Member::UnionArray { at, table, .. } => {
+            if !present(cells, *at) {
+                return None;
+            }
+            let union = union_of(layout, *table)?;
+            let items = tables[*table].elements.get(&owner).map(Vec::as_slice).unwrap_or_default();
+            Some(Value::Array(items.iter().filter_map(|(_, element)| assemble(union, layout, &element.cells, tables, element.node)).collect()))
         }
         Member::List { at, table, .. } => {
             if !present(cells, *at) {

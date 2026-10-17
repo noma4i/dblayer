@@ -162,6 +162,7 @@ pub enum FieldKind {
     Array,
     List { element: ScalarKind },
     Union,
+    UnionArray,
     File,
 }
 
@@ -189,6 +190,8 @@ pub struct FieldSpec {
     pub searchable: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<FieldSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared: Vec<FieldSpec>,
 }
 
 impl FieldSpec {
@@ -206,6 +209,7 @@ impl FieldSpec {
             merge: None,
             searchable: false,
             fields: Vec::new(),
+            shared: Vec::new(),
         }
     }
 
@@ -235,6 +239,14 @@ impl FieldSpec {
 
     pub fn union(name: &str, type_name: &str, variants: Vec<FieldSpec>) -> Self {
         Self { app_type: Some(type_name.to_string()), fields: variants, ..Self::with_kind(name, FieldKind::Union) }
+    }
+
+    pub fn union_array(name: &str, type_name: &str, variants: Vec<FieldSpec>) -> Self {
+        Self { app_type: Some(type_name.to_string()), fields: variants, ..Self::with_kind(name, FieldKind::UnionArray) }
+    }
+
+    pub fn with_shared(self, shared: Vec<FieldSpec>) -> Self {
+        Self { shared, ..self }
     }
 
     pub fn variant(case: &str, type_name: &str, fields: Vec<FieldSpec>) -> Self {
@@ -293,7 +305,7 @@ impl FieldSpec {
             },
             FieldKind::Enum { values } => values.first().cloned().map(Value::String),
             FieldKind::Object => Some(Value::Object(Map::new())),
-            FieldKind::Array | FieldKind::List { .. } => Some(Value::Array(Vec::new())),
+            FieldKind::Array | FieldKind::UnionArray | FieldKind::List { .. } => Some(Value::Array(Vec::new())),
             FieldKind::Raw | FieldKind::File | FieldKind::Union => None,
         }
     }
@@ -304,7 +316,7 @@ impl FieldSpec {
             FieldKind::Enum { .. } => read_enum(value).map(Value::String),
             FieldKind::Raw => read_raw(value),
             FieldKind::Object => value.is_object().then(|| value.clone()),
-            FieldKind::Array => value.is_array().then(|| value.clone()),
+            FieldKind::Array | FieldKind::UnionArray => value.is_array().then(|| value.clone()),
             FieldKind::Union => value.get(TYPENAME).is_some_and(Value::is_string).then(|| value.clone()),
             FieldKind::File => is_file_descriptor(value).then(|| value.clone()),
             FieldKind::List { element } => {
@@ -966,11 +978,17 @@ impl ModelSpec {
     }
 
     fn check_unions(&self) -> Result<(), DeclarationError> {
-        for field in self.fields.iter().filter(|field| field.kind == FieldKind::Union) {
+        for field in self.fields.iter().filter(|field| matches!(field.kind, FieldKind::Union | FieldKind::UnionArray)) {
             let cases: Vec<&str> = field.fields.iter().map(|variant| variant.name.as_str()).collect();
             let typenames: Vec<&str> = field.fields.iter().filter_map(|variant| variant.app_type.as_deref()).collect();
             if !duplicates(&cases).is_empty() || !duplicates(&typenames).is_empty() {
                 return Err(DeclarationError::DuplicateVariant(field.name.clone()));
+            }
+            for variant in &field.fields {
+                let members: Vec<&str> = field.shared.iter().chain(variant.fields.iter()).map(|member| member.name.as_str()).collect();
+                if let Some(name) = duplicates(&members).first() {
+                    return Err(DeclarationError::DuplicateField(name.to_string()));
+                }
             }
         }
         match crate::ddl::table_widths(self).into_iter().find(|(_, count)| *count > COLUMN_LIMIT) {
@@ -1094,3 +1112,9 @@ mod newer_tests;
 mod schema_tests;
 #[cfg(test)]
 mod union_tests;
+
+#[cfg(test)]
+pub(crate) mod screens_fixture;
+
+#[cfg(test)]
+mod interface_tests;
