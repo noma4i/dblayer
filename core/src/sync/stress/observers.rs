@@ -152,8 +152,8 @@ impl Watcher {
             Target::Count(_) => Vec::new(),
         };
         let delivered = tape.last.as_ref().map(|change| change.rows.clone()).unwrap_or_default();
-        if fresh_rows.iter().zip(&delivered).any(|(fresh, seen)| **fresh != **seen) {
-            findings.report("observer-final", format!("{}: delivered rows carry different data, sync state or ephemeral values than the fresh read", self.name));
+        if let Some((fresh, seen)) = fresh_rows.iter().zip(&delivered).find(|(fresh, seen)| **fresh != **seen) {
+            findings.report("observer-final", format!("{}: delivered {seen:?} differs from fresh {fresh:?}", self.name));
         }
         tape.seen
     }

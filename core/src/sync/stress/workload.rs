@@ -151,7 +151,7 @@ impl Worker {
                 let outcome = rig.db.create("moments", params(json!({"text": text})));
                 world.findings.trace(|| format!("issued create {text} -> {:?}", outcome.as_ref().map(|row| row.id.to_string())));
                 if let Ok(row) = &outcome {
-                    world.issue(&text, "create", None);
+                    world.issue(&text, "create", Some(row.id.as_str()));
                     world.remember("moments", row.id.as_str());
                     world.created_as(row.id.as_str(), &text);
                 }
@@ -175,7 +175,11 @@ impl Worker {
             Op::Destroy => {
                 let Some(row) = self.pick_own(world) else { return };
                 world.findings.trace(|| format!("issued destroy of {} {:?}", row.id, row.text("text")));
-                world.expect("destroy", rig.db.destroy("moments", &row.id).map(|_| ()));
+                let outcome = rig.db.destroy("moments", &row.id);
+                if outcome.is_ok() && row.is_local() && !rig.db.outbox().unwrap().iter().any(|entry| entry.operation.row_ids.contains(&row.id)) {
+                    world.discarded(row.id.as_str());
+                }
+                world.expect("destroy", outcome.map(|_| ()));
             }
             Op::Flush => {
                 let report = rig.sync.flush().await;
@@ -282,7 +286,7 @@ impl Worker {
         let scope = ScopeRef::new(ModelKey::new("moments"), super::scope_of(&world.rig.db, "feed"));
         let mut request = ReplaceRequest::new(scope, if self.dice.percent(50) { Coverage::Page } else { Coverage::Complete });
         request.on_absent = if self.dice.percent(50) { OnAbsent::Destroy } else { OnAbsent::Detach };
-        world.expect("replace", world.rig.db.replace(&request, rows).map(|_| ()));
+        world.replace(&request, rows);
     }
 
     fn event(&mut self, world: &World) {

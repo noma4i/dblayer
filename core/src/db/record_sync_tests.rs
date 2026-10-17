@@ -27,6 +27,23 @@ fn state_of(db: &Db, model: &str, id: &str) -> SyncState {
 }
 
 #[test]
+fn a_list_step_reads_sync_changes_committed_after_its_event_batch() {
+    for query in [Query::new("moments"), Query::new("moments").filtered(Where::equal("userId", json!("u1")))] {
+        let db = booted();
+        put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
+        put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "two"}));
+        db.update("moments", &rid("m1"), obj(json!({"text": "edited"}))).unwrap();
+        let previous = db.shared.evaluate(&super::watch::Subject::Rows(query.clone())).unwrap().version;
+        put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "changed"}));
+        let horizon = db.shared.evaluate(&super::watch::Subject::Rows(query.clone())).unwrap().version.position();
+        rejected(&db, only_seq(&db));
+        let evaluated = db.shared.evaluate_step(&query, &previous, &std::collections::HashSet::from(["m2".to_string()]), horizon).unwrap();
+        let super::watch::Body::Rows(rows) = evaluated.version.body else { panic!("expected rows") };
+        assert_eq!(rows.entry("m1").unwrap().stamp.sync, db.find("moments", &rid("m1")).unwrap().unwrap().sync);
+    }
+}
+
+#[test]
 fn created_record_is_pending_local_and_names_its_action() {
     let db = booted();
     let row = db.create("moments", obj(json!({"userId": "u1", "text": "hi"}))).unwrap();

@@ -396,7 +396,7 @@ impl Shared {
             let slots: Vec<Option<Arc<Entry>>> = keys
                 .iter()
                 .map(|(id, key_revision)| match old.entry(id.as_str()) {
-                    Some(entry) if entry.stamp.revision == *key_revision && !touched.contains(id) => Some(entry),
+                    Some(entry) if (revision, epoch) == horizon && entry.stamp.revision == *key_revision && !touched.contains(id) => Some(entry),
                     _ => {
                         wanted.push((id.clone(), *key_revision));
                         None

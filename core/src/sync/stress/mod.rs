@@ -13,6 +13,8 @@ mod check_tests;
 #[cfg(test)]
 mod observers_tests;
 #[cfg(test)]
+mod oracle_tests;
+#[cfg(test)]
 mod run_tests;
 #[cfg(test)]
 mod server_tests;
