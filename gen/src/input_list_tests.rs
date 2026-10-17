@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::{compile_files, emit_kotlin, emit_swift, Declarations};
 
-const SCHEMA: &str = "type Query { a: Int }\ntype Mutation { widgetsSend(widgets: [WidgetInput!]): Int, momentCreate(input: MomentCreateInput!): MomentCreated }\ntype MomentCreated { moment: Moment }\ntype Moment { id: ID! }\ninput MomentCreateInput { signedId: String!, widgets: [WidgetInput!] }\nenum WidgetKind { EMOJI GIF }\ninput TextInput { body: String! }\ninput EmojiInput { code: String!, kinds: [WidgetKind!] }\ninput PropsInput @oneOf { text: TextInput, emoji: EmojiInput }\ninput SettingsInput { kind: WidgetKind!, extras: [PropsInput!] }\ninput WidgetInput { kind: WidgetKind!, settings: SettingsInput, props: PropsInput! }\ndirective @oneOf on INPUT_OBJECT\n";
+const SCHEMA: &str = "type Query { a: Int }\ntype Mutation { widgetsSend(widgets: [WidgetInput!]): WidgetsSent, momentCreate(input: MomentCreateInput!): MomentCreated }\ntype WidgetsSent { id: ID! }\ntype MomentCreated { moment: Moment }\ntype Moment { id: ID! }\ninput MomentCreateInput { signedId: String!, widgets: [WidgetInput!] }\nenum WidgetKind { EMOJI GIF }\ninput TextInput { body: String! }\ninput EmojiInput { code: String!, kinds: [WidgetKind!] }\ninput PropsInput @oneOf { text: TextInput, emoji: EmojiInput }\ninput SettingsInput { kind: WidgetKind!, extras: [PropsInput!] }\ninput WidgetInput { kind: WidgetKind!, settings: SettingsInput, props: PropsInput! }\ndirective @oneOf on INPUT_OBJECT\n";
 
 const UPLOAD_MUTATION: &str = "mutation MomentCreateFile($signedId: String!, $widgets: [WidgetInput!]) { momentCreate(input: { signedId: $signedId, widgets: $widgets }) { moment { id } } }\n";
 
@@ -27,7 +27,7 @@ fn compile(source: &str, mutation: &str, schema: &str) -> Result<Declarations, V
     compile_files(&[file], Some(&schema_file), &operations).map_err(|errors| errors.into_iter().map(|error| error.error.message).collect())
 }
 
-const SEND_MUTATION: &str = "mutation WidgetsSend($widgets: [WidgetInput!]) { widgetsSend(widgets: $widgets) }\n";
+const SEND_MUTATION: &str = "mutation WidgetsSend($widgets: [WidgetInput!]) { widgetsSend(widgets: $widgets) { id } }\n";
 
 #[test]
 fn an_operation_arg_takes_a_list_of_input_objects_in_every_nullability() {
@@ -39,8 +39,8 @@ fn an_operation_arg_takes_a_list_of_input_objects_in_every_nullability() {
         ("[:WidgetKind]", "widgets: [WidgetKind]", "widgets: List<WidgetKind>", "variables[\"widgets\"] = JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
     ];
     for (arg, swift_param, kotlin_param, swift_put, kotlin_put) in cases {
-        let schema = SCHEMA.replace("widgetsSend(widgets: [WidgetInput!]): Int", if arg.contains("WidgetKind") { "widgetsSend(widgets: [WidgetKind!]): Int" } else { "widgetsSend(widgets: [WidgetInput!]): Int" });
-        let mutation = if arg.contains("WidgetKind") { "mutation WidgetsSend($widgets: [WidgetKind!]) { widgetsSend(widgets: $widgets) }\n" } else if arg.contains("WidgetInput?") { "mutation WidgetsSend($widgets: [WidgetInput]) { widgetsSend(widgets: $widgets) }\n" } else { SEND_MUTATION };
+        let schema = SCHEMA.replace("widgetsSend(widgets: [WidgetInput!]): WidgetsSent", if arg.contains("WidgetKind") { "widgetsSend(widgets: [WidgetKind!]): WidgetsSent" } else { "widgetsSend(widgets: [WidgetInput!]): WidgetsSent" });
+        let mutation = if arg.contains("WidgetKind") { "mutation WidgetsSend($widgets: [WidgetKind!]) { widgetsSend(widgets: $widgets) { id } }\n" } else if arg.contains("WidgetInput?") { "mutation WidgetsSend($widgets: [WidgetInput]) { widgetsSend(widgets: $widgets) { id } }\n" } else { SEND_MUTATION };
         let declared = match compile(&operation(arg), mutation, &schema) {
             Ok(declared) => declared,
             Err(errors) => panic!("{arg}: {errors:?}"),

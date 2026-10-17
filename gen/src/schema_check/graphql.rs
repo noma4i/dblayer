@@ -153,6 +153,16 @@ pub struct Root {
     pub field: String,
 }
 
+pub struct Miss {
+    pub at: usize,
+    pub keys: BTreeSet<String>,
+}
+
+pub struct Followed<'b> {
+    pub names: Vec<&'b str>,
+    pub selects: Vec<&'b Select>,
+}
+
 #[derive(Debug, Default)]
 pub struct Operations {
     pub named: HashMap<String, Operation>,
@@ -226,6 +236,26 @@ impl Operations {
             }
         }, &mut Vec::new());
         found
+    }
+
+    pub fn keys_in(&self, selects: &[&Select]) -> BTreeSet<String> {
+        let mut keys = BTreeSet::new();
+        for select in selects {
+            self.each_select(select, None, &mut |inner, _| keys.extend(inner.fields.iter().map(|field| field.key.clone())), &mut Vec::new());
+        }
+        keys
+    }
+
+    pub fn follow<'b>(&'b self, starts: &[&'b Select], path: &[&str]) -> Result<Followed<'b>, Miss> {
+        let mut here: Vec<&'b Select> = starts.to_vec();
+        let mut names = Vec::new();
+        for (at, key) in path.iter().enumerate() {
+            let found: Vec<&'b SelectedField> = here.iter().flat_map(|select| self.fields_in(select, key, &[])).collect();
+            let Some(first) = found.first() else { return Err(Miss { at, keys: self.keys_in(&here) }) };
+            names.push(first.name.as_str());
+            here = found.iter().map(|field| &field.select).collect();
+        }
+        Ok(Followed { names, selects: here })
     }
 
     pub fn missing_spreads(&self) -> BTreeSet<&str> {

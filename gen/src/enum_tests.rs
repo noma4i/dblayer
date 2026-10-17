@@ -80,8 +80,8 @@ fn one_enum_name_with_different_values_and_bad_values_fail_at_their_line() {
     }
 }
 
-const SCHEMA: &str = "type Query { a: Int }\nscalar Cursor\nscalar Wide\nscalar Mystery\nenum WidgetKind { EMOJI GIF }\ninput WidgetInput { kind: WidgetKind!, after: Cursor, size: Wide! }\ntype Mutation { widgetSend(input: WidgetInput!, kind: WidgetKind!): Int }\n";
-const OPERATIONS: &str = "mutation WidgetSend($input: WidgetInput!, $kind: WidgetKind!) { widgetSend(input: $input, kind: $kind) }\n";
+const SCHEMA: &str = "type Query { a: Int }\nscalar Cursor\nscalar Wide\nscalar Mystery\nenum WidgetKind { EMOJI GIF }\ninput WidgetInput { kind: WidgetKind!, after: Cursor, size: Wide! }\ntype Mutation { widgetSend(input: WidgetInput!, kind: WidgetKind!): WidgetSent }\ntype WidgetSent { kind: WidgetKind! size: Wide! }\n";
+const OPERATIONS: &str = "mutation WidgetSend($input: WidgetInput!, $kind: WidgetKind!) { widgetSend(input: $input, kind: $kind) { kind size } }\n";
 const SCALARS: &str = "scalar :Cursor, as: :string\nscalar :Wide, as: :long\n";
 const SEND: &str = "operation :widget_send do\n  mutation WidgetSend\n  args input: :WidgetInput, kind: :WidgetKind\n  result kind: :WidgetKind, size: :int\nend\n";
 

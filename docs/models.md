@@ -495,6 +495,27 @@ For each scope with `fetch`, the check finds the named operation, takes its firs
 
 `from:` names the key of the response, which is the alias when the operation gives one (`giftTier: kind` is read with `from: "giftTier"`). The check follows each key through the selection of the operation, into inline fragments and named fragments, and tests the schema field behind it. The key of a field that the operation does not select is taken as the schema field name. A union or interface field must select `__typename` somewhere in its own selection, also inside a fragment. Without operation documents the operation name is read as the schema field.
 
+### Paths into the response
+
+A path that a declaration writes names keys of the response, so the check follows it through the selection of the operation that sends it: the aliases of the document, spreads of named fragments, inline fragments (with or without `... on`), union branches and the `edges { node }` or `nodes` of a connection. The path starts at the top-level key of the operation. These declarations are followed:
+
+| Declaration | Starts at | Follows |
+| --- | --- | --- |
+| `root:` of `fetch`, `create`, `update`, `destroy`, and the `root` line of an action | top of the operation | the path |
+| `lands Model, root:` | top of the operation | the path |
+| `result` fields of an action or an `operation` block | the first part of `root`, or the first field | each key, and the keys of nested objects and lists |
+| `total from:` | top of the operation | the path |
+| `paginate ..., from:` | the connection | the path |
+| `root:` and `id:` of `updates` and `listen` | top of the subscription, or the row | the path |
+
+A path the document does not select is an error with the file and line of the declaration. The message names the declaration, the path, the segment where the path ends and the keys the document has at that place:
+
+```
+chat.dbl:125: root `chatGroupLeave.chat`: operation `ChatGroupLeave` has no `chat` under `chatGroupLeave`, it has: removedChatId
+```
+
+A path may not be empty and may not have an empty segment, with or without `--schema`. Operation documents come only with `--schema`. Without them the check stops at the shape of the path. A default `root` (the first field of the operation) is not followed, because the declaration did not write it. `refetch_of`, `response`, `optimistic` and `correlate` name relations, models and row fields and are not paths into the response.
+
 Every field of the model, every `from:` path, every `id_from:` and every field of a nested type must exist on that type. The check reports:
 
 - a field or path the schema does not have;

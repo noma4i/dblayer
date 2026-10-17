@@ -50,7 +50,7 @@ fn a_total_path_that_breaks_the_schema_is_refused() {
 #[test]
 fn a_document_that_does_not_select_the_total_field_is_refused() {
     let errors = run(USER, &OPERATION.replace("membersCount ", "")).unwrap_err();
-    assert!(errors.iter().any(|text| text.contains("does not select `node.membersCount`")), "{errors:?}");
+    assert!(errors.iter().any(|text| text.contains("total `node.membersCount`") && text.contains("no `membersCount` under `node`")), "{errors:?}");
 }
 
 #[test]

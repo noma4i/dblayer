@@ -760,6 +760,31 @@ fn check_call(call: &Call, context: Context, report: &mut impl FnMut(usize, usiz
             report(call.line, call.column, format!("`{}` needs `{}:`", call.word, expected.name));
         }
     }
+    check_response_paths(call, context, report);
+}
+
+fn check_response_paths(call: &Call, context: Context, report: &mut impl FnMut(usize, usize, String)) {
+    let option_paths: &[(&str, &str)] = match (context, call.word.as_str()) {
+        (Context::Model, "create" | "update" | "destroy") => &[("root", "root")],
+        (Context::Model, "listen") => &[("root", "listen root"), ("id", "listen id")],
+        (Context::Remote, "updates") => &[("root", "updates root"), ("id", "updates id")],
+        (Context::Remote, "query") => &[("root", "root")],
+        (Context::Remote, "total") => &[("from", "total")],
+        (Context::Remote, "paginate") => &[("from", "paginate from")],
+        (Context::Action, "lands") => &[("root", "lands")],
+        _ => &[],
+    };
+    let mut paths: Vec<(&str, &Node<Value>)> = option_paths.iter().filter_map(|(key, label)| call.options.iter().find(|pair| pair.key == *key).map(|pair| (*label, &pair.value))).collect();
+    if (context, call.word.as_str()) == (Context::Action, "root") {
+        paths.extend(call.args.first().map(|arg| ("root", arg)));
+    }
+    for (label, node) in paths {
+        if let Value::Symbol(path) | Value::Str(path) | Value::Const(path) = &node.item {
+            if path.split('.').any(str::is_empty) {
+                report(node.line, node.column, format!("{label} `{path}` has an empty segment"));
+            }
+        }
+    }
 }
 
 fn check_shape(call: &Call, shape: Shape, report: &mut impl FnMut(usize, usize, String)) {

@@ -8,6 +8,7 @@ use crate::{FileError, ParseError};
 
 mod graphql;
 mod inputs;
+mod paths;
 mod standalone;
 
 pub use inputs::{InputField, InputObject, SchemaTypes, Ty, TyKind};
@@ -170,6 +171,7 @@ impl<'a> Run<'a> {
             self.list_unmodeled(node, remote, &element, &covered);
         }
         self.check_mutation_args(node);
+        self.check_response_paths(node);
     }
 
     fn check_edge_fields(&mut self, node: &'a ModelNode, remote: &'a Call, edge: &str) {
@@ -352,7 +354,13 @@ impl<'a> Run<'a> {
         if self.schema.is_interface(reached.name()) {
             reached = self.enter_implementation(node.file, query, &name, &root.key, reached)?;
         }
-        for segment in segments {
+        let keys: Vec<&str> = path.split('.').collect();
+        let followed = paths::segments_of(&path).and_then(|_| self.follow_quiet(&name, None, &keys));
+        let names: Vec<&str> = match &followed {
+            Some(Ok(found)) => found.names.clone(),
+            _ => keys.clone(),
+        };
+        for segment in names.into_iter().skip(1) {
             reached = match self.schema.field(reached.name(), segment) {
                 Ok(next) if !reached.is_list() => next,
                 Ok(_) => {
@@ -364,6 +372,11 @@ impl<'a> Run<'a> {
                     return None;
                 }
             };
+        }
+        if let Some(Err(miss)) = followed {
+            let at = option(query, "root").map_or((query.line, query.column), |pair| (pair.value.line, pair.value.column));
+            self.report_miss(node.file, at, "root", &name, &path, &[], &keys, miss);
+            return None;
         }
         let paginates = lines.iter().any(|call| call.word == "paginate");
         let lists = lines.iter().any(|call| call.word == "list");
@@ -417,15 +430,7 @@ impl<'a> Run<'a> {
             self.fail(node.file, total.line, total.column, format!("total `{path}` must be an `Int` but is `{}`", reached.describe()));
             return None;
         }
-        let operations: &Operations = self.operations;
-        let mut select = operations.named.get(operation).and_then(|found| found.select.fields.iter().find(|field| field.key == root.key)).map(|field| &field.select);
-        for segment in &segments {
-            select = select.and_then(|inner| operations.fields_in(inner, segment, &[]).first().copied()).map(|field| &field.select);
-        }
-        if select.is_none() {
-            self.fail(node.file, total.line, total.column, format!("operation `{operation}` does not select `{path}`: the server counts it only when selected"));
-            return None;
-        }
+        self.follow_operation(node.file, (total.line, total.column), "total", operation, &path)?;
         Some(())
     }
 
@@ -532,11 +537,8 @@ impl<'a> Run<'a> {
         let operation = operations.named.get(name_of(query))?;
         let root = operation.root.as_ref()?;
         let path = option_text(query, "root").unwrap_or(&root.key);
-        let mut select = &operation.select.fields.iter().find(|field| field.key == root.key)?.select;
-        for segment in path.split('.').skip(1) {
-            select = &operations.fields_in(select, segment, &[]).first().copied()?.select;
-        }
-        Some(select)
+        let keys: Vec<&str> = path.split('.').collect();
+        operations.follow(&[&operation.select], &keys).ok()?.selects.first().copied()
     }
 
     fn check_union_selection(&mut self, file: usize, call: &Call, union: &str, children: &[Call], select: &Select) {
@@ -757,3 +759,6 @@ mod alias_tests;
 
 #[cfg(test)]
 mod edge_tests;
+
+#[cfg(test)]
+mod paths_tests;

@@ -11,6 +11,9 @@ impl Run<'_> {
         if operation.kind != named.word {
             self.fail(node.file, named.line, named.column, format!("operation `{name}` is a {}, not a {}", operation.kind, named.word));
         }
+        if let Some(result) = node.body.iter().find(|line| line.word == "result") {
+            self.check_standalone_result(node.file, name, result);
+        }
         let wrap = node.body.iter().find(|line| line.word == "wrap").map(name_of);
         let accepted = match wrap {
             None => operation.variables.clone(),
