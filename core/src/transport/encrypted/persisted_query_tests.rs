@@ -155,3 +155,17 @@ async fn a_restart_between_the_miss_and_the_answer_to_the_second_send_resumes_th
     assert_eq!(sent[2]["requestId"], sent[1]["requestId"]);
     assert_eq!((rig.server.executed().len(), rig.pending_sequence()), (2, None));
 }
+
+#[tokio::test]
+async fn a_restart_between_the_miss_and_the_second_send_leaves_no_effect_and_the_resent_mutation_runs_once() {
+    let rig = Rig::signed_in().await;
+    let miss = rig.client().mutate("/api/v3/graphql", super::graphql::graphql_body(&request(WRITE), false)).await.unwrap();
+    assert_eq!(miss.body["errors"][0]["extensions"]["code"], "PERSISTED_QUERY_NOT_FOUND");
+    assert_eq!((rig.server.executed().len(), rig.pending_sequence()), (1, None));
+
+    assert_eq!(rig.client().resume().await, Ok(None));
+    rig.transport().mutate(request(WRITE)).await.unwrap();
+
+    assert_eq!(rig.server.executed().len(), 2);
+    assert_eq!(rig.graphql_requests().iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(2), json!(3), json!(4)]);
+}
