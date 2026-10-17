@@ -93,10 +93,44 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | ----- | -------------- |
 | `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
 | `DB.run(_:variables:)` and generated `Operations.*` calls (`DBlayer.database.run` in Kotlin) | the call got the sealed refusal |
-| `settled()`, `confirmedId()` and `answer()` of a row or an action that has a mutation | the queued mutation got the sealed refusal. `unauthenticated` and `accountUnavailable` keep the operation failed and the optimistic row in place: sign in again, call `sessionResume()`, then `retry` (`Moment.retry()`, `DB.database.retry`) sends it once. Every other code follows the `onFailure` rule of the action, as for any refusal |
+| `settled()`, `confirmedId()` and `answer()` of a row or an action that has a mutation | the queued mutation got the sealed refusal. `unauthenticated` and `accountUnavailable` keep the operation failed and the optimistic row in place, `error.kind` is `session:<CODE>` and `error.message` is the detail. Recover as in "Recover a queued mutation" below. Every other code follows the `onFailure` rule of the action, as for any refusal |
 | live reads (`live`, `LiveList`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
-`flush()`, `retry()` and `resume()` do not throw for the refusal of one operation. The core keeps the credential and the pending request for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. A refusal with a code outside the `SessionCode` table (for example `INTERNAL_SERVER_ERROR`) stays a `Graphql` error. Errors inside `data` and `errors` of a normal answer stay `Graphql` too.
+`flush()` and `retry()` do not throw for the refusal of one operation. `sessionResume()` throws the refusal of the stored request. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. A refusal with a code outside the `SessionCode` table (for example `INTERNAL_SERVER_ERROR`) stays a `Graphql` error. Errors inside `data` and `errors` of a normal answer stay `Graphql` too.
+
+### Recover a queued mutation
+
+One rule decides, the sequence of the refusal:
+
+| The refusal | The request | Do |
+| ----------- | ----------- | -- |
+| confirmed the sequence (`accountUnavailable`, `rateLimited`, every sign-in code) | spent, nothing is pending | fix the cause, then `retry`. The core sends the mutation as a new request |
+| did not confirm it, and the code is `unauthenticated`, `sessionEnded` or `sequenceConflict` | pending, and it blocks every other mutation, sign-in too | `sessionReset()`, sign in again, then `retry` |
+| no answer at all (lost connection, the server returned an error status) | pending, the server may have run it | `sessionResume()` or `retry` or the next `flush()`: each sends the identical request, the server answers from its record |
+
+`sessionResume()` closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
+
+```swift
+do {
+  try await Moment.feed.load()
+} catch DbError.Session(let code, _) where code == .unauthenticated {
+  try DB.database.sessionReset()
+  _ = try await DB.database.sessionCall(operation: "social", bodyJson: signInJson)
+  try await DB.database.retryAll()
+}
+```
+
+```kotlin
+try {
+    Moment.feed.load()
+} catch (error: DbException.Session) {
+    if (error.code == SessionCode.UNAUTHENTICATED) {
+        DBlayer.database.sessionReset()
+        DBlayer.database.sessionCall("social", signInJson)
+        DBlayer.database.retryAll()
+    }
+}
+```
 
 A platform transport (`MockTransport` and your own `Transport`) throws `DbError.Session` to the same effect.
 
@@ -165,8 +199,8 @@ DBlayer.openEncrypted(EncryptedConfig(origin, bundledServerKey, bundledServerPin
 Rules of the session:
 
 - Every mutation, including a sign-in operation, carries the next sequence number. A query carries none and gets a new request id each time.
-- The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call, `sessionResume()` or a restart sends the identical request again and the server answers from its record. Only the time stamp changes.
-- While a request is pending, a different mutation fails with a network error and sends nothing. `sessionResume()` sends the pending request and returns its answer.
+- The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call, `sessionResume()` or a restart sends the identical request again and the server answers from its record. Only the time stamp changes. A GraphQL call that was stored with its document after a miss counts as the same call when you repeat it.
+- While a request is pending, a different mutation fails with a network error and sends nothing. `sessionResume()` sends the pending request and returns its answer. When a queued operation owns the request, the answer also closes that operation.
 - A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
 - A credential with no matching session state (for example a restored Keychain with a new database file) is replaced by a new credential. The next call is unauthenticated.
 - Errors: `503` is a retryable HTTP error, `400` means a bad request or a device clock more than 2 minutes behind or 30 seconds ahead of the server, `413` means more than 256 KiB. A lost connection is a network error.

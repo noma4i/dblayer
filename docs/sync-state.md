@@ -23,7 +23,7 @@ Every record knows whether the server has seen it. The state is live like everyt
 | `failed` | the server refused the change and the record is kept for you to decide |
 | `deliveryUnknown` | the request was sent and no answer was seen: the connection broke, the server returned an error status, or the answer could not be understood |
 
-The error `kind` is `network`, `server`, `rejected` or `unrecognized`.
+The error `kind` is `network`, `server`, `rejected`, `unrecognized` or `session:<CODE>`. A sealed session refusal of the encrypted session gives the wire name of its code, for example `session:UNAUTHENTICATED`, and `message` holds the detail text.
 
 ## Example: a moment that is still being sent
 
