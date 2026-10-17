@@ -19,7 +19,12 @@ private class RecordedHttp(private val status: UShort) : EncryptedHttp {
         return EncryptedReply(status, "")
     }
 
-    override suspend fun get(path: String): EncryptedReply = EncryptedReply(503u, "")
+    val gets = CopyOnWriteArrayList<String>()
+
+    override suspend fun get(path: String): EncryptedReply {
+        gets.add(path)
+        return EncryptedReply(503u, "")
+    }
 }
 
 private class HeldCredential : CredentialStore {
@@ -120,5 +125,22 @@ class EncryptedSessionTest {
         assertEquals(43, credentials.current?.length)
         database.sessionReset()
         assertNull(credentials.current)
+    }
+
+    @Test
+    fun openEncryptedMakesTheEncryptedDatabaseTheSharedOneAndTheConfigQueryReachesTheHook() = bounded {
+        val http = RecordedHttp(400u)
+        DBlayer.openEncrypted(
+            EncryptedConfig("http://localhost:3001", SERVER_KEY, SERVER_PIN),
+            HeldCredential(),
+            DatabaseTransport(cable = { null }),
+            modelsJSON,
+            http = http,
+        )
+
+        failsWith<DbException.Http> { DBlayer.database.serverConfig("android", "1.2.3") }
+        failsWith<DbException.Http> { DBlayer.database.serverConfig(null, null) }
+
+        assertEquals(listOf("/api/v3/config?platform=android&version=1.2.3", "/api/v3/config"), http.gets)
     }
 }

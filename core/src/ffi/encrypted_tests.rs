@@ -94,8 +94,8 @@ async fn a_sequence_conflict_is_a_typed_code_and_the_credential_stays() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_config_is_typed_and_a_key_other_than_the_pinned_one_is_refused() {
     let (database, server, _) = rig(PUBLIC_KEY_DER_B64, PIN);
-    assert_eq!(database.server_config().await.unwrap().server_key.kid, PIN);
+    assert_eq!(database.server_config(None, None).await.unwrap().server_key.kid, PIN);
 
     server.serve_config(HttpReply { status: 200, body: config_body(SHORT_KEY_PIN, SHORT_KEY_DER_B64, 2048).to_string() });
-    assert_eq!(code(database.server_config().await.unwrap_err()), SessionCode::ServerKeyMismatch);
+    assert_eq!(code(database.server_config(None, None).await.unwrap_err()), SessionCode::ServerKeyMismatch);
 }

@@ -20,7 +20,13 @@ private final class RecordedHttp: EncryptedHttp, @unchecked Sendable {
     return EncryptedReply(status: status, body: "")
   }
 
-  func get(path: String) async throws -> EncryptedReply { EncryptedReply(status: 503, body: "") }
+  var gets: [String] { lock.withLock { recordedGets } }
+  private var recordedGets: [String] = []
+
+  func get(path: String) async throws -> EncryptedReply {
+    lock.withLock { recordedGets.append(path) }
+    return EncryptedReply(status: 503, body: "")
+  }
 }
 
 private final class PlainResponseProtocol: URLProtocol, @unchecked Sendable {
@@ -127,5 +133,22 @@ struct EncryptedSessionTests {
     #expect(credentials.current?.count == 43)
     try database.sessionReset()
     #expect(credentials.current == nil)
+  }
+
+  @Test
+  func openEncryptedMakesTheEncryptedDatabaseTheSharedOneAndTheConfigQueryReachesTheHook() async throws {
+    let http = RecordedHttp(status: 400)
+    try DB.openEncrypted(
+      encrypted: EncryptedConfig(origin: "http://localhost:3001", serverKey: serverKey, pin: serverPin),
+      credentials: HeldCredential(),
+      transport: DatabaseTransport(cable: { nil }),
+      http: http,
+      modelsJSON: modelsJSON
+    )
+
+    await #expect(throws: DbError.self) { try await DB.database.serverConfig(platform: "ios", version: "1.2.3") }
+    await #expect(throws: DbError.self) { try await DB.database.serverConfig(platform: nil, version: nil) }
+
+    #expect(http.gets == ["/api/v3/config?platform=ios&version=1.2.3", "/api/v3/config"])
   }
 }

@@ -39,6 +39,13 @@ public enum DB {
     try install(try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport), transport: transport, operations: operations)
   }
 
+  /// Opens the database with the encrypted session. `http` defaults to `UrlSessionEncryptedHttp` on the origin of `encrypted`; the database is then `DB.database`.
+  public static func openEncrypted(encrypted: EncryptedConfig, credentials: CredentialStore, transport: Transport, http: EncryptedHttp? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
+    guard let origin = URL(string: encrypted.origin) else { throw DbError.Invalid(detail: "bad origin \(encrypted.origin)") }
+    let database = try Database.openEncrypted(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, encrypted: encrypted, http: http ?? UrlSessionEncryptedHttp(origin: origin), credentials: credentials, transport: transport)
+    try install(database, transport: transport, operations: operations)
+  }
+
   @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) throws {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     if transport != nil { try database.registerOperations(defsJson: JSONValue.array(definitions).text) }

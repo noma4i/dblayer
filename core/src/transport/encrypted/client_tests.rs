@@ -256,7 +256,6 @@ fn the_client_requires_an_https_origin_without_a_path_and_a_pinned_key() {
 
     assert!(make("https://api.example.com", PIN));
     assert!(make("https://api.example.com/", PIN));
-    assert!(!make("http://api.example.com", PIN));
     assert!(!make("https://api.example.com/api", PIN));
     assert!(!make("https://api.example.com", SHORT_KEY_PIN));
 }
@@ -285,4 +284,15 @@ async fn a_pending_request_of_a_replaced_credential_is_dropped_and_never_sent() 
 
     assert_ne!(rig.credentials.value(), Some("r".repeat(43)));
     assert_eq!((rig.server.seen().len(), rows(&db).1), (0, None));
+}
+
+#[tokio::test]
+async fn encrypted_paths_never_carry_a_query_or_a_fragment() {
+    let rig = Rig::new();
+    let client = rig.client(&memory_db());
+
+    for path in ["/api/v3/graphql?platform=ios", "/api/v3/graphql#frag"] {
+        assert!(matches!(client.read(path, graphql("{ a }")).await, Err(TransportError::Decode(_))), "{path}");
+        assert!(matches!(client.mutate(path, graphql("{ a }")).await, Err(TransportError::Decode(_))), "{path}");
+    }
 }

@@ -33,7 +33,7 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 
 | Piece | What it is |
 | ----- | ---------- |
-| `EncryptedConfig` | `origin` (`https://host`, no path), `serverKey` (the server public key, base64 DER) and `pin` (SHA-256 of that DER, lowercase hex). The key must have at least 3072 bits and match the pin. Ship both with the app. Do not download them |
+| `EncryptedConfig` | `origin` (`https://host[:port]`, no path; see the origin rule below), `serverKey` (the server public key, base64 DER) and `pin` (SHA-256 of that DER, lowercase hex). The key must have at least 3072 bits and match the pin. Ship both with the app. Do not download them |
 | `EncryptedHttp` | `post` sends the request text to `origin + path` as `application/jose`. `get` reads the public config. Both return the status and the body. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
 | `CredentialStore` | `get`, `set` and `clear` keep one string in the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite |
 
@@ -85,7 +85,41 @@ val answer = database.sessionCall("confirm", """{"code":"123456"}""")
 | `serverKeyMismatch` | the key in the config differs from the pinned key | kept |
 | `other` | any other `error` value, the text is in `detail` | kept |
 
-`serverConfig()` reads `GET /api/v3/config` and returns `protocolVersion`, `minAppVersion`, `graphqlUrl`, `cableUrl` and `serverKey`. It compares the announced key id with the pin and the announced DER with `EncryptedConfig.serverKey`, and throws `serverKeyMismatch` when either differs or when the algorithms are not RSA-OAEP with A256GCM. Take the addresses and versions from it. Never take the key from it.
+`serverConfig(platform:version:)` (`serverConfig(platform, version)` in Kotlin) reads `GET /api/v3/config`. Both arguments are optional. When set, the core sends them as the URL-encoded query `?platform=ios&version=1.2.3`; the server decides what an unknown platform means. Encrypted paths (`/api/v3/graphql`, sign-in) never carry a query: the core refuses them. The answer is not cached by the server and depends on the request address.
+
+| Field | Meaning |
+| ----- | ------- |
+| `protocolVersion`, `minAppVersion`, `graphqlUrl`, `cableUrl` | versions and addresses. Take them from here |
+| `updateRequired` | `true` when `version` is below the minimum for `platform`. `false` without both arguments |
+| `country`, `countryDisabled` | the country of the device address, or `nil`. `countryDisabled` is `true` when phone sign-in is off there |
+| `countries` | sign-up countries: `name`, `code`, `flag`, `phoneCode`, `phoneMask`, `phoneFormatter` (a string to string map, empty when absent), `enabled`, `phoneAuthEnabled` |
+| `trackingPromptEnabled` | `true` when the app shows the tracking prompt |
+| `iosStoreUrl`, `androidStoreUrl` | store links, or `nil` |
+| `serverKey` | the announced key, compared with the pin |
+
+A missing or `null` field reads as `false`, an empty list or `nil`. Unknown fields are ignored. The core compares the announced key id with the pin and the announced DER with `EncryptedConfig.serverKey`, and throws `serverKeyMismatch` when either differs or when the algorithms are not RSA-OAEP with A256GCM. Never take the key from the config.
+
+```swift
+let config = try await DB.database.serverConfig(platform: "ios", version: appVersion)
+if config.updateRequired { showUpdate(config.iosStoreUrl) }
+```
+
+```kotlin
+val config = DBlayer.database.serverConfig("android", appVersion)
+if (config.updateRequired) showUpdate(config.androidStoreUrl)
+```
+
+Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]` is accepted only for development hosts: the name `localhost`, a name that ends with the label `.local`, and the IP literals of loopback (`127.0.0.0/8`, `::1`), private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`). The core parses the host strictly: decimal, hex and octal address forms, trailing dots, user info, paths, queries and fragments are refused. The request audience stays the origin you gave. The JWE protects the payload over http, but the transport is not protected, so use http for development only. Production origins use https.
+
+`DB.openEncrypted` (Swift) and `DBlayer.openEncrypted` (Kotlin) open the encrypted database like `open` does and set `DB.database` and `DBlayer.database`. `http` defaults to `UrlSessionEncryptedHttp` or `OkHttpEncryptedHttp` on the origin.
+
+```swift
+try DB.openEncrypted(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin), credentials: KeychainCredentials(), transport: transport, modelsJSON: modelsJSON)
+```
+
+```kotlin
+DBlayer.openEncrypted(EncryptedConfig(origin, bundledServerKey, bundledServerPin), KeystoreCredentials(), transport, modelsJson)
+```
 
 Rules of the session:
 

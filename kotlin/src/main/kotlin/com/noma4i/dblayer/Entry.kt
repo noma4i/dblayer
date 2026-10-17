@@ -42,6 +42,19 @@ object DBlayer {
         install(Database.open(Config(path, null, 2000u), modelsJson, transport), transport, operations)
     }
 
+    /** Opens the database with the encrypted session. `http` defaults to `OkHttpEncryptedHttp` on the origin of `encrypted`; the database is then `DBlayer.database`. */
+    fun openEncrypted(
+        encrypted: EncryptedConfig,
+        credentials: CredentialStore,
+        transport: Transport,
+        modelsJson: String,
+        path: String? = null,
+        operations: List<GraphQLOperation> = emptyList(),
+        http: EncryptedHttp = OkHttpEncryptedHttp(encrypted.origin),
+    ) {
+        install(Database.openEncrypted(Config(path, null, 2000u), modelsJson, encrypted, http, credentials, transport), transport, operations)
+    }
+
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
         if (transport != null) opened.registerOperations(JsonArray(definitions).toString())

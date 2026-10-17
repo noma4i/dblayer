@@ -117,6 +117,7 @@ pub struct FakeServer {
     clock: Arc<dyn Clock>,
     on_request: Mutex<Option<Box<dyn Fn() + Send>>>,
     config: Mutex<HttpReply>,
+    config_paths: Mutex<Vec<String>>,
 }
 
 fn digest_of(data: &Value) -> String {
@@ -141,12 +142,16 @@ impl FakeServer {
         session.sequence = sequence;
     }
 
+    pub fn config_paths(&self) -> Vec<String> {
+        self.config_paths.lock().unwrap().clone()
+    }
+
     pub fn serve_config(&self, reply: HttpReply) {
         *self.config.lock().unwrap() = reply;
     }
 
     pub fn new(clock: Arc<dyn Clock>) -> Arc<Self> {
-        Arc::new(Self { state: Mutex::default(), clock, on_request: Mutex::new(None), config: Mutex::new(HttpReply { status: 200, body: config_body(&vectors::PIN, &vectors::PUBLIC_KEY_DER_B64, 3072).to_string() }) })
+        Arc::new(Self { state: Mutex::default(), clock, on_request: Mutex::new(None), config: Mutex::new(HttpReply { status: 200, body: config_body(&vectors::PIN, &vectors::PUBLIC_KEY_DER_B64, 3072).to_string() }), config_paths: Mutex::default() })
     }
 
     pub fn with_sequence(self: Arc<Self>, credential: &str, sequence: i64) -> Arc<Self> {
@@ -233,7 +238,8 @@ impl FakeServer {
 #[async_trait]
 impl HttpExchange for FakeServer {
     async fn get(&self, path: &str) -> Result<HttpReply, TransportError> {
-        assert_eq!(path, "/api/v3/config");
+        assert!(path == "/api/v3/config" || path.starts_with("/api/v3/config?"));
+        self.config_paths.lock().unwrap().push(path.to_string());
         Ok(self.config.lock().unwrap().clone())
     }
 

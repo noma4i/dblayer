@@ -139,9 +139,10 @@ impl Database {
         answer.map(|answer| refused(answer).map(|answer| answer.body.to_string())).transpose()
     }
 
-    pub async fn server_config(&self) -> Result<ServerConfig, DbError> {
+    #[uniffi::method(default(platform = None, version = None))]
+    pub async fn server_config(&self, platform: Option<String>, version: Option<String>) -> Result<ServerConfig, DbError> {
         let client = self.session()?.clone();
-        let config = executor()?.spawn(async move { client.server_config().await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+        let config = executor()?.spawn(async move { client.server_config(platform.as_deref(), version.as_deref()).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?;
         match config {
             Ok(config) => Ok(config),
             Err(core::ConfigError::KeyMismatch(detail)) => Err(DbError::Session { code: SessionCode::ServerKeyMismatch, detail }),

@@ -47,6 +47,23 @@ pub(super) fn digest_of(credential: &str) -> String {
     Sha256::digest(credential.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn config_path(platform: Option<&str>, version: Option<&str>) -> String {
+    let pairs = [("platform", platform), ("version", version)];
+    let query: Vec<String> = pairs.iter().filter_map(|(name, value)| value.map(|value| format!("{name}={}", percent_encoded(value)))).collect();
+    if query.is_empty() { CONFIG_PATH.to_string() } else { format!("{CONFIG_PATH}?{}", query.join("&")) }
+}
+
+fn percent_encoded(value: &str) -> String {
+    value.bytes().map(|byte| if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') { (byte as char).to_string() } else { format!("%{byte:02X}") }).collect()
+}
+
+fn check_path(path: &str) -> Result<(), TransportError> {
+    match path.contains(['?', '#']) {
+        true => Err(TransportError::Decode(format!("an encrypted path carries no query or fragment: {path}"))),
+        false => Ok(()),
+    }
+}
+
 fn storage(error: rusqlite::Error) -> TransportError {
     TransportError::Network(format!("session storage: {error}"))
 }
@@ -64,15 +81,15 @@ impl EncryptedClient {
         clock: Arc<dyn Clock>,
     ) -> Result<Self, TransportError> {
         let audience = config.origin.trim_end_matches('/').to_string();
-        let origin_ok = audience.strip_prefix("https://").is_some_and(|host| !host.is_empty() && !host.contains(['/', '?', '#']));
-        if !origin_ok {
-            return Err(TransportError::Decode(format!("the origin must be https without a path: {}", config.origin)));
+        if !super::origin::allowed(&audience) {
+            return Err(TransportError::Decode(format!("the origin must be https, or http on a development host, without a path: {}", config.origin)));
         }
         let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Decode(error.to_string()))?;
         Ok(Self { audience, key, http, credentials, db, clock, credential: Mutex::new(None), mutations: Gate::new(()) })
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
+        check_path(path)?;
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
         let pending = match self.with_connection(state::pending)? {
@@ -103,6 +120,7 @@ impl EncryptedClient {
     }
 
     pub async fn read(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
+        check_path(path)?;
         let credential = self.credential()?;
         let mut answer = self.exchange(&credential, &uuid::Uuid::new_v4().to_string(), &random_token(), None, path, &body).await?;
         if confirmed_error(&answer.body) == Some(REPLAYED) {
@@ -111,8 +129,8 @@ impl EncryptedClient {
         Ok(answer)
     }
 
-    pub async fn server_config(&self) -> Result<ServerConfig, ConfigError> {
-        let reply = self.http.get(CONFIG_PATH).await.map_err(ConfigError::Transport)?;
+    pub async fn server_config(&self, platform: Option<&str>, version: Option<&str>) -> Result<ServerConfig, ConfigError> {
+        let reply = self.http.get(&config_path(platform, version)).await.map_err(ConfigError::Transport)?;
         if reply.status != 200 {
             return Err(ConfigError::Transport(TransportError::Http { status: reply.status, body: reply.body }));
         }

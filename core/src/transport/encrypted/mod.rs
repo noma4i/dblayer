@@ -10,12 +10,13 @@ pub(crate) mod fake_server_tests;
 mod graphql;
 mod jwe;
 mod key;
+mod origin;
 mod state;
 #[cfg(test)]
 pub(crate) mod vectors;
 
 pub use client::{Answer, EncryptedClient, EncryptedConfig, LOGOUT_PATH};
-pub use config::{ConfigError, ServerConfig, ServerKeyInfo};
+pub use config::{ConfigError, Country, ServerConfig, ServerKeyInfo};
 pub use graphql::EncryptedTransport;
 #[cfg(test)]
 use {jwe::{open_response, seal_request, RequestPlain, ResponsePlain}, key::ServerKey};
@@ -48,3 +49,5 @@ mod graphql_tests;
 mod jwe_tests;
 #[cfg(test)]
 mod key_tests;
+#[cfg(test)]
+mod origin_tests;
