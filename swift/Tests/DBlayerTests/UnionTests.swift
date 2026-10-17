@@ -3,8 +3,7 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-@Suite(.serialized)
-struct UnionTests {
+extension BridgeProbeTests {
   private func withoutNullKeys(_ value: JSONValue) -> JSONValue {
     switch value {
     case let .object(fields): .object(fields.filter { $0.value != .null }.mapValues(withoutNullKeys))
