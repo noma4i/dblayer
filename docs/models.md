@@ -303,13 +303,13 @@ _online = Live(Presence.where(Presence.room == "lobby"))
 val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 ```
 
-### Уведомления V3 в памяти
+### V3 notices in memory
 
-Локальный scope memory-модели принимает `updates` без `fetch`. Для disk-модели такое объявление запрещено.
-Подписка запускается при первом читателе scope, делится между читателями и закрывается после последнего через `live_linger`.
-Без читателей события теряются. Сервер не повторяет их при подключении.
-Событие без id получает новый UUID. `expire_after` удаляет строку, данные не попадают в файл SQLite или outbox.
-Повтор одной подписки внутри модели запрещён.
+A local scope of a memory model accepts `updates` without `fetch`. A disk model must not declare it.
+The subscription starts at the first reader of the scope and is shared between readers. It closes after the last reader leaves, after `live_linger`.
+Events are lost while no reader exists. The server does not replay them on connect.
+An event without an id gets a new UUID. `expire_after` deletes the row, and the data never reaches the SQLite file or the outbox.
+A model must not repeat the same subscription.
 
 ```ruby
 model Notice, storage: :memory, expire_after: 1.minute do
@@ -529,9 +529,9 @@ edge?.rank                                                // FeedRank?
 
 ## Node reads
 
-### Чтение после события V3
+### Reading after a V3 event
 
-`changed_by` связывает область `viewerChanges` с HTTP-чтением модели. Объявление не создаёт дополнительный способ подписки.
+`changed_by` links the `viewerChanges` area to the HTTP read of the model. The declaration adds no other way to subscribe.
 
 ```ruby
 model Chat do
@@ -541,13 +541,13 @@ model Chat do
 end
 ```
 
-Node-чтение получает `entityId` автоматически. Для связи с 1 параметром укажите `id: :messageId`.
-Для singleton-чтения параметр не нужен: `changed_by :counters, via: :current`.
-Допустимы CHAT, MESSAGE, MOMENT, REACTION, GIFT, WALLET, COUNTERS, USER и CUSTOM_SCREEN, регистр объявления не важен.
-Неизвестная область, отсутствующее чтение и неверный параметр дают ошибку генератора с позицией объявления.
-Повтор области разрешён только для node-чтений нескольких моделей. Каждый получатель выполняет своё HTTP-чтение.
-Наблюдение модели открывает общую подписку `viewerChanges`, последняя отмена освобождает её после `live_linger`.
-Полный обмен описан в [Cable protocol](cable-protocol.md).
+A node read gets `entityId` automatically. For a relation with 1 parameter, set `id: :messageId`.
+A singleton read needs no parameter: `changed_by :counters, via: :current`.
+Allowed areas are CHAT, MESSAGE, MOMENT, REACTION, GIFT, WALLET, COUNTERS, USER and CUSTOM_SCREEN. The case of the declaration does not matter.
+An unknown area, a missing read or a wrong parameter gives a generator error with the position of the declaration.
+An area may repeat only for node reads of several models. Each receiver runs its own HTTP read.
+Observing a model opens the shared `viewerChanges` subscription. The last cancel releases it after `live_linger`.
+The full exchange is described in [Cable protocol](cable-protocol.md).
 
 GraphQL `node(id:)` reads one entity of any type that implements `Node`. A model reads it with `node`, a related list reads it through `root:`.
 

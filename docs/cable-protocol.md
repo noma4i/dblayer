@@ -23,45 +23,45 @@ X25519 private material, derived keys and temporary hello plaintext use zeroing 
 The public vectors in `fixtures/v3-cable/kat.json` contain test keys only. Tests compare hello plaintext and all four encrypted frames without printing key material.
 
 Swift and Kotlin retain the same `EncryptedConfig(origin, serverKey, pin)` and `openEncrypted` calls.
-Платформа передаёт текст WebSocket через `openCable`, `cableSend`, `cableNext`, `cableClose`. Шифрование, подписки, повторные открытия и таймеры выполняет Rust.
+The platform passes WebSocket text through `openCable`, `cableSend`, `cableNext` and `cableClose`. Rust handles encryption, subscriptions, reopening and timers.
 
-## Подписки
+## Subscriptions
 
-`EncryptedTransport.subscribe` использует общий `Transport.subscribe` и `SubscriptionEvent`, как обычный транспорт ActionCable.
-Открытие проходит через challenge, подтверждение канала, hello и зашифрованный ready.
-Каждая подписка получает отдельный строковый id. Подтверждение `subscribed` выдаёт `Ready`, `next` выдаёт ответ GraphQL.
-Отмена отправляет `unsubscribe` только для выбранного id. Последняя отмена закрывает сокет.
+`EncryptedTransport.subscribe` uses the shared `Transport.subscribe` and `SubscriptionEvent`, like a plain ActionCable transport.
+Opening goes through the challenge, the channel confirmation, hello and an encrypted ready.
+Each subscription gets its own string id. The `subscribed` confirmation yields `Ready`. A `next` message yields a GraphQL response.
+Cancel sends `unsubscribe` for the chosen id only. The last cancel closes the socket.
 
-| Подписка | Обработка |
+| Subscription | Handling |
 | --- | --- |
-| `viewerChanges` | `area` и `entityId` выбирают HTTP reread из `changed_by` |
-| `viewerNotice` | Событие создаёт строку memory-модели Notice без HTTP-чтения |
-| `chatActivity` | `TYPING` обновляет ephemeral `typing` пользователя, `reset_after` сбрасывает значение |
-| `interactionReceived` | Событие создаёт строку memory-модели InteractionNotice без HTTP-чтения |
+| `viewerChanges` | `area` and `entityId` select the HTTP reread from `changed_by` |
+| `viewerNotice` | The event creates a row of the memory model Notice without an HTTP read |
+| `chatActivity` | `TYPING` updates the ephemeral `typing` of the user, `reset_after` resets the value |
+| `interactionReceived` | The event creates a row of the memory model InteractionNotice without an HTTP read |
 
-`viewerChanges` не заменяет поля строки. HTTP reread проходит через существующий V3 JWE клиент и обычную запись колонок SQLite.
-Уведомления memory-моделей получают UUID при отсутствии серверного id. Их строки существуют только в памяти и удаляются по `expire_after`.
-Локальный scope с `updates` открывает подписку при первом читателе и освобождает после последнего с учётом `live_linger`.
-События без читателей теряются, сервер их не повторяет.
-Необъявленные области увеличивают `SubscriptionStatus.rejected`. Повторный `Ready` перечитывает наблюдаемые выборки моделей с `changed_by`.
-Область REACTION может указывать на несколько node-чтений. Тогда выполняется 1 HTTP-запрос на каждую объявленную модель.
+`viewerChanges` does not replace row fields. The HTTP reread uses the existing V3 JWE client and the normal SQLite column write.
+Memory model notices get a UUID when the server sends no id. Their rows live in memory only and `expire_after` deletes them.
+A local scope with `updates` opens the subscription at the first reader. It releases the subscription after the last reader leaves, honoring `live_linger`.
+Events are lost while no reader exists. The server does not replay them.
+Undeclared areas increase `SubscriptionStatus.rejected`. A repeated `Ready` rereads the observed selections of models with `changed_by`.
+The REACTION area may point to several node reads. Then 1 HTTP request runs for each declared model.
 
-Пока есть живая подписка, отсутствие трафика 25 секунд запускает зашифрованный ping.
-Если pong или next не приходит за 20 секунд, клиент закрывает сокет и повторяет открытие.
-Без подписок отсутствуют соединения и таймеры. Неудачные открытия увеличивают `pacing::Backoff`, успешный ready сбрасывает счётчик.
-Офлайн и пустой список подписок не расходуют попытки и не создают задержку повтора, включая отмену во время handshake.
-`Sync.set_online` передаёт состояние соединения транспорту.
+While a live subscription exists, 25 seconds without traffic start an encrypted ping.
+If no pong or next arrives within 20 seconds, the client closes the socket and reopens it.
+Without subscriptions there are no connections and no timers. Failed opens increase `pacing::Backoff`. A successful ready resets the counter.
+Offline state and an empty subscription list use no attempts and add no retry delay. This includes a cancel during the handshake.
+`Sync.set_online` passes the connection state to the transport.
 
-| Закрытие | Результат |
+| Close | Result |
 | --- | --- |
-| 4401 | `SessionCode::Unauthenticated`, завершение подписок |
-| 4403 или ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, завершение подписок |
-| LOGGED_OUT | `SessionCode::SessionEnded`, завершение подписок |
-| 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Повторное открытие с backoff |
+| 4401 | `SessionCode::Unauthenticated`, subscriptions end |
+| 4403 or ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, subscriptions end |
+| LOGGED_OUT | `SessionCode::SessionEnded`, subscriptions end |
+| 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Reopen with backoff |
 
-Ни одно закрытие не удаляет credential. Cable получает только функцию чтения credential.
-`SubscriptionFailure.close` сохраняет код закрытия. Ошибки GraphQL сохраняют сообщения и `GraphqlExtensions` в общем типе ошибки.
-Swift `LiveChange.error`, `SubscriptionSink.failed` и `GraphQLSubscriptionEvent.errors` принимают `DbError`, Kotlin использует `DbException`.
+No close deletes the credential. Cable receives only the function that reads the credential.
+`SubscriptionFailure.close` keeps the close code. GraphQL errors keep their messages and `GraphqlExtensions` in the shared error type.
+Swift `LiveChange.error`, `SubscriptionSink.failed` and `GraphQLSubscriptionEvent.errors` take `DbError`. Kotlin uses `DbException`.
 
-Фикстуры `fixtures/v3-cable/subscriptions.json` содержат запросы и ответы всех 4 подписок.
-`fixtures/v3-cable/changes.dbl` показывает выбор HTTP-чтений. Фейковый сокет проверяет полный обмен, HTTP JWE и запись строки.
+The fixtures `fixtures/v3-cable/subscriptions.json` hold the requests and responses of all 4 subscriptions.
+`fixtures/v3-cable/changes.dbl` shows the choice of HTTP reads. A fake socket checks the full exchange, the HTTP JWE and the row write.

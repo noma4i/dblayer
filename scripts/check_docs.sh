@@ -26,6 +26,9 @@ for document in documents:
     kotlin_blocks = len(re.findall(r"^```kotlin", text, re.M))
     if swift_blocks != kotlin_blocks:
         problems.append(f"{name}: {swift_blocks} swift examples but {kotlin_blocks} kotlin examples, they come in pairs")
+    for number, line in enumerate(text.splitlines(), 1):
+        if re.search(r"[\u0400-\u04FF]", line):
+            problems.append(f"{name}:{number}: non-English text")
     for word in banned_words:
         if re.search(rf"\b{word}\b", lowered):
             problems.append(f"{name}: banned word '{word}'")

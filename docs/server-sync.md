@@ -37,8 +37,8 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 | `EncryptedHttp` | `post` sends the request text to `origin + path` as `application/jose`. `get` reads the public config. Both return the status and the body. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
 | `CredentialStore` | `get`, `set` and `clear` keep one string in the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite |
 
-База использует V3 JWE для запросов и мутаций, encrypted Cable для подписок.
-Переданный транспорт предоставляет текстовый WebSocket и загрузку файлов. Общий интерфейс подписок описан в [Cable protocol](cable-protocol.md).
+The database uses V3 JWE for queries and mutations, and encrypted Cable for subscriptions.
+The passed transport offers a text WebSocket and file upload. The shared subscription interface is described in [Cable protocol](cable-protocol.md).
 
 The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin for V3 hello and encrypted frames.
 
@@ -101,9 +101,9 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 
 `flush()` and `retry()` do not throw for the refusal of one operation. `sessionResume()` throws the refusal of the stored request. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. A refusal with a code outside the `SessionCode` table (for example `INTERNAL_SERVER_ERROR`) stays a `Graphql` error. Errors inside `data` and `errors` of a normal answer stay `Graphql` too.
 
-Ошибки `UNAUTHENTICATED` и `ACCOUNT_UNAVAILABLE` внутри `errors[].extensions.code` также сохраняют optimistic-строку и операцию `Failed`.
-Это относится к ответу GraphQL и типизированному исключению `Graphql`.
-`settled()`, `confirmedId()` и `answer()` возвращают `Session` с соответствующим кодом на обеих платформах.
+The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensions.code` also keep the optimistic row and the `Failed` operation.
+This applies to the GraphQL response and to the typed `Graphql` exception.
+`settled()`, `confirmedId()` and `answer()` return `Session` with the matching code on both platforms.
 
 ### Recover a queued mutation
 
@@ -117,24 +117,24 @@ One rule decides, the sequence of the refusal:
 
 `sessionResume()` closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
 
-В Swift и Kotlin `sessionResume()` удерживает право отправки от чтения сохранённого запроса до закрытия операции.
-Параллельные `flush`, `retry`, `retryAll` и автоматические повторы ждут завершения восстановления.
-Для загрузки восстановление сначала ждёт активного отправителя и занимает его запись в `uploads.active`.
-Если отправитель уже завершил сохранённый запрос, восстановление возвращает `nil` в Swift и `null` в Kotlin.
+In Swift and Kotlin, `sessionResume()` holds the right to send from reading the stored request until the operation closes.
+Parallel `flush`, `retry`, `retryAll` and automatic retries wait for the resume to finish.
+For an upload, the resume first waits for the active sender and takes its entry in `uploads.active`.
+If the sender already finished the stored request, the resume returns `nil` in Swift and `null` in Kotlin.
 
-Для мутаций с `clientMutationId` во входном типе SDL генератор выставляет `client_mutation_id` в spec действия.
-Объявлять поле в модели не нужно. Без SDL автоматическая передача ключа отключена.
-SQLite присваивает каждой новой операции случайный 128-битный ключ и хранит его в колонке `op.client_mutation_id`.
-Ключ сохраняется при перезапуске, `flush`, `retry`, `retryAll`, `sessionResume` и повторе финальной мутации загрузки.
-Новый зашифрованный запрос получает прежний ключ операции. Новая операция получает новый ключ.
-Значение приложения в `input.clientMutationId` имеет приоритет, включая явно переданный `null`.
-Технические шаги загрузки используют прежние `key`, `uploadId` и сохранённый зашифрованный запрос.
+For mutations with `clientMutationId` in the SDL input type, the generator sets `client_mutation_id` in the action spec.
+The model needs no field declaration. Without SDL, automatic key passing is off.
+SQLite gives each new operation a random 128-bit key and stores it in the column `op.client_mutation_id`.
+The key survives restart, `flush`, `retry`, `retryAll`, `sessionResume` and a retry of the final upload mutation.
+A new encrypted request gets the old key of the operation. A new operation gets a new key.
+An app value in `input.clientMutationId` takes priority, including an explicit `null`.
+The technical upload steps use the same `key`, `uploadId` and stored encrypted request.
 
-V3 хранит результат по пользователю, имени мутации и ключу 1 день. Повтор при живом ключе получает прежний успешный результат.
-`IN_PROGRESS` с `on_failure: :keep` оставляет строку в `failed`. Ручной `retry` повторяет тот же ключ.
-`DUPLICATE_CLIENT_KEY` с `on_failure: :keep` также сохраняет строку в `failed`.
-Библиотека не объявляет успех без серверной строки и не пытается найти её через неполный список.
-Ключи `messageAlbumSend.items[].clientKey` задаёт приложение. Библиотека их не меняет.
+V3 stores the result by user, mutation name and key for 1 day. A retry with a live key gets the earlier successful result.
+`IN_PROGRESS` with `on_failure: :keep` leaves the row in `failed`. A manual `retry` repeats the same key.
+`DUPLICATE_CLIENT_KEY` with `on_failure: :keep` also keeps the row in `failed`.
+The library does not declare success without a server row. It does not try to find the row through an incomplete list.
+The app sets the keys `messageAlbumSend.items[].clientKey`. The library does not change them.
 
 Uploads also own their saved requests, including blob creation, multipart signing, completion, abort and the final mutation.
 After reopening the database, `sessionResume()` passes the answer to the same upload step and continues its remaining work.
@@ -237,30 +237,30 @@ Rules of the session:
 - A credential with no matching session state (for example a restored Keychain with a new database file) is replaced by a new credential. The next call is unauthenticated.
 - Errors: `503` is a retryable HTTP error, `400` means a bad request or a device clock more than 2 minutes behind or 30 seconds ahead of the server. A lost connection is a network error.
 
-Размер JWE проверяется до сохранения pending и отправки HTTP.
-Если размер превышает 256 KiB, Swift получает `DbError.RequestTooLarge(size:limit:)`, Kotlin получает `DbException.RequestTooLarge` с полями `size` и `limit`.
-Этот локальный отказ не меняет sequence существующей сессии и не создаёт pending.
-Следующий короткий запрос отправляется без `sessionReset()`.
-Проверка действует для чтения, `sessionCall`, logout и повторного APQ-запроса с полным документом.
-При APQ miss hash-only запрос уже подтвердил свой sequence, локальный отказ полного документа следующий sequence не расходует.
-Настоящий HTTP 413 остаётся `Http` и сохраняет pending, как остальные неподтверждённые HTTP-ответы.
+The JWE size is checked before the pending row is saved and before the HTTP send.
+If the size exceeds 256 KiB, Swift gets `DbError.RequestTooLarge(size:limit:)` and Kotlin gets `DbException.RequestTooLarge` with the fields `size` and `limit`.
+This local refusal does not change the sequence of the existing session and creates no pending row.
+The next short request is sent without `sessionReset()`.
+The check applies to reads, `sessionCall`, logout and the repeated APQ request with the full document.
+On an APQ miss, the hash-only request already confirmed its sequence. A local refusal of the full document does not use the next sequence.
+A real HTTP 413 stays `Http` and keeps the pending row, like other unconfirmed HTTP responses.
 
-### Повтор шагов загрузки
+### Retry of upload steps
 
-Шаги передачи файла повторяются по `pacing::Backoff`, когда GraphQL-ошибка содержит `extensions.retryable: true`.
-Оффлайн ждёт восстановления сети и не расходует попытки.
-Правило действует для создания загрузки, multipart init, presign и complete.
-Abort сохраняет прежнее поведение: после отказа сохраняется uploadId, следующий запуск повторяет очистку.
-Финальная мутация содержимого следует [правилам записи](files.md#rules-1): подтверждённый отказ сохраняет `Failed` без автоматического повтора.
+File transfer steps retry by `pacing::Backoff` when the GraphQL error has `extensions.retryable: true`.
+Offline state waits for the network to return and uses no attempts.
+The rule applies to upload creation, multipart init, presign and complete.
+Abort keeps its earlier behavior: after a refusal the uploadId stays, and the next start repeats the cleanup.
+The final content mutation follows the [write rules](files.md#rules-1): a confirmed refusal keeps `Failed` without an automatic retry.
 
-| Код с retryable:true | Шаг передачи | Финальная и обычная мутация |
+| Code with retryable:true | Transfer step | Final and plain mutation |
 | --- | --- | --- |
-| `UPLOAD_STORAGE_FAILURE` | повтор с паузой | `Failed` |
-| `IN_PROGRESS` | повтор с паузой | `Failed` |
-| `RATE_LIMITED` | повтор с паузой | `Failed` |
-| `INVALID_RECEIPT` | повтор с паузой, если этот код вернул шаг | `Failed`, сохраняется transactionDisposition |
-| `INVALID_OPERATION` | повтор с паузой, если этот код вернул шаг | `Failed` |
-| `SERVICE_UNAVAILABLE` | повтор с паузой | `Failed` |
+| `UPLOAD_STORAGE_FAILURE` | retry with a pause | `Failed` |
+| `IN_PROGRESS` | retry with a pause | `Failed` |
+| `RATE_LIMITED` | retry with a pause | `Failed` |
+| `INVALID_RECEIPT` | retry with a pause if the step returned this code | `Failed`, transactionDisposition is kept |
+| `INVALID_OPERATION` | retry with a pause if the step returned this code | `Failed` |
+| `SERVICE_UNAVAILABLE` | retry with a pause | `Failed` |
 - `sessionReset()` deletes the credential and the stored state without contacting the server.
 - A `logout` answer with `revoked` clears the credential and the state in one step, without confirming the sequence first. If your `CredentialStore.clear` fails, the pending logout stays and `sessionResume()` finishes it with the answer the server stored.
 - The core never clears the credential for a refusal code, an HTTP error, a key mismatch or a closed cable.
@@ -340,10 +340,10 @@ What a refresh does, in one commit:
 - Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`deleted_by`, a null node, a delete event).
 - A failed request changes nothing.
 
-Событие V3 содержит идентификаторы. `changed_by` выбирает HTTP reread, его ответ обновляет БД обычным способом.
-События обычного транспорта с полной строкой сохраняют её напрямую. `joins: :events` добавляет такую строку в загруженные выборки без серверных фильтров.
-Связь с `text:` параметрами хранит состав серверного ответа и не принимает строки событий.
-После переподключения Cable перечитывает наблюдаемые выборки моделей с `changed_by`.
+The V3 event carries identifiers. `changed_by` selects the HTTP reread, and its response updates the database in the usual way.
+Events of the plain transport with a full row save that row directly. `joins: :events` adds such a row to loaded selections without server filters.
+A relation with `text:` parameters stores the server response as it was and does not accept event rows.
+After a reconnect, Cable rereads the observed selections of models with `changed_by`.
 
 `refresh(replace: true)` replaces the whole list with the response (unconfirmed records still stay). It is meant for small lists where the server is the only authority.
 
