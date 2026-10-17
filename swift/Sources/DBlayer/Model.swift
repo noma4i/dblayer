@@ -53,6 +53,13 @@ extension DBModel {
     return listSource(initial: [], open: { listener in try DB.database.liveHasMany(model: model, rowId: rowId, name: name, listener: listener) }) { (applied: ListApplied<Target>, _) in applied.rows }
   }
 
+  public static func readNode(relation: String, id: String, force: Bool) async throws -> Self? {
+    try await DB.database.node(model: modelName, relation: relation, rowId: id, force: force).map(decode)
+  }
+  public static func readNodes(relation: String, ids: [String]) async throws -> [Self] {
+    try await DB.database.nodes(model: modelName, relation: relation, rowIds: ids).map(decode)
+  }
+
   static func decode(_ row: WireRow) throws -> Self {
     guard row.layout == wireLayout else { throw DbError.Invalid(detail: "the generated \(modelName) does not match the library: layout \(wireLayout) against \(row.layout)") }
     return try Self(wire: row)

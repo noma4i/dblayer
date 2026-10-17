@@ -74,6 +74,45 @@ pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64
 }
 
 impl Inner {
+    fn related_upserts(&self, reader: &Reader<'_>, base_revision: i64, related: &[(ModelKey, Map<String, Value>)], planned: &BTreeSet<(ModelKey, RowId)>, drops: &mut usize) -> Result<Vec<EntityOp>, SyncError> {
+        let mut ops = Vec::new();
+        for (related_model, row) in related {
+            for row in admit(&self.db, reader, base_revision, None, related_model.as_str(), std::slice::from_ref(row), drops)?.rows {
+                let Some(id) = row.get("id").and_then(read_id) else { continue };
+                if !planned.contains(&(related_model.clone(), id.clone())) {
+                    ops.push(EntityOp::Upsert { model: related_model.clone(), id, row });
+                }
+            }
+        }
+        Ok(ops)
+    }
+
+    pub(crate) fn land_rows(&self, model: &str, normalized: &Normalized, base_revision: i64) -> Result<usize, SyncError> {
+        let _serial = locked(&self.landing);
+        let generation = self.db.generation();
+        let mut drops = 0;
+        let mut admitted_roots = 0;
+        let committed = self.db.commit_following(generation, |reader| {
+            let Admitted { rows: roots, .. } = admit(&self.db, reader, base_revision, None, model, &normalized.roots, &mut drops)?;
+            admitted_roots = roots.len();
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, generation);
+            envelope.entity_ops = self.related_upserts(reader, base_revision, &normalized.related, &BTreeSet::new(), &mut drops)?;
+            for row in roots {
+                let Some(id) = row.get("id").and_then(read_id) else { continue };
+                envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
+            }
+            Ok::<_, SyncError>(Some(envelope))
+        });
+        match committed {
+            Ok(_) => {}
+            Err(PlanCommitError::Plan(error)) => return Err(error),
+            Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(0),
+            Err(PlanCommitError::Store(error)) => return Err(error.into()),
+        }
+        locked(&self.counters).record_stale_version_drops(drops);
+        Ok(admitted_roots)
+    }
+
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
         let Landing { model, scope, window_key, normalized, is_first_page, plans_as_first, coverage, requested_cursor, page_info, attempt } = landing;
@@ -126,14 +165,7 @@ impl Inner {
                 (row.model, row.id)
             }).collect();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, generation);
-            for (related_model, row) in &normalized.related {
-                for row in admit(&self.db, reader, attempt.base_revision, None, related_model.as_str(), std::slice::from_ref(row), &mut drops)?.rows {
-                    let Some(id) = row.get("id").and_then(read_id) else { continue };
-                    if !planned.contains(&(related_model.clone(), id.clone())) {
-                        envelope.entity_ops.push(EntityOp::Upsert { model: related_model.clone(), id, row });
-                    }
-                }
-            }
+            envelope.entity_ops = self.related_upserts(reader, attempt.base_revision, &normalized.related, &planned, &mut drops)?;
             envelope.entity_ops.extend(plan.entity_ops);
             envelope.scope_ops = plan.scope_ops;
             envelope.window = Some(WindowSave {

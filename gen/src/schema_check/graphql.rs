@@ -60,6 +60,7 @@ pub enum TypeKind {
 pub struct Schema {
     pub types: HashMap<String, TypeKind>,
     pub query: String,
+    pub implementers: HashMap<String, Vec<String>>,
 }
 
 impl Schema {
@@ -82,6 +83,16 @@ impl Schema {
     }
 
     fn add(&mut self, declared: &TypeDefinition<'_, String>) {
+        let implemented = match declared {
+            TypeDefinition::Object(object) => Some((&object.name, &object.implements_interfaces)),
+            TypeDefinition::Interface(interface) => Some((&interface.name, &interface.implements_interfaces)),
+            _ => None,
+        };
+        if let Some((name, interfaces)) = implemented {
+            for interface in interfaces {
+                self.implementers.entry(interface.clone()).or_default().push(name.clone());
+            }
+        }
         let (name, kind) = match declared {
             TypeDefinition::Object(object) => (&object.name, TypeKind::Fields(fields_of(&object.fields))),
             TypeDefinition::Interface(interface) => (&interface.name, TypeKind::Fields(fields_of(&interface.fields))),
@@ -91,6 +102,10 @@ impl Schema {
             TypeDefinition::InputObject(input) => (&input.name, TypeKind::Input(input.fields.iter().map(|field| (field.name.clone(), Ty { has_default: field.default_value.is_some(), ..Ty::of(&field.value_type) })).collect())),
         };
         self.types.insert(name.clone(), kind);
+    }
+
+    pub fn is_interface(&self, name: &str) -> bool {
+        self.implementers.contains_key(name)
     }
 
     pub fn is_builtin_scalar(name: &str) -> bool {

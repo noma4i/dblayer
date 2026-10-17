@@ -457,6 +457,8 @@ pub struct CursorSpec {
     pub numeric: bool,
 }
 
+pub const NODE_PARAM: &str = "nodeId";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RemoteShape {
@@ -555,6 +557,13 @@ pub enum Sort {
     Fields(Vec<SortField>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeRead {
+    One,
+    Many,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationSpec {
     pub name: String,
@@ -571,6 +580,8 @@ pub struct RelationSpec {
     pub joins_events: bool,
     #[serde(default)]
     pub joins_created: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<NodeRead>,
 }
 
 impl RelationSpec {
@@ -584,6 +595,7 @@ impl RelationSpec {
             sort: Sort::ServerOrder,
             joins_events: false,
             joins_created: false,
+            node: None,
         }
     }
 

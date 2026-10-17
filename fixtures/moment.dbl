@@ -15,6 +15,8 @@ model Moment do
   belongs_to :author, model: User, key: :userId, touch: true
   has_many   :vibes, dependent: :destroy
 
+  node MomentTranscodeStatus, as: :transcode_status, variable: :momentId
+
   scope :recent do
     order createdAt: :desc
   end

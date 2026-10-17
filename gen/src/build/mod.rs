@@ -1,6 +1,6 @@
 use dblayer::schema::{FieldKind, MergeRule, Newer, CursorSpec, VariableSource, 
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
-    OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
+    NodeRead, OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
 };
 use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::{Map, Number, Value as Json};
@@ -307,6 +307,11 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         None => Vec::new(),
     };
     relation.is_global = columns.is_empty() && relation.text_params.is_empty();
+    relation.node = match option(call, "node").and_then(|pair| text_of(&pair.value.item)).as_deref() {
+        Some("one") => Some(NodeRead::One),
+        Some("many") => Some(NodeRead::Many),
+        _ => None,
+    };
     if let Some(Value::Hash(pairs)) = option(call, "order").map(|pair| &pair.value.item) {
         relation.sort = Sort::Fields(pairs.iter().map(sort_field).collect());
     }

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::parser::{Call, ModelNode, Node, Pair, Value};
 use crate::ParseError;
+use dblayer::schema::NODE_PARAM;
 use crate::schema_check::{Schema, Ty, TyKind, TypeKind};
 
 fn inferred_type(schema: &Schema, ty: &Ty) -> Result<Value, String> {
@@ -199,6 +200,42 @@ fn scope(mut call: Call) -> Result<Call, ParseError> {
     Ok(call)
 }
 
+fn node_read(call: Call, many: bool) -> Result<Call, ParseError> {
+    let word = if many { "nodes" } else { "node" };
+    if !matches!(call.args.as_slice(), [Node { item: Value::Const(_), .. }]) || call.block.is_some() {
+        return Err(fail(&call, format!("`{word}` needs an operation name like `ChatNode`")));
+    }
+    let allowed: &[&str] = if many { &["as"] } else { &["as", "variable", "fresh_for", "empty"] };
+    if let Some(unknown) = call.options.iter().find(|pair| !allowed.contains(&pair.key.as_str())) {
+        return Err(ParseError::new(unknown.line, unknown.column, format!("unknown key `{}` for `{word}`", unknown.key)));
+    }
+    let option = |key: &str| call.options.iter().find(|pair| pair.key == key);
+    let name = match option("as").map(|pair| &pair.value.item) {
+        Some(Value::Symbol(name)) => name.clone(),
+        Some(_) => return Err(fail(&call, "`as` needs a symbol name")),
+        None => word.to_string(),
+    };
+    let line = |word: &str, args: Vec<Node<Value>>, options: Vec<Pair>| Call { word: word.into(), line: call.line, column: call.column, args, options, block: None };
+    let at = |item| Node { item, line: call.line, column: call.column };
+    let mut body = vec![line("query", call.args.clone(), Vec::new())];
+    let mut options = vec![pair(&call, "node", Value::Symbol(if many { "many" } else { "one" }.into()))];
+    if many {
+        body.push(line("list", Vec::new(), Vec::new()));
+    } else {
+        options.push(pair(&call, "text", Value::Array(vec![at(Value::Symbol(NODE_PARAM.into()))])));
+        let variable = match option("variable").map(|pair| &pair.value.item) {
+            Some(Value::Symbol(name)) => name.clone(),
+            Some(_) => return Err(fail(&call, "`variable` needs a symbol name")),
+            None => "id".to_string(),
+        };
+        body.push(line("variables", Vec::new(), vec![pair(&call, &variable, Value::Symbol(NODE_PARAM.into()))]));
+        if let Some(fresh) = option("fresh_for") {
+            body.push(line("fresh_for", vec![fresh.value.clone()], option("empty").cloned().into_iter().collect()));
+        }
+    }
+    Ok(Call { word: "remote".into(), args: vec![at(Value::Symbol(name))], options, block: Some(body), ..call })
+}
+
 fn operation(mut call: Call) -> Result<Call, ParseError> {
     if !call.options.is_empty() {
         return Err(fail(&call, "declare operation settings inside the `do ... end` block"));
@@ -275,6 +312,8 @@ pub(crate) fn prepare(nodes: &mut [ModelNode]) -> Result<(), Vec<(usize, ParseEr
                     continue;
                 }
                 "scope" => scope(call),
+                "node" => node_read(call, false),
+                "nodes" => node_read(call, true),
                 "operation" => operation(call),
                 "schema" | "query" | "remote" | "action" | "create" | "update" | "destroy" => Err(fail(&call, format!("unknown model declaration `{}`", call.word))),
                 _ => Ok(call),

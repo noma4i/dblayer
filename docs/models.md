@@ -275,7 +275,7 @@ A `fetch Operation` line connects a scope to the server. A relation that depends
 | Line | Meaning | Default |
 | ---- | ------- | ------- |
 | `fetch Operation` | GraphQL operation name (required) | none |
-| `fetch Operation, root: "a.b"` | path of the rows inside the response | first field of the operation |
+| `fetch Operation, root: "a.b"` | path of the rows inside the response, `node.x` for a list under a [node read](#node-reads) | first field of the operation |
 | `paginate 20` | Relay-style pages of 20, forward | whole response |
 | `paginate 20, backward: true` | pages backward | forward |
 | `paginate 20, cursor: :afterSequence, from: "lastSequenceNumber", cursor_type: :int` | the server pages by its own variable: the next page sends `afterSequence`, taken from `lastSequenceNumber` of the connection. No page size is sent | Relay `first`/`after` |
@@ -289,6 +289,71 @@ A `fetch Operation` line connects a scope to the server. A relation that depends
 An operation name is a constant like `MomentsFeed`, or a string like `"feed"` when the GraphQL name starts with a lowercase letter.
 
 Durations are written `300.milliseconds`, `30.seconds`, `5.minutes`, `2.hours`, `1.day`. Mutations and the `updates` line are described in [server sync](server-sync.md).
+
+## Node reads
+
+GraphQL `node(id:)` reads one entity of any type that implements `Node`. A model reads it with `node`, a related list reads it through `root:`.
+
+```ruby
+model Chat do
+  field :title, type: :string
+  field :shareUrl, type: :string, null: true
+  node ChatNode
+  nodes ChatsByIds
+end
+
+model Message do
+  field :chatId, type: :id
+  field :media, type: MessageMedia, null: true do
+    field :kind, type: :string, null: true
+    field :fileUrl, type: :string, null: true
+  end
+  node MessageTranscodeStatus, as: :transcode_status
+  scope :chat_media do
+    where :chatId
+    fetch ChatMedia, root: "node.messages"
+    paginate 30
+  end
+end
+```
+
+```graphql
+query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title shareUrl } } }
+query MessageTranscodeStatus($id: ID!) { node(id: $id) { ... on Message { id chatId media { kind fileUrl } } } }
+query ChatMedia($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { messages(first: $first, after: $after) { edges { node { ...MessageFragment } } pageInfo { hasNextPage endCursor } } } } }
+query ChatsByIds($ids: [ID!]!) { nodes(ids: $ids) { ... on Chat { id title shareUrl } } }
+```
+
+| Line | Meaning |
+| ---- | ------- |
+| `node Operation` | one entity by id, generates `Model.node(id)`. The operation sends the id as `$id` |
+| `node Operation, as: :name` | a second read of the same model, such as a small status read, generates `Model.name(id)` |
+| `node Operation, variable: :momentId` | the id goes into `$momentId` |
+| `node Operation, fresh_for: 1.minute, empty: 10.seconds` | how long an answer counts as fresh, as for `fresh_for` |
+| `nodes Operation` | many entities in one request, generates `Model.nodes(ids)`. The operation takes `$ids` |
+| `fetch Operation, root: "node.messages"` | a related list under the node: the path starts at `node` and continues inside the `... on` type |
+
+```swift
+let chat = try await Chat.node(chatId)                      // nil when the server has no such chat or the viewer cannot see it
+let fresh = try await Chat.node(chatId, force: true)        // an event named this chat: read it again now
+let status = try await Message.transcodeStatus(messageId)
+let chats = try await Chat.nodes(ids)
+```
+
+```kotlin
+val chat = Chat.node(chatId)                                // null when the server has no such chat or the viewer cannot see it
+val fresh = Chat.node(chatId, force = true)                 // an event named this chat: read it again now
+val status = Message.transcodeStatus(messageId)
+val chats = Chat.nodes(ids)
+```
+
+- The answer lands as a normal server row of the model. Only the fields the operation selects change, so a small read leaves the other fields, the merge rules and local fields as they were. A local edit that is not confirmed yet is kept.
+- A plain call inside the freshness time of an id reads the local row and sends nothing. `force: true` always asks the server. Each read of a model has its own freshness per id.
+- Calls for one id that overlap share one request. Nothing needs to be started or released.
+- The result is nil when the answer is `null`, has another type than the `... on` fragment (an empty object), or the id has no entity. Nothing is written then and the stored row stays as it was.
+- `nodes` skips every `null` and empty entry, keeps the order of the answer, writes each row once and keeps no list of its own, so every call asks the server.
+- `Model.entity(id)` and `Model.find(id)` stay the way to watch a row. A node read fills them.
+- The generator stops with file and line when a field is selected under `node` outside `... on`, when the `... on` type is not an implementation of the interface, when one `node` selects two types, or when the model has a field that the `... on` type lacks. A selection outside `... on` would give a row for a foreign type, so it is an error.
 
 ## Validation
 

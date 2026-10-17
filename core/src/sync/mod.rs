@@ -5,6 +5,7 @@ mod invalidate;
 mod land;
 mod live;
 mod load;
+mod node;
 mod normalize;
 mod online;
 mod registry;
@@ -186,6 +187,8 @@ mod load_more_tests;
 mod load_tests;
 #[cfg(test)]
 mod merge_tests;
+#[cfg(test)]
+mod node_tests;
 #[cfg(test)]
 mod normalize_tests;
 #[cfg(test)]

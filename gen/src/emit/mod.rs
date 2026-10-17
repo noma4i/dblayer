@@ -8,6 +8,8 @@ mod inputs;
 mod enums;
 mod operations;
 mod unions;
+mod nodes;
+use nodes::{kotlin_node, swift_node};
 use unions::{emit_kotlin_union, emit_swift_union};
 use nested::{emit_kotlin_type, emit_swift_type};
 use inputs::{emit_kotlin_inputs, emit_swift_inputs};
@@ -203,6 +205,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         out.push_str("    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }\n    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }\n");
         for relation in &model.relations {
             let method = name(&relation.name);
+            if let Some(kind) = relation.node { swift_node(&mut out, &method, relation, kind); continue; }
             if relation.by_columns.is_empty() && relation.text_params.is_empty() { writeln!(out, "    public static var {method}: Query<Self> {{").unwrap(); }
             else {
                 let params = relation.by_columns.iter().map(|key| format!("_ {key}: {}", model.field(key).map(|field| field_type(field, true)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| format!("_ {key}: String"))).collect::<Vec<_>>().join(", ");
@@ -299,6 +302,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         writeln!(out, "        fun find(id: String) = Query(\"{class}\", this).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", this).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", this, ids)\n        fun entity(id: String) = entityOf(\"{class}\", this, id)").unwrap();
         for relation in &model.relations {
             let method = name(&relation.name);
+            if let Some(kind) = relation.node { kotlin_node(&mut out, &class, &method, relation, kind); continue; }
             let params = relation.by_columns.iter().map(|key| format!("{key}: {}", model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| format!("{key}: String"))).collect::<Vec<_>>().join(", ");
             if params.is_empty() { writeln!(out, "        val {method}: Query<{class}> get() {{").unwrap(); }
             else { writeln!(out, "        fun {method}({params}): Query<{class}> {{").unwrap(); }

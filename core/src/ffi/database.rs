@@ -280,6 +280,18 @@ impl Database {
         let params = serde_json::from_str(&params_json)?;
         Ok(on_executor(async move { sync.load_more(&model, &relation, &params).await }).await?.has_next)
     }
+    pub async fn node(&self, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
+        let sync = self.sync()?.clone();
+        let wire = self.wire(&model)?;
+        let row = on_executor(async move { sync.node(&model, &relation, &row_id, force).await }).await?;
+        Ok(row.map(|row| wire.row(&row)))
+    }
+    pub async fn nodes(&self, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
+        let sync = self.sync()?.clone();
+        let wire = self.wire(&model)?;
+        let rows = on_executor(async move { sync.nodes(&model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
+        Ok(rows.iter().map(|row| wire.row(row)).collect())
+    }
     pub fn listen(&self) -> Result<(), DbError> {
         let _entered = executor()?.enter();
         self.sync()?.listen();

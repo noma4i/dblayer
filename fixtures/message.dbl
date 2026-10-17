@@ -26,6 +26,12 @@ model Message do
     end
   end
 
+  field :media, type: MessageMedia, null: true, merge: { fileUrl: :non_empty } do
+    field :kind, type: :string, null: true
+    field :transcoded, type: :bool, null: true
+    field :fileUrl, type: :string, null: true
+  end
+
   belongs_to :chat, sets: { lastMessageId: :id, lastMessageAt: :createdAt }, newer: { createdAt: :lastMessageAt }
 
   scope :by_chat do
@@ -45,6 +51,14 @@ model Message do
     input chatId: :chatId, text: :text, signedId: :signedId, attachedUserId: :attachedUserId
     args signedId: :string?, attachedUserId: :id?
     local :authorId
+  end
+
+  node MessageTranscodeStatus, as: :transcode_status
+
+  scope :chat_media do
+    where :chatId
+    fetch ChatMedia, root: "node.messages"
+    paginate 30
   end
 
   scope :history do

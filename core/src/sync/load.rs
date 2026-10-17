@@ -260,7 +260,7 @@ impl Inner {
         }
     }
 
-    async fn query_with_retry(&self, request: GraphQLRequest) -> Result<(Response, u32), SyncError> {
+    pub(crate) async fn query_with_retry(&self, request: GraphQLRequest) -> Result<(Response, u32), SyncError> {
         let mut attempt = 0;
         loop {
             if !self.connectivity.is_online() {

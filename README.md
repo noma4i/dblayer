@@ -76,6 +76,8 @@ end
 
 The generator turns these files into typed Swift and Kotlin models and a model specification for the core. Nested `object` and `array` blocks generate their value types too, with reusable names, optional fields, defaults and JSON key aliases. Keep field declarations in `.dbl` and add app behavior in extensions. See [describing models](docs/models.md#nested-objects-and-lists).
 
+A model reads one entity with GraphQL `node(id:)` through `node`, and `Chat.node(id)` returns the typed row or nil. See [node reads](docs/models.md#node-reads).
+
 Use `dblayer-gen explain models/*.dbl` to inspect generated tables, indexes and SQLite query plans before building the app.
 
 ## What using it looks like

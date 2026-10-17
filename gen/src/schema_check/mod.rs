@@ -248,6 +248,9 @@ impl<'a> Run<'a> {
                 return None;
             }
         };
+        if self.schema.is_interface(reached.name()) {
+            reached = self.enter_implementation(node.file, query, &name, &root.key, reached)?;
+        }
         for segment in segments {
             reached = match self.schema.field(reached.name(), segment) {
                 Ok(next) if !reached.is_list() => next,
@@ -273,6 +276,41 @@ impl<'a> Run<'a> {
             return None;
         }
         Some(reached.name().to_string())
+    }
+
+    fn enter_implementation(&mut self, file: usize, query: &Call, operation: &str, key: &str, reached: Ty) -> Option<Ty> {
+        let interface = reached.name().to_string();
+        let Some(select) = self.operations.named.get(operation).and_then(|found| found.select.fields.iter().find(|field| field.key == key)).map(|field| &field.select) else {
+            self.fail(file, query.line, query.column, format!("`{interface}` root needs the operation documents of `{operation}`"));
+            return None;
+        };
+        let mut types: Vec<&str> = Vec::new();
+        let mut bare: Vec<&str> = Vec::new();
+        self.each_select(select, None, &mut |inner, on| match on {
+            Some(on) if on != interface => types.extend((!types.contains(&on)).then_some(on)),
+            _ => bare.extend(inner.fields.iter().map(|field| field.key.as_str())),
+        }, &mut Vec::new());
+        let problems: Vec<String> = bare.iter().map(|field| format!("field `{field}` of `{key}` is selected outside `... on`, a type that does not match would still give a row")).collect();
+        let implementation = match types.as_slice() {
+            [one] if self.schema.implementers.get(&interface).is_some_and(|all| all.iter().any(|name| name == one)) => Some(one.to_string()),
+            [one] => {
+                self.fail(file, query.line, query.column, format!("`... on {one}` is not an implementation of `{interface}`"));
+                None
+            }
+            [] => {
+                self.fail(file, query.line, query.column, format!("`{key}` of `{operation}` is `{interface}`: select its fields under `... on <Type>`"));
+                None
+            }
+            _ => {
+                self.fail(file, query.line, query.column, format!("`{key}` of `{operation}` selects more than one `... on` type: {}", types.join(", ")));
+                None
+            }
+        };
+        for problem in problems {
+            self.fail(file, query.line, query.column, problem);
+        }
+        let named = |name: String| Ty { kind: TyKind::Named(name), nullable: true, has_default: false };
+        implementation.map(|name| Ty { nullable: reached.nullable, ..if reached.is_list() { named(name).into_list() } else { named(name) } })
     }
 
     fn connection_node(&mut self, node: &ModelNode, line: &Call, connection: &Ty) -> Option<String> {
@@ -331,6 +369,12 @@ impl<'a> Run<'a> {
         }
     }
 
+    fn field_in<'b>(&'b self, select: &'b Select, key: &str) -> Option<&'b graphql::SelectedField> {
+        let mut found = None;
+        self.each_select(select, None, &mut |inner, _| found = found.or_else(|| inner.fields.iter().find(|field| field.key == key)), &mut Vec::new());
+        found
+    }
+
     fn element_select(&self, remote: &Call) -> Option<&Select> {
         let lines = remote.block.as_deref().unwrap_or_default();
         let query = lines.iter().find(|call| call.word == "query")?;
@@ -339,7 +383,7 @@ impl<'a> Run<'a> {
         let path = option_text(query, "root").unwrap_or(&root.key);
         let mut select = &operation.select.fields.iter().find(|field| field.key == root.key)?.select;
         for segment in path.split('.').skip(1) {
-            select = &select.fields.iter().find(|field| field.key == segment)?.select;
+            select = &self.field_in(select, segment)?.select;
         }
         if lines.iter().any(|call| call.word == "paginate") {
             select = match select.fields.iter().find(|field| field.name == "nodes") {
@@ -527,6 +571,9 @@ impl<'a> Run<'a> {
 
 #[cfg(test)]
 mod schema_check_tests;
+
+#[cfg(test)]
+mod node_tests;
 
 #[cfg(test)]
 mod union_tests;

@@ -1,0 +1,52 @@
+use serde_json::{json, Map};
+
+use crate::db::Row;
+use crate::identity::RowId;
+use crate::schema::{Coverage, NodeRead, RemoteShape, NODE_PARAM};
+use crate::transport::GraphQLRequest;
+use crate::value::read_id;
+
+use super::error::SyncError;
+use super::extract::extract;
+use super::load::Resolved;
+use super::normalize::normalize_nodes;
+use super::Sync;
+
+impl Sync {
+    pub async fn node(&self, model: &str, relation: &str, id: &str, force: bool) -> Result<Option<Row>, SyncError> {
+        let row_id = RowId::new(id).map_err(|error| SyncError::Params(error.to_string()))?;
+        let resolved = self.resolve_node(model, relation, NodeRead::One, Map::from_iter([(NODE_PARAM.to_string(), json!(id))]))?;
+        self.inner.fetch(&resolved, None, force).await?;
+        let listed = self.inner.db.shared.store.window(&resolved.window_key)?.is_some_and(|window| window.ids.iter().any(|member| member == id));
+        Ok(if listed { self.inner.db.find(model, &row_id)? } else { None })
+    }
+
+    pub async fn nodes(&self, model: &str, relation: &str, ids: &[&str]) -> Result<Vec<Row>, SyncError> {
+        let resolved = self.resolve_node(model, relation, NodeRead::Many, Map::new())?;
+        let base_revision = self.inner.db.revision_seq()?;
+        let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, json!({ "ids": ids }));
+        let (response, _) = self.inner.query_with_retry(request).await?;
+        let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;
+        let root = resolved.remote.root.as_deref().unwrap_or(&resolved.operation.root_path);
+        let extracted = extract(&data, root, &RemoteShape::List { coverage: Coverage::Complete })?;
+        let normalized = normalize_nodes(&self.inner.db, model, &extracted.nodes)?;
+        self.inner.land_rows(model, &normalized, base_revision)?;
+        let mut rows: Vec<Row> = Vec::new();
+        for root in &normalized.roots {
+            let Some(id) = root.get("id").and_then(read_id) else { continue };
+            if rows.iter().all(|row| row.id != id) {
+                rows.extend(self.inner.db.find(model, &id)?);
+            }
+        }
+        Ok(rows)
+    }
+
+    fn resolve_node(&self, model: &str, relation: &str, kind: NodeRead, params: Map<String, serde_json::Value>) -> Result<Resolved, SyncError> {
+        let spec = self.inner.db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation);
+        if declared.is_some_and(|declared| declared.node != Some(kind)) {
+            return Err(SyncError::Params(format!("relation {relation} of {model} is not a {kind:?} node read")));
+        }
+        self.inner.resolve(model, relation, &params)
+    }
+}
