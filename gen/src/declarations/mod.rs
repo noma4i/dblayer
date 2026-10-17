@@ -179,7 +179,7 @@ fn scope(mut call: Call) -> Result<Call, ParseError> {
     let mut seen = HashSet::new();
     let mut body = Vec::new();
     for mut line in lines {
-        if line.word != "updates" && !seen.insert(line.word.clone()) {
+        if !matches!(line.word.as_str(), "updates" | "edge") && !seen.insert(line.word.clone()) {
             return Err(fail(&line, format!("`{}` is declared twice", line.word)));
         }
         match line.word.as_str() {
@@ -200,6 +200,11 @@ fn scope(mut call: Call) -> Result<Call, ParseError> {
                 call.options.push(pair(&line, "order", Value::Hash(line.options.clone())));
             }
             "fetch" => { line.word = "query".into(); body.push(line); }
+            "edge" if remote => {
+                line.word = "field".into();
+                let declared = field(line)?;
+                body.push(Call { word: "edge".into(), line: declared.line, column: declared.column, args: Vec::new(), options: Vec::new(), block: Some(vec![declared]) });
+            }
             _ if remote => body.push(line),
             _ => return Err(fail(&line, format!("`{}` needs a scope with `fetch`", line.word))),
         }

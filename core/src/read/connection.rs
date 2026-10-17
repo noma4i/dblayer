@@ -19,6 +19,24 @@ pub fn connection_nodes(connection: &Value) -> Vec<Value> {
     edges.iter().filter_map(|edge| edge.get("node")).filter(|node| !node.is_null()).cloned().collect()
 }
 
+pub const EDGE_KEY: &str = "@edge";
+
+pub fn connection_rows(connection: &Value) -> Vec<Value> {
+    let Some(fields) = connection.as_object() else { return Vec::new() };
+    let edges = match fields.get("edges").and_then(Value::as_array) {
+        Some(edges) if !fields.contains_key("nodes") => edges,
+        _ => return connection_nodes(connection),
+    };
+    edges.iter().filter_map(|edge| {
+        let mut node = edge.get("node").filter(|node| !node.is_null())?.clone();
+        if let (Some(row), Some(edge)) = (node.as_object_mut(), edge.as_object()) {
+            let carried = edge.iter().filter(|(key, _)| key.as_str() != "node").map(|(key, value)| (key.clone(), value.clone())).collect();
+            row.insert(EDGE_KEY.to_string(), Value::Object(carried));
+        }
+        Some(node)
+    }).collect()
+}
+
 pub fn connection_page_info(connection: &Value, cursor: Option<&CursorSpec>) -> PageInfo {
     let info = connection.get("pageInfo");
     PageInfo {

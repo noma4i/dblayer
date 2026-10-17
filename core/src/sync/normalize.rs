@@ -4,6 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::db::Db;
 use crate::identity::ModelKey;
+use crate::read::EDGE_KEY;
 use crate::schema::AssociationKind;
 use crate::store::Reader;
 use crate::value::read_id;
@@ -15,6 +16,7 @@ pub(crate) struct Normalized {
     pub roots: Vec<Map<String, Value>>,
     pub related: Vec<(ModelKey, Map<String, Value>)>,
     pub dropped: usize,
+    pub edges: BTreeMap<String, Map<String, Value>>,
 }
 
 pub(crate) type Related = BTreeMap<(String, String), Map<String, Value>>;
@@ -25,7 +27,12 @@ pub(crate) fn normalize_nodes(db: &Db, model: &str, nodes: &[Map<String, Value>]
     let mut normalized = Normalized::default();
     for node in nodes {
         match normalize_node(db, model, node, &mut related)? {
-            Some(row) => normalized.roots.push(row),
+            Some(row) => {
+                if let (Some(id), Some(edge)) = (row.get("id").and_then(read_id), node.get(EDGE_KEY).and_then(Value::as_object)) {
+                    normalized.edges.insert(id.as_str().to_string(), edge.clone());
+                }
+                normalized.roots.push(row);
+            }
             None => normalized.dropped += 1,
         }
     }

@@ -37,7 +37,7 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
             collect_declared(schema_block.block.as_deref().unwrap_or_default(), node.file, &mut declared);
         }
     }
-    let mut run = Run { schema, scalars, operations: &documents, files, declared, found: Vec::new(), notes: Vec::new() };
+    let mut run = Run { schema, scalars, operations: &documents, files, declared, found: Vec::new(), notes: Vec::new(), edge: None };
     for node in nodes.iter().filter(|node| !is_local(node)) {
         run.check_model(node);
     }
@@ -96,6 +96,15 @@ fn flag(call: &Call, key: &str) -> bool {
     option(call, key).is_some_and(|pair| pair.value.item == Value::Bool(true))
 }
 
+fn exact_word(named: &str) -> Option<&'static str> {
+    match named {
+        "Int" => Some("int"),
+        "Float" => Some("num"),
+        "Boolean" => Some("bool"),
+        _ => None,
+    }
+}
+
 fn name_of(call: &Call) -> &str {
     call.args.first().and_then(|arg| text(&arg.item)).unwrap_or_default()
 }
@@ -108,6 +117,7 @@ struct Run<'a> {
     declared: Declared<'a>,
     found: Vec<FileError>,
     notes: Vec<String>,
+    edge: Option<String>,
 }
 
 struct Scope<'a> {
@@ -140,7 +150,11 @@ impl<'a> Run<'a> {
     fn check_model(&mut self, node: &'a ModelNode) {
         let mut seen = HashSet::new();
         for remote in node.body.iter().filter(|call| call.word == "remote") {
+            self.edge = None;
             let Some(element) = self.resolve(node, remote) else { continue };
+            if let Some(edge) = self.edge.take() {
+                self.check_edge_fields(node, remote, &edge);
+            }
             if !seen.insert(element.clone()) {
                 continue;
             }
@@ -153,6 +167,37 @@ impl<'a> Run<'a> {
             self.list_unmodeled(node, remote, &element, &covered);
         }
         self.check_mutation_args(node);
+    }
+
+    fn check_edge_fields(&mut self, node: &'a ModelNode, remote: &'a Call, edge: &str) {
+        let select = self.edge_select(remote);
+        for field in remote.block.iter().flatten().filter(|call| call.word == "edge").flat_map(|call| call.block.iter().flatten()) {
+            let name = name_of(field);
+            let key = option_text(field, "from").unwrap_or(name);
+            let segments: Vec<&str> = key.split('.').collect();
+            let selected = select.map(|select| self.operations.fields_in(select, segments[0], &[]));
+            let real = selected.as_ref().and_then(|found| found.first().map(|field| field.name.clone())).unwrap_or_else(|| segments[0].to_string());
+            if let Err(message) = self.schema.field(edge, &real) {
+                self.fail(node.file, field.line, field.column, format!("field `{name}`: {message}"));
+                continue;
+            }
+            if selected.is_some_and(|found| found.is_empty()) {
+                self.fail(node.file, field.line, field.column, format!("field `{name}`: the document does not select `{}` on the edges", segments[0]));
+                continue;
+            }
+            let selects: Vec<&'a Select> = select.into_iter().collect();
+            let Some(reached) = self.walk(node.file, field, edge, &segments, &Scope::inside(node.file, selects), name) else { continue };
+            if let Some(expected) = exact_word(reached.ty.name()).filter(|expected| *expected != field.word && !reached.ty.is_list()) {
+                self.fail(node.file, field.line, field.column, format!("field `{name}` is declared `{}` but the edge field is `{}`, declare `{expected}`", field.word, reached.ty.describe()));
+                continue;
+            }
+            self.check_kind(node, field, name, &reached.ty, reached.nullable_hop, node.file);
+        }
+    }
+
+    fn edge_select(&self, remote: &Call) -> Option<&'a Select> {
+        let select = self.root_select(remote)?;
+        Some(&select.fields.iter().find(|field| field.name == "edges")?.select)
     }
 
     fn check_mutation_args(&mut self, node: &'a ModelNode) {
@@ -341,7 +386,10 @@ impl<'a> Run<'a> {
     fn connection_node(&mut self, node: &ModelNode, line: &Call, connection: &Ty) -> Option<String> {
         let found = match self.schema.field(connection.name(), "nodes") {
             Ok(nodes) if nodes.is_list() => Some(nodes.name().to_string()),
-            _ => self.schema.field(connection.name(), "edges").and_then(|edges| self.schema.field(edges.name(), "node")).ok().map(|edge| edge.name().to_string()),
+            _ => self.schema.field(connection.name(), "edges").and_then(|edges| {
+                self.edge = Some(edges.name().to_string());
+                self.schema.field(edges.name(), "node")
+            }).ok().map(|edge| edge.name().to_string()),
         };
         if found.is_none() {
             self.fail(node.file, line.line, line.column, format!("`paginate` needs `nodes` or `edges {{ node }}` on `{}`", connection.name().to_string()));
@@ -385,6 +433,18 @@ impl<'a> Run<'a> {
     }
 
     fn element_select(&self, remote: &Call) -> Option<&'a Select> {
+        let lines = remote.block.as_deref().unwrap_or_default();
+        let mut select = self.root_select(remote)?;
+        if lines.iter().any(|call| call.word == "paginate") {
+            select = match select.fields.iter().find(|field| field.name == "nodes") {
+                Some(nodes) => &nodes.select,
+                None => &select.fields.iter().find(|field| field.name == "edges")?.select.fields.iter().find(|field| field.name == "node")?.select,
+            };
+        }
+        Some(select)
+    }
+
+    fn root_select(&self, remote: &Call) -> Option<&'a Select> {
         let operations: &'a Operations = self.operations;
         let lines = remote.block.as_deref().unwrap_or_default();
         let query = lines.iter().find(|call| call.word == "query")?;
@@ -394,12 +454,6 @@ impl<'a> Run<'a> {
         let mut select = &operation.select.fields.iter().find(|field| field.key == root.key)?.select;
         for segment in path.split('.').skip(1) {
             select = &operations.fields_in(select, segment, &[]).first().copied()?.select;
-        }
-        if lines.iter().any(|call| call.word == "paginate") {
-            select = match select.fields.iter().find(|field| field.name == "nodes") {
-                Some(nodes) => &nodes.select,
-                None => &select.fields.iter().find(|field| field.name == "edges")?.select.fields.iter().find(|field| field.name == "node")?.select,
-            };
         }
         Some(select)
     }
@@ -617,3 +671,6 @@ mod interface_tests;
 
 #[cfg(test)]
 mod alias_tests;
+
+#[cfg(test)]
+mod edge_tests;

@@ -9,6 +9,8 @@ mod enums;
 mod operations;
 mod unions;
 mod nodes;
+mod edges;
+use edges::{kotlin_accessors, swift_accessors};
 use nodes::{kotlin_node, swift_node};
 use unions::{emit_kotlin_union, emit_swift_union};
 use nested::{emit_kotlin_type, emit_swift_type};
@@ -207,6 +209,7 @@ pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], schem
 
 pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> String {
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
+    let mut edge_types = String::new();
     for model in models {
         let class = model.key.as_str();
         let values = local_name(model, "values");
@@ -248,6 +251,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
                 }
             }
             writeln!(out, "        return {built}\n    }}").unwrap();
+            swift_accessors(&mut out, &mut edge_types, model, relation);
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var singleton: Query<Self> {{ {} }}", name(&relation.name)).unwrap(); }
         let upload_args = standard_args(model, "upload");
@@ -315,6 +319,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             out.push_str("}\n\n");
         }
     }
+    out.push_str(&edge_types);
     let spread = with_shared_in_variants(models);
     let types = declared_types(&spread);
     for declaration in &types { if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_swift_union(&mut out, declaration); } else { emit_swift_type(&mut out, declaration, &types, true); } }
@@ -329,6 +334,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
     let one_of = if schema_types.inputs.iter().any(|input| input.one_of) { "import kotlinx.serialization.KSerializer\nimport kotlinx.serialization.SerializationException\nimport kotlinx.serialization.descriptors.SerialDescriptor\nimport kotlinx.serialization.descriptors.buildClassSerialDescriptor\nimport kotlinx.serialization.encoding.Decoder\nimport kotlinx.serialization.encoding.Encoder\n" } else { "" };
     let encoding = if schema_types.inputs.is_empty() { String::new() } else { format!("import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n{one_of}") };
     let mut out = format!("package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\n{encoding}import kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n");
+    let mut edge_types = String::new();
     for model in models {
         let class = model.key.as_str();
         let values = local_name(model, "values");
@@ -354,6 +360,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
                 if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            {built} = {built}.order(Order(\"{}\", \"{}\"))", field.column, field.direction.name()).unwrap(); } }
             }
             writeln!(out, "            return {built}\n        }}").unwrap();
+            kotlin_accessors(&mut out, &mut edge_types, model, relation);
         }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", this, {})", name(&relation.name)).unwrap(); }
         let upload_args = standard_args(model, "upload");
@@ -428,6 +435,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             writeln!(out, "@Serializable\ndata class {}({fields})\n", result_type(class, &action.name)).unwrap();
         }
     }
+    out.push_str(&edge_types);
     let spread = with_shared_in_variants(models);
     let types = declared_types(&spread);
     for declaration in &types { if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_kotlin_union(&mut out, declaration); } else { emit_kotlin_type(&mut out, declaration, &types, true); } }

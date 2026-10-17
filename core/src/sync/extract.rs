@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::read::{connection_nodes, connection_page_info, landing_fault};
+use crate::read::{connection_page_info, connection_rows, landing_fault};
 use crate::schema::RemoteShape;
 use crate::store::PageInfo;
 
@@ -34,7 +34,7 @@ pub(crate) fn extract(data: &Value, root_path: &str, shape: &RemoteShape) -> Res
             if let Some(fault) = landing_fault(connection, cursor) {
                 return Err(malformed(&format!("{fault:?}")));
             }
-            Ok(Extracted { nodes: objects(&connection_nodes(connection)), page_info: Some(connection_page_info(connection, cursor)) })
+            Ok(Extracted { nodes: objects(&connection_rows(connection)), page_info: Some(connection_page_info(connection, cursor)) })
         }
     }
 }

@@ -21,6 +21,8 @@ pub struct Counters {
     pub transport_calls: usize,
     pub lost_outcomes: usize,
     pub settle_parks: usize,
+    pub edge_read_steps: usize,
+    pub edge_read_scans: usize,
 }
 
 impl Counters {
@@ -61,6 +63,8 @@ impl Add for Counters {
             transport_calls: self.transport_calls + other.transport_calls,
             lost_outcomes: self.lost_outcomes + other.lost_outcomes,
             settle_parks: self.settle_parks + other.settle_parks,
+            edge_read_steps: self.edge_read_steps + other.edge_read_steps,
+            edge_read_scans: self.edge_read_scans + other.edge_read_scans,
         }
     }
 }

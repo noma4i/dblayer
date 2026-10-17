@@ -49,6 +49,11 @@ pub fn moments_spec() -> ModelSpec {
     let backward = RemoteShape::Connection { direction: PageDirection::Backward, coverage: Coverage::Page, max_pages: None, cursor: None };
     let mut feed = RelationSpec::global("feed");
     feed.remote = Some(remote("MomentsFeed", forward, "5.minutes"));
+    feed.edge_fields = edge_fields();
+    let mut vibe_feed = RelationSpec::new("vibe_feed", &[]);
+    vibe_feed.text_params = vec!["vibeId".to_string()];
+    vibe_feed.remote = Some(remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes"));
+    vibe_feed.edge_fields = edge_fields();
     let mut history = RelationSpec::global("history");
     history.remote = Some(remote("MomentsHistory", backward, "5.minutes"));
     let mut by_user = RelationSpec::new("by_user", &["userId"]);
@@ -70,7 +75,7 @@ pub fn moments_spec() -> ModelSpec {
         UpdatesSpec { subscription: "MomentRemoved".to_string(), deleted_by: None, set: Map::new(), removes: true, debounce: None, root: None, id: None },
     ];
     pulse.remote = Some(pulse_remote);
-    spec.relations.extend([feed, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
+    spec.relations.extend([feed, vibe_feed, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
     spec.listens = vec![UpdatesSpec { subscription: "MomentListen".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None },
         UpdatesSpec { subscription: "MomentWrapped".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: Some("momentWrapped.wrapped".to_string()), id: Some("key".to_string()) },
         UpdatesSpec { subscription: "MomentDebounced".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: Some("300.milliseconds".to_string()), root: None, id: None },
@@ -84,6 +89,10 @@ pub fn moments_spec() -> ModelSpec {
         ignoring_action(),
     ];
     spec
+}
+
+fn edge_fields() -> Vec<FieldSpec> {
+    vec![FieldSpec::scalar("impressionUuid", ScalarKind::Str).nullable(), FieldSpec::scalar("impressionScore", ScalarKind::Int).nullable()]
 }
 
 fn bound(name: &str, shape: RootShape, mutation: &str) -> ActionDeclaration {

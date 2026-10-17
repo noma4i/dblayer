@@ -79,6 +79,20 @@ pub enum ScopeOp {
     Detach { scope: ScopeRef, row: RowId },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum EdgeValue {
+    Whole(i64),
+    Fraction(f64),
+    Text(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EdgeWrite {
+    pub scope: ScopeRef,
+    pub row: RowId,
+    pub values: Vec<(String, EdgeValue)>,
+}
+
 impl ScopeOp {
     pub fn scope(&self) -> &ScopeRef {
         match self {
@@ -180,6 +194,7 @@ pub struct CommitEnvelope {
     pub tx_id: Uuid,
     pub entity_ops: Vec<EntityOp>,
     pub scope_ops: Vec<ScopeOp>,
+    pub edge_writes: Vec<EdgeWrite>,
     pub file_ops: Vec<FileOp>,
     pub operation_transitions: Vec<OperationTransition>,
     pub window: Option<WindowSave>,
@@ -209,6 +224,7 @@ impl CommitEnvelope {
             tx_id: Uuid::new_v4(),
             entity_ops: Vec::new(),
             scope_ops: Vec::new(),
+            edge_writes: Vec::new(),
             file_ops: Vec::new(),
             operation_transitions: Vec::new(),
             window: None,
@@ -219,7 +235,7 @@ impl CommitEnvelope {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none()
+        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none()
     }
 
     pub fn validate(&self, current: Generation) -> Result<(), EnvelopeFault> {

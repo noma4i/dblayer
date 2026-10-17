@@ -594,6 +594,8 @@ pub struct RelationSpec {
     pub joins_created: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node: Option<NodeRead>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_fields: Vec<FieldSpec>,
 }
 
 impl RelationSpec {
@@ -608,6 +610,7 @@ impl RelationSpec {
             joins_events: false,
             joins_created: false,
             node: None,
+            edge_fields: Vec::new(),
         }
     }
 

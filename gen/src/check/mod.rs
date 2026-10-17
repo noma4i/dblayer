@@ -189,6 +189,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Union, "shared") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
         (Context::Remote, "query") => plain(Shape::Const, vec![key("root", Want::Any, false)]),
         (Context::Remote, "paginate") => plain(Shape::Int, vec![key("backward", Want::Bool, false), key("cursor", Want::Symbol, false), key("from", Want::Any, false), key("cursor_type", Want::Symbol, false)]),
+        (Context::Remote, "edge") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
         (Context::Remote, "list") => plain(Shape::Nothing, vec![]),
         (Context::Remote, "fresh_for") => plain(Shape::Duration, vec![key("empty", Want::Duration, false)]),
         (Context::Remote, "max_pages") => plain(Shape::Int, vec![]),
@@ -688,10 +689,30 @@ fn check_remote(remote: &Call, report: &mut impl FnMut(usize, usize, String)) {
     if let Some(call) = lines.iter().find(|call| call.word == "max_pages").filter(|_| !has("paginate")) {
         report(call.line, call.column, "`max_pages` needs `paginate`".to_string());
     }
+    check_edges(&lines, has("paginate"), report);
     let mut seen = HashSet::new();
     for call in &lines {
-        if call.word != "updates" && !seen.insert(call.word.as_str()) {
+        if !matches!(call.word.as_str(), "updates" | "edge") && !seen.insert(call.word.as_str()) {
             report(call.line, call.column, format!("`{}` is declared twice", call.word));
+        }
+    }
+}
+
+fn check_edges(lines: &[&Call], paginated: bool, report: &mut impl FnMut(usize, usize, String)) {
+    let mut names = HashSet::new();
+    for edge in lines.iter().filter(|call| call.word == "edge") {
+        let Some(field) = edge.block.iter().flatten().next() else { continue };
+        check_call(field, Context::Schema, report);
+        let name = symbol_name(field.args.first()).unwrap_or_default();
+        let has = |key: &str| field.options.iter().any(|pair| pair.key == key);
+        if !names.insert(name.to_string()) {
+            report(field.line, field.column, format!("edge `{name}` is declared twice"));
+        } else if !paginated {
+            report(field.line, field.column, format!("edge `{name}` needs `paginate` in its scope"));
+        } else if !has("null") && !has("optional") {
+            report(field.line, field.column, format!("edge `{name}` needs `null: true` or `optional: true`"));
+        } else if ["merge", "local", "index", "default"].iter().any(|key| has(key)) {
+            report(field.line, field.column, format!("edge `{name}` cannot set `merge`, `local`, `index` or `default`"));
         }
     }
 }
@@ -803,6 +824,8 @@ fn symbol_name(node: Option<&Node<Value>>) -> Option<&str> {
 mod check_tests;
 #[cfg(test)]
 mod option_tests;
+#[cfg(test)]
+mod edge_tests;
 
 fn report_keyed_optimistic(parts: &[Pair], pair: &Pair, report: &mut impl FnMut(usize, usize, String)) {
     let by = parts.iter().find(|part| part.key == "by").and_then(|part| match &part.value.item {

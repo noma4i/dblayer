@@ -284,11 +284,53 @@ A `fetch Operation` line connects a scope to the server. A relation that depends
 | `fresh_for 5.minutes, empty: 30.seconds` | shorter freshness for an empty response | same |
 | `max_pages 5` | page limit per load | none |
 | `variables statusFilter: :status, includeGifts: false` | name the GraphQL variables: a symbol takes the value of a relation param, any other value is sent as written | every param under its own name |
+| `edge :impressionUuid, type: :string, null: true` | a value of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |
 | `updates Subscription, deleted_by: :field` | keep the relation current with a subscription. Write the line again for each subscription. `removes: true` makes every event delete its row, `debounce: 300.milliseconds` merges bursts | none |
 
 An operation name is a constant like `MomentsFeed`, or a string like `"feed"` when the GraphQL name starts with a lowercase letter.
 
 Durations are written `300.milliseconds`, `30.seconds`, `5.minutes`, `2.hours`, `1.day`. Mutations and the `updates` line are described in [server sync](server-sync.md).
+
+## Edge values
+
+A connection edge can carry data of its own next to `node`, for example `impressionUuid` on `feed { edges { impressionUuid node { ... } } }`. The value belongs to the connection, not to the row: the same moment can arrive from the main feed with a value and from a vibe feed with null, and each connection keeps its own.
+
+```ruby
+scope :feed do
+  fetch "feed"
+  paginate 20
+  edge :impressionUuid, type: :string, null: true
+  edge :impressionScore, type: :int, null: true
+end
+
+scope :vibe_feed, text: [:vibeId] do
+  fetch "feed"
+  paginate 20
+  edge :impressionUuid, type: :string, null: true
+end
+```
+
+`edge` takes the options of a field: `type:`, `null:` or `optional:`, `from:` for another key in the response. Each scope with edges generates one value type and two reads with the parameters of the scope: `feedEdge(of:)` reads in place, `readFeedEdge(of:)` waits on a background thread. The row has no new property.
+
+```swift
+let edge = try Moment.feedEdge(of: moment.id)            // MomentFeedEdge?
+let vibe = try await Moment.readVibeFeedEdge(vibeId, of: moment.id)
+edge?.impressionUuid                                      // String?
+```
+
+```kotlin
+val edge = Moment.feedEdge(moment.id)                     // MomentFeedEdge?
+val vibe = Moment.readVibeFeedEdge(vibeId, moment.id)
+edge?.impressionUuid                                      // String?
+```
+
+- A read gives `nil` for a row that is not in the connection, and a value type with `nil` fields for a row without edge values.
+- The answer of the same connection replaces the values of its rows, also with null. A row that leaves the connection loses its values. An answer without edges (a node read, a mutation, an event, a list, another connection) leaves them as they are.
+- The values live in the cache. A database that is rebuilt or reset loses them, and the next load of the connection brings them back.
+- A change of an edge value alone does not change the row or a live list. Read the value when the row is shown.
+- A read takes one row by key from the reader connection. It does not wait for a write and costs the same at 20 and at 2000 rows.
+- `edge` needs `paginate`, and `null: true` or `optional: true`. With `--schema` the key must exist on the edge type of the connection, the operation must select it, and the type must match the schema (`Int` is `:int`, `Float` is `:num`).
+- Edges of a connection nested inside an association give no values. `cursor` and `sequenceNumber` of the edge are not read.
 
 ## Node reads
 

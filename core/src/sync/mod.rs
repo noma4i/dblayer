@@ -172,6 +172,9 @@ pub mod rig;
 pub mod stress;
 
 #[cfg(test)]
+mod edge_tests;
+
+#[cfg(test)]
 mod extract_tests;
 #[cfg(test)]
 mod freshness_tests;

@@ -112,6 +112,18 @@ public struct Query<Model: DBModel>: Sendable {
   /// Reads the query once and keeps its rows in memory, so that `cached()` answers at once. The library keeps the latest queries warm and drops the oldest.
   public func warm() async throws { try await DB.database.warm(queryJson: json) }
 
+  /// The values that the connection of this relation carried on the edge of one row, or nil when the row is not in the connection. It reads one row by key and never waits for a write.
+  public func edgeValues(of id: String) throws -> [String: JSONValue]? {
+    JSONValue.parse(try DB.database.edgeValues(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
+  }
+
+  public func readEdgeValues(of id: String) async throws -> [String: JSONValue]? {
+    let model = Model.modelName, relation = relation ?? "", params = JSONValue.object(params).text
+    return try await Task.detached(priority: .userInitiated) {
+      JSONValue.parse(try DB.database.edgeValues(model: model, relation: relation, paramsJson: params, rowIds: [id])).objectValue[id]?.objectValue
+    }.value
+  }
+
   public func load() async throws { try await DB.database.load(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
   public func refresh() async throws { try await DB.database.refresh(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
   @discardableResult public func loadMore() async throws -> Bool { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }

@@ -3,9 +3,10 @@ use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, StatementStatus};
 use serde_json::{Map, Value};
 
+use crate::commit::EdgeValue;
 use crate::ddl::{manifest_read, ColumnType, REVISION_SEQ_KEY};
 use crate::identity::touches::touch;
 use crate::identity::RowId;
@@ -123,6 +124,13 @@ pub struct Reader<'a> {
     models: &'a BTreeMap<String, ModelInfo>,
 }
 
+#[derive(Debug, Default)]
+pub struct EdgeRead {
+    pub members: std::collections::BTreeMap<String, Vec<(String, EdgeValue)>>,
+    pub steps: usize,
+    pub scans: usize,
+}
+
 impl<'a> Reader<'a> {
     pub(crate) fn new(connection: &'a Connection, models: &'a BTreeMap<String, ModelInfo>) -> Self {
         Self { connection, models }
@@ -185,6 +193,40 @@ impl<'a> Reader<'a> {
         let members: Vec<(String, String)> = rows.collect::<Result<_, _>>()?;
         touch(members.len());
         Ok(members)
+    }
+
+    pub fn scope_edges(&self, model: &str, scope_key: &str, row_ids: &[&str]) -> Result<EdgeRead, StoreError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT e.name, e.whole, e.fraction, e.text FROM scope_member AS m \
+             LEFT JOIN scope_edge AS e ON e.model = m.model AND e.scope_key = m.scope_key AND e.row_id = m.row_id \
+             WHERE m.model = ?1 AND m.scope_key = ?2 AND m.row_id = ?3",
+        )?;
+        let mut read = EdgeRead::default();
+        for row_id in row_ids {
+            statement.reset_status(StatementStatus::VmStep);
+            statement.reset_status(StatementStatus::FullscanStep);
+            let mut values = Vec::new();
+            let mut member = false;
+            let mut rows = statement.query(params![model, scope_key, row_id])?;
+            while let Some(row) = rows.next()? {
+                member = true;
+                let Some(name) = row.get::<_, Option<String>>(0)? else { continue };
+                let value = match (row.get::<_, Option<i64>>(1)?, row.get::<_, Option<f64>>(2)?, row.get::<_, Option<String>>(3)?) {
+                    (Some(whole), _, _) => EdgeValue::Whole(whole),
+                    (_, Some(fraction), _) => EdgeValue::Fraction(fraction),
+                    (_, _, Some(text)) => EdgeValue::Text(text),
+                    _ => continue,
+                };
+                values.push((name, value));
+            }
+            drop(rows);
+            read.steps += usize::try_from(statement.get_status(StatementStatus::VmStep)).unwrap_or_default();
+            read.scans += usize::try_from(statement.get_status(StatementStatus::FullscanStep)).unwrap_or_default();
+            if member {
+                read.members.insert(row_id.to_string(), values);
+            }
+        }
+        Ok(read)
     }
 
     pub fn scope_member_positions(&self, model: &str, scope_key: &str, row_ids: &[&str]) -> Result<Vec<(String, String, usize)>, StoreError> {

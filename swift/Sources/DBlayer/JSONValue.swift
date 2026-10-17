@@ -58,6 +58,9 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
   }
 
   public var objectValue: [String: JSONValue] { if case .object(let value) = self { value } else { [:] } }
+  public var intValue: Int? { if case .number(let value) = self { Int(exactly: value) } else { nil } }
+  public var doubleValue: Double? { if case .number(let value) = self { value } else { nil } }
+  public var boolValue: Bool? { if case .bool(let value) = self { value } else { nil } }
   public var stringValue: String? { if case .string(let value) = self { value } else { nil } }
   public var text: String { String(decoding: (try? JSONEncoder().encode(self)) ?? Data("null".utf8), as: UTF8.self) }
 }

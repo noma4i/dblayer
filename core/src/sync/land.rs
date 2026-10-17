@@ -2,10 +2,11 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, EntityOp, EnvelopeFault, ScopeRef, WindowSave, WindowTail, WriteOrigin};
+use crate::commit::{CommitEnvelope, EdgeValue, EdgeWrite, EntityOp, EnvelopeFault, ScopeRef, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
 use crate::db::{Db, Prior, ReplaceRequest};
-use crate::schema::Coverage;
+use crate::schema::{Coverage, FieldKind, FieldSpec};
+use crate::value::ScalarKind;
 use crate::read::{incoming_ids, plan_landing, StoredMember, StoredScope};
 use crate::store::{admit_upsert, PageInfo, PlanCommitError, Reader, StoreError, UpsertAdmission};
 use crate::transport::FetchAttempt;
@@ -24,6 +25,7 @@ pub(crate) struct Landing {
     pub is_first_page: bool,
     pub plans_as_first: bool,
     pub coverage: Coverage,
+    pub edge_fields: Vec<FieldSpec>,
     pub requested_cursor: Option<String>,
     pub page_info: Option<PageInfo>,
     pub attempt: FetchAttempt,
@@ -73,6 +75,30 @@ pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64
     Ok(admitted)
 }
 
+fn edge_writes(scope: &ScopeRef, fields: &[FieldSpec], roots: &[Map<String, Value>], edges: &std::collections::BTreeMap<String, Map<String, Value>>) -> Vec<EdgeWrite> {
+    if fields.is_empty() {
+        return Vec::new();
+    }
+    roots.iter().filter_map(|root| root.get("id").and_then(read_id)).map(|row| {
+        let edge = edges.get(row.as_str());
+        let values = fields.iter().filter_map(|field| {
+            let value = field.decode(&field.read(edge?)?)?;
+            Some((field.name.clone(), edge_value(&field.kind, &value)?))
+        }).collect();
+        EdgeWrite { scope: scope.clone(), row, values }
+    }).collect()
+}
+
+fn edge_value(kind: &FieldKind, value: &Value) -> Option<EdgeValue> {
+    match kind {
+        FieldKind::Scalar { kind: ScalarKind::Int } => value.as_i64().map(EdgeValue::Whole),
+        FieldKind::Scalar { kind: ScalarKind::Num } => value.as_f64().map(EdgeValue::Fraction),
+        FieldKind::Scalar { kind: ScalarKind::Bool } => value.as_bool().map(|flag| EdgeValue::Whole(i64::from(flag))),
+        FieldKind::Scalar { .. } | FieldKind::Enum { .. } => value.as_str().map(|text| EdgeValue::Text(text.to_string())),
+        _ => None,
+    }
+}
+
 impl Inner {
     fn related_upserts(&self, reader: &Reader<'_>, base_revision: i64, related: &[(ModelKey, Map<String, Value>)], planned: &BTreeSet<(ModelKey, RowId)>, drops: &mut usize) -> Result<Vec<EntityOp>, SyncError> {
         let mut ops = Vec::new();
@@ -115,7 +141,7 @@ impl Inner {
 
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
-        let Landing { model, scope, window_key, normalized, is_first_page, plans_as_first, coverage, requested_cursor, page_info, attempt } = landing;
+        let Landing { model, scope, window_key, normalized, is_first_page, plans_as_first, coverage, edge_fields, requested_cursor, page_info, attempt } = landing;
         let generation = self.db.generation();
         if !attempt.applies_to(generation) {
             return Ok(Landed::Discarded(DiscardReason::StaleGeneration));
@@ -168,6 +194,7 @@ impl Inner {
             envelope.entity_ops = self.related_upserts(reader, attempt.base_revision, &normalized.related, &planned, &mut drops)?;
             envelope.entity_ops.extend(plan.entity_ops);
             envelope.scope_ops = plan.scope_ops;
+            envelope.edge_writes = edge_writes(&scope, &edge_fields, &roots, &normalized.edges);
             envelope.window = Some(WindowSave {
                 key: window_key.clone(),
                 scope: scope.clone(),

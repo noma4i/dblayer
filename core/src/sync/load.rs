@@ -7,7 +7,7 @@ use crate::commit::ScopeRef;
 use crate::identity::ModelKey;
 use crate::pacing::{selected_policy, FetchVerdict};
 use crate::read::{LoadMoreVerdict, PageChain};
-use crate::schema::{Coverage, PageDirection, RemoteShape, RemoteSpec};
+use crate::schema::{Coverage, FieldSpec, PageDirection, RemoteShape, RemoteSpec};
 use crate::store::window_key;
 use crate::transport::{FetchAttempt, FetchReport, GraphQLRequest, Response, ResponseOutcome, RetryClass, RETRY_BACKOFF};
 use crate::value::{normalize_relation_params, relation_scope_key, ScalarKind};
@@ -65,6 +65,7 @@ pub(crate) struct Resolved {
     pub window_key: String,
     pub params: Map<String, Value>,
     pub(crate) scope_values: Map<String, Value>,
+    pub edge_fields: Vec<FieldSpec>,
 }
 
 impl Resolved {
@@ -141,7 +142,7 @@ impl Inner {
         };
         let window_key = window_key(scope_key.as_str(), direction);
         let scope = ScopeRef::new(ModelKey::new(model), scope_key);
-        Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values })
+        Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: declared.edge_fields.clone() })
     }
 
     fn next_issued(&self) -> i64 {
@@ -243,6 +244,7 @@ impl Inner {
             is_first_page,
             plans_as_first,
             coverage: resolved.remote.coverage(),
+            edge_fields: resolved.edge_fields.clone(),
             requested_cursor: cursor,
             page_info: extracted.page_info,
             attempt: FetchAttempt::new(&resolved.window_key, issued, generation, base_revision),
@@ -314,6 +316,24 @@ impl Sync {
         Ok(self.inner.resolve(model, relation, params)?.window_key)
     }
 
+    pub fn edge_values(&self, model: &str, relation: &str, params: &Map<String, Value>, ids: &[String]) -> Result<std::collections::BTreeMap<String, Map<String, Value>>, SyncError> {
+        let resolved = self.inner.resolve(model, relation, params)?;
+        let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let read = self.inner.db.shared.store.read(&[model], |reader| reader.scope_edges(model, resolved.scope.key.as_str(), &wanted))?;
+        {
+            let mut counters = locked(&self.inner.counters);
+            counters.edge_read_steps += read.steps;
+            counters.edge_read_scans += read.scans;
+        }
+        Ok(read.members.into_iter().map(|(id, stored)| {
+            let values = stored.into_iter().filter_map(|(name, value)| {
+                let field = resolved.edge_fields.iter().find(|field| field.name == name)?;
+                Some((name, edge_json(&field.kind, value)))
+            }).collect();
+            (id, values)
+        }).collect())
+    }
+
     pub async fn load(&self, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {
         let resolved = self.inner.resolve(model, relation, params)?;
         self.inner.fetch(&resolved, None, options.force).await
@@ -332,4 +352,14 @@ fn stamp_scope_values(mut nodes: Vec<Map<String, Value>>, values: &Map<String, V
         }
     }
     nodes
+}
+
+fn edge_json(kind: &crate::schema::FieldKind, value: crate::commit::EdgeValue) -> Value {
+    use crate::commit::EdgeValue;
+    match (kind, value) {
+        (crate::schema::FieldKind::Scalar { kind: ScalarKind::Bool }, EdgeValue::Whole(whole)) => Value::Bool(whole != 0),
+        (_, EdgeValue::Whole(whole)) => Value::from(whole),
+        (_, EdgeValue::Fraction(fraction)) => Value::from(fraction),
+        (_, EdgeValue::Text(text)) => Value::String(text),
+    }
 }

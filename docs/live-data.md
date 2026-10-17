@@ -301,6 +301,20 @@ Query("Moment", Moment).search("cats").where(Moment.userId eq id).limit(20)
 
 The default match treats the last word as a prefix and the other words as whole words. A query without an order is ranked by relevance. A query has one search, and the model needs at least one searchable field. Search combines with filters, scopes and limits, and an observed search re-runs when a searchable field changes.
 
+## Edge values
+
+The values of a connection edge are read with `feedEdge(of:)` and `readFeedEdge(of:)`, see [edge values](models.md#edge-values). They are not part of the row, of a live list or of a window, so a change of an edge value delivers nothing. A list that shows the feed reads the value for the row it presents.
+
+```swift
+let list = Moment.feed
+let uuid = try Moment.feedEdge(of: id)?.impressionUuid
+```
+
+```kotlin
+val list = Moment.feed
+val uuid = Moment.feedEdge(id)?.impressionUuid
+```
+
 ## Remote relations are live too
 
 Connecting to a relation that has a `fetch` declaration loads it when its data is stale, keeps it fresh through its `updates` subscription while someone reads it, and lets go a while after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.

@@ -30,6 +30,14 @@ model Moment do
     paginate 20
     fresh_for 5.minutes
     updates MomentEvents, deleted_by: :destroyed
+    edge :impressionUuid, type: :string, null: true
+    edge :impressionScore, type: :int, null: true
+  end
+
+  scope :vibe_feed, text: [:vibeId] do
+    fetch MomentsFeed
+    paginate 20
+    edge :impressionUuid, type: :string, null: true
   end
 
   operation :create do

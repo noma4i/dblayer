@@ -30,7 +30,7 @@ pub(crate) use apply::save_pending;
 pub use boot::BootReport;
 pub use error::StoreError;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
-pub use rows::{Reader, StoredRow};
+pub use rows::{EdgeRead, Reader, StoredRow};
 #[cfg(test)]
 pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;

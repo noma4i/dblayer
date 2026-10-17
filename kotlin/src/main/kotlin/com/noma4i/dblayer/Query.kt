@@ -1,5 +1,8 @@
 package com.noma4i.dblayer
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -127,6 +130,12 @@ class Query<Model : DBModel>(
 
     /** Reads the query once and keeps its rows in memory, so that `cached()` answers at once. The library keeps the latest queries warm and drops the oldest. */
     suspend fun warm() = DBlayer.database.warm(json)
+
+    /** The values that the connection of this relation carried on the edge of one row, or null when the row is not in the connection. It reads one row by key and never waits for a write. */
+    fun edgeValues(id: String): JsonObject? =
+        (Json.parseToJsonElement(DBlayer.database.edgeValues(modelName, relation.orEmpty(), params.toString(), listOf(id))) as JsonObject)[id] as? JsonObject
+
+    suspend fun readEdgeValues(id: String): JsonObject? = withContext(Dispatchers.IO) { edgeValues(id) }
 
     suspend fun load() = DBlayer.database.load(modelName, relation.orEmpty(), params.toString())
     suspend fun refresh() = DBlayer.database.refresh(modelName, relation.orEmpty(), params.toString())

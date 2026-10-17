@@ -19,9 +19,9 @@ pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
-const CACHE_TABLES: [&str; 4] = ["scope_member", "tombstone", "query_window", "query_window_row"];
+const CACHE_TABLES: [&str; 5] = ["scope_member", "scope_edge", "tombstone", "query_window", "query_window_row"];
 
-const CACHE_STATEMENTS: [&str; 8] = [
+const CACHE_STATEMENTS: [&str; 11] = [
     "CREATE TABLE IF NOT EXISTS scope_member (
   model TEXT NOT NULL,
   scope_key TEXT NOT NULL,
@@ -32,6 +32,22 @@ const CACHE_STATEMENTS: [&str; 8] = [
     "CREATE UNIQUE INDEX IF NOT EXISTS scope_walk ON scope_member (model, scope_key, order_key, row_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS scope_order_unique ON scope_member (model, scope_key, order_key)",
     "CREATE INDEX IF NOT EXISTS scope_member_row ON scope_member (model, row_id)",
+    "CREATE TABLE IF NOT EXISTS scope_edge (
+  model TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (model, scope_key, row_id, name)
+) STRICT, WITHOUT ROWID",
+    "CREATE TRIGGER IF NOT EXISTS scope_edge_member_delete AFTER DELETE ON scope_member BEGIN
+  DELETE FROM scope_edge WHERE model = old.model AND scope_key = old.scope_key AND row_id = old.row_id;
+END",
+    "CREATE TRIGGER IF NOT EXISTS scope_edge_member_rename AFTER UPDATE OF row_id ON scope_member BEGIN
+  UPDATE OR REPLACE scope_edge SET row_id = new.row_id WHERE model = old.model AND scope_key = old.scope_key AND row_id = old.row_id;
+END",
     "CREATE TABLE IF NOT EXISTS tombstone (
   model TEXT NOT NULL,
   id TEXT NOT NULL,

@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::{
     CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition,
-    RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
+    EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
@@ -507,6 +507,7 @@ pub(crate) fn apply_envelope(
     };
     wrote |= apply_scope_ops(connection, &moves, &mut result.scopes, &mut result.members)?;
     wrote |= apply_scope_ops(connection, scope_ops, &mut result.scopes, &mut result.members)?;
+    apply_edge_writes(connection, &envelope.edge_writes)?;
     if let Some(window) = &envelope.window {
         save_window(connection, window, envelope.generation, now_ms)?;
     }
@@ -567,6 +568,26 @@ fn collect_scopes(
             for key in keys {
                 scopes.insert(ScopeRef::new(model.clone(), crate::identity::ScopeKey::from_raw(&key?)));
             }
+        }
+    }
+    Ok(())
+}
+
+fn apply_edge_writes(connection: &Connection, writes: &[EdgeWrite]) -> Result<(), StoreError> {
+    for write in writes {
+        let key = params![write.scope.model.as_str(), write.scope.key.as_str(), write.row.as_str()];
+        connection.execute("DELETE FROM scope_edge WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3", key)?;
+        for (name, value) in &write.values {
+            let (whole, fraction, text) = match value {
+                EdgeValue::Whole(whole) => (Some(*whole), None, None),
+                EdgeValue::Fraction(fraction) => (None, Some(*fraction), None),
+                EdgeValue::Text(text) => (None, None, Some(text.as_str())),
+            };
+            connection.execute(
+                "INSERT INTO scope_edge (model, scope_key, row_id, name, whole, fraction, text) \
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3)",
+                params![write.scope.model.as_str(), write.scope.key.as_str(), write.row.as_str(), name, whole, fraction, text],
+            )?;
         }
     }
     Ok(())

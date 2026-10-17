@@ -22,6 +22,8 @@ fn new_counters_have_zero_values() {
         transport_calls: 0,
         lost_outcomes: 0,
         settle_parks: 0,
+        edge_read_steps: 0,
+        edge_read_scans: 0,
     });
 }
 

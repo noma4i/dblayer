@@ -215,3 +215,6 @@ mod interface_tests;
 
 #[cfg(test)]
 mod input_list_tests;
+
+#[cfg(test)]
+mod edge_tests;

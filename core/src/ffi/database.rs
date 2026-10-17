@@ -127,6 +127,11 @@ impl Database {
         let wire = self.wire(&model)?;
         Ok(self.db.peek_row(&model, &id(&row_id)?).map(|row| wire.row(&row)))
     }
+    pub fn edge_values(&self, model: String, relation: String, params_json: String, row_ids: Vec<String>) -> Result<String, DbError> {
+        let sync = self.sync()?.clone();
+        let params = serde_json::from_str(&params_json)?;
+        Ok(serde_json::to_string(&sync.edge_values(&model, &relation, &params, &row_ids)?)?)
+    }
     pub fn peek_query(&self, query_json: String) -> Result<Option<LiveChange>, DbError> {
         let (query, _) = self.parsed_query(&query_json)?;
         let wire = self.wire(query.model.as_str())?;
