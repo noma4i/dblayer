@@ -58,4 +58,34 @@ struct SealedErrorsTests {
       #expect(sessionCode(error, "settled \(code)") == code)
     }
   }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)), arguments: [SessionCode.unauthenticated, .accountUnavailable])
+  func aLostSessionKeepsTheQueuedMutationFailedAndRetrySendsItOnce(_ code: SessionCode) async throws {
+    let transport = MockTransport()
+    try open(transport)
+    transport.enqueue("CreateMoment", failure: DbError.Session(code: code, detail: "\(code)"))
+    let local = try await Moment.create(text: "hello", media: nil)
+    await #expect(throws: DbError.self) { try await local.settled() }
+    #expect(await Moment.find(local.id).current()?.text == "hello")
+
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    try await DB.database.retry(model: Moment.modelName, rowId: local.id)
+    try await local.settled()
+
+    #expect(transport.calls.filter { $0.operationName == "CreateMoment" }.count == 2)
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func anotherSessionCodeRollsTheQueuedMutationBack() async throws {
+    let transport = MockTransport()
+    try open(transport)
+    transport.enqueue("CreateMoment", failure: DbError.Session(code: .rateLimited, detail: "RATE_LIMITED"))
+    let local = try await Moment.create(text: "hello", media: nil)
+
+    await #expect(throws: DbError.self) { try await local.settled() }
+
+    #expect(await Moment.find(local.id).current() == nil)
+  }
 }

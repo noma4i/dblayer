@@ -12,7 +12,7 @@ use crate::operation::{
 use crate::schema::{OnFailure, RemoteShape};
 use crate::store::{PlanCommitError, Reader, StoreError};
 use crate::syncstate::{FailureKind, OperationFailure};
-use crate::transport::{GraphQLRequest, Response, ResponseOutcome, RetryClass, TransportError};
+use crate::transport::{GraphQLRequest, Response, ResponseOutcome, RetryClass, SessionCode, TransportError};
 use crate::value::read_id;
 
 use super::super::error::SyncError;
@@ -180,6 +180,7 @@ impl Inner {
             Delivery::Rejected(failure) | Delivery::Unreached(failure) | Delivery::Unknown(failure) => failure.clone(),
         };
         let unreached = matches!(delivery, Delivery::Unreached(_));
+        let keep = keep || matches!(&delivery, Delivery::Rejected(failure) if failure.kind == FailureKind::Session && SessionCode::of(&failure.message).keeps_queue());
         let rejected = matches!(delivery, Delivery::Rejected(_));
         let result = match delivery {
             Delivery::Response(response) => self.settle_response(sending, operation, response).await?,

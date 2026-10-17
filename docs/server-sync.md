@@ -93,7 +93,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | ----- | -------------- |
 | `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
 | `DB.run(_:variables:)` and generated `Operations.*` calls (`DBlayer.database.run` in Kotlin) | the call got the sealed refusal |
-| `settled()`, `confirmedId()` and `answer()` of a row or an action that has a mutation | the queued mutation got the sealed refusal. The row rolls back or stays failed by its `onFailure` rule, as for any refusal |
+| `settled()`, `confirmedId()` and `answer()` of a row or an action that has a mutation | the queued mutation got the sealed refusal. `unauthenticated` and `accountUnavailable` keep the operation failed and the optimistic row in place: sign in again, call `sessionResume()`, then `retry` (`Moment.retry()`, `DB.database.retry`) sends it once. Every other code follows the `onFailure` rule of the action, as for any refusal |
 | live reads (`live`, `LiveList`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
 `flush()`, `retry()` and `resume()` do not throw for the refusal of one operation. The core keeps the credential and the pending request for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. A refusal with a code outside the `SessionCode` table (for example `INTERNAL_SERVER_ERROR`) stays a `Graphql` error. Errors inside `data` and `errors` of a normal answer stay `Graphql` too.

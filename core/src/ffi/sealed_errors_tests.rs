@@ -135,3 +135,44 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_l
         }
     }
 }
+
+fn graphql_posts(rig: &Rig) -> usize {
+    rig.server.seen().iter().filter(|request| request["path"] == "/api/v3/graphql").count()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_failed_and_retry_sends_it_once() {
+    for (wire, code) in [("UNAUTHENTICATED", SessionCode::Unauthenticated), ("ACCOUNT_UNAVAILABLE", SessionCode::AccountUnavailable)] {
+        let rig = Rig::new();
+        let database = signed_in(&rig).await;
+        let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+        rig.server.refuse_next(wire, false);
+
+        let error = database.settled("Moment".into(), row.id.clone()).await.unwrap_err();
+
+        assert_eq!(session(error).0, code, "{wire}");
+        let stored = database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
+        assert_eq!(stored.and_then(|stored| stored.text("text").map(str::to_string)), Some("hello".to_string()), "{wire}");
+        let states: Vec<_> = database.db.outbox().unwrap().iter().map(|entry| entry.operation.status).collect();
+        assert_eq!(states, [crate::commit::OperationStatus::Failed], "{wire}");
+        database.session_resume().await.unwrap();
+        let before = graphql_posts(&rig);
+
+        database.retry("Moment".into(), row.id.clone()).await.unwrap();
+        let _ = database.settled("Moment".into(), row.id.clone()).await;
+
+        assert_eq!(graphql_posts(&rig) - before, 1, "{wire}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn any_other_session_refusal_rolls_the_queued_mutation_back() {
+    let rig = Rig::new();
+    let database = signed_in(&rig).await;
+    let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+    rig.server.refuse_next("RATE_LIMITED", true);
+
+    database.settled("Moment".into(), row.id.clone()).await.unwrap_err();
+
+    assert!(database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap().is_none());
+}
