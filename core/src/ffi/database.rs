@@ -299,27 +299,27 @@ impl Database {
     }
     pub fn listen(&self) -> Result<(), DbError> {
         let _entered = executor()?.enter();
-        self.sync()?.listen();
+        if let Some(sync) = &self.sync { sync.listen(); }
         Ok(())
     }
     pub fn unlisten(&self) -> Result<(), DbError> {
         let _entered = executor()?.enter();
-        self.sync()?.unlisten();
+        if let Some(sync) = &self.sync { sync.unlisten(); }
         Ok(())
     }
     pub async fn flush(&self) -> Result<(), DbError> {
-        let sync = self.sync()?.clone();
+        let Some(sync) = self.sync.clone() else { return Ok(()) };
         on_executor(async move { sync.flush().await }).await?;
         Ok(())
     }
     pub async fn retry(&self, model: String, row_id: String) -> Result<(), DbError> {
-        let sync = self.sync()?.clone();
+        let Some(sync) = self.sync.clone() else { return Ok(()) };
         let row = id(&row_id)?;
         on_executor(async move { sync.retry(&model, &row).await }).await?;
         Ok(())
     }
     pub async fn retry_all(&self) -> Result<(), DbError> {
-        let sync = self.sync()?.clone();
+        let Some(sync) = self.sync.clone() else { return Ok(()) };
         on_executor(async move { sync.retry_all().await }).await?;
         Ok(())
     }
@@ -330,12 +330,12 @@ impl Database {
         }).await
     }
     pub async fn resume(&self) -> Result<(), DbError> {
-        let sync = self.sync()?.clone();
+        let Some(sync) = self.sync.clone() else { return Ok(()) };
         on_executor(async move { sync.resume().await }).await?;
         Ok(())
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
-    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync()?.clone() })) }
+    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone() })) }
     pub async fn upload(&self, model: String, row_id: String, input_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;

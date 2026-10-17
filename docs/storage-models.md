@@ -33,6 +33,16 @@ val cached = Session.find(edited.id).current()
 edited.destroy()
 ```
 
+A database with only local models needs no server. Open it without a transport. Online tracking, `listen`, `resume`, `flush` and `retry` then do nothing, and calls that need the server fail with `DbError.Invalid`.
+
+```swift
+try DB.open(transport: nil, modelsJSON: modelsJSON, path: path)
+```
+
+```kotlin
+DBlayer.open(null, modelsJson, path)
+```
+
 Local rows notify readers and survive reopening. Create, update and destroy generate no network request and write no outbox entry.
 Their sync state is `synced`, meaning that no server operation is pending.
 
