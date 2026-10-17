@@ -12,6 +12,7 @@ Start with the [model syntax and decode rules](models.md#nested-objects-and-list
 | `field :name, type: :string, from: "full_name"` inside a block | property `name`, JSON key `full_name` |
 | `field :owners, type: [:id]` inside a block | string IDs, including numeric input |
 | `field :attachment, type: MessageAttachment do on GiftAttachment do ... end ... end` | a union, see [unions](#unions) |
+| `field :elements, type: [ScreenElement] do shared do ... end on Button do ... end end` | a list of interface values, see [interfaces and lists](#interfaces-and-lists-of-unions) |
 
 ## Defaults
 
@@ -123,7 +124,78 @@ val gifts = Message.where(Message.attachment eq MessageAttachmentKind.Gift)
 | Answers | an answer replaces the whole value, like any nested value. A new variant clears the columns of the old one |
 | Merge | `merge: :present` keeps the stored value when the server sends null, and `local: true` keeps the field app-owned. Key-by-key merge is not available for a union |
 | Queries | `Message.attachment` compares the variant kind: `==`, `in`, `isNull`, ordering. Variant fields are not queryable |
-| Lists | a list of unions is not supported |
+| Lists | `type: [Name]` with `on` blocks holds a list of variants, see [interfaces and lists](#interfaces-and-lists-of-unions) |
 | Schema | with `--schema`, every `on` type must be a member of the GraphQL union and every member needs an `on` block. An operation document that selects the field must select `__typename` and may name only declared variants in `... on` |
 
 A union is stored in the columns of its row: one text column holds the `__typename`, and each variant has its own columns, prefixed with the field and variant names. Only the active variant has values. A SQLite table has at most 2000 columns, so the generator rejects a model whose union widens a table past that limit: `table row_Message would have 2405 columns, above the SQLite limit of 2000`.
+
+## Interfaces and lists of unions
+
+A GraphQL interface is a union with a `shared` block. The `shared` block declares the interface fields once. Every `on` block declares only the fields of its implementation. A field type of `[Name]` with `on` blocks is a list of variants: each item is one variant.
+
+```ruby
+model CustomScreen do
+  field :slug, type: :string
+  field :spec, type: ScreenSpec, null: true do
+    field :root, type: :id
+    field :elements, type: [ScreenElement] do
+      shared do
+        field :id, type: :id
+        field :children, type: [:id]
+        field :press, type: ScreenAction, null: true
+        field :visible, type: ScreenVisibility, null: true
+      end
+      on ScreenButton do
+        field :label, type: ScreenTextValue, null: true
+      end
+      on ScreenHeading do
+        field :text, type: ScreenTextValue, null: true
+      end
+      on ScreenPressable do
+      end
+    end
+  end
+end
+```
+
+Each variant type holds the shared fields first and its own fields after them. The union type gives one property for each shared field. The property is empty for an unknown variant.
+
+```swift
+let elements = screen.spec?.elements ?? []
+for element in elements {
+  guard let id = element.id else { continue }
+  switch element {
+  case .button(let button): show(id, button.label)
+  case .heading(let heading): show(id, heading.text)
+  case .pressable, .unknown: break
+  }
+  open(element.press, children: element.children ?? [])
+}
+```
+
+```kotlin
+val elements = screen.spec?.elements.orEmpty()
+for (element in elements) {
+    val id = element.id ?: continue
+    when (element) {
+        is ScreenElement.Button -> show(id, element.value.label)
+        is ScreenElement.Heading -> show(id, element.value.text)
+        is ScreenElement.Pressable, is ScreenElement.Unknown -> Unit
+    }
+    open(element.press, element.children.orEmpty())
+}
+```
+
+| Rule | Behavior |
+| ---- | -------- |
+| Shared fields | `shared` is allowed once in a union field. A shared field and a variant field cannot have the same name. `kind` is reserved when a union has shared fields |
+| Empty variant | `on Type do end` is allowed when the union has shared fields: the variant holds only them |
+| Reuse | `type: [ScreenElement]` or `type: ScreenElement` without a block names an interface declared anywhere in the same generator invocation. A union or interface field may be nullable |
+| Tree | a field such as `children` holds keys (`[:id]`), not nested values. The tree is not stored recursively: a screen reads children by key from the same list |
+| Order | the list keeps the order the server sent. An answer replaces the whole list, and an element that changes variant loses the columns and child rows of the old variant |
+| Unknown variant | an item with an unknown `__typename` becomes `.unknown(typename:)` / `Unknown`. It keeps the type name only, so its shared fields are empty. An item without a text `__typename` is dropped |
+| Nested unions | a variant or the `shared` block may hold unions and lists of values. A variant of one union may hold a union, and a type may be a variant of several unions |
+| Queries | list items are not queryable. A single interface value compares its kind like any union |
+| Schema | with `--schema`, the `on` types must be the implementations of the interface and every implementation needs an `on` block. The `shared` fields must exist on the interface and on every implementation. The operation must select `__typename` and may name only declared variants in `... on` |
+
+An interface list is stored in one child table with one row per item: one text column holds the `__typename`, the shared fields take their columns once, and each variant adds its own columns. A model of 33 variants with 334 columns of their own and 20 shared columns takes 359 columns per item. A table has at most 2000 columns, so the generator rejects a wider declaration and names the table: `table row_Screen__spec would have 2406 columns, above the SQLite limit of 2000`. Declare fewer variants or fields, or split the model.

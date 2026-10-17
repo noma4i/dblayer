@@ -1,0 +1,97 @@
+model CustomScreen do
+  field :slug, type: :string
+  field :spec, type: ScreenSpec, null: true do
+    field :root, type: :id
+    field :elements, type: [ScreenElement] do
+      shared do
+        field :id, type: :id
+        field :children, type: [:id]
+        field :press, type: ScreenAction, null: true do
+          on ScreenNavigateAction do
+            field :slug, type: :string
+            field :title, type: :string, null: true
+          end
+          on ScreenOpenChatAction do
+            field :chatId, type: :string
+          end
+          on ScreenOpenExternalAction do
+            field :url, type: :string
+          end
+          on ScreenOpenProfileAction do
+            field :userId, type: :string
+          end
+        end
+        field :visible, type: ScreenVisibility, null: true do
+          on ScreenCondition do
+            field :comparison, type: :string
+            field :negated, type: :bool
+            field :operand, type: ScreenOperand, null: true do
+              on ScreenFlagLiteral do
+                field :flag, type: :bool
+              end
+              on ScreenNumberLiteral do
+                field :number, type: :num
+              end
+              on ScreenStateRef do
+                field :path, type: :string
+              end
+              on ScreenTextLiteral do
+                field :text, type: :string
+              end
+            end
+            field :path, type: :string
+          end
+          on ScreenVisibleAll do
+            field :conditions, type: [ScreenCondition]
+          end
+          on ScreenVisibleAny do
+            field :conditions, type: [ScreenCondition]
+          end
+          on ScreenVisibleFlag do
+            field :flag, type: :bool
+          end
+        end
+      end
+      on ScreenButton do
+        field :label, type: ScreenTextValue, null: true do
+          on ScreenStateRef
+          on ScreenTextLiteral
+        end
+        field :disabled, type: ScreenFlagValue, null: true do
+          on ScreenFlagLiteral
+          on ScreenStateRef
+        end
+      end
+      on ScreenColumn do
+        field :gap, type: ScreenNumberValue, null: true do
+          on ScreenNumberLiteral
+          on ScreenStateRef
+        end
+        field :alignItems, type: :string, null: true
+      end
+      on ScreenHeading do
+        field :text, type: ScreenTextValue, null: true
+        field :level, type: :int, null: true
+      end
+      on ScreenPressable do
+      end
+      on ScreenSpacer do
+        field :length, type: ScreenNumberValue, null: true
+      end
+      on ScreenSwitch do
+        field :checked, type: ScreenFlagValue, null: true
+        field :label, type: ScreenTextValue, null: true
+      end
+    end
+    field :state, type: [ScreenStateEntry] do
+      field :path, type: :string
+      field :value, type: ScreenStateValue do
+        on ScreenFlagLiteral
+        on ScreenNumberLiteral
+        on ScreenTextLiteral
+      end
+    end
+  end
+
+  node ScreenNode
+end

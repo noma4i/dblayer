@@ -432,6 +432,54 @@ public struct Presence: DBModel {
     public var user: LiveSource<[User]> { related("user", as: User.self) }
 }
 
+public struct CustomScreen: DBModel {
+    public static let modelName = "CustomScreen"
+    public let id: String
+    public let slug: String
+    public let spec: ScreenSpec?
+    public let sync: SyncInfo
+    public let upload: UploadInfo?
+
+    public init(id: String, slug: String, spec: ScreenSpec? = nil, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil) {
+        self.id = id
+        self.slug = slug
+        self.spec = spec
+        self.sync = sync
+        self.upload = upload
+    }
+
+    public static let wireLayout = "2ee8e83236c749b2249aed88873cc60db6064cf630c886ed538336525207ffbc"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.slug = try r.req(0, \.asText)
+        self.spec = try r.objOpt(1, ScreenSpec.init(cells:))
+        self.sync = SyncInfo(wire: row.sync)
+        self.upload = row.upload.map(UploadInfo.init(wire:))
+    }
+
+    public static let slug = Column<CustomScreen, String>("slug")
+    public static let spec = Column<CustomScreen, ScreenSpec?>("spec")
+    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
+    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
+    public static func node(_ id: String, force: Bool = false) async throws -> Self? {
+        try await readNode(relation: "node", id: id, force: force)
+    }
+    public static func create(slug: String, spec: ScreenSpec? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        values["slug"] = JSONValue.encode(slug)
+        if let value = spec { values["spec"] = JSONValue.encode(value) }
+        return try await create(values: values)
+    }
+    public func update(slug: String? = nil, spec: ScreenSpec?? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = slug { values["slug"] = JSONValue.encode(value) }
+        if let value = spec { values["spec"] = JSONValue.encode(value) }
+        return try await update(values: values)
+    }
+}
+
 public struct StorageRow: DBModel {
     public static let modelName = "StorageRow"
     public let id: String
@@ -1195,6 +1243,1098 @@ public struct NestedMedia: Codable, Sendable, Equatable {
     }
 }
 
+public struct ScreenSpec: Codable, Sendable, Equatable {
+    public let root: String
+    public let elements: [ScreenElement]
+    public let state: [ScreenStateEntry]
+
+    public init(root: String, elements: [ScreenElement], state: [ScreenStateEntry]) {
+        self.root = root
+        self.elements = elements
+        self.state = state
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case root = "root"
+        case elements = "elements"
+        case state = "state"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        root = try container.decode(IDText.self, forKey: .root).value
+        elements = try container.decode([ScreenElement].self, forKey: .elements)
+        state = try container.decode([ScreenStateEntry].self, forKey: .state)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        root = try r.req(0, \.asId)
+        elements = try r.arr(1, ScreenElement.init(cells:))
+        state = try r.arr(2, ScreenStateEntry.init(cells:))
+    }
+}
+
+public enum ScreenElement: Codable, Sendable, Equatable {
+    case button(ScreenButton)
+    case column(ScreenColumn)
+    case heading(ScreenHeading)
+    case pressable(ScreenPressable)
+    case spacer(ScreenSpacer)
+    case `switch`(ScreenSwitch)
+    case unknown(typename: String)
+
+    public init(from decoder: Decoder) throws {
+        let typename = try decoder.container(keyedBy: UnionTypenameKey.self).decode(String.self, forKey: .typename)
+        switch typename {
+        case "ScreenButton": self = .button(try ScreenButton(from: decoder))
+        case "ScreenColumn": self = .column(try ScreenColumn(from: decoder))
+        case "ScreenHeading": self = .heading(try ScreenHeading(from: decoder))
+        case "ScreenPressable": self = .pressable(try ScreenPressable(from: decoder))
+        case "ScreenSpacer": self = .spacer(try ScreenSpacer(from: decoder))
+        case "ScreenSwitch": self = .`switch`(try ScreenSwitch(from: decoder))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .button(value): try JSONValue.tagged("ScreenButton", value).encode(to: encoder)
+        case let .column(value): try JSONValue.tagged("ScreenColumn", value).encode(to: encoder)
+        case let .heading(value): try JSONValue.tagged("ScreenHeading", value).encode(to: encoder)
+        case let .pressable(value): try JSONValue.tagged("ScreenPressable", value).encode(to: encoder)
+        case let .spacer(value): try JSONValue.tagged("ScreenSpacer", value).encode(to: encoder)
+        case let .`switch`(value): try JSONValue.tagged("ScreenSwitch", value).encode(to: encoder)
+        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)
+        }
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        let typename = try r.req(0, \.asText)
+        switch typename {
+        case "ScreenButton": self = .button(try r.obj(1, ScreenButton.init(cells:)))
+        case "ScreenColumn": self = .column(try r.obj(1, ScreenColumn.init(cells:)))
+        case "ScreenHeading": self = .heading(try r.obj(1, ScreenHeading.init(cells:)))
+        case "ScreenPressable": self = .pressable(try r.obj(1, ScreenPressable.init(cells:)))
+        case "ScreenSpacer": self = .spacer(try r.obj(1, ScreenSpacer.init(cells:)))
+        case "ScreenSwitch": self = .`switch`(try r.obj(1, ScreenSwitch.init(cells:)))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public var id: String? {
+        switch self {
+        case let .button(value): return value.id
+        case let .column(value): return value.id
+        case let .heading(value): return value.id
+        case let .pressable(value): return value.id
+        case let .spacer(value): return value.id
+        case let .`switch`(value): return value.id
+        case .unknown: return nil
+        }
+    }
+
+    public var children: [String]? {
+        switch self {
+        case let .button(value): return value.children
+        case let .column(value): return value.children
+        case let .heading(value): return value.children
+        case let .pressable(value): return value.children
+        case let .spacer(value): return value.children
+        case let .`switch`(value): return value.children
+        case .unknown: return nil
+        }
+    }
+
+    public var press: ScreenAction? {
+        switch self {
+        case let .button(value): return value.press
+        case let .column(value): return value.press
+        case let .heading(value): return value.press
+        case let .pressable(value): return value.press
+        case let .spacer(value): return value.press
+        case let .`switch`(value): return value.press
+        case .unknown: return nil
+        }
+    }
+
+    public var visible: ScreenVisibility? {
+        switch self {
+        case let .button(value): return value.visible
+        case let .column(value): return value.visible
+        case let .heading(value): return value.visible
+        case let .pressable(value): return value.visible
+        case let .spacer(value): return value.visible
+        case let .`switch`(value): return value.visible
+        case .unknown: return nil
+        }
+    }
+
+    public var kind: ScreenElementKind? {
+        switch self {
+        case .button: return .button
+        case .column: return .column
+        case .heading: return .heading
+        case .pressable: return .pressable
+        case .spacer: return .spacer
+        case .`switch`: return .`switch`
+        case .unknown: return nil
+        }
+    }
+}
+
+public enum ScreenElementKind: String, Codable, Sendable {
+    case button = "ScreenButton"
+    case column = "ScreenColumn"
+    case heading = "ScreenHeading"
+    case pressable = "ScreenPressable"
+    case spacer = "ScreenSpacer"
+    case `switch` = "ScreenSwitch"
+}
+
+public struct ScreenButton: Codable, Sendable, Equatable {
+    public let id: String
+    public let children: [String]
+    public let press: ScreenAction?
+    public let visible: ScreenVisibility?
+    public let label: ScreenTextValue?
+    public let disabled: ScreenFlagValue?
+
+    public init(id: String, children: [String], press: ScreenAction? = nil, visible: ScreenVisibility? = nil, label: ScreenTextValue? = nil, disabled: ScreenFlagValue? = nil) {
+        self.id = id
+        self.children = children
+        self.press = press
+        self.visible = visible
+        self.label = label
+        self.disabled = disabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case children = "children"
+        case press = "press"
+        case visible = "visible"
+        case label = "label"
+        case disabled = "disabled"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(IDText.self, forKey: .id).value
+        children = try container.decode([IDText].self, forKey: .children).map(\.value)
+        press = try container.decodeIfPresent(ScreenAction.self, forKey: .press)
+        visible = try container.decodeIfPresent(ScreenVisibility.self, forKey: .visible)
+        label = try container.decodeIfPresent(ScreenTextValue.self, forKey: .label)
+        disabled = try container.decodeIfPresent(ScreenFlagValue.self, forKey: .disabled)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        id = try r.req(0, \.asId)
+        children = try r.list(1, \.asId)
+        press = try r.objOpt(2, ScreenAction.init(cells:))
+        visible = try r.objOpt(3, ScreenVisibility.init(cells:))
+        label = try r.objOpt(4, ScreenTextValue.init(cells:))
+        disabled = try r.objOpt(5, ScreenFlagValue.init(cells:))
+    }
+}
+
+public enum ScreenAction: Codable, Sendable, Equatable {
+    case navigate(ScreenNavigateAction)
+    case openChat(ScreenOpenChatAction)
+    case openExternal(ScreenOpenExternalAction)
+    case openProfile(ScreenOpenProfileAction)
+    case unknown(typename: String)
+
+    public init(from decoder: Decoder) throws {
+        let typename = try decoder.container(keyedBy: UnionTypenameKey.self).decode(String.self, forKey: .typename)
+        switch typename {
+        case "ScreenNavigateAction": self = .navigate(try ScreenNavigateAction(from: decoder))
+        case "ScreenOpenChatAction": self = .openChat(try ScreenOpenChatAction(from: decoder))
+        case "ScreenOpenExternalAction": self = .openExternal(try ScreenOpenExternalAction(from: decoder))
+        case "ScreenOpenProfileAction": self = .openProfile(try ScreenOpenProfileAction(from: decoder))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .navigate(value): try JSONValue.tagged("ScreenNavigateAction", value).encode(to: encoder)
+        case let .openChat(value): try JSONValue.tagged("ScreenOpenChatAction", value).encode(to: encoder)
+        case let .openExternal(value): try JSONValue.tagged("ScreenOpenExternalAction", value).encode(to: encoder)
+        case let .openProfile(value): try JSONValue.tagged("ScreenOpenProfileAction", value).encode(to: encoder)
+        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)
+        }
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        let typename = try r.req(0, \.asText)
+        switch typename {
+        case "ScreenNavigateAction": self = .navigate(try r.obj(1, ScreenNavigateAction.init(cells:)))
+        case "ScreenOpenChatAction": self = .openChat(try r.obj(1, ScreenOpenChatAction.init(cells:)))
+        case "ScreenOpenExternalAction": self = .openExternal(try r.obj(1, ScreenOpenExternalAction.init(cells:)))
+        case "ScreenOpenProfileAction": self = .openProfile(try r.obj(1, ScreenOpenProfileAction.init(cells:)))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public var kind: ScreenActionKind? {
+        switch self {
+        case .navigate: return .navigate
+        case .openChat: return .openChat
+        case .openExternal: return .openExternal
+        case .openProfile: return .openProfile
+        case .unknown: return nil
+        }
+    }
+}
+
+public enum ScreenActionKind: String, Codable, Sendable {
+    case navigate = "ScreenNavigateAction"
+    case openChat = "ScreenOpenChatAction"
+    case openExternal = "ScreenOpenExternalAction"
+    case openProfile = "ScreenOpenProfileAction"
+}
+
+public struct ScreenNavigateAction: Codable, Sendable, Equatable {
+    public let slug: String
+    public let title: String?
+
+    public init(slug: String, title: String? = nil) {
+        self.slug = slug
+        self.title = title
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case slug = "slug"
+        case title = "title"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        slug = try container.decode(String.self, forKey: .slug)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        slug = try r.req(0, \.asText)
+        title = try r.opt(1, \.asText)
+    }
+}
+
+public struct ScreenOpenChatAction: Codable, Sendable, Equatable {
+    public let chatId: String
+
+    public init(chatId: String) {
+        self.chatId = chatId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case chatId = "chatId"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        chatId = try container.decode(String.self, forKey: .chatId)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        chatId = try r.req(0, \.asText)
+    }
+}
+
+public struct ScreenOpenExternalAction: Codable, Sendable, Equatable {
+    public let url: String
+
+    public init(url: String) {
+        self.url = url
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case url = "url"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = try container.decode(String.self, forKey: .url)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        url = try r.req(0, \.asText)
+    }
+}
+
+public struct ScreenOpenProfileAction: Codable, Sendable, Equatable {
+    public let userId: String
+
+    public init(userId: String) {
+        self.userId = userId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case userId = "userId"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userId = try container.decode(String.self, forKey: .userId)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        userId = try r.req(0, \.asText)
+    }
+}
+
+public enum ScreenVisibility: Codable, Sendable, Equatable {
+    case condition(ScreenCondition)
+    case visibleAll(ScreenVisibleAll)
+    case visibleAny(ScreenVisibleAny)
+    case visibleFlag(ScreenVisibleFlag)
+    case unknown(typename: String)
+
+    public init(from decoder: Decoder) throws {
+        let typename = try decoder.container(keyedBy: UnionTypenameKey.self).decode(String.self, forKey: .typename)
+        switch typename {
+        case "ScreenCondition": self = .condition(try ScreenCondition(from: decoder))
+        case "ScreenVisibleAll": self = .visibleAll(try ScreenVisibleAll(from: decoder))
+        case "ScreenVisibleAny": self = .visibleAny(try ScreenVisibleAny(from: decoder))
+        case "ScreenVisibleFlag": self = .visibleFlag(try ScreenVisibleFlag(from: decoder))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .condition(value): try JSONValue.tagged("ScreenCondition", value).encode(to: encoder)
+        case let .visibleAll(value): try JSONValue.tagged("ScreenVisibleAll", value).encode(to: encoder)
+        case let .visibleAny(value): try JSONValue.tagged("ScreenVisibleAny", value).encode(to: encoder)
+        case let .visibleFlag(value): try JSONValue.tagged("ScreenVisibleFlag", value).encode(to: encoder)
+        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)
+        }
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        let typename = try r.req(0, \.asText)
+        switch typename {
+        case "ScreenCondition": self = .condition(try r.obj(1, ScreenCondition.init(cells:)))
+        case "ScreenVisibleAll": self = .visibleAll(try r.obj(1, ScreenVisibleAll.init(cells:)))
+        case "ScreenVisibleAny": self = .visibleAny(try r.obj(1, ScreenVisibleAny.init(cells:)))
+        case "ScreenVisibleFlag": self = .visibleFlag(try r.obj(1, ScreenVisibleFlag.init(cells:)))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public var kind: ScreenVisibilityKind? {
+        switch self {
+        case .condition: return .condition
+        case .visibleAll: return .visibleAll
+        case .visibleAny: return .visibleAny
+        case .visibleFlag: return .visibleFlag
+        case .unknown: return nil
+        }
+    }
+}
+
+public enum ScreenVisibilityKind: String, Codable, Sendable {
+    case condition = "ScreenCondition"
+    case visibleAll = "ScreenVisibleAll"
+    case visibleAny = "ScreenVisibleAny"
+    case visibleFlag = "ScreenVisibleFlag"
+}
+
+public struct ScreenCondition: Codable, Sendable, Equatable {
+    public let comparison: String
+    public let negated: Bool
+    public let operand: ScreenOperand?
+    public let path: String
+
+    public init(comparison: String, negated: Bool, operand: ScreenOperand? = nil, path: String) {
+        self.comparison = comparison
+        self.negated = negated
+        self.operand = operand
+        self.path = path
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case comparison = "comparison"
+        case negated = "negated"
+        case operand = "operand"
+        case path = "path"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        comparison = try container.decode(String.self, forKey: .comparison)
+        negated = try container.decode(Bool.self, forKey: .negated)
+        operand = try container.decodeIfPresent(ScreenOperand.self, forKey: .operand)
+        path = try container.decode(String.self, forKey: .path)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        comparison = try r.req(0, \.asText)
+        negated = try r.req(1, \.asBool)
+        operand = try r.objOpt(2, ScreenOperand.init(cells:))
+        path = try r.req(3, \.asText)
+    }
+}
+
+public enum ScreenOperand: Codable, Sendable, Equatable {
+    case flagLiteral(ScreenFlagLiteral)
+    case numberLiteral(ScreenNumberLiteral)
+    case stateRef(ScreenStateRef)
+    case textLiteral(ScreenTextLiteral)
+    case unknown(typename: String)
+
+    public init(from decoder: Decoder) throws {
+        let typename = try decoder.container(keyedBy: UnionTypenameKey.self).decode(String.self, forKey: .typename)
+        switch typename {
+        case "ScreenFlagLiteral": self = .flagLiteral(try ScreenFlagLiteral(from: decoder))
+        case "ScreenNumberLiteral": self = .numberLiteral(try ScreenNumberLiteral(from: decoder))
+        case "ScreenStateRef": self = .stateRef(try ScreenStateRef(from: decoder))
+        case "ScreenTextLiteral": self = .textLiteral(try ScreenTextLiteral(from: decoder))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .flagLiteral(value): try JSONValue.tagged("ScreenFlagLiteral", value).encode(to: encoder)
+        case let .numberLiteral(value): try JSONValue.tagged("ScreenNumberLiteral", value).encode(to: encoder)
+        case let .stateRef(value): try JSONValue.tagged("ScreenStateRef", value).encode(to: encoder)
+        case let .textLiteral(value): try JSONValue.tagged("ScreenTextLiteral", value).encode(to: encoder)
+        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)
+        }
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        let typename = try r.req(0, \.asText)
+        switch typename {
+        case "ScreenFlagLiteral": self = .flagLiteral(try r.obj(1, ScreenFlagLiteral.init(cells:)))
+        case "ScreenNumberLiteral": self = .numberLiteral(try r.obj(1, ScreenNumberLiteral.init(cells:)))
+        case "ScreenStateRef": self = .stateRef(try r.obj(1, ScreenStateRef.init(cells:)))
+        case "ScreenTextLiteral": self = .textLiteral(try r.obj(1, ScreenTextLiteral.init(cells:)))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public var kind: ScreenOperandKind? {
+        switch self {
+        case .flagLiteral: return .flagLiteral
+        case .numberLiteral: return .numberLiteral
+        case .stateRef: return .stateRef
+        case .textLiteral: return .textLiteral
+        case .unknown: return nil
+        }
+    }
+}
+
+public enum ScreenOperandKind: String, Codable, Sendable {
+    case flagLiteral = "ScreenFlagLiteral"
+    case numberLiteral = "ScreenNumberLiteral"
+    case stateRef = "ScreenStateRef"
+    case textLiteral = "ScreenTextLiteral"
+}
+
+public struct ScreenFlagLiteral: Codable, Sendable, Equatable {
+    public let flag: Bool
+
+    public init(flag: Bool) {
+        self.flag = flag
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case flag = "flag"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        flag = try container.decode(Bool.self, forKey: .flag)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        flag = try r.req(0, \.asBool)
+    }
+}
+
+public struct ScreenNumberLiteral: Codable, Sendable, Equatable {
+    public let number: Double
+
+    public init(number: Double) {
+        self.number = number
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case number = "number"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        number = try container.decode(Double.self, forKey: .number)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        number = try r.req(0, \.asDouble)
+    }
+}
+
+public struct ScreenStateRef: Codable, Sendable, Equatable {
+    public let path: String
+
+    public init(path: String) {
+        self.path = path
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path = "path"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        path = try container.decode(String.self, forKey: .path)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        path = try r.req(0, \.asText)
+    }
+}
+
+public struct ScreenTextLiteral: Codable, Sendable, Equatable {
+    public let text: String
+
+    public init(text: String) {
+        self.text = text
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text = "text"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        text = try r.req(0, \.asText)
+    }
+}
+
+public struct ScreenVisibleAll: Codable, Sendable, Equatable {
+    public let conditions: [ScreenCondition]
+
+    public init(conditions: [ScreenCondition]) {
+        self.conditions = conditions
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case conditions = "conditions"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        conditions = try container.decode([ScreenCondition].self, forKey: .conditions)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        conditions = try r.arr(0, ScreenCondition.init(cells:))
+    }
+}
+
+public struct ScreenVisibleAny: Codable, Sendable, Equatable {
+    public let conditions: [ScreenCondition]
+
+    public init(conditions: [ScreenCondition]) {
+        self.conditions = conditions
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case conditions = "conditions"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        conditions = try container.decode([ScreenCondition].self, forKey: .conditions)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        conditions = try r.arr(0, ScreenCondition.init(cells:))
+    }
+}
+
+public struct ScreenVisibleFlag: Codable, Sendable, Equatable {
+    public let flag: Bool
+
+    public init(flag: Bool) {
+        self.flag = flag
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case flag = "flag"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        flag = try container.decode(Bool.self, forKey: .flag)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        flag = try r.req(0, \.asBool)
+    }
+}
+
+public enum ScreenTextValue: Codable, Sendable, Equatable {
+    case stateRef(ScreenStateRef)
+    case textLiteral(ScreenTextLiteral)
+    case unknown(typename: String)
+
+    public init(from decoder: Decoder) throws {
+        let typename = try decoder.container(keyedBy: UnionTypenameKey.self).decode(String.self, forKey: .typename)
+        switch typename {
+        case "ScreenStateRef": self = .stateRef(try ScreenStateRef(from: decoder))
+        case "ScreenTextLiteral": self = .textLiteral(try ScreenTextLiteral(from: decoder))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .stateRef(value): try JSONValue.tagged("ScreenStateRef", value).encode(to: encoder)
+        case let .textLiteral(value): try JSONValue.tagged("ScreenTextLiteral", value).encode(to: encoder)
+        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)
+        }
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        let typename = try r.req(0, \.asText)
+        switch typename {
+        case "ScreenStateRef": self = .stateRef(try r.obj(1, ScreenStateRef.init(cells:)))
+        case "ScreenTextLiteral": self = .textLiteral(try r.obj(1, ScreenTextLiteral.init(cells:)))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public var kind: ScreenTextValueKind? {
+        switch self {
+        case .stateRef: return .stateRef
+        case .textLiteral: return .textLiteral
+        case .unknown: return nil
+        }
+    }
+}
+
+public enum ScreenTextValueKind: String, Codable, Sendable {
+    case stateRef = "ScreenStateRef"
+    case textLiteral = "ScreenTextLiteral"
+}
+
+public enum ScreenFlagValue: Codable, Sendable, Equatable {
+    case flagLiteral(ScreenFlagLiteral)
+    case stateRef(ScreenStateRef)
+    case unknown(typename: String)
+
+    public init(from decoder: Decoder) throws {
+        let typename = try decoder.container(keyedBy: UnionTypenameKey.self).decode(String.self, forKey: .typename)
+        switch typename {
+        case "ScreenFlagLiteral": self = .flagLiteral(try ScreenFlagLiteral(from: decoder))
+        case "ScreenStateRef": self = .stateRef(try ScreenStateRef(from: decoder))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .flagLiteral(value): try JSONValue.tagged("ScreenFlagLiteral", value).encode(to: encoder)
+        case let .stateRef(value): try JSONValue.tagged("ScreenStateRef", value).encode(to: encoder)
+        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)
+        }
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        let typename = try r.req(0, \.asText)
+        switch typename {
+        case "ScreenFlagLiteral": self = .flagLiteral(try r.obj(1, ScreenFlagLiteral.init(cells:)))
+        case "ScreenStateRef": self = .stateRef(try r.obj(1, ScreenStateRef.init(cells:)))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public var kind: ScreenFlagValueKind? {
+        switch self {
+        case .flagLiteral: return .flagLiteral
+        case .stateRef: return .stateRef
+        case .unknown: return nil
+        }
+    }
+}
+
+public enum ScreenFlagValueKind: String, Codable, Sendable {
+    case flagLiteral = "ScreenFlagLiteral"
+    case stateRef = "ScreenStateRef"
+}
+
+public struct ScreenColumn: Codable, Sendable, Equatable {
+    public let id: String
+    public let children: [String]
+    public let press: ScreenAction?
+    public let visible: ScreenVisibility?
+    public let gap: ScreenNumberValue?
+    public let alignItems: String?
+
+    public init(id: String, children: [String], press: ScreenAction? = nil, visible: ScreenVisibility? = nil, gap: ScreenNumberValue? = nil, alignItems: String? = nil) {
+        self.id = id
+        self.children = children
+        self.press = press
+        self.visible = visible
+        self.gap = gap
+        self.alignItems = alignItems
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case children = "children"
+        case press = "press"
+        case visible = "visible"
+        case gap = "gap"
+        case alignItems = "alignItems"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(IDText.self, forKey: .id).value
+        children = try container.decode([IDText].self, forKey: .children).map(\.value)
+        press = try container.decodeIfPresent(ScreenAction.self, forKey: .press)
+        visible = try container.decodeIfPresent(ScreenVisibility.self, forKey: .visible)
+        gap = try container.decodeIfPresent(ScreenNumberValue.self, forKey: .gap)
+        alignItems = try container.decodeIfPresent(String.self, forKey: .alignItems)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        id = try r.req(0, \.asId)
+        children = try r.list(1, \.asId)
+        press = try r.objOpt(2, ScreenAction.init(cells:))
+        visible = try r.objOpt(3, ScreenVisibility.init(cells:))
+        gap = try r.objOpt(4, ScreenNumberValue.init(cells:))
+        alignItems = try r.opt(5, \.asText)
+    }
+}
+
+public enum ScreenNumberValue: Codable, Sendable, Equatable {
+    case numberLiteral(ScreenNumberLiteral)
+    case stateRef(ScreenStateRef)
+    case unknown(typename: String)
+
+    public init(from decoder: Decoder) throws {
+        let typename = try decoder.container(keyedBy: UnionTypenameKey.self).decode(String.self, forKey: .typename)
+        switch typename {
+        case "ScreenNumberLiteral": self = .numberLiteral(try ScreenNumberLiteral(from: decoder))
+        case "ScreenStateRef": self = .stateRef(try ScreenStateRef(from: decoder))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .numberLiteral(value): try JSONValue.tagged("ScreenNumberLiteral", value).encode(to: encoder)
+        case let .stateRef(value): try JSONValue.tagged("ScreenStateRef", value).encode(to: encoder)
+        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)
+        }
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        let typename = try r.req(0, \.asText)
+        switch typename {
+        case "ScreenNumberLiteral": self = .numberLiteral(try r.obj(1, ScreenNumberLiteral.init(cells:)))
+        case "ScreenStateRef": self = .stateRef(try r.obj(1, ScreenStateRef.init(cells:)))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public var kind: ScreenNumberValueKind? {
+        switch self {
+        case .numberLiteral: return .numberLiteral
+        case .stateRef: return .stateRef
+        case .unknown: return nil
+        }
+    }
+}
+
+public enum ScreenNumberValueKind: String, Codable, Sendable {
+    case numberLiteral = "ScreenNumberLiteral"
+    case stateRef = "ScreenStateRef"
+}
+
+public struct ScreenHeading: Codable, Sendable, Equatable {
+    public let id: String
+    public let children: [String]
+    public let press: ScreenAction?
+    public let visible: ScreenVisibility?
+    public let text: ScreenTextValue?
+    public let level: Int?
+
+    public init(id: String, children: [String], press: ScreenAction? = nil, visible: ScreenVisibility? = nil, text: ScreenTextValue? = nil, level: Int? = nil) {
+        self.id = id
+        self.children = children
+        self.press = press
+        self.visible = visible
+        self.text = text
+        self.level = level
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case children = "children"
+        case press = "press"
+        case visible = "visible"
+        case text = "text"
+        case level = "level"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(IDText.self, forKey: .id).value
+        children = try container.decode([IDText].self, forKey: .children).map(\.value)
+        press = try container.decodeIfPresent(ScreenAction.self, forKey: .press)
+        visible = try container.decodeIfPresent(ScreenVisibility.self, forKey: .visible)
+        text = try container.decodeIfPresent(ScreenTextValue.self, forKey: .text)
+        level = try container.decodeIfPresent(Int.self, forKey: .level)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        id = try r.req(0, \.asId)
+        children = try r.list(1, \.asId)
+        press = try r.objOpt(2, ScreenAction.init(cells:))
+        visible = try r.objOpt(3, ScreenVisibility.init(cells:))
+        text = try r.objOpt(4, ScreenTextValue.init(cells:))
+        level = try r.opt(5, \.asInt)
+    }
+}
+
+public struct ScreenPressable: Codable, Sendable, Equatable {
+    public let id: String
+    public let children: [String]
+    public let press: ScreenAction?
+    public let visible: ScreenVisibility?
+
+    public init(id: String, children: [String], press: ScreenAction? = nil, visible: ScreenVisibility? = nil) {
+        self.id = id
+        self.children = children
+        self.press = press
+        self.visible = visible
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case children = "children"
+        case press = "press"
+        case visible = "visible"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(IDText.self, forKey: .id).value
+        children = try container.decode([IDText].self, forKey: .children).map(\.value)
+        press = try container.decodeIfPresent(ScreenAction.self, forKey: .press)
+        visible = try container.decodeIfPresent(ScreenVisibility.self, forKey: .visible)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        id = try r.req(0, \.asId)
+        children = try r.list(1, \.asId)
+        press = try r.objOpt(2, ScreenAction.init(cells:))
+        visible = try r.objOpt(3, ScreenVisibility.init(cells:))
+    }
+}
+
+public struct ScreenSpacer: Codable, Sendable, Equatable {
+    public let id: String
+    public let children: [String]
+    public let press: ScreenAction?
+    public let visible: ScreenVisibility?
+    public let length: ScreenNumberValue?
+
+    public init(id: String, children: [String], press: ScreenAction? = nil, visible: ScreenVisibility? = nil, length: ScreenNumberValue? = nil) {
+        self.id = id
+        self.children = children
+        self.press = press
+        self.visible = visible
+        self.length = length
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case children = "children"
+        case press = "press"
+        case visible = "visible"
+        case length = "length"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(IDText.self, forKey: .id).value
+        children = try container.decode([IDText].self, forKey: .children).map(\.value)
+        press = try container.decodeIfPresent(ScreenAction.self, forKey: .press)
+        visible = try container.decodeIfPresent(ScreenVisibility.self, forKey: .visible)
+        length = try container.decodeIfPresent(ScreenNumberValue.self, forKey: .length)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        id = try r.req(0, \.asId)
+        children = try r.list(1, \.asId)
+        press = try r.objOpt(2, ScreenAction.init(cells:))
+        visible = try r.objOpt(3, ScreenVisibility.init(cells:))
+        length = try r.objOpt(4, ScreenNumberValue.init(cells:))
+    }
+}
+
+public struct ScreenSwitch: Codable, Sendable, Equatable {
+    public let id: String
+    public let children: [String]
+    public let press: ScreenAction?
+    public let visible: ScreenVisibility?
+    public let checked: ScreenFlagValue?
+    public let label: ScreenTextValue?
+
+    public init(id: String, children: [String], press: ScreenAction? = nil, visible: ScreenVisibility? = nil, checked: ScreenFlagValue? = nil, label: ScreenTextValue? = nil) {
+        self.id = id
+        self.children = children
+        self.press = press
+        self.visible = visible
+        self.checked = checked
+        self.label = label
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case children = "children"
+        case press = "press"
+        case visible = "visible"
+        case checked = "checked"
+        case label = "label"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(IDText.self, forKey: .id).value
+        children = try container.decode([IDText].self, forKey: .children).map(\.value)
+        press = try container.decodeIfPresent(ScreenAction.self, forKey: .press)
+        visible = try container.decodeIfPresent(ScreenVisibility.self, forKey: .visible)
+        checked = try container.decodeIfPresent(ScreenFlagValue.self, forKey: .checked)
+        label = try container.decodeIfPresent(ScreenTextValue.self, forKey: .label)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        id = try r.req(0, \.asId)
+        children = try r.list(1, \.asId)
+        press = try r.objOpt(2, ScreenAction.init(cells:))
+        visible = try r.objOpt(3, ScreenVisibility.init(cells:))
+        checked = try r.objOpt(4, ScreenFlagValue.init(cells:))
+        label = try r.objOpt(5, ScreenTextValue.init(cells:))
+    }
+}
+
+public struct ScreenStateEntry: Codable, Sendable, Equatable {
+    public let path: String
+    public let value: ScreenStateValue
+
+    public init(path: String, value: ScreenStateValue) {
+        self.path = path
+        self.value = value
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path = "path"
+        case value = "value"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        path = try container.decode(String.self, forKey: .path)
+        value = try container.decode(ScreenStateValue.self, forKey: .value)
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        path = try r.req(0, \.asText)
+        value = try r.obj(1, ScreenStateValue.init(cells:))
+    }
+}
+
+public enum ScreenStateValue: Codable, Sendable, Equatable {
+    case flag(ScreenFlagLiteral)
+    case number(ScreenNumberLiteral)
+    case text(ScreenTextLiteral)
+    case unknown(typename: String)
+
+    public init(from decoder: Decoder) throws {
+        let typename = try decoder.container(keyedBy: UnionTypenameKey.self).decode(String.self, forKey: .typename)
+        switch typename {
+        case "ScreenFlagLiteral": self = .flag(try ScreenFlagLiteral(from: decoder))
+        case "ScreenNumberLiteral": self = .number(try ScreenNumberLiteral(from: decoder))
+        case "ScreenTextLiteral": self = .text(try ScreenTextLiteral(from: decoder))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .flag(value): try JSONValue.tagged("ScreenFlagLiteral", value).encode(to: encoder)
+        case let .number(value): try JSONValue.tagged("ScreenNumberLiteral", value).encode(to: encoder)
+        case let .text(value): try JSONValue.tagged("ScreenTextLiteral", value).encode(to: encoder)
+        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)
+        }
+    }
+
+    public init(cells: [Cell]) throws {
+        let r = CellReader(cells)
+        let typename = try r.req(0, \.asText)
+        switch typename {
+        case "ScreenFlagLiteral": self = .flag(try r.obj(1, ScreenFlagLiteral.init(cells:)))
+        case "ScreenNumberLiteral": self = .number(try r.obj(1, ScreenNumberLiteral.init(cells:)))
+        case "ScreenTextLiteral": self = .text(try r.obj(1, ScreenTextLiteral.init(cells:)))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public var kind: ScreenStateValueKind? {
+        switch self {
+        case .flag: return .flag
+        case .number: return .number
+        case .text: return .text
+        case .unknown: return nil
+        }
+    }
+}
+
+public enum ScreenStateValueKind: String, Codable, Sendable {
+    case flag = "ScreenFlagLiteral"
+    case number = "ScreenNumberLiteral"
+    case text = "ScreenTextLiteral"
+}
+
 public enum MomentWidgetItemProps: Codable, Sendable, Equatable {
     case emoji(MomentEmojiProps)
     case label(MomentLabelProps)
@@ -1386,4 +2526,4 @@ public enum VibeKind: Codable, Sendable, Hashable {
     }
 }
 
-public let modelsJSON = #"[{"key":"Chat","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"title","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"lastMessageAt","kind":{"type":"scalar","kind":"date"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"lastMessageId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"shareUrl","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"isPublic","kind":{"type":"scalar","kind":"bool"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[{"name":"messages","kind":"has_many","target":"Message","foreign_key":"chatId","dependent":"destroy","touches_parent":false,"sets":{},"newer":[],"from":null},{"name":"lastMessage","kind":"belongs_to","target":"Message","foreign_key":"lastMessageId","dependent":null,"touches_parent":false,"sets":{},"newer":[],"from":null}],"relations":[{"name":"node","by_columns":[],"text_params":["nodeId"],"remote":{"operation":"ChatNode","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[],"page_size":null,"variables":{"id":{"from":"param","name":"nodeId"}},"root":null},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"node":"one"},{"name":"nodes","by_columns":[],"text_params":[],"remote":{"operation":"ChatsByIds","shape":{"type":"list","coverage":"complete"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[],"page_size":null,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false,"node":"many"},{"name":"recent","by_columns":[],"text_params":[],"remote":null,"is_global":true,"sort":{"fields":[{"column":"lastMessageAt","direction":"desc"}]},"joins_events":false,"joins_created":false}],"indexes":[],"actions":[{"name":"create","root_shape":"upsert","on_failure":"rollback","has_optimistic":true,"has_temp_row_retention":true,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"CreateChat","variables":{},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}}],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]},{"key":"Message","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"chatId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"authorId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"createdAt","kind":{"type":"scalar","kind":"date"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"sequenceNumber","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"attachment","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageAttachment","merge":null,"fields":[{"name":"gift","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"GiftAttachment","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"tier","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":"giftTier","app_type":null,"merge":null},{"name":"status","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"tags","kind":{"type":"list","element":"str"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"moment","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentAttachment","merge":null,"fields":[{"name":"momentId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"caption","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"profile","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ProfileAttachment","merge":null,"fields":[{"name":"user","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"AttachmentUser","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]},{"name":"reaction","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ReactionAttachment","merge":null,"fields":[{"name":"body","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]},{"name":"media","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageMedia","merge":{"type":"keys","keys":{"fileUrl":{"type":"non_empty"}}},"fields":[{"name":"kind","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"transcoded","kind":{"type":"scalar","kind":"bool"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"fileUrl","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}],"associations":[{"name":"chat","kind":"belongs_to","target":"Chat","foreign_key":"chatId","dependent":null,"touches_parent":false,"sets":{"lastMessageAt":"createdAt","lastMessageId":"id"},"newer":[{"child":"createdAt","parent":"lastMessageAt"}],"from":null}],"relations":[{"name":"by_chat","by_columns":["chatId"],"text_params":[],"remote":null,"is_global":false,"sort":{"fields":[{"column":"createdAt","direction":"asc"}]},"joins_events":false,"joins_created":false},{"name":"thread","by_columns":["chatId"],"text_params":[],"remote":{"operation":"ChatThread","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"updates":[],"page_size":30,"variables":{},"root":"chat.messages"},"is_global":false,"sort":{"fields":[{"column":"sequenceNumber","direction":"asc_nulls_last"},{"column":"createdAt","direction":"asc"}]},"joins_events":true,"joins_created":false},{"name":"transcode_status","by_columns":[],"text_params":["nodeId"],"remote":{"operation":"MessageTranscodeStatus","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[],"page_size":null,"variables":{"id":{"from":"param","name":"nodeId"}},"root":null},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"node":"one"},{"name":"chat_media","by_columns":["chatId"],"text_params":[],"remote":{"operation":"ChatMedia","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"updates":[],"page_size":30,"variables":{},"root":"node.messages"},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false},{"name":"history","by_columns":[],"text_params":[],"remote":{"operation":"ChatMessages","shape":{"type":"connection","direction":"backward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"1.minute","empty_stale_time":"10.seconds","selects_page_info":true,"updates":[],"page_size":30,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false}],"indexes":[],"actions":[{"name":"create","root_shape":"upsert","on_failure":"rollback","has_optimistic":true,"has_temp_row_retention":true,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"CreateMessage","variables":{"attachedUserId":"attachedUserId","chatId":"chatId","signedId":"signedId","text":"text"},"optimistic":{},"refetch":[],"args":{"attachedUserId":"id?","signedId":"string?"},"local":["authorId"],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}}],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]},{"key":"Moment","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"uuid","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"searchable":true},{"name":"likedByMe","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"media","kind":{"type":"object"},"nullable":false,"optional":false,"default":{},"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"tone","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":true,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":{"type":"local"}},{"name":"createdAt","kind":{"type":"scalar","kind":"date"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[{"name":"author","kind":"belongs_to","target":"User","foreign_key":"userId","dependent":null,"touches_parent":true,"sets":{},"newer":[],"from":null},{"name":"vibes","kind":"has_many","target":"Vibe","foreign_key":"momentId","dependent":"destroy","touches_parent":false,"sets":{},"newer":[],"from":null}],"relations":[{"name":"transcode_status","by_columns":[],"text_params":["nodeId"],"remote":{"operation":"MomentTranscodeStatus","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[],"page_size":null,"variables":{"momentId":{"from":"param","name":"nodeId"}},"root":null},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"node":"one"},{"name":"recent","by_columns":[],"text_params":[],"remote":null,"is_global":true,"sort":{"fields":[{"column":"createdAt","direction":"desc"}]},"joins_events":false,"joins_created":false},{"name":"by_user","by_columns":["userId"],"text_params":[],"remote":null,"is_global":false,"sort":{"fields":[{"column":"createdAt","direction":"desc"}]},"joins_events":false,"joins_created":false},{"name":"feed","by_columns":[],"text_params":[],"remote":{"operation":"MomentsFeed","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"updates":[{"subscription":"MomentEvents","deleted_by":"destroyed","set":{},"removes":false,"debounce":null,"root":null,"id":null}],"page_size":20,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false}],"indexes":[["uuid"],["userId","createdAt"]],"actions":[{"name":"create","root_shape":"upsert","on_failure":"rollback","has_optimistic":true,"has_temp_row_retention":true,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"CreateMoment","variables":{"media":"media","text":"text"},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}},{"name":"update","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"UpdateMoment","variables":{},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}},{"name":"destroy","root_shape":"destroy","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"DeleteMoment","variables":{},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}},{"name":"like","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"LikeMoment","variables":{"momentId":"id"},"optimistic":{"likedByMe":true},"refetch":["feed"],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}},{"name":"share","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"ShareMoment","variables":{"momentId":"id"},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":"shareMoment.moment","lands":[],"result":{"copies":"int","successMessage":"string"}}],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]},{"key":"NestedSample","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"phase","kind":{"type":"enum","values":["draft","live"]},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedSamplePhase","merge":null},{"name":"value","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValue","merge":null,"fields":[{"name":"title","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"note","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":true,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"nullableDefault","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":true,"default":"default","indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"ownerId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":"owner_id","app_type":null,"merge":null},{"name":"count","kind":{"type":"scalar","kind":"int"},"nullable":false,"optional":false,"default":2,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"ratio","kind":{"type":"scalar","kind":"num"},"nullable":false,"optional":false,"default":1.5,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"enabled","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"createdAt","kind":{"type":"scalar","kind":"date"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"state","kind":{"type":"enum","values":["ready","done"]},"nullable":false,"optional":false,"default":"ready","indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValueState","merge":null},{"name":"labels","kind":{"type":"list","element":"str"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"counts","kind":{"type":"list","element":"int"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"ratios","kind":{"type":"list","element":"num"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"flags","kind":{"type":"list","element":"bool"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"dates","kind":{"type":"list","element":"date"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"owners","kind":{"type":"list","element":"id"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"payload","kind":{"type":"raw"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"rawValue","kind":{"type":"raw"},"nullable":false,"optional":false,"default":{"free":[1,true,null]},"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"preferences","kind":{"type":"object"},"nullable":false,"optional":false,"default":{"label":"base"},"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValuePreferences","merge":null,"fields":[{"name":"label","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"active","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":true,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"presets","kind":{"type":"array"},"nullable":false,"optional":false,"default":[{"label":"first"}],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValuePreferences","merge":null},{"name":"metadata","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"values","kind":{"type":"array"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"child","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValueChild","merge":null,"fields":[{"name":"body","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"horizontal","kind":{"type":"scalar","kind":"num"},"nullable":false,"optional":false,"default":0,"indexed":false,"id_from_parent":null,"from":"x","app_type":null,"merge":null}]},{"name":"children","kind":{"type":"array"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValueChild","merge":null}]},{"name":"values","kind":{"type":"array"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValue","merge":null},{"name":"tree","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedTree","merge":null,"fields":[{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"children","kind":{"type":"array"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedTree","merge":null}]},{"name":"replyTo","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageReplyNode","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"body","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"kind","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"user","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageUserRef","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"fullName","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"username","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"avatarUrl","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"media","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedMedia","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":"","indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"fileUrl","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]}],"associations":[],"relations":[],"indexes":[],"actions":[],"ephemeral":[],"storage":"local","expire_after":null,"listens":[]},{"key":"NestedReference","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"values","kind":{"type":"array"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValue","merge":null}],"associations":[],"relations":[],"indexes":[],"actions":[],"ephemeral":[],"storage":"local","expire_after":null,"listens":[]},{"key":"Presence","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"room","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[{"name":"user","kind":"belongs_to","target":"User","foreign_key":"userId","dependent":null,"touches_parent":false,"sets":{},"newer":[],"from":null}],"relations":[{"name":"for_user","by_columns":["userId"],"text_params":[],"remote":null,"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false},{"name":"online","by_columns":[],"text_params":[],"remote":{"operation":"PresenceOnline","shape":{"type":"list","coverage":"complete"},"stale_time":"30.seconds","empty_stale_time":null,"selects_page_info":false,"updates":[{"subscription":"PresenceChanged","deleted_by":"left","set":{},"removes":false,"debounce":null,"root":null,"id":null}],"page_size":null,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false}],"indexes":[],"actions":[],"ephemeral":[],"storage":"memory","expire_after":"1.minute","listens":[]},{"key":"StorageRow","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"record","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[],"relations":[],"indexes":[],"actions":[],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]},{"key":"UnionSample","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"label","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"attachment","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageAttachment","merge":null},{"name":"props","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentWidgetItemProps","merge":null,"fields":[{"name":"emoji","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentEmojiProps","merge":null,"fields":[{"name":"emoji","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"label","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentLabelProps","merge":null,"fields":[{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"size","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]}],"associations":[],"relations":[],"indexes":[],"actions":[],"ephemeral":[],"storage":"local","expire_after":null,"listens":[]},{"key":"User","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"avatar","kind":{"type":"file"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"birthday","kind":{"type":"scalar","kind":"date"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[],"relations":[{"name":"profile","by_columns":[],"text_params":[],"remote":{"operation":"UserProfile","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[{"subscription":"UserTyping","deleted_by":null,"set":{"typing":true},"removes":false,"debounce":null,"root":null,"id":null}],"page_size":null,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false}],"indexes":[],"actions":[],"ephemeral":[{"name":"typing","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"reset_after":"5.seconds"},{"name":"mood","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"reset_after":null}],"storage":"disk","expire_after":null,"listens":[]},{"key":"Vibe","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"momentId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"kind","kind":{"type":"enum","values":["like","love","laugh"]},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"VibeKind","merge":null}],"associations":[],"relations":[],"indexes":[["userId"]],"actions":[],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]}]"#
+public let modelsJSON = #"[{"key":"Chat","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"title","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"lastMessageAt","kind":{"type":"scalar","kind":"date"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"lastMessageId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"shareUrl","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"isPublic","kind":{"type":"scalar","kind":"bool"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[{"name":"messages","kind":"has_many","target":"Message","foreign_key":"chatId","dependent":"destroy","touches_parent":false,"sets":{},"newer":[],"from":null},{"name":"lastMessage","kind":"belongs_to","target":"Message","foreign_key":"lastMessageId","dependent":null,"touches_parent":false,"sets":{},"newer":[],"from":null}],"relations":[{"name":"node","by_columns":[],"text_params":["nodeId"],"remote":{"operation":"ChatNode","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[],"page_size":null,"variables":{"id":{"from":"param","name":"nodeId"}},"root":null},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"node":"one"},{"name":"nodes","by_columns":[],"text_params":[],"remote":{"operation":"ChatsByIds","shape":{"type":"list","coverage":"complete"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[],"page_size":null,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false,"node":"many"},{"name":"recent","by_columns":[],"text_params":[],"remote":null,"is_global":true,"sort":{"fields":[{"column":"lastMessageAt","direction":"desc"}]},"joins_events":false,"joins_created":false}],"indexes":[],"actions":[{"name":"create","root_shape":"upsert","on_failure":"rollback","has_optimistic":true,"has_temp_row_retention":true,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"CreateChat","variables":{},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}}],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]},{"key":"Message","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"chatId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"authorId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"createdAt","kind":{"type":"scalar","kind":"date"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"sequenceNumber","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"attachment","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageAttachment","merge":null,"fields":[{"name":"gift","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"GiftAttachment","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"tier","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":"giftTier","app_type":null,"merge":null},{"name":"status","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"tags","kind":{"type":"list","element":"str"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"moment","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentAttachment","merge":null,"fields":[{"name":"momentId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"caption","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"profile","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ProfileAttachment","merge":null,"fields":[{"name":"user","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"AttachmentUser","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]},{"name":"reaction","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ReactionAttachment","merge":null,"fields":[{"name":"body","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]},{"name":"media","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageMedia","merge":{"type":"keys","keys":{"fileUrl":{"type":"non_empty"}}},"fields":[{"name":"kind","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"transcoded","kind":{"type":"scalar","kind":"bool"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"fileUrl","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}],"associations":[{"name":"chat","kind":"belongs_to","target":"Chat","foreign_key":"chatId","dependent":null,"touches_parent":false,"sets":{"lastMessageAt":"createdAt","lastMessageId":"id"},"newer":[{"child":"createdAt","parent":"lastMessageAt"}],"from":null}],"relations":[{"name":"by_chat","by_columns":["chatId"],"text_params":[],"remote":null,"is_global":false,"sort":{"fields":[{"column":"createdAt","direction":"asc"}]},"joins_events":false,"joins_created":false},{"name":"thread","by_columns":["chatId"],"text_params":[],"remote":{"operation":"ChatThread","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"updates":[],"page_size":30,"variables":{},"root":"chat.messages"},"is_global":false,"sort":{"fields":[{"column":"sequenceNumber","direction":"asc_nulls_last"},{"column":"createdAt","direction":"asc"}]},"joins_events":true,"joins_created":false},{"name":"transcode_status","by_columns":[],"text_params":["nodeId"],"remote":{"operation":"MessageTranscodeStatus","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[],"page_size":null,"variables":{"id":{"from":"param","name":"nodeId"}},"root":null},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"node":"one"},{"name":"chat_media","by_columns":["chatId"],"text_params":[],"remote":{"operation":"ChatMedia","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"updates":[],"page_size":30,"variables":{},"root":"node.messages"},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false},{"name":"history","by_columns":[],"text_params":[],"remote":{"operation":"ChatMessages","shape":{"type":"connection","direction":"backward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"1.minute","empty_stale_time":"10.seconds","selects_page_info":true,"updates":[],"page_size":30,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false}],"indexes":[],"actions":[{"name":"create","root_shape":"upsert","on_failure":"rollback","has_optimistic":true,"has_temp_row_retention":true,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"CreateMessage","variables":{"attachedUserId":"attachedUserId","chatId":"chatId","signedId":"signedId","text":"text"},"optimistic":{},"refetch":[],"args":{"attachedUserId":"id?","signedId":"string?"},"local":["authorId"],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}}],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]},{"key":"Moment","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"uuid","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"searchable":true},{"name":"likedByMe","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"media","kind":{"type":"object"},"nullable":false,"optional":false,"default":{},"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"tone","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":true,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":{"type":"local"}},{"name":"createdAt","kind":{"type":"scalar","kind":"date"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[{"name":"author","kind":"belongs_to","target":"User","foreign_key":"userId","dependent":null,"touches_parent":true,"sets":{},"newer":[],"from":null},{"name":"vibes","kind":"has_many","target":"Vibe","foreign_key":"momentId","dependent":"destroy","touches_parent":false,"sets":{},"newer":[],"from":null}],"relations":[{"name":"transcode_status","by_columns":[],"text_params":["nodeId"],"remote":{"operation":"MomentTranscodeStatus","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[],"page_size":null,"variables":{"momentId":{"from":"param","name":"nodeId"}},"root":null},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"node":"one"},{"name":"recent","by_columns":[],"text_params":[],"remote":null,"is_global":true,"sort":{"fields":[{"column":"createdAt","direction":"desc"}]},"joins_events":false,"joins_created":false},{"name":"by_user","by_columns":["userId"],"text_params":[],"remote":null,"is_global":false,"sort":{"fields":[{"column":"createdAt","direction":"desc"}]},"joins_events":false,"joins_created":false},{"name":"feed","by_columns":[],"text_params":[],"remote":{"operation":"MomentsFeed","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"updates":[{"subscription":"MomentEvents","deleted_by":"destroyed","set":{},"removes":false,"debounce":null,"root":null,"id":null}],"page_size":20,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false}],"indexes":[["uuid"],["userId","createdAt"]],"actions":[{"name":"create","root_shape":"upsert","on_failure":"rollback","has_optimistic":true,"has_temp_row_retention":true,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"CreateMoment","variables":{"media":"media","text":"text"},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}},{"name":"update","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"UpdateMoment","variables":{},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}},{"name":"destroy","root_shape":"destroy","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"DeleteMoment","variables":{},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}},{"name":"like","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"LikeMoment","variables":{"momentId":"id"},"optimistic":{"likedByMe":true},"refetch":["feed"],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[],"result":{}},{"name":"share","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"has_once":false,"dedupe_key":null,"members":[],"mutation":"ShareMoment","variables":{"momentId":"id"},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":"shareMoment.moment","lands":[],"result":{"copies":"int","successMessage":"string"}}],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]},{"key":"NestedSample","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"phase","kind":{"type":"enum","values":["draft","live"]},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedSamplePhase","merge":null},{"name":"value","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValue","merge":null,"fields":[{"name":"title","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"note","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":true,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"nullableDefault","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":true,"default":"default","indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"ownerId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":"owner_id","app_type":null,"merge":null},{"name":"count","kind":{"type":"scalar","kind":"int"},"nullable":false,"optional":false,"default":2,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"ratio","kind":{"type":"scalar","kind":"num"},"nullable":false,"optional":false,"default":1.5,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"enabled","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"createdAt","kind":{"type":"scalar","kind":"date"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"state","kind":{"type":"enum","values":["ready","done"]},"nullable":false,"optional":false,"default":"ready","indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValueState","merge":null},{"name":"labels","kind":{"type":"list","element":"str"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"counts","kind":{"type":"list","element":"int"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"ratios","kind":{"type":"list","element":"num"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"flags","kind":{"type":"list","element":"bool"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"dates","kind":{"type":"list","element":"date"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"owners","kind":{"type":"list","element":"id"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"payload","kind":{"type":"raw"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"rawValue","kind":{"type":"raw"},"nullable":false,"optional":false,"default":{"free":[1,true,null]},"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"preferences","kind":{"type":"object"},"nullable":false,"optional":false,"default":{"label":"base"},"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValuePreferences","merge":null,"fields":[{"name":"label","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"active","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":true,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"presets","kind":{"type":"array"},"nullable":false,"optional":false,"default":[{"label":"first"}],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValuePreferences","merge":null},{"name":"metadata","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"values","kind":{"type":"array"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"child","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValueChild","merge":null,"fields":[{"name":"body","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"horizontal","kind":{"type":"scalar","kind":"num"},"nullable":false,"optional":false,"default":0,"indexed":false,"id_from_parent":null,"from":"x","app_type":null,"merge":null}]},{"name":"children","kind":{"type":"array"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValueChild","merge":null}]},{"name":"values","kind":{"type":"array"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValue","merge":null},{"name":"tree","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedTree","merge":null,"fields":[{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"children","kind":{"type":"array"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedTree","merge":null}]},{"name":"replyTo","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageReplyNode","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"body","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"kind","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"user","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageUserRef","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"fullName","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"username","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"avatarUrl","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"media","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedMedia","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":"","indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"fileUrl","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]}],"associations":[],"relations":[],"indexes":[],"actions":[],"ephemeral":[],"storage":"local","expire_after":null,"listens":[]},{"key":"NestedReference","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"values","kind":{"type":"array"},"nullable":false,"optional":false,"default":[],"indexed":false,"id_from_parent":null,"from":null,"app_type":"NestedValue","merge":null}],"associations":[],"relations":[],"indexes":[],"actions":[],"ephemeral":[],"storage":"local","expire_after":null,"listens":[]},{"key":"Presence","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"room","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[{"name":"user","kind":"belongs_to","target":"User","foreign_key":"userId","dependent":null,"touches_parent":false,"sets":{},"newer":[],"from":null}],"relations":[{"name":"for_user","by_columns":["userId"],"text_params":[],"remote":null,"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false},{"name":"online","by_columns":[],"text_params":[],"remote":{"operation":"PresenceOnline","shape":{"type":"list","coverage":"complete"},"stale_time":"30.seconds","empty_stale_time":null,"selects_page_info":false,"updates":[{"subscription":"PresenceChanged","deleted_by":"left","set":{},"removes":false,"debounce":null,"root":null,"id":null}],"page_size":null,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false}],"indexes":[],"actions":[],"ephemeral":[],"storage":"memory","expire_after":"1.minute","listens":[]},{"key":"CustomScreen","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"slug","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"spec","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenSpec","merge":null,"fields":[{"name":"root","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"elements","kind":{"type":"union_array"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenElement","merge":null,"fields":[{"name":"button","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenButton","merge":null,"fields":[{"name":"label","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenTextValue","merge":null,"fields":[{"name":"stateRef","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenStateRef","merge":null},{"name":"textLiteral","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenTextLiteral","merge":null}]},{"name":"disabled","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenFlagValue","merge":null,"fields":[{"name":"flagLiteral","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenFlagLiteral","merge":null},{"name":"stateRef","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenStateRef","merge":null}]}]},{"name":"column","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenColumn","merge":null,"fields":[{"name":"gap","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenNumberValue","merge":null,"fields":[{"name":"numberLiteral","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenNumberLiteral","merge":null},{"name":"stateRef","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenStateRef","merge":null}]},{"name":"alignItems","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"heading","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenHeading","merge":null,"fields":[{"name":"text","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenTextValue","merge":null},{"name":"level","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"pressable","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenPressable","merge":null},{"name":"spacer","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenSpacer","merge":null,"fields":[{"name":"length","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenNumberValue","merge":null}]},{"name":"switch","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenSwitch","merge":null,"fields":[{"name":"checked","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenFlagValue","merge":null},{"name":"label","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenTextValue","merge":null}]}],"shared":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"children","kind":{"type":"list","element":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"press","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenAction","merge":null,"fields":[{"name":"navigate","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenNavigateAction","merge":null,"fields":[{"name":"slug","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"title","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"openChat","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenOpenChatAction","merge":null,"fields":[{"name":"chatId","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"openExternal","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenOpenExternalAction","merge":null,"fields":[{"name":"url","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"openProfile","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenOpenProfileAction","merge":null,"fields":[{"name":"userId","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]},{"name":"visible","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenVisibility","merge":null,"fields":[{"name":"condition","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenCondition","merge":null,"fields":[{"name":"comparison","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"negated","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"operand","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenOperand","merge":null,"fields":[{"name":"flagLiteral","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenFlagLiteral","merge":null,"fields":[{"name":"flag","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"numberLiteral","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenNumberLiteral","merge":null,"fields":[{"name":"number","kind":{"type":"scalar","kind":"num"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"stateRef","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenStateRef","merge":null,"fields":[{"name":"path","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"textLiteral","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenTextLiteral","merge":null,"fields":[{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]},{"name":"path","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"visibleAll","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenVisibleAll","merge":null,"fields":[{"name":"conditions","kind":{"type":"array"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenCondition","merge":null}]},{"name":"visibleAny","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenVisibleAny","merge":null,"fields":[{"name":"conditions","kind":{"type":"array"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenCondition","merge":null}]},{"name":"visibleFlag","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenVisibleFlag","merge":null,"fields":[{"name":"flag","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]}]},{"name":"state","kind":{"type":"array"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenStateEntry","merge":null,"fields":[{"name":"path","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"value","kind":{"type":"union"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenStateValue","merge":null,"fields":[{"name":"flag","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenFlagLiteral","merge":null},{"name":"number","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenNumberLiteral","merge":null},{"name":"text","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ScreenTextLiteral","merge":null}]}]}]}],"associations":[],"relations":[{"name":"node","by_columns":[],"text_params":["nodeId"],"remote":{"operation":"ScreenNode","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[],"page_size":null,"variables":{"id":{"from":"param","name":"nodeId"}},"root":null},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"node":"one"}],"indexes":[],"actions":[],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]},{"key":"StorageRow","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"record","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[],"relations":[],"indexes":[],"actions":[],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]},{"key":"UnionSample","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"label","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"attachment","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MessageAttachment","merge":null},{"name":"props","kind":{"type":"union"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentWidgetItemProps","merge":null,"fields":[{"name":"emoji","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentEmojiProps","merge":null,"fields":[{"name":"emoji","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"label","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentLabelProps","merge":null,"fields":[{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"size","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]}],"associations":[],"relations":[],"indexes":[],"actions":[],"ephemeral":[],"storage":"local","expire_after":null,"listens":[]},{"key":"User","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"avatar","kind":{"type":"file"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"birthday","kind":{"type":"scalar","kind":"date"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[],"relations":[{"name":"profile","by_columns":[],"text_params":[],"remote":{"operation":"UserProfile","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"updates":[{"subscription":"UserTyping","deleted_by":null,"set":{"typing":true},"removes":false,"debounce":null,"root":null,"id":null}],"page_size":null,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false}],"indexes":[],"actions":[],"ephemeral":[{"name":"typing","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"reset_after":"5.seconds"},{"name":"mood","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"reset_after":null}],"storage":"disk","expire_after":null,"listens":[]},{"key":"Vibe","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"momentId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"kind","kind":{"type":"enum","values":["like","love","laugh"]},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"VibeKind","merge":null}],"associations":[],"relations":[],"indexes":[["userId"]],"actions":[],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]}]"#

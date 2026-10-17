@@ -99,7 +99,7 @@ val name = message.replyTo?.user?.fullName
 
 Nested blocks contain `field` declarations. Their options include `type`, `null`, `optional`, `default`, `from`, and `values` for enums. Blocks can contain more blocks. An unnamed object joins the owning type and capitalized field name. All generated value types have top-level names.
 
-For reusable names, recursive lists, unrestricted JSON, typed defaults and GraphQL unions, see [nested value types](nested-types.md).
+For reusable names, recursive lists, unrestricted JSON, typed defaults, GraphQL unions and interfaces, see [nested value types](nested-types.md).
 
 | Input | Decoding rule on both platforms |
 | ----- | ------------------------------ |
