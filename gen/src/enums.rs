@@ -1,3 +1,5 @@
+use dblayer::schema::{FieldKind, FieldSpec, ModelSpec};
+
 const SWIFT_KEYWORDS: [&str; 24] = [
     "as", "break", "case", "class", "continue", "default", "defer", "do", "else", "enum", "for", "func", "guard", "if", "import", "in", "is", "let", "return", "switch", "var", "where", "while", "extension",
 ];
@@ -94,4 +96,53 @@ pub fn merge_enums(found: impl IntoIterator<Item = EnumDecl>) -> Result<Vec<Enum
         }
     }
     Ok(merged)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Site {
+    pub decl: EnumDecl,
+    pub model: String,
+    pub scope: Option<String>,
+    pub path: Vec<String>,
+}
+
+fn declared(field: &FieldSpec) -> Option<EnumDecl> {
+    match (&field.kind, &field.app_type) {
+        (FieldKind::Enum { values }, Some(name)) => Some(EnumDecl { name: name.clone(), values: values.clone() }),
+        (FieldKind::List { .. }, Some(name)) if !field.values.is_empty() => Some(EnumDecl { name: name.clone(), values: field.values.clone() }),
+        _ => None,
+    }
+}
+
+fn collect(field: &FieldSpec, label: &str, path: &mut Vec<String>, found: &mut Vec<(EnumDecl, Vec<String>)>) {
+    path.push(label.to_string());
+    found.extend(declared(field).map(|decl| (decl, path.clone())));
+    let variants = matches!(field.kind, FieldKind::Union | FieldKind::UnionArray);
+    for inner in &field.fields {
+        collect(inner, if variants { inner.app_type.as_deref().unwrap_or(&inner.name) } else { &inner.name }, path, found);
+    }
+    for inner in &field.shared {
+        collect(inner, &inner.name, path, found);
+    }
+    path.pop();
+}
+
+pub fn declared_in_field(field: &FieldSpec) -> Vec<EnumDecl> {
+    let mut found = Vec::new();
+    collect(field, &field.name, &mut Vec::new(), &mut found);
+    found.into_iter().map(|(decl, _)| decl).collect()
+}
+
+pub fn declared_in(models: &[ModelSpec]) -> Vec<Site> {
+    let mut sites = Vec::new();
+    for model in models {
+        let own = model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)).map(|field| (None, field));
+        let edges = model.relations.iter().flat_map(|relation| relation.edge_fields.iter().map(|field| (Some(relation.name.clone()), field)));
+        for (scope, field) in own.chain(edges) {
+            let mut found = Vec::new();
+            collect(field, &field.name, &mut Vec::new(), &mut found);
+            sites.extend(found.into_iter().map(|(decl, path)| Site { decl, model: model.key.as_str().to_string(), scope: scope.clone(), path }));
+        }
+    }
+    sites
 }

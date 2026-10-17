@@ -92,6 +92,7 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     let failed = |message: String| vec![FileError { file: names.first().cloned().unwrap_or_default(), error: ParseError::new(0, 0, message) }];
     declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.models, &declared.operations).map_err(&failed)?;
     operation::resolve_result_enums(&mut declared.operations, loaded.as_ref()).map_err(&failed)?;
+    emit::enum_decls(&declared.models, &declared.operations, &declared.inputs).map_err(&failed)?;
     declared.scalars = scalars;
     declared.notes = notes;
     Ok(declared)
@@ -229,3 +230,12 @@ mod scope_default_tests;
 
 #[cfg(test)]
 mod enum_position_tests;
+
+#[cfg(test)]
+mod edge_enum_tests;
+
+#[cfg(test)]
+mod enum_walk_tests;
+
+#[cfg(test)]
+mod enum_schema_conflict_tests;

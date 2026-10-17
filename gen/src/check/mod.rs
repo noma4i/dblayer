@@ -209,11 +209,12 @@ pub fn check(nodes: &[ModelNode]) -> Result<Vec<ModelSpec>, Vec<Found>> {
         check_model(node, nodes, &mut errors);
     }
     check_types(nodes, &mut errors);
-    enums::check_enums(nodes, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }
     let models = build(nodes);
+    enums::check_enums(nodes, &models, &mut errors);
+    if !errors.is_empty() { return Err(errors); }
     nested::check_defaults(nodes, &models, &mut errors);
     if !errors.is_empty() { return Err(errors); }
     let mut resolved = models.clone();

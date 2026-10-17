@@ -41,7 +41,7 @@ Every scalar and enum field is its own typed SQLite column, indexed or not. An u
 
 ### Enums
 
-Every `type: :enum` field becomes an enum named after its owner and field (`VibeKind` for `Vibe.kind`, `MessageReplyNodeKind` for a nested `kind`). `as: Kind` sets the name. A schema enum used by an input object, an operation arg or an operation result keeps the schema name (`WidgetKind`). Each name is declared once, and the same name with different values stops the run.
+Every `type: :enum` field becomes an enum named after its owner and field (`VibeKind` for `Vibe.kind`, `MessageReplyNodeKind` for a nested `kind`). `as: Kind` sets the name. A schema enum used by an input object, an operation arg or an operation result keeps the schema name (`WidgetKind`). Each name is declared once, and the same name with different values stops the run, wherever the two declarations sit: a field, a nested type, a union variant, a shared field or an `edge`. The message names the enum and points at both declarations.
 
 Case names come from the values: lowerCamel in Swift (`like`, `fooBar`, `` `default` `` for a keyword) and PascalCase in Kotlin (`Like`, `FooBar`). `HAPPY` and `FOO_BAR` read as words. A value that starts with a digit, becomes an empty name, becomes `unknown` (Swift) or `Unknown` and `Companion` (Kotlin), or gives the same name as another value stops the run with the value in the message.
 

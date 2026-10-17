@@ -19,7 +19,7 @@ use enums::{emit_kotlin_enums, emit_swift_enums};
 use operations::{emit_kotlin_operations, emit_swift_operations};
 use crate::operation::OperationCall;
 use crate::schema_check::SchemaTypes;
-use crate::enums::{merge_enums, EnumDecl};
+use crate::enums::{declared_in, declared_in_field, merge_enums, EnumDecl};
 
 /// The relation that holds the one row of a model: the only global relation answered as a single record.
 fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
@@ -87,19 +87,15 @@ pub(super) fn text_param(relation: &RelationSpec, key: &str, decls: &[EnumDecl],
     format!("{key}: {kind}{}", default.unwrap_or_default())
 }
 
-pub(crate) fn enum_decls(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> Vec<EnumDecl> {
-    fn walk(field: &FieldSpec, out: &mut Vec<EnumDecl>) {
-        match (&field.kind, &field.app_type) {
-            (FieldKind::Enum { values }, Some(name)) => out.push(EnumDecl { name: name.clone(), values: values.clone() }),
-            (FieldKind::List { .. }, Some(name)) if !field.values.is_empty() => out.push(EnumDecl { name: name.clone(), values: field.values.clone() }),
-            _ => {}
-        }
-        field.fields.iter().chain(field.shared.iter()).for_each(|inner| walk(inner, out));
-    }
+pub(crate) fn enum_decls(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> Result<Vec<EnumDecl>, String> {
     let mut found = schema_types.enums.clone();
-    for model in models { model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)).for_each(|field| walk(field, &mut found)); }
-    for operation in operations { if let Some(root) = &operation.result { walk(root, &mut found); } }
-    merge_enums(found).unwrap_or_default()
+    found.extend(declared_in(models).into_iter().map(|site| site.decl));
+    found.extend(operations.iter().filter_map(|operation| operation.result.as_ref()).flat_map(declared_in_field));
+    merge_enums(found)
+}
+
+fn checked_enum_decls(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> Vec<EnumDecl> {
+    enum_decls(models, operations, schema_types).expect("compile_files refuses enums declared with different values")
 }
 
 fn spread_shared(field: &mut FieldSpec) {
@@ -225,7 +221,7 @@ pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], schem
 }
 
 pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> String {
-    let decls = enum_decls(models, operations, schema_types);
+    let decls = checked_enum_decls(models, operations, schema_types);
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
     let mut edge_types = String::new();
     for model in models {
@@ -349,7 +345,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
 }
 
 pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> String {
-    let decls = enum_decls(models, operations, schema_types);
+    let decls = checked_enum_decls(models, operations, schema_types);
     let one_of = if schema_types.inputs.iter().any(|input| input.one_of) { "import kotlinx.serialization.KSerializer\nimport kotlinx.serialization.SerializationException\nimport kotlinx.serialization.descriptors.SerialDescriptor\nimport kotlinx.serialization.descriptors.buildClassSerialDescriptor\nimport kotlinx.serialization.encoding.Decoder\nimport kotlinx.serialization.encoding.Encoder\n" } else { "" };
     let encoding = if schema_types.inputs.is_empty() { String::new() } else { format!("import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n{one_of}") };
     let mut out = format!("package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\n{encoding}import kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n");
