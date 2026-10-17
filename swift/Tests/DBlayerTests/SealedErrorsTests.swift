@@ -10,15 +10,14 @@ private let sessionCodes: [SessionCode] = [
 
 private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#
 
-@Suite(.serialized)
-struct SealedErrorsTests {
+extension BridgeProbeTests {
   @MainActor
-  private func open(_ transport: MockTransport) throws {
+  private func openSealedRig(_ transport: MockTransport) throws {
     DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: operations)
   }
 
-  private func sessionCode(_ error: Error, _ comment: String) -> SessionCode? {
+  private func sealedCode(_ error: Error, _ comment: String) -> SessionCode? {
     guard case DbError.Session(let code, _) = error else {
       Issue.record("\(comment): surfaced as \(error), not as a session error")
       return nil
@@ -30,7 +29,7 @@ struct SealedErrorsTests {
   @Test(.timeLimit(.minutes(1)), arguments: sessionCodes)
   func aSessionCodeArrivesTypedThroughALoadAnOperationCallAndASettledMutation(_ code: SessionCode) async throws {
     let transport = MockTransport()
-    try open(transport)
+    try openSealedRig(transport)
     let failure = DbError.Session(code: code, detail: "\(code)")
 
     transport.enqueue("MomentsFeed", failure: failure)
@@ -38,7 +37,7 @@ struct SealedErrorsTests {
       try await Moment.feed.load()
       Issue.record("\(code): the load did not throw")
     } catch {
-      #expect(sessionCode(error, "load \(code)") == code)
+      #expect(sealedCode(error, "load \(code)") == code)
     }
 
     transport.enqueue("QrCodeCreate", failure: failure)
@@ -46,7 +45,7 @@ struct SealedErrorsTests {
       _ = try await Operations.qrCodeCreate(kind: "chat", size: 3)
       Issue.record("\(code): the operation call did not throw")
     } catch {
-      #expect(sessionCode(error, "call \(code)") == code)
+      #expect(sealedCode(error, "call \(code)") == code)
     }
 
     transport.enqueue("CreateMoment", failure: failure)
@@ -55,7 +54,7 @@ struct SealedErrorsTests {
       try await local.settled()
       Issue.record("\(code): settled did not throw")
     } catch {
-      #expect(sessionCode(error, "settled \(code)") == code)
+      #expect(sealedCode(error, "settled \(code)") == code)
     }
   }
 
@@ -63,7 +62,7 @@ struct SealedErrorsTests {
   @Test(.timeLimit(.minutes(1)), arguments: [SessionCode.unauthenticated, .accountUnavailable])
   func aLostSessionKeepsTheQueuedMutationFailedAndRetrySendsItOnce(_ code: SessionCode) async throws {
     let transport = MockTransport()
-    try open(transport)
+    try openSealedRig(transport)
     transport.enqueue("CreateMoment", failure: DbError.Session(code: code, detail: "\(code)"))
     let local = try await Moment.create(text: "hello", media: nil)
     await #expect(throws: DbError.self) { try await local.settled() }
@@ -80,7 +79,7 @@ struct SealedErrorsTests {
   @Test(.timeLimit(.minutes(1)))
   func anotherSessionCodeRollsTheQueuedMutationBack() async throws {
     let transport = MockTransport()
-    try open(transport)
+    try openSealedRig(transport)
     transport.enqueue("CreateMoment", failure: DbError.Session(code: .rateLimited, detail: "RATE_LIMITED"))
     let local = try await Moment.create(text: "hello", media: nil)
 
