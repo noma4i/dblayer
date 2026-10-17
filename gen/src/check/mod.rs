@@ -4,6 +4,7 @@ use dblayer::schema::{validate_models, ModelSpec};
 use dblayer::value::SortDirection;
 
 use crate::build::build;
+use crate::operation::{is_arg_kind, ARG_KIND_MESSAGE};
 use crate::parser::{Call, ModelNode, Node, Pair, Value};
 use crate::ParseError;
 
@@ -392,12 +393,6 @@ fn check_standard_input(call: &Call, fields: &HashSet<&str>, report: &mut impl F
     for arg in args.iter().filter(|arg| !pairs.iter().any(|pair| matches!(&pair.value.item, Value::Symbol(name) if *name == arg.key))) {
         report(call.line, call.column, format!("arg `{}` is not named by `input`", arg.key));
     }
-}
-
-const ARG_KIND_MESSAGE: &str = "arg type must be :bool, :int, :num, :string, :id or :ids, each optionally followed by ?";
-
-fn is_arg_kind(value: &Value) -> bool {
-    matches!(value, Value::Symbol(kind) if ["bool", "int", "num", "string", "id", "ids"].contains(&kind.trim_end_matches('?')))
 }
 
 fn check_action(action: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {

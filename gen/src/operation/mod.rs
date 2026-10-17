@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use dblayer::schema::{FieldKind, FieldSpec};
+use dblayer::schema::{FieldKind, FieldSpec, ModelSpec};
 use dblayer::value::ScalarKind;
 
 use crate::build::camel;
@@ -34,6 +34,12 @@ pub(crate) fn is_input_object(kind: &str) -> bool {
     kind.trim_end_matches('?').chars().next().is_some_and(char::is_uppercase)
 }
 
+pub(crate) const ARG_KIND_MESSAGE: &str = "arg type must be :bool, :int, :long, :num, :string, :id, :ids or the name of a schema input object or enum like :QrCodeInput, each optionally followed by ?";
+
+pub(crate) fn is_arg_kind(value: &Value) -> bool {
+    matches!(value, Value::Symbol(kind) if ARG_KINDS.contains(&kind.trim_end_matches('?')) || is_input_object(kind))
+}
+
 pub(crate) fn resolve_result_enums(operations: &mut [OperationCall], schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
     fn walk(field: &mut FieldSpec, schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
         if let (FieldKind::Enum { values }, Some(name)) = (&mut field.kind, field.app_type.clone()) {
@@ -48,9 +54,11 @@ pub(crate) fn resolve_result_enums(operations: &mut [OperationCall], schema: Opt
     operations.iter_mut().filter_map(|operation| operation.result.as_mut()).try_for_each(|root| walk(root, schema))
 }
 
-pub(crate) fn schema_type_names(operations: &[OperationCall]) -> Vec<String> {
+pub(crate) fn schema_type_names(models: &[ModelSpec], operations: &[OperationCall]) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    for (_, kind) in operations.iter().flat_map(|operation| &operation.args).filter(|(_, kind)| is_input_object(kind)) {
+    let model_args = models.iter().flat_map(|model| &model.actions).flat_map(|action| action.args.iter());
+    let operation_args = operations.iter().flat_map(|operation| operation.args.iter().map(|(name, kind)| (name, kind)));
+    for (_, kind) in model_args.chain(operation_args).filter(|(_, kind)| is_input_object(kind)) {
         let name = kind.trim_end_matches('?').to_string();
         if !names.contains(&name) {
             names.push(name);
@@ -68,8 +76,8 @@ fn kinds(call: &Call, file: usize, errors: &mut Vec<Found>) -> Vec<(String, Stri
             continue;
         }
         match &pair.value.item {
-            Value::Symbol(kind) if ARG_KINDS.contains(&kind.trim_end_matches('?')) || is_input_object(kind) => found.push((pair.key.clone(), kind.clone())),
-            _ => errors.push((file, ParseError::new(pair.line, pair.column, "type must be :bool, :int, :long, :num, :string, :id, :ids or the name of a schema input object or enum like :QrCodeInput, each optionally followed by ?"))),
+            Value::Symbol(kind) if is_arg_kind(&pair.value.item) => found.push((pair.key.clone(), kind.clone())),
+            _ => errors.push((file, ParseError::new(pair.line, pair.column, ARG_KIND_MESSAGE))),
         }
     }
     found

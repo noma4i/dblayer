@@ -127,9 +127,9 @@ fn standard_args<'a>(model: &'a ModelSpec, action: &str) -> Vec<(&'a str, &'a st
     model.actions.iter().find(|declared| declared.name == action).map(|declared| declared.args.iter().map(|(name, kind)| (name.as_str(), kind.as_str())).collect()).unwrap_or_default()
 }
 
-fn arg_type(kind: &str, swift: bool) -> &'static str {
+fn arg_type(kind: &str, swift: bool) -> String {
     let kind = kind.trim_end_matches('?');
-    match (kind, swift) {
+    let name = match (kind, swift) {
         ("bool", true) => "Bool",
         ("bool", false) => "Boolean",
         ("int", _) | ("long", true) => "Int",
@@ -137,8 +137,10 @@ fn arg_type(kind: &str, swift: bool) -> &'static str {
         ("num", _) => "Double",
         ("ids", true) => "[String]",
         ("ids", false) => "List<String>",
+        _ if crate::operation::is_input_object(kind) => kind,
         _ => "String",
-    }
+    };
+    name.to_string()
 }
 
 fn swift_default(field: &FieldSpec) -> Option<String> {

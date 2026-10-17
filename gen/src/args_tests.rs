@@ -22,7 +22,7 @@ fn standard_action_args_are_typed_values_that_input_may_name() {
 #[test]
 fn standard_action_args_reject_what_cannot_be_sent() {
     for (case, body, message) in [
-        ("kind", "  operation :create do\n    mutation A\n    args x: :date\n  end", "arg type must be :bool, :int, :num, :string, :id or :ids, each optionally followed by ?"),
+        ("kind", "  operation :create do\n    mutation A\n    args x: :date\n  end", crate::operation::ARG_KIND_MESSAGE),
         ("positional value", "  operation :create do\n    mutation A\n    args 1\n  end", "`args` needs named values"),
         ("field name", "  operation :create do\n    mutation A\n    args name: :string\n  end", "arg `name` has the name of a field"),
         ("unused", "  operation :create do\n    mutation A\n    input name: :name\n    args x: :string\n  end", "arg `x` is not named by `input`"),

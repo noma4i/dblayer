@@ -16,7 +16,7 @@ fn read(source: &str) -> Result<SchemaTypes, String> {
     let path = directory.path().join("schema.graphql");
     fs::write(&path, SCHEMA).unwrap();
     let declared = parse_all(&[source]).unwrap();
-    load_schema_types(Some(&path), &declared.scalars, &declared.operations)
+    load_schema_types(Some(&path), &declared.scalars, &declared.models, &declared.operations)
 }
 
 #[test]
@@ -49,9 +49,9 @@ fn a_name_that_is_not_an_input_object_of_the_schema_fails_and_no_schema_fails_to
         assert_eq!(read(source).unwrap_err(), expected, "{case}");
     }
     let declared = parse_all(&[SEND]).unwrap();
-    let error = load_schema_types(None, &declared.scalars, &declared.operations).unwrap_err();
+    let error = load_schema_types(None, &declared.scalars, &declared.models, &declared.operations).unwrap_err();
     assert!(error.contains("`StickerInput`") && error.contains("--schema"), "{error}");
-    assert_eq!(load_schema_types(None, &Default::default(), &parse_all(&["operation :out do\n  mutation Out\nend\n"]).unwrap().operations).unwrap(), SchemaTypes::default());
+    assert_eq!(load_schema_types(None, &Default::default(), &[], &parse_all(&["operation :out do\n  mutation Out\nend\n"]).unwrap().operations).unwrap(), SchemaTypes::default());
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn nested_input_lists_keep_every_dimension_and_nullability_in_both_languages() {
     let path = directory.path().join("schema.graphql");
     fs::write(&path, "input MatrixInput { cells: [[Int!]!]! sparse: [[String]]! }").unwrap();
     let declared = parse_all(&["operation :send do\n mutation Send\n args input: :MatrixInput\nend\n"]).unwrap();
-    let inputs = load_schema_types(Some(&path), &declared.scalars, &declared.operations).unwrap();
+    let inputs = load_schema_types(Some(&path), &declared.scalars, &declared.models, &declared.operations).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &inputs);
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &inputs);
     assert!(swift.contains("public let cells: [[Int]]"), "{swift}");
@@ -109,7 +109,7 @@ fn a_json_scalar_in_an_input_object_is_raw_json_on_both_platforms_and_default_li
     let path = directory.path().join("schema.graphql");
     fs::write(&path, MOMENT_SCHEMA).unwrap();
     let declared = parse_all(&[MOMENT]).unwrap();
-    let types = load_schema_types(Some(&path), &declared.scalars, &declared.operations).unwrap();
+    let types = load_schema_types(Some(&path), &declared.scalars, &declared.models, &declared.operations).unwrap();
     let objects = &types.inputs;
     let settings = objects.iter().find(|object| object.name == "SettingsInput").unwrap();
     assert_eq!(settings.fields[0], field("itemProps", "json", false, false, false));

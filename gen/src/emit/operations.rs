@@ -6,12 +6,6 @@ use crate::operation::OperationCall;
 use super::nested::{emit_kotlin_type, emit_swift_type};
 
 use super::{arg_type, name};
-use crate::operation::is_input_object;
-
-fn param_type(kind: &str, swift: bool) -> String {
-    if is_input_object(kind) { kind.trim_end_matches('?').to_string() } else { arg_type(kind, swift).to_string() }
-}
-
 fn declared(root: &FieldSpec) -> Vec<&FieldSpec> {
     fn walk<'a>(field: &'a FieldSpec, out: &mut Vec<&'a FieldSpec>) {
         out.push(field);
@@ -44,7 +38,7 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
     writeln!(out, "public enum Operations {{").unwrap();
     for operation in operations {
         let method = name(&operation.name);
-        let params = operation.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", param_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
+        let params = operation.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
         let returns = if operation.result.is_none() { String::new() } else { format!(" -> {}", returned(operation, true)) };
         let binding = if operation.args.is_empty() { "let" } else { "var" };
         writeln!(out, "    public static func {method}({params}) async throws{returns} {{\n        {binding} variables: [String: JSONValue] = [:]").unwrap();
@@ -69,7 +63,7 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
     writeln!(out, "object Operations {{").unwrap();
     for operation in operations {
         let method = name(&operation.name);
-        let params = operation.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", param_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
+        let params = operation.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
         let returns = if operation.result.is_none() { String::new() } else { format!(": {}", returned(operation, false)) };
         writeln!(out, "    suspend fun {method}({params}){returns} {{\n        val variables = mutableMapOf<String, JsonElement>()").unwrap();
         for (arg, kind) in &operation.args {

@@ -136,5 +136,5 @@ fn an_unmapped_custom_scalar_a_string_arg_over_an_enum_and_a_result_enum_without
     let errors = parse_all(&["scalar :Cursor, as: :bogus\n"]).err().unwrap();
     assert!(errors[0].1.message.contains("scalar kind must be one of"), "{errors:?}");
     let declared = parse_all(&[SEND]).unwrap();
-    assert_eq!(crate::load_schema_types(None, &declared.scalars, &declared.operations).unwrap_err().contains("--schema"), true);
+    assert_eq!(crate::load_schema_types(None, &declared.scalars, &declared.models, &declared.operations).unwrap_err().contains("--schema"), true);
 }

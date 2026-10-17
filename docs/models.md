@@ -317,6 +317,26 @@ Each arg declared by an `args` line inside a model operation is checked against 
 - an arg whose kind does not fit the type: `:string` fits `String`, `ID` or a scalar mapped to `:string` or `:date`, `:id` fits `ID`, `Int`, `String` or a scalar mapped to `:string`, `:int` or `:long`, `:int` fits `Int` or a scalar mapped to `:int` or `:long`, `:long` fits a scalar mapped to `:long`, `:num` fits `Float`, `Int` or a scalar mapped to `:num`, `:bool` fits `Boolean`, `:ids` fits a list of `ID`, `Int` or `String`, and the name of an input object or enum (`:WidgetKind`) fits that type;
 - an arg with `?` that the schema requires (`String!` without a default).
 
+An `args` line inside a model operation takes the same kinds as an operation without a model, including the name of a schema enum or input object. The call gets a typed parameter, and an `optimistic` line can write an enum arg into an enum field of the model. Without `--schema` the generator stops and names the type.
+
+```ruby
+operation :answer_connection do
+  mutation   ConnectionUpdate
+  args       decision: :ConnectionAction, outcome: :ConnectionStatus
+  input      userId: :id, action: :decision
+  optimistic connection: :outcome
+  wrap       :input
+end
+```
+
+```swift
+try await user.answerConnection(decision: .accept, outcome: .connected)
+```
+
+```kotlin
+user.answerConnection(decision = ConnectionAction.Accept, outcome = ConnectionStatus.Connected)
+```
+
 Fields marked `local: true`, `file` fields and models with `storage: :local` are skipped. Schema fields that the model leaves out are listed as notes, because a model may select a subset.
 
 ## Access level

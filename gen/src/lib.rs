@@ -90,23 +90,23 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     };
     let mut declared = build_declarations(parsed).map_err(locate)?;
     let failed = |message: String| vec![FileError { file: names.first().cloned().unwrap_or_default(), error: ParseError::new(0, 0, message) }];
-    declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.operations).map_err(&failed)?;
+    declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.models, &declared.operations).map_err(&failed)?;
     operation::resolve_result_enums(&mut declared.operations, loaded.as_ref()).map_err(&failed)?;
     declared.scalars = scalars;
     declared.notes = notes;
     Ok(declared)
 }
 
-pub fn load_schema_types(schema: Option<&Path>, scalars: &Scalars, operations: &[OperationCall]) -> Result<SchemaTypes, String> {
+pub fn load_schema_types(schema: Option<&Path>, scalars: &Scalars, models: &[ModelSpec], operations: &[OperationCall]) -> Result<SchemaTypes, String> {
     let loaded = schema.map(schema_check::Schema::load).transpose()?;
-    inputs_from_schema(loaded.as_ref(), scalars, operations)
+    inputs_from_schema(loaded.as_ref(), scalars, models, operations)
 }
 
-fn inputs_from_schema(schema: Option<&schema_check::Schema>, scalars: &Scalars, operations: &[OperationCall]) -> Result<SchemaTypes, String> {
-    let wanted = operation::schema_type_names(operations);
+fn inputs_from_schema(schema: Option<&schema_check::Schema>, scalars: &Scalars, models: &[ModelSpec], operations: &[OperationCall]) -> Result<SchemaTypes, String> {
+    let wanted = operation::schema_type_names(models, operations);
     match (schema, wanted.first()) {
         (_, None) => Ok(SchemaTypes::default()),
-        (None, Some(name)) => Err(format!("an operation names the schema type `{name}`: pass --schema <schema.graphql> so the generator can read it")),
+        (None, Some(name)) => Err(format!("a declaration names the schema type `{name}`: pass --schema <schema.graphql> so the generator can read it")),
         (Some(schema), Some(_)) => schema_check::load_schema_types(schema, scalars, &wanted),
     }
 }
@@ -207,3 +207,5 @@ mod active_record_tests;
 
 #[cfg(test)]
 mod union_tests;
+#[cfg(test)]
+mod model_enum_args_tests;
