@@ -1,0 +1,18 @@
+model Notice, storage: :memory, expire_after: 1.minute do
+  field :body, type: :string
+  field :occurredAt, type: :date
+  scope :recent do
+    order occurredAt: :desc
+    updates ViewerNotice
+  end
+end
+
+model InteractionNotice, storage: :memory, expire_after: 1.minute do
+  field :messageId, type: :id
+  field :actorUserId, type: :id
+  field :occurredAt, type: :date
+  scope :recent do
+    order occurredAt: :desc
+    updates InteractionReceived
+  end
+end

@@ -9,7 +9,7 @@ use super::vectors::*;
 use super::*;
 use crate::db::Db;
 use crate::pacing::ManualClock;
-use crate::transport::{CallKind, GraphQLRequest, MockTransport, Reply, Transport};
+use crate::transport::{GraphQLRequest, MockTransport, Transport};
 
 async fn transport(rest: MockTransport) -> (EncryptedTransport, Arc<FakeServer>) {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
@@ -18,6 +18,14 @@ async fn transport(rest: MockTransport) -> (EncryptedTransport, Arc<FakeServer>)
     let client = EncryptedClient::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), Db::open_in_memory(Vec::new(), None).unwrap(), clock).unwrap();
     client.mutate("/api/v3/auth/provider", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     (EncryptedTransport::new(Arc::new(client), Arc::new(rest)), server)
+}
+
+#[tokio::test]
+async fn encrypted_subscriptions_do_not_send_credentials_or_queries_to_v2() {
+    let rest = MockTransport::new();
+    let (transport, _) = transport(rest.clone()).await;
+    let _subscription = transport.subscribe(GraphQLRequest::new("subscription Changes { viewerChanges { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
+    assert_eq!(rest.call_count("Changes"), 0);
 }
 
 #[test]
@@ -47,20 +55,18 @@ fn an_answer_maps_to_a_response_and_a_server_error_code_becomes_a_graphql_error(
 }
 
 #[tokio::test]
-async fn queries_and_mutations_go_through_the_encrypted_client_and_subscriptions_and_uploads_stay_with_the_platform() {
+async fn queries_and_mutations_use_the_encrypted_client() {
     let rest = MockTransport::new();
-    rest.enqueue("Watch", Reply::data(json!({ "w": 1 })));
     let (transport, server) = transport(rest.clone()).await;
     server.register("query Q { q }");
     server.register("mutation M { m }");
 
     let read = transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
     let written = transport.mutate(GraphQLRequest::new("mutation M { m }", "M", json!({}))).await.unwrap();
-    let _ = transport.subscribe(GraphQLRequest::new("subscription Watch { w }", "Watch", json!({}))).await;
 
     assert_eq!(read.data, Some(json!({ "read": "query Q { q }" })));
     assert_eq!(written.data, Some(json!({ "done": "mutation M { m }" })));
     let sequences: Vec<_> = server.seen().iter().map(|request| request["sequence"].clone()).collect();
     assert_eq!(sequences, [json!(1), serde_json::Value::Null, json!(2)]);
-    assert_eq!(rest.calls().iter().map(|call| call.kind).collect::<Vec<_>>(), [CallKind::Subscription]);
+    assert!(rest.calls().is_empty());
 }

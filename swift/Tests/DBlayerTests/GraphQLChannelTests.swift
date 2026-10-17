@@ -46,7 +46,7 @@ struct GraphQLChannelTests {
       #"{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionReady":true}"#
     )
     let payload = try decode(#"{"result":{"data":{"chatUpdated":{"id":"1"}}},"more":true}"#)
-    let errors = try decode(#"{"result":{"errors":[{"message":"boom"}]},"more":true}"#)
+    let errors = try decode(#"{"result":{"errors":[{"message":"boom","extensions":{"code":"NOT_FOUND"}}]},"more":true}"#)
     let completed = try decode(#"{"result":{"data":null},"more":false}"#)
     let pong = try decode(#"{"type":"pong"}"#)
     let emptyData = try decode(#"{"result":{"data":{}},"more":true}"#)
@@ -58,7 +58,7 @@ struct GraphQLChannelTests {
       GraphQLChannel.event(from: payload, requestId: "abc:1")
         == .payload(JSONValue.object(["chatUpdated": .object(["id": .string("1")])]))
     )
-    #expect(GraphQLChannel.event(from: errors, requestId: "abc:1") == .errors(["boom"]))
+    #expect(GraphQLChannel.event(from: errors, requestId: "abc:1") == .errors(.Graphql(messages: ["boom"], extensions: GraphqlExtensions(code: "NOT_FOUND", transactionDisposition: nil))))
     #expect(GraphQLChannel.event(from: pong, requestId: "abc:1") == nil)
     #expect(GraphQLChannel.event(from: emptyData, requestId: "abc:1") == nil)
   }

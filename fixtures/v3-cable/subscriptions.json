@@ -1,0 +1,26 @@
+[
+  {
+    "operationName": "ViewerChanges",
+    "query": "subscription ViewerChanges { viewerChanges { changes { area entityId } } }",
+    "variables": {},
+    "result": {"data": {"viewerChanges": {"changes": [{"area": "CHAT", "entityId": "c1"}]}}}
+  },
+  {
+    "operationName": "ViewerNotice",
+    "query": "subscription ViewerNotice { viewerNotice { kind title body occurredAt } }",
+    "variables": {},
+    "result": {"data": {"viewerNotice": {"kind": "ANNOUNCEMENT", "title": null, "body": "Hello", "occurredAt": "2026-10-18T00:00:00Z"}}}
+  },
+  {
+    "operationName": "ChatActivity",
+    "query": "subscription ChatActivity($chatId: ID) { chatActivity(chatId: $chatId) { chatId userId kind active expiresAt } }",
+    "variables": {"chatId": "c1"},
+    "result": {"data": {"chatActivity": {"chatId": "c1", "userId": "u1", "kind": "TYPING", "active": true, "expiresAt": "2026-10-18T00:00:06Z"}}}
+  },
+  {
+    "operationName": "InteractionReceived",
+    "query": "subscription InteractionReceived { interactionReceived { messageId actorUserId chatId action occurredAt } }",
+    "variables": {},
+    "result": {"data": {"interactionReceived": {"messageId": "m1", "actorUserId": "u1", "chatId": "c1", "action": "GIFT_UNWRAPPED", "occurredAt": "2026-10-18T00:00:00Z"}}}
+  }
+]

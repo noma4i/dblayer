@@ -18,6 +18,10 @@ struct Counting {
 
 #[async_trait::async_trait]
 impl Transport for Counting {
+    async fn open_cable(&self) -> Result<String, DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, _: String) {}
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> {
         self.queries.fetch_add(1, Ordering::SeqCst);
         self.started.notify_one();
@@ -25,7 +29,7 @@ impl Transport for Counting {
         Ok(r#"{"data":{"moments":[{"id":"m1","text":"a"}]}}"#.into())
     }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: super::TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<String, DbError> { unreachable!() }
+    async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<String, DbError> { sink.ready(); Ok("notice".into()) }
     fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
@@ -35,11 +39,30 @@ impl QueryListener for Silent {
     fn changed(&self, _: LiveChange) {}
 }
 
+#[test]
+fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_load() {
+    let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str)]);
+    model.storage = crate::schema::Storage::Memory;
+    let mut relation = RelationSpec::global("recent");
+    relation.updates.push(crate::schema::UpdatesSpec { subscription:"ViewerNotice".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
+    model.relations.push(relation);
+    let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), delay:Duration::ZERO });
+    let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport)).unwrap();
+    db.register_operations(r#"[{"name":"ViewerNotice","document":"subscription ViewerNotice { viewerNotice { body } }","rootPath":"viewerNotice"}]"#.into()).unwrap();
+    for window in [false, true] {
+        let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#.into();
+        let live = if window { db.live_window(query, 10, Arc::new(Silent)) } else { db.live_query(query, Arc::new(Silent)) }.unwrap();
+        let handles = live.handles.lock().unwrap();
+        assert!(handles.as_ref().unwrap()._watch.is_some(), "window={window}");
+        assert!(handles.as_ref().unwrap().load.is_none());
+    }
+}
+
 fn relation(name: &str, stale: &str) -> RelationSpec {
     let mut relation = RelationSpec::global(name);
     relation.remote = Some(RemoteSpec {
         operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: stale.into(),
-        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None, total_from: None,
+        empty_stale_time: None, selects_page_info: false, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     relation
 }

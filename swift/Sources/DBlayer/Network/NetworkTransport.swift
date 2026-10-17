@@ -96,15 +96,14 @@ private func runSubscription<Operation: GraphQLSubscription>(
       )
     }
     guard !Task.isCancelled else { return }
-    onError(SubscriptionFailure(kind: .transport, message: "subscription completed"))
+    onError(SubscriptionFailure(error: .Network(detail: "subscription completed")))
   } catch is CancellationError {
     return
   } catch {
     guard !Task.isCancelled else { return }
     onError(
       SubscriptionFailure(
-        kind: error as? CableClientError == .rejected ? .graphql : .transport,
-        message: String(describing: error)
+        error: error as? CableClientError == .rejected ? .Graphql(messages: [String(describing: error)], extensions: nil) : TransportFailure.classify(error, kind: .query)
       )
     )
   }
@@ -128,20 +127,14 @@ private func deliverSubscriptionEvent<Operation: GraphQLSubscription>(
     case let .failure(error):
       onError(
         SubscriptionFailure(
-          kind: .internalError,
-          message: String(describing: error)
+          error: .Invalid(detail: String(describing: error))
         )
       )
     }
   case .completed:
     break
-  case let .errors(messages):
-    onError(
-      SubscriptionFailure(
-        kind: .graphql,
-        message: messages.joined(separator: "\n")
-      )
-    )
+  case let .errors(error):
+    onError(SubscriptionFailure(error: error))
   }
 }
 

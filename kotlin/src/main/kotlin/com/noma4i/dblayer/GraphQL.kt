@@ -88,7 +88,17 @@ data class Response<Data>(val data: Data?, val errors: List<GraphQLError> = empt
 
 enum class SubscriptionFailureKind(val wire: String) { Transport("transport"), Graphql("graphql"), Internal("internal") }
 
-data class SubscriptionFailure(val kind: SubscriptionFailureKind, val message: String, val details: String? = null)
+data class SubscriptionFailure(val error: DbException) {
+    val kind: SubscriptionFailureKind get() = when (error) {
+        is DbException.Graphql -> SubscriptionFailureKind.Graphql
+        is DbException.Network, is DbException.Http -> SubscriptionFailureKind.Transport
+        else -> SubscriptionFailureKind.Internal
+    }
+    val message: String get() = when (error) {
+        is DbException.Graphql -> error.messages.joinToString("\n")
+        else -> error.toString()
+    }
+}
 
 class SubscriptionHandle(private val onCancel: () -> Unit) {
     private val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)

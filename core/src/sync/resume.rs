@@ -20,13 +20,13 @@ pub struct ResumeReport {
 
 pub struct Watch {
     inner: Arc<Inner>,
-    id: u64,
+    id: Option<u64>,
     live: Vec<String>,
 }
 
 impl Drop for Watch {
     fn drop(&mut self) {
-        locked(&self.inner.watches).remove(&self.id);
+        if let Some(id) = self.id { locked(&self.inner.watches).remove(&id); }
         for key in &self.live {
             self.inner.release_live(key);
         }
@@ -35,10 +35,15 @@ impl Drop for Watch {
 
 impl Sync {
     pub fn watch(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Watch, SyncError> {
-        let key = self.inner.resolve(model, relation, params)?.window_key;
-        let id = self.inner.next_watch.fetch_add(1, Ordering::SeqCst) as u64;
-        let entry = WatchEntry { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key };
-        locked(&self.inner.watches).insert(id, entry);
+        let spec = self.inner.db.spec(model)?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| SyncError::UnknownRelation { model:model.into(), relation:relation.into() })?;
+        let id = if declared.remote.is_some() {
+            let key = self.inner.resolve(model, relation, params)?.window_key;
+            let id = self.inner.next_watch.fetch_add(1, Ordering::SeqCst) as u64;
+            let entry = WatchEntry { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key };
+            locked(&self.inner.watches).insert(id, entry);
+            Some(id)
+        } else { None };
         let live = self.inner.acquire_live(model, relation);
         Ok(Watch { inner: self.inner.clone(), id, live })
     }

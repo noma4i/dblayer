@@ -32,6 +32,108 @@ fn failed(kind: SubscriptionFailureKind) -> SubscriptionEvent {
 }
 
 #[tokio::test(start_paused = true)]
+async fn change_ids_reread_registered_nodes_and_count_undeclared_areas() {
+    let original = super::node_tests::node_rig();
+    let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
+    specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(crate::schema::ChangeRead { area: "CHAT".into(), relation: "node".into(), parameter: None });
+    let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
+    for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register(operation.clone()); }
+    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { viewerChanges { changes { area entityId } } }", "viewerChanges"));
+    rig.transport.enqueue("ChatNode", crate::transport::Reply::data(json!({"node":{"id":"c1", "title":"reread"}})));
+    let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "chats", EventEffect::Upsert)).await.unwrap();
+    rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"viewerChanges":{"changes":[{"area":"CHAT", "entityId":"c1", "title":"untrusted"}, {"area":"UNKNOWN", "entityId":"x"}]}}))));
+    settle().await;
+    let row = rig.db.find("chats", &crate::identity::RowId::new("c1").unwrap()).unwrap();
+    assert_eq!(row.and_then(|row| row.text("title").map(str::to_string)), Some("reread".into()));
+    assert_eq!(subscription.status().rejected, 1);
+    assert_eq!(rig.transport.calls().iter().filter(|call| call.operation_name == "ChatNode").count(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn chat_activity_changes_only_ephemeral_typing_and_expires() {
+    let rig = rig();
+    put(&rig, "users", json!({"id":"u1", "name":"Ann"}));
+    rig.sync.register(super::OperationDef::new("Activity", "subscription Activity { chatActivity { userId active } }", "chatActivity"));
+    let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("activity"), "Activity", "users", EventEffect::Patch)).await.unwrap();
+    rig.transport.emit("Activity", SubscriptionEvent::Next(Response::data(json!({"chatActivity":{"userId":"u1", "kind":"TYPING", "active":true}}))));
+    settle().await;
+    let row = || rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
+    assert_eq!(row().get("typing"), Some(&json!(true)));
+    rig.clock.advance(Duration::from_secs(6));
+    rig.db.expire_ephemeral().unwrap();
+    assert_eq!(row().get("typing"), Some(&json!(false)));
+    assert_eq!(row().text("name"), Some("Ann"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_shared_change_area_reads_each_declared_node_once() {
+    let original = super::node_tests::node_rig();
+    let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
+    for spec in &mut specs {
+        let relation = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One)).unwrap().name.clone();
+        spec.changes.push(crate::schema::ChangeRead { area:"REACTION".into(), relation, parameter:None });
+    }
+    let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
+    for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register(operation.clone()); }
+    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { viewerChanges { changes { area entityId } } }", "viewerChanges"));
+    rig.transport.enqueue("ChatNode", crate::transport::Reply::data(json!({"node":null})));
+    rig.transport.enqueue("MessageTranscodeStatus", crate::transport::Reply::data(json!({"node":{"id":"m1", "text":"updated"}})));
+    let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "messages", EventEffect::Upsert)).await.unwrap();
+    rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"viewerChanges":{"changes":[{"area":"REACTION", "entityId":"m1"}]}}))));
+    settle().await;
+    assert_eq!(rig.transport.calls().iter().filter(|call| call.kind == crate::transport::CallKind::Query).count(), 2);
+    assert_eq!(rig.db.find("messages", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap().text("text"), Some("updated"));
+    assert!(rig.db.query(&Query::new("chats")).unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn memory_events_without_server_ids_create_distinct_expiring_rows() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../fixtures/v3-cable/subscriptions.json")).unwrap();
+    for index in [1, 3] {
+        let fixture = &fixtures[index];
+        let root = fixture["result"]["data"].as_object().unwrap().keys().next().unwrap();
+        let mut model = crate::schema::ModelSpec::new("notices", vec![
+            FieldSpec::scalar("id", ScalarKind::Id),
+            FieldSpec::scalar("body", ScalarKind::Str).optional(),
+            FieldSpec::scalar("messageId", ScalarKind::Id).optional(),
+            FieldSpec::scalar("actorUserId", ScalarKind::Id).optional(),
+        ]);
+        model.storage = crate::schema::Storage::Memory;
+        model.expire_after = Some("5.seconds".into());
+        let rig = rig_on(Db::open_in_memory(vec![model], None).unwrap(), MockTransport::new(), SyncConfig::default());
+        rig.sync.register(super::OperationDef::new("Notices", fixture["query"].as_str().unwrap(), root));
+        let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("notice"), "Notices", "notices", EventEffect::Upsert)).await.unwrap();
+        for _ in 0..2 { rig.transport.emit("Notices", SubscriptionEvent::Next(serde_json::from_value(fixture["result"].clone()).unwrap())); }
+        settle().await;
+        let rows = rig.db.query(&Query::new("notices")).unwrap();
+        assert_eq!(rows.len(), 2, "{root}");
+        assert_ne!(rows[0].id, rows[1].id);
+        assert_eq!(subscription.status().applied, 2);
+        assert!(rig.transport.calls().iter().all(|call| call.kind == crate::transport::CallKind::Subscription));
+        rig.clock.advance(Duration::from_secs(6));
+        rig.db.expire_ephemeral().unwrap();
+        assert!(rig.db.query(&Query::new("notices")).unwrap().is_empty());
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn repeated_ready_rereads_watched_queries_after_cable_reconnect() {
+    let rig = rig_with_subscription();
+    for name in ["before", "after"] {
+        rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":name}})));
+    }
+    let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
+    rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+    let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
+    rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
+    settle().await;
+    rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
+    settle().await;
+    assert_eq!(rig.transport.call_count("CurrentUser"), 2);
+    assert_eq!(rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap().text("name"), Some("after"));
+}
+
+#[tokio::test(start_paused = true)]
 async fn partial_child_events_preserve_absent_parent_fields_and_apply_explicit_null() {
     for stored_child in [true, false] {
         let mut users = users_spec();

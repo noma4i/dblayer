@@ -3,7 +3,7 @@
 public enum GraphQLSubscriptionEvent: Sendable, Equatable {
   case ready
   case payload(JSONValue)
-  case errors([String])
+  case errors(DbError)
   case completed
 }
 
@@ -106,7 +106,7 @@ public enum GraphQLChannel: Sendable {
       }
       return message
     }
-    return .errors(messages)
+    return .errors(.Graphql(messages: messages, extensions: try? graphqlExtensions(responseJson: JSONValue.object(result).text)))
   }
 
   private static func encoded(_ value: JSONValue) -> String {

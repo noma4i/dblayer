@@ -37,7 +37,7 @@ pub struct LiveChange {
     pub replaced: Vec<Replacement>,
     pub renamed: Vec<Replacement>,
     pub count: Option<i64>,
-    pub error: Option<String>,
+    pub error: Option<super::DbError>,
     #[uniffi(default = None)]
     pub window: Option<LiveWindowEdge>,
 }
@@ -69,7 +69,7 @@ impl LiveChange {
         Self { count: Some(count), ..Self::empty(revision) }
     }
 
-    pub(super) fn failed(revision: i64, error: String) -> Self {
+    pub(super) fn failed(revision: i64, error: super::DbError) -> Self {
         Self { error: Some(error), ..Self::empty(revision) }
     }
 }

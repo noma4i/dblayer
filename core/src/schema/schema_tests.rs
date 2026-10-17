@@ -20,7 +20,6 @@ fn paged_remote(selects_page_info: bool) -> RemoteSpec {
         stale_time: "paged_session".into(),
         empty_stale_time: None,
         selects_page_info,
-        updates: Vec::new(),
         page_size: None,
         variables: Default::default(), root: None, total_from: None,
     }
@@ -33,7 +32,6 @@ fn complete_remote() -> RemoteSpec {
         stale_time: "catalog".into(),
         empty_stale_time: Some("empty_retry".into()),
         selects_page_info: false,
-        updates: Vec::new(),
         page_size: None,
         variables: Default::default(),
         root: None,
@@ -504,11 +502,11 @@ fn specs_round_trip_through_json_and_default_missing_parts() {
     .unwrap();
     assert_eq!(minimal, ModelSpec::new("m", vec![FieldSpec::raw("id")]));
 
-    let remote = RemoteSpec { updates: vec![UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()), set: Map::new(), removes: false, debounce: None, root: None, id: None }], ..complete_remote() };
+    let remote = RelationSpec { updates: vec![UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()), set: Map::new(), removes: false, debounce: None, root: None, id: None }], ..RelationSpec::global("feed") };
     let text = serde_json::to_string(&remote).unwrap();
-    assert_eq!(serde_json::from_str::<RemoteSpec>(&text).unwrap(), remote);
+    assert_eq!(serde_json::from_str::<RelationSpec>(&text).unwrap(), remote);
     let bare = r#"{"operation":"Q","shape":{"type":"single"},"stale_time":"5.minutes"}"#;
-    assert_eq!(serde_json::from_str::<RemoteSpec>(bare).unwrap().updates, Vec::new());
+    assert_eq!(serde_json::from_str::<RemoteSpec>(bare).unwrap().operation, "Q");
 
     let bare = r#"{"name":"like","mode":"request","root_shape":"upsert"}"#;
     let parsed: ActionDeclaration = serde_json::from_str(bare).unwrap();

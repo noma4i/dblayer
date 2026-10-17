@@ -69,7 +69,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
         case "next":
           if let next = object["payload"] { try sink.event(json: String(decoding: try JSONSerialization.data(withJSONObject: next), as: UTF8.self)) }
         case "error":
-          sink.failed(kind: "graphql", detail: String(describing: object["payload"] ?? ""))
+          if let errors = object["payload"] { try sink.event(json: String(decoding: try JSONSerialization.data(withJSONObject: ["errors": errors]), as: UTF8.self)) }
         case "complete":
           sink.closed(); return
         case "ping":
@@ -78,7 +78,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
         }
       }
     } catch {
-      sink.failed(kind: "transport", detail: error.localizedDescription)
+      sink.failed(error: .Network(detail: error.localizedDescription))
       sink.closed()
     }
   }

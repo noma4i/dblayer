@@ -12,6 +12,10 @@ struct Refusing {
 
 #[async_trait::async_trait]
 impl Transport for Refusing {
+    async fn open_cable(&self) -> Result<String, DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, _: String) {}
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.answer.map(str::to_string).map_err(|make| make())
@@ -27,7 +31,7 @@ fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<Database>, Arc<Ref
     let mut relation = RelationSpec::global("feed");
     relation.remote = Some(RemoteSpec {
         operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: "5.minutes".into(),
-        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None, total_from: None,
+        empty_stale_time: None, selects_page_info: false, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(relation);
     let transport = Arc::new(Refusing { calls: AtomicUsize::new(0), answer });

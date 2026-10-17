@@ -111,9 +111,58 @@ struct Feed {
 }
 
 impl Feed {
+    async fn invalidation(&self, response: &Response) -> bool {
+        if self.inner.db.spec(&self.def.model).is_ok_and(|spec| spec.is_memory()) { return false; }
+        let Some(data) = response.data.as_ref() else { return false };
+        if let Some(activity) = data.get("chatActivity") {
+            if activity["kind"] == "TYPING" {
+                if let (Some(id), Some(active)) = (activity.get("userId").and_then(read_id), activity["active"].as_bool()) {
+                    match self.inner.db.set_ephemeral(&self.def.model, &id, Map::from_iter([("typing".into(), json!(active))])) {
+                        Ok(_) => locked(&self.status).applied += 1,
+                        Err(_) => locked(&self.status).rejected += 1,
+                    }
+                }
+            }
+            return true;
+        }
+        if data.get("viewerNotice").is_some() { return true; }
+        let changes = if let Some(changes) = data["viewerChanges"]["changes"].as_array() {
+            changes.clone()
+        } else if let Some(notice) = data.get("interactionReceived") {
+            vec![json!({"area":"MESSAGE", "entityId":notice["messageId"]}), json!({"area":"USER", "entityId":notice["actorUserId"]})]
+        } else { return false };
+        for change in changes {
+            let (Some(area), Some(id)) = (change["area"].as_str(), change["entityId"].as_str()) else {
+                locked(&self.status).rejected += 1;
+                continue;
+            };
+            let targets: Vec<_> = self.inner.db.shared.specs.values().flat_map(|spec| spec.changes.iter().filter(|read| read.area == area).map(|read| (spec.key.to_string(), read.clone()))).collect();
+            if targets.is_empty() { locked(&self.status).rejected += 1; }
+            for (model, read) in targets {
+                let spec = match self.inner.db.spec(&model) { Ok(spec) => spec, Err(_) => continue };
+                let Some(relation) = spec.relations.iter().find(|relation| relation.name == read.relation) else { continue };
+                let parameter = if relation.node == Some(crate::schema::NodeRead::One) { Some(crate::schema::NODE_PARAM) } else { read.parameter.as_deref() };
+                let params = parameter.map(|name| Map::from_iter([(name.to_string(), json!(id))])).unwrap_or_default();
+                let result = match self.inner.resolve(&model, &read.relation, &params) {
+                    Ok(resolved) => self.inner.fetch(&resolved, None, true).await.map(|_| ()),
+                    Err(error) => Err(error),
+                };
+                match result {
+                    Ok(()) => locked(&self.status).applied += 1,
+                    Err(_) => locked(&self.status).rejected += 1,
+                }
+            }
+        }
+        true
+    }
+
     fn parse(&self, response: &Response) -> Option<Pending> {
         let node = root_value(response.data.as_ref()?, &self.root_path)?.as_object()?;
-        let id = read_id(node.get(self.def.id.as_deref().unwrap_or("id"))?)?;
+        let id = match node.get(self.def.id.as_deref().unwrap_or("id")) {
+            None | Some(Value::Null) if self.inner.db.spec(&self.def.model).is_ok_and(|spec| spec.is_memory()) => RowId::new(&uuid::Uuid::new_v4().to_string()).ok()?,
+            Some(value) => read_id(value)?,
+            None => return None,
+        };
         let mut node = node.clone();
         node.insert("id".to_string(), Value::String(id.to_string()));
         Some(Pending { bucket: self.def.event.bucket_key(id.as_str()), id, node, generation: self.inner.db.generation() })
@@ -219,6 +268,7 @@ impl Feed {
         let debounce = self.def.event.debounce_interval.map(|interval| Debounce::new(interval, |item: &Pending| item.bucket.clone()));
         let mut pending: Vec<Pending> = Vec::new();
         let mut deadline: Option<Instant> = None;
+        let mut ready = false;
         loop {
             let wake = deadline.unwrap_or_else(Instant::now);
             tokio::select! {
@@ -228,10 +278,16 @@ impl Feed {
                         return None;
                     }
                     Some(SubscriptionEvent::Ready) => {
+                        if ready {
+                            let models: Vec<_> = self.inner.db.shared.specs.values().filter(|spec| !spec.changes.is_empty() || spec.key.as_str() == self.def.model).map(|spec| spec.key.to_string()).collect();
+                            for model in models { self.inner.reload_watched(&model, None, false).await; }
+                        }
+                        ready = true;
                         *retry = retry.confirmed();
                         locked(&self.status).degraded = false;
                     }
                     Some(SubscriptionEvent::Next(response)) => {
+                        if self.invalidation(&response).await { continue; }
                         let Some(item) = self.parse(&response) else { continue };
                         match &debounce {
                             Some(debounce) => {

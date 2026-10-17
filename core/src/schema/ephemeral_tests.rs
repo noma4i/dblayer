@@ -107,18 +107,17 @@ fn expire_after_needs_a_memory_model_and_a_positive_duration() {
 #[test]
 fn updates_set_must_name_ephemeral_fields() {
     let relation = |field: &str| {
-        let mut remote = RemoteSpec {
+        let remote = RemoteSpec {
             operation: "UserEvents".into(),
             shape: RemoteShape::Single,
             stale_time: "5.minutes".into(),
             empty_stale_time: None,
             selects_page_info: false,
-            updates: vec![UpdatesSpec { subscription: "UserTyping".into(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None }],
             page_size: None,
             variables: Default::default(), root: None, total_from: None,
         };
-        remote.updates[0].set.insert(field.into(), json!(true));
         let mut relation = RelationSpec::global("current");
+        relation.updates = vec![UpdatesSpec { subscription: "UserTyping".into(), deleted_by: None, set: Map::from_iter([(field.into(), json!(true))]), removes: false, debounce: None, root: None, id: None }];
         relation.remote = Some(remote);
         ModelSpec { relations: vec![relation], ..with_ephemeral(typing()) }
     };

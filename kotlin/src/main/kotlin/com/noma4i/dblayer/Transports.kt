@@ -51,17 +51,17 @@ class NetworkTransport(private val run: OperationRun, private val cable: CableCl
                         GraphQLSubscriptionEvent.Ready -> onReady()
                         is GraphQLSubscriptionEvent.Payload -> runCatching { dbJson.decodeFromJsonElement(operation.dataSerializer, event.value) }
                             .onSuccess { onNext(Response(it)) }
-                            .onFailure { onError(SubscriptionFailure(SubscriptionFailureKind.Internal, it.toString())) }
-                        is GraphQLSubscriptionEvent.Errors -> onError(SubscriptionFailure(SubscriptionFailureKind.Graphql, event.messages.joinToString("\n")))
+                            .onFailure { onError(SubscriptionFailure(DbException.Invalid(it.toString()))) }
+                        is GraphQLSubscriptionEvent.Errors -> onError(SubscriptionFailure(event.error))
                         GraphQLSubscriptionEvent.Completed -> Unit
                     }
                 }
-                onError(SubscriptionFailure(SubscriptionFailureKind.Transport, "subscription completed"))
+                onError(SubscriptionFailure(classifyTransportFailure(java.io.IOException("subscription completed"), GraphQLOperationKind.Query)))
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                val kind = if ((error as? CableClientException)?.reason == CableClientException.Reason.Rejected) SubscriptionFailureKind.Graphql else SubscriptionFailureKind.Transport
-                onError(SubscriptionFailure(kind, error.toString()))
+                val failure = if ((error as? CableClientException)?.reason == CableClientException.Reason.Rejected) DbException.Graphql(listOf(error.toString()), null) else classifyTransportFailure(error, GraphQLOperationKind.Query)
+                onError(SubscriptionFailure(failure))
             }
         }
         return SubscriptionHandle { job.cancel() }
@@ -76,6 +76,10 @@ class DatabaseTransport(
     private val onEvent: (operationName: String, json: String) -> Unit = { _, _ -> },
 ) : Transport {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    override suspend fun openCable(): String = throw DbException.Invalid("encrypted cable socket is not configured")
+    override suspend fun cableSend(token: String, text: String): Unit = throw DbException.Invalid("encrypted cable socket is not configured")
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
+    override suspend fun cableClose(token: String) {}
     private val jobs = ConcurrentHashMap<String, Job>()
 
     override suspend fun query(request: TransportRequest): String = send(request, GraphQLOperationKind.Query)
@@ -94,16 +98,16 @@ class DatabaseTransport(
                             onEvent(request.operationName, event.value.toString())
                             sink.event(JsonObject(mapOf("data" to event.value)).toString())
                         }
-                        is GraphQLSubscriptionEvent.Errors -> sink.failed("graphql", event.messages.joinToString("\n"))
+                        is GraphQLSubscriptionEvent.Errors -> sink.failed(event.error)
                         GraphQLSubscriptionEvent.Completed -> Unit
                     }
                 }
-                sink.failed("transport", "subscription completed")
+                sink.failed(classifyTransportFailure(java.io.IOException("subscription completed"), GraphQLOperationKind.Query))
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                val kind = if ((error as? CableClientException)?.reason == CableClientException.Reason.Rejected) "graphql" else "transport"
-                sink.failed(kind, error.toString())
+                val failure = if ((error as? CableClientException)?.reason == CableClientException.Reason.Rejected) DbException.Graphql(listOf(error.toString()), null) else classifyTransportFailure(error, GraphQLOperationKind.Query)
+                sink.failed(failure)
             }
         }
         return token
@@ -135,6 +139,10 @@ class OkHttpTransport(
     private val client: OkHttpClient = OkHttpClient(),
 ) : Transport {
     private val sockets = ConcurrentHashMap<String, okhttp3.WebSocket>()
+    override suspend fun openCable(): String = throw DbException.Invalid("encrypted cable socket is not configured")
+    override suspend fun cableSend(token: String, text: String): Unit = throw DbException.Invalid("encrypted cable socket is not configured")
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
+    override suspend fun cableClose(token: String) {}
 
     private fun body(request: TransportRequest): String = kotlinx.serialization.json.buildJsonObject {
         put("query", kotlinx.serialization.json.JsonPrimitive(request.document))
@@ -187,14 +195,14 @@ class OkHttpTransport(
                             sink.ready()
                         }
                         "next" -> message["payload"]?.let { sink.event(it.toString()) }
-                        "error" -> sink.failed("graphql", message["payload"]?.toString().orEmpty())
+                        "error" -> sink.event(JsonObject(mapOf("errors" to (message["payload"] ?: kotlinx.serialization.json.JsonArray(emptyList())))).toString())
                         "complete" -> { sink.closed(); webSocket.close(1000, null) }
                         "ping" -> webSocket.send("""{"type":"pong"}""")
                     }
                 }
 
                 override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
-                    sink.failed("transport", t.message ?: t.toString())
+                    sink.failed(classifyTransportFailure(java.io.IOException(t), GraphQLOperationKind.Query))
                     sink.closed()
                 }
             },

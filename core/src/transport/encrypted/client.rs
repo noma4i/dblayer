@@ -33,6 +33,7 @@ pub struct Answer {
 }
 
 pub struct EncryptedClient {
+    pub(super) config: EncryptedConfig,
     audience: String,
     key: ServerKey,
     http: Arc<dyn HttpExchange>,
@@ -85,7 +86,7 @@ impl EncryptedClient {
             return Err(TransportError::Decode(format!("the origin must be https, or http on a development host, without a path: {}", config.origin)));
         }
         let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Decode(error.to_string()))?;
-        Ok(Self { audience, key, http, credentials, db, clock, credential: Mutex::new(None), mutations: Gate::new(()) })
+        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, credential: Mutex::new(None), mutations: Gate::new(()) })
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -208,7 +209,7 @@ impl EncryptedClient {
         Ok(Answer { sequence: opened.sequence, body: opened.body })
     }
 
-    fn credential(&self) -> Result<String, TransportError> {
+    pub(super) fn credential(&self) -> Result<String, TransportError> {
         let mut cached = crate::db::locked(&self.credential);
         if let Some(credential) = cached.as_ref() {
             return Ok(credential.clone());

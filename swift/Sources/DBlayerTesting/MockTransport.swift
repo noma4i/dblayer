@@ -31,7 +31,7 @@ public final class MockTransport: Transport, @unchecked Sendable {
   }
 
   public func breakSubscription(_ operation: String) {
-    lock.withLock { sinks.removeValue(forKey: operation) }?.failed(kind: "transport", detail: "connection lost")
+    lock.withLock { sinks.removeValue(forKey: operation) }?.failed(error: .Network(detail: "connection lost"))
   }
 
   public func query(request: TransportRequest) async throws -> String { try await answer(request) }

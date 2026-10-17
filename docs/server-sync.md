@@ -37,7 +37,8 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 | `EncryptedHttp` | `post` sends the request text to `origin + path` as `application/jose`. `get` reads the public config. Both return the status and the body. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
 | `CredentialStore` | `get`, `set` and `clear` keep one string in the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite |
 
-The database opens with its own transport for queries and mutations. The transport you pass serves subscriptions and file uploads.
+База использует V3 JWE для запросов и мутаций, encrypted Cable для подписок.
+Переданный транспорт предоставляет текстовый WebSocket и загрузку файлов. Общий интерфейс подписок описан в [Cable protocol](cable-protocol.md).
 
 The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin for V3 hello and encrypted frames.
 
@@ -339,7 +340,10 @@ What a refresh does, in one commit:
 - Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`deleted_by`, a null node, a delete event).
 - A failed request changes nothing.
 
-An event never loads a list again. A row that arrives by an event is stored like any other row (V2 does the same: the event inserts the row and no list is fetched). A relation that lists every row of its params (a scope with `where :chatId` and `joins: :events`) also gets the new row appended, when that list is loaded, in the same commit as the event. Declare `joins: :events` only for a relation without server-side filters (`variables`), because the library cannot tell from the row whether the server would have listed it. Other lists show the row on their next load. A scope with `text:` params takes no event rows (`joins: :events` is refused there): its members are the server answer, and a changed chat shows in it after the window reloads (`refetch` on an action, or `load` once the window is stale). Only a row whose parent is not stored makes the library reload the lists of that parent model.
+Событие V3 содержит идентификаторы. `changed_by` выбирает HTTP reread, его ответ обновляет БД обычным способом.
+События обычного транспорта с полной строкой сохраняют её напрямую. `joins: :events` добавляет такую строку в загруженные выборки без серверных фильтров.
+Связь с `text:` параметрами хранит состав серверного ответа и не принимает строки событий.
+После переподключения Cable перечитывает наблюдаемые выборки моделей с `changed_by`.
 
 `refresh(replace: true)` replaces the whole list with the response (unconfirmed records still stay). It is meant for small lists where the server is the only authority.
 

@@ -89,7 +89,7 @@ extension BridgeProbeTests {
     return row
   }
 
-  fileprivate static func wire(full: Bool = false, size: UInt32, rows: [WireRow] = [], indexes: [UInt32] = [], removed: [String] = [], placed: [Placement] = [], renamed: [Replacement] = [], error: String? = nil) -> LiveChange {
+  fileprivate static func wire(full: Bool = false, size: UInt32, rows: [WireRow] = [], indexes: [UInt32] = [], removed: [String] = [], placed: [Placement] = [], renamed: [Replacement] = [], error: DbError? = nil) -> LiveChange {
     LiveChange(revision: 1, full: full, size: size, rows: rows, rowIndexes: indexes, removed: removed, placed: placed, replaced: [], renamed: renamed, count: nil, error: error)
   }
 

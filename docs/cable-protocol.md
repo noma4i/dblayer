@@ -23,4 +23,44 @@ X25519 private material, derived keys and temporary hello plaintext use zeroing 
 The public vectors in `fixtures/v3-cable/kat.json` contain test keys only. Tests compare hello plaintext and all four encrypted frames without printing key material.
 
 Swift and Kotlin retain the same `EncryptedConfig(origin, serverKey, pin)` and `openEncrypted` calls.
-Their supplied subscription transport still owns the socket. `CableLink` is a Rust API and does not change those platform calls.
+Платформа передаёт текст WebSocket через `openCable`, `cableSend`, `cableNext`, `cableClose`. Шифрование, подписки, повторные открытия и таймеры выполняет Rust.
+
+## Подписки
+
+`EncryptedTransport.subscribe` использует общий `Transport.subscribe` и `SubscriptionEvent`, как обычный транспорт ActionCable.
+Открытие проходит через challenge, подтверждение канала, hello и зашифрованный ready.
+Каждая подписка получает отдельный строковый id. Подтверждение `subscribed` выдаёт `Ready`, `next` выдаёт ответ GraphQL.
+Отмена отправляет `unsubscribe` только для выбранного id. Последняя отмена закрывает сокет.
+
+| Подписка | Обработка |
+| --- | --- |
+| `viewerChanges` | `area` и `entityId` выбирают HTTP reread из `changed_by` |
+| `viewerNotice` | Событие создаёт строку memory-модели Notice без HTTP-чтения |
+| `chatActivity` | `TYPING` обновляет ephemeral `typing` пользователя, `reset_after` сбрасывает значение |
+| `interactionReceived` | Событие создаёт строку memory-модели InteractionNotice без HTTP-чтения |
+
+`viewerChanges` не заменяет поля строки. HTTP reread проходит через существующий V3 JWE клиент и обычную запись колонок SQLite.
+Уведомления memory-моделей получают UUID при отсутствии серверного id. Их строки существуют только в памяти и удаляются по `expire_after`.
+Локальный scope с `updates` открывает подписку при первом читателе и освобождает после последнего с учётом `live_linger`.
+События без читателей теряются, сервер их не повторяет.
+Необъявленные области увеличивают `SubscriptionStatus.rejected`. Повторный `Ready` перечитывает наблюдаемые выборки моделей с `changed_by`.
+Область REACTION может указывать на несколько node-чтений. Тогда выполняется 1 HTTP-запрос на каждую объявленную модель.
+
+Пока есть живая подписка, отсутствие трафика 25 секунд запускает зашифрованный ping.
+Если pong или next не приходит за 20 секунд, клиент закрывает сокет и повторяет открытие.
+Без подписок отсутствуют соединения и таймеры. Неудачные открытия увеличивают `pacing::Backoff`, успешный ready сбрасывает счётчик.
+Офлайн не расходует попытки. `Sync.set_online` передаёт состояние соединения транспорту.
+
+| Закрытие | Результат |
+| --- | --- |
+| 4401 | `SessionCode::Unauthenticated`, завершение подписок |
+| 4403 или ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, завершение подписок |
+| LOGGED_OUT | `SessionCode::SessionEnded`, завершение подписок |
+| 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Повторное открытие с backoff |
+
+Ни одно закрытие не удаляет credential. Cable получает только функцию чтения credential.
+`SubscriptionFailure.close` сохраняет код закрытия. Ошибки GraphQL сохраняют сообщения и `GraphqlExtensions` в общем типе ошибки.
+Swift `LiveChange.error`, `SubscriptionSink.failed` и `GraphQLSubscriptionEvent.errors` принимают `DbError`, Kotlin использует `DbException`.
+
+Фикстуры `fixtures/v3-cable/subscriptions.json` содержат запросы и ответы всех 4 подписок.
+`fixtures/v3-cable/changes.dbl` показывает выбор HTTP-чтений. Фейковый сокет проверяет полный обмен, HTTP JWE и запись строки.

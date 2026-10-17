@@ -11,6 +11,10 @@ pub(super) struct Bytes;
 
 #[async_trait::async_trait]
 impl Transport for Bytes {
+    async fn open_cable(&self) -> Result<String, DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, _: String) {}
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<String, DbError> { unreachable!() }

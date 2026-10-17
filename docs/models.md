@@ -303,6 +303,58 @@ _online = Live(Presence.where(Presence.room == "lobby"))
 val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 ```
 
+### Уведомления V3 в памяти
+
+Локальный scope memory-модели принимает `updates` без `fetch`. Для disk-модели такое объявление запрещено.
+Подписка запускается при первом читателе scope, делится между читателями и закрывается после последнего через `live_linger`.
+Без читателей события теряются. Сервер не повторяет их при подключении.
+Событие без id получает новый UUID. `expire_after` удаляет строку, данные не попадают в файл SQLite или outbox.
+Повтор одной подписки внутри модели запрещён.
+
+```ruby
+model Notice, storage: :memory, expire_after: 1.minute do
+  field :body, type: :string
+  field :occurredAt, type: :date
+  scope :recent do
+    order occurredAt: :desc
+    updates ViewerNotice
+  end
+end
+
+model InteractionNotice, storage: :memory, expire_after: 1.minute do
+  field :messageId, type: :id
+  field :actorUserId, type: :id
+  field :occurredAt, type: :date
+  scope :recent do
+    order occurredAt: :desc
+    updates InteractionReceived
+  end
+end
+
+model User do
+  field :name, type: :string
+  ephemeral do
+    field :typing, type: :bool, default: false, reset_after: 5.seconds
+  end
+  scope :profile do
+    fetch UserProfile
+    updates ChatActivity, id: :userId, set: { typing: true }
+  end
+end
+```
+
+```swift
+@Live var notices: [Notice]
+@Live var interactions: [InteractionNotice]
+_notices = Live(Notice.recent)
+_interactions = Live(InteractionNotice.recent)
+```
+
+```kotlin
+val notices by Notice.recent.collectAsLive()
+val interactions by InteractionNotice.recent.collectAsLive()
+```
+
 ## Associations
 
 | Word | Options |
@@ -476,6 +528,26 @@ edge?.rank                                                // FeedRank?
 - Edges of a connection nested inside an association give no values. `cursor` and `sequenceNumber` of the edge are not read.
 
 ## Node reads
+
+### Чтение после события V3
+
+`changed_by` связывает область `viewerChanges` с HTTP-чтением модели. Объявление не создаёт дополнительный способ подписки.
+
+```ruby
+model Chat do
+  field :title, type: :string
+  node ChatNode
+  changed_by :chat, via: :node
+end
+```
+
+Node-чтение получает `entityId` автоматически. Для связи с 1 параметром укажите `id: :messageId`.
+Для singleton-чтения параметр не нужен: `changed_by :counters, via: :current`.
+Допустимы CHAT, MESSAGE, MOMENT, REACTION, GIFT, WALLET, COUNTERS, USER и CUSTOM_SCREEN, регистр объявления не важен.
+Неизвестная область, отсутствующее чтение и неверный параметр дают ошибку генератора с позицией объявления.
+Повтор области разрешён только для node-чтений нескольких моделей. Каждый получатель выполняет своё HTTP-чтение.
+Наблюдение модели открывает общую подписку `viewerChanges`, последняя отмена освобождает её после `live_linger`.
+Полный обмен описан в [Cable protocol](cable-protocol.md).
 
 GraphQL `node(id:)` reads one entity of any type that implements `Node`. A model reads it with `node`, a related list reads it through `root:`.
 

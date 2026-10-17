@@ -102,6 +102,7 @@ impl Database {
         credentials: Arc<dyn CredentialStore>,
         transport: Arc<dyn Transport>,
     ) -> Result<Arc<Self>, DbError> {
+        let _entered = executor()?.enter();
         Self::start_with(config, models_json, Arc::new(crate::pacing::SystemClock), |db, clock| {
             let client = EncryptedClient::new(&encrypted, Arc::new(ForeignHttp(http)), Arc::new(ForeignCredentials(credentials)), db.clone(), clock.clone())
                 .map_err(|error| DbError::Invalid { detail: error.to_string() })?;

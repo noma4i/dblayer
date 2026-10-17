@@ -5,6 +5,14 @@ mod link;
 mod keys;
 mod frame;
 mod schema;
+mod session;
+pub use session::CableSession;
+mod wire;
+pub use wire::{CableConnect, CableSocket, CableSubscriptions, SocketEvent};
+#[cfg(test)]
+mod session_tests;
+#[cfg(test)]
+mod wire_tests;
 pub use link::CableLink;
 
 pub const CABLE_PATH: &str = "/api/v3/cable";

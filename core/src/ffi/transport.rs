@@ -21,11 +21,35 @@ impl From<core::GraphQLRequest> for TransportRequest {
 #[uniffi::export(rust, foreign)]
 #[async_trait]
 pub trait Transport: Send + Sync {
+    async fn open_cable(&self) -> Result<String, DbError>;
+    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError>;
+    async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent>;
+    async fn cable_close(&self, token: String);
     async fn query(&self, request: TransportRequest) -> Result<String, DbError>;
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError>;
     async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<String, DbError>;
     fn unsubscribe(&self, token: String);
     async fn put(&self, url: String, headers: HashMap<String, String>, bytes: Vec<u8>, progress: Arc<ByteProgress>) -> Result<PutReply, DbError>;
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum EncryptedSocketEvent {
+    Text { text: String },
+    Closed { code: u16, reason: String },
+}
+
+struct ForeignSocket { transport: Arc<dyn Transport>, token: String }
+
+#[async_trait]
+impl core::CableSocket for ForeignSocket {
+    async fn send(&self, text: String) -> Result<(), core::TransportError> { self.transport.cable_send(self.token.clone(), text).await.map_err(transport_error) }
+    async fn next(&self) -> Option<core::SocketEvent> {
+        self.transport.cable_next(self.token.clone()).await.map(|event| match event {
+            EncryptedSocketEvent::Text { text } => core::SocketEvent::Text(text),
+            EncryptedSocketEvent::Closed { code, reason } => core::SocketEvent::Closed { code, reason },
+        })
+    }
+    async fn close(&self) { self.transport.cable_close(self.token.clone()).await; }
 }
 
 #[derive(uniffi::Object)]
@@ -41,16 +65,11 @@ impl SubscriptionSink {
             self.send(core::SubscriptionEvent::Failed(core::SubscriptionFailure::new(core::SubscriptionFailureKind::Internal, detail.clone())));
             return Err(DbError::Invalid { detail });
         }
-        self.send(core::SubscriptionEvent::Next(response));
+        self.send(core::SubscriptionEvent::response(response));
         Ok(())
     }
-    pub fn failed(&self, kind: String, detail: String) {
-        let kind = match kind.as_str() {
-            "graphql" => core::SubscriptionFailureKind::Graphql,
-            "internal" => core::SubscriptionFailureKind::Internal,
-            _ => core::SubscriptionFailureKind::Transport,
-        };
-        self.send(core::SubscriptionEvent::Failed(core::SubscriptionFailure::new(kind, detail)));
+    pub fn failed(&self, error: DbError) {
+        self.send(core::SubscriptionEvent::Failed(core::SubscriptionFailure::from_error(transport_error(error))));
     }
     pub fn closed(&self) { crate::db::locked(&self.sender).take(); }
 }
@@ -102,6 +121,9 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 
 #[async_trait]
 impl core::Transport for ForeignTransport {
+    async fn open_cable(&self) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
+        Ok(Arc::new(ForeignSocket { token: self.0.open_cable().await.map_err(transport_error)?, transport: self.0.clone() }))
+    }
     async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         let json = self.0.query(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))

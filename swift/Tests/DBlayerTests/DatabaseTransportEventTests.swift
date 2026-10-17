@@ -10,7 +10,7 @@ private final class RecordingSink: SubscriptionSinkProtocol, @unchecked Sendable
 
   func closed() {}
   func ready() {}
-  func failed(kind: String, detail: String) {}
+  func failed(error: DbError) {}
 
   func event(json: String) throws {
     lock.withLock { recorded.append(json) }

@@ -246,7 +246,7 @@ final class ListSession<Model: DBModel, Value: Sendable>: @unchecked Sendable {
     current?()
     decodeLog.error("List of \(Model.modelName, privacy: .public) stopped: \(reason, privacy: .public)")
     let applied = ListApplied<Model>(rows: feed.rows, reordered: false, desynced: false, failure: reason)
-    emit(map(applied, LiveChange(revision: 0, full: false, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: reason)))
+    emit(map(applied, LiveChange(revision: 0, full: false, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: .Invalid(detail: reason))))
   }
 }
 

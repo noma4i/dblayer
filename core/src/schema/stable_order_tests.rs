@@ -8,7 +8,6 @@ fn remote() -> RemoteSpec {
         stale_time: "1.minute".into(),
         empty_stale_time: None,
         selects_page_info: true,
-        updates: Vec::new(),
         page_size: None,
         variables: Default::default(),
         root: None,

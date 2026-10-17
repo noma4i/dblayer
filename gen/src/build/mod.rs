@@ -72,6 +72,11 @@ fn build_model(node: &ModelNode) -> ModelSpec {
             "scope" => model.relations.push(build_scope(call)),
             "remote" => model.relations.push(build_remote(call, &node.name)),
             "listen" => model.listens.push(updates_spec(call)),
+            "changed_by" => model.changes.push(dblayer::schema::ChangeRead {
+                area: first_name(call).to_ascii_uppercase(),
+                relation: option(call, "via").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
+                parameter: option(call, "id").and_then(|pair| text_of(&pair.value.item)),
+            }),
             "create" | "update" | "destroy" => model.actions.push(build_standard_action(call)),
             "action" => model.actions.push(build_action(call, &node.name)),
             _ => {}
@@ -247,6 +252,7 @@ fn build_scope(call: &Call) -> RelationSpec {
     };
     let mut relation = RelationSpec::new(&first_name(call), &columns.iter().map(String::as_str).collect::<Vec<_>>());
     relation.is_global = columns.is_empty();
+    relation.updates = call.block.iter().flatten().filter(|candidate| candidate.word == "updates").map(updates_spec).collect();
     if let Some(Value::Hash(pairs)) = option(call, "order").map(|pair| &pair.value.item) {
         relation.sort = Sort::Fields(pairs.iter().map(sort_field).collect());
     }
@@ -308,7 +314,6 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
         page_size,
         variables: line("variables").map(variables_of).unwrap_or_default(),
         root: line("query").and_then(|query| option(query, "root")).and_then(|pair| text_of(&pair.value.item)),
-        updates: lines.iter().filter(|candidate| candidate.word == "updates").map(updates_spec).collect(),
         total_from: line("total").and_then(|total| option(total, "from")).and_then(|pair| text_of(&pair.value.item)),
     };
     let columns: Vec<String> = match option(call, "params").map(|pair| &pair.value.item) {
@@ -347,6 +352,7 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
     relation.joins_created = joins.as_deref() == Some("created");
     relation.order_stable = flag(call, "order_stable");
     relation.remote = Some(remote);
+    relation.updates = lines.iter().filter(|candidate| candidate.word == "updates").map(updates_spec).collect();
     relation.edge_fields = lines.iter().filter(|candidate| candidate.word == "edge").flat_map(|edge| edge.block.iter().flatten()).map(|field| build_field(field, owner)).collect();
     relation
 }

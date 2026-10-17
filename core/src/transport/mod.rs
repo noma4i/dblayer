@@ -17,7 +17,7 @@ mod session_code;
 mod subscription;
 
 pub use cancel::CancelToken;
-pub use encrypted::cable::{CableError, CableLink, CABLE_PATH};
+pub use encrypted::cable::{CableConnect, CableError, CableLink, CableSocket, CableSubscriptions, SocketEvent, CABLE_PATH};
 pub use encrypted::{missing_from_registry, repeats, response_of, Answer, ConfigError, Country, CredentialSlot, EncryptedClient, EncryptedConfig, EncryptedTransport, HttpExchange, HttpReply, ServerConfig, ServerKeyInfo, LOGOUT_PATH};
 pub use error::TransportError;
 pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDisposition};
@@ -32,12 +32,16 @@ pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryClass, RETRY_BACKOFF};
 pub use session_code::SessionCode;
 pub use subscription::{
-    Subscription, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionFault,
+    Subscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionFault,
     SubscriptionHandle, SubscriptionOutcome, SubscriptionRetry,
 };
 
 #[async_trait]
 pub trait Transport: Send + Sync {
+    fn set_online(&self, _online: bool) {}
+    async fn open_cable(&self) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {
+        Err(TransportError::Network("encrypted cable socket is not connected".into()))
+    }
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
     async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError>;

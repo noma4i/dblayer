@@ -174,7 +174,7 @@ fn variant(mut call: Call) -> Result<Call, ParseError> {
     Ok(call)
 }
 
-fn scope(mut call: Call) -> Result<Call, ParseError> {
+fn scope(mut call: Call, memory: bool) -> Result<Call, ParseError> {
     if call.options.iter().any(|pair| matches!(pair.key.as_str(), "params" | "where" | "order")) {
         return Err(fail(&call, "declare `where` and `order` inside the scope block"));
     }
@@ -204,6 +204,10 @@ fn scope(mut call: Call) -> Result<Call, ParseError> {
                 call.options.push(pair(&line, "order", Value::Hash(line.options.clone())));
             }
             "fetch" => { line.word = "query".into(); body.push(line); }
+            "updates" if !remote => {
+                if !memory { return Err(fail(&line, "updates without fetch requires memory storage")); }
+                body.push(line);
+            }
             "edge" if remote => {
                 line.word = "field".into();
                 let declared = field(line)?;
@@ -214,7 +218,7 @@ fn scope(mut call: Call) -> Result<Call, ParseError> {
         }
     }
     call.word = if remote { "remote" } else { "scope" }.into();
-    call.block = remote.then_some(body);
+    call.block = (remote || !body.is_empty()).then_some(body);
     Ok(call)
 }
 
@@ -303,6 +307,7 @@ fn operation(mut call: Call) -> Result<Call, ParseError> {
 pub(crate) fn prepare(nodes: &mut [ModelNode]) -> Result<(), Vec<(usize, ParseError)>> {
     let mut errors = Vec::new();
     for node in nodes {
+        let memory = node.options.iter().any(|pair| pair.key == "storage" && pair.value.item == Value::Symbol("memory".into()));
         let mut body = Vec::new();
         let mut fields = Vec::new();
         let mut search = Vec::new();
@@ -332,7 +337,7 @@ pub(crate) fn prepare(nodes: &mut [ModelNode]) -> Result<(), Vec<(usize, ParseEr
                     }
                     continue;
                 }
-                "scope" => scope(call),
+                "scope" => scope(call, memory),
                 "node" => node_read(call, false),
                 "nodes" => node_read(call, true),
                 "operation" => operation(call),

@@ -51,14 +51,14 @@ public final class DatabaseTransport: Transport, @unchecked Sendable {
         case let .payload(data):
           onEvent(operationName, data.text)
           try sink.event(json: JSONValue.object(["data": data]).text)
-        case let .errors(messages): sink.failed(kind: "graphql", detail: messages.joined(separator: "\n"))
+        case let .errors(error): sink.failed(error: error)
         case .completed: break
         }
       }
-      if !Task.isCancelled { sink.failed(kind: "transport", detail: "subscription completed") }
+      if !Task.isCancelled { sink.failed(error: .Network(detail: "subscription completed")) }
     } catch is CancellationError {
     } catch {
-      if !Task.isCancelled { sink.failed(kind: error as? CableClientError == .rejected ? "graphql" : "transport", detail: String(describing: error)) }
+      if !Task.isCancelled { sink.failed(error: error as? CableClientError == .rejected ? .Graphql(messages: [String(describing: error)], extensions: nil) : .Network(detail: String(describing: error))) }
     }
   }
 

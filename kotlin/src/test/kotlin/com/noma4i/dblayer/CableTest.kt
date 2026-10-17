@@ -93,7 +93,9 @@ class CableProtocolTest {
         assertEquals(GraphQLSubscriptionEvent.Ready, event("""{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionReady":true}"""))
         assertNull(event("""{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionReady":true}""", "abc:2"))
         assertEquals(GraphQLSubscriptionEvent.Payload(parseJson("""{"chatUpdated":{"id":"1"}}""")), event("""{"result":{"data":{"chatUpdated":{"id":"1"}}},"more":true}"""))
-        assertEquals(GraphQLSubscriptionEvent.Errors(listOf("boom")), event("""{"result":{"errors":[{"message":"boom"}]},"more":true}"""))
+        val failure = event("""{"result":{"errors":[{"message":"boom","extensions":{"code":"NOT_FOUND"}}]},"more":true}""") as GraphQLSubscriptionEvent.Errors
+        assertEquals(listOf("boom"), (failure.error as DbException.Graphql).messages)
+        assertEquals("NOT_FOUND", (failure.error as DbException.Graphql).extensions?.code)
         assertNull(event("""{"type":"pong"}"""))
         assertNull(event("""{"result":{"data":{}},"more":true}"""))
     }

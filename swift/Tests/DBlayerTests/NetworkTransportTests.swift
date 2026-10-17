@@ -234,7 +234,7 @@ struct NetworkTransportTests {
       scriptId: "network-transport-subscription-completed"
     )
 
-    #expect(graphqlError == SubscriptionFailure(kind: .graphql, message: "boom"))
+    #expect(graphqlError == SubscriptionFailure(error: .Graphql(messages: ["boom"], extensions: nil)))
     #expect(undecodable?.kind == .internalError)
     #expect(rejected?.kind == .graphql)
     #expect(completed?.kind == .transport)

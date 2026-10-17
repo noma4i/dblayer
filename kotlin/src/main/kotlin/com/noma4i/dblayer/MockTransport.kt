@@ -6,6 +6,10 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /** Answers by operation name, can delay or fail answers, and lets a test push or break a subscription. */
 class MockTransport : Transport {
+    override suspend fun openCable(): String = throw DbException.Invalid("encrypted cable socket is not configured")
+    override suspend fun cableSend(token: String, text: String): Unit = throw DbException.Invalid("encrypted cable socket is not configured")
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
+    override suspend fun cableClose(token: String) {}
     private class Reply(val body: String?, val failure: DbException?, val delayMillis: Long)
 
     private val replies = ConcurrentHashMap<String, java.util.ArrayDeque<Reply>>()
@@ -24,7 +28,7 @@ class MockTransport : Transport {
 
     fun emit(operation: String, json: String) { sinks[operation]?.event(json) }
 
-    fun breakSubscription(operation: String) { sinks.remove(operation)?.failed("transport", "connection lost") }
+    fun breakSubscription(operation: String) { sinks.remove(operation)?.failed(DbException.Network("connection lost")) }
 
     override suspend fun query(request: TransportRequest): String = answer(request)
 

@@ -10,6 +10,63 @@ use crate::transport::Response;
 const KEY: &str = "moments|MomentEvents";
 
 #[tokio::test(start_paused = true)]
+async fn memory_scope_events_follow_readers_and_expire_without_http() {
+    use crate::schema::{FieldSpec, ModelSpec, RelationSpec, Storage, UpdatesSpec};
+    use crate::value::ScalarKind;
+    let mut model = ModelSpec::new("notices", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str)]);
+    model.storage = Storage::Memory;
+    model.expire_after = Some("5.seconds".into());
+    let mut relation = RelationSpec::global("recent");
+    relation.updates.push(UpdatesSpec { subscription:"ViewerNotice".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
+    model.relations.push(relation);
+    let rig = rig_on(crate::db::Db::open_in_memory(vec![model], None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig { live_linger:Duration::from_secs(1), ..Default::default() });
+    rig.sync.register(super::super::OperationDef::new("ViewerNotice", "subscription ViewerNotice { viewerNotice { body } }", "viewerNotice"));
+    let emit = || rig.transport.emit("ViewerNotice", SubscriptionEvent::Next(Response::data(json!({"viewerNotice":{"body":"hello"}}))));
+    emit();
+    settle().await;
+    assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
+    let first = rig.sync.watch("notices", "recent", &none()).unwrap();
+    let second = rig.sync.watch("notices", "recent", &none()).unwrap();
+    settle().await;
+    assert_eq!(rig.transport.call_count("ViewerNotice"), 1);
+    emit();
+    settle().await;
+    assert_eq!(rig.db.query(&crate::query::Query::new("notices")).unwrap()[0].text("body"), Some("hello"));
+    rig.clock.advance(Duration::from_secs(6));
+    rig.db.expire_ephemeral().unwrap();
+    assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
+    drop(first);
+    settle().await;
+    assert_eq!(rig.transport.cancellations("ViewerNotice"), 0);
+    drop(second);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    emit();
+    settle().await;
+    assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
+    assert_eq!(rig.transport.cancellations("ViewerNotice"), 1);
+    assert!(rig.transport.calls().iter().all(|call| call.kind == crate::transport::CallKind::Subscription));
+}
+
+#[tokio::test(start_paused = true)]
+async fn changes_declarations_share_one_subscription_until_the_last_reader_leaves() {
+    let mut spec = users_spec();
+    spec.changes.push(crate::schema::ChangeRead { area: "USER".into(), relation: "current".into(), parameter: None });
+    let rig = rig_on(crate::db::Db::open_in_memory(vec![spec], None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig { live_linger: Duration::from_secs(1), ..Default::default() });
+    let first = rig.sync.watch("users", "current", &none()).unwrap();
+    let second = rig.sync.watch("users", "current", &none()).unwrap();
+    settle().await;
+    assert_eq!(rig.transport.call_count("DblayerViewerChanges"), 1);
+    drop(first);
+    settle().await;
+    assert_eq!(rig.transport.cancellations("DblayerViewerChanges"), 0);
+    drop(second);
+    settle().await;
+    tokio::time::advance(Duration::from_secs(10)).await;
+    settle().await;
+    assert_eq!(rig.transport.cancellations("DblayerViewerChanges"), 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn dropping_sync_stops_subscriptions_at_every_lifetime_stage() {
     let mut results = Vec::new();
     for stage in ["starting", "active", "lingering", "clone", "direct"] {

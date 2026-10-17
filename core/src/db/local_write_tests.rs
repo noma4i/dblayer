@@ -229,7 +229,6 @@ fn thread_remote(variables: std::collections::BTreeMap<String, VariableSource>) 
         stale_time: "session".into(),
         empty_stale_time: None,
         selects_page_info: true,
-        updates: Vec::new(),
         page_size: None,
         variables,
         root: None,

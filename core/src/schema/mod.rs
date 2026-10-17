@@ -528,8 +528,6 @@ pub struct RemoteSpec {
     #[serde(default)]
     pub selects_page_info: bool,
     #[serde(default)]
-    pub updates: Vec<UpdatesSpec>,
-    #[serde(default)]
     pub page_size: Option<u32>,
     #[serde(default)]
     pub variables: BTreeMap<String, VariableSource>,
@@ -589,6 +587,8 @@ pub enum NodeRead {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationSpec {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub updates: Vec<UpdatesSpec>,
     pub by_columns: Vec<String>,
     #[serde(default)]
     pub text_params: Vec<String>,
@@ -618,6 +618,7 @@ impl RelationSpec {
     pub fn new(name: &str, by_columns: &[&str]) -> Self {
         Self {
             name: name.to_string(),
+            updates: Vec::new(),
             by_columns: by_columns.iter().map(|column| column.to_string()).collect(),
             text_params: Vec::new(),
             text_types: BTreeMap::new(),
@@ -709,7 +710,7 @@ impl RelationSpec {
                 return Err(DeclarationError::UnknownSortColumn { relation: relation(), column: field.column.clone() });
             }
         }
-        let set = self.remote.iter().flat_map(|remote| remote.updates.iter()).flat_map(|updates| updates.set.keys());
+        let set = self.updates.iter().flat_map(|updates| updates.set.keys());
         for field in set {
             let Some(spec) = model.ephemeral_field(field) else {
                 return Err(DeclarationError::UnknownSetField { relation: relation(), field: field.clone() });
@@ -874,6 +875,15 @@ pub struct ModelSpec {
     pub expire_after: Option<String>,
     #[serde(default)]
     pub listens: Vec<UpdatesSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<ChangeRead>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeRead {
+    pub area: String,
+    pub relation: String,
+    pub parameter: Option<String>,
 }
 
 fn is_reserved_name(name: &str) -> bool {
@@ -893,6 +903,7 @@ impl ModelSpec {
             storage: Storage::Disk,
             expire_after: None,
             listens: Vec::new(),
+            changes: Vec::new(),
         }
     }
 

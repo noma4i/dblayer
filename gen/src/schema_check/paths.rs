@@ -60,11 +60,11 @@ impl<'a> Run<'a> {
                 }
                 "action" => self.check_action_paths(node, call),
                 "listen" => self.check_subscription_paths(node, call, "listen"),
-                "remote" => {
+                "remote" | "scope" => {
                     for updates in call.block.iter().flatten().filter(|line| line.word == "updates") {
                         self.check_subscription_paths(node, updates, "updates");
                     }
-                    self.check_cursor(node, call);
+                    if call.word == "remote" { self.check_cursor(node, call); }
                 }
                 _ => {}
             }

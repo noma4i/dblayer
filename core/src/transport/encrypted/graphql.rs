@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 
 use super::client::{Answer, EncryptedClient};
 use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutResponse, Response, Subscription, Transport, TransportError};
+use crate::transport::{CableConnect, CableSocket, CableSubscriptions, Connectivity};
 
 const GRAPHQL_PATH: &str = "/api/v3/graphql";
 const PERSISTED_QUERY_VERSION: u32 = 1;
@@ -14,11 +15,21 @@ const PERSISTED_QUERY_NOT_FOUND: &str = "PERSISTED_QUERY_NOT_FOUND";
 pub struct EncryptedTransport {
     client: Arc<EncryptedClient>,
     rest: Arc<dyn Transport>,
+    cable: CableSubscriptions,
+}
+
+struct TransportCable(Arc<dyn Transport>);
+
+#[async_trait]
+impl CableConnect for TransportCable {
+    async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> { self.0.open_cable().await }
 }
 
 impl EncryptedTransport {
     pub fn new(client: Arc<EncryptedClient>, rest: Arc<dyn Transport>) -> Self {
-        Self { client, rest }
+        let credentials = client.clone();
+        let cable = CableSubscriptions::new(client.config.clone(), Arc::new(move || credentials.credential()), Arc::new(TransportCable(rest.clone())), Connectivity::new());
+        Self { client, rest, cable }
     }
 }
 
@@ -66,6 +77,8 @@ pub fn missing_from_registry(response: &Response) -> bool {
 
 #[async_trait]
 impl Transport for EncryptedTransport {
+    fn set_online(&self, online: bool) { self.cable.set_online(online); }
+
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let response = response_of(self.client.read(GRAPHQL_PATH, graphql_body(&request, false)).await?)?;
         if !missing_from_registry(&response) {
@@ -87,7 +100,7 @@ impl Transport for EncryptedTransport {
     }
 
     async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> {
-        self.rest.subscribe(request).await
+        self.cable.subscribe(request).await
     }
 
     async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {

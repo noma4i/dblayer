@@ -9,6 +9,7 @@ impl Sync {
     pub fn set_online(&self, online: bool) {
         let was_online = self.inner.connectivity.is_online();
         self.inner.connectivity.set(online);
+        self.inner.transport.set_online(online);
         if online && !was_online {
             self.inner.spawn_flush(Duration::ZERO);
         }

@@ -10,6 +10,9 @@ use crate::ParseError;
 
 mod nested;
 mod enums;
+mod changes;
+#[cfg(test)]
+mod changes_tests;
 
 type Found = (usize, ParseError);
 
@@ -163,13 +166,11 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Model, "listen") => {
             plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
         }
+        (Context::Model, "changed_by") => plain(Shape::Name, vec![key("via", Want::Symbol, true), key("id", Want::Symbol, false)]),
         (Context::Remote, "updates") => {
             plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
         }
-        (Context::Model, "scope") => plain(
-            Shape::Name,
-            vec![key("params", Want::Symbols, false), key("where", Want::Hash, false), key("order", Want::Hash, false)],
-        ),
+        (Context::Model, "scope") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("where", Want::Hash, false), key("order", Want::Hash, false)], block: true, free_keys: false }),
         (Context::Model, "belongs_to") => plain(
             Shape::Name,
             vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("touch", Want::Bool, false), key("sets", Want::Hash, false), key("newer", Want::Hash, false), key("from", Want::Any, false)],
@@ -213,6 +214,7 @@ pub fn check(nodes: &[ModelNode]) -> Result<Vec<ModelSpec>, Vec<Found>> {
         return Err(errors);
     }
     let models = build(nodes);
+    changes::check_changes(nodes, &models, &mut errors);
     enums::check_enums(nodes, &models, &mut errors);
     if !errors.is_empty() { return Err(errors); }
     nested::check_defaults(nodes, &models, &mut errors);
@@ -305,6 +307,12 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
         }
     }
     let mut schemas = 0;
+    let mut subscriptions = HashSet::new();
+    for update in node.body.iter().flat_map(|call| if call.word == "listen" { vec![call] } else { call.block.iter().flatten().filter(|line| line.word == "updates").collect() }) {
+        if let Some(Node { item: Value::Const(name) | Value::Str(name), .. }) = update.args.first() {
+            if !subscriptions.insert(name) { report(update.line, update.column, format!("duplicate subscription `{name}`")); }
+        }
+    }
     let mut member_names = HashSet::new();
     let mut standard_words = HashSet::new();
     let fields: HashSet<&str> = node
@@ -345,6 +353,10 @@ fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
         }
         if call.word == "scope" {
             check_scope(call, &mut report);
+            if call.block.is_some() && !node.options.iter().any(|pair| pair.key == "storage" && pair.value.item == Value::Symbol("memory".into())) {
+                report(call.line, call.column, "`scope` takes no block".into());
+            }
+            for update in call.block.iter().flatten() { check_call(update, Context::Remote, &mut report); }
         }
         if matches!(call.word.as_str(), "create" | "update" | "destroy") {
             if !standard_words.insert(call.word.as_str()) {
@@ -748,6 +760,7 @@ fn check_call(call: &Call, context: Context, report: &mut impl FnMut(usize, usiz
     };
     check_shape(call, word.shape, report);
     match (&call.block, word.block) {
+        (None, true) if call.word == "scope" => {}
         (None, true) if call.word == "action" && call.options.iter().any(|pair| pair.key == "mutation") => {}
         (None, true) => report(call.line, call.column, format!("`{}` needs a `do ... end` block", call.word)),
         (Some(_), false) if matches!(context, Context::Schema | Context::Nested) && matches!(call.word.as_str(), "object" | "array" | "union") => {}

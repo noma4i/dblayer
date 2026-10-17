@@ -1,0 +1,26 @@
+model Chat do
+  field :title, type: :string
+  node ChatNode
+  changed_by :chat, via: :node
+end
+
+model Message do
+  field :text, type: :string
+  node MessageNode
+  changed_by :message, via: :node
+  changed_by :reaction, via: :node
+end
+
+model Moment do
+  field :text, type: :string
+  node MomentNode
+  changed_by :reaction, via: :node
+end
+
+model Viewer do
+  field :unread, type: :int
+  scope :current do
+    fetch CurrentViewer
+  end
+  changed_by :counters, via: :current
+end

@@ -48,13 +48,35 @@ impl SubscriptionFailureKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubscriptionFailure {
     pub kind: SubscriptionFailureKind,
-    pub message: String,
-    pub details: Option<String>,
+    pub error: super::TransportError,
+    pub close: Option<SubscriptionClose>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscriptionClose {
+    pub code: u16,
+    pub session: Option<super::SessionCode>,
+    pub terminal: bool,
 }
 
 impl SubscriptionFailure {
     pub fn new(kind: SubscriptionFailureKind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into(), details: None }
+        let message = message.into();
+        let error = match kind {
+            SubscriptionFailureKind::Transport => super::TransportError::Network(message),
+            SubscriptionFailureKind::Graphql => super::TransportError::Graphql { messages: vec![message], extensions: None },
+            SubscriptionFailureKind::Internal => super::TransportError::Decode(message),
+        };
+        Self { kind, error, close: None }
+    }
+
+    pub fn from_error(error: super::TransportError) -> Self {
+        let kind = match &error {
+            super::TransportError::Graphql { .. } => SubscriptionFailureKind::Graphql,
+            super::TransportError::Network(_) | super::TransportError::Http { .. } => SubscriptionFailureKind::Transport,
+            _ => SubscriptionFailureKind::Internal,
+        };
+        Self { kind, error, close: None }
     }
 }
 
@@ -63,6 +85,16 @@ pub enum SubscriptionEvent {
     Ready,
     Next(Response),
     Failed(SubscriptionFailure),
+}
+
+impl SubscriptionEvent {
+    pub fn response(response: Response) -> Self {
+        if response.data.is_none() && !response.errors.is_empty() {
+            let error = super::TransportError::Graphql { extensions: response.extensions(), messages: response.errors.into_iter().map(|error| error.message).collect() };
+            return Self::Failed(SubscriptionFailure::from_error(error));
+        }
+        Self::Next(response)
+    }
 }
 
 pub struct Subscription {

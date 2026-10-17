@@ -154,14 +154,18 @@ impl Database {
         self.connect_json(&query_json, false, listener)
     }
     pub fn live_window(&self, query_json: String, tail: u32, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        let (query, _) = self.parsed_query(&query_json)?;
+        let (query, relation) = self.parsed_query(&query_json)?;
         let _entered = executor()?.enter();
+        let watch = match (self.sync.as_ref(), relation) {
+            (Some(sync), Some((relation, params))) => Some(sync.watch(query.model.as_str(), &relation, &params)?),
+            _ => None,
+        };
         let (latest, _) = tokio::sync::watch::channel(None);
         let post = latest.clone();
         let wire = self.wire(query.model.as_str())?.clone();
         let window = self.db.observe_window(query, WindowSpec::Tail { size: tail as usize }, move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); listener.changed(value); })?;
         let (_, initial_load) = tokio::sync::watch::channel(Some(Ok(())));
-        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: None, window: Some(window), _watch: None, load: None })) }))
+        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None })) }))
     }
     pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.connect_json(&query_json, true, listener)
@@ -399,12 +403,13 @@ impl Database {
         let remote = description["relation"].as_str().map(|name| -> Result<_, DbError> {
             let params: Map<String, Value> = description.get("params").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or_default();
             let relation_query = self.db.remote_relation_query(query.model.as_str(), name, &params).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-            Ok(relation_query.map(|relation_query| {
+            let watch = relation_query.is_some() || self.db.spec(query.model.as_str())?.relations.iter().any(|relation| relation.name == name && !relation.updates.is_empty());
+            if let Some(relation_query) = relation_query {
                 query.scope = relation_query.scope;
                 query.stable = relation_query.stable;
                 if query.order.is_empty() { query.order = relation_query.order; }
-                (name.to_string(), params)
-            }))
+            }
+            Ok(watch.then_some((name.to_string(), params)))
         }).transpose()?.flatten();
         Ok((query, remote))
     }
@@ -438,17 +443,18 @@ impl Database {
                 let watch = sync.watch(query.model.as_str(), &relation, &params)?;
                 let model = query.model.to_string();
                 let errors = latest.clone();
-                let task = executor()?.spawn(async move {
+                let remote = self.db.spec(&model)?.relations.iter().any(|declared| declared.name == relation && declared.remote.is_some());
+                let task = if remote { Some(executor()?.spawn(async move {
                     let result = sync.load(&model, &relation, &params, options).await.map(|_| ());
                     if let Err(error) = &result {
                         let revision = errors.borrow().as_ref().map_or(0, |change| change.revision);
-                        let change = LiveChange::failed(revision, error.to_string());
+                        let change = LiveChange::failed(revision, error.clone().into());
                         errors.send_replace(Some(change.clone()));
                         listener.changed(change);
                     }
                     completed.send_replace(Some(result));
-                });
-                (Some(watch), Some(task.abort_handle()))
+                }).abort_handle()) } else { completed.send_replace(Some(Ok(()))); None };
+                (Some(watch), task)
             }
             None => { completed.send_replace(Some(Ok(()))); (None, None) },
         };

@@ -9,7 +9,7 @@ fn vectors() -> Value { serde_json::from_str(include_str!("../../../../../fixtur
 fn hex(text: &str) -> Vec<u8> { text.as_bytes().chunks_exact(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap()).collect() }
 fn bytes(value: &Value) -> [u8; 32] { hex(value.as_str().unwrap()).try_into().unwrap() }
 
-fn inputs() -> (Value, EncryptedConfig, Value, String) {
+pub(super) fn inputs() -> (Value, EncryptedConfig, Value, String) {
     let kat = vectors();
     let private = RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap();
     let config = EncryptedConfig { origin: kat["hkdf"]["audience"].as_str().unwrap().into(), server_key: STANDARD.encode(private.to_public_key().to_public_key_der().unwrap().as_bytes()), pin: kat["hkdf"]["kid"].as_str().unwrap().into() };
@@ -24,7 +24,7 @@ fn known_link() -> (CableLink, String, Value) {
     (link, hello, kat)
 }
 
-fn decrypt(token: &str, key: &[u8]) -> Vec<u8> {
+pub(super) fn decrypt(token: &str, key: &[u8]) -> Vec<u8> {
     let parts: Vec<_> = token.split('.').collect();
     let mut data = URL_SAFE_NO_PAD.decode(parts[3]).unwrap();
     data.extend(URL_SAFE_NO_PAD.decode(parts[4]).unwrap());

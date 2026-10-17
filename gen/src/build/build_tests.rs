@@ -211,7 +211,7 @@ fn keyed_optimistic_builds_an_op_that_names_its_args() {
 #[test]
 fn remote_updates_line_builds_updates_spec() {
     let model = build_one("  remote :feed do\n    query Feed\n    updates SampleEvents, deleted_by: :destroyed\n  end\n  remote :plain do\n    query Plain\n    updates PlainEvents\n  end");
-    let updates = |index: usize| model.relations[index].remote.as_ref().unwrap().updates.clone();
+    let updates = |index: usize| model.relations[index].updates.clone();
     assert_eq!(updates(0), vec![UpdatesSpec { subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), set: Default::default(), removes: false, debounce: None, root: None, id: None }]);
     assert_eq!(updates(1), vec![UpdatesSpec { subscription: "PlainEvents".into(), deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }]);
 }
@@ -257,7 +257,7 @@ fn updates_set_builds_ephemeral_values() {
     )
     .unwrap()
     .remove(0);
-    let updates = model.relations[0].remote.as_ref().unwrap().updates[0].clone();
+    let updates = model.relations[0].updates[0].clone();
     assert_eq!(updates.set.get("typing"), Some(&json!(true)));
 }
 
@@ -288,7 +288,7 @@ fn variables_line_renames_params_and_fixes_constants() {
 #[test]
 fn a_relation_can_follow_several_subscriptions() {
     let model = build_one("  remote :list do\n    query \"chats\"\n    updates \"chatCreated\"\n    updates \"chatUpdated\", debounce: 300.milliseconds\n    updates \"chatDeleted\", removes: true\n  end");
-    let updates = &model.relations[0].remote.as_ref().unwrap().updates;
+    let updates = &model.relations[0].updates;
     assert_eq!(updates.iter().map(|update| update.subscription.as_str()).collect::<Vec<_>>(), ["chatCreated", "chatUpdated", "chatDeleted"]);
     assert_eq!(updates[1].debounce.as_deref(), Some("300.milliseconds"));
     assert!(updates[2].removes && !updates[0].removes);

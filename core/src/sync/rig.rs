@@ -19,7 +19,7 @@ pub const START_MS: u64 = 1_000_000;
 
 pub fn remote(operation: &str, shape: RemoteShape, stale: &str) -> RemoteSpec {
     let selects_page_info = matches!(shape, RemoteShape::Connection { .. });
-    RemoteSpec { operation: operation.to_string(), shape, stale_time: stale.to_string(), empty_stale_time: None, selects_page_info, updates: Vec::new(), page_size: None, variables: Default::default(), root: None, total_from: None }
+    RemoteSpec { operation: operation.to_string(), shape, stale_time: stale.to_string(), empty_stale_time: None, selects_page_info, page_size: None, variables: Default::default(), root: None, total_from: None }
 }
 
 pub fn users_spec() -> ModelSpec {
@@ -69,8 +69,8 @@ pub fn moments_spec() -> ModelSpec {
     spec_remote.empty_stale_time = Some("10.seconds".to_string());
     empty_aware.remote = Some(spec_remote);
     let mut pulse = RelationSpec::global("pulse");
-    let mut pulse_remote = remote("MomentsPulse", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes");
-    pulse_remote.updates = vec![
+    let pulse_remote = remote("MomentsPulse", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes");
+    pulse.updates = vec![
         UpdatesSpec { subscription: "MomentEvents".to_string(), deleted_by: Some("destroyed".to_string()), set: Map::new(), removes: false, debounce: None, root: None, id: None },
         UpdatesSpec { subscription: "MomentRemoved".to_string(), deleted_by: None, set: Map::new(), removes: true, debounce: None, root: None, id: None },
     ];

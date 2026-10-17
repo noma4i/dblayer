@@ -10,6 +10,9 @@ use crate::transport::EventSpec;
 use super::subscribe::{EventEffect, EventSubscription, SubscriptionDef};
 use super::{locked, Inner};
 
+const CHANGES: &str = "DblayerViewerChanges";
+const CHANGES_QUERY: &str = "subscription DblayerViewerChanges { viewerChanges { changes { area entityId } } }";
+
 #[derive(Default)]
 pub(crate) struct Live {
     readers: usize,
@@ -29,12 +32,17 @@ impl Drop for Live {
 impl Inner {
     pub(crate) fn acquire_live(self: &std::sync::Arc<Self>, model: &str, relation: &str) -> Vec<String> {
         let Ok(spec) = self.db.spec(model) else { return Vec::new() };
-        let updates = spec.relations.iter().find(|candidate| candidate.name == relation).and_then(|found| found.remote.as_ref()).map(|remote| remote.updates.clone()).unwrap_or_default();
-        updates.into_iter().map(|updates| self.acquire_one(model, updates)).collect()
+        let updates = spec.relations.iter().find(|candidate| candidate.name == relation).map(|relation| relation.updates.clone()).unwrap_or_default();
+        let mut keys: Vec<_> = updates.into_iter().map(|updates| self.acquire_one(model, updates)).collect();
+        if !spec.changes.is_empty() {
+            if let Some(key) = self.acquire_changes() { keys.push(key); }
+        }
+        keys
     }
 
     /// Starts the model-level subscriptions (`listen` lines). They stay open until `unlisten`.
     pub(crate) fn listen_all(self: &std::sync::Arc<Self>) {
+        self.acquire_changes();
         for spec in self.db.shared.specs.values() {
             for updates in &spec.listens {
                 self.acquire_one(spec.key.as_str(), updates.clone());
@@ -47,6 +55,17 @@ impl Inner {
         for key in keys {
             self.release_live(&key);
         }
+        if let Some(model) = self.change_model() { self.release_live(&format!("{model}|{CHANGES}")); }
+    }
+
+    fn change_model(&self) -> Option<String> {
+        self.db.shared.specs.values().filter(|spec| !spec.changes.is_empty()).map(|spec| spec.key.to_string()).min()
+    }
+
+    fn acquire_changes(self: &std::sync::Arc<Self>) -> Option<String> {
+        let model = self.change_model()?;
+        locked(&self.operations).entry(CHANGES.into()).or_insert_with(|| super::OperationDef::new(CHANGES, CHANGES_QUERY, "viewerChanges"));
+        Some(self.acquire_one(&model, UpdatesSpec { subscription: CHANGES.into(), deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }))
     }
 
     fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec) -> String {

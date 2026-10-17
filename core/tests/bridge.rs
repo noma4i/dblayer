@@ -44,7 +44,7 @@ async fn bridge_state_needs_a_sync_to_report_on() {
     let mut feed = RelationSpec::global("feed");
     feed.remote = Some(RemoteSpec {
         operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: "5.minutes".into(),
-        empty_stale_time: None, selects_page_info: false, updates: Vec::new(), page_size: None, variables: Default::default(), root: None, total_from: None,
+        empty_stale_time: None, selects_page_info: false, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(feed);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 },
@@ -57,6 +57,10 @@ async fn bridge_state_needs_a_sync_to_report_on() {
 struct Recorder(std::sync::Mutex<Vec<String>>);
 #[async_trait::async_trait]
 impl Transport for Recorder {
+    async fn open_cable(&self) -> Result<String, dblayer::ffi::DbError> { Err(dblayer::ffi::DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), dblayer::ffi::DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<dblayer::ffi::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, _: String) {}
     async fn query(&self, _: dblayer::ffi::TransportRequest) -> Result<String, dblayer::ffi::DbError> { unreachable!() }
     async fn mutate(&self, request: dblayer::ffi::TransportRequest) -> Result<String, dblayer::ffi::DbError> {
         self.0.lock().unwrap().push(request.operation_name);

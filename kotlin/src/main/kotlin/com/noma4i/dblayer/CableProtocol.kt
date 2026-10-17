@@ -80,7 +80,7 @@ sealed interface CableCommand {
 sealed interface GraphQLSubscriptionEvent {
     data object Ready : GraphQLSubscriptionEvent
     data class Payload(val value: JsonElement) : GraphQLSubscriptionEvent
-    data class Errors(val messages: List<String>) : GraphQLSubscriptionEvent
+    data class Errors(val error: DbException) : GraphQLSubscriptionEvent
     data object Completed : GraphQLSubscriptionEvent
 }
 
@@ -118,7 +118,8 @@ object GraphQLChannel {
         if (data != null && data.isNotEmpty()) return GraphQLSubscriptionEvent.Payload(data)
         val errors = result["errors"] as? kotlinx.serialization.json.JsonArray ?: return null
         if (errors.isEmpty()) return null
-        return GraphQLSubscriptionEvent.Errors(errors.mapNotNull { ((it as? JsonObject)?.get("message") as? JsonPrimitive)?.takeIf { message -> message.isString }?.content })
+        val messages = errors.mapNotNull { ((it as? JsonObject)?.get("message") as? JsonPrimitive)?.takeIf { message -> message.isString }?.content }
+        return GraphQLSubscriptionEvent.Errors(DbException.Graphql(messages, graphqlExtensions(result.toString())))
     }
 }
 

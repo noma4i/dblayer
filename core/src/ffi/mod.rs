@@ -16,9 +16,9 @@ pub use live::{LiveChange, LiveSubscription, QueryListener};
 pub use retention::{RetentionChange, RetentionPool};
 pub use state::{RelationStateChange, StateListener, StateSubscription};
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
-pub use transport::{ByteProgress, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
+pub use transport::{ByteProgress, EncryptedSocketEvent, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
 
-#[derive(Debug, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum DbError {
     #[error("invalid: {detail}")]
     Invalid { detail: String },
