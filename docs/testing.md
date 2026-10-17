@@ -79,7 +79,7 @@ Test conventions:
 
 ## Stress stand
 
-A separate program runs random operations from several threads against one database. A fake server drops, delays, refuses and repeats answers, goes offline and pushes late and duplicate subscription events. The stand is not part of `cargo test` or `scripts/check_dblayer.sh`. Run it by hand, only when a change may open a race (queue, cache, observers, concurrency). Clippy is also outside the standard run.
+A separate program runs random operations from several threads against one database. A fake server delays, refuses and repeats answers, goes offline and sends late events. The `features` step in `scripts/check_dblayer.sh` compiles all core targets with all features, including the stress tests. Run this step separately with `bash scripts/check_dblayer.sh --only features`. Run the stress tests with `cargo test -p dblayer --features stress sync::stress`. Race runs and Clippy remain manual checks.
 
 ```sh
 cargo run -p dblayer --features stress --bin stress -- --seed 7 --threads 4 --seconds 20

@@ -69,7 +69,7 @@ fn a_stale_cached_row_turns_the_cache_check_red() {
     let mut data = fresh.data.clone();
     data.insert("text".to_string(), json!("stale"));
     let stale = Record { id: fresh.id.clone(), revision: fresh.revision - 1, data, sync: SyncInfo::default(), ephemeral: 0 };
-    rig.db.shared.cache.lock().unwrap().put("moments", Arc::new(stale));
+    rig.db.shared.cache.lock().unwrap().put("moments", Arc::new(stale), fresh.revision);
     let findings = Findings::default();
     check::cache(&rig.db, &universe_of(&["m1"]), &findings);
     assert_eq!(tags(&findings), ["[cache]"]);

@@ -102,7 +102,7 @@ pub fn lists(db: &Db, findings: &Findings) {
                 problems.push(format!("scope {scope} lists a row twice"));
             }
             let stored = reader.stored_rows("moments", &ids)?;
-            for id in ids.iter().filter(|id| stored.get(*id).and_then(|record| record.row.as_ref()).is_none()) {
+            for id in ids.iter().filter(|id| !stored.contains_key(*id)) {
                 problems.push(format!("scope {scope} holds row {id} that is not stored"));
             }
         }
@@ -129,10 +129,10 @@ fn stale_cache_entries(db: &Db, universe: &[(String, String)]) -> Result<Vec<Str
             let overlay = (!spec.ephemeral.is_empty()).then(|| db.shared.ephemeral.lock());
             for id in &ids {
                 let cached = db.shared.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(model, id);
-                let fresh = stored.get(id).and_then(|record| {
-                    let mut data = record.row.clone()?;
+                let fresh = stored.get(id).map(|record| {
+                    let mut data = record.row.clone();
                     let ephemeral = overlay.as_ref().map_or(0, |state| state.overlay(spec, id, &mut data));
-                    Some((record.revision, data, syncs.remove(id).unwrap_or_default(), ephemeral))
+                    (record.revision, data, syncs.remove(id).unwrap_or_default(), ephemeral)
                 });
                 match (cached, fresh) {
                     (Some(row), Some((revision, data, sync, ephemeral))) => {

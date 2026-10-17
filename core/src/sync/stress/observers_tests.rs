@@ -12,7 +12,7 @@ fn row(id: &str, revision: i64) -> Arc<Record> {
 }
 
 fn change(revision: i64, rows: Vec<Arc<Record>>, diff: Diff) -> Change {
-    Change { revision, size: rows.len(), rows, related: Default::default(), diff, full: true }
+    Change { revision, size: rows.len(), rows, related: Default::default(), diff, full: true, window: None }
 }
 
 fn inserted(ids: &[&str]) -> Diff {

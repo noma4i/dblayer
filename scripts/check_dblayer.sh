@@ -23,6 +23,7 @@ steps=(
   "cheap|invariants-selftest|120|*|bash scripts/check_invariants_selftest.sh"
   "cheap|waits|120|*|bash scripts/check_waits.sh"
   "cheap|waits-selftest|120|*|bash scripts/check_waits_test.sh"
+  "features|cargo-check-features|600|core/ Cargo.|$slot cargo-step cargo check --manifest-path core/Cargo.toml --all-features --all-targets"
   "cargo|cargo-test-core|600|core/ Cargo.|$slot cargo-step cargo test --manifest-path core/Cargo.toml"
   "cargo|cargo-test-gen|600|gen/ Cargo.|$slot cargo-step cargo test --manifest-path Cargo.toml -p dblayer-gen"
   "swift|ios-slices|600|swift/|$slot bash-step bash scripts/build_ios.sh --check"

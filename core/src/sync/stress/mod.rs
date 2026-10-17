@@ -81,6 +81,10 @@ pub fn scope_of(db: &Db, relation: &str) -> ScopeKey {
     relation.scope_key("moments", &BTreeMap::new()).expect("global relation key")
 }
 
+fn scratch_dir() -> tempfile::TempDir {
+    tempfile::tempdir().expect("stress upload directory")
+}
+
 fn runtime(threads: usize) -> Runtime {
     if threads <= 1 {
         Builder::new_current_thread().enable_time().start_paused(true).build().expect("runtime")
@@ -260,9 +264,8 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     let aliases = Aliases::default();
     let rows = vec!["s1".to_string(), format!("s{}", workers * OWNED_ROWS + 1)];
     let watchers = Watchers::attach(&rig.db, &findings, &universe, &aliases, &rows, scope_of(&rig.db, "feed"));
-    let scratch = std::env::temp_dir().join(format!("dblayer-stress-{}-{}", std::process::id(), config.seed));
-    let _ = std::fs::create_dir_all(&scratch);
-    let world = Arc::new(World::new(rig, server, findings.clone(), universe, aliases, scratch.clone()));
+    let scratch = scratch_dir();
+    let world = Arc::new(World::new(rig, server, findings.clone(), universe, aliases, scratch.path().to_path_buf()));
     world.server.set_calm(true);
     let _ = world.rig.sync.load("moments", "empty_aware", &Map::new(), LoadOptions { force: true }).await;
     world.server.set_calm(false);
@@ -289,6 +292,5 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     check::cache(&world.rig.db, &world.universe, &findings);
     watchers.finish(&world.rig.db, &findings);
     let report = StressReport { findings: findings.all(), ops, digest: oracle::digest(&world), requests: world.server.received() };
-    let _ = std::fs::remove_dir_all(&scratch);
     report
 }

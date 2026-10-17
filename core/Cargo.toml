@@ -9,7 +9,7 @@ name = "dblayer"
 
 [features]
 cli = ["uniffi/cli"]
-stress = ["tokio/rt-multi-thread", "tokio/test-util"]
+stress = ["tokio/rt-multi-thread", "tokio/test-util", "dep:tempfile"]
 bench = ["dep:tempfile"]
 
 [[bin]]
