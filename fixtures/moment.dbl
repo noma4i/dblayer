@@ -38,6 +38,8 @@ model Moment do
     fetch MomentsFeed
     paginate 20
     edge :impressionUuid, type: :string, null: true
+    edge :score, type: :int, null: true, from: "impressionScore"
+    edge :rank, type: :enum, values: [:top, :normal], as: FeedRank, null: true
   end
 
   operation :create do

@@ -11,12 +11,8 @@ fn pascal(text: &str) -> String {
     chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
 }
 
-fn key_of(field: &FieldSpec) -> &str {
-    field.from.as_deref().unwrap_or(&field.name)
-}
-
 fn read(field: &FieldSpec, swift: bool) -> String {
-    let key = key_of(field);
+    let key = &field.name;
     let enum_type = field.app_type.as_deref().unwrap_or_default();
     match (&field.kind, swift) {
         (FieldKind::Scalar { kind: ScalarKind::Int }, true) => format!("values[\"{key}\"]?.intValue"),

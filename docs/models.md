@@ -387,6 +387,29 @@ val vibe = Moment.readVibeFeedEdge(vibeId, moment.id)
 edge?.impressionUuid                                      // String?
 ```
 
+`from:` names the key in the response, the value is stored and read under the name of the edge field. An `enum` edge declares its type like a field does.
+
+```ruby
+scope :vibe_feed, text: [:vibeId] do
+  fetch "feed"
+  paginate 20
+  edge :score, type: :int, null: true, from: "impressionScore"
+  edge :rank, type: :enum, values: [:top, :normal], as: FeedRank, null: true
+end
+```
+
+```swift
+let edge = try Moment.vibeFeedEdge(vibeId, of: moment.id)
+edge?.score                                               // Int?, the response key is impressionScore
+edge?.rank                                                // FeedRank?
+```
+
+```kotlin
+val edge = Moment.vibeFeedEdge(vibeId, moment.id)
+edge?.score                                               // Long?, the response key is impressionScore
+edge?.rank                                                // FeedRank?
+```
+
 - A read gives `nil` for a row that is not in the connection, and a value type with `nil` fields for a row without edge values.
 - The answer of the same connection replaces the values of its rows, also with null. A row that leaves the connection loses its values. An answer without edges (a node read, a mutation, an event, a list, another connection) leaves them as they are.
 - The values live in the cache. A database that is rebuilt or reset loses them, and the next load of the connection brings them back.

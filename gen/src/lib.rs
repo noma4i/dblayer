@@ -232,6 +232,9 @@ mod scope_default_tests;
 mod enum_position_tests;
 
 #[cfg(test)]
+mod edge_from_tests;
+
+#[cfg(test)]
 mod edge_enum_tests;
 
 #[cfg(test)]
