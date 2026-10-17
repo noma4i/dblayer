@@ -64,7 +64,6 @@ fn union_declarations_reject_invalid_variants_at_their_line() {
         (wrap(&variant("Unknown")), "reserved"),
         (wrap("    on OneProps, case: :same do\n      field :id, type: :id\n    end\n    on TwoProps, case: :same do\n      field :id, type: :id\n    end\n"), "both become"),
         ("model Sample do\n  field :v, type: :object do\n    on OneProps do\n      field :id, type: :id\n    end\n  end\nend\n".to_string(), "only inside a union"),
-        (format!("{}{}", wrap(&variant("OneProps")), "model Other do\n  field :v, type: [Value]\nend\n"), "union lists"),
         ("model Sample do\n  field :v, type: Value, null: true, default: 1 do\n    on OneProps do\n      field :id, type: :id\n    end\n  end\nend\n".to_string(), "unknown key `default`"),
         ("model Sample do\n  field :v, type: Value, null: true do\n    on OneProps do\n      field :v, type: Value, null: true\n    end\n  end\nend\n".to_string(), "recursive"),
     ];
@@ -129,5 +128,5 @@ fn a_union_too_wide_for_one_sqlite_table_is_rejected_at_its_model() {
     let variant = |at: usize| format!("    on Wide{at}Item do\n{}    end\n", (0..60).map(|member| format!("      field :m{member}, type: :string, null: true\n")).collect::<String>());
     let source = format!("model Screen do\n  field :spec, type: ScreenSpec, null: true do\n{}  end\nend\n", (0..40).map(variant).collect::<String>());
     let errors = parse_models(&source).unwrap_err();
-    assert!(errors.iter().any(|found| found.message == "model Screen: table row_Screen would have 2405 columns, above the SQLite limit of 2000"), "{errors:?}");
+    assert!(errors.iter().any(|found| found.message == "model Screen: table row_Screen would have 2405 columns, above the SQLite limit of 2000. A union stores its variants in the columns of one table: declare fewer variants or fields, or split the model"), "{errors:?}");
 }

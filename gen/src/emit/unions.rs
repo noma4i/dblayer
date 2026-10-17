@@ -3,6 +3,7 @@ use std::fmt::Write;
 use dblayer::schema::FieldSpec;
 
 use super::nested::string_literal;
+use super::field_type;
 use crate::enums::EnumDecl;
 
 fn cases(declaration: &FieldSpec, swift: bool) -> Vec<(String, String, &str)> {
@@ -22,7 +23,15 @@ pub(super) fn emit_swift_union(out: &mut String, declaration: &FieldSpec) {
     for (case, variant, _) in &cases { writeln!(out, "        case let .{case}(value): try JSONValue.tagged({}, value).encode(to: encoder)", string_literal(variant, true)).unwrap(); }
     writeln!(out, "        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)\n        }}\n    }}\n\n    public init(cells: [Cell]) throws {{\n        let r = CellReader(cells)\n        let typename = try r.req(0, \\.asText)\n        switch typename {{").unwrap();
     for (case, variant, _) in &cases { writeln!(out, "        case {}: self = .{case}(try r.obj(1, {variant}.init(cells:)))", string_literal(variant, true)).unwrap(); }
-    writeln!(out, "        default: self = .unknown(typename: typename)\n        }}\n    }}\n\n    public var kind: {name}Kind? {{\n        switch self {{").unwrap();
+    writeln!(out, "        default: self = .unknown(typename: typename)\n        }}\n    }}\n").unwrap();
+    for field in &declaration.shared {
+        let optional = field_type(field, true);
+        let optional = if optional.ends_with('?') { optional } else { format!("{optional}?") };
+        writeln!(out, "    public var {}: {optional} {{\n        switch self {{", field.name).unwrap();
+        for (case, _, _) in &cases { writeln!(out, "        case let .{case}(value): return value.{}", field.name).unwrap(); }
+        writeln!(out, "        case .unknown: return nil\n        }}\n    }}\n").unwrap();
+    }
+    writeln!(out, "    public var kind: {name}Kind? {{\n        switch self {{").unwrap();
     for (case, _, _) in &cases { writeln!(out, "        case .{case}: return .{case}").unwrap(); }
     writeln!(out, "        case .unknown: return nil\n        }}\n    }}\n}}\n\npublic enum {name}Kind: String, Codable, Sendable {{").unwrap();
     for (case, variant, _) in &cases { writeln!(out, "    case {case} = {}", string_literal(variant, true)).unwrap(); }
@@ -37,7 +46,15 @@ pub(super) fn emit_kotlin_union(out: &mut String, declaration: &FieldSpec) {
     for (case, variant, _) in &cases { writeln!(out, "    data class {case}(val value: {}) : {name}()", inside(case, variant)).unwrap(); }
     writeln!(out, "    data class Unknown(val typename: String) : {name}()\n\n    val kind: {name}Kind?\n        get() = when (this) {{").unwrap();
     for (case, _, _) in &cases { writeln!(out, "            is {case} -> {name}Kind.{case}").unwrap(); }
-    writeln!(out, "            is Unknown -> null\n        }}\n\n    companion object {{\n        fun fromCells(cells: List<Cell>): {name} {{\n            val r = CellReader(cells)\n            return when (val typename = r.req(0, Cell::asText)) {{").unwrap();
+    writeln!(out, "            is Unknown -> null\n        }}\n").unwrap();
+    for field in &declaration.shared {
+        let optional = field_type(field, false);
+        let optional = if optional.ends_with('?') { optional } else { format!("{optional}?") };
+        writeln!(out, "    val {}: {optional}\n        get() = when (this) {{", field.name).unwrap();
+        for (case, _, _) in &cases { writeln!(out, "            is {case} -> value.{}", field.name).unwrap(); }
+        writeln!(out, "            is Unknown -> null\n        }}\n").unwrap();
+    }
+    writeln!(out, "    companion object {{\n        fun fromCells(cells: List<Cell>): {name} {{\n            val r = CellReader(cells)\n            return when (val typename = r.req(0, Cell::asText)) {{").unwrap();
     for (case, variant, _) in &cases { writeln!(out, "                {} -> {case}(r.obj(1) {{ {}.fromCells(it) }})", string_literal(variant, false), inside(case, variant)).unwrap(); }
     writeln!(out, "                else -> Unknown(typename)\n            }}\n        }}\n    }}\n}}\n\nobject {name}Serializer : UnionSerializer<{name}>(\"{name}\") {{\n    override fun read(typename: String, body: JsonObject): {name} = when (typename) {{").unwrap();
     for (case, variant, _) in &cases { writeln!(out, "        {} -> {name}.{case}(dbJson.decodeFromJsonElement({variant}.serializer(), body))", string_literal(variant, false)).unwrap(); }

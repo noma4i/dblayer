@@ -398,16 +398,31 @@ impl<'a> Run<'a> {
         let Some(element) = self.element_select(remote) else { return };
         let mut selected: Vec<&graphql::SelectedField> = Vec::new();
         self.each_select(element, None, &mut |select, _| selected.extend(select.fields.iter()), &mut Vec::new());
+        let mut at = 0;
+        while let Some(field) = selected.get(at).copied() {
+            at += 1;
+            self.each_select(&field.select, None, &mut |select, _| selected.extend(select.fields.iter()), &mut Vec::new());
+        }
         let mut problems = Vec::new();
-        for call in node.body.iter().filter(|call| call.word == "schema").flat_map(|call| call.block.iter().flatten()) {
+        for call in node.body.iter().filter(|call| call.word == "schema") {
+            self.union_selection_problems(call.block.as_deref().unwrap_or_default(), &selected, &mut problems);
+        }
+        for (line, column, message) in problems {
+            self.fail(node.file, line, column, message);
+        }
+    }
+
+    fn union_selection_problems(&self, calls: &'a [Call], selected: &[&graphql::SelectedField], problems: &mut Vec<(usize, usize, String)>) {
+        for call in calls {
             let variants: &[Call] = match (&call.block, call.word.as_str()) {
-                (Some(block), "union") => block,
-                (None, "object") => option_text(call, "as").and_then(|name| self.declared.get(name)).map(|(_, block)| *block).filter(|block| block.iter().any(|child| child.word == "variant")).unwrap_or_default(),
-                _ => continue,
+                (Some(block), _) if crate::unions::is_union_call(call) => block,
+                (None, "object" | "array") => option_text(call, "as").and_then(|name| self.declared.get(name)).map(|(_, block)| *block).filter(|block| block.iter().any(|child| child.word == "variant")).unwrap_or_default(),
+                _ => &[],
             };
             let union = option_text(call, "as").unwrap_or_default();
+            let noun = if self.schema.is_interface(union) { "interface" } else { "union" };
             let schema_name = option_text(call, "from").unwrap_or(name_of(call)).split('.').next().unwrap_or_default();
-            for field in selected.iter().filter(|field| field.name == schema_name) {
+            for field in selected.iter().filter(|field| !variants.is_empty() && field.name == schema_name) {
                 let mut found: (bool, Vec<&str>) = (false, Vec::new());
                 self.each_select(&field.select, None, &mut |select, on| {
                     found.0 |= select.typename;
@@ -416,27 +431,36 @@ impl<'a> Run<'a> {
                 if !found.0 {
                     problems.push((call.line, call.column, format!("field `{}`: the selection of `{schema_name}` must select `__typename`", name_of(call))));
                 }
-                for on in found.1.iter().filter(|on| !variants.iter().any(|variant| name_of(variant) == **on)) {
-                    problems.push((call.line, call.column, format!("field `{}`: `... on {on}` is not a declared variant of union `{union}`", name_of(call))));
+                for on in found.1.iter().filter(|on| !variants.iter().any(|variant| variant.word == "variant" && name_of(variant) == **on)) {
+                    problems.push((call.line, call.column, format!("field `{}`: `... on {on}` is not a declared variant of {noun} `{union}`", name_of(call))));
                 }
             }
-        }
-        for (line, column, message) in problems {
-            self.fail(node.file, line, column, message);
+            self.union_selection_problems(call.block.as_deref().unwrap_or_default(), selected, problems);
         }
     }
 
-    fn check_union(&mut self, node: &'a ModelNode, call: &Call, union: &str, variants: &'a [Call], file: usize, stack: &mut Vec<(String, String)>) {
-        let Some(TypeKind::Union(members)) = self.schema.types.get(union) else { return };
-        let declared: Vec<&str> = variants.iter().map(name_of).collect();
-        for variant in variants {
+    fn check_union(&mut self, node: &'a ModelNode, call: &Call, union: &str, children: &'a [Call], file: usize, stack: &mut Vec<(String, String)>) {
+        let interface = self.schema.is_interface(union);
+        let members: Vec<String> = match self.schema.types.get(union) {
+            Some(TypeKind::Union(members)) => members.clone(),
+            Some(TypeKind::Fields(_)) if interface => self.schema.implementers.get(union).cloned().unwrap_or_default(),
+            _ => return,
+        };
+        let variants: Vec<&Call> = children.iter().filter(|child| child.word == "variant").collect();
+        let declared: Vec<&str> = variants.iter().map(|variant| name_of(variant)).collect();
+        for variant in &variants {
             if !members.iter().any(|member| member == name_of(variant)) {
-                self.fail(file, variant.line, variant.column, format!("variant `{}` is not a member of union `{union}`", name_of(variant)));
+                let message = if interface { format!("variant `{}` is not an implementation of interface `{union}`", name_of(variant)) } else { format!("variant `{}` is not a member of union `{union}`", name_of(variant)) };
+                self.fail(file, variant.line, variant.column, message);
             }
         }
         for member in members.iter().filter(|member| !declared.contains(&member.as_str())) {
-            let at = variants.first().unwrap_or(call);
-            self.fail(file, at.line, at.column, format!("variant `{member}` of union `{union}` is not declared"));
+            let at = variants.first().copied().unwrap_or(call);
+            let message = if interface { format!("implementation `{member}` of interface `{union}` is not declared") } else { format!("variant `{member}` of union `{union}` is not declared") };
+            self.fail(file, at.line, at.column, message);
+        }
+        if let Some(shared) = children.iter().find(|child| child.word == "shared") {
+            self.check_shared(node, shared, union, &members, interface, file, stack);
         }
         for variant in variants.iter().filter(|variant| members.iter().any(|member| member == name_of(variant))) {
             let Some(block) = &variant.block else { continue };
@@ -448,6 +472,21 @@ impl<'a> Run<'a> {
             let inner: Vec<&Call> = block.iter().collect();
             self.check_fields(node, &inner, name_of(variant), &Scope { file, keys: HashSet::new(), top: false, lists: false }, &mut BTreeSet::new(), stack);
             stack.pop();
+        }
+    }
+
+    fn check_shared(&mut self, node: &'a ModelNode, shared: &'a Call, union: &str, members: &[String], interface: bool, file: usize, stack: &mut Vec<(String, String)>) {
+        if !interface {
+            self.fail(file, shared.line, shared.column, format!("`shared` needs an interface: `{union}` is a union"));
+            return;
+        }
+        let fields: Vec<&Call> = shared.block.iter().flatten().collect();
+        self.check_fields(node, &fields, union, &Scope { file, keys: HashSet::new(), top: false, lists: false }, &mut BTreeSet::new(), stack);
+        for field in &fields {
+            let key = option_text(field, "from").unwrap_or(name_of(field)).split('.').next().unwrap_or_default();
+            for member in members.iter().filter(|member| self.schema.field(member, key).is_err()) {
+                self.fail(file, field.line, field.column, format!("implementation `{member}` of interface `{union}` has no field `{key}`"));
+            }
         }
     }
 
@@ -507,7 +546,7 @@ impl<'a> Run<'a> {
         if word == "enum" {
             problems.extend(self.enum_problems(call, reached.name()));
         }
-        if word == "union" && !matches!(self.schema.types.get(reached.name()), Some(TypeKind::Union(_))) {
+        if crate::unions::is_union_call(call) && !matches!(self.schema.types.get(reached.name()), Some(TypeKind::Union(_))) && !self.schema.is_interface(reached.name()) {
             problems.push(format!("is not a union: schema type `{}` is not one", reached.name()));
         }
         for problem in problems {
@@ -577,3 +616,6 @@ mod node_tests;
 
 #[cfg(test)]
 mod union_tests;
+
+#[cfg(test)]
+mod interface_tests;

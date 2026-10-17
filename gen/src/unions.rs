@@ -45,6 +45,10 @@ pub(crate) fn check_cases(union: &str, cases: &[String]) -> Result<(), String> {
     EnumDecl::new(union, cases).check_as("union", "variant")
 }
 
+pub(crate) fn is_union_call(call: &Call) -> bool {
+    call.word == "union" || (call.word == "array" && call.block.as_ref().is_some_and(|block| block.iter().any(|child| child.word == "variant")))
+}
+
 fn typename_of(variant: &Call) -> Option<&str> {
     match variant.args.first().map(|node| &node.item) {
         Some(Value::Const(name)) => Some(name),

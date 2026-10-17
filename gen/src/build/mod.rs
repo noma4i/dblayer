@@ -31,10 +31,10 @@ pub fn build(nodes: &[ModelNode]) -> Vec<ModelSpec> {
 
 fn union_names(models: &[ModelSpec]) -> Vec<String> {
     fn walk(field: &FieldSpec, out: &mut Vec<String>) {
-        if let (FieldKind::Union, Some(name)) = (&field.kind, &field.app_type) {
+        if let (FieldKind::Union | FieldKind::UnionArray, Some(name)) = (&field.kind, &field.app_type) {
             if !field.fields.is_empty() { out.push(name.clone()); }
         }
-        field.fields.iter().for_each(|inner| walk(inner, out));
+        field.fields.iter().chain(field.shared.iter()).for_each(|inner| walk(inner, out));
     }
     let mut found = Vec::new();
     models.iter().flat_map(|model| model.fields.iter()).for_each(|field| walk(field, &mut found));
@@ -42,10 +42,14 @@ fn union_names(models: &[ModelSpec]) -> Vec<String> {
 }
 
 fn retag_references(field: &mut FieldSpec, unions: &[String]) {
-    if field.kind == FieldKind::Object && field.fields.is_empty() && field.app_type.as_ref().is_some_and(|name| unions.contains(name)) {
-        field.kind = FieldKind::Union;
+    if field.fields.is_empty() && field.app_type.as_ref().is_some_and(|name| unions.contains(name)) {
+        match field.kind {
+            FieldKind::Object => field.kind = FieldKind::Union,
+            FieldKind::Array => field.kind = FieldKind::UnionArray,
+            _ => {}
+        }
     }
-    field.fields.iter_mut().for_each(|inner| retag_references(inner, unions));
+    field.fields.iter_mut().chain(field.shared.iter_mut()).for_each(|inner| retag_references(inner, unions));
 }
 
 fn build_model(node: &ModelNode) -> ModelSpec {
@@ -104,6 +108,7 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
         "id" => FieldSpec::scalar(&name, ScalarKind::Id),
         "object" => FieldSpec::object(&name),
         "union" => FieldSpec::union(&name, "", Vec::new()),
+        "array" if crate::unions::is_union_call(call) => FieldSpec::union_array(&name, "", Vec::new()),
         "array" => FieldSpec::array(&name),
         "raw" => FieldSpec::raw(&name),
         "file" => FieldSpec::file(&name),
@@ -125,9 +130,12 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
     if let Some(block) = &call.block {
         let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(&name)));
         field.fields = match field.kind {
-            FieldKind::Union => block.iter().zip(crate::unions::cases_of(block)).map(|(variant, case)| build_variant(variant, &case)).collect(),
+            FieldKind::Union | FieldKind::UnionArray => block.iter().filter(|call| call.word == "variant").zip(crate::unions::cases_of(block)).map(|(variant, case)| build_variant(variant, &case)).collect(),
             _ => block.iter().map(|child| build_field(child, &type_name)).collect(),
         };
+        if matches!(field.kind, FieldKind::Union | FieldKind::UnionArray) {
+            field.shared = block.iter().filter(|call| call.word == "shared").flat_map(|call| call.block.iter().flatten()).map(|child| build_field(child, &type_name)).collect();
+        }
         field.app_type = Some(type_name);
     }
     field.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));

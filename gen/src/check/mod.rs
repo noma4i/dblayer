@@ -186,6 +186,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Nested, field) if NESTED_WORDS.contains(&field) => plain(Shape::Name, nested_keys(field)),
         (Context::Ephemeral, field) if EPHEMERAL_WORDS.contains(&field) => plain(Shape::Name, ephemeral_keys(field)),
         (Context::Union, "variant") => plain(Shape::Const, vec![key("case", Want::Symbol, false)]),
+        (Context::Union, "shared") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
         (Context::Remote, "query") => plain(Shape::Const, vec![key("root", Want::Any, false)]),
         (Context::Remote, "paginate") => plain(Shape::Int, vec![key("backward", Want::Bool, false), key("cursor", Want::Symbol, false), key("from", Want::Any, false), key("cursor_type", Want::Symbol, false)]),
         (Context::Remote, "list") => plain(Shape::Nothing, vec![]),
@@ -222,7 +223,8 @@ pub fn check(nodes: &[ModelNode]) -> Result<Vec<ModelSpec>, Vec<Found>> {
         .iter()
         .filter_map(|fault| {
             let node = nodes.iter().find(|node| node.name == fault.model.as_str())?;
-            let message = format!("model {}: {}", node.name, fault.error);
+            let hint = if matches!(fault.error, dblayer::schema::DeclarationError::TooManyColumns { .. }) { ". A union stores its variants in the columns of one table: declare fewer variants or fields, or split the model" } else { "" };
+            let message = format!("model {}: {}{hint}", node.name, fault.error);
             Some(at(node.file, node.line, node.column, message))
         })
         .collect();
@@ -244,7 +246,7 @@ fn collect_types<'a>(calls: &'a [Call], owner: &str, file: usize, out: &mut Vec<
         });
         let field = symbol_name(call.args.first()).unwrap_or_default();
         let name = named.clone().unwrap_or_else(|| format!("{owner}{}", crate::build::camel(field)));
-        if call.word == "union" {
+        if crate::unions::is_union_call(call) {
             out.push(TypeUse { name: name.clone(), call, file, declares: call.block.is_some() });
             for variant in call.block.iter().flatten() {
                 let Some(Node { item: Value::Const(typename), .. }) = variant.args.first() else { continue };
@@ -278,10 +280,6 @@ fn check_types(nodes: &[ModelNode], errors: &mut Vec<Found>) {
     }
     for item in uses.iter().filter(|item| !item.declares && !declared.contains(item.name.as_str())) {
         errors.push(at(item.file, item.call.line, item.call.column, format!("type `{}` is not declared by any `do ... end` block", item.name)));
-    }
-    let unions: HashSet<&str> = uses.iter().filter(|item| item.declares && item.call.word == "union").map(|item| item.name.as_str()).collect();
-    for item in uses.iter().filter(|item| item.call.word == "array" && unions.contains(item.name.as_str())) {
-        errors.push(at(item.file, item.call.line, item.call.column, format!("union lists are not supported: `{}` is a union", item.name)));
     }
 }
 
@@ -498,7 +496,7 @@ fn check_schema(schema: &Call, report: &mut impl FnMut(usize, usize, String)) {
 fn check_nested_block(owner: &Call, report: &mut impl FnMut(usize, usize, String)) {
     let name = symbol_name(owner.args.first()).unwrap_or_default();
     let calls: &[Call] = owner.block.as_deref().unwrap_or_default();
-    if owner.word == "union" {
+    if crate::unions::is_union_call(owner) {
         return check_union_block(owner, name, report);
     }
     check_field_block(owner, name, calls, report);
@@ -508,8 +506,22 @@ fn check_union_block(owner: &Call, name: &str, report: &mut impl FnMut(usize, us
     let calls: &[Call] = owner.block.as_deref().unwrap_or_default();
     let mut typenames: Vec<&str> = Vec::new();
     let mut repeated = false;
+    let shared_calls: Vec<&Call> = calls.iter().filter(|call| call.word == "shared").collect();
+    let shared_names: Vec<&str> = shared_calls.iter().flat_map(|call| call.block.iter().flatten()).filter_map(|field| symbol_name(field.args.first())).collect();
     for call in calls {
         check_call(call, Context::Union, report);
+        if call.word == "shared" {
+            if !std::ptr::eq(*shared_calls.first().unwrap_or(&call), call) {
+                report(call.line, call.column, "`shared` is declared twice".to_string());
+                continue;
+            }
+            let block: &[Call] = call.block.as_deref().unwrap_or_default();
+            check_field_block(call, "shared", block, report);
+            for field in block.iter().filter(|field| symbol_name(field.args.first()) == Some("kind")) {
+                report(field.line, field.column, "`kind` is reserved: a union with `shared` fields already has a `kind` property".to_string());
+            }
+            continue;
+        }
         let Some(Node { item: Value::Const(typename), .. }) = call.args.first() else { continue };
         if typenames.contains(&typename.as_str()) {
             repeated = true;
@@ -518,7 +530,13 @@ fn check_union_block(owner: &Call, name: &str, report: &mut impl FnMut(usize, us
         }
         typenames.push(typename);
         if let Some(block) = &call.block {
+            if block.is_empty() && !shared_names.is_empty() {
+                continue;
+            }
             check_field_block(call, typename, block, report);
+            for field in block.iter().filter(|field| symbol_name(field.args.first()).is_some_and(|field| shared_names.contains(&field))) {
+                report(field.line, field.column, format!("field `{}` is declared twice: it is also a `shared` field", symbol_name(field.args.first()).unwrap_or_default()));
+            }
         }
     }
     if repeated {

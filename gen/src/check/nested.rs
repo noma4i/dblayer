@@ -22,7 +22,7 @@ fn fits(field: &FieldSpec, value: &Json, types: &[&FieldSpec]) -> bool {
         }),
         FieldKind::Array => value.as_array().is_some_and(|items| field.app_type.is_none() || items.iter().all(|item| fits(&FieldSpec { kind: FieldKind::Object, ..field.clone() }, item, types))),
         FieldKind::Raw => true,
-        FieldKind::Union | FieldKind::File => false,
+        FieldKind::Union | FieldKind::UnionArray | FieldKind::File => false,
     }
 }
 

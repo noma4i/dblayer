@@ -28,7 +28,7 @@ fn inferred_type(schema: &Schema, ty: &Ty) -> Result<Value, String> {
 }
 
 fn needs_inference(call: &Call) -> bool {
-    let inside = |children: &Vec<Call>| children.iter().any(|child| needs_inference(child) || (child.word == "on" && child.block.as_ref().is_some_and(|block| block.iter().any(needs_inference))));
+    let inside = |children: &Vec<Call>| children.iter().any(|child| needs_inference(child) || (matches!(child.word.as_str(), "on" | "shared") && child.block.as_ref().is_some_and(|block| block.iter().any(needs_inference))));
     call.word == "field" && (!call.options.iter().any(|pair| pair.key == "type") || call.block.as_ref().is_some_and(inside))
 }
 
@@ -56,9 +56,12 @@ fn infer_fields(calls: &mut [Call], owner: &str, schema: &Schema) -> Result<(), 
             }
         }
         if let Some(children) = &mut call.block {
-            if children.iter().any(|child| child.word == "on") {
-                for variant in children.iter_mut().filter(|child| child.word == "on") {
-                    let Some(Node { item: Value::Const(name), .. }) = variant.args.first().cloned() else { continue };
+            if children.iter().any(|child| matches!(child.word.as_str(), "on" | "shared")) {
+                for variant in children.iter_mut().filter(|child| matches!(child.word.as_str(), "on" | "shared")) {
+                    let name = match variant.args.first().cloned() {
+                        Some(Node { item: Value::Const(name), .. }) => name,
+                        _ => ty.name().to_string(),
+                    };
                     if let Some(block) = &mut variant.block {
                         infer_fields(block, &name, schema)?;
                     }
@@ -107,6 +110,7 @@ fn positional_values(call: &Call, count: std::ops::RangeInclusive<usize>) -> Res
 }
 
 fn field(mut call: Call) -> Result<Call, ParseError> {
+    if call.word == "shared" { return Err(fail(&call, "`shared` is allowed only inside a union field")); }
     if call.word != "field" { return Err(fail(&call, "nested fields must use `field`")); }
     if call.options.iter().any(|pair| matches!(pair.key.as_str(), "index" | "searchable")) {
         return Err(fail(&call, "declare indexes with `index` and full-text fields with `search`"));
@@ -119,8 +123,8 @@ fn field(mut call: Call) -> Result<Call, ParseError> {
         return Err(fail(&call, "field needs `type:` when no GraphQL schema supplies its type"));
     };
     let ty = call.options.remove(at).value.item;
-    let variants = call.block.as_ref().is_some_and(|children| children.iter().any(|child| child.word == "on"));
-    if variants && !matches!(ty, Value::Const(_)) {
+    let variants = call.block.as_ref().is_some_and(|children| children.iter().any(|child| matches!(child.word.as_str(), "on" | "shared")));
+    if variants && !matches!(&ty, Value::Const(_)) && !matches!(&ty, Value::Array(items) if matches!(items.as_slice(), [Node { item: Value::Const(_), .. }])) {
         return Err(fail(&call, "`on` is allowed only inside a union field with a type name"));
     }
     match ty {
@@ -150,7 +154,12 @@ fn field(mut call: Call) -> Result<Call, ParseError> {
 }
 
 fn variant(mut call: Call) -> Result<Call, ParseError> {
-    if call.word != "on" { return Err(fail(&call, "a union holds only `on` variants")); }
+    if call.word == "shared" {
+        if !call.args.is_empty() || !call.options.is_empty() { return Err(fail(&call, "`shared` takes only a block")); }
+        call.block = Some(call.block.take().unwrap_or_default().into_iter().map(field).collect::<Result<_, _>>()?);
+        return Ok(call);
+    }
+    if call.word != "on" { return Err(fail(&call, "a union holds only `on` variants and one `shared` block")); }
     if !matches!(call.args.as_slice(), [Node { item: Value::Const(_), .. }]) {
         return Err(fail(&call, "`on` needs a type name like `GiftAttachment`"));
     }

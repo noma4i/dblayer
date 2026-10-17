@@ -209,3 +209,6 @@ mod active_record_tests;
 mod union_tests;
 #[cfg(test)]
 mod model_enum_args_tests;
+
+#[cfg(test)]
+mod interface_tests;

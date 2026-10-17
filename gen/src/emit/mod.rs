@@ -65,7 +65,7 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
         FieldKind::Scalar { kind } => scalar(*kind, swift).to_string(),
         FieldKind::Enum { .. } => field.app_type.clone().expect("an enum field names its type"),
         FieldKind::List { element } => if swift { format!("[{}]", scalar(*element, true)) } else { format!("List<{}>", scalar(*element, false)) },
-        FieldKind::Array => field.app_type.as_ref().map(|name| if swift { format!("[{name}]") } else { format!("List<{name}>") }).unwrap_or_else(|| raw_type(swift)),
+        FieldKind::Array | FieldKind::UnionArray => field.app_type.as_ref().map(|name| if swift { format!("[{name}]") } else { format!("List<{name}>") }).unwrap_or_else(|| raw_type(swift)),
         FieldKind::Object | FieldKind::Union => field.app_type.clone().unwrap_or_else(|| raw_type(swift)),
         _ => raw_type(swift),
     };
@@ -75,7 +75,7 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
 pub(crate) fn enum_decls(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> Vec<EnumDecl> {
     fn walk(field: &FieldSpec, out: &mut Vec<EnumDecl>) {
         if let (FieldKind::Enum { values }, Some(name)) = (&field.kind, &field.app_type) { out.push(EnumDecl { name: name.clone(), values: values.clone() }); }
-        field.fields.iter().for_each(|inner| walk(inner, out));
+        field.fields.iter().chain(field.shared.iter()).for_each(|inner| walk(inner, out));
     }
     let mut found = schema_types.enums.clone();
     for model in models { model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)).for_each(|field| walk(field, &mut found)); }
@@ -83,11 +83,35 @@ pub(crate) fn enum_decls(models: &[ModelSpec], operations: &[OperationCall], sch
     merge_enums(found).unwrap_or_default()
 }
 
+fn spread_shared(field: &mut FieldSpec) {
+    let shared = field.shared.clone();
+    let variants = matches!(field.kind, FieldKind::Union | FieldKind::UnionArray);
+    for child in &mut field.fields {
+        if variants {
+            child.fields.splice(0..0, shared.iter().cloned());
+            child.fields.iter_mut().for_each(spread_shared);
+        } else {
+            spread_shared(child);
+        }
+    }
+    field.shared.iter_mut().for_each(spread_shared);
+}
+
+/// The models with every shared field of a union written into each of its variants, the form the platform types are emitted from.
+fn with_shared_in_variants(models: &[ModelSpec]) -> Vec<ModelSpec> {
+    let mut spread = models.to_vec();
+    spread.iter_mut().flat_map(|model| model.fields.iter_mut().chain(model.ephemeral.iter_mut().map(|field| &mut field.field))).for_each(spread_shared);
+    spread
+}
+
 pub(crate) fn declared_types(models: &[ModelSpec]) -> Vec<&FieldSpec> {
     fn walk<'a>(fields: &'a [FieldSpec], out: &mut Vec<&'a FieldSpec>) {
         for field in fields.iter().filter(|field| !field.fields.is_empty()) {
-            out.push(field);
+            if !out.iter().any(|seen| seen.app_type == field.app_type && seen.kind == field.kind) {
+                out.push(field);
+            }
             walk(&field.fields, out);
+            walk(&field.shared, out);
         }
     }
     let mut out = Vec::new();
@@ -277,8 +301,9 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             out.push_str("}\n\n");
         }
     }
-    let types = declared_types(models);
-    for declaration in &types { if declaration.kind == FieldKind::Union { emit_swift_union(&mut out, declaration); } else { emit_swift_type(&mut out, declaration, &types, true); } }
+    let spread = with_shared_in_variants(models);
+    let types = declared_types(&spread);
+    for declaration in &types { if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_swift_union(&mut out, declaration); } else { emit_swift_type(&mut out, declaration, &types, true); } }
     emit_swift_enums(&mut out, &enum_decls(models, operations, schema_types));
     emit_swift_inputs(&mut out, &schema_types.inputs);
     emit_swift_operations(&mut out, operations);
@@ -378,8 +403,9 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             writeln!(out, "@Serializable\ndata class {}({fields})\n", result_type(class, &action.name)).unwrap();
         }
     }
-    let types = declared_types(models);
-    for declaration in &types { if declaration.kind == FieldKind::Union { emit_kotlin_union(&mut out, declaration); } else { emit_kotlin_type(&mut out, declaration, &types, true); } }
+    let spread = with_shared_in_variants(models);
+    let types = declared_types(&spread);
+    for declaration in &types { if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_kotlin_union(&mut out, declaration); } else { emit_kotlin_type(&mut out, declaration, &types, true); } }
     emit_kotlin_enums(&mut out, &enum_decls(models, operations, schema_types));
     emit_kotlin_inputs(&mut out, &schema_types.inputs);
     emit_kotlin_operations(&mut out, operations);
