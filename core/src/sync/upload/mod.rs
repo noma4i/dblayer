@@ -54,7 +54,7 @@ impl Inner {
             let seq = entry.operation.id.0;
             match entry.operation.status {
                 OperationStatus::Pending if !entry.operation.transport_started && !self.is_waiting(&entry.operation) => self.spawn_run(seq, Mode::Transfer),
-                OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() => self.spawn_run(seq, Mode::Orphan),
+                OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() && !state.request.as_ref().is_some_and(|request| crate::transport::encrypted::pending_matches(&self.db, &request.graphql())) => self.spawn_run(seq, Mode::Orphan),
                 _ => {}
             }
         }
@@ -114,7 +114,7 @@ impl Inner {
         let Some((run, token, permits)) = self.register(seq) else { return };
         let inner = self.clone();
         locked(&self.uploads).tasks.spawn(self.until_closed(async move {
-            run::drive(inner.clone(), seq, run, token, permits, mode).await;
+            run::drive(inner.clone(), seq, run, token, permits, mode, None).await;
             inner.finish_run(seq, run);
         }));
     }
@@ -129,6 +129,22 @@ impl Inner {
         let token = CancelToken::new();
         runs.active.insert(seq, ActiveRun { run, token: token.clone(), done: watch::channel(false).0 });
         Some((run, token, runs.permits.clone()))
+    }
+
+    pub(crate) async fn resume_upload(self: &Arc<Self>, seq: i64, result: Result<crate::transport::Response, crate::transport::TransportError>) {
+        let waiting = locked(&self.uploads).active.get(&seq).map(|active| active.done.subscribe());
+        if let Some(mut done) = waiting {
+            let _ = done.wait_for(|finished| *finished).await;
+        }
+        let mode = self.db.outbox().ok().and_then(|entries| entries.into_iter().find(|entry| entry.operation.id.0 == seq))
+            .and_then(|entry| entry.operation.upload).map_or(Mode::Transfer, |state| match (state.stage, state.phase) {
+                (crate::upload::UploadStage::Abort, crate::upload::UploadStatus::Cancelled) => Mode::Cancel,
+                (crate::upload::UploadStage::Abort, _) => Mode::Orphan,
+                _ => Mode::Transfer,
+            });
+        let Some((run, token, permits)) = self.register(seq) else { return };
+        run::drive(self.clone(), seq, run, token, permits, mode, Some(result)).await;
+        self.finish_run(seq, run);
     }
 }
 
@@ -174,7 +190,7 @@ impl Sync {
 
     async fn run_inline(&self, seq: i64, mode: Mode) {
         let Some((run, token, permits)) = self.inner.register(seq) else { return };
-        run::drive(self.inner.clone(), seq, run, token, permits, mode).await;
+        run::drive(self.inner.clone(), seq, run, token, permits, mode, None).await;
         self.inner.finish_run(seq, run);
     }
 }
@@ -183,3 +199,5 @@ impl Sync {
 mod upload_tests;
 #[cfg(test)]
 mod generation_tests;
+#[cfg(test)]
+mod resume_tests;

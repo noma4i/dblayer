@@ -5,7 +5,7 @@ use rusqlite::{params, params_from_iter, Connection, Row};
 
 use crate::commit::OperationStatus;
 use crate::identity::RowId;
-use crate::operation::{failure_at, failure_cells, info_at, info_cells, read_all_fields, read_all_parts, read_all_rows, upload_at, Operation, INFO_COLUMNS};
+use crate::operation::{failure_at, failure_cells, info_at, info_cells, read_all_fields, read_all_parts, read_all_rows, upload_at, Operation, INFO_COLUMNS, UPLOAD_COLUMNS};
 
 use super::derive::{fold_entries, SyncEntry};
 use super::info::{SyncInfo, SyncState};
@@ -13,9 +13,6 @@ use super::info::{SyncInfo, SyncState};
 pub type SyncKey = (String, String);
 
 const CHUNK: usize = 500;
-
-const OPEN_ENTRIES: &str = "SELECT seq, action_key, status, temp_id, transport_started, attempts, error_kind, error_message, since, up_phase, up_stage, up_scenario, up_total, up_sent, up_retries, up_key, up_upload_id, up_signed_id, up_blob_id \
-     FROM op WHERE status IN ('pending', 'failed', 'delivery_unknown') ORDER BY seq";
 
 const SELECT_STORED_WITH_ID: &str = "SELECT row_id, state, error_kind, error_message, attempts, since, up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message FROM row_sync";
 
@@ -33,7 +30,8 @@ fn open_entries(connection: &Connection) -> rusqlite::Result<HashMap<SyncKey, Ve
     let mut rows_of = read_all_rows(connection)?;
     let mut parts_of = read_all_parts(connection)?;
     let mut fields_of = read_all_fields(connection)?;
-    let mut statement = connection.prepare_cached(OPEN_ENTRIES)?;
+    let sql = format!("SELECT seq, action_key, status, temp_id, transport_started, attempts, error_kind, error_message, since, {UPLOAD_COLUMNS} FROM op WHERE status IN ('pending', 'failed', 'delivery_unknown') ORDER BY seq");
+    let mut statement = connection.prepare_cached(&sql)?;
     let mut rows = statement.query([])?;
     let mut grouped: HashMap<SyncKey, Vec<SyncEntry>> = HashMap::new();
     while let Some(row) = rows.next()? {

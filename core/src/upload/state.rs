@@ -63,6 +63,20 @@ pub struct UploadState {
     pub parts: Vec<UploadPart>,
     pub signed_id: Option<String>,
     pub blob_id: Option<String>,
+    pub request: Option<UploadRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadRequest {
+    pub document: String,
+    pub name: String,
+    pub variables: serde_json::Value,
+}
+
+impl UploadRequest {
+    pub fn graphql(&self) -> crate::transport::GraphQLRequest {
+        crate::transport::GraphQLRequest::new(&self.document, &self.name, self.variables.clone())
+    }
 }
 
 impl UploadState {
@@ -79,6 +93,7 @@ impl UploadState {
             parts: Vec::new(),
             signed_id: None,
             blob_id: None,
+            request: None,
         }
     }
 

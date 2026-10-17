@@ -7,7 +7,7 @@ use tokio::sync::Semaphore;
 use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
 use crate::operation::Operation;
 use crate::syncstate::{FailureKind, OperationFailure};
-use crate::transport::CancelToken;
+use crate::transport::{CancelToken, Response, TransportError};
 use crate::upload::{
     file_len, md5_base64, mime_of, scenario_for, TransferProgress, UploadInput, UploadScenario, UploadStage, UploadState, UploadStatus,
 };
@@ -32,6 +32,7 @@ pub(super) struct Runner {
     model: String,
     state: Mutex<UploadState>,
     progress: Mutex<TransferProgress>,
+    pub(super) resumed: Mutex<Option<Result<Response, TransportError>>>,
 }
 
 pub(super) fn stop_of(error: StepError) -> Stop {
@@ -42,9 +43,10 @@ pub(super) fn stop_of(error: StepError) -> Stop {
     }
 }
 
-pub(super) async fn drive(inner: Arc<Inner>, seq: i64, run: u64, token: CancelToken, permits: Arc<Semaphore>, mode: Mode) {
+pub(super) async fn drive(inner: Arc<Inner>, seq: i64, run: u64, token: CancelToken, permits: Arc<Semaphore>, mode: Mode, resumed: Option<Result<Response, TransportError>>) {
     let Some(runner) = Runner::load(inner, seq, run, token) else { return };
     let runner = Arc::new(runner);
+    *locked(&runner.resumed) = resumed;
     match mode {
         Mode::Transfer => runner.transfer(permits).await,
         Mode::Orphan => runner.abort_remote().await,
@@ -59,7 +61,7 @@ impl Runner {
         let input: UploadInput = serde_json::from_value(entry.input.clone()).ok()?;
         let state = entry.operation.upload.clone()?;
         let progress = TransferProgress::new(state.total_bytes, inner.config.upload.tick);
-        Some(Self { inner, seq, run, token, input, model, state: Mutex::new(state), progress: Mutex::new(progress) })
+        Some(Self { inner, seq, run, token, input, model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) })
     }
 
     pub(super) fn snapshot(&self) -> UploadState {
@@ -120,6 +122,9 @@ impl Runner {
     }
 
     async fn transfer_and_send(self: &Arc<Self>) -> Result<(), Stop> {
+        if self.snapshot().is_transferred() {
+            return self.mutation().await;
+        }
         self.save(|state| {
             state.phase = UploadStatus::Preparing;
             state.stage = UploadStage::Prepare;
@@ -235,7 +240,9 @@ impl Runner {
             generation: self.inner.db.generation(),
             base_revision: self.inner.db.revision_seq().unwrap_or_default(),
         };
-        let delivery = match tokio::time::timeout(self.inner.config.upload.step_timeout, self.inner.deliver(request)).await {
+        self.remember(&request).map_err(stop_of)?;
+        let resumed = locked(&self.resumed).take();
+        let delivery = match tokio::time::timeout(self.inner.config.upload.step_timeout, self.inner.deliver_or_resume(request, resumed)).await {
             Ok(delivery) => delivery,
             Err(_) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, "the mutation timed out")),
         };
@@ -261,18 +268,22 @@ impl Runner {
             state.upload_id = None;
             state.parts.clear();
             state.sent_bytes = 0;
+            state.request = None;
         });
     }
 
     async fn failed(&self, failure: OperationFailure) {
         let stage = self.snapshot().stage;
-        if self.snapshot().upload_id.is_some() {
+        if self.snapshot().upload_id.is_some() && !self.has_pending_request() {
             let _ = self.save(|state| state.stage = UploadStage::Abort);
             self.abort_remote().await;
         }
+        let pending = self.has_pending_request();
         let state = {
             let mut state = locked(&self.state);
-            state.stage = stage;
+            if !pending {
+                state.stage = stage;
+            }
             state.clone()
         };
         let _ = self.commit(|envelope| {
@@ -282,6 +293,7 @@ impl Runner {
     }
 
     pub(super) async fn cancelled(&self) {
+        let _ = self.save(|state| state.phase = UploadStatus::Cancelled);
         if self.snapshot().upload_id.is_some() {
             let _ = self.save(|state| state.stage = UploadStage::Abort);
             self.abort_remote().await;

@@ -188,10 +188,7 @@ impl Inner {
             return Ok(SendResult::Discarded);
         }
         let in_flight = InFlight { inner: self, seq: entry.operation.id.0, generation: sending.generation, settled: false };
-        let delivery = match resumed {
-            Some(result) => delivery_of(result),
-            None => self.deliver(GraphQLRequest::new(&operation.document, &operation.name, variables)).await,
-        };
+        let delivery = self.deliver_or_resume(GraphQLRequest::new(&operation.document, &operation.name, variables), resumed).await;
         let settled = self.settle_delivery(&sending, &operation, delivery, declaration.on_failure == OnFailure::Keep).await;
         let mut in_flight = in_flight;
         in_flight.settled = true;
@@ -202,13 +199,17 @@ impl Inner {
         settled
     }
 
-    pub(crate) async fn settle_resumed(&self, repeats: &(dyn Fn(&GraphQLRequest) -> bool + Send + Sync), result: Result<Response, TransportError>) -> Result<(), SyncError> {
+    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, repeats: &(dyn Fn(&GraphQLRequest) -> bool + Send + Sync), result: Result<Response, TransportError>) -> Result<(), SyncError> {
         let _serial = self.outbox_gate.lock().await;
         let Some(owner) = self.owner_of(repeats)? else { return Ok(()) };
-        if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) {
+        if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) && owner.operation.upload.as_ref().is_none_or(|state| state.stage != crate::upload::UploadStage::Abort) {
             self.db.retry_operations(vec![owner.clone()])?;
         }
         let Some(entry) = self.db.outbox()?.into_iter().find(|entry| entry.operation.id == owner.operation.id) else { return Ok(()) };
+        if entry.operation.upload.is_some() {
+            self.resume_upload(entry.operation.id.0, result).await;
+            return Ok(());
+        }
         let sent = self.send(&entry, Some(result)).await?;
         self.record_outcome(&entry, &sent);
         Ok(())
@@ -216,7 +217,13 @@ impl Inner {
 
     fn owner_of(&self, repeats: &(dyn Fn(&GraphQLRequest) -> bool + Send + Sync)) -> Result<Option<OutboxOperation>, SyncError> {
         for entry in self.db.outbox()? {
-            if !is_open(entry.operation.status) || entry.operation.upload.is_some() || (entry.operation.status == OperationStatus::Pending && entry.operation.transport_started) {
+            if !is_open(entry.operation.status) || (entry.operation.status == OperationStatus::Pending && entry.operation.transport_started) {
+                continue;
+            }
+            if let Some(state) = &entry.operation.upload {
+                if state.request.as_ref().is_some_and(|request| repeats(&request.graphql())) {
+                    return Ok(Some(entry));
+                }
                 continue;
             }
             let Some(bound) = self.bind(&entry)? else { continue };
@@ -313,6 +320,13 @@ impl Inner {
     pub(crate) async fn deliver(&self, request: GraphQLRequest) -> Delivery {
         locked(&self.counters).record_transport_call();
         delivery_of(self.transport.mutate(request).await)
+    }
+
+    pub(crate) async fn deliver_or_resume(&self, request: GraphQLRequest, resumed: Option<Result<Response, TransportError>>) -> Delivery {
+        match resumed {
+            Some(result) => delivery_of(result),
+            None => self.deliver(request).await,
+        }
     }
 
     async fn settle_response(&self, sending: &Sending<'_>, operation: &OperationDef, response: Response) -> Result<SendResult, SyncError> {

@@ -98,7 +98,9 @@ const CORE_STATEMENTS: [&str; 23] = [
   up_key TEXT,
   up_upload_id TEXT,
   up_signed_id TEXT,
-  up_blob_id TEXT
+  up_blob_id TEXT,
+  up_document TEXT,
+  up_operation TEXT
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS op_row (
   seq INTEGER NOT NULL,

@@ -38,19 +38,40 @@ fn step_error(error: TransportError, cancelled: bool) -> StepError {
         TransportError::Http { status, .. } if status >= 500 || status == 408 || status == 429 => {
             StepError::Retry(OperationFailure::new(FailureKind::Server, message))
         }
-        TransportError::Http { .. } | TransportError::Graphql { .. } | TransportError::Session { .. } | TransportError::Unscripted(_) => fatal(FailureKind::Rejected, message),
+        TransportError::Session { code, detail } => fatal(FailureKind::Session(code), detail),
+        TransportError::Http { .. } | TransportError::Graphql { .. } | TransportError::Unscripted(_) => fatal(FailureKind::Rejected, message),
         TransportError::Decode(_) => fatal(FailureKind::Unrecognized, message),
     }
 }
 
 impl Runner {
+    pub(super) fn remember(&self, request: &GraphQLRequest) -> Result<(), StepError> {
+        self.save(|state| state.request = Some(crate::upload::UploadRequest {
+            document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone(),
+        })).map_err(|stop| match stop {
+            Stop::Failed(failure) => StepError::Fatal(failure),
+            _ => StepError::Cancelled,
+        })
+    }
+
+    pub(super) fn has_pending_request(&self) -> bool {
+        self.snapshot().request.is_some_and(|request| crate::transport::encrypted::pending_matches(&self.inner.db, &request.graphql()))
+    }
+
     pub(super) async fn graphql(&self, name: &str, variables: Value, interruptible: bool) -> Result<Value, StepError> {
         let Some(operation) = locked(&self.inner.operations).get(name).cloned() else {
             return Err(fatal(FailureKind::Rejected, format!("operation {name} is not registered")));
         };
         locked(&self.inner.counters).record_transport_call();
         let request = GraphQLRequest::new(&operation.document, &operation.name, variables);
-        let call = tokio::time::timeout(self.inner.config.upload.step_timeout, self.inner.transport.mutate(request));
+        self.remember(&request)?;
+        let resumed = locked(&self.resumed).take();
+        let call = tokio::time::timeout(self.inner.config.upload.step_timeout, async {
+            match resumed {
+                Some(result) => result,
+                None => self.inner.transport.mutate(request).await,
+            }
+        });
         let outcome = if interruptible {
             tokio::select! {
                 result = call => result,

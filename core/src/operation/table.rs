@@ -79,6 +79,9 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
             operation.row_ids = rows_of.remove(&operation.id.0).unwrap_or_default();
             if let Some(state) = operation.upload.as_mut() {
                 state.parts = parts_of.remove(&operation.id.0).unwrap_or_default();
+                if let Some(request) = state.request.as_mut() {
+                    request.variables = read_value(connection, operation.id.0, "upload_request")?.unwrap_or(Value::Null);
+                }
             }
             operations.push(operation);
         }

@@ -9,9 +9,9 @@ use serde_json::Value;
 use crate::identity::RowId;
 use crate::nodes::{delete_trees, read_trees, write_tree};
 use crate::syncstate::OperationFailure;
-use crate::upload::{UploadInfo, UploadPart, UploadState};
+use crate::upload::{UploadInfo, UploadPart, UploadRequest, UploadState};
 
-pub const UPLOAD_COLUMNS: &str = "up_phase, up_stage, up_scenario, up_total, up_sent, up_retries, up_key, up_upload_id, up_signed_id, up_blob_id";
+pub const UPLOAD_COLUMNS: &str = "up_phase, up_stage, up_scenario, up_total, up_sent, up_retries, up_key, up_upload_id, up_signed_id, up_blob_id, up_document, up_operation";
 pub const INFO_COLUMNS: &str = "up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message";
 
 pub fn enum_text<T: Serialize>(value: &T) -> Option<String> {
@@ -40,7 +40,7 @@ pub fn failure_at(row: &Row<'_>, first: usize) -> Result<Option<OperationFailure
 }
 
 pub fn upload_cells(state: Option<&UploadState>) -> Vec<SqlValue> {
-    let Some(state) = state else { return vec![SqlValue::Null; 10] };
+    let Some(state) = state else { return vec![SqlValue::Null; 12] };
     vec![
         text_cell(enum_text(&state.phase)),
         text_cell(enum_text(&state.stage)),
@@ -52,6 +52,8 @@ pub fn upload_cells(state: Option<&UploadState>) -> Vec<SqlValue> {
         text_cell(state.upload_id.clone()),
         text_cell(state.signed_id.clone()),
         text_cell(state.blob_id.clone()),
+        text_cell(state.request.as_ref().map(|request| request.document.clone())),
+        text_cell(state.request.as_ref().map(|request| request.name.clone())),
     ]
 }
 
@@ -71,6 +73,7 @@ pub fn upload_at(row: &Row<'_>, first: usize) -> Result<Option<UploadState>> {
         parts: Vec::new(),
         signed_id: row.get(first + 8)?,
         blob_id: row.get(first + 9)?,
+        request: row.get::<_, Option<String>>(first + 10)?.zip(row.get::<_, Option<String>>(first + 11)?).map(|(document, name)| UploadRequest { document, name, variables: Value::Null }),
     }))
 }
 

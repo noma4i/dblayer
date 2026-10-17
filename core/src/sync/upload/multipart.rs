@@ -55,13 +55,16 @@ impl Runner {
         loop {
             let aged = self.inner.clock.now().saturating_sub(presigned_at) > config.presign_ttl;
             if !queue.is_empty() && (targets.is_empty() || aged) {
-                let numbers: Vec<u32> = queue.iter().copied().collect();
+                let numbers: Vec<u32> = self.snapshot().request.filter(|request| request.name == steps.presign && super::super::locked(&self.resumed).is_some())
+                    .and_then(|request| serde_json::from_value(request.variables["partNumbers"].clone()).ok())
+                    .unwrap_or_else(|| queue.iter().copied().collect());
                 targets.extend(self.presign(&steps.presign, &key, &upload_id, &numbers).await?);
                 presigned_at = self.inner.clock.now();
             }
             while flight.len() < limit {
-                let Some(number) = queue.pop_front() else { break };
-                let Some((url, headers)) = targets.get(&number).cloned() else { continue };
+                let Some(position) = queue.iter().position(|number| targets.contains_key(number)) else { break };
+                let Some(number) = queue.remove(position) else { break };
+                let Some((url, headers)) = targets.remove(&number) else { break };
                 let (offset, length) = part_range(total, config.part_size, number);
                 let runner = self.clone();
                 flight.spawn(async move {

@@ -269,6 +269,8 @@ fn core_table_columns_match_spec() {
         "up_upload_id",
         "up_signed_id",
         "up_blob_id",
+        "up_document",
+        "up_operation",
     ];
     assert_eq!(op_names, expected_op.into_iter().collect());
     assert!(!op["dedupe_key"].1 && !op["temp_id"].1 && !op["base_revision"].1 && !op["error_kind"].1);

@@ -851,6 +851,7 @@ fn write_upload(connection: &Connection, seq: i64, state: &UploadState) -> Resul
     let saved = connection.execute(&format!("UPDATE op SET {} WHERE seq = ?1", assignments.join(", ")), params_from_iter(values))?;
     if saved > 0 {
         write_parts(connection, seq, &state.parts)?;
+        write_value(connection, seq, "upload_request", state.request.as_ref().map(|request| &request.variables))?;
     }
     Ok(saved)
 }

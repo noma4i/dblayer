@@ -110,6 +110,12 @@ One rule decides, the sequence of the refusal:
 
 `sessionResume()` closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
 
+Uploads also own their saved requests, including blob creation, multipart signing, completion, abort and the final mutation.
+After reopening the database, `sessionResume()` passes the answer to the same upload step and continues its remaining work.
+The saved request identifies the exact part numbers when an upload URL needs renewal.
+Upload failures retain their typed `SessionCode` in Swift and Kotlin.
+A direct `run` mutation has no queued owner, so `sessionResume()` returns its answer without creating an operation.
+
 ```swift
 do {
   try await Moment.feed.load()

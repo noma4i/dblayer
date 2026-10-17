@@ -10,7 +10,7 @@ pub use input::{MultipartSteps, SingleSteps, UploadInput, UploadSteps};
 pub use plan::{mime_of, parse_headers, part_count, part_range, scenario_for};
 pub use progress::TransferProgress;
 pub use source::{file_len, md5_base64, read_range};
-pub use state::{UploadInfo, UploadPart, UploadScenario, UploadStage, UploadState, UploadStatus, WaitReason};
+pub use state::{UploadInfo, UploadPart, UploadRequest, UploadScenario, UploadStage, UploadState, UploadStatus, WaitReason};
 
 #[cfg(test)]
 mod plan_tests;
