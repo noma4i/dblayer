@@ -13,9 +13,9 @@ extension BridgeProbeTests {
     ("MomentTranscodeStatus", "query MomentTranscodeStatus($momentId: ID!) { node(id: $momentId) { ... on Moment { id uuid createdAt media } } }"),
   ]
 
-  private func openNodeRig() throws -> MockTransport {
+  private func openNodeRig(models: String = modelsJSON) throws -> MockTransport {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: models, transport: transport)
     let defs = Self.nodeDocuments.map { JSONValue.object(["name": .string($0.0), "document": .string($0.1)]) }
     try DB.database.registerOperations(defsJson: JSONValue.array(defs).text)
     return transport
@@ -83,5 +83,32 @@ extension BridgeProbeTests {
       #expect(try await Chat.node("c1", force: true) == nil)
     }
     #expect(await Chat.find("c1").current()?.title == "old")
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func v3NodesKeepsDuplicatesInResponseOrder() async throws {
+    let transport = try openNodeRig()
+    transport.enqueue("ChatsByIds", reply: #"{"data":{"nodes":[{"id":"c2","title":"old","shareUrl":"kept"},null,{"id":"c1","title":"middle"},{"id":"c2","title":"last"}]}}"#)
+    let rows = try await Chat.nodes(["c2", "missing", "c1", "c2"])
+    #expect(rows.map(\.id) == ["c2", "c1", "c2"])
+    #expect(rows.map(\.title) == ["last", "middle", "last"])
+    #expect(await Chat.find("c2").current()?.shareUrl == "kept")
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func v3NullPathsClearAndMissingPathsPreserve() async throws {
+    var models = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [[String: Any]])
+    let index = try #require(models.firstIndex { $0["key"] as? String == "Chat" })
+    var fields = try #require(models[index]["fields"] as? [[String: Any]])
+    let field = try #require(fields.firstIndex { $0["name"] as? String == "shareUrl" })
+    fields[field]["from"] = "profile.url"
+    models[index]["fields"] = fields
+    let transport = try openNodeRig(models: String(decoding: JSONSerialization.data(withJSONObject: models), as: UTF8.self))
+    for (patch, expected) in [(#""profile":{}"#, "kept" as String?), (#""profile":null"#, nil), (#""profile":{"url":null}"#, nil)] {
+      transport.enqueue("ChatNode", reply: #"{"data":{"node":{"id":"c1","title":"chat","profile":{"url":"kept"}}}}"#)
+      #expect(try await Chat.node("c1", force: true)?.shareUrl == "kept")
+      transport.enqueue("ChatNode", reply: #"{"data":{"node":{"id":"c1",\#(patch)}}}"#)
+      #expect(try await Chat.node("c1", force: true)?.shareUrl == expected)
+    }
   }
 }

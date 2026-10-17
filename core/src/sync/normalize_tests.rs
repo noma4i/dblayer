@@ -142,3 +142,21 @@ fn absent_nested_data_leaves_the_parent_untouched() {
     let normalized = normalize_nodes(&db, "moments", &nodes(json!([{"id": "m1"}]))).unwrap();
     assert!(!normalized.roots[0].contains_key("mentionIds"));
 }
+
+#[test]
+fn v3_repeated_roots_and_nested_rows_merge_selected_fields_once() {
+    let db = nesting_db();
+    let input = nodes(json!([
+        {"id": "m1", "text": "first", "author": {"id": "u1", "name": "first"}},
+        {"id": "m2", "similarIds": ["m1"]},
+        {"id": "m1", "likedByMe": true, "author": {"id": "u1", "name": "last"},
+         "compass": [{"similarMoment": {"id": "m2", "text": "nested"}}]}
+    ]));
+    let normalized = normalize_nodes(&db, "moments", &input).unwrap();
+    assert_eq!(normalized.roots.len(), 2);
+    assert_eq!(normalized.roots[0]["text"], "first");
+    assert_eq!(normalized.roots[0]["likedByMe"], true);
+    assert_eq!(normalized.roots[1]["text"], "nested");
+    assert_eq!(normalized.related.len(), 1);
+    assert_eq!(normalized.related[0].1["name"], "last");
+}

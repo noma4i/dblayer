@@ -566,10 +566,16 @@ fn action_refetch_must_name_a_remote_relation_and_optimistic_a_field() {
 fn field_with_a_path_reads_the_nested_value() {
     let field = FieldSpec::scalar("locationLat", ScalarKind::Num).read_from("location.lat");
 
-    assert_eq!(field.read(&object(json!({"location": {"lat": 1.5}}))), Some(json!(1.5)));
-    assert_eq!(field.read(&object(json!({"locationLat": 2.5, "location": {"lat": 1.5}}))), Some(json!(2.5)));
-    assert_eq!(field.read(&object(json!({"location": {"city": "Kyiv"}}))), None);
-    assert_eq!(field.read(&object(json!({"location": null}))), None);
+    for (input, expected) in [
+        (json!({"location": {"lat": 1.5}}), Some(json!(1.5))),
+        (json!({"locationLat": 2.5, "location": {"lat": 1.5}}), Some(json!(2.5))),
+        (json!({"location": {"town": "Harbor"}}), None),
+        (json!({}), None),
+        (json!({"location": null}), Some(Value::Null)),
+        (json!({"location": {"lat": null}}), Some(Value::Null)),
+    ] {
+        assert_eq!(field.read(&object(input.clone())), expected, "{input}");
+    }
 }
 
 #[test]

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 use crate::db::Db;
-use crate::identity::ModelKey;
+use crate::identity::{ModelKey, RowId};
 use crate::read::EDGE_KEY;
 use crate::schema::AssociationKind;
 use crate::store::Reader;
@@ -14,12 +14,33 @@ use super::error::SyncError;
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct Normalized {
     pub roots: Vec<Map<String, Value>>,
+    pub order: Vec<RowId>,
     pub related: Vec<(ModelKey, Map<String, Value>)>,
     pub dropped: usize,
     pub edges: BTreeMap<String, Map<String, Value>>,
 }
 
-pub(crate) type Related = BTreeMap<(String, String), Map<String, Value>>;
+pub(crate) type Related = Vec<(ModelKey, Map<String, Value>)>;
+
+impl Normalized {
+    pub(crate) fn coalesce(&mut self, model: &str) {
+        let key = ModelKey::new(model);
+        let positions: BTreeMap<_, _> = self.roots.iter().enumerate().rev()
+            .filter_map(|(index, row)| Some((row.get("id").and_then(read_id)?, index))).collect();
+        let input = std::mem::take(&mut self.related).into_iter()
+            .chain(std::mem::take(&mut self.roots).into_iter().map(|row| (key.clone(), row)));
+        let mut roots = Vec::new();
+        for (model, row) in crate::store::coalesce_rows(input) {
+            let position = row.get("id").and_then(read_id).and_then(|id| positions.get(&id));
+            match position.filter(|_| model == key) {
+                Some(position) => roots.push((*position, row)),
+                None => self.related.push((model, row)),
+            }
+        }
+        roots.sort_by_key(|(position, _)| *position);
+        self.roots = roots.into_iter().map(|(_, row)| row).collect();
+    }
+}
 
 pub(crate) fn normalize_nodes(db: &Db, model: &str, nodes: &[Map<String, Value>]) -> Result<Normalized, SyncError> {
     db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
@@ -28,6 +49,7 @@ pub(crate) fn normalize_nodes(db: &Db, model: &str, nodes: &[Map<String, Value>]
     for node in nodes {
         match normalize_node(db, model, node, &mut related)? {
             Some(row) => {
+                normalized.order.extend(row.get("id").and_then(read_id));
                 if let (Some(id), Some(edge)) = (row.get("id").and_then(read_id), node.get(EDGE_KEY).and_then(Value::as_object)) {
                     normalized.edges.insert(id.as_str().to_string(), edge.clone());
                 }
@@ -36,7 +58,8 @@ pub(crate) fn normalize_nodes(db: &Db, model: &str, nodes: &[Map<String, Value>]
             None => normalized.dropped += 1,
         }
     }
-    normalized.related = related.into_iter().map(|((model, _), row)| (ModelKey::new(&model), row)).collect();
+    normalized.related = related;
+    normalized.coalesce(model);
     Ok(normalized)
 }
 
@@ -62,7 +85,7 @@ pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, rela
             }
             let Some(row) = normalize_node(db, target, &child, related)? else { continue };
             let Some(id) = row.get("id").and_then(read_id) else { continue };
-            related.entry((target.to_string(), id.as_str().to_string())).or_default().extend(row);
+            related.push((ModelKey::new(target), row));
             ids.push(Value::String(id.as_str().to_string()));
         }
         match association.kind {
@@ -72,7 +95,8 @@ pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, rela
                     Some(id) => {
                         input.insert(association.foreign_key.clone(), Value::String(id));
                     }
-                    None if is_explicit_null(node, path) && spec.field(&association.foreign_key).is_some_and(|field| field.nullable) => {
+                    None if crate::schema::read_path(node, &format!("{path}.id")).is_some_and(Value::is_null)
+                        && spec.field(&association.foreign_key).is_some_and(|field| field.nullable || field.default.is_some()) => {
                         input.insert(association.foreign_key.clone(), Value::Null);
                     }
                     None => {}
@@ -100,18 +124,6 @@ fn nested_values<'a>(node: &'a Map<String, Value>, path: &str) -> Option<Vec<&'a
     }
     let found: Vec<&Value> = flatten(current).into_iter().flat_map(connection_items).filter(|value| !value.is_null()).collect();
     Some(found)
-}
-
-fn is_explicit_null(node: &Map<String, Value>, path: &str) -> bool {
-    let mut current = node;
-    for segment in path.split('.') {
-        match current.get(segment) {
-            Some(Value::Null) => return true,
-            Some(Value::Object(next)) => current = next,
-            _ => return false,
-        }
-    }
-    false
 }
 
 fn flatten(values: Vec<&Value>) -> Vec<&Value> {

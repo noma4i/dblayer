@@ -66,6 +66,19 @@ fn identical_rows_commit_nothing() {
 }
 
 #[test]
+fn v3_replace_merges_repeated_ids_before_storing_unique_members() {
+    let db = booted();
+    db.replace(&request("feed", Coverage::Complete), vec![
+        obj(json!({"id": "m2", "userId": "u1", "text": "first"})),
+        obj(json!({"id": "m1", "userId": "u1", "text": "middle"})),
+        obj(json!({"id": "m2", "text": "last"})),
+    ]).unwrap();
+    assert_eq!(members(&db, "feed"), ["m2", "m1"]);
+    let row = db.find("moments", &rid("m2")).unwrap().unwrap();
+    assert_eq!((row.text("text"), row.text("userId")), (Some("last"), Some("u1")));
+}
+
+#[test]
 fn fields_of_a_stored_row_that_the_response_omits_are_kept() {
     let db = booted();
     start(&db, "feed", &[("m1", "one")]);

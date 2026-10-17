@@ -6,6 +6,11 @@ import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -20,9 +25,9 @@ class NodeReadTest {
         "MomentTranscodeStatus" to "query MomentTranscodeStatus(\$momentId: ID!) { node(id: \$momentId) { ... on Moment { id uuid createdAt media } } }",
     )
 
-    private fun open(): MockTransport {
+    private fun open(models: String = modelsJSON): MockTransport {
         val transport = MockTransport()
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, transport)
+        DBlayer.database = Database.open(Config(null, null, 64u), models, transport)
         val defs = documents.map { (name, document) -> buildJsonObject { put("name", JsonPrimitive(name)); put("document", JsonPrimitive(document)) } }
         DBlayer.database.registerOperations(JsonArray(defs).toString())
         return transport
@@ -87,5 +92,33 @@ class NodeReadTest {
             assertNull(Chat.node("c1", force = true))
         }
         assertEquals("old", Chat.find("c1").current()?.title)
+    }
+
+    @Test
+    fun v3NodesKeepsDuplicatesInResponseOrder() = bounded {
+        val transport = open()
+        transport.enqueue("ChatsByIds", """{"data":{"nodes":[{"id":"c2","title":"old","shareUrl":"kept"},null,{"id":"c1","title":"middle"},{"id":"c2","title":"last"}]}}""")
+        val rows = Chat.nodes(listOf("c2", "missing", "c1", "c2"))
+        assertEquals(listOf("c2", "c1", "c2"), rows.map { it.id })
+        assertEquals(listOf("last", "middle", "last"), rows.map { it.title })
+        assertEquals("kept", Chat.find("c2").current()?.shareUrl)
+    }
+
+    @Test
+    fun v3NullPathsClearAndMissingPathsPreserve() = bounded {
+        val models = Json.parseToJsonElement(modelsJSON).jsonArray.map { element ->
+            val model = element.jsonObject
+            if (model["key"]?.jsonPrimitive?.content != "Chat") model else JsonObject(model + ("fields" to JsonArray(model.getValue("fields").jsonArray.map {
+                val field = it.jsonObject
+                if (field["name"]?.jsonPrimitive?.content == "shareUrl") JsonObject(field + ("from" to JsonPrimitive("profile.url"))) else field
+            })))
+        }
+        val transport = open(JsonArray(models).toString())
+        for ((patch, expected) in listOf(""""profile":{}""" to "kept", """"profile":null""" to null, """"profile":{"url":null}""" to null)) {
+            transport.enqueue("ChatNode", """{"data":{"node":{"id":"c1","title":"chat","profile":{"url":"kept"}}}}""")
+            assertEquals("kept", Chat.node("c1", force = true)?.shareUrl)
+            transport.enqueue("ChatNode", """{"data":{"node":{"id":"c1",$patch}}}""")
+            assertEquals(expected, Chat.node("c1", force = true)?.shareUrl)
+        }
     }
 }

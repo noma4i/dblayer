@@ -4,7 +4,6 @@ use crate::db::Row;
 use crate::identity::RowId;
 use crate::schema::{Coverage, NodeRead, RemoteShape, NODE_PARAM};
 use crate::transport::GraphQLRequest;
-use crate::value::read_id;
 
 use super::error::SyncError;
 use super::extract::extract;
@@ -35,11 +34,8 @@ impl Sync {
             return Ok(Vec::new());
         }
         let mut rows: Vec<Row> = Vec::new();
-        for root in &normalized.roots {
-            let Some(id) = root.get("id").and_then(read_id) else { continue };
-            if rows.iter().all(|row| row.id != id) {
-                rows.extend(self.inner.db.find(model, &id)?);
-            }
+        for id in &normalized.order {
+            rows.extend(self.inner.db.find(model, id)?);
         }
         Ok(rows)
     }

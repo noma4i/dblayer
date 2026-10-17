@@ -14,7 +14,7 @@ fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
         model: "moments".to_string(),
         scope: ScopeRef::new(ModelKey::new("moments"), crate::identity::ScopeKey::from_raw(&scope_key)),
         window_key: key.clone(),
-        normalized: Normalized { roots, related: Vec::new(), dropped: 0, edges: Default::default() },
+        normalized: Normalized { roots, ..Default::default() },
         is_first_page: true,
         plans_as_first: true,
         coverage: crate::schema::Coverage::Complete,

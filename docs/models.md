@@ -31,6 +31,9 @@ Field options:
 | `merge: :non_empty` | what a row from the server may replace in a stored value, see below |
 | `local: true` | the server never sends the field and a refresh never replaces or clears it, see [local fields](#local-fields) (needs `optional: true` or `null: true`) |
 
+For a top-level `from` field, an explicit null at any segment clears a nullable field or applies its non-null default.
+An absent path key leaves the stored field unchanged.
+
 `index :a` declares a single-column SQLite index. `index :a, :b` declares a composite index without requiring individual indexes. Columns must be scalar or enum fields.
 
 `search :text, :tags` selects string fields or lists of strings for [full-text search](live-data.md#text-search).
@@ -314,7 +317,10 @@ Singular associations capitalize their name, preserving a final `s`. Plural asso
 
 - `from: "visitorsList.nodes"` is the dotted path in a response where the association's objects sit. It defaults to the association name. A list on the way is walked element by element, and a connection (`nodes` or `edges { node }`) gives its nodes.
 - Objects found there become rows of the target model. A `belongs_to` object that holds only its `id` (`owner { id }`) cannot become a row when the target needs more fields, and it still sets `key:` to that id. `has_many` and `has_one` rows get the parent id in `key:`. A `references` parent keeps the ids of its rows in `key:`; declare that field directly (`field :similarIds, type: [:id]`), the model is rejected without it.
-- An explicit `null` for the object of a `belongs_to` resets its `key:` to null in every answer: a page, a node read, an event, a mutation answer. The target row stays. A response without the key does not touch the `key:`. The same holds when `from:` walks through a `null`. A required `key:` cannot hold null and does not change. A `references` path that is `null` empties the id list. `has_one` and `has_many` write no key on the parent, so a `null` changes nothing.
+- An explicit null for a `belongs_to` object or its ID clears a nullable `key:` in every server answer. The target row stays.
+- An absent association path preserves the key. A required key uses its declared default, or stays unchanged when no default exists.
+- Association paths use the same null reader as `from` fields. A null `references` path empties its ID list.
+- `has_one` and `has_many` write no key on the parent, so a null changes nothing.
 
 ```swift
 // chat { id opponent { id } }       -> Chat.opponent is the user
@@ -571,7 +577,8 @@ val chats = Chat.nodes(ids)
 - A plain call inside the freshness time of an id reads the local row and sends nothing. `force: true` always asks the server. Each read of a model has its own freshness per id.
 - Calls for one id that overlap share one request. Nothing needs to be started or released.
 - The result is nil when the answer is `null`, has another type than the `... on` fragment (an empty object), or the id has no entity. Nothing is written then and the stored row stays as it was.
-- `nodes` skips every `null` and empty entry, keeps the order of the answer, writes each row once and keeps no list of its own, so every call asks the server.
+- `nodes` skips null and empty entries, preserves repeated IDs in response order, and writes each row once. Every call asks the server.
+- Repeated rows merge selected fields before storage. The last supplied value wins, and root fields take precedence over nested copies.
 - An answer that arrives after the database was reset (a logout or a cache reset of the model) is dropped. Nothing is written, `node` returns nil and `nodes` returns an empty list.
 - `Model.entity(id)` and `Model.find(id)` stay the way to watch a row. A node read fills them.
 - The generator stops with file and line when a field is selected under `node` outside `... on`, when the `... on` type is not an implementation of the interface, when one `node` selects two types, or when the model has a field that the `... on` type lacks. A selection outside `... on` would give a row for a foreign type, so it is an error.

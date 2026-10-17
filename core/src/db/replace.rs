@@ -49,12 +49,13 @@ impl Db {
             self.shared.store.response_values(request.scope.model.as_str(), &mut patch)?;
             Ok(patch)
         }).collect::<Result<Vec<_>, DbError>>()?;
+        let rows = crate::store::coalesce_rows(rows.into_iter().map(|row| (request.scope.model.clone(), row)));
         let generation = self.generation();
         self.commit_following(generation, |reader| {
                 let model = request.scope.model.as_str();
                 let rows = rows
                     .iter()
-                    .map(|row| match row.get("id").and_then(read_id) {
+                    .map(|(_, row)| match row.get("id").and_then(read_id) {
                         Some(id) => Ok(self.merged(model, reader.point(model, id.as_str())?.as_ref(), row)?.unwrap_or_else(|| row.clone())),
                         None => Ok(row.clone()),
                     })

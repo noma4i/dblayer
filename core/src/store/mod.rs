@@ -18,6 +18,7 @@ mod open;
 mod readers;
 mod reset;
 mod rows;
+mod response;
 mod scopes;
 mod search;
 mod shape;
@@ -32,6 +33,7 @@ pub use boot::BootReport;
 pub use error::StoreError;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
 pub use rows::{EdgeRead, Reader, StoredRow};
+pub(crate) use response::coalesce_rows;
 #[cfg(test)]
 pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;

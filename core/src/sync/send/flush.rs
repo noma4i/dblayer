@@ -414,6 +414,7 @@ impl Inner {
             normalized.related.extend(landed.related);
             normalized.dropped += landed.dropped;
         }
+        normalized.coalesce(&sending.model);
         normalized
     }
 

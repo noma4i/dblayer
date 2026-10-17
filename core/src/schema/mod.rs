@@ -335,9 +335,12 @@ pub(crate) fn read_path<'a>(input: &'a Map<String, Value>, path: &str) -> Option
     let mut parts = path.split('.');
     let mut current = input.get(parts.next()?)?;
     for part in parts {
+        if current.is_null() {
+            return Some(current);
+        }
         current = current.as_object()?.get(part)?;
     }
-    (!current.is_null()).then_some(current)
+    Some(current)
 }
 
 fn is_file_descriptor(value: &Value) -> bool {
@@ -1152,6 +1155,8 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
 mod ephemeral_tests;
 #[cfg(test)]
 mod merge_tests;
+#[cfg(test)]
+mod path_tests;
 #[cfg(test)]
 mod newer_tests;
 #[cfg(test)]

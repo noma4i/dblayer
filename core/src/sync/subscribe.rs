@@ -20,7 +20,7 @@ use crate::value::{fractional_between, read_id};
 
 use super::error::SyncError;
 use super::extract::root_value;
-use super::normalize::{merge_stored, normalize_node, Related};
+use super::normalize::{merge_stored, normalize_nodes};
 use super::{locked, Inner, Sync};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,16 +164,16 @@ impl Feed {
                     if stored.is_none() && self.def.effect == EventEffect::Patch {
                         continue;
                     }
-                    let mut related = Related::new();
-                    let Some(patch) = normalize_node(db, model, &item.node, &mut related)? else { continue };
-                    let Some(row) = db.merged(model, stored.as_ref(), &patch)? else { continue };
+                    let normalized = normalize_nodes(db, model, std::slice::from_ref(&item.node))?;
+                    let Some(patch) = normalized.roots.first() else { continue };
+                    let Some(row) = db.merged(model, stored.as_ref(), patch)? else { continue };
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
                     let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();
                     touches.extend(db.touch_ops(reader, spec, &seen, &own)?);
-                    for ((related_model, related_id), patch) in related {
-                        let Some(row) = merge_stored(db, reader, &related_model, &patch)? else { continue };
-                        let id = RowId::new(&related_id).map_err(|error| SyncError::Event(error.to_string()))?;
-                        operations.insert((related_model.clone(), related_id), EntityOp::Upsert { model: ModelKey::new(&related_model), id, row });
+                    for (related_model, patch) in normalized.related {
+                        let Some(row) = merge_stored(db, reader, related_model.as_str(), &patch)? else { continue };
+                        let Some(id) = row.get("id").and_then(read_id) else { continue };
+                        operations.insert((related_model.to_string(), id.to_string()), EntityOp::Upsert { model: related_model, id, row });
                     }
                     if stored.is_none() {
                         joins.extend(self.inner.joins_of(reader, model, &item.id, &row)?);

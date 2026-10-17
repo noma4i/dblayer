@@ -1,5 +1,10 @@
 # Live data and queries
 
+Server lists and connections store each model ID once, combining selected fields from repeated rows before notifying observers.
+The last supplied field value wins. Declared merge rules still apply against stored data.
+The `nodes` result retains repeated IDs in server order, while stored list membership remains unique.
+An explicit null in a top-level `from` path clears the projected nullable field. Missing path keys preserve the stored value.
+
 Every read of a model is live. A read gives you the current value and a stream of changes. There is no snapshot-only read and no separate observe call: connecting to data is reading it.
 
 In Swift and Kotlin, saved page metadata reads membership and the last member from the current stored scope, without a separate copy of ids.

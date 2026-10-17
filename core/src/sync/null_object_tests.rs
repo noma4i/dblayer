@@ -71,3 +71,19 @@ fn explicit_null_of_a_has_one_or_has_many_holds_no_key_and_lands_no_row() {
     let row = root("users", json!({"id": "u1", "pinned": null, "moments": null}));
     assert_eq!(row.keys().collect::<Vec<_>>(), ["id"]);
 }
+
+#[test]
+fn v3_null_association_uses_the_required_keys_default() {
+    let target = ModelSpec::new("users", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+    let mut source = ModelSpec::new("posts", vec![
+        FieldSpec::scalar("id", ScalarKind::Id),
+        FieldSpec::scalar("authorId", ScalarKind::Id).indexed().with_default(json!("anonymous")),
+    ]);
+    source.associations.push(AssociationSpec::new("author", AssociationKind::BelongsTo, "users", "authorId"));
+    let db = Db::open_in_memory(vec![target, source], None).unwrap();
+    for author in [Value::Null, json!({"id": null})] {
+        let input = json!({"id": "p1", "author": author}).as_object().unwrap().clone();
+        let normalized = normalize_nodes(&db, "posts", &[input]).unwrap();
+        assert_eq!(normalized.roots[0]["authorId"], "anonymous");
+    }
+}
