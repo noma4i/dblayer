@@ -49,7 +49,7 @@ private final class HeldCredential: CredentialStore, @unchecked Sendable {
   func clear() throws { lock.withLock { value = nil } }
 }
 
-@Suite(.serialized)
+extension BridgeProbeTests {
 struct EncryptedSessionTests {
   static let scriptId = "encrypted-http"
   static let origin = URL(string: "https://api.example.com")!
@@ -151,4 +151,5 @@ struct EncryptedSessionTests {
 
     #expect(http.gets == ["/api/v3/config?platform=ios&version=1.2.3", "/api/v3/config"])
   }
+}
 }

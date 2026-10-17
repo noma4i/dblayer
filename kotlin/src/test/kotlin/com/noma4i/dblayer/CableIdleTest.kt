@@ -12,11 +12,13 @@ class CableIdleTest {
         connection.open()
         sockets[0].deliver("""{"type":"welcome"}""")
         eventually("the welcome frame") { connection.lastFrameAt != null }
+        eventually("the welcome deadline") { clock.pendingDues() == listOf(CableHeartbeat.STALE_AFTER) }
 
         for (step in 1..10) {
             clock.advance(3.0)
             sockets[0].deliver("""{"type":"ping","message":$step}""")
             eventually("frame $step") { connection.lastFrameAt == 3.0 * step }
+            eventually("the deadline of frame $step") { clock.pendingDues() == listOf(3.0 * step + CableHeartbeat.STALE_AFTER) }
         }
 
         assertEquals(0, clock.fired)

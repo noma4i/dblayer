@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-extension EnumTests {
+extension BridgeProbeTests.EnumTests {
   private func openShelves() throws -> Database {
     try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
   }

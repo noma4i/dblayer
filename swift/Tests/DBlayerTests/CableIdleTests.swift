@@ -10,11 +10,13 @@ struct CableIdleTests {
     await connection.open()
     bench.sockets[0].deliver("{\"type\":\"welcome\"}")
     await eventually("the welcome frame") { await connection.lastFrameAt != nil }
+    await eventually("the welcome deadline") { bench.clock.pendingDues() == [CableHeartbeat.staleAfter] }
 
     for step in 1 ... 10 {
       await bench.clock.advance(by: 3)
       bench.sockets[0].deliver("{\"type\":\"ping\",\"message\":\(step)}")
       await eventually("frame \(step)") { await connection.lastFrameAt == bench.clock.now() }
+      await eventually("the deadline of frame \(step)") { bench.clock.pendingDues() == [Double(step) * 3 + CableHeartbeat.staleAfter] }
     }
 
     #expect(bench.clock.firedSleeps == 0)

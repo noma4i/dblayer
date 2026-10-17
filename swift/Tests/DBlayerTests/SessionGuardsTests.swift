@@ -78,7 +78,7 @@ private func temporaryFile() throws -> (URL, String) {
   return (directory, directory.appendingPathComponent("v3.sqlite").path)
 }
 
-@Suite(.serialized)
+extension BridgeProbeTests {
 struct SessionGuardsTests {
   @Test
   func aPinMismatchAtOpenAndInTheConfigNeverTouchesTheCredentialStore() async throws {
@@ -189,4 +189,5 @@ struct SessionGuardsTests {
 
     #expect(credentials.current == issued && credentials.touched == (1, 0))
   }
+}
 }

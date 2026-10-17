@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-@Suite(.serialized)
+extension BridgeProbeTests {
 struct EnumTests {
   private func open() throws -> Database {
     try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
@@ -54,4 +54,5 @@ struct EnumTests {
     let encoded = String(decoding: try JSONEncoder().encode(sample.value), as: UTF8.self)
     #expect(encoded.contains(#""state":"mystery""#), "encoded: \(encoded)")
   }
+}
 }
