@@ -1,19 +1,20 @@
 model Chat do
   field :title, type: :string
   node ChatNode
-  changed_by :chat, via: :node
+  changed_by :chat, via: :node, removes_on: [:deleted, :access_revoked]
 end
 
 model Message do
   field :text, type: :string
   node MessageNode
-  changed_by :message, via: :node
+  changed_by :message, via: :node, removes_on: [:deleted, :access_revoked]
   changed_by :reaction, via: :node
 end
 
 model Moment do
   field :text, type: :string
   node MomentNode
+  changed_by :moment, via: :node, removes_on: [:deleted, :access_revoked]
   changed_by :reaction, via: :node
 end
 

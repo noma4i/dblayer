@@ -58,12 +58,13 @@ Cancel sends `unsubscribe` for the chosen id only. The last cancel closes the so
 
 | Subscription | Handling |
 | --- | --- |
-| `viewerChanges` | `area` and `entityId` select the HTTP reread from `changed_by` |
+| `viewerChanges` | `area`, `kind` and `entityId` select the reread or local removal from `changed_by` |
 | `viewerNotice` | The event creates a row of the memory model Notice without an HTTP read |
 | `chatActivity` | `TYPING` updates the ephemeral `typing` of the user, `reset_after` resets the value |
 | `interactionReceived` | The event creates a row of the memory model InteractionNotice without an HTTP read |
 
-`viewerChanges` does not replace row fields. The HTTP reread uses the existing V3 JWE client and the normal SQLite column write.
+`viewerChanges` does not replace row fields. A matching `removes_on` kind removes the cached row without HTTP or a mutation.
+Other known kinds use the HTTP reread through the existing V3 JWE client and the normal SQLite column write.
 Memory model notices get a UUID when the server sends no id. Their rows live in memory only and `expire_after` deletes them.
 A local scope with `updates` opens the subscription at the first reader. It releases the subscription after the last reader leaves, honoring `live_linger`.
 Events are lost while no reader exists. The server does not replay them.

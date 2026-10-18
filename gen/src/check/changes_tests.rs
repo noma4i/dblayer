@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn removes_on_requires_a_node_and_known_removal_kinds() {
+    let source = "model Chat do\n field :title, type: :string\n node ChatNode\n scope :current do\n fetch CurrentChat\n end\n changed_by :chat, via: :node, removes_on: [:deleted, :access_revoked]\nend";
+    let models = crate::parse_models(source).unwrap();
+    assert_eq!(serde_json::to_value(&models[0]).unwrap()["changes"][0]["removes_on"], serde_json::json!(["DELETED", "ACCESS_REVOKED"]));
+    for (input, expected) in [
+        (source.replace("via: :node", "via: :current"), "via: :node"),
+        (source.replace(":deleted, :access_revoked", ":updated"), "unknown removal kind"),
+    ] {
+        let errors = crate::parse_models(&input).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(expected) && error.line == 7 && error.column > 0), "{errors:?}");
+    }
+}
+
+#[test]
 fn changes_declarations_resolve_remote_reads_and_reject_ambiguous_targets() {
     let model = |name: &str, declaration: &str| format!("model {name} do\n schema do\n string :title\n end\n remote :node do\n query Read\n end\n {declaration}\nend\n");
     let valid = model("Chat", "changed_by :chat, via: :node");

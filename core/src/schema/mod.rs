@@ -884,6 +884,8 @@ pub struct ChangeRead {
     pub area: String,
     pub relation: String,
     pub parameter: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removes_on: Vec<String>,
 }
 
 fn is_reserved_name(name: &str) -> bool {

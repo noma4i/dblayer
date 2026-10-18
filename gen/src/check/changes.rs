@@ -14,6 +14,14 @@ pub(super) fn check_changes(nodes: &[ModelNode], models: &[ModelSpec], errors: &
             };
             if relation.remote.is_none() { report(format!("relation `{}` has no remote read", change.relation)); }
             let node_read = relation.node == Some(dblayer::schema::NodeRead::One);
+            if call.options.iter().any(|pair| pair.key == "removes_on") && (!node_read || change.relation != "node") {
+                report("removes_on requires via: :node".into());
+            }
+            for kind in &change.removes_on {
+                if !["DELETED", "ACCESS_REVOKED"].contains(&kind.as_str()) {
+                    report(format!("unknown removal kind `{kind}`"));
+                }
+            }
             let parameters: Vec<&str> = relation.text_params.iter().chain(&relation.by_columns).map(String::as_str).collect();
             match (&change.parameter, node_read) {
                 (Some(_), true) => report("node read takes its id parameter from entityId automatically".into()),

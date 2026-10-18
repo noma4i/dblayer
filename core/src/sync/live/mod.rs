@@ -11,7 +11,7 @@ use super::subscribe::{EventEffect, EventSubscription, SubscriptionDef};
 use super::{locked, Inner};
 
 const CHANGES: &str = "DblayerViewerChanges";
-const CHANGES_QUERY: &str = "subscription DblayerViewerChanges { viewerChanges { changes { area entityId } } }";
+const CHANGES_QUERY: &str = "subscription DblayerViewerChanges { viewerChanges { changes { area kind entityId } } }";
 
 #[derive(Default)]
 pub(crate) struct Live {

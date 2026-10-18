@@ -50,7 +50,7 @@ async fn memory_scope_events_follow_readers_and_expire_without_http() {
 #[tokio::test(start_paused = true)]
 async fn changes_declarations_share_one_subscription_until_the_last_reader_leaves() {
     let mut spec = users_spec();
-    spec.changes.push(crate::schema::ChangeRead { area: "USER".into(), relation: "current".into(), parameter: None });
+    spec.changes.push(crate::schema::ChangeRead { area: "USER".into(), relation: "current".into(), parameter: None, removes_on: vec![] });
     let rig = rig_on(crate::db::Db::open_in_memory(vec![spec], None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig { live_linger: Duration::from_secs(1), ..Default::default() });
     let first = rig.sync.watch("users", "current", &none()).unwrap();
     let second = rig.sync.watch("users", "current", &none()).unwrap();

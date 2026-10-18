@@ -76,6 +76,7 @@ fn build_model(node: &ModelNode) -> ModelSpec {
                 area: first_name(call).to_ascii_uppercase(),
                 relation: option(call, "via").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
                 parameter: option(call, "id").and_then(|pair| text_of(&pair.value.item)),
+                removes_on: list_of(call, "removes_on").into_iter().map(|kind| kind.to_ascii_uppercase()).collect(),
             }),
             "create" | "update" | "destroy" => model.actions.push(build_standard_action(call)),
             "action" => model.actions.push(build_action(call, &node.name)),

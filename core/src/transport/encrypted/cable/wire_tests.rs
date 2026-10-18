@@ -211,7 +211,7 @@ async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
     relation.remote = Some(serde_json::from_value(json!({"operation":"ChatNode", "shape":{"type":"single"}, "stale_time":"5.minutes"})).unwrap());
     relation.remote.as_mut().unwrap().variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
     model.relations.push(relation);
-    model.changes.push(ChangeRead { area:"CHAT".into(), relation:"node".into(), parameter:None });
+    model.changes.push(ChangeRead { area:"CHAT".into(), relation:"node".into(), parameter:None, removes_on: vec![] });
     let db = crate::db::Db::open_in_memory(vec![model], None).unwrap();
     let http = Arc::new(Http { key:RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads:AtomicUsize::new(0) });
     let clock = Arc::new(crate::pacing::ManualClock::default());
@@ -224,7 +224,7 @@ async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
     peer.handshake(&kat, &config, challenge).await;
     let subscription = peer.next().await;
     peer.emit(json!({"t":"subscribed", "id":subscription["id"]}));
-    peer.emit(json!({"t":"next", "id":subscription["id"], "result":{"data":{"viewerChanges":{"changes":[{"area":"CHAT", "entityId":"c1", "title":"forged"}]}}}}));
+    peer.emit(json!({"t":"next", "id":subscription["id"], "result":{"data":{"viewerChanges":{"changes":[{"area":"CHAT", "kind":"UPDATED", "entityId":"c1", "title":"forged"}]}}}}));
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     let row = db.find("Chat", &crate::identity::RowId::new("c1").unwrap()).unwrap().expect("HTTP row");
     assert_eq!(row.text("title"), Some("from HTTP"));

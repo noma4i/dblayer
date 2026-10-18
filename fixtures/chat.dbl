@@ -10,6 +10,7 @@ model Chat do
   belongs_to :lastMessage, model: Message
 
   node ChatNode
+  changed_by :chat, via: :node, removes_on: [:deleted, :access_revoked]
   nodes ChatsByIds
 
   scope :recent do

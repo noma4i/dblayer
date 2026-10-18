@@ -129,16 +129,28 @@ impl Feed {
         let changes = if let Some(changes) = data["viewerChanges"]["changes"].as_array() {
             changes.clone()
         } else if let Some(notice) = data.get("interactionReceived") {
-            vec![json!({"area":"MESSAGE", "entityId":notice["messageId"]}), json!({"area":"USER", "entityId":notice["actorUserId"]})]
+            vec![json!({"area":"MESSAGE", "kind":"UPDATED", "entityId":notice["messageId"]}), json!({"area":"USER", "kind":"UPDATED", "entityId":notice["actorUserId"]})]
         } else { return false };
         for change in changes {
-            let (Some(area), Some(id)) = (change["area"].as_str(), change["entityId"].as_str()) else {
+            let (Some(area), Some(id), Some(kind)) = (change["area"].as_str(), change["entityId"].as_str(), change["kind"].as_str()) else {
                 locked(&self.status).rejected += 1;
                 continue;
             };
+            if !["CREATED", "UPDATED", "DELETED", "ACCESS_REVOKED"].contains(&kind) {
+                locked(&self.status).rejected += 1;
+                continue;
+            }
             let targets: Vec<_> = self.inner.db.shared.specs.values().flat_map(|spec| spec.changes.iter().filter(|read| read.area == area).map(|read| (spec.key.to_string(), read.clone()))).collect();
             if targets.is_empty() { locked(&self.status).rejected += 1; }
             for (model, read) in targets {
+                if read.removes_on.iter().any(|removal| removal == kind) {
+                    let Ok(id) = RowId::new(id) else {
+                        locked(&self.status).rejected += 1;
+                        continue;
+                    };
+                    self.apply(vec![Pending { bucket: String::new(), id, node: Map::new(), generation: self.inner.db.generation() }], &model, EventEffect::Destroy).await;
+                    continue;
+                }
                 let spec = match self.inner.db.spec(&model) { Ok(spec) => spec, Err(_) => continue };
                 let Some(relation) = spec.relations.iter().find(|relation| relation.name == read.relation) else { continue };
                 let parameter = if relation.node == Some(crate::schema::NodeRead::One) { Some(crate::schema::NODE_PARAM) } else { read.parameter.as_deref() };
@@ -168,13 +180,13 @@ impl Feed {
         Some(Pending { bucket: self.def.event.bucket_key(id.as_str()), id, node, generation: self.inner.db.generation() })
     }
 
-    async fn apply(&self, mut items: Vec<Pending>) {
+    async fn apply(&self, mut items: Vec<Pending>, model: &str, effect: EventEffect) {
         let current = self.inner.db.generation();
         items.retain(|item| item.generation == current);
         if items.is_empty() {
             return;
         }
-        match self.try_apply(items, current) {
+        match self.try_apply(items, current, model, effect) {
             Ok(stale) => {
                 for model in stale {
                     let _ = self.inner.reload_lists_of_absent_parent(&model).await;
@@ -184,13 +196,12 @@ impl Feed {
         }
     }
 
-    fn try_apply(&self, items: Vec<Pending>, generation: Generation) -> Result<Vec<String>, SyncError> {
+    fn try_apply(&self, items: Vec<Pending>, generation: Generation, model: &str, effect: EventEffect) -> Result<Vec<String>, SyncError> {
         let db = &self.inner.db;
-        let model = self.def.model.as_str();
         let spec = db.spec(model)?;
         let items = items.into_iter().map(|item| {
             let deleted = self.def.deleted_by.as_ref().and_then(|field| item.node.get(field)).is_some_and(is_truthy);
-            let normalized = if deleted || self.def.effect == EventEffect::Destroy {
+            let normalized = if deleted || effect == EventEffect::Destroy {
                 None
             } else {
                 Some(normalize_nodes(db, model, std::slice::from_ref(&item.node))?)
@@ -212,7 +223,7 @@ impl Feed {
                 }
                 if let Some(normalized) = normalized {
                     let stored = reader.point(model, item.id.as_str())?;
-                    if stored.is_none() && self.def.effect == EventEffect::Patch {
+                    if stored.is_none() && effect == EventEffect::Patch {
                         continue;
                     }
                     let Some(patch) = normalized.roots.first() else { continue };
@@ -281,7 +292,7 @@ impl Feed {
             tokio::select! {
                 event = connection.next() => match event {
                     None => {
-                        self.apply(std::mem::take(&mut pending)).await;
+                        self.apply(std::mem::take(&mut pending), &self.def.model, self.def.effect).await;
                         return None;
                     }
                     Some(SubscriptionEvent::Ready) => {
@@ -301,16 +312,16 @@ impl Feed {
                                 pending = debounce.coalesce(std::mem::take(&mut pending), item);
                                 deadline.get_or_insert_with(|| Instant::now() + debounce.interval);
                             }
-                            None => self.apply(vec![item]).await,
+                            None => self.apply(vec![item], &self.def.model, self.def.effect).await,
                         }
                     }
                     Some(SubscriptionEvent::Failed(failure)) => {
-                        self.apply(std::mem::take(&mut pending)).await;
+                        self.apply(std::mem::take(&mut pending), &self.def.model, self.def.effect).await;
                         return Some(failure.kind);
                     }
                 },
                 _ = tokio::time::sleep_until(wake), if deadline.is_some() => {
-                    self.apply(std::mem::take(&mut pending)).await;
+                    self.apply(std::mem::take(&mut pending), &self.def.model, self.def.effect).await;
                     deadline = None;
                 }
             }

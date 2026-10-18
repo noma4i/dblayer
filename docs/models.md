@@ -537,7 +537,7 @@ edge?.rank                                                // FeedRank?
 model Chat do
   field :title, type: :string
   node ChatNode
-  changed_by :chat, via: :node
+  changed_by :chat, via: :node, removes_on: [:deleted, :access_revoked]
 end
 ```
 
@@ -545,7 +545,20 @@ A node read gets `entityId` automatically. For a relation with 1 parameter, set 
 A singleton read needs no parameter: `changed_by :counters, via: :current`.
 Allowed areas are CHAT, MESSAGE, MOMENT, REACTION, GIFT, WALLET, COUNTERS, USER and CUSTOM_SCREEN. The case of the declaration does not matter.
 An unknown area, a missing read or a wrong parameter gives a generator error with the position of the declaration.
-An area may repeat only for node reads of several models. Each receiver runs its own HTTP read.
+An area may repeat only for node reads of several models. Each receiver follows its own declaration.
+`removes_on` accepts `:deleted` and `:access_revoked` only with `via: :node`. Other values or reads produce a generator error with a position.
+
+| Event kind | With the kind in `removes_on` | Without the kind in `removes_on` |
+| ---------- | ---------------------------- | ------------------------------- |
+| CREATED | HTTP reread | HTTP reread |
+| UPDATED | HTTP reread | HTTP reread |
+| DELETED | Remove the local row by `entityId` | HTTP reread |
+| ACCESS_REVOKED | Remove the local row by `entityId` | HTTP reread |
+| Unknown | Reject the event | Reject the event |
+
+Removal uses no mutation or outbox entry. It closes queued writes without sending or rollback and destroys children declared with `dependent: :destroy`.
+Observers receive 1 change for the removal. `DELETED` has nothing to load. `ACCESS_REVOKED` means the viewer cannot read the entity.
+For REACTION, `entityId` identifies the message or moment. Leave `removes_on` off that declaration to reread after a reaction is removed.
 Observing a model opens the shared `viewerChanges` subscription. The last cancel releases it after `live_linger`.
 The full exchange is described in [Cable protocol](cable-protocol.md).
 
