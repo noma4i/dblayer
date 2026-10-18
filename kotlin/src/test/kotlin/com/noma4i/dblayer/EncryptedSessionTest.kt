@@ -159,8 +159,7 @@ class EncryptedSessionTest {
         DBlayer.openEncrypted(
             EncryptedConfig("http://localhost:3001", SERVER_KEY, SERVER_PIN),
             HeldCredential(),
-            DatabaseTransport(cable = { null }),
-            modelsJSON,
+            modelsJson = modelsJSON,
             http = http,
         )
 

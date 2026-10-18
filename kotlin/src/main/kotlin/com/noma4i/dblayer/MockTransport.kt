@@ -1,15 +1,37 @@
 package com.noma4i.dblayer
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** Answers by operation name, can delay or fail answers, and lets a test push or break a subscription. */
 class MockTransport : Transport {
-    override suspend fun openCable(): String = throw DbException.Invalid("encrypted cable socket is not configured")
-    override suspend fun cableSend(token: String, text: String): Unit = throw DbException.Invalid("encrypted cable socket is not configured")
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
-    override suspend fun cableClose(token: String) {}
+    private val cableEvents = ConcurrentHashMap<String, Channel<EncryptedSocketEvent>>()
+    private val sentFrames = CopyOnWriteArrayList<Pair<String, String>>()
+    val cableFrames: List<Pair<String, String>> get() = sentFrames.toList()
+
+    override suspend fun openCable(): String {
+        val token = UUID.randomUUID().toString()
+        cableEvents[token] = Channel(Channel.UNLIMITED)
+        return token
+    }
+
+    override suspend fun cableSend(token: String, text: String) {
+        if (!cableEvents.containsKey(token)) throw DbException.Network("cable socket is closed")
+        sentFrames.add(token to text)
+    }
+
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = cableEvents[token]?.receiveCatching()?.getOrNull()
+
+    override suspend fun cableClose(token: String) { cableEvents.remove(token)?.close() }
+
+    fun emitCable(token: String, event: EncryptedSocketEvent) {
+        val events = cableEvents[token] ?: throw DbException.Network("cable socket is closed")
+        if (!events.trySend(event).isSuccess) throw DbException.Network("cable socket is closed")
+        if (event is EncryptedSocketEvent.Closed) events.close()
+    }
     private class Reply(val body: String?, val failure: DbException?, val delayMillis: Long)
 
     private val replies = ConcurrentHashMap<String, java.util.ArrayDeque<Reply>>()

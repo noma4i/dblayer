@@ -74,12 +74,14 @@ class DatabaseTransport(
     private val cable: suspend () -> CableClient?,
     private val client: OkHttpClient = OkHttpClient(),
     private val onEvent: (operationName: String, json: String) -> Unit = { _, _ -> },
+    origin: String? = null,
 ) : Transport {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    override suspend fun openCable(): String = throw DbException.Invalid("encrypted cable socket is not configured")
-    override suspend fun cableSend(token: String, text: String): Unit = throw DbException.Invalid("encrypted cable socket is not configured")
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
-    override suspend fun cableClose(token: String) {}
+    private val encryptedSocket = origin?.let { OkHttpEncryptedSocket(it, client) }
+    override suspend fun openCable(): String = (encryptedSocket ?: throw DbException.Invalid("DatabaseTransport requires origin to open cable")).open()
+    override suspend fun cableSend(token: String, text: String) = (encryptedSocket ?: throw DbException.Invalid("DatabaseTransport requires origin to send cable text")).send(token, text)
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket?.next(token)
+    override suspend fun cableClose(token: String) { encryptedSocket?.close(token) }
     private val jobs = ConcurrentHashMap<String, Job>()
 
     override suspend fun query(request: TransportRequest): String = send(request, GraphQLOperationKind.Query)
@@ -139,10 +141,11 @@ class OkHttpTransport(
     private val client: OkHttpClient = OkHttpClient(),
 ) : Transport {
     private val sockets = ConcurrentHashMap<String, okhttp3.WebSocket>()
-    override suspend fun openCable(): String = throw DbException.Invalid("encrypted cable socket is not configured")
-    override suspend fun cableSend(token: String, text: String): Unit = throw DbException.Invalid("encrypted cable socket is not configured")
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
-    override suspend fun cableClose(token: String) {}
+    private val encryptedSocket = OkHttpEncryptedSocket(endpoint, client)
+    override suspend fun openCable(): String = encryptedSocket.open()
+    override suspend fun cableSend(token: String, text: String) = encryptedSocket.send(token, text)
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket.next(token)
+    override suspend fun cableClose(token: String) = encryptedSocket.close(token)
 
     private fun body(request: TransportRequest): String = kotlinx.serialization.json.buildJsonObject {
         put("query", kotlinx.serialization.json.JsonPrimitive(request.document))

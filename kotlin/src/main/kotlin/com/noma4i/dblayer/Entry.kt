@@ -46,7 +46,7 @@ object DBlayer {
     fun openEncrypted(
         encrypted: EncryptedConfig,
         credentials: CredentialStore,
-        transport: Transport,
+        transport: Transport = OkHttpTransport(encrypted.origin),
         modelsJson: String,
         path: String? = null,
         operations: List<GraphQLOperation> = emptyList(),

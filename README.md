@@ -116,22 +116,19 @@ val moment = Moment.create(text = "hello")            // optimistic, queued, syn
 ### Encrypted sign-in
 
 ```swift
-let database = try Database.openEncrypted(
-  config: Config(path: path, dataVersion: nil, cacheRows: 4096), modelsJson: modelsJSON,
+try DB.openEncrypted(
   encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin),
-  http: UrlSessionEncryptedHttp(origin: URL(string: "https://api.example.com")!),
-  credentials: KeychainCredentials(), transport: DatabaseTransport(cable: { nil })
+  credentials: KeychainCredentials(), modelsJSON: modelsJSON, path: path
 )
-_ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
+_ = try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
 ```
 
 ```kotlin
-val database = Database.openEncrypted(
-  Config(path, null, 4096u), modelsJSON,
+DBlayer.openEncrypted(
   EncryptedConfig("https://api.example.com", serverKey, serverPin),
-  OkHttpEncryptedHttp("https://api.example.com"), KeystoreCredentials(), DatabaseTransport(cable = { null }),
+  KeystoreCredentials(), modelsJson = modelsJSON, path = path,
 )
-database.sessionCall("otp", """{"phone":"+61400000000"}""")
+DBlayer.database.sessionCall("otp", """{"phone":"+61400000000"}""")
 ```
 
 See [docs/live-data.md](docs/live-data.md) for UIKit, view models, single records, loading state and diffs.
