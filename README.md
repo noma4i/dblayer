@@ -116,7 +116,7 @@ val moment = Moment.create(text = "hello")            // optimistic, queued, syn
 ### Encrypted sign-in
 
 ```swift
-try DB.openEncrypted(
+try DB.open(
   encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin),
   credentials: KeychainCredentials(), modelsJSON: modelsJSON, path: path
 )
@@ -124,12 +124,15 @@ _ = try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+6
 ```
 
 ```kotlin
-DBlayer.openEncrypted(
-  EncryptedConfig("https://api.example.com", serverKey, serverPin),
-  KeystoreCredentials(), modelsJson = modelsJSON, path = path,
+DBlayer.open(
+  encrypted = EncryptedConfig("https://api.example.com", serverKey, serverPin),
+  credentials = KeystoreCredentials(), modelsJson = modelsJSON, path = path,
 )
 DBlayer.database.sessionCall("otp", """{"phone":"+61400000000"}""")
 ```
+
+Omit `encrypted` and `credentials` for ordinary GraphQL through `endpoint` or a custom `transport`.
+Omit the endpoint and transport too for a local database. See [server sync](docs/server-sync.md) for arguments and errors.
 
 See [docs/live-data.md](docs/live-data.md) for UIKit, view models, single records, loading state and diffs.
 

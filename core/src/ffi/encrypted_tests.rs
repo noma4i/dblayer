@@ -53,14 +53,7 @@ fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<FakeServer>, Arc<Memo
     let server = FakeServer::new(Arc::new(SystemClock));
     let credentials = Arc::new(MemoryCredentials::default());
     let encrypted = EncryptedConfig { origin: ORIGIN.to_string(), server_key: server_key.to_string(), pin: pin.to_string() };
-    let database = Database::open_encrypted(
-        Config { path: None, data_version: None, cache_rows: 8 },
-        "[]".to_string(),
-        encrypted,
-        Arc::new(ThroughServer(server.clone())),
-        Arc::new(Held(credentials.clone())),
-        Arc::new(SubscriptionsOnly),
-    )
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone()))))
     .unwrap();
     (database, server, credentials)
 }

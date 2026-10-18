@@ -109,9 +109,28 @@ fn id(value: &str) -> Result<RowId, DbError> {
 
 #[uniffi::export]
 impl Database {
-    #[uniffi::constructor]
-    pub fn open(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>) -> Result<Arc<Self>, DbError> {
-        Self::start(config, models_json, transport, Arc::new(SystemClock))
+    #[uniffi::constructor(default(encrypted = None, credentials = None, http = None))]
+    pub fn open(
+        config: Config,
+        models_json: String,
+        transport: Option<Arc<dyn Transport>>,
+        encrypted: Option<super::EncryptedConfig>,
+        credentials: Option<Arc<dyn super::CredentialStore>>,
+        http: Option<Arc<dyn super::EncryptedHttp>>,
+    ) -> Result<Arc<Self>, DbError> {
+        let Some(encrypted) = encrypted else {
+            if credentials.is_some() || http.is_some() {
+                return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
+            }
+            return Self::start(config, models_json, transport, Arc::new(SystemClock));
+        };
+        let credentials = credentials.ok_or_else(|| DbError::Invalid { detail: "encrypted requires credentials".into() })?;
+        let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
+        let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
+        let _entered = executor()?.enter();
+        Self::start_with(config, models_json, Arc::new(SystemClock), |db, clock| {
+            super::encrypted::wire(db, clock, encrypted, http, credentials, transport)
+        })
     }
 
     #[uniffi::constructor]

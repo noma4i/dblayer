@@ -1,4 +1,6 @@
 mod database;
+#[cfg(test)]
+mod database_tests;
 mod encrypted;
 mod entities;
 mod live;

@@ -8,6 +8,26 @@ DBlayer talks to a GraphQL endpoint. You describe operations and models once. Re
 2. Open the database with your models and the transport.
 3. Pass your GraphQL operation types. The name and document come from the type, the response root is the first field of the document.
 
+Use `DB.open` (Swift) or `DBlayer.open` (Kotlin) for every database.
+Without `encrypted`, requests use ordinary GraphQL HTTP and the transport's existing subscriptions, without credentials, sequence numbers or APQ.
+
+```swift
+try DB.open(endpoint: endpoint, headers: headers, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
+```
+
+```kotlin
+DBlayer.open(endpoint = endpoint, headers = headers, modelsJson = modelsJson, operations = GraphQLOperations.all)
+```
+
+`endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
+`headers` defaults to an empty map. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
+An omitted endpoint and transport opens a local database when `encrypted` is absent.
+With `encrypted`, the default HTTP uses its origin. The default transport uses `endpoint`, or that origin when endpoint is absent.
+`http` is the last optional argument and accepts custom encrypted HTTP replies.
+The core rejects `encrypted` without credentials, credentials without `encrypted`, and `http` without `encrypted` as `DbError.Invalid` (`DbException.Invalid` in Kotlin).
+Direct `Database.open` calls with `encrypted` also require HTTP and transport arguments.
+There is no unencrypted V3 session format.
+
 An operation type declares `Data` (Swift) or a `dataSerializer` (Kotlin) only when your code reads the response itself through the typed transport calls. An operation that models and actions run needs neither: leave `Data` out and it is `Never`, and the library still normalizes the response into rows. Do not write a response type that copies a model.
 
 ```swift
@@ -44,13 +64,13 @@ The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin f
 
 ```swift
 let origin = URL(string: "https://api.example.com")!
-let database = try Database.openEncrypted(
+let database = try Database.open(
   config: Config(path: path, dataVersion: nil, cacheRows: 4096),
   modelsJson: modelsJSON,
+  transport: DatabaseTransport(cable: { await cable.current }),
   encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin),
-  http: UrlSessionEncryptedHttp(origin: origin),
-  credentials: KeychainCredentials(),   // your CredentialStore
-  transport: DatabaseTransport(cable: { await cable.current })
+  credentials: KeychainCredentials(),
+  http: UrlSessionEncryptedHttp(origin: origin)
 )
 _ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
 let answer = try await database.sessionCall(operation: "confirm", bodyJson: #"{"code":"123456"}"#)
@@ -58,13 +78,13 @@ let answer = try await database.sessionCall(operation: "confirm", bodyJson: #"{"
 
 ```kotlin
 val origin = "https://api.example.com"
-val database = Database.openEncrypted(
-    Config(path, null, 4096u),
-    modelsJSON,
-    EncryptedConfig(origin, bundledServerKey, bundledServerPin),
-    OkHttpEncryptedHttp(origin),
-    KeystoreCredentials(),   // your CredentialStore
-    DatabaseTransport(cable = { cable.current }),
+val database = Database.open(
+    config = Config(path, null, 4096u),
+    modelsJson = modelsJSON,
+    transport = DatabaseTransport(cable = { cable.current }),
+    encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin),
+    credentials = KeystoreCredentials(),
+    http = OkHttpEncryptedHttp(origin),
 )
 database.sessionCall("otp", """{"phone":"+61400000000"}""")
 val answer = database.sessionCall("confirm", """{"code":"123456"}""")
@@ -218,26 +238,26 @@ if (config.updateRequired) showUpdate(config.androidStoreUrl)
 
 Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]` is accepted only for development hosts: the name `localhost`, a name that ends with the label `.local`, and the IP literals of loopback (`127.0.0.0/8`, `::1`), private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`). The core parses the host strictly: decimal, hex and octal address forms, trailing dots, user info, paths, queries and fragments are refused. The request audience stays the origin you gave. The JWE protects the payload over http, but the transport is not protected, so use http for development only. Production origins use https.
 
-`DB.openEncrypted` (Swift) and `DBlayer.openEncrypted` (Kotlin) open the encrypted database and set `DB.database` and `DBlayer.database`.
+`DB.open` (Swift) and `DBlayer.open` (Kotlin) set `DB.database` and `DBlayer.database`.
 `http` defaults to `UrlSessionEncryptedHttp` or `OkHttpEncryptedHttp` on the origin.
 `transport` defaults to `UrlSessionTransport` or `OkHttpTransport` on the same origin, including the WebSocket at `/api/v3/cable`.
 
 ```swift
-try DB.openEncrypted(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin), credentials: KeychainCredentials(), modelsJSON: modelsJSON)
+try DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin), credentials: KeychainCredentials(), modelsJSON: modelsJSON)
 ```
 
 ```kotlin
-DBlayer.openEncrypted(EncryptedConfig(origin, bundledServerKey, bundledServerPin), KeystoreCredentials(), modelsJson = modelsJson)
+DBlayer.open(encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin), credentials = KeystoreCredentials(), modelsJson = modelsJson)
 ```
 
 Tests can pass their own transport and HTTP replies. A test that opens cable must also implement the 4 WebSocket calls.
 
 ```swift
-try DB.openEncrypted(encrypted: encrypted, credentials: credentials, transport: testTransport, http: testHttp, modelsJSON: modelsJSON)
+try DB.open(encrypted: encrypted, credentials: credentials, transport: testTransport, modelsJSON: modelsJSON, http: testHttp)
 ```
 
 ```kotlin
-DBlayer.openEncrypted(encrypted, credentials, transport = testTransport, modelsJson = modelsJson, http = testHttp)
+DBlayer.open(encrypted = encrypted, credentials = credentials, transport = testTransport, modelsJson = modelsJson, http = testHttp)
 ```
 
 Rules of the session:

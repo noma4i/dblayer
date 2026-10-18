@@ -68,7 +68,7 @@ private suspend inline fun <reified Failure : Throwable> rejects(block: () -> Un
 }
 
 private fun open(http: ScriptedHttp, credentials: CountedCredential, path: String? = null, pin: String = PIN) =
-    Database.openEncrypted(Config(path, null, 32u), modelsJSON, EncryptedConfig("https://api.example.com", KEY, pin), http, credentials, DatabaseTransport(cable = { null }))
+    Database.open(config = Config(path, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", KEY, pin), credentials = credentials, http = http)
 
 private inline fun withDirectory(block: (File) -> Unit) {
     val directory = Files.createTempDirectory("dblayer-session").toFile()
@@ -173,7 +173,7 @@ class SessionGuardsTest {
     fun aClosedCableLeavesTheCredentialInTheAppStore() = bounded {
         val http = ScriptedHttp()
         val credentials = CountedCredential()
-        DBlayer.openEncrypted(EncryptedConfig("https://api.example.com", KEY, PIN), credentials, DatabaseTransport(cable = { null }), modelsJSON, http = http)
+        DBlayer.open(encrypted = EncryptedConfig("https://api.example.com", KEY, PIN), credentials = credentials, transport = DatabaseTransport(cable = { null }), modelsJson = modelsJSON, http = http)
         rejects<DbException.Http> { DBlayer.database.sessionCall("otp", OTP) }
         val issued = credentials.current
         val connection = CableConnection("/test", "token", { _, _ -> ClosingSocket() }, ManualTimers().timers)

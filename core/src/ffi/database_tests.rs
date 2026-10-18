@@ -1,0 +1,66 @@
+use std::sync::Arc;
+
+use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, Transport, TransportRequest};
+use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
+
+struct Plain;
+
+#[async_trait::async_trait]
+impl Transport for Plain {
+    async fn open_cable(&self) -> Result<String, DbError> { unreachable!() }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, _: String) { unreachable!() }
+    async fn query(&self, request: TransportRequest) -> Result<String, DbError> {
+        assert_eq!(request.document, "query Greeting($name: String!) { greeting(name: $name) }");
+        assert_eq!(request.operation_name, "Greeting");
+        assert_eq!(request.variables_json, r#"{"name":"Ada"}"#);
+        Ok(r#"{"data":{"greeting":"Hello Ada"}}"#.into())
+    }
+    async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
+    async fn subscribe(&self, _: TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<String, DbError> { unreachable!() }
+    fn unsubscribe(&self, _: String) { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
+}
+
+struct Unused;
+
+impl CredentialStore for Unused {
+    fn get(&self) -> Result<Option<String>, DbError> { unreachable!() }
+    fn set(&self, _: String) -> Result<(), DbError> { unreachable!() }
+    fn clear(&self) -> Result<(), DbError> { unreachable!() }
+}
+
+#[async_trait::async_trait]
+impl EncryptedHttp for Unused {
+    async fn post(&self, _: String, _: String) -> Result<EncryptedReply, DbError> { unreachable!() }
+    async fn get(&self, _: String) -> Result<EncryptedReply, DbError> { unreachable!() }
+}
+
+fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
+
+#[tokio::test]
+async fn unified_open_without_encryption_sends_plain_graphql_through_the_transport() {
+    let database = Database::open(config(), "[]".into(), Some(Arc::new(Plain)), None, None, None).unwrap();
+    database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).unwrap();
+    assert_eq!(database.run("Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
+    assert!(matches!(database.session_reset(), Err(DbError::Invalid { .. })));
+}
+
+#[test]
+fn unified_open_rejects_incomplete_or_unencrypted_session_arguments() {
+    let mut rejected = Vec::new();
+    for (encrypted, credentials, http, transport) in [
+        (true, false, true, true),
+        (false, true, false, true),
+        (false, false, true, true),
+        (false, true, true, true),
+        (true, true, false, true),
+        (true, true, true, false),
+    ] {
+        let encrypted = encrypted.then(|| EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() });
+        let result = Database::open(config(), "[]".into(), transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>));
+        rejected.push(matches!(result, Err(DbError::Invalid { .. })));
+    }
+    assert_eq!(rejected, [true; 6]);
+}

@@ -35,24 +35,19 @@ object DBlayer {
     lateinit var database: Database
     internal val databaseOrNull: Database? get() = if (::database.isInitialized) database else null
 
-    fun open(endpoint: String, headers: Map<String, String> = emptyMap(), modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList()) =
-        open(OkHttpTransport(endpoint, { headers }), modelsJson, path, operations)
-
-    fun open(transport: Transport?, modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList()) {
-        install(Database.open(Config(path, null, 2000u), modelsJson, transport), transport, operations)
-    }
-
-    /** Opens the database with the encrypted session. `http` defaults to `OkHttpEncryptedHttp` on the origin of `encrypted`; the database is then `DBlayer.database`. */
-    fun openEncrypted(
-        encrypted: EncryptedConfig,
-        credentials: CredentialStore,
-        transport: Transport = OkHttpTransport(encrypted.origin),
+    fun open(
+        endpoint: String? = null,
+        headers: Map<String, String> = emptyMap(),
+        encrypted: EncryptedConfig? = null,
+        credentials: CredentialStore? = null,
+        transport: Transport? = null,
         modelsJson: String,
         path: String? = null,
         operations: List<GraphQLOperation> = emptyList(),
-        http: EncryptedHttp = OkHttpEncryptedHttp(encrypted.origin),
+        http: EncryptedHttp? = null,
     ) {
-        install(Database.openEncrypted(Config(path, null, 2000u), modelsJson, encrypted, http, credentials, transport), transport, operations)
+        val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, { headers }) }
+        install(Database.open(Config(path, null, 2000u), modelsJson, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }), selectedTransport, operations)
     }
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {

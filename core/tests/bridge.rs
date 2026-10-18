@@ -16,7 +16,7 @@ async fn bridge_writes_reach_live_rows_and_files() {
         FieldSpec::file("media").nullable(),
     ]);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 32 },
-        serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>).unwrap();
+        serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None).unwrap();
     let live = db.live_query(r#"{"model":"Moment"}"#.into(), Arc::new(Listener)).unwrap();
     assert!(live.current().await.rows.is_empty());
     let id = db.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap().id;
@@ -48,7 +48,7 @@ async fn bridge_state_needs_a_sync_to_report_on() {
     });
     model.relations.push(feed);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 },
-        serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>).unwrap();
+        serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None).unwrap();
     let listener = Arc::new(States(Default::default()));
     let result = db.live_state("Moment".into(), "feed".into(), "{}".into(), listener.clone());
     assert!(result.is_err(), "without a transport there is no sync to report on");
@@ -82,12 +82,12 @@ async fn a_create_left_pending_by_the_last_session_waits_for_registration_after_
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("db.sqlite").to_string_lossy().into_owned();
     let config = || Config { path: Some(path.clone()), data_version: None, cache_rows: 32 };
-    let first = Database::open(config(), models.clone(), None::<Arc<dyn Transport>>).unwrap();
+    let first = Database::open(config(), models.clone(), None::<Arc<dyn Transport>>, None, None, None).unwrap();
     first.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
     drop(first);
 
     let transport = Arc::new(Recorder(Default::default()));
-    let second = Database::open(config(), models, Some(transport.clone() as Arc<dyn Transport>)).unwrap();
+    let second = Database::open(config(), models, Some(transport.clone() as Arc<dyn Transport>), None, None, None).unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(transport.0.lock().unwrap().is_empty());
     second.register_operations(r#"[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id text } }"}]"#.into()).unwrap();

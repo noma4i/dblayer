@@ -47,14 +47,7 @@ impl Rig {
     }
 
     pub(super) fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
-        Database::open_encrypted(
-            Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 },
-            "[]".to_string(),
-            EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: pin.to_string() },
-            Arc::new(ThroughServer(self.server.clone())),
-            self.credentials.clone(),
-            Arc::new(SubscriptionsOnly),
-        )
+        Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: pin.to_string() }), Some(self.credentials.clone()), Some(Arc::new(ThroughServer(self.server.clone()))))
     }
 
     pub(super) fn touched(&self) -> (usize, usize) {

@@ -62,14 +62,7 @@ private final class ClosingSocket: CableSocket, @unchecked Sendable {
 }
 
 private func open(_ http: ScriptedHttp, _ credentials: CountedCredential, path: String? = nil, pin: String = serverPin) throws -> Database {
-  try Database.openEncrypted(
-    config: Config(path: path, dataVersion: nil, cacheRows: 32),
-    modelsJson: modelsJSON,
-    encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: pin),
-    http: http,
-    credentials: credentials,
-    transport: DatabaseTransport(cable: { nil })
-  )
+  try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: pin), credentials: credentials, http: http)
 }
 
 private func temporaryFile() throws -> (URL, String) {
@@ -173,13 +166,7 @@ struct SessionGuardsTests {
   func aClosedCableLeavesTheCredentialInTheAppStore() async throws {
     let http = ScriptedHttp()
     let credentials = CountedCredential()
-    try DB.openEncrypted(
-      encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin),
-      credentials: credentials,
-      transport: DatabaseTransport(cable: { nil }),
-      http: http,
-      modelsJSON: modelsJSON
-    )
+    try DB.open(encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin), credentials: credentials, transport: DatabaseTransport(cable: { nil }), modelsJSON: modelsJSON, http: http)
     await #expect(throws: DbError.self) { try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
     let issued = credentials.current
     let connection = CableConnection(url: URL(fileURLWithPath: "/test"), token: "token", makeSocket: { _, _ in ClosingSocket() })

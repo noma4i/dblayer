@@ -31,19 +31,10 @@ public enum DB {
     _ = try await database.run(operation: operation, variablesJson: JSONValue.object(variables).text)
   }
 
-  public static func open(endpoint: URL, headers: [String: String] = [:], modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
-    try open(transport: UrlSessionTransport(endpoint: endpoint, headers: headers), modelsJSON: modelsJSON, path: path, operations: operations)
-  }
-
-  public static func open(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
-    try install(try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport), transport: transport, operations: operations)
-  }
-
-  /// Opens the database with the encrypted session. `http` defaults to `UrlSessionEncryptedHttp` on the origin of `encrypted`; the database is then `DB.database`.
-  public static func openEncrypted(encrypted: EncryptedConfig, credentials: CredentialStore, transport: Transport? = nil, http: EncryptedHttp? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
-    guard let origin = URL(string: encrypted.origin) else { throw DbError.Invalid(detail: "bad origin \(encrypted.origin)") }
-    let transport = transport ?? UrlSessionTransport(endpoint: origin)
-    let database = try Database.openEncrypted(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, encrypted: encrypted, http: http ?? UrlSessionEncryptedHttp(origin: origin), credentials: credentials, transport: transport)
+  public static func open(endpoint: URL? = nil, headers: [String: String] = [:], encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) throws {
+    let origin = encrypted.flatMap { URL(string: $0.origin) }
+    let transport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers) }
+    let database = try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) })
     try install(database, transport: transport, operations: operations)
   }
 

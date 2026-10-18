@@ -55,11 +55,7 @@ class EncryptedSessionTest {
     @Test
     fun oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() = bounded {
         val http = RecordedHttp(400u)
-        val database = Database.openEncrypted(
-            Config(null, null, 32u), modelsJSON,
-            EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN),
-            http, HeldCredential(), DatabaseTransport(cable = { null }),
-        )
+        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN), credentials = HeldCredential(), http = http)
         try {
             database.sessionCall("otp", """{"phone":"${"x".repeat(260_000)}"}""")
             throw AssertionError("expected a local size refusal")
@@ -133,14 +129,7 @@ class EncryptedSessionTest {
     fun theCoreSendsSealedRequestsThroughTheAppHooksAndKeepsTheCredentialInTheAppStore() = bounded {
         val http = RecordedHttp(400u)
         val credentials = HeldCredential()
-        val database = Database.openEncrypted(
-            Config(null, null, 32u),
-            modelsJSON,
-            EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN),
-            http,
-            credentials,
-            DatabaseTransport(cable = { null }),
-        )
+        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN), credentials = credentials, http = http)
 
         failsWith<DbException.Http> { database.sessionCall("otp", """{"phone":"+61400000000"}""") }
         failsWith<DbException.Network> { database.sessionCall("otp", """{"phone":"+61411111111"}""") }
@@ -154,14 +143,9 @@ class EncryptedSessionTest {
     }
 
     @Test
-    fun openEncryptedMakesTheEncryptedDatabaseTheSharedOneAndTheConfigQueryReachesTheHook() = bounded {
+    fun openWithEncryptionMakesTheEncryptedDatabaseTheSharedOneAndTheConfigQueryReachesTheHook() = bounded {
         val http = RecordedHttp(400u)
-        DBlayer.openEncrypted(
-            EncryptedConfig("http://localhost:3001", SERVER_KEY, SERVER_PIN),
-            HeldCredential(),
-            modelsJson = modelsJSON,
-            http = http,
-        )
+        DBlayer.open(encrypted = EncryptedConfig("http://localhost:3001", SERVER_KEY, SERVER_PIN), credentials = HeldCredential(), modelsJson = modelsJSON, http = http)
 
         failsWith<DbException.Http> { DBlayer.database.serverConfig("android", "1.2.3") }
         failsWith<DbException.Http> { DBlayer.database.serverConfig(null, null) }

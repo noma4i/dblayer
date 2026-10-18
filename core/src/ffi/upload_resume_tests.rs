@@ -25,12 +25,7 @@ impl Transport for Bytes {
 }
 
 fn open(rig: &Rig, path: &std::path::Path) -> Arc<Database> {
-    let database = Database::open_encrypted(
-        Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 },
-        serde_json::to_string(&vec![moment_spec()]).unwrap(),
-        EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() },
-        Arc::new(ThroughServer(rig.server.clone())), rig.credentials.clone(), Arc::new(Bytes),
-    ).unwrap();
+    let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone())))).unwrap();
     let operations: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);

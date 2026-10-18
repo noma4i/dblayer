@@ -69,7 +69,7 @@ The coverage reports cost time: the Swift lane with coverage takes about the sam
 
 Test conventions:
 
-- Swift tests that replace `DB.database`, including calls through `DB.open` or `DB.openEncrypted`, belong to the serialized `BridgeProbeTests` suite. Nest related suites there. Separate serialized suites still run concurrently and can replace each other's database during an awaited call.
+- Swift tests that replace `DB.database`, including calls through `DB.open`, belong to the serialized `BridgeProbeTests` suite. Nest related suites there. Separate serialized suites still run concurrently and can replace each other's database during an awaited call.
 - Kotlin tests that replace `DBlayer.database` run sequentially with JUnit 4. Keep that shared state sequential if changing the test runner. Tests using independent database handles can run concurrently on either platform.
 - Before advancing manual cable clocks, await the registered deadline in Swift and Kotlin. A received frame's timestamp does not prove its asynchronous sleep has registered.
 - A test waits only through `eventually` or `Cursor` (Swift, `Waiting.swift`) and `bounded` or `eventually` (Kotlin, `TestWaiting.kt`). Each wait has a timeout and its failure names the condition. `check_waits.sh` rejects loops, raw iterators and `runBlocking` in tests.

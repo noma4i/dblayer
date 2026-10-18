@@ -45,10 +45,7 @@ impl CredentialStore for Remote {
 async fn child(mode: &str) {
     let path = std::env::var("DBLAYER_UPLOAD_DB").unwrap();
     let remote = Arc::new(Remote(std::env::var("DBLAYER_UPLOAD_PEER").unwrap()));
-    let database = Database::open_encrypted(
-        Config { path: Some(path.clone()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(),
-        EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() }, remote.clone(), remote.clone(), Arc::new(Bytes),
-    ).unwrap();
+    let database = Database::open(Config { path: Some(path.clone()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() }), Some(remote.clone()), Some(remote.clone())).unwrap();
     database.register_operations(json!([
         {"name": "CreateBlob", "document": "mutation CreateBlob { createBlob { id } }", "rootPath": "createBlob"},
         {"name": "MakeMoment", "document": "mutation MakeMoment { makeMoment { id } }", "rootPath": "makeMoment"}

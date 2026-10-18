@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use crate::sync::SyncError;
 use crate::transport::{self as core, EncryptedClient, EncryptedConfig, EncryptedTransport, ServerConfig, SessionCode};
-use super::database::{executor, Config, Database};
+use super::database::{executor, Database, Wiring};
 use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
 
@@ -91,26 +91,22 @@ pub(super) async fn resume(client: Arc<EncryptedClient>, sync: Option<crate::syn
     refused(answer).map(|answer| Some(answer.body.to_string()))
 }
 
+pub(super) fn wire(
+    db: &crate::db::Db,
+    clock: &Arc<dyn crate::pacing::Clock>,
+    encrypted: EncryptedConfig,
+    http: Arc<dyn EncryptedHttp>,
+    credentials: Arc<dyn CredentialStore>,
+    transport: Arc<dyn Transport>,
+) -> Result<Wiring, DbError> {
+    let client = EncryptedClient::new(&encrypted, Arc::new(ForeignHttp(http)), Arc::new(ForeignCredentials(credentials)), db.clone(), clock.clone())
+        .map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+    let client = Arc::new(client);
+    Ok((Some(Arc::new(EncryptedTransport::new(client.clone(), Arc::new(ForeignTransport(transport))))), Some(client)))
+}
+
 #[uniffi::export]
 impl Database {
-    #[uniffi::constructor]
-    pub fn open_encrypted(
-        config: Config,
-        models_json: String,
-        encrypted: EncryptedConfig,
-        http: Arc<dyn EncryptedHttp>,
-        credentials: Arc<dyn CredentialStore>,
-        transport: Arc<dyn Transport>,
-    ) -> Result<Arc<Self>, DbError> {
-        let _entered = executor()?.enter();
-        Self::start_with(config, models_json, Arc::new(crate::pacing::SystemClock), |db, clock| {
-            let client = EncryptedClient::new(&encrypted, Arc::new(ForeignHttp(http)), Arc::new(ForeignCredentials(credentials)), db.clone(), clock.clone())
-                .map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-            let client = Arc::new(client);
-            Ok((Some(Arc::new(EncryptedTransport::new(client.clone(), Arc::new(ForeignTransport(transport))))), Some(client)))
-        })
-    }
-
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
         let client = self.session()?.clone();
         let (path, body) = (path_of(&operation)?, serde_json::from_str::<Value>(&body_json)?);

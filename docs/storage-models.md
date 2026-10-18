@@ -43,7 +43,7 @@ try DB.open(transport: nil, modelsJSON: modelsJSON, path: path)
 ```
 
 ```kotlin
-DBlayer.open(null, modelsJson, path)
+DBlayer.open(modelsJson = modelsJson, path = path)
 ```
 
 Local rows notify readers and survive reopening. Create, update and destroy generate no network request and write no outbox entry.

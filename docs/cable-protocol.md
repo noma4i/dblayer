@@ -22,12 +22,12 @@ An incoming failure retires both keys. An authenticated `closing` message return
 X25519 private material, derived keys and temporary hello plaintext use zeroing storage. Dropping a connection also erases its stored keys.
 The public vectors in `fixtures/v3-cable/kat.json` contain test keys only. Tests compare hello plaintext and all four encrypted frames without printing key material.
 
-Swift and Kotlin retain the same `EncryptedConfig(origin, serverKey, pin)` and `openEncrypted` calls.
+Swift and Kotlin retain the same `EncryptedConfig(origin, serverKey, pin)` and `open` calls.
 The platform passes WebSocket text through `openCable`, `cableSend`, `cableNext` and `cableClose`. Rust handles encryption, subscriptions, reopening and timers.
 
 ## Platform sockets
 
-`DB.openEncrypted` and `DBlayer.openEncrypted` choose a platform transport when `transport` is omitted.
+`DB.open` and `DBlayer.open` choose a platform transport when `transport` is omitted.
 Swift uses `URLSessionWebSocketTask`. Kotlin uses OkHttp WebSocket.
 Both derive `/api/v3/cable` from `EncryptedConfig.origin`: HTTPS becomes WSS, and development HTTP becomes WS.
 Every open returns a new token. Calls for that token send and receive text without interpreting the encrypted payload.
@@ -42,11 +42,11 @@ Every open returns a new token. Calls for that token send and receive text witho
 | Open or send failure | Typed transport error from the platform classifier |
 
 ```swift
-try DB.openEncrypted(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
+try DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
 ```
 
 ```kotlin
-DBlayer.openEncrypted(encrypted, credentials, modelsJson = modelsJson)
+DBlayer.open(encrypted = encrypted, credentials = credentials, modelsJson = modelsJson)
 ```
 
 ## Subscriptions

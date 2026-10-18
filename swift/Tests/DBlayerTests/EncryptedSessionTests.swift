@@ -57,11 +57,7 @@ struct EncryptedSessionTests {
   @Test
   func oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() async throws {
     let http = RecordedHttp(status: 400)
-    let database = try Database.openEncrypted(
-      config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON,
-      encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin),
-      http: http, credentials: HeldCredential(), transport: DatabaseTransport(cable: { nil })
-    )
+    let database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin), credentials: HeldCredential(), http: http)
     do {
       _ = try await database.sessionCall(operation: "otp", bodyJson: "{\"phone\":\"\(String(repeating: "x", count: 260_000))\"}")
       Issue.record("expected a local size refusal")
@@ -139,14 +135,7 @@ struct EncryptedSessionTests {
   func theCoreSendsSealedRequestsThroughTheAppHooksAndKeepsTheCredentialInTheAppStore() async throws {
     let http = RecordedHttp(status: 400)
     let credentials = HeldCredential()
-    let database = try Database.openEncrypted(
-      config: Config(path: nil, dataVersion: nil, cacheRows: 32),
-      modelsJson: modelsJSON,
-      encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin),
-      http: http,
-      credentials: credentials,
-      transport: DatabaseTransport(cable: { nil })
-    )
+    let database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin), credentials: credentials, http: http)
 
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61411111111"}"#) }
@@ -161,14 +150,9 @@ struct EncryptedSessionTests {
   }
 
   @Test
-  func openEncryptedMakesTheEncryptedDatabaseTheSharedOneAndTheConfigQueryReachesTheHook() async throws {
+  func openWithEncryptionMakesTheEncryptedDatabaseTheSharedOneAndTheConfigQueryReachesTheHook() async throws {
     let http = RecordedHttp(status: 400)
-    try DB.openEncrypted(
-      encrypted: EncryptedConfig(origin: "http://localhost:3001", serverKey: serverKey, pin: serverPin),
-      credentials: HeldCredential(),
-      http: http,
-      modelsJSON: modelsJSON
-    )
+    try DB.open(encrypted: EncryptedConfig(origin: "http://localhost:3001", serverKey: serverKey, pin: serverPin), credentials: HeldCredential(), modelsJSON: modelsJSON, http: http)
 
     await #expect(throws: DbError.self) { try await DB.database.serverConfig(platform: "ios", version: "1.2.3") }
     await #expect(throws: DbError.self) { try await DB.database.serverConfig(platform: nil, version: nil) }

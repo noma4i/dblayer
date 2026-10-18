@@ -47,7 +47,7 @@ fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_load() {
     relation.updates.push(crate::schema::UpdatesSpec { subscription:"ViewerNotice".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
     model.relations.push(relation);
     let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), delay:Duration::ZERO });
-    let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport)).unwrap();
+    let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None).unwrap();
     db.register_operations(r#"[{"name":"ViewerNotice","document":"subscription ViewerNotice { viewerNotice { body } }","rootPath":"viewerNotice"}]"#.into()).unwrap();
     for window in [false, true] {
         let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#.into();
@@ -87,7 +87,7 @@ fn open_rig(delay: Duration, clock: Option<Arc<TestClock>>) -> (Arc<Database>, A
     let transport_handle = Some(transport.clone() as Arc<dyn Transport>);
     let db = match &clock {
         Some(clock) => Database::open_with_clock(config, models, transport_handle, clock.clone()),
-        None => Database::open(config, models, transport_handle),
+        None => Database::open(config, models, transport_handle, None, None, None),
     }
     .unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();
