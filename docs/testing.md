@@ -59,6 +59,7 @@ Typical scenarios to cover:
 | Everything, including Swift and Kotlin | `bash scripts/check_dblayer.sh` |
 | Touched directories only | `bash scripts/check_dblayer.sh --fast` |
 | Every invariant has a test with an assertion | `bash scripts/check_invariants.sh` |
+| Check scripts leave unrelated processes alone | `bash scripts/check_bounded.sh --selftest` |
 | Duplicate mechanisms and names | `bash scripts/check_zoo.sh` |
 | Docs reference real paths | `bash scripts/check_docs.sh` |
 | No test waits without a bound | `bash scripts/check_waits.sh` |

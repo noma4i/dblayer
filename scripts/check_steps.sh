@@ -54,10 +54,20 @@ run_bounded() {
 
 # CPU seconds of processes the waited-children counter (`times`) cannot see, sampled once per second: processes below a
 # java process of this check (single-use daemon, test executors) and the Gradle and Kotlin daemons that carry this
-# worktree's check-owner-<id> tag in a JVM option (-XX:ErrorFile, Gradle drops plain -D options from the daemon command line), with their children. A daemon of another worktree carries another id and is
+# run's check-owner-<id> tag in a JVM option (-XX:ErrorFile, Gradle drops plain -D options from the daemon command line), with their children. A daemon of another run carries another id and is
 # not counted. The highest CPU time seen per pid counts, the CPU a daemon had before the run is subtracted.
 counted_processes_cpu() {
-  ps -axo pid=,ppid=,cputime=,command= | awk -v root="$$" -v owner="check-owner-${CHECK_OWNER_ID:-none}-" '
+  local root_pid="$CHECK_ROOT_PID" pid pids tagged=""
+  [ -z "${CHECK_OWNER_ID:-}" ] || tagged="$(pgrep -f "check-owner-${CHECK_OWNER_ID}-" || true)"
+  pids="$(
+    echo "$root_pid"
+    descendants "$root_pid"
+    for pid in $tagged; do
+      echo "$pid"
+      descendants "$pid"
+    done
+  )"
+  ps -p "$(printf '%s\n' "$pids" | sort -nu | paste -sd, -)" -o pid=,ppid=,cputime=,command= | awk -v root="$root_pid" -v owner="check-owner-${CHECK_OWNER_ID:-none}-" '
     { parent[$1] = $2; n = split($3, a, ":"); sec[$1] = a[n] + 60 * a[n - 1] + (n > 2 ? 3600 * a[n - 2] : 0)
       isjava[$1] = ($0 ~ /\/java( |$)/) ? 1 : 0
       tagged[$1] = ($0 ~ /GradleDaemon|KotlinCompileDaemon/ && index($0, owner) > 0) ? 1 : 0 }
@@ -151,9 +161,10 @@ run_checks() {
   logdir="$root/target/check-logs"
   mkdir -p "$logdir"
   local start=$SECONDS lanes=() ordered=() failed=0 cpu sampled before sampler cpu_children daemon
-  CHECK_OWNER_ID="$(printf '%s' "$root" | shasum | cut -c1-12)"
-  export CHECK_OWNER_ID
   sampled="$(mktemp)"
+  CHECK_OWNER_ID="$(basename "$sampled" | tr -cd '[:alnum:]')"
+  CHECK_ROOT_PID="$(exec sh -c 'echo "$PPID"')"
+  export CHECK_OWNER_ID CHECK_ROOT_PID
   before="$(mktemp)"
   counted_processes_cpu > "$before"
   export CHECK_SAMPLES_FILE="$sampled"

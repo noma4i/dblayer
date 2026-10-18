@@ -9,7 +9,16 @@ here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$here/check_steps.sh"
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+cleanup_processes() {
+  local file pid
+  for file in "$work"/pid-*; do
+    [ -f "$file" ] || continue
+    read -r pid < "$file"
+    kill "$pid" 2>/dev/null || true
+    rm -f "$file"
+  done
+}
+trap 'cleanup_processes; rm -rf "$work"' EXIT
 failed=0
 
 fixture() {
@@ -133,16 +142,19 @@ inv_check_04_a_missing_registry_is_red() {
 
 expect_red_step_killed() {
   sleep 1
-  if [ "$1" -ne 124 ] || pgrep -f 'sleep 601.7' > /dev/null; then
-    echo "FAIL step code $1, leftover: $(pgrep -fl 'sleep 601.7' || true)"
-    pkill -f 'sleep 601.7' || true
+  local pid
+  read -r pid < "$work/pid-sleep"
+  if [ "$1" -ne 124 ] || kill -0 "$pid" 2>/dev/null; then
+    echo "FAIL step code $1, leftover PID: $pid"
+    kill "$pid" 2>/dev/null || true
     failed=1
   fi
+  rm -f "$work/pid-sleep"
 }
 
 inv_check_05_a_step_past_its_limit_leaves_no_process() {
   local code=0
-  bash "$here/check_bounded.sh" 2 selftest bash -c 'set -m; sleep 601.7 & wait' 2> /dev/null || code=$?
+  bash "$here/check_bounded.sh" 2 selftest bash -c 'set -m; sleep 601.7 & echo $! > "$1"; wait' _ "$work/pid-sleep" 2> /dev/null || code=$?
   expect_red_step_killed "$code"
 }
 
@@ -235,13 +247,14 @@ inv_check_08_the_cpu_counter_sees_a_build_daemon() {
   rm -f "$work/marker-java"
   changed_files() { echo "$CHANGED"; }
   cp "$(command -v perl)" "$work/jdk/java"
-  local child='while ((times)[0] + (times)[1] < 3) {} open(F, q(>), q(MARKER)); print F $$, q( ), int((times)[0] + (times)[1]); close(F); sleep 60' waiting='until [ -s MARKER ] && awk -v pid=$(cut -d" " -f1 MARKER) -v cpu=$(cut -d" " -f2 MARKER) "\$1 == pid && \$2 >= cpu - 1 { found = 1 } END { exit !found }" "$CHECK_SAMPLES_FILE"; do sleep 1; done'
+  local child='open(P, q(>), q(PIDFILE)); print P $$; close(P); while ((times)[0] + (times)[1] < 3) {} open(F, q(>), q(MARKER)); print F $$, q( ), int((times)[0] + (times)[1]); close(F); sleep 60' waiting='until [ -s MARKER ] && awk -v pid=$(cut -d" " -f1 MARKER) -v cpu=$(cut -d" " -f2 MARKER) "\$1 == pid && \$2 >= cpu - 1 { found = 1 } END { exit !found }" "$CHECK_SAMPLES_FILE"; do sleep 1; done'
+  child="${child//PIDFILE/$work/pid-java}"
   child="${child//MARKER/$work/marker-java}"
   waiting="${waiting//MARKER/$work/marker-java}"
   rm -f "$work/release"
   steps=("a|a1|280|-|$work/jdk/java -e 'if (!fork) { exec(q(perl), q(-e), q($child)) } until (-e q($work/release)) { sleep 1 }' & $waiting; touch $work/release; wait")
   (run_checks) > "$work/engine.out" 2>&1
-  pkill -f "perl -e while .(times)" 2> /dev/null
+  cleanup_processes
   local counted
   counted="$(sed -n 's/^check: ok, at least \([0-9]*\) CPU seconds.*/\1/p' "$work/engine.out")"
   expect_green_counter "${counted:-0}" "$(cut -d' ' -f2 "$work/marker-java" 2> /dev/null || echo 0)"
@@ -258,13 +271,15 @@ inv_check_08_a_daemon_that_outlives_the_step_is_counted_and_another_runs_daemon_
   changed_files() { echo "$CHANGED"; }
   cp "$(command -v perl)" "$work/jdk/java"
   local mine other waiting='until [ -s MARKER ] && awk -v pid=$(cut -d" " -f1 MARKER) -v cpu=$(cut -d" " -f2 MARKER) "\$1 == pid && \$2 >= cpu - 1 { found = 1 } END { exit !found }" "$CHECK_SAMPLES_FILE"; do sleep 1; done'
-  mine='if (!fork) { exec(q(perl), q(-e), q(while ((times)[0] + (times)[1] < 3) {} open(F, q(>), q(MARKER)); print F $$, q( ), int((times)[0] + (times)[1]); close(F); sleep 60), q(GradleDaemon), q(-XX:ErrorFile=/tmp/check-owner-) . $ENV{CHECK_OWNER_ID} . q(-x.log)) }'
-  other='if (!fork) { exec(q(perl), q(-e), q(1 while 1), q(GradleDaemon), q(-XX:ErrorFile=/tmp/check-owner-other-run-x.log)) }'
+  mine='if (!fork) { open(P, q(>), q(PIDFILE)); print P $$; close(P); exec(q(perl), q(-e), q(while ((times)[0] + (times)[1] < 3) {} open(F, q(>), q(MARKER)); print F $$, q( ), int((times)[0] + (times)[1]); close(F); sleep 60), q(GradleDaemon), q(-XX:ErrorFile=/tmp/check-owner-) . $ENV{CHECK_OWNER_ID} . q(-x.log)) }'
+  mine="${mine//PIDFILE/$work/pid-mine}"
+  other='if (!fork) { open(F, q(>), q(PIDFILE)); print F $$; close(F); exec(q(perl), q(-e), q(1 while 1), q(GradleDaemon), q(-XX:ErrorFile=/tmp/check-owner-other-run-x.log)) }'
+  other="${other//PIDFILE/$work/pid-other}"
   mine="${mine//MARKER/$work/marker-mine}"
   waiting="${waiting//MARKER/$work/marker-mine}"
   steps=("a|a1|280|-|$work/jdk/java -e '$mine'; $work/jdk/java -e '$other'; $waiting")
   (run_checks) > "$work/engine.out" 2>&1
-  pkill -f 'GradleDaemon -XX:ErrorFile=/tmp/check-owner-' 2> /dev/null
+  cleanup_processes
   local counted
   counted="$(sed -n 's/^check: ok, at least \([0-9]*\) CPU seconds.*/\1/p' "$work/engine.out")"
   expect_green_run_daemon "${counted:-0}" "$(cut -d' ' -f2 "$work/marker-mine" 2> /dev/null || echo 0)"
