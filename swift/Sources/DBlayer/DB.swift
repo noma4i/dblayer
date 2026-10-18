@@ -40,8 +40,9 @@ public enum DB {
   }
 
   /// Opens the database with the encrypted session. `http` defaults to `UrlSessionEncryptedHttp` on the origin of `encrypted`; the database is then `DB.database`.
-  public static func openEncrypted(encrypted: EncryptedConfig, credentials: CredentialStore, transport: Transport, http: EncryptedHttp? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
+  public static func openEncrypted(encrypted: EncryptedConfig, credentials: CredentialStore, transport: Transport? = nil, http: EncryptedHttp? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = []) throws {
     guard let origin = URL(string: encrypted.origin) else { throw DbError.Invalid(detail: "bad origin \(encrypted.origin)") }
+    let transport = transport ?? UrlSessionTransport(endpoint: origin)
     let database = try Database.openEncrypted(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, encrypted: encrypted, http: http ?? UrlSessionEncryptedHttp(origin: origin), credentials: credentials, transport: transport)
     try install(database, transport: transport, operations: operations)
   }

@@ -218,14 +218,26 @@ if (config.updateRequired) showUpdate(config.androidStoreUrl)
 
 Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]` is accepted only for development hosts: the name `localhost`, a name that ends with the label `.local`, and the IP literals of loopback (`127.0.0.0/8`, `::1`), private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`). The core parses the host strictly: decimal, hex and octal address forms, trailing dots, user info, paths, queries and fragments are refused. The request audience stays the origin you gave. The JWE protects the payload over http, but the transport is not protected, so use http for development only. Production origins use https.
 
-`DB.openEncrypted` (Swift) and `DBlayer.openEncrypted` (Kotlin) open the encrypted database like `open` does and set `DB.database` and `DBlayer.database`. `http` defaults to `UrlSessionEncryptedHttp` or `OkHttpEncryptedHttp` on the origin.
+`DB.openEncrypted` (Swift) and `DBlayer.openEncrypted` (Kotlin) open the encrypted database and set `DB.database` and `DBlayer.database`.
+`http` defaults to `UrlSessionEncryptedHttp` or `OkHttpEncryptedHttp` on the origin.
+`transport` defaults to `UrlSessionTransport` or `OkHttpTransport` on the same origin, including the WebSocket at `/api/v3/cable`.
 
 ```swift
-try DB.openEncrypted(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin), credentials: KeychainCredentials(), transport: transport, modelsJSON: modelsJSON)
+try DB.openEncrypted(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin), credentials: KeychainCredentials(), modelsJSON: modelsJSON)
 ```
 
 ```kotlin
-DBlayer.openEncrypted(EncryptedConfig(origin, bundledServerKey, bundledServerPin), KeystoreCredentials(), transport, modelsJson)
+DBlayer.openEncrypted(EncryptedConfig(origin, bundledServerKey, bundledServerPin), KeystoreCredentials(), modelsJson = modelsJson)
+```
+
+Tests can pass their own transport and HTTP replies. A test that opens cable must also implement the 4 WebSocket calls.
+
+```swift
+try DB.openEncrypted(encrypted: encrypted, credentials: credentials, transport: testTransport, http: testHttp, modelsJSON: modelsJSON)
+```
+
+```kotlin
+DBlayer.openEncrypted(encrypted, credentials, transport = testTransport, modelsJson = modelsJson, http = testHttp)
 ```
 
 Rules of the session:

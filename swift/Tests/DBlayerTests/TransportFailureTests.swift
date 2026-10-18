@@ -49,13 +49,14 @@ struct TransportFailureTests {
   }
 
   @Test
-  func onlyTheClassifierAndTheBlobPutBuildTheRetryableNetworkError() throws {
+  func onlyTheClassifierBuildsTheRetryableNetworkError() throws {
     let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent("Sources/DBlayer")
-    let allowed = ["the subscription socket is not open", "return .Network(detail: error.localizedDescription)"]
-    for file in ["Network/DatabaseTransport.swift", "UrlSessionTransport.swift"] {
-      let text = try String(contentsOf: sources.appendingPathComponent(file), encoding: .utf8)
-      let offenders = text.split(separator: "\n").filter { $0.contains("Network(") && !allowed.contains(where: $0.contains) }
+    let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+    for case let file as URL in files where file.pathExtension == "swift" {
+      if ["dblayer.swift", "TransportFailure.swift"].contains(file.lastPathComponent) { continue }
+      let text = try String(contentsOf: file, encoding: .utf8)
+      let offenders = text.split(separator: "\n").filter { $0.contains("Network(") }
       #expect(offenders.isEmpty, "\(file): \(offenders)")
     }
   }

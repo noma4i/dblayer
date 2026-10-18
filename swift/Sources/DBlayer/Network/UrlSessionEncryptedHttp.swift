@@ -31,7 +31,7 @@ public final class UrlSessionEncryptedHttp: EncryptedHttp, @unchecked Sendable {
       let status = (response as? HTTPURLResponse)?.statusCode ?? 0
       return EncryptedReply(status: UInt16(clamping: status), body: String(decoding: data, as: UTF8.self))
     } catch {
-      throw DbError.Network(detail: error.localizedDescription)
+      throw TransportFailure.classifyEncryptedHttp(error)
     }
   }
 }

@@ -16,6 +16,11 @@ public final class MockTransport: Transport, @unchecked Sendable {
 
   public init() {}
 
+  public func openCable() async throws -> String { throw DbError.Invalid(detail: "MockTransport does not support WebSocket connections") }
+  public func cableSend(token: String, text: String) async throws { throw DbError.Interrupted(detail: "mock cable socket is closed") }
+  public func cableNext(token: String) async -> EncryptedSocketEvent? { nil }
+  public func cableClose(token: String) async {}
+
   public var calls: [TransportRequest] { lock.withLock { recorded } }
 
   public func enqueue(_ operation: String, reply: String, delay: TimeInterval = 0) {

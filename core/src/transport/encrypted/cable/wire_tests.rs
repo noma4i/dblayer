@@ -124,7 +124,9 @@ impl crate::transport::CredentialSlot for Credentials {
 #[tokio::test(start_paused = true)]
 async fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retries() {
     use crate::transport::CredentialSlot;
-    for (code, reason, terminal) in [(4400,"",false), (4401,"",true), (4403,"",true), (4408,"",false), (4409,"",false), (4429,"",false), (4430,"SUPERSEDED",false), (4500,"",false), (4503,"",false), (1000,"LOGGED_OUT",true)] {
+    for (code, reason, terminal) in [(4400,"",false), (4401,"",true), (4403,"",true), (4408,"",false), (4409,"",false), (4429,"",false), (4430,"SUPERSEDED",false), (4500,"",false), (4503,"",false), (1000,"LOGGED_OUT",true),
+        (1003,"",false),
+        (1006,"",false)] {
         let (incoming, receiver) = mpsc::unbounded_channel();
         let (outgoing, sent) = mpsc::unbounded_channel();
         let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });

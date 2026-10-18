@@ -166,7 +166,6 @@ struct EncryptedSessionTests {
     try DB.openEncrypted(
       encrypted: EncryptedConfig(origin: "http://localhost:3001", serverKey: serverKey, pin: serverPin),
       credentials: HeldCredential(),
-      transport: DatabaseTransport(cable: { nil }),
       http: http,
       modelsJSON: modelsJSON
     )

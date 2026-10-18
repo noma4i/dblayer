@@ -1,6 +1,17 @@
 import Foundation
 
 enum TransportFailure {
+  static let subscriptionUnavailable = DbError.Network(detail: "the subscription socket is not open")
+
+  static func classifySocket(_ error: Error) -> DbError {
+    if let error = error as? DbError { return error }
+    return classify(error, kind: .query)
+  }
+
+  static func classifyEncryptedHttp(_ error: Error) -> DbError {
+    .Network(detail: error.localizedDescription)
+  }
+
   private static let notDelivered: Set<URLError.Code> = [
     .notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff
   ]

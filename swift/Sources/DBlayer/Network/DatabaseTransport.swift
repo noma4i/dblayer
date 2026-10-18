@@ -6,24 +6,32 @@ public final class DatabaseTransport: Transport, @unchecked Sendable {
   private let cable: @Sendable () async -> CableClient?
   private let onEvent: @Sendable (String, String) -> Void
   private let uploads = UrlSessionTransport(endpoint: URL(fileURLWithPath: "/"))
+  private let encryptedCable: UrlSessionCable
   private let lock = NSLock()
   private var tasks: [String: Task<Void, Never>] = [:]
 
   public init(
     run: (@Sendable () async throws -> OperationRun)? = nil,
+    origin: URL? = nil,
     cable: @escaping @Sendable () async -> CableClient?,
     onEvent: @escaping @Sendable (String, String) -> Void = { _, _ in }
   ) {
     self.run = run
     self.cable = cable
     self.onEvent = onEvent
+    self.encryptedCable = UrlSessionCable(origin: origin) { URLSession.shared.webSocketTask(with: $0) }
   }
 
   public func query(request: TransportRequest) async throws -> String { try await send(request, kind: .query) }
   public func mutate(request: TransportRequest) async throws -> String { try await send(request, kind: .mutation) }
 
+  public func openCable() async throws -> String { try await encryptedCable.open() }
+  public func cableSend(token: String, text: String) async throws { try await encryptedCable.send(token: token, text: text) }
+  public func cableNext(token: String) async -> EncryptedSocketEvent? { await encryptedCable.next(token: token) }
+  public func cableClose(token: String) async { await encryptedCable.close(token: token) }
+
   public func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws -> String {
-    guard let client = await cable() else { throw DbError.Network(detail: "the subscription socket is not open") }
+    guard let client = await cable() else { throw TransportFailure.subscriptionUnavailable }
     let token = UUID().uuidString
     let onEvent = onEvent
     let task = Task {

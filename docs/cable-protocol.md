@@ -25,6 +25,30 @@ The public vectors in `fixtures/v3-cable/kat.json` contain test keys only. Tests
 Swift and Kotlin retain the same `EncryptedConfig(origin, serverKey, pin)` and `openEncrypted` calls.
 The platform passes WebSocket text through `openCable`, `cableSend`, `cableNext` and `cableClose`. Rust handles encryption, subscriptions, reopening and timers.
 
+## Platform sockets
+
+`DB.openEncrypted` and `DBlayer.openEncrypted` choose a platform transport when `transport` is omitted.
+Swift uses `URLSessionWebSocketTask`. Kotlin uses OkHttp WebSocket.
+Both derive `/api/v3/cable` from `EncryptedConfig.origin`: HTTPS becomes WSS, and development HTTP becomes WS.
+Every open returns a new token. Calls for that token send and receive text without interpreting the encrypted payload.
+`cableClose` removes the token and cancels its socket. Further reads return no event.
+
+| Socket result | Result for Rust |
+| --- | --- |
+| Text | `EncryptedSocketEvent.Text` with unchanged text |
+| Peer close | `EncryptedSocketEvent.Closed` with the peer code and reason |
+| Binary frame | Close the socket and return `Closed` with code 1003 and a reason |
+| Network failure | `Closed` with code 1006 and a reason |
+| Open or send failure | Typed transport error from the platform classifier |
+
+```swift
+try DB.openEncrypted(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
+```
+
+```kotlin
+DBlayer.openEncrypted(encrypted, credentials, modelsJson = modelsJson)
+```
+
 ## Subscriptions
 
 `EncryptedTransport.subscribe` uses the shared `Transport.subscribe` and `SubscriptionEvent`, like a plain ActionCable transport.
@@ -57,7 +81,7 @@ Offline state and an empty subscription list use no attempts and add no retry de
 | 4401 | `SessionCode::Unauthenticated`, subscriptions end |
 | 4403 or ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, subscriptions end |
 | LOGGED_OUT | `SessionCode::SessionEnded`, subscriptions end |
-| 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Reopen with backoff |
+| 1003, 1006, 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Reopen with backoff |
 
 No close deletes the credential. Cable receives only the function that reads the credential.
 `SubscriptionFailure.close` keeps the close code. GraphQL errors keep their messages and `GraphqlExtensions` in the shared error type.

@@ -4,6 +4,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   private let endpoint: URL
   private let headers: @Sendable () -> [String: String]
   private let session: URLSession
+  private let encryptedCable: UrlSessionCable
   private let lock = NSLock()
   private var sockets: [String: URLSessionWebSocketTask] = [:]
 
@@ -11,6 +12,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     self.endpoint = endpoint
     self.headers = headers
     self.session = session
+    self.encryptedCable = UrlSessionCable(origin: endpoint) { session.webSocketTask(with: $0) }
   }
 
   public convenience init(endpoint: URL, headers: [String: String]) {
@@ -19,6 +21,11 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
 
   public func query(request: TransportRequest) async throws -> String { try await post(request, kind: .query) }
   public func mutate(request: TransportRequest) async throws -> String { try await post(request, kind: .mutation) }
+
+  public func openCable() async throws -> String { try await encryptedCable.open() }
+  public func cableSend(token: String, text: String) async throws { try await encryptedCable.send(token: token, text: text) }
+  public func cableNext(token: String) async -> EncryptedSocketEvent? { await encryptedCable.next(token: token) }
+  public func cableClose(token: String) async { await encryptedCable.close(token: token) }
 
   private func body(_ request: TransportRequest) -> [String: Any] {
     let variables = (try? JSONSerialization.jsonObject(with: Data(request.variablesJson.utf8))) ?? [String: Any]()
@@ -97,12 +104,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
       let (_, response) = try await session.upload(for: urlRequest, from: bytes, delegate: watcher)
       let http = response as? HTTPURLResponse
       return PutReply(status: UInt16(http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"))
-    } catch { throw Self.failure(error) }
-  }
-
-  private static func failure(_ error: Error) -> DbError {
-    if (error as? URLError)?.code == .cancelled { return .Interrupted(detail: error.localizedDescription) }
-    return .Network(detail: error.localizedDescription)
+    } catch { throw TransportFailure.classifySocket(error) }
   }
 }
 
