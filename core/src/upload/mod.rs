@@ -13,6 +13,8 @@ pub use source::{file_len, md5_base64, read_range};
 pub use state::{UploadInfo, UploadPart, UploadRequest, UploadScenario, UploadStage, UploadState, UploadStatus, WaitReason};
 
 #[cfg(test)]
+mod config_tests;
+#[cfg(test)]
 mod plan_tests;
 #[cfg(test)]
 mod progress_tests;

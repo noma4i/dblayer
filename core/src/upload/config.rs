@@ -24,7 +24,7 @@ impl Default for UploadConfig {
             part_size: 5 * MEBIBYTE,
             parallel_parts: 3,
             max_files: 1,
-            backoff: Backoff::new(Duration::from_secs(1), Duration::from_secs(15)).with_jitter(0.5, 0x5eed).limited(50),
+            backoff: Backoff::new(Duration::from_secs(1), Duration::from_secs(15)).with_jitter(0.5, 0x5eed).limited(50).randomized(),
             put_timeout: Duration::from_secs(120),
             step_timeout: Duration::from_secs(45),
             presign_ttl: Duration::from_secs(50 * 60),

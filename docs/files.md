@@ -130,7 +130,7 @@ The file is read in ranges: a single upload in one range up to the 10 MB thresho
 | part size | 5 MB |
 | parallel parts | 3 (1 means sequential) |
 | files at a time | 1, the others wait as `queued` |
-| retry backoff | 1 s doubling to 15 s with jitter, 50 attempts per step |
+| retry backoff | 1 s doubling to 15 s with jitter, independent seeds per client, 50 attempts per step |
 | PUT timeout / GraphQL step timeout | 120 s / 45 s |
 | presigned url lifetime | 50 minutes |
 
