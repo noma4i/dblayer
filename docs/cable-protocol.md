@@ -83,7 +83,8 @@ If no pong or next arrives within 20 seconds, the client closes the socket and r
 Each pong restarts the 25-second idle interval. Its `ts` echoes the ping timestamp.
 The pending socket receive survives timer, subscription and cancellation events until it returns a frame or the connection closes.
 The client reads its credential before opening a socket. A handshake timeout closes the socket.
-Without subscriptions there are no connections and no timers. Failed opens increase `pacing::Backoff`. A successful ready resets the counter.
+Without subscriptions there are no connections and no timers. Failed opens and closes before any server frame increase a cable backoff: 1 s doubling to 30 s with 20% jitter.
+Ready does not reset the counter. The first `subscribed`, `next` or `pong` frame after ready resets it.
 Offline state and an empty subscription list use no attempts and add no retry delay. This includes a cancel during the handshake.
 `Sync.set_online` passes the connection state to the transport.
 
@@ -92,7 +93,7 @@ Offline state and an empty subscription list use no attempts and add no retry de
 | 4401, including session_unknown | `SessionCode::Unauthenticated`, stop until explicit listen or resume |
 | 4403 or ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, stop until explicit listen or resume |
 | LOGGED_OUT | `SessionCode::SessionEnded`, stop until explicit listen or resume |
-| 1003, 1006, 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Reopen with backoff |
+| 1003, 1006, 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Reopen with backoff. A close before the first server frame after ready keeps growing the delay |
 
 No close deletes the credential. Cable receives only the function that reads the credential.
 Terminal refusals also reject later subscriptions without opening sockets or triggering rereads.

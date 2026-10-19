@@ -72,22 +72,69 @@ async fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry
 
 #[tokio::test(start_paused = true)]
 async fn failed_openings_increase_backoff_only_with_online_subscribers() {
-    use std::time::Duration;
     let mut retry = CableSession::new();
     assert_eq!(retry.failed_open(true), None);
     let request = GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}));
     let (_, subscription) = retry.subscribe(request.clone());
-    assert_eq!(retry.failed_open(true), Some(Duration::from_secs(1)));
+    assert!(within_jitter(retry.failed_open(true).unwrap(), 1));
     assert_eq!(retry.failed_open(false), None);
-    assert_eq!(retry.failed_open(true), Some(Duration::from_secs(2)));
-    assert_eq!(retry.failed_open(true), Some(Duration::from_secs(4)));
+    assert!(within_jitter(retry.failed_open(true).unwrap(), 2));
+    assert!(within_jitter(retry.failed_open(true).unwrap(), 4));
     retry.ready();
-    assert_eq!(retry.failed_open(true), Some(Duration::from_secs(1)));
+    retry.receive(json!({"t":"subscribed", "id":"1"})).unwrap();
+    assert!(within_jitter(retry.failed_open(true).unwrap(), 1));
     subscription.cancel();
     retry.cancelled().await.unwrap();
     assert_eq!(retry.failed_open(true), None);
     let (_, _subscription) = retry.subscribe(request);
-    assert_eq!(retry.failed_open(true), Some(Duration::from_secs(2)));
+    assert!(within_jitter(retry.failed_open(true).unwrap(), 2));
     retry.closed(4401, "UNAUTHENTICATED");
     assert_eq!(retry.failed_open(true), None);
+}
+
+fn within_jitter(delay: std::time::Duration, ceiling_secs: u64) -> bool {
+    let ceiling = std::time::Duration::from_secs(ceiling_secs);
+    delay <= ceiling && delay >= ceiling.mul_f64(0.8)
+}
+
+fn ready_then_close(session: &mut CableSession, frame: Option<serde_json::Value>) -> std::time::Duration {
+    session.ready();
+    if let Some(frame) = frame { session.receive(frame).unwrap(); }
+    session.closed(1006, "");
+    session.failed_open(true).unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn closes_right_after_ready_grow_jittered_delays_up_to_the_cap() {
+    let mut session = CableSession::new();
+    let _subscription = session.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({})));
+    let mut previous = std::time::Duration::ZERO;
+    let mut below_ceiling = false;
+    for ceiling in [1u64, 2, 4, 8, 16, 30, 30, 30] {
+        let delay = ready_then_close(&mut session, None);
+        assert!(within_jitter(delay, ceiling), "{delay:?} outside jitter band of {ceiling}s");
+        if ceiling < 30 { assert!(delay > previous, "{delay:?} did not grow past {previous:?}"); }
+        below_ceiling |= delay < std::time::Duration::from_secs(ceiling);
+        previous = delay;
+    }
+    assert!(below_ceiling, "delays carry no jitter");
+}
+
+#[tokio::test(start_paused = true)]
+async fn first_server_frame_after_ready_resets_attempts_and_other_frames_do_not() {
+    for (frame, resets) in [
+        (Some(json!({"t":"subscribed", "id":"1"})), true),
+        (Some(json!({"t":"next", "id":"1", "result":{"data":{}}})), true),
+        (Some(json!({"t":"pong", "ts":1})), true),
+        (None, false),
+    ] {
+        let mut session = CableSession::new();
+        let _subscription = session.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({})));
+        for _ in 0..3 { ready_then_close(&mut session, None); }
+        let delay = ready_then_close(&mut session, frame.clone());
+        let (first, second) = if resets { (1, 2) } else { (8, 16) };
+        assert!(within_jitter(delay, first), "{frame:?}: {delay:?}");
+        let delay = ready_then_close(&mut session, None);
+        assert!(within_jitter(delay, second), "{frame:?}: {delay:?}");
+    }
 }

@@ -5,7 +5,10 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use crate::transport::{GraphQLRequest, SessionCode, Subscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionHandle};
 use super::CableError;
+use crate::pacing::Backoff;
 use crate::transport::{SubscriptionRetry, SubscriptionFault, RETRY_BACKOFF};
+
+const CABLE_BACKOFF: Backoff = RETRY_BACKOFF.with_jitter(0.2, 0xcab1_e5ee);
 
 struct Entry {
     request: GraphQLRequest,
@@ -51,7 +54,6 @@ impl CableSession {
 
     pub fn ready(&mut self) -> Vec<Value> {
         self.opened = true;
-        self.retry = self.retry.confirmed();
         self.pong_due = None;
         self.traffic();
         self.entries.keys().filter_map(|id| self.frame(id)).collect()
@@ -89,7 +91,7 @@ impl CableSession {
     pub fn failed_open(&mut self, online: bool) -> Option<Duration> {
         if !online || self.is_empty() { return None; }
         self.retry = self.retry.record_failure(SubscriptionFault::Transient).state;
-        Some(RETRY_BACKOFF.delay(self.retry.attempts.saturating_sub(1)))
+        Some(CABLE_BACKOFF.delay(self.retry.attempts.saturating_sub(1)))
     }
 
     pub fn closed(&mut self, code: u16, reason: &str) -> SubscriptionClose {
@@ -128,6 +130,7 @@ impl CableSession {
     pub fn receive(&mut self, body: Value) -> Result<(), CableError> {
         self.traffic();
         if matches!(body["t"].as_str(), Some("pong" | "next")) { self.pong_due = None; }
+        if matches!(body["t"].as_str(), Some("subscribed" | "next" | "pong")) { self.retry = self.retry.confirmed(); }
         if body["t"] == "pong" { return Ok(()); }
         let id = body["id"].as_str().ok_or(CableError::Frame)?;
         let Some(entry) = self.entries.get(id) else { return Ok(()) };
