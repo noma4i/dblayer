@@ -71,16 +71,17 @@ pub(super) async fn resume(client: Arc<EncryptedClient>, sync: Option<crate::syn
         None => None,
     };
     let stored = client.pending_call().map_err(typed)?;
-    let upload = match (&sync, &stored) {
-        (Some(sync), Some((path, body))) => sync.inner.claim_upload_resume(&|request| core::repeats(request, path, body)).await?,
+    let owner = client.pending_owner().map_err(typed)?;
+    let upload = match (&sync, &owner) {
+        (Some(sync), Some(owner)) => sync.inner.claim_upload_resume(owner).await?,
         _ => None,
     };
     if client.pending_call().map_err(typed)? != stored { return Ok(None); }
     let Some(answer) = client.resume().await.map_err(typed)? else { return Ok(None) };
-    if let (Some(sync), Some(serial), Some((path, body))) = (&sync, &serial, stored) {
+    if let (Some(sync), Some(serial), Some(owner)) = (&sync, &serial, owner) {
         let result = core::response_of(answer.clone());
         if !matches!(&result, Ok(response) if core::missing_from_registry(response)) {
-            sync.inner.settle_resumed(serial, upload, &move |request| core::repeats(request, &path, &body), result).await?;
+            sync.inner.settle_resumed(serial, upload, owner, result).await?;
         }
     }
     refused(answer).map(|answer| Some(answer.body.to_string()))

@@ -43,6 +43,10 @@ You do not decide where bytes live. Small files are kept inside the database, la
 
 An upload sends a local file to storage and then runs one content mutation with the stored blob. It is an operation of the library: it lives in the same queue as other pending operations, survives restarts, and shows its state on the record.
 
+After the upload call returns, the library owns a copy of the source. The application can delete its temporary file.
+Each file has an `op_item` row. Multipart parts and saved requests include the item position.
+The database format changes with these tables. Opening an incompatible database clears it through the existing recreation policy.
+
 The steps are operations you registered by name. Each upload names the ones it uses.
 
 ```swift
@@ -130,6 +134,9 @@ The file is read in ranges: a single upload in one range up to the 10 MB thresho
 | PUT timeout / GraphQL step timeout | 120 s / 45 s |
 | presigned url lifetime | 50 minutes |
 
+The file limit counts transfers across operations and their items. A limit of 2 allows 2 files to transfer together.
+The final content mutation does not hold a file permit.
+
 ### State
 
 `record.upload` is `nil` when nothing is running. It changes through the same live reads as `record.sync`, so observers get a new row for every state or progress change.
@@ -151,7 +158,8 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 
 - Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts. A `403` on a part asks for a new url for that part only. Urls older than the presign lifetime are requested again for unfinished parts.
 - The content mutation follows the same rules as other mutations ([writing data](writing-data.md)). Offline it waits for `setOnline(true)`. If it could not reach the server, the upload stays pending and the mutation is sent again with a growing pause, up to 40 attempts, without a new transfer. If the transfer started and no answer is observed, the upload becomes `deliveryUnknown` and is never sent again by itself. A rejected mutation, or 40 unreached attempts, becomes `failed`.
-- The pair `signedId` and `blobId` is stored before the mutation. `retry()` after a failed or unknown mutation skips the transfer and sends the mutation again.
+- The grant, including `signedId`, `blobId`, URL and headers, is stored before PUT. A separate flag records confirmed transfer.
+- A restarted unfinished PUT uses its saved grant. `retry()` after a failed or unknown content mutation skips confirmed transfers.
 - A failed multipart upload calls `abort` and clears its parts. After a restart a stored multipart continues from its finished parts, and an upload that failed with an unfinished `abort` is aborted again.
 - `retry()` and `discard()` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.
 - One record has one upload at a time.

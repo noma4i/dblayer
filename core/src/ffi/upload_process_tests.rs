@@ -43,6 +43,9 @@ impl CredentialStore for Remote {
 
 async fn child(mode: &str) {
     let path = std::env::var("DBLAYER_UPLOAD_DB").unwrap();
+    if mode == "resume" {
+        std::fs::remove_file(format!("{path}.mp4")).unwrap();
+    }
     let remote = Arc::new(Remote(std::env::var("DBLAYER_UPLOAD_PEER").unwrap()));
     let database = Database::open(Config { path: Some(path.clone()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() }), Some(remote.clone()), Some(remote.clone())).unwrap();
     database.register_operations(json!([

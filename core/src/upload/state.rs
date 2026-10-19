@@ -48,6 +48,7 @@ pub enum UploadScenario {
 pub struct UploadPart {
     pub number: u32,
     pub etag: String,
+    pub confirmed_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +65,14 @@ pub struct UploadState {
     pub signed_id: Option<String>,
     pub blob_id: Option<String>,
     pub request: Option<UploadRequest>,
+    pub transferred: bool,
+    pub confirmed_bytes: u64,
+    pub checksum: Option<String>,
+    pub put_url: Option<String>,
+    pub url_issued_at: Option<u64>,
+    pub headers: Vec<(String, String)>,
+    pub retry_at: Option<u64>,
+    pub error: Option<OperationFailure>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,11 +103,19 @@ impl UploadState {
             signed_id: None,
             blob_id: None,
             request: None,
+            transferred: false,
+            confirmed_bytes: 0,
+            checksum: None,
+            put_url: None,
+            url_issued_at: None,
+            headers: Vec::new(),
+            retry_at: None,
+            error: None,
         }
     }
 
     pub fn is_transferred(&self) -> bool {
-        self.signed_id.is_some() && self.blob_id.is_some()
+        self.transferred
     }
 }
 

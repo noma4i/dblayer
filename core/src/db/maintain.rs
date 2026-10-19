@@ -20,12 +20,14 @@ impl Db {
     pub fn sweep_files(&self) -> Result<usize, DbError> {
         let _gate = locked(&self.shared.files_gate);
         let orphans = self.shared.read(&[], |reader| {
-            let held: HashSet<String> = read_outbox(reader)?
+            let mut held: HashSet<String> = read_outbox(reader)?
                 .iter()
                 .filter_map(Prior::of)
                 .flat_map(|prior| prior.held_files())
                 .map(|file| file.id)
                 .collect();
+            let mut statement = reader.connection().prepare("SELECT file_id FROM op_item WHERE file_id IS NOT NULL")?;
+            held.extend(statement.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?);
             let mut orphans = Vec::new();
             for reference in all_references(reader.connection())? {
                 let described = held.contains(&reference.id)

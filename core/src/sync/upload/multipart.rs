@@ -79,9 +79,10 @@ impl Runner {
                     self.progress().finish(number, size(number));
                     let sent = self.progress().sent();
                     self.save(|state| {
-                        state.parts.push(UploadPart { number, etag });
+                        state.parts.push(UploadPart { number, etag, confirmed_bytes: size(number) });
                         state.parts.sort_by_key(|part| part.number);
                         state.sent_bytes = state.sent_bytes.max(sent);
+                        state.confirmed_bytes = sent;
                     })?;
                 }
                 Ok(None) => return self.stop_flight(flight, Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, "the part answer has no etag"))).await,
@@ -109,6 +110,8 @@ impl Runner {
             state.signed_id = Some(signed);
             state.blob_id = Some(blob);
             state.sent_bytes = total;
+            state.confirmed_bytes = total;
+            state.transferred = true;
             state.key = None;
             state.upload_id = None;
             state.parts.clear();

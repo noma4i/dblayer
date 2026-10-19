@@ -53,10 +53,10 @@ pub fn repeats(request: &GraphQLRequest, path: &str, body: &Value) -> bool {
     path == GRAPHQL_PATH && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
 }
 
-pub(crate) fn pending_matches(db: &crate::db::Db, request: &GraphQLRequest) -> bool {
+pub(crate) fn pending_matches(db: &crate::db::Db, seq: i64, position: i64, stage: &str) -> bool {
     let stored = db.shared.store.lock();
     super::state::pending(&stored.connection).ok().flatten().is_some_and(|pending| {
-        serde_json::from_str(&pending.body).is_ok_and(|body| repeats(request, &pending.path, &body))
+        pending.owner.is_some_and(|owner| owner.seq == seq && owner.stage == stage && (owner.item_position == position || owner.item_position == -1 && stage == "mutation"))
     })
 }
 
@@ -91,13 +91,13 @@ impl Transport for EncryptedTransport {
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let stored = graphql_body(&request, true);
         if self.client.pending_call()?.is_some_and(|(path, body)| path == GRAPHQL_PATH && body == stored) {
-            return response_of(self.client.mutate(GRAPHQL_PATH, stored).await?);
+            return response_of(self.client.mutate_owned(GRAPHQL_PATH, stored, request.owner).await?);
         }
-        let response = response_of(self.client.mutate(GRAPHQL_PATH, graphql_body(&request, false)).await?)?;
+        let response = response_of(self.client.mutate_owned(GRAPHQL_PATH, graphql_body(&request, false), request.owner.clone()).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_of(self.client.mutate(GRAPHQL_PATH, graphql_body(&request, true)).await?)
+        response_of(self.client.mutate_owned(GRAPHQL_PATH, graphql_body(&request, true), request.owner.clone()).await?)
     }
 
     async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> {

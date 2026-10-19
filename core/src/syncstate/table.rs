@@ -5,7 +5,7 @@ use rusqlite::{params, params_from_iter, Connection, Row};
 
 use crate::commit::OperationStatus;
 use crate::identity::RowId;
-use crate::operation::{failure_at, failure_cells, info_at, info_cells, read_all_fields, read_all_parts, read_all_rows, upload_at, Operation, INFO_COLUMNS, UPLOAD_COLUMNS};
+use crate::operation::{failure_at, failure_cells, info_at, info_cells, read_all_fields, read_uploads, read_all_rows, Operation, INFO_COLUMNS};
 
 use super::derive::{fold_entries, SyncEntry};
 use super::info::{SyncInfo, SyncState};
@@ -28,9 +28,9 @@ pub fn operation_keys(action_key: &str, row_ids: &[RowId], temp_id: Option<&RowI
 
 fn open_entries(connection: &Connection) -> rusqlite::Result<HashMap<SyncKey, Vec<SyncEntry>>> {
     let mut rows_of = read_all_rows(connection)?;
-    let mut parts_of = read_all_parts(connection)?;
+    let mut uploads = read_uploads(connection)?;
     let mut fields_of = read_all_fields(connection)?;
-    let sql = format!("SELECT seq, action_key, status, temp_id, transport_started, attempts, error_kind, error_message, error_code, error_disposition, since, {UPLOAD_COLUMNS} FROM op WHERE status IN ('pending', 'failed', 'delivery_unknown') ORDER BY seq");
+    let sql = "SELECT seq, action_key, status, temp_id, transport_started, attempts, error_kind, error_message, error_code, error_disposition, since FROM op WHERE status IN ('pending', 'failed', 'delivery_unknown') ORDER BY seq";
     let mut statement = connection.prepare_cached(&sql)?;
     let mut rows = statement.query([])?;
     let mut grouped: HashMap<SyncKey, Vec<SyncEntry>> = HashMap::new();
@@ -42,10 +42,7 @@ fn open_entries(connection: &Connection) -> rusqlite::Result<HashMap<SyncKey, Ve
         let temp_id: Option<RowId> = row.get::<_, Option<String>>(3)?.and_then(|text| RowId::new(&text).ok());
         let Some((_, action)) = Operation::split_action_key(&action_key) else { continue };
         let fields = if action == "update" { fields_of.remove(&seq).unwrap_or_default() } else { Vec::new() };
-        let mut upload = upload_at(row, 11)?;
-        if let Some(state) = upload.as_mut() {
-            state.parts = parts_of.remove(&seq).unwrap_or_default();
-        }
+        let upload = uploads.remove(&seq);
         let entry = SyncEntry {
             action,
             status,

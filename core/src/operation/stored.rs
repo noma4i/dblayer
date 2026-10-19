@@ -11,7 +11,7 @@ use crate::nodes::{delete_trees, read_trees, write_tree};
 use crate::syncstate::OperationFailure;
 use crate::upload::{UploadInfo, UploadPart, UploadRequest, UploadState};
 
-pub const UPLOAD_COLUMNS: &str = "up_phase, up_stage, up_scenario, up_total, up_sent, up_retries, up_key, up_upload_id, up_signed_id, up_blob_id, up_document, up_operation";
+pub const UPLOAD_COLUMNS: &str = "phase, stage, scenario, total_bytes, sent_bytes, attempts, storage_key, upload_id, signed_id, blob_id, document, operation, transferred, confirmed_bytes, checksum, put_url, url_issued_at, retry_at, error_kind, error_message, error_code, error_disposition";
 pub const INFO_COLUMNS: &str = "up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_code, up_error_disposition";
 
 pub fn enum_text<T: Serialize>(value: &T) -> Option<String> {
@@ -52,7 +52,8 @@ pub fn failure_at(row: &Row<'_>, first: usize) -> Result<Option<OperationFailure
 }
 
 pub fn upload_cells(state: Option<&UploadState>) -> Vec<SqlValue> {
-    let Some(state) = state else { return vec![SqlValue::Null; 12] };
+    let Some(state) = state else { return vec![SqlValue::Null; 22] };
+    let [kind, message, code, disposition] = failure_cells(state.error.as_ref());
     vec![
         text_cell(enum_text(&state.phase)),
         text_cell(enum_text(&state.stage)),
@@ -66,6 +67,16 @@ pub fn upload_cells(state: Option<&UploadState>) -> Vec<SqlValue> {
         text_cell(state.blob_id.clone()),
         text_cell(state.request.as_ref().map(|request| request.document.clone())),
         text_cell(state.request.as_ref().map(|request| request.name.clone())),
+        SqlValue::Integer(i64::from(state.transferred)),
+        SqlValue::Integer(state.confirmed_bytes as i64),
+        text_cell(state.checksum.clone()),
+        text_cell(state.put_url.clone()),
+        state.url_issued_at.map_or(SqlValue::Null, |time| SqlValue::Integer(time as i64)),
+        state.retry_at.map_or(SqlValue::Null, |time| SqlValue::Integer(time as i64)),
+        kind,
+        message,
+        code,
+        disposition,
     ]
 }
 
@@ -86,7 +97,56 @@ pub fn upload_at(row: &Row<'_>, first: usize) -> Result<Option<UploadState>> {
         signed_id: row.get(first + 8)?,
         blob_id: row.get(first + 9)?,
         request: row.get::<_, Option<String>>(first + 10)?.zip(row.get::<_, Option<String>>(first + 11)?).map(|(document, name)| UploadRequest { document, name, variables: Value::Null }),
+        transferred: row.get::<_, i64>(first + 12)? != 0,
+        confirmed_bytes: row.get::<_, i64>(first + 13)? as u64,
+        checksum: row.get(first + 14)?,
+        put_url: row.get(first + 15)?,
+        url_issued_at: row.get::<_, Option<i64>>(first + 16)?.map(|time| time as u64),
+        headers: Vec::new(),
+        retry_at: row.get::<_, Option<i64>>(first + 17)?.map(|time| time as u64),
+        error: failure_at(row, first + 18)?,
     }))
+}
+
+pub fn read_upload_items(connection: &Connection) -> Result<HashMap<(i64, i64), UploadState>> {
+    let mut parts = read_all_parts(connection)?;
+    let mut statement = connection.prepare(&format!("SELECT seq, position, {UPLOAD_COLUMNS} FROM op_item ORDER BY seq, position"))?;
+    let mut found = HashMap::new();
+    for item in statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, upload_at(row, 2)?)))? {
+        let (seq, position, state) = item?;
+        if let Some(mut state) = state {
+            let mut headers = connection.prepare_cached("SELECT name, value FROM op_item_header WHERE seq = ?1 AND position = ?2 ORDER BY name")?;
+            state.headers = headers.query_map(params![seq, position], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>>>()?;
+            state.parts = parts.remove(&(seq, position)).unwrap_or_default();
+            if let Some(request) = state.request.as_mut() {
+                request.variables = read_item_value(connection, seq, position, "request")?.unwrap_or(Value::Null);
+            }
+            found.insert((seq, position), state);
+        }
+    }
+    Ok(found)
+}
+
+pub fn read_uploads(connection: &Connection) -> Result<HashMap<i64, UploadState>> {
+    Ok(read_upload_items(connection)?.into_iter().filter_map(|((seq, position), state)| (position == 0).then_some((seq, state))).collect())
+}
+
+pub fn write_upload(connection: &Connection, seq: i64, position: i64, state: &UploadState) -> Result<usize> {
+    let columns: Vec<&str> = UPLOAD_COLUMNS.split(", ").collect();
+    let marks = (3..columns.len() + 3).map(|at| format!("?{at}")).collect::<Vec<_>>().join(", ");
+    let assignments = columns.iter().map(|name| format!("{name} = excluded.{name}")).collect::<Vec<_>>().join(", ");
+    let mut values = vec![SqlValue::Integer(seq), SqlValue::Integer(position)];
+    values.extend(upload_cells(Some(state)));
+    let saved = connection.execute(&format!("INSERT INTO op_item (seq, position, {UPLOAD_COLUMNS}) SELECT ?1, ?2, {marks} WHERE EXISTS (SELECT 1 FROM op WHERE seq = ?1) ON CONFLICT (seq, position) DO UPDATE SET {assignments}"), rusqlite::params_from_iter(values))?;
+    if saved > 0 {
+        connection.execute("DELETE FROM op_item_header WHERE seq = ?1 AND position = ?2", params![seq, position])?;
+        for (name, value) in &state.headers {
+            connection.execute("INSERT INTO op_item_header (seq, position, name, value) VALUES (?1, ?2, ?3, ?4)", params![seq, position, name, value])?;
+        }
+        write_parts(connection, seq, position, &state.parts)?;
+        write_item_value(connection, seq, position, "request", state.request.as_ref().map(|request| &request.variables))?;
+    }
+    Ok(saved)
 }
 
 pub fn info_cells(info: Option<&UploadInfo>) -> Vec<SqlValue> {
@@ -130,23 +190,31 @@ pub fn write_rows(connection: &Connection, seq: i64, row_ids: &[RowId]) -> Resul
 }
 
 pub fn write_value(connection: &Connection, seq: i64, part: &str, value: Option<&Value>) -> Result<()> {
-    let owner = [SqlValue::Integer(seq), SqlValue::Text(part.to_string())];
-    delete_trees(connection, "op_value", "seq = ?1 AND part = ?2", &owner)?;
-    value.map_or(Ok(()), |value| write_tree(connection, "op_value", &["seq", "part"], &owner, value))
+    write_item_value(connection, seq, -1, part, value)
 }
 
-pub fn write_parts(connection: &Connection, seq: i64, parts: &[UploadPart]) -> Result<()> {
-    connection.prepare_cached("DELETE FROM op_part WHERE seq = ?1")?.execute([seq])?;
-    let mut insert = connection.prepare_cached("INSERT INTO op_part (seq, pos, number, etag) VALUES (?1, ?2, ?3, ?4)")?;
-    for (pos, part) in parts.iter().enumerate() {
-        insert.execute(params![seq, pos as i64, i64::from(part.number), part.etag])?;
+pub fn write_item_value(connection: &Connection, seq: i64, position: i64, part: &str, value: Option<&Value>) -> Result<()> {
+    let owner = [SqlValue::Integer(seq), SqlValue::Integer(position), SqlValue::Text(part.to_string())];
+    delete_trees(connection, "op_value", "seq = ?1 AND item_position = ?2 AND part = ?3", &owner)?;
+    value.map_or(Ok(()), |value| write_tree(connection, "op_value", &["seq", "item_position", "part"], &owner, value))
+}
+
+pub fn write_parts(connection: &Connection, seq: i64, position: i64, parts: &[UploadPart]) -> Result<()> {
+    connection.prepare_cached("DELETE FROM op_part WHERE seq = ?1 AND item_position = ?2")?.execute(params![seq, position])?;
+    let mut insert = connection.prepare_cached("INSERT INTO op_part (seq, item_position, number, etag, confirmed_bytes) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+    for part in parts {
+        insert.execute(params![seq, position, i64::from(part.number), part.etag, part.confirmed_bytes as i64])?;
     }
     Ok(())
 }
 
 pub fn read_value(connection: &Connection, seq: i64, part: &str) -> Result<Option<Value>> {
-    let owner = [SqlValue::Integer(seq), SqlValue::Text(part.to_string())];
-    Ok(read_trees(connection, "op_value", &["seq", "part"], "seq = ?1 AND part = ?2", &owner)?.into_iter().next().map(|(_, value)| value))
+    read_item_value(connection, seq, -1, part)
+}
+
+pub fn read_item_value(connection: &Connection, seq: i64, position: i64, part: &str) -> Result<Option<Value>> {
+    let owner = [SqlValue::Integer(seq), SqlValue::Integer(position), SqlValue::Text(part.to_string())];
+    Ok(read_trees(connection, "op_value", &["seq", "item_position", "part"], "seq = ?1 AND item_position = ?2 AND part = ?3", &owner)?.into_iter().next().map(|(_, value)| value))
 }
 
 pub fn read_rows(connection: &Connection, seq: i64) -> Result<Vec<RowId>> {
@@ -165,18 +233,18 @@ pub fn read_all_rows(connection: &Connection) -> Result<HashMap<i64, Vec<RowId>>
     Ok(found)
 }
 
-pub fn read_all_parts(connection: &Connection) -> Result<HashMap<i64, Vec<UploadPart>>> {
-    let mut statement = connection.prepare_cached("SELECT seq, number, etag FROM op_part ORDER BY seq, pos")?;
-    let mut found: HashMap<i64, Vec<UploadPart>> = HashMap::new();
-    for item in statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, UploadPart { number: row.get::<_, i64>(1)? as u32, etag: row.get(2)? })))? {
-        let (seq, part) = item?;
-        found.entry(seq).or_default().push(part);
+pub fn read_all_parts(connection: &Connection) -> Result<HashMap<(i64, i64), Vec<UploadPart>>> {
+    let mut statement = connection.prepare_cached("SELECT seq, item_position, number, etag, confirmed_bytes FROM op_part ORDER BY seq, item_position, number")?;
+    let mut found: HashMap<(i64, i64), Vec<UploadPart>> = HashMap::new();
+    for item in statement.query_map([], |row| Ok(((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?), UploadPart { number: row.get::<_, i64>(2)? as u32, etag: row.get(3)?, confirmed_bytes: row.get::<_, i64>(4)? as u64 })))? {
+        let (owner, part) = item?;
+        found.entry(owner).or_default().push(part);
     }
     Ok(found)
 }
 
 pub fn read_all_fields(connection: &Connection) -> Result<HashMap<i64, Vec<String>>> {
-    let mut statement = connection.prepare_cached("SELECT seq, name FROM op_value WHERE part = 'input' AND parent = 0 AND name IS NOT NULL AND name != 'id' ORDER BY seq, pos")?;
+    let mut statement = connection.prepare_cached("SELECT seq, name FROM op_value WHERE item_position = -1 AND part = 'input' AND parent = 0 AND name IS NOT NULL AND name != 'id' ORDER BY seq, pos")?;
     let mut found: HashMap<i64, Vec<String>> = HashMap::new();
     for item in statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))? {
         let (seq, name) = item?;
@@ -186,7 +254,8 @@ pub fn read_all_fields(connection: &Connection) -> Result<HashMap<i64, Vec<Strin
 }
 
 pub fn delete_operation(connection: &Connection, seq: i64) -> Result<usize> {
-    for table in ["op_row", "op_value", "op_part"] {
+    connection.execute("DELETE FROM file WHERE id IN (SELECT file_id FROM op_item WHERE seq = ?1) AND field LIKE 'op_item.%' AND NOT EXISTS (SELECT 1 FROM op_item WHERE op_item.file_id = file.id AND seq != ?1)", [seq])?;
+    for table in ["op_row", "op_value", "op_part", "op_item_header", "op_item"] {
         connection.prepare_cached(&format!("DELETE FROM {table} WHERE seq = ?1"))?.execute([seq])?;
     }
     connection.prepare_cached("DELETE FROM op WHERE seq = ?1")?.execute([seq])

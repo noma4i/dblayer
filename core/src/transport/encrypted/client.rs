@@ -78,11 +78,15 @@ impl EncryptedClient {
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
+        self.mutate_owned(path, body, None).await
+    }
+
+    pub(crate) async fn mutate_owned(&self, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>) -> Result<Answer, TransportError> {
         check_path(path)?;
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
         let (pending, token) = match self.with_connection(state::pending)? {
-            Some(pending) if pending.path == path && serde_json::from_str::<Value>(&pending.body).ok().as_ref() == Some(&body) => {
+            Some(pending) if pending.owner == owner && pending.path == path && serde_json::from_str::<Value>(&pending.body).ok().as_ref() == Some(&body) => {
                 let token = self.pending_token(&credential, &pending)?;
                 (pending, token)
             }
@@ -96,6 +100,7 @@ impl EncryptedClient {
                     sequence,
                     path: path.to_string(),
                     body: body.to_string(),
+                    owner,
                 };
                 let token = self.pending_token(&credential, &pending)?;
                 self.with_connection(|connection| state::store_pending(connection, &pending))?;
@@ -107,6 +112,10 @@ impl EncryptedClient {
 
     pub fn pending_call(&self) -> Result<Option<(String, Value)>, TransportError> {
         Ok(self.with_connection(state::pending)?.and_then(|pending| Some((pending.path, serde_json::from_str(&pending.body).ok()?))))
+    }
+
+    pub(crate) fn pending_owner(&self) -> Result<Option<crate::transport::RequestOwner>, TransportError> {
+        Ok(self.with_connection(state::pending)?.and_then(|pending| pending.owner))
     }
 
     pub async fn resume(&self) -> Result<Option<Answer>, TransportError> {

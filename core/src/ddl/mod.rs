@@ -71,7 +71,7 @@ END",
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 23] = [
+const CORE_STATEMENTS: [&str; 25] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -91,20 +91,49 @@ const CORE_STATEMENTS: [&str; 23] = [
   error_kind TEXT,
   error_message TEXT,
   error_code TEXT,
-  error_disposition TEXT,
-  up_phase TEXT,
-  up_stage TEXT,
-  up_scenario TEXT,
-  up_total INTEGER,
-  up_sent INTEGER,
-  up_retries INTEGER,
-  up_key TEXT,
-  up_upload_id TEXT,
-  up_signed_id TEXT,
-  up_blob_id TEXT,
-  up_document TEXT,
-  up_operation TEXT
+  error_disposition TEXT
 ) STRICT",
+    "CREATE TABLE IF NOT EXISTS op_item (
+  seq INTEGER NOT NULL REFERENCES op(seq) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  client_key TEXT NOT NULL UNIQUE DEFAULT (lower(hex(randomblob(16)))),
+  row_id TEXT,
+  file_id TEXT,
+  source_error TEXT,
+  kind TEXT,
+  body TEXT,
+  phase TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  scenario TEXT,
+  total_bytes INTEGER NOT NULL,
+  sent_bytes INTEGER NOT NULL,
+  attempts INTEGER NOT NULL,
+  retry_at INTEGER,
+  error_kind TEXT,
+  error_message TEXT,
+  error_code TEXT,
+  error_disposition TEXT,
+  storage_key TEXT,
+  upload_id TEXT,
+  signed_id TEXT,
+  blob_id TEXT,
+  document TEXT,
+  operation TEXT,
+  transferred INTEGER NOT NULL,
+  confirmed_bytes INTEGER NOT NULL,
+  checksum TEXT,
+  put_url TEXT,
+  url_issued_at INTEGER,
+  PRIMARY KEY (seq, position)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS op_item_header (
+  seq INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (seq, position, name),
+  FOREIGN KEY (seq, position) REFERENCES op_item(seq, position) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS op_row (
   seq INTEGER NOT NULL,
   pos INTEGER NOT NULL,
@@ -114,13 +143,16 @@ const CORE_STATEMENTS: [&str; 23] = [
     "CREATE INDEX IF NOT EXISTS op_row_id ON op_row (row_id)",
     "CREATE TABLE IF NOT EXISTS op_part (
   seq INTEGER NOT NULL,
-  pos INTEGER NOT NULL,
+  item_position INTEGER NOT NULL,
   number INTEGER NOT NULL,
   etag TEXT NOT NULL,
-  PRIMARY KEY (seq, pos)
+  confirmed_bytes INTEGER NOT NULL,
+  PRIMARY KEY (seq, item_position, number),
+  FOREIGN KEY (seq, item_position) REFERENCES op_item(seq, position) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS op_value (
   seq INTEGER NOT NULL,
+  item_position INTEGER NOT NULL DEFAULT -1,
   part TEXT NOT NULL,
   node INTEGER NOT NULL,
   parent INTEGER NOT NULL,
@@ -130,7 +162,7 @@ const CORE_STATEMENTS: [&str; 23] = [
   whole INTEGER,
   fraction REAL,
   text TEXT,
-  PRIMARY KEY (seq, part, node)
+  PRIMARY KEY (seq, item_position, part, node)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS row_sync (
   model TEXT NOT NULL,
@@ -216,7 +248,10 @@ const CORE_STATEMENTS: [&str; 23] = [
   response_key TEXT NOT NULL,
   sequence INTEGER NOT NULL,
   path TEXT NOT NULL,
-  body TEXT NOT NULL
+  body TEXT NOT NULL,
+  owner_seq INTEGER,
+  item_position INTEGER,
+  stage TEXT
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS file (
   id TEXT PRIMARY KEY NOT NULL,

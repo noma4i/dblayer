@@ -97,6 +97,7 @@ pub(crate) struct Inner {
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
     pub replaced: Mutex<HashMap<String, String>>,
     pub outcomes: Mutex<send::Outcomes>,
+    pub final_attempts: Mutex<send::FinalAttempts>,
 }
 
 impl Inner {
@@ -153,6 +154,7 @@ impl Sync {
             wake: Mutex::new(None),
             replaced: Mutex::new(HashMap::new()),
             outcomes: Mutex::new(send::Outcomes::default()),
+            final_attempts: Mutex::new(send::FinalAttempts::default()),
         };
         Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) }
     }

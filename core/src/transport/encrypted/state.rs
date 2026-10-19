@@ -14,6 +14,7 @@ pub struct Pending {
     pub sequence: i64,
     pub path: String,
     pub body: String,
+    pub owner: Option<crate::transport::RequestOwner>,
 }
 
 pub fn session(connection: &Connection) -> rusqlite::Result<Option<Session>> {
@@ -37,7 +38,7 @@ pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Resu
 
 pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
     connection
-        .query_row("SELECT credential_digest, request_id, response_key, sequence, path, body FROM encrypted_pending WHERE id = 1", [], |row| {
+        .query_row("SELECT credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage FROM encrypted_pending WHERE id = 1", [], |row| {
             Ok(Pending {
                 credential_digest: row.get(0)?,
                 request_id: row.get(1)?,
@@ -45,6 +46,10 @@ pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
                 sequence: row.get(3)?,
                 path: row.get(4)?,
                 body: row.get(5)?,
+                owner: match (row.get::<_, Option<i64>>(6)?, row.get::<_, Option<i64>>(7)?, row.get::<_, Option<String>>(8)?) {
+                    (Some(seq), Some(item_position), Some(stage)) => Some(crate::transport::RequestOwner { seq, item_position, stage }),
+                    _ => None,
+                },
             })
         })
         .optional()
@@ -52,8 +57,8 @@ pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
 
 pub fn store_pending(connection: &Connection, pending: &Pending) -> rusqlite::Result<()> {
     connection.execute(
-        "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
-        params![pending.credential_digest, pending.request_id, pending.response_key, pending.sequence, pending.path, pending.body],
+        "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![pending.credential_digest, pending.request_id, pending.response_key, pending.sequence, pending.path, pending.body, pending.owner.as_ref().map(|owner| owner.seq), pending.owner.as_ref().map(|owner| owner.item_position), pending.owner.as_ref().map(|owner| &owner.stage)],
     )?;
     Ok(())
 }

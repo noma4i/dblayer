@@ -57,7 +57,7 @@ impl Runner {
     }
 
     pub(super) fn has_pending_request(&self) -> bool {
-        self.snapshot().request.is_some_and(|request| crate::transport::encrypted::pending_matches(&self.inner.db, &request.graphql()))
+        crate::transport::encrypted::pending_matches(&self.inner.db, self.seq, self.position, &crate::operation::enum_text(&self.snapshot().stage).unwrap_or_default())
     }
 
     pub(super) async fn graphql(&self, name: &str, variables: Value, interruptible: bool) -> Result<Value, StepError> {
@@ -65,7 +65,8 @@ impl Runner {
             return Err(fatal(FailureKind::Rejected, format!("operation {name} is not registered")));
         };
         locked(&self.inner.counters).record_transport_call();
-        let request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+        let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+        request.owner = Some(crate::transport::RequestOwner { seq: self.seq, item_position: self.position, stage: crate::operation::enum_text(&self.snapshot().stage).unwrap_or_default() });
         self.remember(&request)?;
         let resumed = locked(&self.resumed).take();
         let call = tokio::time::timeout(self.inner.config.upload.step_timeout, async {
@@ -156,11 +157,17 @@ impl Runner {
                     if !backoff.allows(attempt) {
                         return Err(Stop::Failed(failure));
                     }
-                    self.save(|state| state.retries += 1)?;
+                    let delay = backoff.delay(attempt);
+                    self.save(|state| {
+                        state.retries += 1;
+                        state.retry_at = Some((self.inner.clock.now() + delay).as_millis() as u64);
+                        state.error = Some(failure.clone());
+                    })?;
                     tokio::select! {
-                        () = tokio::time::sleep(backoff.delay(attempt)) => {}
+                        () = tokio::time::sleep(delay) => {}
                         () = self.token.cancelled() => return Err(Stop::Cancelled),
                     }
+                    self.save(|state| { state.retry_at = None; state.error = None; })?;
                     attempt += 1;
                 }
             }

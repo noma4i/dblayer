@@ -19,7 +19,7 @@ fn upload_at(db: &Db, sent: u64) {
     let seq = db.outbox().unwrap().iter().find(|entry| entry.operation.upload.is_some()).map(|entry| entry.operation.id.0);
     let state = UploadState { phase: UploadStatus::Uploading, sent_bytes: sent, total_bytes: 10, ..UploadState::queued() };
     match seq {
-        Some(seq) => apply(db, OperationTransition::Progress { seq, state }),
+        Some(seq) => apply(db, OperationTransition::Progress { seq, item_position: 0, state }),
         None => {
             let record = OperationRecord {
                 seq: None,

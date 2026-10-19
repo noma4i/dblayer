@@ -3,16 +3,24 @@ use serde_json::{Map, Value};
 
 use super::response::ResponseShape;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestOwner {
+    pub seq: i64,
+    pub item_position: i64,
+    pub stage: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphQLRequest {
     pub document: String,
     pub operation_name: String,
     pub variables: Value,
+    pub owner: Option<RequestOwner>,
 }
 
 impl GraphQLRequest {
     pub fn new(document: impl Into<String>, operation_name: impl Into<String>, variables: Value) -> Self {
-        Self { document: document.into(), operation_name: operation_name.into(), variables }
+        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None }
     }
 }
 

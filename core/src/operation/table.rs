@@ -44,11 +44,11 @@ pub fn operation_input(connection: &Connection, sequence: i64) -> rusqlite::Resu
 
 pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operation>> {
     let sql = format!(
-        "SELECT seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_code, error_disposition, since, {UPLOAD_COLUMNS}, client_mutation_id \
+        "SELECT seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_code, error_disposition, since, client_mutation_id \
          FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq"
     );
     let mut rows_of = read_all_rows(connection)?;
-    let mut parts_of = read_all_parts(connection)?;
+    let mut uploads = read_uploads(connection)?;
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], |row| {
         let status: String = row.get(2)?;
@@ -68,8 +68,8 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
                 attempts: row.get(8)?,
                 error: failure_at(row, 9)?,
                 since: row.get(13)?,
-                upload: upload_at(row, 14)?,
-                client_mutation_id: row.get(26)?,
+                upload: None,
+                client_mutation_id: row.get(14)?,
             },
             OperationStatus::from_sql(&status).is_some(),
         ))
@@ -79,12 +79,7 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
         let (mut operation, valid) = item?;
         if valid {
             operation.row_ids = rows_of.remove(&operation.id.0).unwrap_or_default();
-            if let Some(state) = operation.upload.as_mut() {
-                state.parts = parts_of.remove(&operation.id.0).unwrap_or_default();
-                if let Some(request) = state.request.as_mut() {
-                    request.variables = read_value(connection, operation.id.0, "upload_request")?.unwrap_or(Value::Null);
-                }
-            }
+            operation.upload = uploads.remove(&operation.id.0);
             operations.push(operation);
         }
     }

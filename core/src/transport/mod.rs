@@ -27,7 +27,7 @@ pub use fetch::{FetchAttempt, FetchError, FetchReport};
 pub use mock::{CallKind, MockTransport, PutReply, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
 pub use put::{ByteSink, PutRequest, PutResponse};
-pub use request::{GraphQLError, GraphQLRequest, Response};
+pub use request::{GraphQLError, GraphQLRequest, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryClass, RETRY_BACKOFF};
 pub use session_code::SessionCode;

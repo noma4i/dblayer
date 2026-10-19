@@ -164,7 +164,7 @@ pub enum OperationTransition {
     Fail { seq: i64, status: OperationStatus, failure: OperationFailure },
     Retry { seq: i64 },
     Postpone { seq: i64, failure: OperationFailure },
-    Progress { seq: i64, state: UploadState },
+    Progress { seq: i64, item_position: i64, state: UploadState },
     Remove { seq: i64, expected: Option<OperationStatus> },
 }
 

@@ -4,7 +4,7 @@ use rusqlite::Connection;
 
 use super::*;
 use crate::ddl::migrate_core;
-use crate::operation::{delete_operation, failure_cells, upload_cells, write_rows, UPLOAD_COLUMNS};
+use crate::operation::{delete_operation, failure_cells, write_rows};
 use crate::upload::{UploadStage, UploadState, UploadStatus};
 
 fn database() -> Connection {
@@ -29,10 +29,7 @@ fn insert_upload(connection: &Connection, status: &str, started: i64, state: &Up
 }
 
 fn set_upload(connection: &Connection, seq: i64, state: &UploadState) {
-    let assignments: Vec<String> = UPLOAD_COLUMNS.split(", ").enumerate().map(|(at, column)| format!("{column} = ?{}", at + 2)).collect();
-    let mut values = vec![rusqlite::types::Value::Integer(seq)];
-    values.extend(upload_cells(Some(state)));
-    connection.execute(&format!("UPDATE op SET {} WHERE seq = ?1", assignments.join(", ")), rusqlite::params_from_iter(values)).unwrap();
+    crate::operation::write_upload(connection, seq, 0, state).unwrap();
 }
 
 fn state(phase: UploadStatus, sent: u64) -> UploadState {

@@ -607,7 +607,7 @@ async fn a_stored_multipart_resumes_from_its_finished_parts_after_a_restart() {
     rig.transport.enqueue("CompleteMultipart", complete());
     rig.transport.enqueue("CreateMoment", created("m9"));
     let source = file(TWELVE);
-    let state = resumable(vec![UploadPart { number: 1, etag: "e1".to_string() }]);
+    let state = resumable(vec![UploadPart { number: 1, etag: "e1".to_string(), confirmed_bytes: 5 }]);
     rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), state).unwrap();
     let report = rig.sync.flush().await.unwrap();
     assert!(report.operations.is_empty());
@@ -670,9 +670,9 @@ async fn inv_op_09_a_retry_that_lands_while_the_old_run_is_ending_still_starts_t
     single_replies(&rig);
     let source = file(b"abcdef");
     let seq = rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
-    let (run, _, _) = rig.sync.inner.register(seq).unwrap();
+    let (run, _, _) = rig.sync.inner.register(seq, 0).unwrap();
     rig.sync.inner.start_uploads().unwrap();
-    rig.sync.inner.finish_run(seq, run);
+    rig.sync.inner.finish_run(seq, 0, run);
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
 }

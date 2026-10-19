@@ -9,9 +9,8 @@ use crate::commit::{
 };
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
-use crate::operation::{delete_operation, failure_cells, read_rows, read_value, upload_cells, write_parts, write_rows, write_value, UPLOAD_COLUMNS};
+use crate::operation::{delete_operation, failure_cells, read_rows, read_value, write_rows, write_value};
 use crate::syncstate::{operation_keys, recompute_sync, OperationFailure, SyncKey};
-use crate::upload::UploadState;
 
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, fetch_stored, placeholders, Reader, StoredRow, CHUNK};
@@ -792,9 +791,9 @@ fn apply_transitions(
                 result.operations.insert(*seq);
                 wrote = true;
             }
-            OperationTransition::Progress { seq, state } => {
+            OperationTransition::Progress { seq, item_position, state } => {
                 synced.extend(op_keys_of(connection, *seq)?);
-                let saved = write_upload(connection, *seq, state)?;
+                let saved = crate::operation::write_upload(connection, *seq, *item_position, state)?;
                 if saved == 0 {
                     result.unknown_operation_acks += 1;
                     continue;
@@ -844,18 +843,6 @@ fn set_open_status(connection: &Connection, seq: i64, status: OperationStatus, e
     )?)
 }
 
-fn write_upload(connection: &Connection, seq: i64, state: &UploadState) -> Result<usize, StoreError> {
-    let assignments: Vec<String> = UPLOAD_COLUMNS.split(", ").enumerate().map(|(at, column)| format!("{column} = ?{}", at + 2)).collect();
-    let mut values = vec![rusqlite::types::Value::Integer(seq)];
-    values.extend(upload_cells(Some(state)));
-    let saved = connection.execute(&format!("UPDATE op SET {} WHERE seq = ?1", assignments.join(", ")), params_from_iter(values))?;
-    if saved > 0 {
-        write_parts(connection, seq, &state.parts)?;
-        write_value(connection, seq, "upload_request", state.request.as_ref().map(|request| &request.variables))?;
-    }
-    Ok(saved)
-}
-
 fn begin_operation(connection: &Connection, record: &OperationRecord) -> Result<i64, StoreError> {
     let dedupe_key = if record.status == OperationStatus::Failed { None } else { record.dedupe_key.clone() };
     connection.execute(
@@ -881,9 +868,40 @@ fn begin_operation(connection: &Connection, record: &OperationRecord) -> Result<
     write_value(connection, seq, "input", Some(&record.input))?;
     write_value(connection, seq, "prior", record.rollback.as_ref())?;
     if let Some(state) = &record.upload {
-        write_upload(connection, seq, state)?;
+        crate::operation::write_upload(connection, seq, 0, state)?;
+        if record.seq.is_none() {
+            write_upload_source(connection, seq, record)?;
+        }
     }
     Ok(seq)
+}
+
+fn write_upload_source(connection: &Connection, seq: i64, record: &OperationRecord) -> Result<(), StoreError> {
+    let Ok(mut input) = serde_json::from_value::<crate::upload::UploadInput>(record.input.clone()) else { return Ok(()) };
+    let row_id = record.row_ids.first().map(|id| id.as_str()).unwrap_or_default();
+    let model = crate::operation::Operation::split_action_key(&record.action_key).map(|pair| pair.0).unwrap_or_default();
+    let name = input.name.clone().unwrap_or_else(|| std::path::Path::new(&input.path).file_name().unwrap_or_default().to_string_lossy().into_owned());
+    let mime = input.mime.clone().unwrap_or_else(|| crate::upload::mime_of(&name).into());
+    let (file_id, error) = match std::fs::read(&input.path) {
+        Ok(bytes) => {
+            let file_id = uuid::Uuid::new_v4().to_string();
+            let descriptor = crate::files::FileDescriptor { id: file_id.clone(), size: bytes.len() as u64, name: Some(name.clone()), mime: Some(mime.clone()), sha256: Some(crate::files::sha256_hex(&bytes)) };
+            crate::files::put(connection, &crate::files::FileRecord {
+                id: file_id.clone(), model, row_id: row_id.into(), field: format!("op_item.{seq}.0"), descriptor,
+                location: crate::files::Location::Table, data: bytes, created_at: record.created_at,
+            })?;
+            (Some(file_id), None)
+        }
+        Err(error) => (None, Some(error.to_string())),
+    };
+    input.path.clear();
+    input.name = Some(name);
+    input.mime = Some(mime);
+    let value = serde_json::to_value(&input).map_err(|error| StoreError::from(std::io::Error::other(error)))?;
+    crate::operation::write_item_value(connection, seq, 0, "input", Some(&value))?;
+    connection.execute("UPDATE op_item SET row_id = ?2, file_id = ?3, source_error = ?4 WHERE seq = ?1 AND position = 0", params![seq, row_id, file_id, error])?;
+    write_value(connection, seq, "input", Some(&Value::Object(input.variables)))?;
+    Ok(())
 }
 
 pub(crate) fn save_pending(connection: &Connection, model: &str, row_id: &str, path: &str, value: &Value) -> Result<(), StoreError> {

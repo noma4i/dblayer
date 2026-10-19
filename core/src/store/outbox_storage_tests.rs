@@ -42,7 +42,7 @@ fn upload() -> UploadState {
     state.total_bytes = 90;
     state.sent_bytes = 40;
     state.key = Some("k1".into());
-    state.parts = vec![UploadPart { number: 1, etag: "a".into() }, UploadPart { number: 2, etag: "b".into() }];
+    state.parts = vec![UploadPart { number: 1, etag: "a".into(), confirmed_bytes: 20 }, UploadPart { number: 2, etag: "b".into(), confirmed_bytes: 20 }];
     state
 }
 
@@ -69,8 +69,9 @@ fn a_failure_and_the_upload_progress_are_columns() {
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
     send(&store, vec![OperationTransition::Start { seq }]);
     send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure }]);
-    send(&store, vec![OperationTransition::Progress { seq, state: upload() }]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind = 'server' AND error_message = 'http 503' AND up_phase = 'uploading' AND up_sent = 40"), 1);
+    send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: upload() }]);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('op') WHERE name LIKE 'up_%'"), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op JOIN op_item USING (seq) WHERE op.error_kind = 'server' AND op.error_message = 'http 503' AND position = 0 AND phase = 'uploading' AND sent_bytes = 40"), 1);
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_part WHERE seq = {seq} AND etag IN ('a', 'b')")), 2);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync WHERE error_kind = 'server' AND error_message = 'http 503'"), 2);
 }
@@ -111,9 +112,9 @@ fn row_sync_keeps_actions_and_dirty_fields_in_child_tables() {
 #[test]
 fn closing_an_operation_removes_its_child_rows() {
     let (store, seq) = begun();
-    send(&store, vec![OperationTransition::Progress { seq, state: upload() }]);
+    send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: upload() }]);
     send(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed, once: false }]);
-    for table in ["op", "op_row", "op_value", "op_part", "row_sync", "sync_action", "sync_field"] {
+    for table in ["op", "op_row", "op_value", "op_item", "op_part", "row_sync", "sync_action", "sync_field"] {
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
     }
 }

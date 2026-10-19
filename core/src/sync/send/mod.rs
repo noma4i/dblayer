@@ -5,9 +5,8 @@ mod report;
 mod settle;
 mod variables;
 
-pub(crate) use flush::{Delivery, Sending};
+pub(crate) use flush::{Sending, FinalAttempts};
 pub(crate) use outcomes::Outcomes;
-pub(crate) use variables::upload_variables;
 pub use report::{FlushReport, SendResult, SentOperation, SkipReason};
 
 use crate::commit::OperationStatus;

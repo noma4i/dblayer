@@ -16,6 +16,24 @@ fn rid(text: &str) -> RowId {
     RowId::new(text).unwrap()
 }
 
+#[tokio::test(start_paused = true)]
+async fn sending_uses_the_input_frozen_by_its_owner_instead_of_a_stale_snapshot() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "before"}))).unwrap();
+    let stale = rig.db.outbox().unwrap().remove(0);
+    let generation = rig.db.generation();
+    let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Optimistic, generation);
+    envelope.operation_transitions.push(stale.rewritten(stale.operation.row_ids.clone(), json!({"id": "m1", "text": "after"}), stale.rollback.clone()));
+    rig.sync.inner.commit(generation, |_| Ok(Some(envelope))).unwrap();
+    let operation = rig.sync.inner.operations.lock().unwrap()["UpdateMoment"].clone();
+    let sending = super::Sending { entry: &stale, model: "moments".into(), action: "update".into(), generation, base_revision: rig.db.revision_seq().unwrap() };
+    rig.transport.enqueue("UpdateMoment", updated("m1", "after"));
+    rig.sync.inner.send_owned(&sending, &operation, None, false).await.unwrap();
+    assert_eq!(rig.transport.calls()[0].variables["text"], "after");
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
 fn created(id: &str, text: &str) -> Reply {
     Reply::data(json!({"createMoment": {"id": id, "text": text, "userId": null}}))
 }

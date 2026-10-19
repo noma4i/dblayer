@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -7,7 +7,7 @@ use crate::commit::{CommitEnvelope, CommitResult, EntityOp, EnvelopeFault, FileO
 use crate::db::{read_outbox, DbError, OutboxOperation, Prior};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::operation::{
-    is_open, quarantine_add, ready, transport_verdict, Operation, OutboxEntry as GateEntry, OutboxQueue, QuarantineReason, TransportVerdict,
+    quarantine_add, ready, transport_verdict, Operation, OutboxEntry as GateEntry, OutboxQueue, QuarantineReason, TransportVerdict,
 };
 use crate::schema::{ActionDeclaration, OnFailure, RemoteShape};
 use crate::store::{PlanCommitError, Reader, StoreError};
@@ -26,7 +26,7 @@ use super::variables::{idempotent_variables, mutation_variables};
 
 const SETTLE_ATTEMPTS: usize = 3;
 
-pub(crate) enum Delivery {
+enum Delivery {
     Response(Response),
     Rejected(OperationFailure),
     Unreached(OperationFailure),
@@ -39,6 +39,12 @@ pub(crate) struct Sending<'a> {
     pub action: String,
     pub generation: Generation,
     pub base_revision: i64,
+}
+
+#[derive(Default)]
+pub(crate) struct FinalAttempts {
+    next: u64,
+    active: HashMap<(Generation, i64), u64>,
 }
 
 struct Bound {
@@ -54,10 +60,17 @@ struct InFlight<'a> {
     seq: i64,
     generation: Generation,
     settled: bool,
+    attempt: u64,
 }
 
 impl Drop for InFlight<'_> {
     fn drop(&mut self) {
+        let mut attempts = locked(&self.inner.final_attempts);
+        if attempts.active.get(&(self.generation, self.seq)) != Some(&self.attempt) {
+            return;
+        }
+        attempts.active.remove(&(self.generation, self.seq));
+        drop(attempts);
         if self.settled {
             return;
         }
@@ -184,19 +197,54 @@ impl Inner {
     }
 
     async fn send(&self, entry: &OutboxOperation, resumed: Option<Result<Response, TransportError>>) -> Result<SendResult, SyncError> {
-        let Some(Bound { model, action, declaration, mutation, variables }) = self.bind(entry)? else { return Ok(SendResult::Skipped(SkipReason::NotBound)) };
+        let Some(Bound { model, action, declaration, mutation, .. }) = self.bind(entry)? else { return Ok(SendResult::Skipped(SkipReason::NotBound)) };
         let sending = Sending { entry, model, action, generation: self.db.generation(), base_revision: self.db.revision_seq()? };
         let Some(operation) = locked(&self.operations).get(&mutation).cloned() else {
             let failure = OperationFailure::new(FailureKind::Rejected, format!("operation {mutation} is not registered"));
             return self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure));
         };
-        if !self.start(&sending)? {
+        self.send_owned(&sending, &operation, resumed, declaration.on_failure == OnFailure::Keep).await
+    }
+
+    pub(crate) async fn send_owned(&self, sending: &Sending<'_>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>, keep: bool) -> Result<SendResult, SyncError> {
+        let seq = sending.entry.operation.id.0;
+        let key = (sending.generation, seq);
+        let attempt = {
+            let mut attempts = locked(&self.final_attempts);
+            if attempts.active.contains_key(&key) {
+                return Ok(SendResult::Discarded);
+            }
+            attempts.next += 1;
+            let attempt = attempts.next;
+            attempts.active.insert(key, attempt);
+            attempt
+        };
+        let mut in_flight = InFlight { inner: self, seq, generation: sending.generation, attempt, settled: true };
+        let Some((entry, base_revision)) = self.start(sending)? else { return Ok(SendResult::Discarded) };
+        let sending = Sending { entry: &entry, model: sending.model.clone(), action: sending.action.clone(), generation: sending.generation, base_revision };
+        in_flight.settled = false;
+        let mut request = match self.owned_request(&sending, operation) {
+            Ok(request) => request,
+            Err(error) => {
+                in_flight.settled = true;
+                let failure = OperationFailure::new(FailureKind::Unrecognized, error.to_string());
+                return self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure));
+            }
+        };
+        request.owner = Some(crate::transport::RequestOwner { seq, item_position: -1, stage: "mutation".into() });
+        let delivery = if sending.entry.operation.upload.is_some() {
+            match tokio::time::timeout(self.config.upload.step_timeout, self.deliver_or_resume(request, resumed)).await {
+                Ok(delivery) => delivery,
+                Err(_) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, "the mutation timed out")),
+            }
+        } else {
+            self.deliver_or_resume(request, resumed).await
+        };
+        if locked(&self.final_attempts).active.get(&key) != Some(&attempt) {
+            in_flight.settled = true;
             return Ok(SendResult::Discarded);
         }
-        let in_flight = InFlight { inner: self, seq: entry.operation.id.0, generation: sending.generation, settled: false };
-        let delivery = self.deliver_or_resume(GraphQLRequest::new(&operation.document, &operation.name, variables), resumed).await;
-        let settled = self.settle_delivery(&sending, &operation, delivery, declaration.on_failure == OnFailure::Keep).await;
-        let mut in_flight = in_flight;
+        let settled = self.settle_delivery(&sending, operation, delivery, keep).await;
         in_flight.settled = true;
         if let Err(error) = &settled {
             let failure = OperationFailure::new(FailureKind::Unrecognized, error.to_string());
@@ -205,8 +253,42 @@ impl Inner {
         settled
     }
 
-    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, _serial: &tokio::sync::MutexGuard<'_, ()>, upload: Option<super::super::upload::UploadResume>, repeats: &(dyn Fn(&GraphQLRequest) -> bool + Send + Sync), result: Result<Response, TransportError>) -> Result<(), SyncError> {
-        let Some(owner) = self.owner_of(repeats)? else { return Ok(()) };
+    fn owned_request(&self, sending: &Sending<'_>, operation: &OperationDef) -> Result<GraphQLRequest, SyncError> {
+        let entry = sending.entry;
+        let variables = match &entry.operation.upload {
+            None => self.bind(entry)?.ok_or_else(|| SyncError::Malformed("the operation has no declaration".into()))?.variables,
+            Some(state) => {
+                let value = self.db.shared.read(&[], |reader| Ok(crate::operation::read_item_value(reader.connection(), entry.operation.id.0, 0, "input")?))?;
+                let input: crate::upload::UploadInput = serde_json::from_value(value.unwrap_or(Value::Null)).map_err(|error| SyncError::Malformed(error.to_string()))?;
+                let (Some(signed), Some(blob)) = (&state.signed_id, &state.blob_id) else { return Err(SyncError::Malformed("the upload has no stored blob".into())) };
+                let mut variables = entry.input.as_object().cloned().ok_or_else(|| SyncError::Malformed("the upload arguments are not an object".into()))?;
+                variables.insert(input.steps.signed_id_variable, Value::String(signed.clone()));
+                if let Some(name) = input.steps.blob_id_variable { variables.insert(name, Value::String(blob.clone())); }
+                let spec = self.db.spec(&sending.model)?;
+                let declaration = spec.actions.iter().find(|action| action.mutation.as_deref() == Some(&operation.name));
+                let variables = Value::Object(variables);
+                match declaration {
+                    Some(declaration) => super::variables::upload_variables(declaration, variables, &entry.operation.client_mutation_id),
+                    None => variables,
+                }
+            }
+        };
+        let request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+        if let Some(mut state) = entry.operation.upload.clone() {
+            state.phase = crate::upload::UploadStatus::Sending;
+            state.stage = crate::upload::UploadStage::Mutation;
+            state.request = Some(crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() });
+            self.commit(sending.generation, |_| {
+                let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
+                envelope.operation_transitions.push(OperationTransition::Progress { seq: entry.operation.id.0, item_position: 0, state });
+                Ok(Some(envelope))
+            })?;
+        }
+        Ok(request)
+    }
+
+    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, _serial: &tokio::sync::MutexGuard<'_, ()>, upload: Option<super::super::upload::UploadResume>, request_owner: crate::transport::RequestOwner, result: Result<Response, TransportError>) -> Result<(), SyncError> {
+        let Some(owner) = self.db.outbox()?.into_iter().find(|entry| entry.operation.id.0 == request_owner.seq) else { return Ok(()) };
         if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) && owner.operation.upload.as_ref().is_none_or(|state| state.stage != crate::upload::UploadStage::Abort) {
             self.db.retry_operations(vec![owner.clone()])?;
         }
@@ -220,27 +302,7 @@ impl Inner {
         Ok(())
     }
 
-    fn owner_of(&self, repeats: &(dyn Fn(&GraphQLRequest) -> bool + Send + Sync)) -> Result<Option<OutboxOperation>, SyncError> {
-        for entry in self.db.outbox()? {
-            if !is_open(entry.operation.status) || (entry.operation.status == OperationStatus::Pending && entry.operation.transport_started) {
-                continue;
-            }
-            if let Some(state) = &entry.operation.upload {
-                if state.request.as_ref().is_some_and(|request| repeats(&request.graphql())) {
-                    return Ok(Some(entry));
-                }
-                continue;
-            }
-            let Some(bound) = self.bind(&entry)? else { continue };
-            let Some(operation) = locked(&self.operations).get(&bound.mutation).cloned() else { continue };
-            if repeats(&GraphQLRequest::new(&operation.document, &operation.name, bound.variables)) {
-                return Ok(Some(entry));
-            }
-        }
-        Ok(None)
-    }
-
-    pub(crate) async fn settle_delivery(&self, sending: &Sending<'_>, operation: &OperationDef, delivery: Delivery, keep: bool) -> Result<SendResult, SyncError> {
+    async fn settle_delivery(&self, sending: &Sending<'_>, operation: &OperationDef, delivery: Delivery, keep: bool) -> Result<SendResult, SyncError> {
         let unsettled = match &delivery {
             Delivery::Response(_) => OperationFailure::new(FailureKind::Unrecognized, "the answer arrived after the database was reset"),
             Delivery::Rejected(failure) | Delivery::Unreached(failure) | Delivery::Unknown(failure) => failure.clone(),
@@ -313,22 +375,26 @@ impl Inner {
         Ok(if committed.is_some() { SendResult::Deferred } else { SendResult::Discarded })
     }
 
-    fn start(&self, sending: &Sending<'_>) -> Result<bool, SyncError> {
+    fn start(&self, sending: &Sending<'_>) -> Result<Option<(OutboxOperation, i64)>, SyncError> {
         let seq = sending.entry.operation.id.0;
-        let committed = self.commit(sending.generation, |_| {
+        let mut frozen = None;
+        let committed = self.commit(sending.generation, |reader| {
+            let Some(entry) = read_outbox(reader)?.into_iter().find(|entry| entry.operation.id.0 == seq) else { return Ok(None) };
+            if entry.operation.status != OperationStatus::Pending || entry.operation.transport_started || entry.operation.client_mutation_id != sending.entry.operation.client_mutation_id { return Ok(None); }
+            frozen = Some((entry, reader.revision_seq()?));
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
             envelope.operation_transitions.push(OperationTransition::Start { seq });
             Ok(Some(envelope))
         })?;
-        Ok(committed.is_some_and(|result| !result.is_noop()))
+        Ok(committed.filter(|result| !result.is_noop()).and(frozen))
     }
 
-    pub(crate) async fn deliver(&self, request: GraphQLRequest) -> Delivery {
+    async fn deliver(&self, request: GraphQLRequest) -> Delivery {
         locked(&self.counters).record_transport_call();
         delivery_of(self.transport.mutate(request).await)
     }
 
-    pub(crate) async fn deliver_or_resume(&self, request: GraphQLRequest, resumed: Option<Result<Response, TransportError>>) -> Delivery {
+    async fn deliver_or_resume(&self, request: GraphQLRequest, resumed: Option<Result<Response, TransportError>>) -> Delivery {
         match resumed {
             Some(result) => delivery_of(result),
             None => self.deliver(request).await,
