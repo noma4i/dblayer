@@ -49,7 +49,7 @@ class EncryptedSessionTest {
     @Test
     fun oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() = bounded {
         val http = RecordedHttp(400u)
-        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN), credentials = HeldCredential(), http = http)
+        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to "/api/auth/otp", "confirm" to "/api/auth/confirm", "social" to "/api/auth/social", "support" to "/api/support")), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = HeldCredential(), http = http)
         try {
             database.sessionCall("otp", """{"phone":"${"x".repeat(260_000)}"}""")
             throw AssertionError("expected a local size refusal")
@@ -74,11 +74,11 @@ class EncryptedSessionTest {
             server.enqueue(MockResponse().setResponseCode(503).setBody("busy"))
             server.start()
 
-            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/v3/graphql", "a.b.c.d.e")
+            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e")
 
             assertEquals(503.toUShort() to "busy", reply.status to reply.body)
             val request = server.takeRequest()
-            assertEquals("POST /api/v3/graphql", "${request.method} ${request.path}")
+            assertEquals("POST /api/graphql", "${request.method} ${request.path}")
             assertEquals("application/jose", request.getHeader("Content-Type"))
             assertNull(request.getHeader("Authorization"))
             assertNull(request.getHeader("Cookie"))
@@ -93,7 +93,7 @@ class EncryptedSessionTest {
         val origin = server.url("/").toString().trimEnd('/')
         server.shutdown()
 
-        failsWith<DbException.Network> { OkHttpEncryptedHttp(origin).post("/api/v3/logout", "x") }
+        failsWith<DbException.Network> { OkHttpEncryptedHttp(origin).post("/api/logout", "x") }
     }
 
     @Test
@@ -109,12 +109,12 @@ class EncryptedSessionTest {
     fun theCoreSendsSealedRequestsThroughTheAppHooksAndKeepsTheCredentialInTheAppStore() = bounded {
         val http = RecordedHttp(400u)
         val credentials = HeldCredential()
-        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN), credentials = credentials, http = http)
+        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to "/api/auth/otp", "confirm" to "/api/auth/confirm", "social" to "/api/auth/social", "support" to "/api/support")), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
 
         failsWith<DbException.Http> { database.sessionCall("otp", """{"phone":"+61400000000"}""") }
         failsWith<DbException.Network> { database.sessionCall("otp", """{"phone":"+61411111111"}""") }
 
-        assertEquals(listOf("/api/v3/auth/otp"), http.posts.map { it.first })
+        assertEquals(listOf("/api/auth/otp"), http.posts.map { it.first })
         assertEquals(5, http.posts[0].second.split(".").size)
         assertEquals(43, credentials.current?.length)
         database.sessionReset()

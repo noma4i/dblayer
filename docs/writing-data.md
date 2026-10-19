@@ -123,7 +123,7 @@ A new operation gets a new key. An explicit app value takes priority.
 This rule is the same for Swift and Kotlin, including the final upload mutation.
 With `on_failure: :keep`, the errors `IN_PROGRESS` and `DUPLICATE_CLIENT_KEY` keep the row in `failed`.
 `retry()` and `retryAll()` repeat the stored key. A response with a server row confirms success.
-V3 keeps the result for 1 day. After that, the key no longer guarantees a repeated successful response.
+The server defines how long it keeps the result. After that period, the key no longer guarantees a repeated successful response.
 
 - If the network is unreachable before the transfer starts (no connection, connection refused, offline), the record stays `pending` and is sent again by itself with a growing pause, up to 40 attempts. Offline spends no attempts: the change waits for `setOnline(true)`. After 40 attempts the change fails like a refusal.
 - If the connection breaks after the transfer started, or no readable answer arrives, the record is marked `deliveryUnknown` and is never sent again by itself, because the server may have applied it.

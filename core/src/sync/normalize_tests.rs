@@ -144,7 +144,7 @@ fn absent_nested_data_leaves_the_parent_untouched() {
 }
 
 #[test]
-fn v3_repeated_roots_and_nested_rows_merge_selected_fields_once() {
+fn repeated_roots_and_nested_rows_merge_selected_fields_once() {
     let db = nesting_db();
     let input = nodes(json!([
         {"id": "m1", "text": "first", "author": {"id": "u1", "name": "first"}},

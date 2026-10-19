@@ -73,7 +73,7 @@ fn explicit_null_of_a_has_one_or_has_many_holds_no_key_and_lands_no_row() {
 }
 
 #[test]
-fn v3_null_association_uses_the_required_keys_default() {
+fn null_association_uses_the_required_keys_default() {
     let target = ModelSpec::new("users", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     let mut source = ModelSpec::new("posts", vec![
         FieldSpec::scalar("id", ScalarKind::Id),

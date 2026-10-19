@@ -13,7 +13,6 @@ use crate::db::Db;
 use crate::pacing::Clock;
 use crate::transport::TransportError;
 
-pub const LOGOUT_PATH: &str = "/api/v3/logout";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const REPLAYED: &str = "REPLAYED_REQUEST";
 
@@ -22,6 +21,34 @@ pub struct EncryptedConfig {
     pub origin: String,
     pub server_key: String,
     pub pin: String,
+    pub endpoints: EncryptedEndpoints,
+    pub protocol_label: String,
+    pub cable_purpose: String,
+    pub cable_channel: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EncryptedEndpoints {
+    pub graphql: String,
+    pub cable: String,
+    pub logout: String,
+    pub bootstrap: String,
+    pub session_operations: std::collections::HashMap<String, String>,
+}
+
+impl EncryptedConfig {
+    pub fn validate(&self) -> Result<(), TransportError> {
+        for path in [&self.endpoints.graphql, &self.endpoints.cable, &self.endpoints.logout, &self.endpoints.bootstrap].into_iter().chain(self.endpoints.session_operations.values()) {
+            check_path(path)?;
+        }
+        if [&self.protocol_label, &self.cable_purpose, &self.cable_channel].into_iter().any(|value| value.trim().is_empty() || value.chars().any(char::is_control)) {
+            return Err(TransportError::Decode("encrypted protocol labels must be nonempty and contain no control characters".into()));
+        }
+        if self.endpoints.session_operations.keys().any(|name| name.trim().is_empty() || name == "logout") {
+            return Err(TransportError::Decode("session operation names must be nonempty and exclude logout".into()));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,10 +74,17 @@ pub(super) fn digest_of(credential: &str) -> String {
 }
 
 fn check_path(path: &str) -> Result<(), TransportError> {
-    match path.contains(['?', '#']) {
-        true => Err(TransportError::Decode(format!("an encrypted path carries no query or fragment: {path}"))),
-        false => Ok(()),
+    if !path.starts_with('/') || path.starts_with("//") || !path.is_ascii() || path.contains(['?', '#', '\\']) || path.bytes().any(|byte| byte <= 32 || byte == 127) {
+        return Err(TransportError::Decode("encrypted endpoints require encoded absolute paths without query or fragment".into()));
     }
+    let bytes = path.as_bytes();
+    if bytes.iter().enumerate().any(|(index, byte)| *byte == b'%' && !bytes.get(index + 1..index + 3).is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))) {
+        return Err(TransportError::Decode("encrypted endpoints require valid percent encoding".into()));
+    }
+    if path.to_ascii_lowercase().replace("%2e", ".").split('/').any(|part| matches!(part, "." | "..")) {
+        return Err(TransportError::Decode("encrypted endpoints cannot contain dot segments".into()));
+    }
+    Ok(())
 }
 
 fn storage(error: rusqlite::Error) -> TransportError {
@@ -62,6 +96,11 @@ fn confirmed_error(body: &Value) -> Option<&str> {
 }
 
 impl EncryptedClient {
+    pub fn session_path(&self, operation: &str) -> Option<&str> {
+        if operation == "logout" { return Some(&self.config.endpoints.logout); }
+        self.config.endpoints.session_operations.get(operation).map(String::as_str)
+    }
+
     pub fn new(
         config: &EncryptedConfig,
         http: Arc<dyn HttpExchange>,
@@ -69,6 +108,7 @@ impl EncryptedClient {
         db: Db,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, TransportError> {
+        config.validate()?;
         let audience = config.origin.trim_end_matches('/').to_string();
         if !super::origin::allowed(&audience) {
             return Err(TransportError::Decode(format!("the origin must be https, or http on a development host, without a path: {}", config.origin)));
@@ -155,7 +195,7 @@ impl EncryptedClient {
                 None => TransportError::Decode("the answer does not confirm the sequence".into()),
             });
         }
-        match pending.path == LOGOUT_PATH && answer.body.get("revoked") == Some(&Value::Bool(true)) {
+        match pending.path == self.config.endpoints.logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
             true => self.reset()?,
             false => self.with_connection(|connection| state::commit(connection, pending.sequence))?,
         }

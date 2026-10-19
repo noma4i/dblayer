@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, Transport, TransportRequest};
-use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
+use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 
 struct Plain;
 
@@ -57,7 +57,7 @@ fn unified_open_rejects_incomplete_or_unencrypted_session_arguments() {
         (true, true, false, true),
         (true, true, true, false),
     ] {
-        let encrypted = encrypted.then(|| EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() });
+        let encrypted = encrypted.then(|| EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() });
         let result = Database::open(config(), "[]".into(), transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>));
         rejected.push(matches!(result, Err(DbError::Invalid { .. })));
     }

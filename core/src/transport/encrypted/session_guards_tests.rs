@@ -7,13 +7,13 @@ use serde_json::{json, Value};
 
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
 use super::state;
-use super::vectors::*;
+use super::vectors_tests::*;
 use super::*;
 use crate::db::Db;
 use crate::pacing::ManualClock;
 
-const SOCIAL: &str = "/api/v3/auth/provider";
-const GRAPHQL: &str = "/api/v3/graphql";
+const SOCIAL: &str = "/api/auth/social";
+const GRAPHQL: &str = "/api/graphql";
 
 #[derive(Default)]
 struct WatchedCredentials {
@@ -55,7 +55,7 @@ impl Rig {
     }
 
     fn client(&self, db: &Db) -> EncryptedClient {
-        let config = EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: PIN.to_string() };
+        let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
         EncryptedClient::new(&config, self.server.clone(), self.credentials.clone(), db.clone(), self.clock.clone()).unwrap()
     }
 
@@ -86,7 +86,7 @@ async fn a_key_that_does_not_match_the_pin_leaves_the_credential_and_the_session
     let (credential, session) = (rig.credentials.inner.value(), rows(&db).0);
     let before = rig.touched();
 
-    let wrong_pin = EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: SHORT_KEY_PIN.to_string() };
+    let wrong_pin = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: short_key_pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
     assert!(EncryptedClient::new(&wrong_pin, rig.server.clone(), rig.credentials.clone(), db.clone(), rig.clock.clone()).is_err());
 
     assert_eq!((rig.touched(), rig.credentials.inner.value(), rows(&db).0), (before, credential, session));
@@ -121,7 +121,7 @@ async fn a_refusal_code_keeps_the_credential_the_session_row_and_the_pending_req
 async fn a_request_that_never_left_is_sent_once_by_resume_after_a_restart() {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("v3.sqlite");
+    let path = directory.path().join("session.sqlite");
     let first = rig.client(&file_db(&path));
     rig.server.drop_next_request();
     assert!(first.mutate(SOCIAL, signed_in()).await.is_err());
@@ -139,7 +139,7 @@ async fn a_request_that_never_left_is_sent_once_by_resume_after_a_restart() {
 async fn an_answer_that_was_executed_but_never_committed_is_confirmed_once_by_resume_after_a_restart() {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("v3.sqlite");
+    let path = directory.path().join("session.sqlite");
     let first = rig.client(&file_db(&path));
     first.mutate(SOCIAL, signed_in()).await.unwrap();
     rig.server.lose_next_answer();
@@ -192,7 +192,7 @@ async fn a_logout_whose_credential_could_not_be_cleared_is_finished_by_resume_wi
     client.mutate(SOCIAL, signed_in()).await.unwrap();
     rig.credentials.fail_next_clear.store(true, Ordering::SeqCst);
 
-    assert!(client.mutate("/api/v3/logout", json!({})).await.is_err());
+    assert!(client.mutate("/api/logout", json!({})).await.is_err());
     let resumed = client.resume().await.unwrap();
 
     assert_eq!(resumed.map(|answer| answer.body), Some(json!({ "revoked": true })));

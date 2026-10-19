@@ -40,7 +40,7 @@ public enum DB {
 
   public static func open(endpoint: URL? = nil, headers: [String: String] = [:], encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) throws {
     let origin = encrypted.flatMap { URL(string: $0.origin) }
-    let transport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers) }
+    let transport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers, cablePath: encrypted?.endpoints.cable) }
     let database = try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) })
     try install(database, transport: transport, operations: operations)
   }

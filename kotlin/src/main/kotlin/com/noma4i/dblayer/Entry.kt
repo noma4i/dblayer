@@ -52,7 +52,7 @@ object DBlayer {
         operations: List<GraphQLOperation> = emptyList(),
         http: EncryptedHttp? = null,
     ) {
-        val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, { headers }) }
+        val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, { headers }, cablePath = encrypted?.endpoints?.cable) }
         install(Database.open(Config(path, null, 2000u), modelsJson, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }), selectedTransport, operations)
     }
 

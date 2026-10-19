@@ -8,7 +8,6 @@ use super::client::{Answer, EncryptedClient};
 use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutResponse, Response, Subscription, Transport, TransportError};
 use crate::transport::{CableConnect, CableSocket, CableSubscriptions, Connectivity};
 
-const GRAPHQL_PATH: &str = "/api/v3/graphql";
 const PERSISTED_QUERY_VERSION: u32 = 1;
 const PERSISTED_QUERY_NOT_FOUND: &str = "PERSISTED_QUERY_NOT_FOUND";
 
@@ -49,8 +48,8 @@ pub fn graphql_body(request: &GraphQLRequest, with_document: bool) -> Value {
     Value::Object(body)
 }
 
-pub fn repeats(request: &GraphQLRequest, path: &str, body: &Value) -> bool {
-    path == GRAPHQL_PATH && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
+pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: &str, body: &Value) -> bool {
+    path == config.endpoints.graphql && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
 }
 
 pub(crate) fn pending_matches(db: &crate::db::Db, seq: i64, position: i64, stage: &str) -> bool {
@@ -81,23 +80,23 @@ impl Transport for EncryptedTransport {
     fn resume_subscriptions(&self) { self.cable.resume(); }
 
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
-        let response = response_of(self.client.read(GRAPHQL_PATH, graphql_body(&request, false)).await?)?;
+        let response = response_of(self.client.read(&self.client.config.endpoints.graphql, graphql_body(&request, false)).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_of(self.client.read(GRAPHQL_PATH, graphql_body(&request, true)).await?)
+        response_of(self.client.read(&self.client.config.endpoints.graphql, graphql_body(&request, true)).await?)
     }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let stored = graphql_body(&request, true);
-        if self.client.pending_call()?.is_some_and(|(path, body)| path == GRAPHQL_PATH && body == stored) {
-            return response_of(self.client.mutate_owned(GRAPHQL_PATH, stored, request.owner).await?);
+        if self.client.pending_call()?.is_some_and(|(path, body)| path == self.client.config.endpoints.graphql && body == stored) {
+            return response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, stored, request.owner).await?);
         }
-        let response = response_of(self.client.mutate_owned(GRAPHQL_PATH, graphql_body(&request, false), request.owner.clone()).await?)?;
+        let response = response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, graphql_body(&request, false), request.owner.clone()).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_of(self.client.mutate_owned(GRAPHQL_PATH, graphql_body(&request, true), request.owner.clone()).await?)
+        response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner.clone()).await?)
     }
 
     async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> {

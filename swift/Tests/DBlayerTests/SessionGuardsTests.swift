@@ -51,13 +51,13 @@ private final class ClosingSocket: CableSocket, @unchecked Sendable {
 }
 
 private func open(_ http: ScriptedHttp, _ credentials: CountedCredential, path: String? = nil, pin: String = serverPin) throws -> Database {
-  try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: pin), credentials: credentials, http: http)
+  try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": "/api/auth/otp", "confirm": "/api/auth/confirm", "social": "/api/auth/social", "support": "/api/support"]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: credentials, http: http)
 }
 
 private func temporaryFile() throws -> (URL, String) {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  return (directory, directory.appendingPathComponent("v3.sqlite").path)
+  return (directory, directory.appendingPathComponent("session.sqlite").path)
 }
 
 extension BridgeProbeTests {
@@ -85,7 +85,7 @@ struct SessionGuardsTests {
 
       await #expect(throws: DbError.self) { try await database.sessionResume() }
 
-      #expect(http.paths == ["/api/v3/auth/otp", "/api/v3/auth/otp"], Comment(rawValue: "\(status)"))
+      #expect(http.paths == ["/api/auth/otp", "/api/auth/otp"], Comment(rawValue: "\(status)"))
       #expect(credentials.current == issued && credentials.touched == (1, 0), Comment(rawValue: "\(status)"))
     }
   }
@@ -103,7 +103,7 @@ struct SessionGuardsTests {
 
     database = try open(http, credentials, path: path)
     await #expect(throws: DbError.self) { try await database.sessionResume() }
-    #expect(http.paths == ["/api/v3/auth/otp", "/api/v3/auth/otp"])
+    #expect(http.paths == ["/api/auth/otp", "/api/auth/otp"])
 
     let (fresh, freshPath) = try temporaryFile()
     defer { try? FileManager.default.removeItem(at: fresh) }
@@ -127,7 +127,7 @@ struct SessionGuardsTests {
     database = try open(http, credentials, path: path)
     await #expect(throws: DbError.self) { try await database.sessionResume() }
 
-    #expect(http.paths == ["/api/v3/logout", "/api/v3/logout"])
+    #expect(http.paths == ["/api/logout", "/api/logout"])
     #expect(credentials.current?.count == 43 && credentials.touched == (1, 0))
   }
 
@@ -147,7 +147,7 @@ struct SessionGuardsTests {
   func aClosedCableLeavesTheCredentialInTheAppStore() async throws {
     let http = ScriptedHttp()
     let credentials = CountedCredential()
-    try DB.open(encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin), credentials: credentials, transport: DatabaseTransport(cable: { nil }), modelsJSON: modelsJSON, http: http)
+    try DB.open(encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": "/api/auth/otp", "confirm": "/api/auth/confirm", "social": "/api/auth/social", "support": "/api/support"]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: credentials, transport: DatabaseTransport(cable: { nil }), modelsJSON: modelsJSON, http: http)
     await #expect(throws: DbError.self) { try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
     let issued = credentials.current
     let connection = CableConnection(url: URL(fileURLWithPath: "/test"), token: "token", makeSocket: { _, _ in ClosingSocket() })

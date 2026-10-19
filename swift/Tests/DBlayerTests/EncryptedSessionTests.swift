@@ -50,7 +50,7 @@ struct EncryptedSessionTests {
   @Test
   func oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() async throws {
     let http = RecordedHttp(status: 400)
-    let database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin), credentials: HeldCredential(), http: http)
+    let database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": "/api/auth/otp", "confirm": "/api/auth/confirm", "social": "/api/auth/social", "support": "/api/support"]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: HeldCredential(), http: http)
     do {
       _ = try await database.sessionCall(operation: "otp", bodyJson: "{\"phone\":\"\(String(repeating: "x", count: 260_000))\"}")
       Issue.record("expected a local size refusal")
@@ -76,7 +76,7 @@ struct EncryptedSessionTests {
     configuration.protocolClasses = [PlainResponseProtocol.self]
     let http = UrlSessionEncryptedHttp(origin: Self.origin, session: URLSession(configuration: configuration))
 
-    #expect(try await http.post(path: "/api/v3/bootstrap", body: "x").status == 0)
+    #expect(try await http.post(path: "/api/bootstrap", body: "x").status == 0)
   }
 
   @Test
@@ -84,7 +84,7 @@ struct EncryptedSessionTests {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
     let http = UrlSessionEncryptedHttp(origin: Self.origin, session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
 
-    await #expect(throws: DbError.self) { try await http.post(path: "/api/v3/logout", body: "x") }
+    await #expect(throws: DbError.self) { try await http.post(path: "/api/logout", body: "x") }
   }
 
   @Test
@@ -100,13 +100,13 @@ struct EncryptedSessionTests {
   func theCoreSendsSealedRequestsThroughTheAppHooksAndKeepsTheCredentialInTheAppStore() async throws {
     let http = RecordedHttp(status: 400)
     let credentials = HeldCredential()
-    let database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin), credentials: credentials, http: http)
+    let database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": "/api/auth/otp", "confirm": "/api/auth/confirm", "social": "/api/auth/social", "support": "/api/support"]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: credentials, http: http)
 
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61411111111"}"#) }
 
     let posts = http.posts
-    #expect(posts.map(\.path) == ["/api/v3/auth/otp"])
+    #expect(posts.map(\.path) == ["/api/auth/otp"])
     #expect(posts[0].body.split(separator: ".", omittingEmptySubsequences: false).count == 5)
     #expect(credentials.current?.count == 43)
     try database.sessionReset()

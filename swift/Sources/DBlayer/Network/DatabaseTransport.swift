@@ -13,13 +13,14 @@ public final class DatabaseTransport: Transport, @unchecked Sendable {
   public init(
     run: (@Sendable () async throws -> OperationRun)? = nil,
     origin: URL? = nil,
+    cablePath: String? = nil,
     cable: @escaping @Sendable () async -> CableClient?,
     onEvent: @escaping @Sendable (String, String) -> Void = { _, _ in }
   ) {
     self.run = run
     self.cable = cable
     self.onEvent = onEvent
-    self.encryptedCable = UrlSessionCable(origin: origin) { URLSession.shared.webSocketTask(with: $0) }
+    self.encryptedCable = UrlSessionCable(origin: origin, cablePath: cablePath) { URLSession.shared.webSocketTask(with: $0) }
   }
 
   public func query(request: TransportRequest) async throws -> String { try await send(request, kind: .query) }

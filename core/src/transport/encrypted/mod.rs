@@ -15,9 +15,9 @@ mod key;
 mod origin;
 mod state;
 #[cfg(test)]
-pub(crate) mod vectors;
+pub(crate) mod vectors_tests;
 
-pub use client::{Answer, EncryptedClient, EncryptedConfig, LOGOUT_PATH};
+pub use client::{Answer, EncryptedClient, EncryptedConfig, EncryptedEndpoints};
 pub use config::{AppPlatform, ConfigCode, Country, SecurityCode, ServerConfig};
 pub use graphql::{missing_from_registry, repeats, response_of, EncryptedTransport};
 pub(crate) use graphql::pending_matches;
@@ -63,3 +63,6 @@ mod refused_sequence_tests;
 mod sealed_errors_tests;
 #[cfg(test)]
 mod session_guards_tests;
+
+#[cfg(test)]
+pub(crate) mod protocol_tests;

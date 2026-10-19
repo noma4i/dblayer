@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
 use super::state;
-use super::vectors::*;
+use super::vectors_tests::*;
 use super::*;
 use crate::db::Db;
 use crate::pacing::ManualClock;
@@ -15,7 +15,7 @@ use crate::transport::SessionCode;
 const START: u64 = 1_800_000_000;
 
 fn config() -> EncryptedConfig {
-    EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: PIN.to_string() }
+    EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() }
 }
 
 struct Rig {
@@ -65,13 +65,13 @@ async fn a_mutation_is_stored_as_pending_before_it_is_sent_and_confirmed_by_its_
     let (probe, log) = (db.clone(), during.clone());
     rig.server.on_request(move || log.lock().unwrap().push(rows(&probe)));
 
-    let answer = client.mutate("/api/v3/auth/provider", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
-    client.mutate("/api/v3/graphql", graphql("mutation { a }")).await.unwrap();
+    let answer = client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    client.mutate("/api/graphql", graphql("mutation { a }")).await.unwrap();
 
     assert_eq!(answer.sequence, Some(1));
     let during = during.lock().unwrap();
     let pending = during[1].1.clone().unwrap();
-    assert_eq!((pending.sequence, pending.path.as_str(), during[1].0.as_ref().unwrap().sequence), (2, "/api/v3/graphql", 1));
+    assert_eq!((pending.sequence, pending.path.as_str(), during[1].0.as_ref().unwrap().sequence), (2, "/api/graphql", 1));
     let (session, pending) = rows(&db);
     assert_eq!((session.unwrap().sequence, pending), (2, None));
 }
@@ -80,16 +80,16 @@ async fn a_mutation_is_stored_as_pending_before_it_is_sent_and_confirmed_by_its_
 async fn a_lost_answer_is_recovered_after_a_restart_by_the_same_request_with_a_fresh_issued_at() {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("v3.sqlite");
+    let path = directory.path().join("session.sqlite");
     let client = rig.client(&file_db(&path));
-    client.mutate("/api/v3/auth/provider", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     rig.server.lose_next_answer();
-    assert!(matches!(client.mutate("/api/v3/graphql", graphql("mutation { once }")).await, Err(TransportError::Network(_))));
+    assert!(matches!(client.mutate("/api/graphql", graphql("mutation { once }")).await, Err(TransportError::Network(_))));
     drop(client);
 
     rig.clock.advance(Duration::from_secs(5));
     let db = file_db(&path);
-    let answer = rig.client(&db).mutate("/api/v3/graphql", graphql("mutation { once }")).await.unwrap();
+    let answer = rig.client(&db).mutate("/api/graphql", graphql("mutation { once }")).await.unwrap();
 
     let seen = rig.server.seen();
     assert_eq!(fixed(&seen[1]), fixed(&seen[2]));
@@ -107,7 +107,7 @@ async fn resume_sends_the_pending_request_without_the_original_call_and_does_not
     let client = rig.client(&db);
     assert_eq!(client.resume().await.unwrap(), None);
     rig.server.status_next(503);
-    assert!(client.mutate("/api/v3/auth/otp", json!({ "phone": "+61400000000" })).await.is_err());
+    assert!(client.mutate("/api/auth/otp", json!({ "phone": "+61400000000" })).await.is_err());
 
     let answer = client.resume().await.unwrap().unwrap();
 
@@ -121,9 +121,9 @@ async fn another_mutation_waits_for_the_pending_one_and_sends_nothing() {
     let db = memory_db();
     let client = rig.client(&db);
     rig.server.drop_next_request();
-    assert!(client.mutate("/api/v3/auth/otp", json!({ "phone": "+61400000000" })).await.is_err());
+    assert!(client.mutate("/api/auth/otp", json!({ "phone": "+61400000000" })).await.is_err());
 
-    let refused = client.mutate("/api/v3/auth/otp", json!({ "phone": "+61411111111" })).await;
+    let refused = client.mutate("/api/auth/otp", json!({ "phone": "+61411111111" })).await;
 
     assert!(matches!(refused, Err(TransportError::Network(_))));
     assert!(rig.server.seen().is_empty());
@@ -136,10 +136,10 @@ async fn reads_carry_a_null_sequence_leave_no_pending_and_a_replayed_read_is_ret
     let db = memory_db();
     let client = rig.client(&db);
 
-    client.mutate("/api/v3/auth/provider", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
-    client.read("/api/v3/graphql", graphql("query { a }")).await.unwrap();
+    client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    client.read("/api/graphql", graphql("query { a }")).await.unwrap();
     rig.server.replay_next_read();
-    let answer = client.read("/api/v3/graphql", graphql("query { a }")).await.unwrap();
+    let answer = client.read("/api/graphql", graphql("query { a }")).await.unwrap();
 
     let seen = rig.server.seen();
     assert_eq!(seen.iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(1), Value::Null, Value::Null, Value::Null]);
@@ -153,18 +153,18 @@ async fn http_refusals_keep_the_pending_request_and_the_next_attempt_executes_it
     let rig = Rig::new();
     let db = memory_db();
     let client = rig.client(&db);
-    client.mutate("/api/v3/auth/provider", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     let body = graphql("mutation { m }");
     let mut statuses = Vec::new();
     for status in [503, 400] {
         rig.server.status_next(status);
-        let Err(TransportError::Http { status, .. }) = client.mutate("/api/v3/graphql", body.clone()).await else { panic!("expected an HTTP error") };
+        let Err(TransportError::Http { status, .. }) = client.mutate("/api/graphql", body.clone()).await else { panic!("expected an HTTP error") };
         statuses.push(status);
     }
 
     assert_eq!(statuses, [503, 400]);
     assert_eq!(rows(&db).1.unwrap().sequence, 2);
-    client.mutate("/api/v3/graphql", body).await.unwrap();
+    client.mutate("/api/graphql", body).await.unwrap();
     assert_eq!(rig.server.executed().len(), 2);
 }
 
@@ -181,7 +181,7 @@ async fn a_sequence_conflict_is_an_error_and_keeps_the_pending_request() {
         state::start(&inner.connection, &super::client::digest_of(&credential)).unwrap();
     }
 
-    let outcome = client.mutate("/api/v3/graphql", graphql("mutation { x }")).await;
+    let outcome = client.mutate("/api/graphql", graphql("mutation { x }")).await;
 
     assert_eq!(outcome, Err(TransportError::Session { code: SessionCode::SequenceConflict, detail: "SEQUENCE_CONFLICT".to_string() }));
     assert_eq!(rows(&db).1.unwrap().sequence, 1);
@@ -192,9 +192,9 @@ async fn a_revoked_logout_clears_the_credential_and_the_state_even_when_its_answ
     let rig = Rig::new();
     let db = memory_db();
     let client = rig.client(&db);
-    client.mutate("/api/v3/auth/provider", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     rig.server.lose_next_answer();
-    assert!(client.mutate("/api/v3/logout", json!({})).await.is_err());
+    assert!(client.mutate("/api/logout", json!({})).await.is_err());
     assert!(rig.credentials.value().is_some());
 
     let answer = client.resume().await.unwrap().unwrap();
@@ -211,7 +211,7 @@ async fn the_credential_is_saved_before_the_first_request_and_never_written_to_s
     let witness = saved.clone();
     rig.server.on_request(move || *witness.lock().unwrap() = store.value());
 
-    rig.client(&db).mutate("/api/v3/auth/otp", json!({ "phone": "+61400000000" })).await.unwrap();
+    rig.client(&db).mutate("/api/auth/otp", json!({ "phone": "+61400000000" })).await.unwrap();
 
     let credential = rig.credentials.value().unwrap();
     assert_eq!(saved.lock().unwrap().as_deref(), Some(credential.as_str()));
@@ -230,7 +230,7 @@ async fn a_credential_without_a_matching_session_row_is_replaced_by_a_new_sessio
     rig.credentials.set("from-an-older-install").unwrap();
     let db = memory_db();
 
-    rig.client(&db).read("/api/v3/graphql", graphql("query { a }")).await.unwrap();
+    rig.client(&db).read("/api/graphql", graphql("query { a }")).await.unwrap();
 
     let credential = rig.credentials.value().unwrap();
     assert_ne!(credential, "from-an-older-install");
@@ -242,7 +242,7 @@ async fn a_response_for_another_request_is_refused() {
     let rig = Rig::new();
     rig.server.reply_to_other_request();
 
-    let outcome = rig.client(&memory_db()).mutate("/api/v3/auth/otp", json!({ "phone": "+61400000000" })).await;
+    let outcome = rig.client(&memory_db()).mutate("/api/auth/otp", json!({ "phone": "+61400000000" })).await;
 
     assert!(matches!(outcome, Err(TransportError::Decode(_))));
 }
@@ -251,21 +251,21 @@ async fn a_response_for_another_request_is_refused() {
 fn the_client_requires_an_https_origin_without_a_path_and_a_pinned_key() {
     let rig = Rig::new();
     let make = |origin: &str, pin: &str| {
-        let config = EncryptedConfig { origin: origin.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: pin.to_string() };
+        let config = EncryptedConfig { origin: origin.to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() };
         EncryptedClient::new(&config, rig.server.clone(), rig.credentials.clone(), memory_db(), rig.clock.clone()).is_ok()
     };
 
-    assert!(make("https://api.example.com", PIN));
-    assert!(make("https://api.example.com/", PIN));
-    assert!(!make("https://api.example.com/api", PIN));
-    assert!(!make("https://api.example.com", SHORT_KEY_PIN));
+    assert!(make("https://api.example.com", pin()));
+    assert!(make("https://api.example.com/", pin()));
+    assert!(!make("https://api.example.com/api", pin()));
+    assert!(!make("https://api.example.com", short_key_pin()));
 }
 
 #[tokio::test]
 async fn a_request_over_256_kib_is_refused_without_being_sent() {
     let rig = Rig::new();
 
-    let outcome = rig.client(&memory_db()).read("/api/v3/graphql", graphql(&"q".repeat(300 * 1024))).await;
+    let outcome = rig.client(&memory_db()).read("/api/graphql", graphql(&"q".repeat(300 * 1024))).await;
 
     assert!(matches!(outcome, Err(TransportError::RequestTooLarge { size, limit }) if size > limit && limit == 256 * 1024));
     assert!(rig.server.seen().is_empty());
@@ -273,18 +273,18 @@ async fn a_request_over_256_kib_is_refused_without_being_sent() {
 
 #[tokio::test]
 async fn local_413_does_not_poison_the_session() {
-    for path in ["/api/v3/graphql", "/api/v3/logout", "/api/v3/auth/provider"] {
+    for path in ["/api/graphql", "/api/logout", "/api/auth/social"] {
         let rig = Rig::new();
         let db = memory_db();
         let client = rig.client(&db);
-        client.mutate("/api/v3/auth/provider", json!({"provider":"google","idToken":"t"})).await.unwrap();
+        client.mutate("/api/auth/social", json!({"provider":"google","idToken":"t"})).await.unwrap();
         let before = rows(&db);
         let sent = rig.server.seen().len();
         assert!(matches!(client.mutate(path, graphql(&"x".repeat(260_000))).await, Err(TransportError::RequestTooLarge { size, limit }) if size > limit && limit == 256 * 1024));
         assert_eq!(rig.server.seen().len(), sent);
         assert_eq!(rows(&db), before, "{path}");
         assert_eq!(client.resume().await.unwrap(), None);
-        client.mutate("/api/v3/graphql", graphql("mutation Small { x }")).await.unwrap();
+        client.mutate("/api/graphql", graphql("mutation Small { x }")).await.unwrap();
         assert_eq!(rows(&db).0.unwrap().sequence, 2);
     }
 }
@@ -295,7 +295,7 @@ async fn a_pending_request_of_a_replaced_credential_is_dropped_and_never_sent() 
     let db = memory_db();
     let client = rig.client(&db);
     rig.server.drop_next_request();
-    assert!(client.mutate("/api/v3/auth/otp", json!({ "phone": "+61400000000" })).await.is_err());
+    assert!(client.mutate("/api/auth/otp", json!({ "phone": "+61400000000" })).await.is_err());
     let restored = rig.client(&db);
     rig.credentials.set(&"r".repeat(43)).unwrap();
 
@@ -310,7 +310,7 @@ async fn encrypted_paths_never_carry_a_query_or_a_fragment() {
     let rig = Rig::new();
     let client = rig.client(&memory_db());
 
-    for path in ["/api/v3/graphql?platform=ios", "/api/v3/graphql#frag"] {
+    for path in ["/api/graphql?platform=ios", "/api/graphql#frag"] {
         assert!(matches!(client.read(path, graphql("{ a }")).await, Err(TransportError::Decode(_))), "{path}");
         assert!(matches!(client.mutate(path, graphql("{ a }")).await, Err(TransportError::Decode(_))), "{path}");
     }

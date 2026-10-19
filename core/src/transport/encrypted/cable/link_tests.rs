@@ -12,7 +12,10 @@ fn bytes(value: &Value) -> [u8; 32] { hex(value.as_str().unwrap()).try_into().un
 pub(super) fn inputs() -> (Value, EncryptedConfig, Value, String) {
     let kat = vectors();
     let private = RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap();
-    let config = EncryptedConfig { origin: kat["hkdf"]["audience"].as_str().unwrap().into(), server_key: STANDARD.encode(private.to_public_key().to_public_key_der().unwrap().as_bytes()), pin: kat["hkdf"]["kid"].as_str().unwrap().into() };
+    let mut config = EncryptedConfig { origin: kat["hkdf"]["audience"].as_str().unwrap().into(), server_key: STANDARD.encode(private.to_public_key().to_public_key_der().unwrap().as_bytes()), pin: kat["hkdf"]["kid"].as_str().unwrap().into(), ..crate::transport::encrypted::protocol_tests::config() };
+    config.endpoints.cable = kat["hkdf"]["path"].as_str().unwrap().into();
+    config.protocol_label = kat["config"]["protocol_label"].as_str().unwrap().into();
+    config.cable_purpose = kat["config"]["cable_purpose"].as_str().unwrap().into();
     let challenge = json!({"type":"challenge", "v":1, "kid":config.pin, "challenge":URL_SAFE_NO_PAD.encode(bytes(&kat["hkdf"]["challenge"])), "x25519":URL_SAFE_NO_PAD.encode(bytes(&kat["x25519"]["server_public"]))});
     let credential = URL_SAFE_NO_PAD.encode(bytes(&kat["hello"]["credential"]));
     (kat, config, challenge, credential)

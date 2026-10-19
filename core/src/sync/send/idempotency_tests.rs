@@ -12,7 +12,7 @@ use crate::sync::SyncConfig;
 use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, Subscription, Transport, TransportError};
 use crate::transport::{EncryptedClient, EncryptedConfig, EncryptedTransport, HttpExchange, HttpReply};
 use crate::transport::encrypted::fake_server_tests::{open_request, seal_response, MemoryCredentials};
-use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
+use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 
 struct Exchange {
     server: Arc<Mutex<Server>>,
@@ -23,7 +23,7 @@ struct Exchange {
 impl HttpExchange for Exchange {
     async fn post(&self, path: &str, body: String) -> Result<HttpReply, TransportError> {
         let request = open_request(&body, path, 1_800_000_000).unwrap();
-        let reply = if path == "/api/v3/graphql" {
+        let reply = if path == "/api/graphql" {
             self.requests.lock().unwrap().push((request.clone(), body));
             let response = self.server.mutate(GraphQLRequest::new("", "CreateMoment", request["body"]["variables"].clone())).await?;
             serde_json::to_value(response).unwrap()
@@ -34,7 +34,7 @@ impl HttpExchange for Exchange {
 
 fn encrypted(db: &Db, exchange: Arc<Exchange>, credentials: Arc<MemoryCredentials>) -> (Sync, Arc<EncryptedClient>) {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
-    let config = EncryptedConfig { origin: ORIGIN.into(), pin: PIN.into(), server_key: PUBLIC_KEY_DER_B64.into() };
+    let config = EncryptedConfig { origin: origin().into(), pin: pin().into(), server_key: public_key_der_b64().into(), ..crate::transport::encrypted::protocol_tests::config() };
     let client = Arc::new(EncryptedClient::new(&config, exchange.clone(), credentials, db.clone(), clock.clone()).unwrap());
     let transport = Arc::new(EncryptedTransport::new(client.clone(), exchange.server.clone()));
     let sync = Sync::new(db.clone(), transport, clock, SyncConfig::default());
@@ -113,7 +113,7 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     assert_eq!(db.outbox().unwrap()[0].operation.client_mutation_id, key);
     let (sync, client) = encrypted(&db, exchange.clone(), credentials);
     client.reset().unwrap();
-    client.mutate("/api/v3/auth/provider", json!({"provider": "test"})).await.unwrap();
+    client.mutate("/api/auth/social", json!({"provider": "test"})).await.unwrap();
     assert_eq!(sync.retry("moments", &id).await.unwrap().committed(), 1);
     assert!(db.outbox().unwrap().is_empty());
     assert!(db.find("moments", &id).unwrap().is_none());

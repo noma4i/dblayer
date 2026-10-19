@@ -11,7 +11,7 @@ private final class BootstrapPeer: @unchecked Sendable {
   let encrypted: EncryptedConfig
 
   init() throws {
-    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("fixtures/v3-config/bootstrap_kat.json")
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("fixtures/bootstrap-config/bootstrap_kat.json")
     kat = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
     let pem = kat["rsa_private_pem"] as! String
     let der = Data(base64Encoded: pem.split(separator: "\n").filter { !$0.hasPrefix("-") }.joined())!
@@ -19,7 +19,7 @@ private final class BootstrapPeer: @unchecked Sendable {
     let publicKey = SecKeyCopyExternalRepresentation(SecKeyCopyPublicKey(key)!, nil)! as Data
     func asn(_ tag: UInt8, _ data: Data) -> Data { Data([tag, 0x82, UInt8(data.count >> 8), UInt8(data.count & 255)]) + data }
     let algorithm = Data([0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00])
-    encrypted = EncryptedConfig(origin: kat["audience"] as! String, serverKey: asn(0x30, algorithm + asn(3, Data([0]) + publicKey)).base64EncodedString(), pin: kat["kid"] as! String)
+    encrypted = EncryptedConfig(origin: kat["audience"] as! String, serverKey: asn(0x30, algorithm + asn(3, Data([0]) + publicKey)).base64EncodedString(), pin: kat["kid"] as! String, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: kat["path"] as! String, sessionOperations: ["otp": "/api/auth/otp", "confirm": "/api/auth/confirm", "social": "/api/auth/social", "support": "/api/support"]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel")
   }
 
   func decode(_ text: String) -> Data {
@@ -70,7 +70,7 @@ private final class BootstrapHttp: EncryptedHttp, @unchecked Sendable {
   init(_ peer: BootstrapPeer, _ kind: String) { self.peer = peer; self.kind = kind }
   func post(path: String, body: String) async throws -> EncryptedReply {
     lock.withLock { count += 1 }
-    #expect(path == "/api/v3/bootstrap")
+    #expect(path == peer.encrypted.endpoints.bootstrap)
     return kind == "service" ? EncryptedReply(status: 503, body: "") : EncryptedReply(status: 200, body: try peer.answer(body, kind: kind))
   }
 }
@@ -149,11 +149,11 @@ struct BootstrapConfigTests {
     config.httpAdditionalHeaders = ["Authorization": "secret", "Cookie": "secret", "X-Payload-Encryption": "old", "X-Request-Signature": "old"]
     let session = URLSession(configuration: config)
     defer { session.invalidateAndCancel() }
-    let reply = try await UrlSessionEncryptedHttp(origin: origin, session: customSession ? session : nil).post(path: "/api/v3/bootstrap", body: "jwe")
+    let reply = try await UrlSessionEncryptedHttp(origin: origin, session: customSession ? session : nil).post(path: "/api/bootstrap", body: "jwe")
     #expect(reply.status == 302 && reply.body == "busy")
     #expect(server.requests.count == 1)
     let request = try #require(server.requests.first)
-    #expect(request.hasPrefix("POST /api/v3/bootstrap HTTP/1.1\r\n"))
+    #expect(request.hasPrefix("POST /api/bootstrap HTTP/1.1\r\n"))
     let headers = request.components(separatedBy: "\r\n").dropFirst().prefix(while: { !$0.isEmpty }).map { $0.lowercased() }
     #expect(headers.contains("content-type: application/jose"))
     let names = headers.map { String($0.split(separator: ":")[0]) }

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, SessionCode, Transport};
 use crate::pacing::SystemClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
-use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
+use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::{CredentialSlot as CoreCredentials, HttpExchange, TransportError};
 
 pub(super) struct ThroughServer(pub(super) Arc<FakeServer>);
@@ -48,7 +48,7 @@ impl Transport for SubscriptionsOnly {
 fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<FakeServer>, Arc<MemoryCredentials>) {
     let server = FakeServer::new(Arc::new(SystemClock));
     let credentials = Arc::new(MemoryCredentials::default());
-    let encrypted = EncryptedConfig { origin: ORIGIN.to_string(), server_key: server_key.to_string(), pin: pin.to_string() };
+    let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: server_key.to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() };
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone()))))
     .unwrap();
     (database, server, credentials)
@@ -61,7 +61,7 @@ pub(super) fn code(error: DbError) -> SessionCode {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn answers_come_back_as_json_and_error_answers_as_typed_codes_that_keep_the_session() {
-    let (database, _, credentials) = rig(PUBLIC_KEY_DER_B64, PIN);
+    let (database, _, credentials) = rig(public_key_der_b64(), pin());
 
     let started = database.session_call("social".into(), r#"{"provider":"google","idToken":"t"}"#.into()).await.unwrap();
     let refused = database.session_call("confirm".into(), r#"{"code":"000000"}"#.into()).await.unwrap_err();
@@ -83,24 +83,25 @@ async fn support_posts_all_fields_without_a_session() {
             use crate::transport::encrypted::fake_server_tests::{open_request, seal_response};
             use crate::pacing::Clock;
 
-            assert_eq!(path, "/api/v3/support");
+            assert_eq!(path, "/api/support");
             let request = open_request(&body, &path, SystemClock.now().as_secs() as i64).unwrap();
             assert_eq!(request["body"], serde_json::json!({"name":"Alex","contact":"alex@example.com","message":"Need assistance","step":"phone","device":"iPhone","os":"iOS","appVersion":"3.0","country":"AU"}));
             Ok(EncryptedReply { status: 200, body: seal_response(&request, Some(1), serde_json::json!({})) })
         }
     }
 
-    let encrypted = EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() };
+    let mut encrypted = EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() };
+    encrypted.endpoints.session_operations = [("ticket".into(), "/api/support".into())].into();
     let credentials = Arc::new(MemoryCredentials::default());
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(SupportPost))).unwrap();
     assert!(credentials.value().is_none());
 
-    database.session_call("support".into(), body.into()).await.unwrap();
+    database.session_call("ticket".into(), body.into()).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_sequence_conflict_is_a_typed_code_and_the_credential_stays() {
-    let (database, server, credentials) = rig(PUBLIC_KEY_DER_B64, PIN);
+    let (database, server, credentials) = rig(public_key_der_b64(), pin());
     database.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into()).await.unwrap();
     let credential = credentials.value().unwrap();
     server.rewind_sequence(&credential, 5);

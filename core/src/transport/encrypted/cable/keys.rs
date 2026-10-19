@@ -16,11 +16,11 @@ pub(super) struct Keys {
 #[serde(rename_all = "camelCase")]
 struct Hello<'a> {
     v: u8,
-    purpose: &'static str,
+    purpose: &'a str,
     audience: &'a str,
     kid: &'a str,
     method: &'static str,
-    path: &'static str,
+    path: &'a str,
     challenge: &'a str,
     client_key: String,
     credential: &'a str,
@@ -32,6 +32,7 @@ pub(super) fn decode(value: &Value) -> Result<[u8; 32], CableError> {
 }
 
 pub(super) fn agree(config: &EncryptedConfig, challenge: &Value, credential: &str, private: [u8; 32], response: [u8; 32]) -> Result<(Keys, String), CableError> {
+    config.validate().map_err(|_| CableError::Challenge)?;
     let private = StaticSecret::from(private);
     let response = Zeroizing::new(response);
     let key = super::super::key::ServerKey::parse(&config.server_key, &config.pin).map_err(|_| CableError::ServerKeyMismatch)?;
@@ -48,15 +49,15 @@ pub(super) fn agree(config: &EncryptedConfig, challenge: &Value, credential: &st
     ikm[32..].copy_from_slice(&*response);
     let hkdf = Hkdf::<Sha256>::new(Some(&salt), &*ikm);
     let audience = config.origin.trim_end_matches('/');
-    let derive = |direction| {
-        let info = ["yupi-v3-ws-v1", direction, &config.pin, audience, CABLE_PATH].join("\0");
+    let derive = |direction: &str| {
+        let info = [&config.protocol_label, direction, &config.pin, audience, &config.endpoints.cable].join("\0");
         let mut key = Zeroizing::new([0; 32]);
         hkdf.expand(info.as_bytes(), &mut *key).map_err(|_| CableError::Challenge)?;
         Ok(key)
     };
     let keys = Keys { send: derive("c2s")?, receive: derive("s2c")? };
     let response_key = Zeroizing::new(URL_SAFE_NO_PAD.encode(*response));
-    let hello = Hello { v: 1, purpose: "v3.ws.hello", audience, kid: &config.pin, method: "GET", path: CABLE_PATH,
+    let hello = Hello { v: 1, purpose: &config.cable_purpose, audience, kid: &config.pin, method: "GET", path: &config.endpoints.cable,
         challenge: challenge["challenge"].as_str().ok_or(CableError::Challenge)?, client_key: URL_SAFE_NO_PAD.encode(PublicKey::from(&private).as_bytes()), credential, response_key: &response_key };
     let plain = Zeroizing::new(serde_json::to_vec(&hello).map_err(|_| CableError::Challenge)?);
     let token = super::super::jwe::seal_plain(&key, &plain).map_err(|_| CableError::Challenge)?;

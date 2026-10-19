@@ -66,7 +66,7 @@ fn identical_rows_commit_nothing() {
 }
 
 #[test]
-fn v3_replace_merges_repeated_ids_before_storing_unique_members() {
+fn replace_merges_repeated_ids_before_storing_unique_members() {
     let db = booted();
     db.replace(&request("feed", Coverage::Complete), vec![
         obj(json!({"id": "m2", "userId": "u1", "text": "first"})),

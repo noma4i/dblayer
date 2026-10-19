@@ -1,6 +1,6 @@
 # Cable protocol
 
-`transport::CableLink` implements the cryptographic exchange for `/api/v3/cable`. It has no socket, timer, database or credential storage access.
+`transport::CableLink` implements the cryptographic exchange for `EncryptedConfig.endpoints.cable`. It has no socket, timer, database or credential storage access.
 
 | Call | Result |
 | --- | --- |
@@ -22,16 +22,16 @@ An incoming failure retires both keys. An authenticated `closing` message return
 X25519 private material, derived keys and temporary hello plaintext use zeroing storage. Dropping a connection also erases its stored keys.
 The public vectors in `fixtures/change-events/kat.json` contain test keys only. Tests compare hello plaintext and all four encrypted frames without printing key material.
 
-Swift and Kotlin use the same `EncryptedConfig(origin, serverKey, pin)` for config and `open` calls.
+Swift and Kotlin use the same `EncryptedConfig(origin, serverKey, pin, endpoints, protocolLabel, cablePurpose, cableChannel)` for config and `open` calls.
 Fetch config with `DB.serverConfig` or `DBlayer.serverConfig` before opening the database.
-Config uses `POST /api/v3/bootstrap` without credentials, sequence or Cable connection. See [server sync](server-sync.md).
+Config posts to `EncryptedConfig.endpoints.bootstrap` without credentials, sequence or Cable connection. See [server sync](server-sync.md).
 The platform passes WebSocket text through `openCable`, `cableSend`, `cableNext` and `cableClose`. Rust handles encryption, subscriptions, reopening and timers.
 
 ## Platform sockets
 
 `DB.open` and `DBlayer.open` choose a platform transport when `transport` is omitted.
 Swift uses `URLSessionWebSocketTask`. Kotlin uses OkHttp WebSocket.
-Both derive `/api/v3/cable` from `EncryptedConfig.origin`: HTTPS becomes WSS, and development HTTP becomes WS.
+Both combine `EncryptedConfig.endpoints.cable` with `EncryptedConfig.origin`: HTTPS becomes WSS, and development HTTP becomes WS.
 Every open returns a new token. Calls for that token send and receive text without interpreting the encrypted payload.
 `cableClose` removes the token and cancels its socket. Further reads return no event.
 

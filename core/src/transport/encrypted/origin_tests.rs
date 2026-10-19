@@ -2,13 +2,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
-use super::vectors::*;
+use super::vectors_tests::*;
 use super::*;
 use crate::db::Db;
 use crate::pacing::ManualClock;
 
 fn accepted(origin: &str) -> bool {
-    let config = EncryptedConfig { origin: origin.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: PIN.to_string() };
+    let config = EncryptedConfig { origin: origin.to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1)));
     EncryptedClient::new(&config, FakeServer::new(clock.clone()), Arc::new(MemoryCredentials::default()), Db::open_in_memory(Vec::new(), None).unwrap(), clock).is_ok()
 }

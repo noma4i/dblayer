@@ -2,7 +2,7 @@ use super::*;
 use serde_json::json;
 
 #[test]
-fn v3_selected_null_paths_clear_and_missing_paths_preserve_fields() {
+fn selected_null_paths_clear_and_missing_paths_preserve_fields() {
     let models = [
         (ModelSpec::new("notes", vec![
             FieldSpec::scalar("replyId", ScalarKind::Str).nullable().read_from("replyTo.id"),

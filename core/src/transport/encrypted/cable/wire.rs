@@ -8,7 +8,6 @@ use tokio::time::Instant;
 use crate::transport::{Connectivity, GraphQLRequest, Subscription, TransportError};
 use super::{CableLink, CableSession, EncryptedConfig};
 
-const IDENTIFIER: &str = r#"{"channel":"V3::EncryptedGraphqlChannel"}"#;
 
 pub enum SocketEvent {
     Text(String),
@@ -72,15 +71,15 @@ impl CableSubscriptions {
     }
 }
 
-fn command(command: &str, data: Option<Value>) -> String {
-    let mut body = json!({"command":command, "identifier":IDENTIFIER});
+fn command(channel: &str, command: &str, data: Option<Value>) -> String {
+    let mut body = json!({"command":command, "identifier":json!({"channel":channel}).to_string()});
     if let Some(data) = data { body["data"] = json!(data.to_string()); }
     body.to_string()
 }
 
-async fn send(socket: &dyn CableSocket, link: &mut CableLink, session: &mut CableSession, body: Value) -> Result<(), TransportError> {
+async fn send(channel: &str, socket: &dyn CableSocket, link: &mut CableLink, session: &mut CableSession, body: Value) -> Result<(), TransportError> {
     let token = link.seal(body).map_err(|error| TransportError::Decode(error.to_string()))?;
-    socket.send(command("message", Some(json!({"action":"frame", "frame":token})))).await?;
+    socket.send(command(channel, "message", Some(json!({"action":"frame", "frame":token})))).await?;
     session.traffic();
     Ok(())
 }
@@ -132,11 +131,11 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
             Some("challenge") => {
                 let (opened, hello) = CableLink::open(config, &body, credential).map_err(|error| TransportError::Decode(error.to_string()))?;
                 link = Some((opened, hello));
-                socket.send(command("subscribe", None)).await?;
+                socket.send(command(&config.cable_channel, "subscribe", None)).await?;
             }
             Some("confirm_subscription") => {
                 let (_, hello) = link.as_ref().ok_or_else(|| TransportError::Decode("confirmation before challenge".into()))?;
-                socket.send(command("message", Some(json!({"action":"hello", "hello":hello})))).await?;
+                socket.send(command(&config.cable_channel, "message", Some(json!({"action":"hello", "hello":hello})))).await?;
             }
             Some("reject_subscription") => return Err(TransportError::Session { code: crate::transport::SessionCode::AccountUnavailable, detail: "cable subscription refused".into() }),
             _ => if let Some(token) = body["message"]["frame"].as_str() {
@@ -162,6 +161,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
         if connection.is_none() { incoming = None; }
         if !session.is_empty() && connection.is_none() && retry_at.is_none() && online.is_online() {
             let attempt = async {
+                config.validate()?;
                 let credential = credential()?;
                 if credential.is_empty() { return Err(TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "empty cable credential".into() }); }
                 let socket = tokio::time::timeout(Duration::from_secs(10), await_connected(connect.open(), &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable opening timeout".into()))???;
@@ -175,7 +175,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                 Ok((socket, mut link)) => {
                     let mut success = true;
                     for body in session.ready() {
-                        if send(socket.as_ref(), &mut link, &mut session, body).await.is_err() { success = false; break; }
+                        if send(&config.cable_channel, socket.as_ref(), &mut link, &mut session, body).await.is_err() { success = false; break; }
                     }
                     if success {
                         incoming = Some(Box::pin(receive(socket.clone())));
@@ -208,7 +208,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                 let _ = add.reply.send(subscription);
                 if let Some((socket, link)) = connection.as_mut() {
                     if let Some(body) = session.frame(&id) {
-                        if send(socket.as_ref(), link, &mut session, body).await.is_err() {
+                        if send(&config.cable_channel, socket.as_ref(), link, &mut session, body).await.is_err() {
                             retry_at = disconnect(&mut connection, &mut session, online.is_online()).await;
                         }
                     }
@@ -216,7 +216,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
             }
             body = session.cancelled() => {
                 if let (Some(body), Some((socket, link))) = (body, connection.as_mut()) {
-                    if send(socket.as_ref(), link, &mut session, body).await.is_err() {
+                    if send(&config.cable_channel, socket.as_ref(), link, &mut session, body).await.is_err() {
                         retry_at = disconnect(&mut connection, &mut session, online.is_online()).await;
                     }
                 }
@@ -251,7 +251,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                 if retry_at.take().is_none() {
                     match session.tick() {
                         Ok(Some(body)) => if let Some((socket, link)) = connection.as_mut() {
-                            if send(socket.as_ref(), link, &mut session, body).await.is_err() {
+                            if send(&config.cable_channel, socket.as_ref(), link, &mut session, body).await.is_err() {
                                 retry_at = disconnect(&mut connection, &mut session, online.is_online()).await;
                             }
                         },

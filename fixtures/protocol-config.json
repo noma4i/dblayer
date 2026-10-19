@@ -1,0 +1,17 @@
+{
+  "endpoints": {
+    "graphql": "/api/graphql",
+    "cable": "/api/cable",
+    "logout": "/api/logout",
+    "bootstrap": "/api/bootstrap",
+    "session_operations": {
+      "otp": "/api/auth/otp",
+      "confirm": "/api/auth/confirm",
+      "social": "/api/auth/social",
+      "support": "/api/support"
+    }
+  },
+  "protocol_label": "example-ws-v1",
+  "cable_purpose": "ws.hello",
+  "cable_channel": "EncryptedGraphqlChannel"
+}

@@ -146,7 +146,7 @@ async fn nodes_reads_many_in_one_request_keeps_order_and_skips_missing() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn v3_nodes_accepts_duplicate_ids_and_keeps_response_order() {
+async fn nodes_accepts_duplicate_ids_and_keeps_response_order() {
     let rig = node_rig();
     rig.transport.enqueue("ChatsByIds", data(json!({"nodes": [
         {"id": "c2", "title": "old", "shareUrl": "kept"}, null,

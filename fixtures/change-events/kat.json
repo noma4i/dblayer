@@ -1,4 +1,5 @@
 {
+  "config": {"protocol_label": "yupi-v3-ws-v1", "cable_purpose": "v3.ws.hello"},
   "version": 1,
   "note": "Test vectors only. The RSA key is generated for these vectors and protects nothing. Change only together with the protocol version v.",
   "method": "x25519 vectors are RFC 7748 section 6.1. HKDF: HKDF-SHA256(ikm = dh || responseKey, salt = challenge, info = \"yupi-v3-ws-v1\" 0x00 label 0x00 kid 0x00 audience 0x00 path, length 32). Frame: compact JWE alg dir enc A256GCM, protected header is the literal text of header, AAD is its base64url, empty encrypted key.",

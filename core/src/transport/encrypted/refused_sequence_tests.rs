@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
-use super::vectors::*;
+use super::vectors_tests::*;
 use super::*;
 use crate::db::Db;
 use crate::pacing::ManualClock;
@@ -15,10 +15,10 @@ const WRITE: &str = "mutation Rename { rename { id } }";
 async fn signed_in() -> (Arc<FakeServer>, EncryptedTransport) {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let server = FakeServer::new(clock.clone());
-    let config = EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: PIN.to_string() };
+    let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     let client = EncryptedClient::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), db, clock).unwrap();
-    client.mutate("/api/v3/auth/provider", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     server.register(WRITE);
     (server, EncryptedTransport::new(Arc::new(client), Arc::new(MockTransport::new())))
 }

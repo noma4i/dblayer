@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
-use super::vectors::*;
+use super::vectors_tests::*;
 use super::*;
 use crate::db::Db;
 use crate::pacing::ManualClock;
@@ -25,12 +25,12 @@ impl Rig {
     pub(super) async fn signed_in() -> Self {
         let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
         let rig = Self { server: FakeServer::new(clock.clone()), credentials: Arc::new(MemoryCredentials::default()), clock, db: Db::open_in_memory(Vec::new(), None).unwrap() };
-        rig.client().mutate("/api/v3/auth/provider", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+        rig.client().mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
         rig
     }
 
     pub(super) fn client(&self) -> Arc<EncryptedClient> {
-        let config = EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: PIN.to_string() };
+        let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
         Arc::new(EncryptedClient::new(&config, self.server.clone(), self.credentials.clone(), self.db.clone(), self.clock.clone()).unwrap())
     }
 
@@ -39,7 +39,7 @@ impl Rig {
     }
 
     pub(super) fn graphql_requests(&self) -> Vec<Value> {
-        self.server.seen().into_iter().filter(|request| request["path"] == "/api/v3/graphql").collect()
+        self.server.seen().into_iter().filter(|request| request["path"] == "/api/graphql").collect()
     }
 
     pub(super) fn pending_sequence(&self) -> Option<i64> {
@@ -170,7 +170,7 @@ async fn a_restart_between_the_miss_and_the_answer_to_the_second_send_resumes_th
 #[tokio::test]
 async fn a_restart_between_the_miss_and_the_second_send_leaves_no_effect_and_the_resent_mutation_runs_once() {
     let rig = Rig::signed_in().await;
-    let miss = rig.client().mutate("/api/v3/graphql", super::graphql::graphql_body(&request(WRITE), false)).await.unwrap();
+    let miss = rig.client().mutate("/api/graphql", super::graphql::graphql_body(&request(WRITE), false)).await.unwrap();
     assert_eq!(miss.body["errors"][0]["extensions"]["code"], "PERSISTED_QUERY_NOT_FOUND");
     assert_eq!((rig.server.executed().len(), rig.pending_sequence()), (1, None));
 

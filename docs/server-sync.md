@@ -46,7 +46,7 @@ With `encrypted`, the default HTTP uses its origin. The default transport uses `
 `http` is the last optional argument and accepts custom encrypted HTTP replies.
 The core rejects `encrypted` without credentials, credentials without `encrypted`, and `http` without `encrypted` as `DbError.Invalid` (`DbException.Invalid` in Kotlin).
 Direct `Database.open` calls with `encrypted` also require HTTP and transport arguments.
-There is no unencrypted V3 session format.
+Encrypted sessions require JWE requests.
 
 An operation type declares `Data` (Swift) or a `dataSerializer` (Kotlin) only when your code reads the response itself through the typed transport calls. An operation that models and actions run needs neither: leave `Data` out and it is `Never`, and the library still normalizes the response into rows. Do not write a response type that copies a model.
 
@@ -73,14 +73,14 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 
 | Piece | What it is |
 | ----- | ---------- |
-| `EncryptedConfig` | `origin` (`https://host[:port]`, no path; see the origin rule below), `serverKey` (the server public key, base64 DER) and `pin` (SHA-256 of that DER, lowercase hex). The key must have at least 3072 bits and match the pin. Ship both with the app. Do not download them |
+| `EncryptedConfig` | `origin`, `serverKey`, `pin`, `endpoints`, `protocolLabel`, `cablePurpose`, `cableChannel`. The key is base64 DER with at least 3072 bits. Its SHA-256 must match the lowercase hex pin. Ship both with the app. See Application protocol configuration below |
 | `EncryptedHttp` | `post` sends the request text to `origin + path` as `application/jose` and returns status and body. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
 | `CredentialStore` | `get`, `set` and `clear` keep one string in the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite |
 
-The database uses V3 JWE for queries and mutations, and encrypted Cable for subscriptions.
+The database uses encrypted JWE for queries and mutations, and encrypted Cable for subscriptions.
 The passed transport offers a text WebSocket and file upload. The shared subscription interface is described in [Cable protocol](cable-protocol.md).
 
-The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin for V3 hello and encrypted frames.
+The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin for encrypted hello and encrypted frames.
 
 ```swift
 let origin = URL(string: "https://api.example.com")!
@@ -88,7 +88,7 @@ let database = try Database.open(
   config: Config(path: path, dataVersion: nil, cacheRows: 4096),
   modelsJson: modelsJSON,
   transport: DatabaseTransport(cable: { await cable.current }),
-  encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin),
+  encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
   credentials: KeychainCredentials(),
   http: UrlSessionEncryptedHttp(origin: origin)
 )
@@ -102,7 +102,7 @@ val database = Database.open(
     config = Config(path, null, 4096u),
     modelsJson = modelsJSON,
     transport = DatabaseTransport(cable = { cable.current }),
-    encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin),
+    encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel),
     credentials = KeystoreCredentials(),
     http = OkHttpEncryptedHttp(origin),
 )
@@ -171,7 +171,7 @@ A new encrypted request gets the old key of the operation. A new operation gets 
 An app value in `input.clientMutationId` takes priority, including an explicit `null`.
 The technical upload steps use the same `key`, `uploadId` and stored encrypted request.
 
-V3 stores the result by user, mutation name and key for 1 day. A retry with a live key gets the earlier successful result.
+The server stores the result by user, mutation name and key for its configured retention period. A retry with a live key gets the earlier successful result.
 `IN_PROGRESS` with `on_failure: :keep` leaves the row in `failed`. A manual `retry` repeats the same key.
 `DUPLICATE_CLIENT_KEY` with `on_failure: :keep` also keeps the row in `failed`.
 The library does not declare success without a server row. It does not try to find the row through an incomplete list.
@@ -236,13 +236,13 @@ try {
 Fetch the encrypted config before opening a database. `DB.serverConfig` and `DBlayer.serverConfig` call the same Rust function without credentials or SQLite.
 
 ```swift
-let encrypted = EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin)
+let encrypted = EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel)
 let config = try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: appVersion, build: appBuild)
 if config.updateRequired { showUpdate(config.storeUrl) }
 ```
 
 ```kotlin
-val encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin)
+val encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel)
 val config = DBlayer.serverConfig(encrypted, AppPlatform.ANDROID, appVersion, appBuild)
 if (config.updateRequired) showUpdate(config.storeUrl)
 ```
@@ -250,7 +250,7 @@ if (config.updateRequired) showUpdate(config.storeUrl)
 `AppPlatform` accepts iOS and Android. Version contains 2 or 3 numeric segments separated by dots. Optional build contains at most 32 characters.
 The core refuses invalid input and a mismatched pin before HTTP. The optional `http` argument defaults to the platform client on the origin.
 
-The request is `POST /api/v3/bootstrap`, with `Content-Type: application/jose`, no query, cookies, credentials or old encryption headers.
+The request uses `POST` at `encrypted.endpoints.bootstrap`, with `Content-Type: application/jose`, no query, cookies, credentials or old encryption headers.
 Redirects are refused. HTTP implementations do not reuse added application headers, cookie storage or authenticators.
 URLSession sends empty Accept and Accept-Language values to suppress system defaults.
 Bootstrap sends exactly one User-Agent with the library token and no application products.
@@ -261,7 +261,7 @@ The request JWE uses RSA-OAEP and A256GCM. Its plaintext contains audience, kid,
 The body contains platform, version and optional build.
 The response JWE uses dir and A256GCM under responseKey. Its plaintext contains requestId, requestDigest, sequence=null and body.
 requestDigest is lowercase SHA-256 of the request JSON without issuedAt, with top-level keys sorted.
-Body retains the order platform, version, build. See `fixtures/v3-config/bootstrap_kat.json`.
+Body retains the order platform, version, build. See `fixtures/bootstrap-config/bootstrap_kat.json`.
 The client checks the response key, algorithms, requestId and requestDigest before reading config fields.
 
 | Field | Meaning |
@@ -296,14 +296,14 @@ Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]
 
 `DB.open` (Swift) and `DBlayer.open` (Kotlin) set `DB.database` and `DBlayer.database`.
 `http` defaults to `UrlSessionEncryptedHttp` or `OkHttpEncryptedHttp` on the origin.
-`transport` defaults to `UrlSessionTransport` or `OkHttpTransport` on the same origin, including the WebSocket at `/api/v3/cable`.
+`transport` defaults to `UrlSessionTransport` or `OkHttpTransport` on the same origin, including the WebSocket at `encrypted.endpoints.cable`.
 
 ```swift
-try DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin), credentials: KeychainCredentials(), modelsJSON: modelsJSON)
+try DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel), credentials: KeychainCredentials(), modelsJSON: modelsJSON)
 ```
 
 ```kotlin
-DBlayer.open(encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin), credentials = KeystoreCredentials(), modelsJson = modelsJson)
+DBlayer.open(encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel), credentials = KeystoreCredentials(), modelsJson = modelsJson)
 ```
 
 Tests can pass their own transport and HTTP replies. A test that opens cable must also implement the 4 WebSocket calls.
@@ -369,7 +369,7 @@ The second answer is final: a second `PERSISTED_QUERY_NOT_FOUND` goes to your ap
 - A mutation is sent again as a new mutation. The server has already taken the first sequence number `N` and answers the miss with it, so the core confirms `N` and removes the pending request. The second send takes `N+1`, new request id and response key, and the core stores it before it sends it, like any mutation. The same `N` with another body would get `SEQUENCE_CONFLICT`.
 - After a restart `sessionResume()` sends the stored request unchanged. A stored hash-only request that is answered with a miss returns that answer, and your app sends the mutation again as usual.
 
-The server registry fills itself. The first call of a document after the app is installed (or after the server lost the registry) costs 2 requests: the miss and the send with the document, which the server stores. Every later call of that document, from any device, is one hash-only request. If the server registers the documents in advance with `rake v3:persisted_queries:register[/path/to/GraphQL]`, there are no misses and every call is one hash-only request.
+The server registry fills itself. The first call of a document after the app is installed (or after the server lost the registry) costs 2 requests: the miss and the send with the document, which the server stores. Every later call of that document, from any device, is one hash-only request. If the server registers the documents in advance through its deployment tooling, there are no misses and every call is one hash-only request.
 
 ## Responses become rows
 
@@ -428,7 +428,7 @@ What a refresh does, in one commit:
 - Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`deleted_by`, a null node, a delete event).
 - A failed request changes nothing.
 
-The V3 event carries identifiers. `changed_by` selects the HTTP reread, and its response updates the database in the usual way.
+The encrypted event carries identifiers. `changed_by` selects the HTTP reread, and its response updates the database in the usual way.
 Events of the plain transport with a full row save that row directly. `joins: :events` adds such a row to loaded selections without server filters.
 A relation with `text:` parameters stores the server response as it was and does not accept event rows.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
@@ -666,3 +666,48 @@ You never write "if the mutation worked, reload the list".
 ## State for the UI
 
 Loading state (idle, loading, error with its kind, has more pages, last loaded time) and the outbox (pending writes, send errors) are live too.
+
+### Application protocol configuration
+
+`EncryptedConfig` requires `endpoints`, `protocolLabel`, `cablePurpose`, and `cableChannel` alongside `origin`, `serverKey`, and `pin`.
+These arguments have no defaults. Paths start with one slash and contain no query or fragment.
+Protocol labels are nonempty and contain no control characters.
+The session operation dictionary maps application names to HTTP paths. The reserved `logout` operation uses `endpoints.logout`.
+
+```swift
+let endpoints = EncryptedEndpoints(
+  graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout",
+  bootstrap: "/api/bootstrap", sessionOperations: ["signIn": "/api/sign-in"]
+)
+let protocolLabel = "example-ws-v1"
+let cablePurpose = "ws.hello"
+let cableChannel = "EncryptedGraphqlChannel"
+let encrypted = EncryptedConfig(
+  origin: origin, serverKey: bundledServerKey, pin: bundledServerPin,
+  endpoints: endpoints, protocolLabel: protocolLabel,
+  cablePurpose: cablePurpose, cableChannel: cableChannel
+)
+let config = try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: appVersion)
+try DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
+```
+
+```kotlin
+val endpoints = EncryptedEndpoints(
+    graphql = "/api/graphql", cable = "/api/cable", logout = "/api/logout",
+    bootstrap = "/api/bootstrap", sessionOperations = mapOf("signIn" to "/api/sign-in")
+)
+val protocolLabel = "example-ws-v1"
+val cablePurpose = "ws.hello"
+val cableChannel = "EncryptedGraphqlChannel"
+val encrypted = EncryptedConfig(
+    origin, bundledServerKey, bundledServerPin, endpoints,
+    protocolLabel, cablePurpose, cableChannel
+)
+val config = DBlayer.serverConfig(encrypted, AppPlatform.ANDROID, appVersion)
+DBlayer.open(encrypted = encrypted, credentials = credentials, modelsJson = modelsJson)
+```
+
+`DB.open`, `DBlayer.open`, and both `serverConfig` functions retain their argument lists.
+Their required encrypted configuration has changed. Applications must supply every protocol value before opening or fetching config.
+Direct `UrlSessionTransport`, `OkHttpTransport`, and `DatabaseTransport` construction requires `cablePath` to open encrypted sockets.
+Omitting it disables encrypted socket opening. HTTP-only construction remains available.

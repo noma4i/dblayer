@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use super::sealed_errors_tests::moment_spec;
 use super::upload_resume_tests::Bytes;
 use crate::transport::encrypted::fake_server_tests::FakeServer;
-use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
+use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::HttpExchange;
 use crate::upload::{UploadInput, UploadSteps};
 
@@ -47,7 +47,7 @@ async fn child(mode: &str) {
         std::fs::remove_file(format!("{path}.mp4")).unwrap();
     }
     let remote = Arc::new(Remote(std::env::var("DBLAYER_UPLOAD_PEER").unwrap()));
-    let database = Database::open(Config { path: Some(path.clone()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() }), Some(remote.clone()), Some(remote.clone())).unwrap();
+    let database = Database::open(Config { path: Some(path.clone()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(remote.clone()), Some(remote.clone())).unwrap();
     database.register_operations(json!([
         {"name": "CreateBlob", "document": "mutation CreateBlob { createBlob { id } }", "rootPath": "createBlob"},
         {"name": "MakeMoment", "document": "mutation MakeMoment { makeMoment { id } }", "rootPath": "makeMoment"}

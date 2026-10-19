@@ -21,7 +21,7 @@ pub fn user_agent(application: Option<String>) -> String {
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply};
 pub use crate::transport::SessionCode;
-pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, SecurityCode, ServerConfig};
+pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, SecurityCode, ServerConfig};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
 pub use live::{LiveChange, LiveSubscription, QueryListener};
 pub use retention::{RetentionChange, RetentionPool};

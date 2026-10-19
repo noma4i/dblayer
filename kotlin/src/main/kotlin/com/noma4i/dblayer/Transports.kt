@@ -76,9 +76,10 @@ class DatabaseTransport(
     private val client: OkHttpClient = OkHttpClient(),
     private val onEvent: (operationName: String, json: String) -> Unit = { _, _ -> },
     origin: String? = null,
+    cablePath: String? = null,
 ) : Transport {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val encryptedSocket = origin?.let { OkHttpEncryptedSocket(it, client) }
+    private val encryptedSocket = origin?.let { OkHttpEncryptedSocket(it, client, cablePath) }
     override suspend fun openCable(): String = (encryptedSocket ?: throw DbException.Invalid("DatabaseTransport requires origin to open cable")).open()
     override suspend fun cableSend(token: String, text: String) = (encryptedSocket ?: throw DbException.Invalid("DatabaseTransport requires origin to send cable text")).send(token, text)
     override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket?.next(token)
@@ -140,9 +141,10 @@ class OkHttpTransport(
     private val endpoint: String,
     private val headers: () -> Map<String, String> = { emptyMap() },
     private val client: OkHttpClient = OkHttpClient(),
+    cablePath: String? = null,
 ) : Transport {
     private val sockets = ConcurrentHashMap<String, okhttp3.WebSocket>()
-    private val encryptedSocket = OkHttpEncryptedSocket(endpoint, client) { headers().toHeaders()["User-Agent"] }
+    private val encryptedSocket = OkHttpEncryptedSocket(endpoint, client, cablePath) { headers().toHeaders()["User-Agent"] }
     override suspend fun openCable(): String = encryptedSocket.open()
     override suspend fun cableSend(token: String, text: String) = encryptedSocket.send(token, text)
     override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket.next(token)

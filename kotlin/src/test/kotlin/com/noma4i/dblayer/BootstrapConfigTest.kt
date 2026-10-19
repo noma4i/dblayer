@@ -14,7 +14,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.*
 
 class BootstrapConfigTest {
-    private val kat = Json.parseToJsonElement(File("../fixtures/v3-config/bootstrap_kat.json").readText()).jsonObject
+    private val kat = Json.parseToJsonElement(File("../fixtures/bootstrap-config/bootstrap_kat.json").readText()).jsonObject
     private fun JsonObject.text(key: String) = getValue(key).jsonPrimitive.content
     private fun decode(text: String) = Base64.getUrlDecoder().decode(text)
     private fun encode(bytes: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
@@ -26,7 +26,7 @@ class BootstrapConfigTest {
     }
     private fun encrypted(origin: String = kat.text("audience")): EncryptedConfig {
         val publicKey = KeyFactory.getInstance("RSA").generatePublic(RSAPublicKeySpec(privateKey.modulus, privateKey.publicExponent))
-        return EncryptedConfig(origin, Base64.getEncoder().encodeToString(publicKey.encoded), kat.text("kid"))
+        return EncryptedConfig(origin, Base64.getEncoder().encodeToString(publicKey.encoded), kat.text("kid"), EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", kat.text("path"), mapOf("otp" to "/api/auth/otp", "confirm" to "/api/auth/confirm", "social" to "/api/auth/social", "support" to "/api/support")), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
     }
     private fun open(token: String): JsonObject {
         val parts = token.split(".")
@@ -76,7 +76,7 @@ class BootstrapConfigTest {
                 val http = object : EncryptedHttp {
                     override suspend fun post(path: String, body: String): EncryptedReply {
                         calls++
-                        assertEquals("/api/v3/bootstrap", path)
+                        assertEquals(kat.text("path"), path)
                         return if (kind == "service") EncryptedReply(503u, "") else EncryptedReply(200u, answer(body, kind))
                     }
                 }
@@ -114,12 +114,12 @@ class BootstrapConfigTest {
             val polluted = OkHttpClient.Builder().addInterceptor { chain ->
                 chain.proceed(chain.request().newBuilder().header("Authorization", "secret").header("Cookie", "secret").header("X-Payload-Encryption", "old").header("X-Request-Signature", "old").build())
             }.build()
-            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), polluted).post("/api/v3/bootstrap", "jwe")
+            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), polluted).post("/api/bootstrap", "jwe")
             assertEquals(302.toUShort(), reply.status)
             assertEquals(1, server.requestCount)
             val request = server.takeRequest()
             assertEquals(listOf(userAgent(null)), request.headers.values("User-Agent"))
-            assertEquals("POST /api/v3/bootstrap", "${request.method} ${request.path}")
+            assertEquals("POST /api/bootstrap", "${request.method} ${request.path}")
             val applicationHeaders = request.headers.names().filter { it.lowercase() !in listOf("host", "content-length", "transfer-encoding", "connection", "user-agent", "accept-encoding") }
             assertEquals(listOf("Content-Type"), applicationHeaders)
             assertEquals("application/jose", request.getHeader("Content-Type"))

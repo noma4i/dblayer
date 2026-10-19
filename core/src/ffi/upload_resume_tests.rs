@@ -4,7 +4,7 @@ use serde_json::json;
 use super::encrypted_tests::ThroughServer;
 use super::sealed_errors_tests::moment_spec;
 use super::session_guards_tests::{Rig, SOCIAL_BODY};
-use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
+use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::upload::{UploadInput, UploadSteps};
 
 pub(super) struct Bytes;
@@ -25,7 +25,7 @@ impl Transport for Bytes {
 }
 
 fn open(rig: &Rig, path: &std::path::Path) -> Arc<Database> {
-    let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: ORIGIN.into(), server_key: PUBLIC_KEY_DER_B64.into(), pin: PIN.into() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone())))).unwrap();
+    let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone())))).unwrap();
     let operations: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);

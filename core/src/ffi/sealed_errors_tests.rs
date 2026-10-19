@@ -4,7 +4,7 @@ use super::encrypted_tests::{SubscriptionsOnly, ThroughServer};
 use super::session_guards_tests::{Rig, SOCIAL_BODY};
 use super::{Config, Database, DbError, EncryptedConfig, SessionCode, Transport};
 use crate::schema::{ActionDeclaration, Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec, RootShape};
-use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
+use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::value::ScalarKind;
 
 const TABLE: [(&str, SessionCode); 11] = [
@@ -40,7 +40,7 @@ pub(super) fn moment_spec() -> ModelSpec {
 }
 
 pub(super) async fn signed_in(rig: &Rig) -> Arc<Database> {
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: PIN.to_string() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))))
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))))
     .unwrap();
     database.register_operations(OPERATIONS.into()).unwrap();
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
@@ -134,7 +134,7 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_l
 }
 
 pub(super) fn graphql_posts(rig: &Rig) -> usize {
-    rig.server.seen().iter().filter(|request| request["path"] == "/api/v3/graphql").count()
+    rig.server.seen().iter().filter(|request| request["path"] == "/api/graphql").count()
 }
 
 #[tokio::test(flavor = "multi_thread")]

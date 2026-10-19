@@ -6,7 +6,6 @@ use super::{AppPlatform, ConfigCode, EncryptedConfig, HttpExchange, SecurityCode
 use super::jwe::{open_plain, random_token, seal_plain};
 use super::key::ServerKey;
 
-const PATH: &str = "/api/v3/bootstrap";
 
 fn invalid(detail: impl ToString) -> TransportError {
     TransportError::Config { code: ConfigCode::InvalidRequest, detail: detail.to_string() }
@@ -34,7 +33,7 @@ pub(super) fn request_plain(config: &EncryptedConfig, platform: AppPlatform, ver
     if build.is_some_and(|build| build.chars().count() > 32) { return Err(invalid("build exceeds 32 characters")); }
     let mut body = json!({ "platform": platform, "version": version });
     if let Some(build) = build { body["build"] = build.into(); }
-    Ok(json!({ "audience": config.origin.trim_end_matches('/'), "kid": config.pin, "method": "POST", "path": PATH, "requestId": request_id, "issuedAt": clock.now().as_secs(), "responseKey": response_key, "body": body }))
+    Ok(json!({ "audience": config.origin.trim_end_matches('/'), "kid": config.pin, "method": "POST", "path": config.endpoints.bootstrap, "requestId": request_id, "issuedAt": clock.now().as_secs(), "responseKey": response_key, "body": body }))
 }
 
 pub(super) fn request_digest(plain: &Value) -> String {
@@ -57,6 +56,7 @@ pub(super) fn accept(token: &str, response_key: &str, request_id: &str, digest: 
 }
 
 pub(crate) async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn Clock) -> Result<ServerConfig, TransportError> {
+    config.validate()?;
     let audience = config.origin.trim_end_matches('/');
     if !super::origin::allowed(audience) { return Err(invalid("the origin must be https or a development host without a path")); }
     let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Security { code: SecurityCode::ServerKeyMismatch, detail: error.to_string() })?;
@@ -65,7 +65,7 @@ pub(crate) async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, 
     let plain = request_plain(config, platform, version, build, clock, &request_id, &response_key)?;
     let digest = request_digest(&plain);
     let token = seal_plain(&key, request_text(&plain).as_bytes()).map_err(authentication)?;
-    let reply = http.post(PATH, token).await?;
+    let reply = http.post(&config.endpoints.bootstrap, token).await?;
     if reply.status != 200 { return Err(TransportError::Http { status: reply.status, body: String::new() }); }
     accept(&reply.body, &response_key, &request_id, &digest)
 }

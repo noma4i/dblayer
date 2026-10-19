@@ -15,7 +15,6 @@ mod session_tests;
 mod wire_tests;
 pub use link::CableLink;
 
-pub const CABLE_PATH: &str = "/api/v3/cable";
 const CLIENT_BYTES: usize = 32 * 1024;
 const SERVER_BYTES: usize = 256 * 1024;
 const FRAME_BUDGET: u64 = 1 << 20;

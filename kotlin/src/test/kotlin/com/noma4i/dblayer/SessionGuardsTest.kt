@@ -63,7 +63,7 @@ private suspend inline fun <reified Failure : Throwable> rejects(block: () -> Un
 }
 
 private fun open(http: ScriptedHttp, credentials: CountedCredential, path: String? = null, pin: String = PIN) =
-    Database.open(config = Config(path, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", KEY, pin), credentials = credentials, http = http)
+    Database.open(config = Config(path, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", KEY, pin, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to "/api/auth/otp", "confirm" to "/api/auth/confirm", "social" to "/api/auth/social", "support" to "/api/support")), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
 
 private inline fun withDirectory(block: (File) -> Unit) {
     val directory = Files.createTempDirectory("dblayer-session").toFile()
@@ -98,7 +98,7 @@ class SessionGuardsTest {
 
             rejects<DbException.Http> { database.sessionResume() }
 
-            assertEquals("$status", listOf("/api/v3/auth/otp", "/api/v3/auth/otp"), http.paths.toList())
+            assertEquals("$status", listOf("/api/auth/otp", "/api/auth/otp"), http.paths.toList())
             assertEquals("$status", issued to (1 to 0), credentials.current to (credentials.sets to credentials.clears))
         }
     }
@@ -106,7 +106,7 @@ class SessionGuardsTest {
     @Test
     fun resumeAfterARestartSendsThePendingRequestAndNothingWithoutOne() = bounded {
         withDirectory { directory ->
-            val path = File(directory, "v3.sqlite").path
+            val path = File(directory, "session.sqlite").path
             val http = ScriptedHttp()
             val credentials = CountedCredential()
             val first = open(http, credentials, path)
@@ -116,7 +116,7 @@ class SessionGuardsTest {
 
             val restarted = open(http, credentials, path)
             rejects<DbException.Http> { restarted.sessionResume() }
-            assertEquals(listOf("/api/v3/auth/otp", "/api/v3/auth/otp"), http.paths.toList())
+            assertEquals(listOf("/api/auth/otp", "/api/auth/otp"), http.paths.toList())
 
             val quiet = ScriptedHttp()
             val nothing = open(quiet, CountedCredential(), File(directory, "fresh.sqlite").path)
@@ -128,7 +128,7 @@ class SessionGuardsTest {
     @Test
     fun aLogoutWhoseAnswerWasLostIsResentAfterARestartAndKeepsTheCredentialUntilItIsRevoked() = bounded {
         withDirectory { directory ->
-            val path = File(directory, "v3.sqlite").path
+            val path = File(directory, "session.sqlite").path
             val http = ScriptedHttp()
             val credentials = CountedCredential()
             val first = open(http, credentials, path)
@@ -139,7 +139,7 @@ class SessionGuardsTest {
             val restarted = open(http, credentials, path)
             rejects<DbException.Http> { restarted.sessionResume() }
 
-            assertEquals(listOf("/api/v3/logout", "/api/v3/logout"), http.paths.toList())
+            assertEquals(listOf("/api/logout", "/api/logout"), http.paths.toList())
             assertEquals(43 to (1 to 0), credentials.current?.length to (credentials.sets to credentials.clears))
         }
     }
@@ -160,7 +160,7 @@ class SessionGuardsTest {
     fun aClosedCableLeavesTheCredentialInTheAppStore() = bounded {
         val http = ScriptedHttp()
         val credentials = CountedCredential()
-        DBlayer.open(encrypted = EncryptedConfig("https://api.example.com", KEY, PIN), credentials = credentials, transport = DatabaseTransport(cable = { null }), modelsJson = modelsJSON, http = http)
+        DBlayer.open(encrypted = EncryptedConfig("https://api.example.com", KEY, PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to "/api/auth/otp", "confirm" to "/api/auth/confirm", "social" to "/api/auth/social", "support" to "/api/support")), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, transport = DatabaseTransport(cable = { null }), modelsJson = modelsJSON, http = http)
         rejects<DbException.Http> { DBlayer.database.sessionCall("otp", OTP) }
         val issued = credentials.current
         val connection = CableConnection("/test", "token", { _, _ -> ClosingSocket() }, ManualTimers().timers)

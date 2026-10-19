@@ -86,7 +86,7 @@ extension BridgeProbeTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func v3NodesKeepsDuplicatesInResponseOrder() async throws {
+  func nodesKeepsDuplicatesInResponseOrder() async throws {
     let transport = try openNodeRig()
     transport.enqueue("ChatsByIds", reply: #"{"data":{"nodes":[{"id":"c2","title":"old","shareUrl":"kept"},null,{"id":"c1","title":"middle"},{"id":"c2","title":"last"}]}}"#)
     let rows = try await Chat.nodes(["c2", "missing", "c1", "c2"])
@@ -96,7 +96,7 @@ extension BridgeProbeTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func v3NullPathsClearAndMissingPathsPreserve() async throws {
+  func nullPathsClearAndMissingPathsPreserve() async throws {
     var models = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [[String: Any]])
     let index = try #require(models.firstIndex { $0["key"] as? String == "Chat" })
     var fields = try #require(models[index]["fields"] as? [[String: Any]])

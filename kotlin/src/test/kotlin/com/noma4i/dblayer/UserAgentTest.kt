@@ -29,10 +29,10 @@ class UserAgentTest {
                     val origin = server.url("/").toString()
                     val headers = application?.let { mapOf("uSeR-aGeNt" to it) } ?: emptyMap()
                     val client = OkHttpClient()
-                    val transport = OkHttpTransport(origin, { headers }, client)
+                    val transport = OkHttpTransport(origin, { headers }, client, cablePath = "/api/cable")
                     val operation = TransportRequest("query Probe { id }", "Probe", "{}")
                     when (path) {
-                        "encrypted" -> OkHttpEncryptedHttp(origin, client).post("/api/v3/session", "jwe")
+                        "encrypted" -> OkHttpEncryptedHttp(origin, client).post("/api/session", "jwe")
                         "graphql" -> runCatching { transport.query(operation) }
                         "signed" -> GraphQLHttpTransport(origin, client, RequestSigner("secret"), ServerClock(), "1", "1", "device") { "token" }.send("Probe", "hash", null, "{}".toByteArray())
                         "put" -> transport.put(origin, headers, byteArrayOf(1, 2), Progress())

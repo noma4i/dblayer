@@ -56,16 +56,6 @@ fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
     }
 }
 
-fn path_of(operation: &str) -> Result<String, DbError> {
-    match operation {
-        "otp" | "confirm" => Ok(format!("/api/v3/auth/{operation}")),
-        "support" => Ok("/api/v3/support".to_string()),
-        "social" => Ok("/api/v3/auth/provider".to_string()),
-        "logout" => Ok(core::LOGOUT_PATH.to_string()),
-        other => Err(DbError::Invalid { detail: format!("unknown session operation {other}") }),
-    }
-}
-
 pub(super) async fn resume(client: Arc<EncryptedClient>, sync: Option<crate::sync::Sync>) -> Result<Option<String>, DbError> {
     let serial = match &sync {
         Some(sync) => Some(sync.inner.outbox_gate.lock().await),
@@ -106,7 +96,8 @@ pub(super) fn wire(
 impl Database {
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
         let client = self.session()?.clone();
-        let (path, body) = (path_of(&operation)?, serde_json::from_str::<Value>(&body_json)?);
+        let path = client.session_path(&operation).ok_or_else(|| DbError::Invalid { detail: format!("unknown session operation {operation}") })?.to_string();
+        let body = serde_json::from_str::<Value>(&body_json)?;
         let answer = executor()?.spawn(async move { client.mutate(&path, body).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(typed)?;
         Ok(refused(answer)?.body.to_string())
     }

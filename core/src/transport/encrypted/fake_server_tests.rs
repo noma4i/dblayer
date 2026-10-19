@@ -7,13 +7,13 @@ use rsa::{Oaep, RsaPrivateKey};
 use serde_json::{json, Value};
 use sha1::Sha1;
 
-use super::vectors;
+use super::vectors_tests;
 
 pub const WINDOW: i64 = 120;
 const FIELDS: [&str; 10] = ["audience", "kid", "method", "path", "requestId", "issuedAt", "responseKey", "credential", "sequence", "body"];
 
 pub fn private_key() -> RsaPrivateKey {
-    RsaPrivateKey::from_pkcs1_pem(vectors::SERVER_PRIVATE_KEY_PEM).expect("fixture key parses")
+    RsaPrivateKey::from_pkcs1_pem(vectors_tests::server_private_key_pem()).expect("fixture key parses")
 }
 
 fn token_ok(value: &Value) -> bool {
@@ -45,7 +45,7 @@ pub fn open_request(token: &str, path: &str, now: i64) -> Result<Value, String> 
     if keys != expected {
         return Err(format!("fields {keys:?}"));
     }
-    if object["audience"] != vectors::ORIGIN || object["kid"] != vectors::PIN || object["method"] != "POST" || object["path"] != path {
+    if object["audience"] != vectors_tests::origin() || object["kid"] != vectors_tests::pin() || object["method"] != "POST" || object["path"] != path {
         return Err("destination".into());
     }
     let issued = object["issuedAt"].as_i64().ok_or("issuedAt")?;
@@ -225,7 +225,7 @@ impl FakeServer {
 
     fn answer(&self, state: &mut State, path: &str, data: &Value) -> String {
         let credential_digest: String = Sha256::digest(data["credential"].as_str().unwrap().as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
-        let auth = path.starts_with("/api/v3/auth/");
+        let auth = path.starts_with("/api/auth/");
         if auth && data["sequence"] == 1 && state.session.as_ref().is_none_or(|session| session.digest != credential_digest) {
             state.session = Some(Session { digest: credential_digest.clone(), ..Session::default() });
         }
@@ -233,7 +233,7 @@ impl FakeServer {
             return seal_response(data, None, json!({ "error": "UNAUTHENTICATED" }));
         };
         let (forget, refuse) = (state.faults.forget_registrations, state.faults.refuse_hashes);
-        let resolved = if path == "/api/v3/graphql" && forget { Err("PERSISTED_QUERY_NOT_FOUND") } else if path == "/api/v3/graphql" && refuse { Err("INVALID_INPUT") } else if path == "/api/v3/graphql" { document_of(&mut state.registry, &data["body"]) } else { Ok(Value::Null) };
+        let resolved = if path == "/api/graphql" && forget { Err("PERSISTED_QUERY_NOT_FOUND") } else if path == "/api/graphql" && refuse { Err("INVALID_INPUT") } else if path == "/api/graphql" { document_of(&mut state.registry, &data["body"]) } else { Ok(Value::Null) };
         if let Some((code, confirmed)) = state.faults.refuse_next.take() {
             let spent = data["sequence"].as_i64().filter(|_| confirmed);
             let answer = seal_response(data, spent, json!({ "error": code }));
@@ -265,12 +265,12 @@ impl FakeServer {
             return seal_response(data, None, json!({ "error": "SESSION_ENDED" }));
         }
         let result = match path {
-            "/api/v3/logout" => {
+            "/api/logout" => {
                 session.ended = true;
                 json!({ "revoked": true })
             }
-            "/api/v3/auth/confirm" => json!({ "error": "INVALID_CODE" }),
-            "/api/v3/graphql" => match &resolved {
+            "/api/auth/confirm" => json!({ "error": "INVALID_CODE" }),
+            "/api/graphql" => match &resolved {
                 Ok(document) => json!({ "data": state.reply.clone().unwrap_or_else(|| json!({ "done": document })) }),
                 Err(code) => persisted_failure(code),
             },

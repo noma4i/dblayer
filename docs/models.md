@@ -308,7 +308,7 @@ _online = Live(Presence.where(Presence.room == "lobby"))
 val online by Presence.where(Presence.room eq "lobby").collectAsLive()
 ```
 
-### V3 notices in memory
+### Notices in memory
 
 A local scope of a memory model accepts `updates` without `fetch`. A disk model must not declare it.
 The subscription starts at the first reader of the scope and is shared between readers. It closes after the last reader leaves, after `live_linger`.

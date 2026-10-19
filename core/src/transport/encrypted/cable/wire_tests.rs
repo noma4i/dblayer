@@ -98,6 +98,7 @@ impl Peer {
         self.incoming.send(SocketEvent::Text(challenge.to_string())).unwrap();
         let subscribe: Value = serde_json::from_str(&self.outgoing.recv().await.unwrap()).unwrap();
         assert_eq!(subscribe["command"], "subscribe");
+        assert_eq!(subscribe["identifier"], json!({"channel":config.cable_channel}).to_string());
         self.incoming.send(SocketEvent::Text(json!({"type":"confirm_subscription"}).to_string())).unwrap();
         let hello: Value = serde_json::from_str(&self.outgoing.recv().await.unwrap()).unwrap();
         let data: Value = serde_json::from_str(hello["data"].as_str().unwrap()).unwrap();
@@ -113,7 +114,7 @@ impl Peer {
         let salt = keys::decode(&challenge["challenge"]).unwrap();
         let hkdf = hkdf::Hkdf::<Sha256>::new(Some(&salt), &ikm);
         for (direction, key) in [("s2c", &mut self.send_key), ("c2s", &mut self.receive_key)] {
-            let info = ["yupi-v3-ws-v1", direction, &config.pin, &config.origin, CABLE_PATH].join("\0");
+            let info = [&config.protocol_label, direction, &config.pin, &config.origin, &config.endpoints.cable].join("\0");
             hkdf.expand(info.as_bytes(), key).unwrap();
         }
         let digest: String = Sha256::digest(salt).iter().map(|byte| format!("{byte:02x}")).collect();
@@ -422,7 +423,7 @@ async fn authentication_refusal_before_ready_stops_without_reopening() {
 #[async_trait]
 impl crate::transport::HttpExchange for Http {
     async fn post(&self, path: &str, token: String) -> Result<crate::transport::HttpReply, TransportError> {
-        assert_eq!(path, "/api/v3/graphql");
+        assert_eq!(path, "/api/graphql");
         let key = self.key.decrypt(Oaep::new::<sha1::Sha1>(), &URL_SAFE_NO_PAD.decode(token.split('.').nth(1).unwrap()).unwrap()).unwrap();
         let request: Value = serde_json::from_slice(&super::link_tests::decrypt(&token, &key)).unwrap();
         assert_eq!(request["body"]["operationName"], "ChatNode");
@@ -476,7 +477,7 @@ async fn no_socket_or_timer_work_without_subscribers() {
     let (outgoing, mut sent) = mpsc::unbounded_channel();
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
     let connect = Arc::new(FakeConnect { socket, opens: AtomicUsize::new(0) });
-    let config = EncryptedConfig { origin: "https://example.test".into(), server_key: String::new(), pin: String::new() };
+    let config = EncryptedConfig { origin: "https://example.test".into(), server_key: String::new(), pin: String::new(), ..crate::transport::encrypted::protocol_tests::config() };
     let cable = CableSubscriptions::new(config, Arc::new(|| panic!("idle cable read credential")), connect.clone(), Connectivity::new());
     cable.settled().await.unwrap();
     tokio::time::advance(std::time::Duration::from_secs(100)).await;

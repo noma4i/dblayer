@@ -9,12 +9,32 @@ use super::*;
 use super::bootstrap::{fetch_with, request_plain, request_text, request_digest, accept};
 use crate::pacing::ManualClock;
 
-fn kat() -> Value { serde_json::from_str(include_str!("../../../../fixtures/v3-config/bootstrap_kat.json")).unwrap() }
+fn kat() -> Value { serde_json::from_str(include_str!("../../../../fixtures/bootstrap-config/bootstrap_kat.json")).unwrap() }
+
+struct ConfiguredPath;
+
+#[async_trait::async_trait]
+impl HttpExchange for ConfiguredPath {
+    async fn post(&self, path: &str, _: String) -> Result<HttpReply, TransportError> {
+        assert_eq!(path, "/custom/bootstrap");
+        Ok(HttpReply { status: 503, body: String::new() })
+    }
+}
+
+#[tokio::test]
+async fn sends_bootstrap_to_the_application_path() {
+    let mut config = configuration();
+    config.endpoints.bootstrap = "/custom/bootstrap".into();
+    let result = fetch_with(&config, AppPlatform::Ios, "1.2", None, Arc::new(ConfiguredPath), &ManualClock::new(Duration::from_secs(1))).await;
+    assert!(matches!(result, Err(TransportError::Http { status: 503, .. })));
+}
 fn text<'a>(value: &'a Value, key: &str) -> &'a str { value[key].as_str().unwrap() }
 fn configuration() -> EncryptedConfig {
     let k = kat();
     let private = RsaPrivateKey::from_pkcs1_pem(text(&k, "rsa_private_pem")).unwrap();
-    EncryptedConfig { origin: text(&k, "audience").into(), server_key: STANDARD.encode(private.to_public_key().to_public_key_der().unwrap().as_bytes()), pin: text(&k, "kid").into() }
+    let mut config = EncryptedConfig { origin: text(&k, "audience").into(), server_key: STANDARD.encode(private.to_public_key().to_public_key_der().unwrap().as_bytes()), pin: text(&k, "kid").into(), ..crate::transport::encrypted::protocol_tests::config() };
+    config.endpoints.bootstrap = text(&k, "path").into();
+    config
 }
 fn decrypt_request(token: &str) -> String {
     let k = kat();
@@ -98,7 +118,7 @@ struct Http { calls: AtomicUsize, status: u16 }
 impl HttpExchange for Http {
     async fn post(&self, path: &str, token: String) -> Result<HttpReply, TransportError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(path, "/api/v3/bootstrap");
+        assert_eq!(path, text(&kat(), "path"));
         let plain: Value = serde_json::from_str(&decrypt_request(&token)).unwrap();
         assert!(plain.get("credential").is_none() && plain.get("sequence").is_none());
         if self.status != 200 { return Ok(HttpReply { status: self.status, body: String::new() }); }

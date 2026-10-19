@@ -48,11 +48,11 @@ struct DatabaseTransportTests {
     let server = try BootstrapListener(responseStatus: "400 Bad Request")
     defer { server.listener.cancel() }
     let origin = try await server.start()
-    let transport = DatabaseTransport(origin: origin, cable: { nil })
+    let transport = DatabaseTransport(origin: origin, cablePath: "/api/cable", cable: { nil })
 
     await #expect(throws: DbError.self) { _ = try await transport.openCable() }
     let request = try #require(server.requests.first)
-    #expect(request.hasPrefix("GET /api/v3/cable HTTP/1.1\r\n"))
+    #expect(request.hasPrefix("GET /api/cable HTTP/1.1\r\n"))
     #expect(!request.lowercased().contains("sec-websocket-protocol:"))
     await transport.cableClose(token: "closed")
     #expect(await transport.cableNext(token: "closed") == nil)

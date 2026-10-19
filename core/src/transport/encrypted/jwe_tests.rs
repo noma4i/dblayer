@@ -1,21 +1,21 @@
 use serde_json::{json, Value};
 
 use super::fake_server_tests::{open_request, seal_response};
-use super::vectors::*;
+use super::vectors_tests::*;
 use super::*;
 
 fn plain_from_ruby() -> Value {
-    serde_json::from_str(REQUEST_PLAIN).unwrap()
+    serde_json::from_str(super::vectors_tests::request_plain()).unwrap()
 }
 
 fn request_plain() -> RequestPlain {
     RequestPlain {
-        audience: ORIGIN.to_string(),
-        kid: PIN.to_string(),
-        path: "/api/v3/graphql".to_string(),
+        audience: origin().to_string(),
+        kid: pin().to_string(),
+        path: "/api/graphql".to_string(),
         request_id: "11111111-2222-4333-8444-555555555555".to_string(),
         issued_at: 1_800_000_000,
-        response_key: PUBLISHED_RESPONSE_KEY.to_string(),
+        response_key: published_response_key().to_string(),
         credential: "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8".to_string(),
         sequence: Some(2),
         body: json!({ "query": "mutation { x }" }),
@@ -27,31 +27,31 @@ fn responses_from_the_ruby_server_open_with_the_request_response_key() {
     let key = plain_from_ruby()["responseKey"].as_str().unwrap().to_string();
     let request_id = plain_from_ruby()["requestId"].as_str().unwrap().to_string();
 
-    let accepted = open_response(RESPONSE_OK, &key).unwrap();
+    let accepted = open_response(response_ok(), &key).unwrap();
     assert_eq!(accepted, ResponsePlain { request_id: request_id.clone(), sequence: Some(1), body: json!({ "data": { "x": { "ok": true } } }) });
-    let refused = open_response(RESPONSE_CONFLICT, &key).unwrap();
+    let refused = open_response(response_conflict(), &key).unwrap();
     assert_eq!(refused, ResponsePlain { request_id, sequence: None, body: json!({ "error": "SEQUENCE_CONFLICT" }) });
-    let published = open_response(PUBLISHED_RESPONSE, PUBLISHED_RESPONSE_KEY).unwrap();
+    let published = open_response(published_response(), published_response_key()).unwrap();
     assert_eq!(published, ResponsePlain { request_id: "11111111-2222-4333-8444-555555555555".to_string(), sequence: Some(2), body: json!({ "revoked": true }) });
 }
 
 #[test]
 fn a_response_is_refused_when_key_header_or_ciphertext_do_not_match() {
     let key = plain_from_ruby()["responseKey"].as_str().unwrap().to_string();
-    let parts: Vec<&str> = RESPONSE_OK.split('.').collect();
+    let parts: Vec<&str> = response_ok().split('.').collect();
     let header = |json: &str| base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, json);
     let tampered_tag = format!("{}.{}.{}.{}.{}", parts[0], parts[1], parts[2], parts[3], "A".repeat(parts[4].len()));
     let extra_header = format!("{}.{}.{}.{}.{}", header(r#"{"alg":"dir","enc":"A256GCM","zip":"DEF"}"#), parts[1], parts[2], parts[3], parts[4]);
     let other_alg = format!("{}.{}.{}.{}.{}", header(r#"{"alg":"A256KW","enc":"A256GCM"}"#), parts[1], parts[2], parts[3], parts[4]);
     let with_key_segment = format!("{}.AAAA.{}.{}.{}", parts[0], parts[2], parts[3], parts[4]);
     let cases: [(&str, &str); 7] = [
-        (RESPONSE_OK, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+        (response_ok(), "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
         (&tampered_tag, &key),
         (&extra_header, &key),
         (&other_alg, &key),
         (&with_key_segment, &key),
         ("a.b.c", &key),
-        (RESPONSE_OK, "short"),
+        (response_ok(), "short"),
     ];
     for (token, response_key) in cases {
         assert!(open_response(token, response_key).is_err(), "{token}");
@@ -61,26 +61,26 @@ fn a_response_is_refused_when_key_header_or_ciphertext_do_not_match() {
 #[test]
 fn the_test_server_opens_the_ruby_client_mutation_and_read_requests_and_the_fields_match() {
     let mutation = plain_from_ruby();
-    let read: Value = serde_json::from_str(READ_PLAIN).unwrap();
+    let read: Value = serde_json::from_str(read_plain()).unwrap();
 
-    assert_eq!(open_request(REQUEST_JWE, "/api/v3/graphql", mutation["issuedAt"].as_i64().unwrap()).unwrap(), mutation);
-    assert_eq!(open_request(READ_JWE, "/api/v3/graphql", read["issuedAt"].as_i64().unwrap()).unwrap(), read);
+    assert_eq!(open_request(request_jwe(), mutation["path"].as_str().unwrap(), mutation["issuedAt"].as_i64().unwrap()).unwrap(), mutation);
+    assert_eq!(open_request(read_jwe(), read["path"].as_str().unwrap(), read["issuedAt"].as_i64().unwrap()).unwrap(), read);
 }
 
 #[test]
 fn a_sealed_request_opens_on_the_server_side_with_exactly_the_ten_fields() {
-    let token = seal_request(&ServerKey::parse(PUBLIC_KEY_DER_B64, PIN).unwrap(), &request_plain()).unwrap();
+    let token = seal_request(&ServerKey::parse(public_key_der_b64(), pin()).unwrap(), &request_plain()).unwrap();
 
     assert_eq!(token.split('.').count(), 5);
-    let opened = open_request(&token, "/api/v3/graphql", 1_800_000_000).unwrap();
+    let opened = open_request(&token, "/api/graphql", 1_800_000_000).unwrap();
     assert_eq!(opened, json!({
-        "audience": ORIGIN, "kid": PIN, "method": "POST", "path": "/api/v3/graphql",
-        "requestId": "11111111-2222-4333-8444-555555555555", "issuedAt": 1_800_000_000, "responseKey": PUBLISHED_RESPONSE_KEY,
+        "audience": origin(), "kid": pin(), "method": "POST", "path": "/api/graphql",
+        "requestId": "11111111-2222-4333-8444-555555555555", "issuedAt": 1_800_000_000, "responseKey": published_response_key(),
         "credential": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8", "sequence": 2, "body": { "query": "mutation { x }" }
     }));
     let read = RequestPlain { sequence: None, ..request_plain() };
-    let token = seal_request(&ServerKey::parse(PUBLIC_KEY_DER_B64, PIN).unwrap(), &read).unwrap();
-    assert!(open_request(&token, "/api/v3/graphql", 1_800_000_000).unwrap()["sequence"].is_null());
+    let token = seal_request(&ServerKey::parse(public_key_der_b64(), pin()).unwrap(), &read).unwrap();
+    assert!(open_request(&token, "/api/graphql", 1_800_000_000).unwrap()["sequence"].is_null());
 }
 
 #[test]

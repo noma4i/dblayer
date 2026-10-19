@@ -43,8 +43,8 @@ async fn a_queued_create_whose_answer_was_lost_is_executed_once_by_resume_and_th
         serde_json::to_string(&vec![super::sealed_errors_tests::moment_spec()]).unwrap(),
         clock.clone(),
         |db, clock| {
-            use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
-            let config = crate::transport::EncryptedConfig { origin: ORIGIN.into(), pin: PIN.into(), server_key: PUBLIC_KEY_DER_B64.into() };
+            use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
+            let config = crate::transport::EncryptedConfig { origin: origin().into(), pin: pin().into(), server_key: public_key_der_b64().into(), ..crate::transport::encrypted::protocol_tests::config() };
             let client = Arc::new(crate::transport::EncryptedClient::new(&config, rig.server.clone(), Arc::new(crate::transport::encrypted::fake_server_tests::MemoryCredentials::default()), db.clone(), clock.clone()).unwrap());
             let rest = Arc::new(super::transport::ForeignTransport(Arc::new(super::encrypted_tests::SubscriptionsOnly)));
             Ok((Some(Arc::new(crate::transport::EncryptedTransport::new(client.clone(), rest))), Some(client)))

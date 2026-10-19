@@ -14,7 +14,7 @@ import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-internal class OkHttpEncryptedSocket(private val origin: String, private val client: OkHttpClient, private val applicationUserAgent: () -> String? = { null }) {
+internal class OkHttpEncryptedSocket(private val origin: String, private val client: OkHttpClient, private val cablePath: String?, private val applicationUserAgent: () -> String? = { null }) {
     private class Connection {
         val opened = CompletableDeferred<Unit>()
         val events = Channel<EncryptedSocketEvent>(Channel.UNLIMITED)
@@ -34,7 +34,7 @@ internal class OkHttpEncryptedSocket(private val origin: String, private val cli
 
     suspend fun open(): String {
         val url = try {
-            origin.toHttpUrl().newBuilder().encodedPath("/api/v3/cable").query(null).fragment(null).build()
+            origin.toHttpUrl().newBuilder().encodedPath(requireNotNull(cablePath) { "cable path is required" }).query(null).fragment(null).build()
         } catch (error: IllegalArgumentException) {
             throw DbException.Invalid(error.message ?: "invalid cable origin")
         }

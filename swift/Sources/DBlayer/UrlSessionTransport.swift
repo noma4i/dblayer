@@ -8,17 +8,17 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   private let lock = NSLock()
   private var sockets: [String: URLSessionWebSocketTask] = [:]
 
-  public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared) {
+  public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared, cablePath: String? = nil) {
     self.endpoint = endpoint
     self.headers = headers
     self.session = session
-    self.encryptedCable = UrlSessionCable(origin: endpoint, applicationUserAgent: {
+    self.encryptedCable = UrlSessionCable(origin: endpoint, cablePath: cablePath, applicationUserAgent: {
       headers().first { $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame }?.value
     }) { session.webSocketTask(with: $0) }
   }
 
-  public convenience init(endpoint: URL, headers: [String: String]) {
-    self.init(endpoint: endpoint, headers: { headers })
+  public convenience init(endpoint: URL, headers: [String: String], cablePath: String? = nil) {
+    self.init(endpoint: endpoint, headers: { headers }, cablePath: cablePath)
   }
 
   public func query(request: TransportRequest) async throws -> String { try await post(request, kind: .query) }

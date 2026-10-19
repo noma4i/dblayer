@@ -46,13 +46,15 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
 
 final class UrlSessionCable: @unchecked Sendable {
   private let origin: URL?
+  private let cablePath: String?
   private let applicationUserAgent: @Sendable () -> String?
   private let makeSocket: @Sendable (URLRequest) -> any CableWebSocket
   private let lock = NSLock()
   private var sockets: [String: any CableWebSocket] = [:]
 
-  init(origin: URL?, applicationUserAgent: @escaping @Sendable () -> String? = { nil }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
+  init(origin: URL?, cablePath: String?, applicationUserAgent: @escaping @Sendable () -> String? = { nil }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
     self.origin = origin
+    self.cablePath = cablePath
     self.applicationUserAgent = applicationUserAgent
     self.makeSocket = makeSocket
   }
@@ -63,12 +65,12 @@ final class UrlSessionCable: @unchecked Sendable {
 
   func open() async throws -> String {
     do { try Task.checkCancellation() } catch { throw TransportFailure.classifySocket(error) }
-    guard let origin, var url = URLComponents(url: origin, resolvingAgainstBaseURL: false),
+    guard let cablePath, let origin, var url = URLComponents(url: origin, resolvingAgainstBaseURL: false),
           ["https", "http"].contains(url.scheme), url.host != nil else {
       throw DbError.Invalid(detail: "cable requires an HTTP origin")
     }
     url.scheme = url.scheme == "https" ? "wss" : "ws"
-    url.path = "/api/v3/cable"
+    url.percentEncodedPath = cablePath
     url.query = nil
     url.fragment = nil
     guard let target = url.url else { throw DbError.Invalid(detail: "invalid cable origin") }

@@ -33,8 +33,8 @@ struct UrlSessionCableTests {
 
   @Test func textUsesCableURLAndSeparateTokens() async throws {
     let socket = Socket()
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com:8443/ignored?secret=value")) { request in
-      #expect(request.url?.absoluteString == "wss://example.com:8443/api/v3/cable")
+    let cable = UrlSessionCable(origin: URL(string: "https://example.com:8443/ignored?secret=value"), cablePath: "/api/cable") { request in
+      #expect(request.url?.absoluteString == "wss://example.com:8443/api/cable")
       #expect(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol") == nil)
       return socket
     }
@@ -57,7 +57,7 @@ struct UrlSessionCableTests {
       socket.closeReason = Data("UNAUTHENTICATED".utf8)
     }
     socket.incoming = code == 1003 ? .success(.data(Data([1]))) : .failure(URLError(.networkConnectionLost))
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com")) { _ in socket }
+    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in socket }
     let token = try await cable.open()
     guard case let .closed(actual, reason) = await cable.next(token: token) else {
       Issue.record("expected a close event")
@@ -72,7 +72,7 @@ struct UrlSessionCableTests {
 
   @Test func cancelClosesAndRemovesOnlyItsSocket() async throws {
     let socket = Socket()
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com")) { _ in socket }
+    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in socket }
     let token = try await cable.open()
     await cable.close(token: token)
     #expect(socket.cancelled == .normalClosure)
@@ -84,7 +84,7 @@ struct UrlSessionCableTests {
   func sendFailureIsTyped(code: URLError.Code) async throws {
     let socket = Socket()
     socket.sendError = URLError(code)
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com")) { _ in socket }
+    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in socket }
     let token = try await cable.open()
     do {
       try await cable.send(token: token, text: "frame")
@@ -95,7 +95,7 @@ struct UrlSessionCableTests {
   }
 
   @Test func cancelledOpenFailsWithTypedErrorBeforeCreatingSocket() async throws {
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com")) { _ in
+    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in
       Issue.record("cancelled open created a socket")
       return Socket()
     }
@@ -116,7 +116,7 @@ struct UrlSessionCableTests {
   @Test func connectionFailureRejectsOpenAndClosesSocket() async throws {
     let socket = Socket()
     socket.openError = URLError(.cannotConnectToHost)
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com")) { _ in socket }
+    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in socket }
     do {
       _ = try await cable.open()
       Issue.record("open returned before the WebSocket connected")

@@ -95,7 +95,7 @@ class NodeReadTest {
     }
 
     @Test
-    fun v3NodesKeepsDuplicatesInResponseOrder() = bounded {
+    fun nodesKeepsDuplicatesInResponseOrder() = bounded {
         val transport = open()
         transport.enqueue("ChatsByIds", """{"data":{"nodes":[{"id":"c2","title":"old","shareUrl":"kept"},null,{"id":"c1","title":"middle"},{"id":"c2","title":"last"}]}}""")
         val rows = Chat.nodes(listOf("c2", "missing", "c1", "c2"))
@@ -105,7 +105,7 @@ class NodeReadTest {
     }
 
     @Test
-    fun v3NullPathsClearAndMissingPathsPreserve() = bounded {
+    fun nullPathsClearAndMissingPathsPreserve() = bounded {
         val models = Json.parseToJsonElement(modelsJSON).jsonArray.map { element ->
             val model = element.jsonObject
             if (model["key"]?.jsonPrimitive?.content != "Chat") model else JsonObject(model + ("fields" to JsonArray(model.getValue("fields").jsonArray.map {

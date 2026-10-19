@@ -18,6 +18,7 @@ source "$root/scripts/check_steps.sh"
 steps=(
   "cheap|fixtures|120|*|bash scripts/gen_fixtures.sh --check"
   "cheap|zoo|120|*|bash scripts/check_zoo.sh"
+  "cheap|protocol-config|120|*|bash scripts/check_protocol_config.sh && bash scripts/check_protocol_config.sh --selftest"
   "cheap|docs|120|*|bash scripts/check_docs.sh"
   "cheap|invariants|120|*|bash scripts/check_invariants.sh"
   "cheap|invariants-selftest|120|*|bash scripts/check_invariants_selftest.sh"

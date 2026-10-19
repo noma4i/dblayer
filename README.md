@@ -15,7 +15,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - **GraphQL without glue code.** Register your operations and point models at them. Responses of queries, mutations and subscription events are normalized into rows by one set of rules. Refetching after mutations, reconnects and app resume is automatic.
 - **No flicker.** One change is one commit. Observers see cascades, replacements and id swaps as a single transition, in order. Pull-to-refresh replaces data in one commit with no empty state in between.
 - **Encrypted sessions.** The core builds and opens encrypted requests, numbers mutations and stores a pending mutation before it is sent, so a lost answer is repeated unchanged after a restart. Session recovery delivers the answer to its queued mutation or upload step in Swift and Kotlin. The app supplies only the HTTP post and the credential storage. See [server sync](docs/server-sync.md).
-- **Encrypted cable primitives.** Rust `CableLink` authenticates the server pin, creates the V3 hello and encrypts subscription frames with directional keys. See [cable protocol](docs/cable-protocol.md).
+- **Encrypted cable primitives.** Rust `CableLink` authenticates the server pin, creates the encrypted hello and encrypts subscription frames with directional keys. See [cable protocol](docs/cable-protocol.md).
 - **Files built in.** A `file` field stores binary data. You never choose where bytes live: SQLite or disk.
 - **Background delivery.** Observers receive updates from library threads. Disk reads use a bounded WAL connection pool beside the writer. Releasing synchronization stops its background work. See [threading](docs/threading.md).
 - **One core, two platforms.** All logic is Rust. Swift and Kotlin contain no business logic.
@@ -130,7 +130,7 @@ if (config.updateRequired) showUpdate(config.storeUrl)
 
 ```swift
 try DB.open(
-  encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin),
+  encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
   credentials: KeychainCredentials(), modelsJSON: modelsJSON, path: path
 )
 _ = try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
@@ -138,7 +138,7 @@ _ = try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+6
 
 ```kotlin
 DBlayer.open(
-  encrypted = EncryptedConfig("https://api.example.com", serverKey, serverPin),
+  encrypted = EncryptedConfig("https://api.example.com", serverKey, serverPin, endpoints, protocolLabel, cablePurpose, cableChannel),
   credentials = KeystoreCredentials(), modelsJson = modelsJSON, path = path,
 )
 DBlayer.database.sessionCall("otp", """{"phone":"+61400000000"}""")
