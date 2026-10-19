@@ -12,7 +12,9 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     self.endpoint = endpoint
     self.headers = headers
     self.session = session
-    self.encryptedCable = UrlSessionCable(origin: endpoint) { session.webSocketTask(with: $0) }
+    self.encryptedCable = UrlSessionCable(origin: endpoint, applicationUserAgent: {
+      headers().first { $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame }?.value
+    }) { session.webSocketTask(with: $0) }
   }
 
   public convenience init(endpoint: URL, headers: [String: String]) {
@@ -37,6 +39,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     urlRequest.httpMethod = "POST"
     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
     headers().forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
+    urlRequest.setUserAgent()
     urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body(request))
     let data: Data, response: URLResponse
     do { (data, response) = try await session.data(for: urlRequest) } catch { throw TransportFailure.classify(error, kind: kind) }
@@ -51,6 +54,8 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     components?.scheme = endpoint.scheme == "http" ? "ws" : "wss"
     guard let url = components?.url else { throw DbError.Invalid(detail: "bad subscription url") }
     var urlRequest = URLRequest(url: url)
+    urlRequest.setValue(headers().first { $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame }?.value, forHTTPHeaderField: "User-Agent")
+    urlRequest.setUserAgent()
     urlRequest.setValue("graphql-transport-ws", forHTTPHeaderField: "Sec-WebSocket-Protocol")
     let socket = session.webSocketTask(with: urlRequest)
     let token = UUID().uuidString
@@ -99,6 +104,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     var urlRequest = URLRequest(url: target)
     urlRequest.httpMethod = "PUT"
     headers.forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
+    urlRequest.setUserAgent()
     let watcher = UploadWatcher(progress)
     do {
       let (_, response) = try await session.upload(for: urlRequest, from: bytes, delegate: watcher)

@@ -248,6 +248,8 @@ class ServerClock {
     fun nowMillis(referenceMillis: Long = System.currentTimeMillis()): Long = referenceMillis + offsetMillis.get()
 }
 
+internal fun Request.withUserAgent(): Request = newBuilder().header("User-Agent", userAgent(header("User-Agent"))).build()
+
 class GraphQLHttpTransport(
     private val url: String,
     private val client: OkHttpClient,
@@ -276,7 +278,7 @@ class GraphQLHttpTransport(
         val headers = TransportHeaders.make(appVersion, appBuild, deviceUuid, TransportIdentity.authorizationToken(operationName, token), signed)
         val request = Request.Builder().url(url).post(encrypted.toRequestBody("application/json".toMediaType())).apply {
             headers.forEach { (field, value) -> header(field, value) }
-        }.build()
+        }.build().withUserAgent()
         return client.newCall(request).exchange { response ->
             val bytes = response.body.bytes()
             clock.update(response.header("Date"), System.currentTimeMillis())

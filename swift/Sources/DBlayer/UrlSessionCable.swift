@@ -46,12 +46,14 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
 
 final class UrlSessionCable: @unchecked Sendable {
   private let origin: URL?
+  private let applicationUserAgent: @Sendable () -> String?
   private let makeSocket: @Sendable (URLRequest) -> any CableWebSocket
   private let lock = NSLock()
   private var sockets: [String: any CableWebSocket] = [:]
 
-  init(origin: URL?, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
+  init(origin: URL?, applicationUserAgent: @escaping @Sendable () -> String? = { nil }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
     self.origin = origin
+    self.applicationUserAgent = applicationUserAgent
     self.makeSocket = makeSocket
   }
 
@@ -70,7 +72,10 @@ final class UrlSessionCable: @unchecked Sendable {
     url.query = nil
     url.fragment = nil
     guard let target = url.url else { throw DbError.Invalid(detail: "invalid cable origin") }
-    let socket = makeSocket(URLRequest(url: target))
+    var request = URLRequest(url: target)
+    request.setValue(applicationUserAgent(), forHTTPHeaderField: "User-Agent")
+    request.setUserAgent()
+    let socket = makeSocket(request)
     let token = UUID().uuidString
     lock.withLock { sockets[token] = socket }
     do {

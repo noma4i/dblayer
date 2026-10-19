@@ -118,6 +118,7 @@ class BootstrapConfigTest {
             assertEquals(302.toUShort(), reply.status)
             assertEquals(1, server.requestCount)
             val request = server.takeRequest()
+            assertEquals(listOf(userAgent(null)), request.headers.values("User-Agent"))
             assertEquals("POST /api/v3/bootstrap", "${request.method} ${request.path}")
             val applicationHeaders = request.headers.names().filter { it.lowercase() !in listOf("host", "content-length", "transfer-encoding", "connection", "user-agent", "accept-encoding") }
             assertEquals(listOf("Content-Type"), applicationHeaders)

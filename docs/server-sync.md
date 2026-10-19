@@ -21,6 +21,20 @@ DBlayer.open(endpoint = endpoint, headers = headers, modelsJson = modelsJson, op
 
 `endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
 `headers` defaults to an empty map. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
+
+The built-in clients send `User-Agent: DBlayer/<version>` on HTTP requests, file PUTs and WebSocket handshakes.
+The core supplies the library version from `core/Cargo.toml`.
+An application `User-Agent` passed through request headers retains its value, followed by a space and the library token.
+For example, `Example/3` becomes `Example/3 DBlayer/<version>`.
+Custom HTTP and transport implementations must set this header themselves using the core function.
+
+```swift
+let agent = userAgent(application: "Example/3")
+```
+
+```kotlin
+val agent = userAgent("Example/3")
+```
 An omitted endpoint and transport opens a local database when `encrypted` is absent.
 With `encrypted`, the default HTTP uses its origin. The default transport uses `endpoint`, or that origin when endpoint is absent.
 `http` is the last optional argument and accepts custom encrypted HTTP replies.
@@ -231,7 +245,8 @@ The core refuses invalid input and a mismatched pin before HTTP. The optional `h
 
 The request is `POST /api/v3/bootstrap`, with `Content-Type: application/jose`, no query, cookies, credentials or old encryption headers.
 Redirects are refused. HTTP implementations do not reuse added application headers, cookie storage or authenticators.
-URLSession sends empty Accept, Accept-Language and User-Agent values to suppress system defaults.
+URLSession sends empty Accept and Accept-Language values to suppress system defaults.
+Bootstrap sends exactly one User-Agent with the library token and no application products.
 Each attempt creates a UUID, a response key and an issuedAt timestamp from the core clock. No sequence or pending request is stored.
 The server accepts issuedAt from 30 seconds ahead through 120 seconds old and returns `Cache-Control: no-store`.
 

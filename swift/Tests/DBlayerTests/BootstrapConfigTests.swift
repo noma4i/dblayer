@@ -75,12 +75,16 @@ private final class BootstrapHttp: EncryptedHttp, @unchecked Sendable {
   }
 }
 
-private final class BootstrapListener: @unchecked Sendable {
+final class BootstrapListener: @unchecked Sendable {
   let listener: NWListener
   private let lock = NSLock()
   private var received: [String] = []
   var requests: [String] { lock.withLock { received } }
-  init() throws { listener = try NWListener(using: .tcp, on: .any) }
+  private let responseStatus: String?
+  init(responseStatus: String? = nil) throws {
+    self.responseStatus = responseStatus
+    listener = try NWListener(using: .tcp, on: .any)
+  }
   func start() async throws -> URL {
     listener.newConnectionHandler = { [self] connection in
       connection.start(queue: .global())
@@ -100,7 +104,7 @@ private final class BootstrapListener: @unchecked Sendable {
         let length = header.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }.flatMap { Int($0.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
         if text[end.upperBound...].utf8.count < length { receive(connection, data); return }
         lock.withLock { received.append(text) }
-        let status = requests.count == 1 ? "302 Found\r\nLocation: /redirect" : "200 OK"
+        let status = responseStatus ?? (requests.count == 1 ? "302 Found\r\nLocation: /redirect" : "200 OK")
         connection.send(content: Data("HTTP/1.1 \(status)\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbusy".utf8), completion: .contentProcessed { _ in connection.cancel() })
       } else if !done { receive(connection, data) }
     }
@@ -155,8 +159,10 @@ struct BootstrapConfigTests {
     let names = headers.map { String($0.split(separator: ":")[0]) }
     #expect(headers.contains("accept: ") || headers.contains("accept:"))
     #expect(headers.contains("accept-language: ") || headers.contains("accept-language:"))
-    let userAgent = headers.filter { $0.hasPrefix("user-agent:") }
-    #expect(userAgent == ["user-agent: "])
+    let userAgent = request.components(separatedBy: "\r\n").dropFirst().prefix(while: { !$0.isEmpty })
+      .filter { $0.lowercased().hasPrefix("user-agent:") }
+      .map { $0.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)[1].trimmingCharacters(in: .whitespaces) }
+    #expect(userAgent == [DBlayer.userAgent(application: nil)])
     let applicationHeaders = names.filter { !["host", "content-length", "transfer-encoding", "connection", "user-agent", "accept-encoding", "accept", "accept-language"].contains($0) }
     #expect(applicationHeaders == ["content-type"])
     for field in ["authorization:", "cookie:", "x-payload-encryption:", "x-request-signature:"] {

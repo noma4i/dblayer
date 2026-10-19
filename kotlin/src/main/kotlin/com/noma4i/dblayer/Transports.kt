@@ -12,6 +12,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Headers.Companion.toHeaders
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.UUID
@@ -141,7 +142,7 @@ class OkHttpTransport(
     private val client: OkHttpClient = OkHttpClient(),
 ) : Transport {
     private val sockets = ConcurrentHashMap<String, okhttp3.WebSocket>()
-    private val encryptedSocket = OkHttpEncryptedSocket(endpoint, client)
+    private val encryptedSocket = OkHttpEncryptedSocket(endpoint, client) { headers().toHeaders()["User-Agent"] }
     override suspend fun openCable(): String = encryptedSocket.open()
     override suspend fun cableSend(token: String, text: String) = encryptedSocket.send(token, text)
     override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket.next(token)
@@ -156,7 +157,7 @@ class OkHttpTransport(
     private suspend fun post(request: TransportRequest, kind: GraphQLOperationKind): String {
         val http = Request.Builder().url(endpoint).post(body(request).toRequestBody("application/json".toMediaType())).apply {
             headers().forEach { (field, value) -> header(field, value) }
-        }.build()
+        }.build().withUserAgent()
         return try {
             client.newCall(http).exchange { response ->
                 val text = response.body.string()
@@ -177,7 +178,8 @@ class OkHttpTransport(
         val url = endpoint.replaceFirst("https", "wss").replaceFirst("http", "ws")
         val payload = body(request)
         val socket = client.newWebSocket(
-            Request.Builder().url(url).header("Sec-WebSocket-Protocol", "graphql-transport-ws").build(),
+            Request.Builder().url(url).apply { headers().toHeaders()["User-Agent"]?.let { header("User-Agent", it) } }
+                .header("Sec-WebSocket-Protocol", "graphql-transport-ws").build().withUserAgent(),
             object : okhttp3.WebSocketListener() {
                 override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
                     webSocket.send(kotlinx.serialization.json.buildJsonObject {
@@ -237,7 +239,7 @@ internal suspend fun putBytes(client: OkHttpClient, url: String, headers: Map<St
             }
         }
     }
-    val request = Request.Builder().url(url).put(body).apply { headers.forEach { (field, value) -> header(field, value) } }.build()
+    val request = Request.Builder().url(url).put(body).apply { headers.forEach { (field, value) -> header(field, value) } }.build().withUserAgent()
     return try {
         client.newCall(request).exchange { PutReply(it.code.toUShort(), it.header("ETag")) }
     } catch (error: java.io.IOException) {

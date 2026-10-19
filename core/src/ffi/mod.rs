@@ -9,6 +9,15 @@ mod state;
 mod transport;
 pub mod wire;
 
+#[uniffi::export]
+pub fn user_agent(application: Option<String>) -> String {
+    let token = concat!("DBlayer/", env!("CARGO_PKG_VERSION"));
+    match application.filter(|value| !value.is_empty()) {
+        Some(value) => format!("{value} {token}"),
+        None => token.into(),
+    }
+}
+
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply};
 pub use crate::transport::SessionCode;

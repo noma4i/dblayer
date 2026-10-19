@@ -23,7 +23,7 @@ class OkHttpEncryptedHttp(
         .apply { interceptors().clear(); networkInterceptors().clear() }
         .build()
     override suspend fun post(path: String, body: String): EncryptedReply =
-        send(Request.Builder().url(origin.trimEnd('/') + path).post(body.toByteArray().toRequestBody("application/jose".toMediaType())).build())
+        send(Request.Builder().url(origin.trimEnd('/') + path).post(body.toByteArray().toRequestBody("application/jose".toMediaType())).build().withUserAgent())
 
 
     private suspend fun send(request: Request): EncryptedReply = try {

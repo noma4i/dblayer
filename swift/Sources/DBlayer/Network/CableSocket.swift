@@ -72,6 +72,7 @@ public final class URLSessionCableSocket: CableSocket, @unchecked Sendable {
 
   public func open() async throws {
     var request = URLRequest(url: url)
+    request.setUserAgent()
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     request.setValue(
       "actioncable-v1-json, actioncable-unsupported",

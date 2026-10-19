@@ -54,7 +54,7 @@ class OkHttpCableSocket(private val url: String, private val token: String, priv
         val request = Request.Builder().url(url)
             .header("Authorization", "Bearer $token")
             .header("Sec-WebSocket-Protocol", "actioncable-v1-json, actioncable-unsupported")
-            .build()
+            .build().withUserAgent()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: HttpResponse) { opened.complete(response) }
             override fun onMessage(webSocket: WebSocket, text: String) { messages.trySend(text) }

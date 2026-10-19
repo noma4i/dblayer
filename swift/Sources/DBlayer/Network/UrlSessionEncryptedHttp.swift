@@ -32,7 +32,7 @@ public final class UrlSessionEncryptedHttp: EncryptedHttp, @unchecked Sendable {
     request.setValue("application/jose", forHTTPHeaderField: "Content-Type")
     request.setValue("", forHTTPHeaderField: "Accept")
     request.setValue("", forHTTPHeaderField: "Accept-Language")
-    request.setValue("", forHTTPHeaderField: "User-Agent")
+    request.setUserAgent()
     request.httpBody = Data(body.utf8)
     do {
       let (data, response) = try await session.data(for: request, delegate: RefuseRedirect())

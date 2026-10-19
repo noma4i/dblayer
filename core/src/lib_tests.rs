@@ -29,3 +29,11 @@ fn inv_fresh_09_a_freshness_window_is_a_duration_and_no_policy_table_resolves_na
         assert_eq!(mentions(word), Vec::<String>::new(), "{word} is still defined or used");
     }
 }
+
+#[test]
+fn user_agent_preserves_application_products() {
+    let token = format!("DBlayer/{}", env!("CARGO_PKG_VERSION"));
+    for (application, expected) in [(None, token.clone()), (Some(String::new()), token.clone()), (Some("Example/3".into()), format!("Example/3 {token}"))] {
+        assert_eq!(crate::ffi::user_agent(application), expected);
+    }
+}
