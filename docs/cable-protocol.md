@@ -58,6 +58,31 @@ Opening goes through the challenge, the channel confirmation, hello and an encry
 Each subscription gets its own string id. The `subscribed` confirmation yields `Ready`. A `next` message yields a GraphQL response.
 Cancel sends `unsubscribe` for the chosen id only. The last cancel closes the socket.
 
+### Server codes and subscription refusals
+
+Copied server enumerations can reject authenticated refusals and cause repeated connections instead of stopping the affected subscription.
+The client validates code shapes without copying the server's vocabulary.
+
+| Field | Validation and meaning |
+| --- | --- |
+| `error.code` | 1-64 ASCII uppercase letters, digits or underscores. Preserve the string in the GraphQL failure |
+| `error.retryable` | Boolean. This flag alone decides whether the refused subscription retries |
+| `closing.reason` | The same string shape as `error.code`. Unknown reasons remain valid |
+| `closing.code` | Integer from 1000 through 4999. Unknown codes remain valid |
+| `t` and field names | Closed message grammar. Unknown message types and fields remain invalid |
+
+An `error` for a subscription contains its `id`, `code` and `retryable`, without a message or reason field.
+With `retryable=false`, the feed records `SubscriptionStatus.failure` and stops until explicit `resume` or `listen`.
+Explicit resume restarts every stopped live subscription with a saved failure, including GraphQL refusals.
+With `retryable=true`, the feed retains the GraphQL error and retries after backoff.
+Code spelling never selects retry behavior. For example, `REFUSED` can stop or retry according to the flag.
+Removing the last subscription closes the socket without cable retry attempts, timers or a new connection.
+Other active subscriptions keep using their connection when one subscription is refused.
+
+An authenticated `closing` still closes the connection as requested by the peer.
+The documented session-ending close values below keep their meaning. Other valid close values use normal reconnect backoff when subscriptions remain.
+The code-shape check is shared by error codes and closing reasons, so new server vocabulary needs no client enumeration update.
+
 | Subscription | Handling |
 | --- | --- |
 | `viewerChanges` | `area`, `kind` and `entityId` select the reread or local removal from `changed_by` |

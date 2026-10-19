@@ -156,6 +156,64 @@ struct FakeConnect {
 }
 
 #[tokio::test(start_paused = true)]
+async fn authenticated_error_retryability_controls_feed_until_resume() {
+    use crate::schema::{FieldSpec, ModelSpec, RelationSpec, UpdatesSpec};
+    use crate::value::ScalarKind;
+    for (code, retryable) in [("REFUSED", false), ("REFUSED", true), ("NEW_REFUSAL_2", false), ("NEW_REFUSAL_2", true)] {
+        let (incoming, receiver) = mpsc::unbounded_channel();
+        let (outgoing, sent) = mpsc::unbounded_channel();
+        let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
+        let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
+        let (kat, config, challenge, _) = super::link_tests::inputs();
+        let mut model = ModelSpec::new("Item", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+        let mut relation = RelationSpec::global("all");
+        relation.updates.push(UpdatesSpec { subscription: "ItemEvents".into(), deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None });
+        model.relations.push(relation);
+        let db = crate::db::Db::open_in_memory(vec![model], None).unwrap();
+        let http = Arc::new(Http { key: RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads: AtomicUsize::new(0) });
+        let clock = Arc::new(crate::pacing::ManualClock::default());
+        let client = Arc::new(crate::transport::EncryptedClient::new(&config, http.clone(), Arc::new(super::super::fake_server_tests::MemoryCredentials::default()), db.clone(), clock.clone()).unwrap());
+        let transport = Arc::new(crate::transport::EncryptedTransport::new(client, connect.clone()));
+        let sync = crate::sync::Sync::new(db, transport, clock, Default::default());
+        sync.register(crate::sync::OperationDef::new("ItemEvents", "subscription ItemEvents { itemEvent { id } }", "itemEvent"));
+        let _watch = sync.watch("Item", "all", &Default::default()).unwrap();
+        let status = || sync.inner.lives.lock().unwrap()["Item|ItemEvents"].subscription.as_ref().unwrap().status();
+        let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key: [0;32], sequence: 0 };
+        peer.handshake(&kat, &config, challenge.clone()).await;
+        let subscribe = peer.next().await;
+        assert_eq!(subscribe["operationName"], "ItemEvents");
+        peer.emit(json!({"t":"error", "id":subscribe["id"], "code":code, "retryable":retryable}));
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        let failure = status().failure.expect(code);
+        assert!(matches!(failure.error, TransportError::Graphql { extensions: Some(ref extensions), .. } if extensions.code.as_deref() == Some(code)), "{code}");
+        assert_eq!(status().stopped, !retryable, "{code}");
+        assert_eq!(socket.closes.load(Ordering::SeqCst), 1, "{code}");
+        assert_eq!(connect.opens.load(Ordering::SeqCst), 1, "retry must wait for backoff: {code}");
+        if retryable {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        } else {
+            for _ in 0..120 {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                assert_eq!(connect.opens.load(Ordering::SeqCst), 1, "stopped feed reopened: {code}");
+            }
+            assert_eq!(status().connects, 1);
+            assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
+            assert!(peer.outgoing.try_recv().is_err());
+            sync.resume().await.unwrap();
+        }
+        peer.sequence = 0;
+        tokio::time::timeout(std::time::Duration::from_secs(1), peer.handshake(&kat, &config, challenge)).await.expect("resume opens a new connection");
+        let resumed = peer.next().await;
+        assert_eq!(resumed["operationName"], "ItemEvents");
+        peer.emit(json!({"t":"subscribed", "id":resumed["id"]}));
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        assert_eq!(connect.opens.load(Ordering::SeqCst), 2, "{code}");
+        assert!(!status().stopped, "{code}");
+        assert_eq!(http.reads.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn stopping_subscriptions_drops_pending_open() {
     struct PendingOpen {
         started: mpsc::UnboundedSender<()>,

@@ -36,7 +36,7 @@ impl Inner {
         for (key, live) in lives.iter_mut() {
             let Some(subscription) = live.subscription.as_ref().filter(|subscription| {
                 let status = subscription.status();
-                status.stopped && status.failure.is_some_and(|failure| matches!(failure.error, crate::transport::TransportError::Session { .. }))
+                status.stopped && status.failure.is_some()
             }) else { continue };
             let definition = subscription.definition.clone();
             live.subscription = None;

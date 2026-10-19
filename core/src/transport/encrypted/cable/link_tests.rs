@@ -147,3 +147,35 @@ fn accepts_all_server_messages_and_retires_keys_on_closing() {
     }
     assert_eq!(link.seal(json!({"t":"ping","ts":6})).unwrap_err(), CableError::Closed);
 }
+
+#[test]
+fn authenticated_codes_accept_new_values_and_reject_invalid_shapes() {
+    let cases = [
+        (json!({"t":"error", "id":"a", "code":"REFUSED", "retryable":false}), true),
+        (json!({"t":"error", "id":"a", "code":"FUTURE_2", "retryable":true}), true),
+        (json!({"t":"error", "code":"A".repeat(64), "retryable":false}), true),
+        (json!({"t":"error", "code":"A".repeat(65), "retryable":false}), false),
+        (json!({"t":"error", "code":"", "retryable":false}), false),
+        (json!({"t":"error", "code":42, "retryable":false}), false),
+        (json!({"t":"error", "code":"BAD-CODE", "retryable":false}), false),
+        (json!({"t":"error", "code":"REFUSED", "retryable":"false"}), false),
+        (json!({"t":"closing", "code":4999, "reason":"FUTURE_REASON_2"}), true),
+        (json!({"t":"closing", "code":1000, "reason":"A".repeat(64)}), true),
+        (json!({"t":"closing", "code":999, "reason":"REFUSED"}), false),
+        (json!({"t":"closing", "code":5000, "reason":"REFUSED"}), false),
+        (json!({"t":"closing", "code":65536, "reason":"REFUSED"}), false),
+        (json!({"t":"closing", "code":"4999", "reason":"REFUSED"}), false),
+        (json!({"t":"closing", "code":4999, "reason":"A".repeat(65)}), false),
+        (json!({"t":"closing", "code":4999, "reason":""}), false),
+        (json!({"t":"closing", "code":4999, "reason":null}), false),
+    ];
+    for (mut body, accepted) in cases {
+        let (mut link, _, kat) = known_link();
+        link.receive(kat["frames"][0]["token"].as_str().unwrap()).unwrap();
+        body["n"] = json!(1);
+        let result = link.receive(&server_frame(&kat, body.clone()));
+        assert_eq!(result.is_ok(), accepted, "{body}: {result:?}");
+        if accepted { assert_eq!(result.unwrap(), body); }
+        assert_eq!(link.seal(json!({"t":"ping", "ts":1})).is_ok(), accepted && body["t"] != "closing");
+    }
+}
