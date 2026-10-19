@@ -73,7 +73,7 @@ impl SubscriptionFailure {
     pub fn from_error(error: super::TransportError) -> Self {
         let kind = match &error {
             super::TransportError::Graphql { .. } => SubscriptionFailureKind::Graphql,
-            super::TransportError::Network(_) | super::TransportError::Http { .. } => SubscriptionFailureKind::Transport,
+            error if super::RetryClass::of_error(error).allows_retry(0) => SubscriptionFailureKind::Transport,
             _ => SubscriptionFailureKind::Internal,
         };
         Self { kind, error, close: None }

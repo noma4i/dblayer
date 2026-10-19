@@ -269,6 +269,7 @@ impl Inner {
 
     pub(crate) async fn query_with_retry(&self, request: GraphQLRequest) -> Result<(Response, u32), SyncError> {
         let mut attempt = 0;
+        let backoff = RETRY_BACKOFF.randomized();
         loop {
             if !self.connectivity.is_online() {
                 return Err(SyncError::Offline);
@@ -289,7 +290,7 @@ impl Inner {
             if !class.allows_retry(attempt) {
                 return Err(error);
             }
-            tokio::time::sleep(RETRY_BACKOFF.delay(attempt)).await;
+            tokio::time::sleep(backoff.delay(attempt)).await;
             attempt += 1;
         }
     }

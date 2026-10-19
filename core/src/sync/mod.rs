@@ -55,7 +55,7 @@ pub struct SyncConfig {
 
 impl Default for SyncConfig {
     fn default() -> Self {
-        Self { resume: ResumeDrain::default(), live_linger: LIVE_LINGER, upload: UploadConfig::default(), send_backoff: SEND_BACKOFF }
+        Self { resume: ResumeDrain::default(), live_linger: LIVE_LINGER, upload: UploadConfig::default(), send_backoff: SEND_BACKOFF.randomized() }
     }
 }
 

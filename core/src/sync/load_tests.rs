@@ -105,15 +105,20 @@ async fn parallel_identical_loads_share_one_transport_call() {
 
 #[tokio::test(start_paused = true)]
 async fn network_error_is_retried_with_delay() {
-    let rig = rig();
-    rig.transport.enqueue("MomentsFeed", Reply::fail(TransportError::Network("down".to_string())));
-    rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-    let started = tokio::time::Instant::now();
-    let outcome = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
-    assert_eq!((outcome.status, outcome.attempts), (LoadStatus::Loaded, 2));
-    assert_eq!(started.elapsed(), Duration::from_secs(1));
-    assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
-    assert_eq!(rig.sync.counters().transport_calls, 2);
+    let mut delays = Vec::new();
+    for _ in 0..3 {
+        let rig = rig();
+        rig.transport.enqueue("MomentsFeed", Reply::fail(TransportError::Network("down".to_string())));
+        rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
+        let started = tokio::time::Instant::now();
+        let outcome = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+        assert_eq!((outcome.status, outcome.attempts), (LoadStatus::Loaded, 2));
+        delays.push(started.elapsed());
+        assert!((Duration::from_millis(800)..=Duration::from_secs(1)).contains(&started.elapsed()));
+        assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
+        assert_eq!(rig.sync.counters().transport_calls, 2);
+    }
+    assert!(delays.windows(2).any(|pair| pair[0] != pair[1]), "clients repeated together: {delays:?}");
 }
 
 #[tokio::test(start_paused = true)]

@@ -2,6 +2,12 @@
 
 DBlayer talks to a GraphQL endpoint. You describe operations and models once. Requests, pagination, retries, refetching and subscriptions are handled for you.
 
+Queries and subscription reconnects double retry delays from 1 second to a 30-second ceiling, with 20% jitter and independent random seeds.
+Default send retries also receive independent seeds. An explicitly configured send backoff keeps its seed and assigned delays.
+Subscriptions wait offline before every attempt, including the first. Dropping the subscription cancels waiting and pending work.
+`Ready` alone does not reset failure history or clear degraded status. The first `Next` after `Ready` confirms recovery.
+HTTP subscription errors follow query retry classification: 5xx errors retry, while terminal errors including 401 and 403 stop.
+
 ## Connecting
 
 1. Create a transport with the endpoint and a token supplier. The transport reads the current token once per request.

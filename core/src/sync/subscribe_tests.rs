@@ -28,6 +28,50 @@ fn upsert_def() -> SubscriptionDef {
 }
 
 #[tokio::test(start_paused = true)]
+async fn initial_offline_subscription_makes_no_transport_call() {
+    let rig = rig_with_subscription();
+    rig.sync.set_online(false);
+    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    settle().await;
+    assert_eq!(rig.transport.call_count("MomentChanged"), 0);
+    drop(subscription);
+    rig.sync.set_online(true);
+    settle().await;
+    assert_eq!(rig.transport.call_count("MomentChanged"), 0);
+    rig.sync.set_online(false);
+    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.sync.set_online(true);
+    settle().await;
+    assert_eq!(rig.transport.call_count("MomentChanged"), 1);
+    assert!(!subscription.status().degraded);
+}
+
+#[tokio::test(start_paused = true)]
+async fn ready_then_failure_keeps_growing_backoff() {
+    let rig = rig_with_subscription();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    settle().await;
+    for (attempt, ceiling) in [1, 2, 4, 8, 16, 30, 30].into_iter().enumerate() {
+        rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
+        rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
+        settle().await;
+        tokio::time::advance(Duration::from_millis(ceiling * 800 - 10)).await;
+        settle().await;
+        assert_eq!(rig.transport.call_count("MomentChanged"), attempt + 1, "attempt {attempt} reset its delay");
+        tokio::time::advance(Duration::from_millis(ceiling * 200 + 20)).await;
+        settle().await;
+        assert_eq!(rig.transport.call_count("MomentChanged"), attempt + 2, "attempt {attempt} exceeded its cap");
+    }
+    rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "healthy"})));
+    rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
+    settle().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(rig.transport.call_count("MomentChanged"), 9);
+}
+
+#[tokio::test(start_paused = true)]
 async fn subscription_normalization_does_not_invert_reset_locks() {
     for effect in [EventEffect::Upsert, EventEffect::Patch] {
         let rig = rig_with_subscription();
@@ -418,7 +462,7 @@ async fn offline_subscription_waits_without_spending_attempts_and_reconnects_onl
 }
 
 #[tokio::test(start_paused = true)]
-async fn repeated_transport_failures_report_degraded_once_then_ready_recovers() {
+async fn repeated_transport_failures_stay_degraded_until_next_after_ready() {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     for _ in 0..4 {
@@ -430,7 +474,41 @@ async fn repeated_transport_failures_report_degraded_once_then_ready_recovers() 
     assert!(!subscription.status().stopped);
     rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
     settle().await;
+    assert!(subscription.status().degraded);
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "healthy"})));
+    settle().await;
     assert!(!subscription.status().degraded);
+}
+
+#[tokio::test(start_paused = true)]
+async fn terminal_http_subscription_failures_stop_without_retry() {
+    for status in [401, 403] {
+        let rig = rig_with_subscription();
+        let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+        rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(SubscriptionFailure::from_error(crate::transport::TransportError::Http { status, body: "refused".into() })));
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        assert!(subscription.status().stopped, "HTTP {status} was retried");
+        assert_eq!(rig.transport.call_count("MomentChanged"), 1);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn independent_feeds_spread_reconnects() {
+    let mut delays = Vec::new();
+    for _ in 0..8 {
+        let rig = rig_with_subscription();
+        let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+        rig.transport.disconnect("MomentChanged");
+        tokio::task::yield_now().await;
+        let started = tokio::time::Instant::now();
+        for _ in 0..1100 {
+            if rig.transport.call_count("MomentChanged") == 2 { break; }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert_eq!(rig.transport.call_count("MomentChanged"), 2);
+        delays.push(started.elapsed());
+    }
+    assert!(delays.windows(2).any(|pair| pair[0] != pair[1]), "clients repeated together: {delays:?}");
 }
 
 #[tokio::test(start_paused = true)]

@@ -5,7 +5,7 @@ use crate::pacing::Backoff;
 
 const RETRIABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
 
-pub const RETRY_BACKOFF: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
+pub const RETRY_BACKOFF: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30)).with_jitter(0.2, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryClass {

@@ -9,7 +9,7 @@ use tokio::time::Instant;
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, FileOp, OperationTransition, ScopeOp, WriteOrigin};
 use crate::db::{read_outbox, Prior};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
-use crate::pacing::Debounce;
+use crate::pacing::{Backoff, Debounce};
 use crate::store::PlanCommitError;
 use crate::syncstate::operation_keys;
 use crate::transport::{
@@ -110,6 +110,7 @@ struct Feed {
     def: SubscriptionDef,
     root_path: String,
     status: SharedStatus,
+    backoff: Backoff,
 }
 
 impl Feed {
@@ -310,10 +311,12 @@ impl Feed {
                             for model in models { self.inner.reload_watched(&model, None, false).await; }
                         }
                         ready = true;
-                        *retry = retry.confirmed();
-                        locked(&self.status).degraded = false;
                     }
                     Some(SubscriptionEvent::Next(response)) => {
+                        if ready {
+                            *retry = retry.confirmed();
+                            locked(&self.status).degraded = false;
+                        }
                         if self.invalidation(&response).await { continue; }
                         let Some(item) = self.parse(&response) else { continue };
                         match &debounce {
@@ -344,23 +347,22 @@ impl Feed {
         let mut status = locked(&self.status);
         status.degraded |= outcome.reports_degraded;
         if fault == SubscriptionFault::Transient {
-            return Some(RETRY_BACKOFF.delay(retry.attempts.saturating_sub(1)));
+            return Some(self.backoff.delay(retry.attempts.saturating_sub(1)));
         }
         status.stopped = true;
         None
     }
 
-    async fn run(self, request: GraphQLRequest, first: Result<Subscription, TransportError>) {
+    async fn run(self, request: GraphQLRequest, first: Option<Result<Subscription, TransportError>>) {
         let mut retry = SubscriptionRetry::default();
-        let mut opened = Some(first);
+        let mut opened = first;
         loop {
             let attempt = match opened.take() {
                 Some(attempt) => attempt,
-                None if !self.inner.connectivity.is_online() => {
-                    self.inner.connectivity.online().await;
-                    continue;
-                }
-                None => self.inner.transport.subscribe(request.clone()).await,
+                None => match self.inner.open_subscription(request.clone()).await {
+                    Some(attempt) => attempt,
+                    None => return,
+                },
             };
             let mut connection = match attempt {
                 Ok(connection) => {
@@ -406,6 +408,18 @@ impl Sync {
 }
 
 impl Inner {
+    async fn open_subscription(&self, request: GraphQLRequest) -> Option<Result<Subscription, TransportError>> {
+        let mut stopped = self.stopped.clone();
+        tokio::select! {
+            biased;
+            _ = stopped.changed() => None,
+            result = async {
+                self.connectivity.online().await;
+                self.transport.subscribe(request).await
+            } => Some(result),
+        }
+    }
+
     pub(crate) async fn subscribe(self: &Arc<Self>, def: SubscriptionDef) -> Result<EventSubscription, SyncError> {
         if let Some(fault) = def.event.fault() {
             return Err(SyncError::Event(format!("{fault:?}")));
@@ -416,11 +430,11 @@ impl Inner {
             .cloned()
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
-        let first = self.transport.subscribe(request.clone()).await;
+        let first = if self.connectivity.is_online() { self.open_subscription(request.clone()).await } else { None };
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
         let definition = def.clone();
         let def_root = def.root.clone();
-        let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone() };
+        let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone(), backoff: RETRY_BACKOFF.randomized() };
         let task = tokio::spawn(self.until_closed(feed.run(request, first)));
         Ok(EventSubscription { abort: task.abort_handle(), status, definition })
     }

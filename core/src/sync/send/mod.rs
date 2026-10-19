@@ -1,6 +1,7 @@
 mod flush;
 mod outcomes;
 mod pause;
+#[cfg(test)] mod pause_tests;
 mod report;
 mod settle;
 mod variables;

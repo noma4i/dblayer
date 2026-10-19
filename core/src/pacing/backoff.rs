@@ -1,4 +1,5 @@
 use std::time::Duration;
+use rand_core::RngCore;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Backoff {
@@ -20,6 +21,10 @@ impl Backoff {
 
     pub const fn limited(self, max_attempts: u32) -> Self {
         Self { max_attempts, ..self }
+    }
+
+    pub fn randomized(self) -> Self {
+        Self { seed: rand_core::OsRng.next_u64(), ..self }
     }
 
     pub fn allows(&self, attempt: u32) -> bool {
