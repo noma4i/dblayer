@@ -6,7 +6,7 @@ import Testing
 struct GraphQLURLRequestTests {
   @Test
   func buildsPostWithJsonBodyHeadersAndTimeout() throws {
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     let body = Data("{\"a\":1}".utf8)
     let request = GraphQLURLRequest.make(
       url: url,

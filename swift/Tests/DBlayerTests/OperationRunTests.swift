@@ -228,7 +228,7 @@ private extension OperationRunTests {
 }
 
 func makeScriptedTransport(scriptId: String) throws -> (GraphQLHTTPTransport, URL) {
-  let graphqlURL = URL(string: "https://api.yupi.social/graphql")!
+  let graphqlURL = URL(string: "https://example.test/graphql")!
   let transport = GraphQLHTTPTransport.make(
     url: graphqlURL,
     inputs: TransportInputs(

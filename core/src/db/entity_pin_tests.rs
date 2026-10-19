@@ -28,9 +28,9 @@ fn user_spec() -> ModelSpec {
 }
 
 fn user_json(id: &str, online: bool) -> Value {
-    json!({"id": id, "fullName": format!("Full Name {id}"), "username": format!("user_{id}"), "name": "Name", "avatarUrl": format!("https://cdn.yupi.social/avatars/{id}/thumb.jpg"),
-        "fullAvatarUrl": format!("https://cdn.yupi.social/avatars/{id}/full.jpg"), "description": "A short description of the person that lives here", "story": "story",
-        "connectionStatus": "CONNECTED", "connectionChatId": "c1", "lastInteraction": "GIFT", "shareUrl": format!("https://yupi.social/u/{id}"), "countryName": "Poland", "countryCode": "PL",
+    json!({"id": id, "fullName": format!("Full Name {id}"), "username": format!("user_{id}"), "name": "Name", "avatarUrl": format!("https://example.test/avatars/{id}/thumb.jpg"),
+        "fullAvatarUrl": format!("https://example.test/avatars/{id}/full.jpg"), "description": "A short description of the person that lives here", "story": "story",
+        "connectionStatus": "CONNECTED", "connectionChatId": "c1", "lastInteraction": "GIFT", "shareUrl": format!("https://example.test/u/{id}"), "countryName": "Poland", "countryCode": "PL",
         "age": 27, "online": online, "distance": 12.5, "isFriend": true, "lastSeenAt": "2026-10-12T10:00:00Z", "createdAt": "2026-01-01T10:00:00Z", "updatedAt": "2026-10-12T10:00:00Z"})
 }
 

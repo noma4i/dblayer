@@ -3,6 +3,12 @@ import Testing
 @testable import DBlayer
 
 struct TransportFailureTests {
+  @Test(arguments: [URLError.Code.secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted, .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .clientCertificateRejected, .clientCertificateRequired])
+  func encryptedHttpTrustFailuresKeepTheirSecurityCode(code: URLError.Code) {
+    let error = URLError(code)
+    #expect(TransportFailure.classifyEncryptedHttp(error) == .Security(code: .tlsTrust, detail: error.localizedDescription))
+  }
+
   @Test(arguments: [SessionCode.unauthenticated, .accountUnavailable, .sessionEnded])
   func sessionFailureKeepsItsCodeAndDetail(code: SessionCode) {
     let error = DbError.Session(code: code, detail: "session_unknown")

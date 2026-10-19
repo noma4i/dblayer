@@ -77,13 +77,13 @@ struct NetworkTransportTests {
       scriptId: scriptId,
       status: status,
       headers: [:],
-      body: Data(#"{"errors":[{"message":"Rejected","extensions":{"code":"REGISTRATION_REQUIRED"}}]}"#.utf8),
+      body: Data(#"{"errors":[{"message":"Rejected","extensions":{"code":"REFUSED"}}]}"#.utf8),
       url: url
     )
     let run = OperationRun(transport: httpTransport, hashes: PersistedQueryHashes())
     let transport: any GraphQLTransport = NetworkTransport(run: run, cable: makeCableClient())
 
-    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Rejected"], extensions: GraphqlExtensions(code: "REGISTRATION_REQUIRED", transactionDisposition: nil, fields: [:]))) {
+    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Rejected"], extensions: GraphqlExtensions(code: "REFUSED", transactionDisposition: nil, fields: [:]))) {
       _ = try await transport.query(ProbeQuery.self, variables: ProbeQuery.Variables())
     }
     #expect(ScriptedURLProtocol.recordedRequests(scriptId: scriptId).count == 1)

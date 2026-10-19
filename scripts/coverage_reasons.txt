@@ -20,7 +20,6 @@ Network/NetworkRestore.swift	^NetworkRestore\.	dblayer	default argument that eve
 Network/GraphQLTransportError.swift	^GraphQLTransportError\.	dblayer	error classification branch that no test runs
 Network/GraphQLResponseBody.swift	^ResponseError\.	dblayer	response error init branch that no test runs
 Network/GraphQLHTTPTransport.swift	^GraphQLHTTPTransport\.	dblayer	HTTP transport branches that need a live server or a failing URLSession
-Network/TransportFailure.swift	^TransportFailure\.	dblayer	failure classification branch that no test runs
 Network/CanonicalJSON.swift	^CanonicalJSON\.	dblayer	escape sequence branch for a control character that no test feeds
 Network/CableTimers.swift	^CableTimers\.	dblayer	default live timers that every test replaces
 Network/CableCommand.swift	^CableCommand\.	dblayer	quote branch for a character that no test feeds

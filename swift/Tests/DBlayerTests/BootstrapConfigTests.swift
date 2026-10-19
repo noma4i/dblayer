@@ -141,15 +141,15 @@ struct BootstrapConfigTests {
     }
   }
 
-  @Test
-  func actualHttpOmitsSecretsAndRefusesRedirects() async throws {
+  @Test(arguments: [false, true])
+  func actualHttpOmitsSecretsAndRefusesRedirects(customSession: Bool) async throws {
     let server = try BootstrapListener()
     let origin = try await server.start()
     let config = URLSessionConfiguration.ephemeral
     config.httpAdditionalHeaders = ["Authorization": "secret", "Cookie": "secret", "X-Payload-Encryption": "old", "X-Request-Signature": "old"]
     let session = URLSession(configuration: config)
     defer { session.invalidateAndCancel() }
-    let reply = try await UrlSessionEncryptedHttp(origin: origin, session: session).post(path: "/api/v3/bootstrap", body: "jwe")
+    let reply = try await UrlSessionEncryptedHttp(origin: origin, session: customSession ? session : nil).post(path: "/api/v3/bootstrap", body: "jwe")
     #expect(reply.status == 302 && reply.body == "busy")
     #expect(server.requests.count == 1)
     let request = try #require(server.requests.first)

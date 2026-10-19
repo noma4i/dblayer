@@ -5,9 +5,21 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TransportFailureTest {
+    @Test
+    fun encryptedHttpTrustFailuresKeepTheirSecurityCode() {
+        for (error in listOf(javax.net.ssl.SSLHandshakeException("untrusted"), javax.net.ssl.SSLPeerUnverifiedException("unverified"))) {
+            val actual = classifyEncryptedHttpFailure(error)
+            assertTrue(actual is DbException.Security)
+            actual as DbException.Security
+            assertEquals(SecurityCode.TLS_TRUST, actual.code)
+            assertEquals(error.message, actual.detail)
+        }
+    }
+
     @Test
     fun sessionFailureKeepsItsCodeAndDetail() {
         for (code in listOf(SessionCode.UNAUTHENTICATED, SessionCode.ACCOUNT_UNAVAILABLE, SessionCode.SESSION_ENDED)) {

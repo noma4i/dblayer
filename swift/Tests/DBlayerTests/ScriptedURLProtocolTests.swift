@@ -9,7 +9,7 @@ struct ScriptedURLProtocolTests {
   func returnsQueuedResponseAndRecordsSentRequest() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
 
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     let expectedBody = Data(#"{"ok":true}"#.utf8)
     let sentBody = Data(#"{"a":1}"#.utf8)
     ScriptedURLProtocol.push(
@@ -43,7 +43,7 @@ struct ScriptedURLProtocolTests {
     ScriptedURLProtocol.reset(scriptId: "first")
     ScriptedURLProtocol.reset(scriptId: "second")
 
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     await #expect(throws: URLError.self) {
       _ = try await ScriptedURLProtocol.session(scriptId: Self.scriptId).data(from: url)
     }

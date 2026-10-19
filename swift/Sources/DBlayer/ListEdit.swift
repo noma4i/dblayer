@@ -14,7 +14,7 @@ public enum ListEdit<Model: Sendable>: Sendable {
 }
 
 extension Array {
-  public mutating func replay<Model: Sendable>(_ edits: [ListEdit<Model>]) where Element == Model {
+  public mutating func replay(_ edits: [ListEdit<Element>]) where Element: Sendable {
     for edit in edits {
       switch edit {
       case .rewrite(let index, let row): self[index] = row

@@ -11,7 +11,7 @@ struct TransportInputsTests {
     ScriptedURLProtocol.reset(scriptId: scriptId)
     defer { ScriptedURLProtocol.reset(scriptId: scriptId) }
 
-    let graphqlURL = URL(string: "https://api.yupi.social/graphql")!
+    let graphqlURL = URL(string: "https://example.test/graphql")!
     ScriptedURLProtocol.push(
       scriptId: scriptId,
       status: 200,

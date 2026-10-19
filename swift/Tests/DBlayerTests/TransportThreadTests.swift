@@ -6,7 +6,7 @@ import Testing
 struct TransportThreadTests {
   @Test @MainActor
   func graphQLTransportLoadsOffTheCallerThread() async throws {
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     let session = ThreadProbeProtocol.session()
     defer { session.invalidateAndCancel() }
     ThreadProbeProtocol.reset()
@@ -28,7 +28,7 @@ struct TransportThreadTests {
 
   @Test @MainActor
   func urlSessionTransportLoadsOffTheCallerThread() async throws {
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     let session = ThreadProbeProtocol.session()
     defer { session.invalidateAndCancel() }
     ThreadProbeProtocol.reset()

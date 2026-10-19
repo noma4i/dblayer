@@ -8,7 +8,7 @@ struct GraphQLHTTPTransportTests {
   @Test
   func sessionTimeouts() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: Data(), url: url)
     let configuration = ScriptedURLProtocol.session(scriptId: Self.scriptId).configuration
     let session = GraphQLHTTPTransport.makeSession(configuration: configuration)
@@ -32,7 +32,7 @@ struct GraphQLHTTPTransportTests {
   func sendsSignedEncryptedPost(document: String?) async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
 
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     let expectedBody = Data(#"{"data":{"ping":"pong"}}"#.utf8)
     ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: expectedBody, url: url)
     let transport = makeTransport(url: url, token: "tok")
@@ -66,7 +66,7 @@ struct GraphQLHTTPTransportTests {
   func tokenSupplierReadsTheCurrentTokenOncePerRequest() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
 
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: Data(), url: url)
     ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: Data(), url: url)
     let tokens = TokenSequence()
@@ -101,7 +101,7 @@ struct GraphQLHTTPTransportTests {
   func decryptsEncryptedResponse() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
 
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     let plaintext = Data(#"{"data":{"ping":"pong"}}"#.utf8)
     let envelope = try PayloadCipher(secret: "secret").seal(plaintext)
     let encryptedBody = try JSONEncoder().encode(envelope)
@@ -128,7 +128,7 @@ struct GraphQLHTTPTransportTests {
   func authorizationFollowsOperationVisibility() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
 
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: Data(), url: url)
     ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: Data(), url: url)
     let transport = makeTransport(url: url, token: "tok")
@@ -154,7 +154,7 @@ struct GraphQLHTTPTransportTests {
   func privateOperationWithoutTokenThrows() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
 
-    let url = try #require(URL(string: "https://api.yupi.social/"))
+    let url = try #require(URL(string: "https://example.test/"))
     ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: Data(), url: url)
     let transport = makeTransport(url: url, token: nil)
 
