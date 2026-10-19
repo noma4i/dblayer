@@ -219,7 +219,7 @@ async fn memory_events_without_server_ids_create_distinct_expiring_rows() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn repeated_ready_rereads_watched_queries_after_cable_reconnect() {
+async fn repeated_ready_rereads_expired_watched_queries_after_cable_reconnect() {
     let rig = rig_with_subscription();
     for name in ["before", "after"] {
         rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":name}})));
@@ -229,10 +229,65 @@ async fn repeated_ready_rereads_watched_queries_after_cable_reconnect() {
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
     rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
     settle().await;
+    rig.clock.advance(Duration::from_secs(300));
     rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
     settle().await;
     assert_eq!(rig.transport.call_count("CurrentUser"), 2);
     assert_eq!(rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap().text("name"), Some("after"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn reconnect_reads_only_expired_watched_nodes() {
+    let mut measurements = Vec::new();
+    let mut expected = Vec::new();
+    for reopen in [false, true] {
+        for count in [0, 1, 20] {
+            for (fresh_for, age, expired_first) in [("5.minutes", 0, false), ("5.minutes", 300, false), ("5.minutes", 301, false), ("5.minutes", 0, true), ("0.seconds", 0, false)] {
+                let mut moments = moments_spec();
+                let mut node = crate::schema::RelationSpec::new("node", &[]);
+                node.node = Some(crate::schema::NodeRead::One);
+                node.text_params = vec![crate::schema::NODE_PARAM.into()];
+                let mut read = remote("MomentNode", crate::schema::RemoteShape::Single, fresh_for);
+                read.variables.insert("id".into(), crate::schema::VariableSource::Param { name: crate::schema::NODE_PARAM.into() });
+                node.remote = Some(read);
+                moments.relations.push(node);
+                moments.changes.push(serde_json::from_value(json!({"area":"MOMENT", "relation":"node", "parameter":null})).unwrap());
+                let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
+                rig.sync.register(super::OperationDef::from_document("MomentNode", "query moment($id: ID!) { node(id: $id) { id text } }").unwrap());
+                rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+                let mut watches = Vec::new();
+                for index in 0..count {
+                    let id = format!("m{index}");
+                    rig.transport.enqueue("MomentNode", crate::transport::Reply::data(json!({"node":{"id":id, "text":"before"}})));
+                    rig.sync.node("moments", "node", &id, false).await.unwrap();
+                    watches.push(rig.sync.watch("moments", "node", &params(json!({"nodeId":id}))).unwrap());
+                    if expired_first && index == 0 { rig.clock.advance(Duration::from_secs(300)); }
+                }
+                for index in 0..count {
+                    rig.transport.enqueue("MomentNode", crate::transport::Reply::data(json!({"node":{"id":format!("m{index}"), "text":"after"}})));
+                }
+                let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+                rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
+                settle().await;
+                assert_eq!(rig.transport.call_count("MomentNode"), count, "first Ready");
+                if reopen {
+                    rig.transport.disconnect("MomentChanged");
+                    rig.clock.advance(Duration::from_secs(age));
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    assert_eq!(subscription.status().connects, 2);
+                } else {
+                    rig.clock.advance(Duration::from_secs(age));
+                }
+                rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
+                settle().await;
+                let reads = rig.transport.call_count("MomentNode") - count;
+                measurements.push((reopen, count, fresh_for, age, expired_first, reads));
+                let expired = if fresh_for == "0.seconds" || age >= 300 { count } else if expired_first { count.min(1) } else { 0 };
+                expected.push((reopen, count, fresh_for, age, expired_first, expired));
+            }
+        }
+    }
+    assert_eq!(measurements, expected);
 }
 
 #[tokio::test(start_paused = true)]

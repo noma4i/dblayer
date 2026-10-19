@@ -560,6 +560,11 @@ Removal uses no mutation or outbox entry. It closes queued writes without sendin
 Observers receive 1 change for the removal. `DELETED` has nothing to load. `ACCESS_REVOKED` means the viewer cannot read the entity.
 For REACTION, `entityId` identifies the message or moment. Leave `removes_on` off that declaration to reread after a reaction is removed.
 Observing a model opens the shared `viewerChanges` subscription. The last cancel releases it after `live_linger`.
+After a reconnect, only observed reads whose answers have expired are reread. Fresh answers keep their existing `fresh_for` time.
+Node reads and remote relations default to `5.minutes` when `fresh_for` is omitted. A zero duration always expires.
+The server does not replay missed events. For a fresh read, a missed change waits until a read after `fresh_for` expires.
+Expiration alone starts no request. A later reconnect or read checks freshness again. Received events still reread immediately, regardless of freshness.
+The first `Ready` keeps its existing behavior and does not trigger an extra reread.
 The full exchange is described in [Cable protocol](cable-protocol.md).
 
 GraphQL `node(id:)` reads one entity of any type that implements `Node`. A model reads it with `node`, a related list reads it through `root:`.

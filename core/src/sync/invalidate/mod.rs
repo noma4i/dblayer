@@ -22,7 +22,7 @@ impl Inner {
                 continue;
             }
             let Ok(resolved) = self.resolve(model, &relation, &params) else { continue };
-            let fetched = if only_stale { self.fetch_after_flights(&resolved).await } else { self.fetch(&resolved, None, true).await };
+            let fetched = if only_stale { self.fetch_after_flights(&resolved).await } else { self.fetch(&resolved, None, false).await };
             reloaded += usize::from(fetched.is_ok());
         }
         reloaded

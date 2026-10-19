@@ -147,7 +147,7 @@ async fn reader_returning_within_the_linger_keeps_the_same_subscription() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn dropped_connection_rereads_the_watched_relation_after_it_reconnects() {
+async fn dropped_connection_rereads_the_expired_watched_relation_after_it_reconnects() {
     let rig = rig();
     rig.transport.enqueue("MomentsPulse", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsPulse", feed_reply(&["m1", "m2"], false, "c2"));
@@ -156,6 +156,7 @@ async fn dropped_connection_rereads_the_watched_relation_after_it_reconnects() {
     settle().await;
     assert_eq!(rig.transport.call_count("MomentsPulse"), 1);
     rig.transport.disconnect("MomentEvents");
+    rig.clock.advance(Duration::from_secs(300));
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(rig.transport.call_count("MomentEvents"), 2);
     assert_eq!(rig.transport.call_count("MomentsPulse"), 2);
