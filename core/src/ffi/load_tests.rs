@@ -58,7 +58,7 @@ fn a_terminal_subscription_failure_reaches_the_query_listener_once_without_http(
     let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     model.storage = crate::schema::Storage::Memory;
     let mut relation = if shared_changes { relation("recent", "5.minutes") } else { RelationSpec::global("recent") };
-    relation.updates.push(crate::schema::UpdatesSpec { subscription: "Notices".into(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None });
+    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None });
     if shared_changes { relation.updates.clear(); }
     model.relations.push(relation);
     let mut models = vec![model];
@@ -67,6 +67,7 @@ fn a_terminal_subscription_failure_reaches_the_query_listener_once_without_http(
         let mut other = models[0].clone();
         other.key = crate::identity::ModelKey::new("AnotherNotice");
         models.push(other);
+        models[0].change_feed = Some(crate::schema::ChangeFeed { subscription: "Notices".into(), root: "notices.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
     }
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), Some(transport.clone()), None, None, None).unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"},{"name":"Feed","document":"query Feed { moments { id } }","rootPath":"moments"}]"#.into()).unwrap();
@@ -94,11 +95,11 @@ fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_load() {
     let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str)]);
     model.storage = crate::schema::Storage::Memory;
     let mut relation = RelationSpec::global("recent");
-    relation.updates.push(crate::schema::UpdatesSpec { subscription:"ViewerNotice".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
+    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription:"BulletinAdded".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
     model.relations.push(relation);
     let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), delay:Duration::ZERO, subscriptions: None });
     let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None).unwrap();
-    db.register_operations(r#"[{"name":"ViewerNotice","document":"subscription ViewerNotice { viewerNotice { body } }","rootPath":"viewerNotice"}]"#.into()).unwrap();
+    db.register_operations(r#"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body } }","rootPath":"bulletinAdded"}]"#.into()).unwrap();
     for window in [false, true] {
         let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#.into();
         let live = if window { db.live_window(query, 10, Arc::new(Silent)) } else { db.live_query(query, Arc::new(Silent)) }.unwrap();

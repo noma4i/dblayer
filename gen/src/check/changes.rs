@@ -1,5 +1,22 @@
 use super::*;
 
+pub(super) fn check_subscription_actions(nodes: &[ModelNode], errors: &mut Vec<Found>) {
+    for node in nodes {
+        for call in node.body.iter().flat_map(|call| std::iter::once(call).chain(call.block.iter().flatten())).filter(|call| matches!(call.word.as_str(), "listen" | "updates")) {
+            let result = crate::build::subscription_apply(call).and_then(|apply| {
+                let Some(apply) = apply else { return Ok(()) };
+                if apply.matches.keys().any(|path| path.split('.').any(str::is_empty)) { return Err("apply matches requires nonempty paths".into()); }
+                match apply.action {
+                    dblayer::schema::SubscriptionAction::Ephemeral { fields } if fields.is_empty() || fields.iter().any(|(name, path)| name.is_empty() || path.split('.').any(str::is_empty)) => Err("ephemeral apply requires nonempty fields and paths".into()),
+                    dblayer::schema::SubscriptionAction::Reread { via } if via.is_empty() => Err("reread apply requires via".into()),
+                    _ => Ok(()),
+                }
+            });
+            if let Err(message) = result { errors.push(at(node.file, call.line, call.column, message)); }
+        }
+    }
+}
+
 pub(super) fn check_changes(nodes: &[ModelNode], models: &[ModelSpec], errors: &mut Vec<Found>) {
     let feeds: Vec<_> = nodes.iter().flat_map(|node| node.body.iter().filter(|call| call.word == "changes").map(move |call| (node, call))).collect();
     for (node, call) in feeds.iter().skip(1) {

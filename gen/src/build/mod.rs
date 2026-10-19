@@ -377,7 +377,12 @@ fn updates_spec(updates: &Call) -> UpdatesSpec {
         debounce: option(updates, "debounce").and_then(|pair| text_of(&pair.value.item)),
         root: option(updates, "root").and_then(|pair| text_of(&pair.value.item)),
         id: option(updates, "id").and_then(|pair| text_of(&pair.value.item)),
+        apply: subscription_apply(updates).expect("validated subscription apply"),
     }
+}
+
+pub(crate) fn subscription_apply(call: &Call) -> Result<Option<dblayer::schema::SubscriptionApply>, String> {
+    option(call, "apply").map(|pair| serde_json::from_value(json_of(&pair.value.item)).map_err(|error| error.to_string())).transpose()
 }
 
 fn build_standard_action(call: &Call) -> ActionDeclaration {

@@ -85,13 +85,13 @@ The code-shape check is shared by error codes and closing reasons, so new server
 
 | Subscription | Handling |
 | --- | --- |
-| `recordEvents` | `area`, `kind` and `entityId` select the reread or local removal from `changed_by` |
-| `viewerNotice` | The event creates a row of the memory model Notice without an HTTP read |
-| `chatActivity` | `TYPING` updates the ephemeral `typing` of the user, `reset_after` resets the value |
-| `interactionReceived` | The event creates a row of the memory model InteractionNotice without an HTTP read |
+| `recordEvents` | Declared response paths select the reread or local removal from `changed_by` |
+| `bulletinAdded` | The event creates a row of the memory model Notice without an HTTP read |
+| `presenceSignal` | `apply` copies declared fields when `matches` accepts the event, `reset_after` resets the value |
+| `recordSignal` | The event creates a row of the memory model InteractionNotice without an HTTP read |
 
 `recordEvents` does not replace row fields. A matching `removes_on` kind removes the cached row without HTTP or a mutation.
-Other known kinds use the HTTP reread through the existing V3 JWE client and the normal SQLite column write.
+Other kinds use the HTTP reread through the encrypted client and the normal SQLite column write.
 Memory model notices get a UUID when the server sends no id. Their rows live in memory only and `expire_after` deletes them.
 A local scope with `updates` opens the subscription at the first reader. It releases the subscription after the last reader leaves, honoring `live_linger`.
 Events are lost while no reader exists. The server does not replay them.

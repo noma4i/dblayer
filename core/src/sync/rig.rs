@@ -71,14 +71,14 @@ pub fn moments_spec() -> ModelSpec {
     let mut pulse = RelationSpec::global("pulse");
     let pulse_remote = remote("MomentsPulse", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes");
     pulse.updates = vec![
-        UpdatesSpec { subscription: "MomentEvents".to_string(), deleted_by: Some("destroyed".to_string()), set: Map::new(), removes: false, debounce: None, root: None, id: None },
-        UpdatesSpec { subscription: "MomentRemoved".to_string(), deleted_by: None, set: Map::new(), removes: true, debounce: None, root: None, id: None },
+        UpdatesSpec { apply: None, subscription: "MomentEvents".to_string(), deleted_by: Some("destroyed".to_string()), set: Map::new(), removes: false, debounce: None, root: None, id: None },
+        UpdatesSpec { apply: None, subscription: "MomentRemoved".to_string(), deleted_by: None, set: Map::new(), removes: true, debounce: None, root: None, id: None },
     ];
     pulse.remote = Some(pulse_remote);
     spec.relations.extend([feed, vibe_feed, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
-    spec.listens = vec![UpdatesSpec { subscription: "MomentListen".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None },
-        UpdatesSpec { subscription: "MomentWrapped".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: Some("momentWrapped.wrapped".to_string()), id: Some("key".to_string()) },
-        UpdatesSpec { subscription: "MomentDebounced".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: Some("300.milliseconds".to_string()), root: None, id: None },
+    spec.listens = vec![UpdatesSpec { apply: None, subscription: "MomentListen".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None },
+        UpdatesSpec { apply: None, subscription: "MomentWrapped".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: Some("momentWrapped.wrapped".to_string()), id: Some("key".to_string()) },
+        UpdatesSpec { apply: None, subscription: "MomentDebounced".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: Some("300.milliseconds".to_string()), root: None, id: None },
     ];
     spec.actions = vec![
         bound("create", RootShape::Upsert, "CreateMoment"),

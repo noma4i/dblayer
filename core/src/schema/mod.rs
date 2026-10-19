@@ -516,6 +516,24 @@ pub struct UpdatesSpec {
     pub root: Option<String>,
     #[serde(default)]
     pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply: Option<SubscriptionApply>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubscriptionApply {
+    #[serde(flatten)]
+    pub action: SubscriptionAction,
+    #[serde(default)]
+    pub matches: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "effect", rename_all = "snake_case")]
+pub enum SubscriptionAction {
+    Ephemeral { fields: BTreeMap<String, String> },
+    Reread { via: String },
+    Ignore,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

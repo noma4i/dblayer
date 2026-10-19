@@ -38,7 +38,7 @@ struct SubscriptionSessionTests {
   @Test func queryListenerReceivesOneTypedSessionFailureWithoutReads() async throws {
     let transport = SessionSubscriptions()
     let database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport)
-    try database.registerOperations(defsJson: #"[{"name":"ViewerNotice","document":"subscription ViewerNotice { viewerNotice { body occurredAt } }","rootPath":"viewerNotice"}]"#)
+    try database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     let listener = SessionChanges()
     let live = try database.liveQuery(queryJson: #"{"model":"Notice","relation":"recent","params":{}}"#, listener: listener)
     defer { live.cancel() }
@@ -52,6 +52,6 @@ struct SubscriptionSessionTests {
     }
     #expect(code == .unauthenticated)
     #expect(detail == "session_unknown")
-    #expect(transport.mock.calls.map(\.operationName) == ["ViewerNotice"])
+    #expect(transport.mock.calls.map(\.operationName) == ["BulletinAdded"])
   }
 }

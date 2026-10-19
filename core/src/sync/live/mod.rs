@@ -84,7 +84,7 @@ impl Inner {
 
     fn acquire_changes(self: &std::sync::Arc<Self>) -> Option<String> {
         let (model, feed) = self.change_feed()?;
-        Some(self.acquire_one(&model, UpdatesSpec { subscription: feed.subscription, deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }))
+        Some(self.acquire_one(&model, UpdatesSpec { apply: None, subscription: feed.subscription, deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }))
     }
 
     fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec) -> String {
@@ -113,6 +113,7 @@ impl Inner {
             def.set = updates.set;
             def.root = updates.root;
             def.id = updates.id;
+            def.apply = updates.apply;
             let started = inner.subscribe(def).await;
             let mut lives = locked(&inner.lives);
             let Some(live) = lives.get_mut(&slot) else { return };

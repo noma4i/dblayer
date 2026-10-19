@@ -117,7 +117,7 @@ fn updates_set_must_name_ephemeral_fields() {
             variables: Default::default(), root: None, total_from: None,
         };
         let mut relation = RelationSpec::global("current");
-        relation.updates = vec![UpdatesSpec { subscription: "UserTyping".into(), deleted_by: None, set: Map::from_iter([(field.into(), json!(true))]), removes: false, debounce: None, root: None, id: None }];
+        relation.updates = vec![UpdatesSpec { apply: None, subscription: "UserTyping".into(), deleted_by: None, set: Map::from_iter([(field.into(), json!(true))]), removes: false, debounce: None, root: None, id: None }];
         relation.remote = Some(remote);
         ModelSpec { relations: vec![relation], ..with_ephemeral(typing()) }
     };

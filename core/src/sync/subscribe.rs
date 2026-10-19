@@ -41,11 +41,12 @@ pub struct SubscriptionDef {
     pub set: Map<String, Value>,
     pub root: Option<String>,
     pub id: Option<String>,
+    pub apply: Option<crate::schema::SubscriptionApply>,
 }
 
 impl SubscriptionDef {
     pub fn new(event: EventSpec, operation: &str, model: &str, effect: EventEffect) -> Self {
-        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None, set: Map::new(), root: None, id: None }
+        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None, set: Map::new(), root: None, id: None, apply: None }
     }
 
     #[cfg(test)]
@@ -122,30 +123,11 @@ impl Feed {
     }
 
     async fn invalidation(&self, response: &Response) -> bool {
-        if self.inner.db.spec(&self.def.model).is_ok_and(|spec| spec.is_memory()) { return false; }
         let Some(data) = response.data.as_ref() else { return false };
-        if let Some(activity) = data.get("chatActivity") {
-            if activity["kind"] == "TYPING" {
-                if let (Some(id), Some(active)) = (activity.get("userId").and_then(read_id), activity["active"].as_bool()) {
-                    match self.inner.db.set_ephemeral(&self.def.model, &id, Map::from_iter([("typing".into(), json!(active))])) {
-                        Ok(_) => locked(&self.status).applied += 1,
-                        Err(_) => locked(&self.status).rejected += 1,
-                    }
-                }
-            }
+        let Some((_, feed)) = self.inner.change_feed().filter(|(_, feed)| feed.subscription == self.def.operation) else { return false };
+        let Some(changes) = root_value(data, &feed.root).and_then(Value::as_array) else {
+            locked(&self.status).rejected += 1;
             return true;
-        }
-        if data.get("viewerNotice").is_some() { return true; }
-        let (feed, changes) = if let Some(notice) = data.get("interactionReceived") {
-            (crate::schema::ChangeFeed { subscription: self.def.operation.clone(), root: String::new(), area: "area".into(), kind: "kind".into(), id: "entityId".into() },
-                vec![json!({"area":"MESSAGE", "kind":"UPDATED", "entityId":notice["messageId"]}), json!({"area":"USER", "kind":"UPDATED", "entityId":notice["actorUserId"]})])
-        } else {
-            let Some((_, feed)) = self.inner.change_feed().filter(|(_, feed)| feed.subscription == self.def.operation) else { return false };
-            let Some(changes) = root_value(data, &feed.root).and_then(Value::as_array) else {
-                locked(&self.status).rejected += 1;
-                return true;
-            };
-            (feed, changes.clone())
         };
         for change in changes {
             let (Some(area), Some(id), Some(kind)) = (root_value(&change, &feed.area).and_then(Value::as_str), root_value(&change, &feed.id).and_then(Value::as_str), root_value(&change, &feed.kind).and_then(Value::as_str)) else {
@@ -163,19 +145,52 @@ impl Feed {
                     self.apply(vec![Pending { bucket: String::new(), id, node: Map::new(), generation: self.inner.db.generation() }], &model, EventEffect::Destroy).await;
                     continue;
                 }
-                let spec = match self.inner.db.spec(&model) { Ok(spec) => spec, Err(_) => continue };
-                let Some(relation) = spec.relations.iter().find(|relation| relation.name == read.relation) else { continue };
-                let parameter = if relation.node == Some(crate::schema::NodeRead::One) { Some(crate::schema::NODE_PARAM) } else { read.parameter.as_deref() };
-                let params = parameter.map(|name| Map::from_iter([(name.to_string(), json!(id))])).unwrap_or_default();
-                let result = match self.inner.resolve(&model, &read.relation, &params) {
-                    Ok(resolved) => self.inner.fetch(&resolved, None, true).await.map(|_| ()),
-                    Err(error) => Err(error),
-                };
+                let result = self.reread(&model, &read.relation, read.parameter.as_deref(), Some(id)).await;
                 match result {
                     Ok(()) => locked(&self.status).applied += 1,
                     Err(_) => locked(&self.status).rejected += 1,
                 }
             }
+        }
+        true
+    }
+
+    async fn reread(&self, model: &str, name: &str, parameter: Option<&str>, id: Option<&str>) -> Result<(), SyncError> {
+        let spec = self.inner.db.spec(model)?;
+        let relation = spec.relations.iter().find(|relation| relation.name == name).ok_or_else(|| SyncError::Event(format!("unknown read {name}")))?;
+        let parameter = if relation.node == Some(crate::schema::NodeRead::One) { Some(crate::schema::NODE_PARAM) } else { parameter.or_else(|| relation.text_params.iter().chain(&relation.by_columns).next().map(String::as_str)) };
+        let params = match parameter {
+            Some(parameter) => Map::from_iter([(parameter.to_string(), json!(id.ok_or_else(|| SyncError::Event("missing event id".into()))?))]),
+            None => Map::new(),
+        };
+        let resolved = self.inner.resolve(model, name, &params)?;
+        self.inner.fetch(&resolved, None, true).await.map(|_| ())
+    }
+
+    async fn apply_event(&self, response: &Response) -> bool {
+        use crate::schema::SubscriptionAction;
+        let Some(apply) = &self.def.apply else { return false };
+        if matches!(apply.action, SubscriptionAction::Ignore) { return true; }
+        let Some(node) = response.data.as_ref().and_then(|data| root_value(data, &self.root_path)) else {
+            locked(&self.status).rejected += 1;
+            return true;
+        };
+        if !apply.matches.iter().all(|(path, expected)| root_value(node, path).and_then(Value::as_str) == Some(expected.as_str())) { return true; }
+        let id = root_value(node, self.def.id.as_deref().unwrap_or("id")).and_then(read_id);
+        let result = match &apply.action {
+            SubscriptionAction::Ephemeral { fields } => {
+                let values: Option<Map<String, Value>> = fields.iter().map(|(name, path)| root_value(node, path).cloned().map(|value| (name.clone(), value))).collect();
+                match (id.as_ref(), values) {
+                    (Some(id), Some(values)) => self.inner.db.set_ephemeral(&self.def.model, id, values).map_err(SyncError::from),
+                    _ => Err(SyncError::Event("missing event id or fields".into())),
+                }
+            }
+            SubscriptionAction::Reread { via } => self.reread(&self.def.model, via, None, id.as_ref().map(RowId::as_str)).await,
+            SubscriptionAction::Ignore => Ok(()),
+        };
+        match result {
+            Ok(()) => locked(&self.status).applied += 1,
+            Err(_) => locked(&self.status).rejected += 1,
         }
         true
     }
@@ -319,7 +334,7 @@ impl Feed {
                             *retry = retry.confirmed();
                             locked(&self.status).degraded = false;
                         }
-                        if self.invalidation(&response).await { continue; }
+                        if self.apply_event(&response).await || self.invalidation(&response).await { continue; }
                         let Some(item) = self.parse(&response) else { continue };
                         match &debounce {
                             Some(debounce) => {

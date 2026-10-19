@@ -17,7 +17,7 @@ class SubscriptionSessionTest {
             }
         }
         val database = Database.open(Config(null, null, 8u), modelsJSON, transport)
-        database.registerOperations("""[{"name":"ViewerNotice","document":"subscription ViewerNotice { viewerNotice { body occurredAt } }","rootPath":"viewerNotice"}]""")
+        database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
         val failures = CopyOnWriteArrayList<DbException>()
         val listener = object : QueryListener {
             override fun changed(change: LiveChange) { change.error?.let { failures.add(it) } }
@@ -31,7 +31,7 @@ class SubscriptionSessionTest {
             val failure = failures.single() as DbException.Session
             assertEquals(SessionCode.UNAUTHENTICATED, failure.code)
             assertEquals("session_unknown", failure.detail)
-            assertEquals(listOf("ViewerNotice"), mock.calls.map { it.operationName })
+            assertEquals(listOf("BulletinAdded"), mock.calls.map { it.operationName })
         } finally { live.cancel() }
     }
 }

@@ -3,7 +3,7 @@ model Notice, storage: :memory, expire_after: 1.minute do
   field :occurredAt, type: :date
   scope :recent do
     order occurredAt: :desc
-    updates ViewerNotice
+    updates BulletinAdded
   end
 end
 
@@ -13,6 +13,6 @@ model InteractionNotice, storage: :memory, expire_after: 1.minute do
   field :occurredAt, type: :date
   scope :recent do
     order occurredAt: :desc
-    updates InteractionReceived
+    updates RecordSignal
   end
 end

@@ -164,12 +164,12 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
         (Context::Action, "correlate") => plain(Shape::Paths, vec![]),
         (Context::Model, "listen") => {
-            plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
+            plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("apply", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
         }
         (Context::Model, "changes") => plain(Shape::Const, vec![key("root", Want::Any, true), key("area", Want::Symbol, true), key("kind", Want::Symbol, true), key("id", Want::Symbol, true)]),
         (Context::Model, "changed_by") => plain(Shape::Name, vec![key("via", Want::Symbol, true), key("id", Want::Symbol, false), key("removes_on", Want::Symbols, false)]),
         (Context::Remote, "updates") => {
-            plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
+            plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("apply", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
         }
         (Context::Model, "scope") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("where", Want::Hash, false), key("order", Want::Hash, false)], block: true, free_keys: false }),
         (Context::Model, "belongs_to") => plain(
@@ -214,6 +214,8 @@ pub fn check(nodes: &[ModelNode]) -> Result<Vec<ModelSpec>, Vec<Found>> {
     if !errors.is_empty() {
         return Err(errors);
     }
+    changes::check_subscription_actions(nodes, &mut errors);
+    if !errors.is_empty() { return Err(errors); }
     let models = build(nodes);
     changes::check_changes(nodes, &models, &mut errors);
     enums::check_enums(nodes, &models, &mut errors);

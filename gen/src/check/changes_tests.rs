@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn subscription_actions_validate_effects_and_required_data() {
+    let source = |apply: &str| format!("model Record do\n field :title, type: :string\n node RecordNode\n listen RecordSignal, root: \"recordSignal\", id: \"recordId\", apply: {{{apply}}}\nend");
+    for apply in ["effect: :ephemeral, fields: {typing: :active}, matches: {kind: \"ACTIVE\"}", "effect: :reread, via: :node", "effect: :ignore"] {
+        let models = crate::parse_models(&source(apply)).unwrap();
+        assert!(serde_json::to_value(&models[0]).unwrap()["listens"][0]["apply"].is_object());
+    }
+    for (apply, expected) in [("effect: :unknown", "unknown variant"), ("effect: :ephemeral, fields: {}", "fields"), ("effect: :reread", "via")] {
+        let errors = crate::parse_models(&source(apply)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(expected)), "{errors:?}");
+    }
+}
+
+#[test]
 fn application_declares_change_subscription_and_payload_paths() {
     let source = "model Record do\n node RecordNode\n changes RecordEvents, root: \"recordEvents.entries\", area: :topic, kind: :action, id: :recordId\n changed_by :record, via: :node, removes_on: [:erased]\nend";
     let models = crate::parse_models(source).unwrap();
@@ -51,11 +64,11 @@ fn public_changes_declarations_accept_shared_node_areas_and_reject_shared_lists(
 
 #[test]
 fn local_updates_require_memory_storage_and_unique_subscription_names() {
-    let source = "model Notice, storage: :memory, expire_after: 1.minute do\n field :body, type: :string\n scope :recent do\n updates ViewerNotice\n end\nend";
+    let source = "model Notice, storage: :memory, expire_after: 1.minute do\n field :body, type: :string\n scope :recent do\n updates BulletinAdded\n end\nend";
     assert!(crate::parse_models(source).is_ok(), "{:?}", crate::parse_models(source));
     for (input, expected) in [
         (source.replace(", storage: :memory, expire_after: 1.minute", ""), "memory"),
-        (source.replace("updates ViewerNotice", "updates ViewerNotice\n updates ViewerNotice"), "duplicate subscription"),
+        (source.replace("updates BulletinAdded", "updates BulletinAdded\n updates BulletinAdded"), "duplicate subscription"),
     ] {
         let errors = crate::parse_models(&input).unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains(expected)), "{errors:?}");

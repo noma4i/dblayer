@@ -107,6 +107,7 @@ fn rows() -> Vec<(&'static str, String, String)> {
         ("updates.root", remote("    updates Changed"), remote("    updates Changed, root: \"a.b\"")),
         ("updates.id", remote("    updates Changed"), remote("    updates Changed, id: \"chatId\"")),
         ("updates.set", remote("    updates Changed"), remote("    updates Changed, set: { a: \"x\" }")),
+        ("updates.apply", remote("    updates Changed"), remote("    updates Changed, apply: { effect: :ignore }")),
         ("action.mutation", action(""), action("").replace("mutation Like", "mutation Dislike")),
         ("action.input", action(""), action("    input momentId: :id")),
         ("action.optimistic", action(""), action("    optimistic a: \"x\"")),

@@ -17,18 +17,18 @@ async fn memory_scope_events_follow_readers_and_expire_without_http() {
     model.storage = Storage::Memory;
     model.expire_after = Some("5.seconds".into());
     let mut relation = RelationSpec::global("recent");
-    relation.updates.push(UpdatesSpec { subscription:"ViewerNotice".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
+    relation.updates.push(UpdatesSpec { apply: None, subscription:"BulletinAdded".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
     model.relations.push(relation);
     let rig = rig_on(crate::db::Db::open_in_memory(vec![model], None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig { live_linger:Duration::from_secs(1), ..Default::default() });
-    rig.sync.register(super::super::OperationDef::new("ViewerNotice", "subscription ViewerNotice { viewerNotice { body } }", "viewerNotice"));
-    let emit = || rig.transport.emit("ViewerNotice", SubscriptionEvent::Next(Response::data(json!({"viewerNotice":{"body":"hello"}}))));
+    rig.sync.register(super::super::OperationDef::new("BulletinAdded", "subscription BulletinAdded { bulletinAdded { body } }", "bulletinAdded"));
+    let emit = || rig.transport.emit("BulletinAdded", SubscriptionEvent::Next(Response::data(json!({"bulletinAdded":{"body":"hello"}}))));
     emit();
     settle().await;
     assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
     let first = rig.sync.watch("notices", "recent", &none()).unwrap();
     let second = rig.sync.watch("notices", "recent", &none()).unwrap();
     settle().await;
-    assert_eq!(rig.transport.call_count("ViewerNotice"), 1);
+    assert_eq!(rig.transport.call_count("BulletinAdded"), 1);
     emit();
     settle().await;
     assert_eq!(rig.db.query(&crate::query::Query::new("notices")).unwrap()[0].text("body"), Some("hello"));
@@ -37,13 +37,13 @@ async fn memory_scope_events_follow_readers_and_expire_without_http() {
     assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
     drop(first);
     settle().await;
-    assert_eq!(rig.transport.cancellations("ViewerNotice"), 0);
+    assert_eq!(rig.transport.cancellations("BulletinAdded"), 0);
     drop(second);
     tokio::time::sleep(Duration::from_secs(2)).await;
     emit();
     settle().await;
     assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
-    assert_eq!(rig.transport.cancellations("ViewerNotice"), 1);
+    assert_eq!(rig.transport.cancellations("BulletinAdded"), 1);
     assert!(rig.transport.calls().iter().all(|call| call.kind == crate::transport::CallKind::Subscription));
 }
 

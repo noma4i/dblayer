@@ -502,7 +502,7 @@ fn specs_round_trip_through_json_and_default_missing_parts() {
     .unwrap();
     assert_eq!(minimal, ModelSpec::new("m", vec![FieldSpec::raw("id")]));
 
-    let remote = RelationSpec { updates: vec![UpdatesSpec { subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()), set: Map::new(), removes: false, debounce: None, root: None, id: None }], ..RelationSpec::global("feed") };
+    let remote = RelationSpec { updates: vec![UpdatesSpec { apply: None, subscription: "MomentEvents".into(), deleted_by: Some("destroyed".into()), set: Map::new(), removes: false, debounce: None, root: None, id: None }], ..RelationSpec::global("feed") };
     let text = serde_json::to_string(&remote).unwrap();
     assert_eq!(serde_json::from_str::<RelationSpec>(&text).unwrap(), remote);
     let bare = r#"{"operation":"Q","shape":{"type":"single"},"stale_time":"5.minutes"}"#;

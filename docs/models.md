@@ -322,7 +322,7 @@ model Notice, storage: :memory, expire_after: 1.minute do
   field :occurredAt, type: :date
   scope :recent do
     order occurredAt: :desc
-    updates ViewerNotice
+    updates BulletinAdded
   end
 end
 
@@ -332,7 +332,7 @@ model InteractionNotice, storage: :memory, expire_after: 1.minute do
   field :occurredAt, type: :date
   scope :recent do
     order occurredAt: :desc
-    updates InteractionReceived
+    updates RecordSignal
   end
 end
 
@@ -343,7 +343,7 @@ model User do
   end
   scope :profile do
     fetch UserProfile
-    updates ChatActivity, id: :userId, set: { typing: true }
+    updates PresenceSignal, root: "presenceSignal", id: :userId, apply: { effect: :ephemeral, fields: { typing: :active }, matches: { kind: "ACTIVE" } }
   end
 end
 ```
@@ -570,6 +570,18 @@ DB.listen()
 ```
 
 The generated Swift and Kotlin model declarations carry identical subscription data.
+Both `listen` and `updates` accept `apply` to select an action for a subscription response.
+Without `apply`, the event follows the normal row upsert behavior.
+`matches` compares response paths against exact strings supplied by the application. Nonmatching events do nothing.
+`effect: :ephemeral` copies the response paths in `fields` into declared ephemeral fields without changing stored columns.
+`effect: :reread, via: :node` rereads the declared node with the event ID. A singleton read needs no ID.
+`effect: :ignore` discards the event. Unknown effects, empty ephemeral fields and missing reread destinations produce generator errors.
+
+```ruby
+listen PresenceSignal, root: "presenceSignal", id: "memberId", apply: { effect: :ephemeral, fields: { typing: :active }, matches: { kind: "ACTIVE" } }
+listen RecordSignal, root: "recordSignal", id: "recordId", apply: { effect: :reread, via: :node }
+```
+
 Removal sends no mutation. It closes queued writes without sending or rollback and destroys children declared with `dependent: :destroy`.
 Observers receive 1 change for the removal.
 Observing a model opens the shared subscription. The last cancel releases it after `live_linger`.
