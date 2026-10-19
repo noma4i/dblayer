@@ -59,6 +59,7 @@ fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
 fn path_of(operation: &str) -> Result<String, DbError> {
     match operation {
         "otp" | "confirm" => Ok(format!("/api/v3/auth/{operation}")),
+        "support" => Ok("/api/v3/support".to_string()),
         "social" => Ok("/api/v3/auth/provider".to_string()),
         "logout" => Ok(core::LOGOUT_PATH.to_string()),
         other => Err(DbError::Invalid { detail: format!("unknown session operation {other}") }),

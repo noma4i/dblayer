@@ -109,6 +109,7 @@ val answer = database.sessionCall("confirm", """{"code":"123456"}""")
 | Operation | Body | Answer |
 | --------- | ---- | ------ |
 | `otp` | `phone` | `nextStep` |
+| `support` | `name`, `contact`, `message`, `step`, `device`, `os`, `appVersion`, `country` | |
 | `confirm` | `code` | `nextStep` |
 | `social` | the Apple or Google sign-in fields of the server API: the source name (`apple` or `google`), `idToken`, optional `authCode` and `name` | `nextStep` |
 | `logout` | `{}` | `revoked`. The core then deletes the credential and the session state |
