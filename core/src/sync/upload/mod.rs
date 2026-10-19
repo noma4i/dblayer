@@ -217,9 +217,15 @@ impl Sync {
         loop {
             let mut tasks = std::mem::take(&mut locked(&self.inner.uploads).tasks);
             while tasks.join_next().await.is_some() {}
-            let runs = locked(&self.inner.uploads);
-            if runs.tasks.is_empty() && runs.active.is_empty() {
-                return;
+            let waiting = {
+                let runs = locked(&self.inner.uploads);
+                if runs.tasks.is_empty() && runs.active.is_empty() {
+                    return;
+                }
+                runs.active.values().next().map(|active| active.done.subscribe())
+            };
+            if let Some(mut done) = waiting {
+                let _ = done.wait_for(|finished| *finished).await;
             }
         }
     }

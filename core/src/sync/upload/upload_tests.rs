@@ -112,6 +112,110 @@ fn stored_state(rig: &Rig) -> UploadState {
 const TWELVE: &[u8] = b"0123456789ab";
 
 #[tokio::test(start_paused = true)]
+async fn http_put_failure_does_not_confirm_transfer() {
+    use crate::transport::{Transport, GraphQLRequest, Response, Subscription, PutRequest, PutResponse};
+    struct HttpStatus(crate::transport::MockTransport, u16);
+    #[async_trait::async_trait]
+    impl Transport for HttpStatus {
+        async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> { self.0.query(request).await }
+        async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> { self.0.mutate(request).await }
+        async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> { self.0.subscribe(request).await }
+        async fn put(&self, _: PutRequest) -> Result<PutResponse, TransportError> { Ok(PutResponse { status: self.1, etag: None }) }
+    }
+    for status in [503, 408, 429, 400, 403, 302] {
+        let config = UploadConfig { backoff: small().backoff.limited(0), ..small() };
+        let rig = upload_rig(config.clone());
+        single_replies(&rig);
+        let sync = Sync::new(rig.db.clone(), Arc::new(HttpStatus(rig.transport.clone(), status)), Arc::new(rig.clock.clone()), SyncConfig { upload: config, ..SyncConfig::default() });
+        register_operations(&sync);
+        sync.register(OperationDef::new("CreateBlob", "mutation { createBlob }", "createBlob"));
+        let source = file(b"abcdef");
+        sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
+        sync.wait_uploads().await;
+        assert_eq!(rig.transport.call_count("CreateMoment"), 0, "HTTP {status} PUT confirmed transfer");
+        assert!(!stored_state(&rig).is_transferred());
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancel_multipart_offline_waits_before_abort() {
+    let rig = upload_rig(small());
+    let source = file(TWELVE);
+    rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
+    rig.transport.enqueue("AbortMultipart", abort());
+    rig.sync.set_online(false);
+    let id = rid("m1");
+    let cancel = rig.sync.cancel_upload("moments", &id);
+    tokio::pin!(cancel);
+    tokio::select! {
+        result = &mut cancel => panic!("offline cancellation completed: {result:?}"),
+        () = settle() => {}
+    }
+    assert_eq!(rig.transport.call_count("AbortMultipart"), 0);
+    assert_eq!(stored_state(&rig).retries, 0);
+    rig.sync.set_online(true);
+    assert!(cancel.await.unwrap());
+    assert_eq!(rig.transport.call_count("AbortMultipart"), 1);
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn repeated_expired_grants_wait_before_renewal() {
+    let mut observations = Vec::new();
+    for multipart in [false, true] {
+        let rig = upload_rig(UploadConfig { backoff: small().backoff.limited(2), ..small() });
+        let (operation, url) = if multipart { ("PresignParts", "https://s3/p1") } else { ("CreateBlob", "https://s3/single") };
+        rig.transport.enqueue("InitMultipart", init());
+        rig.transport.enqueue("AbortMultipart", abort());
+        for _ in 0..3 {
+            rig.transport.enqueue(operation, if multipart { presign(&[(1, url), (2, "https://s3/p2"), (3, "https://s3/p3")]) } else { blob() });
+            rig.transport.enqueue_put(url, PutReply::status(403));
+        }
+        let source = file(if multipart { TWELVE } else { b"abcdef" });
+        let started = tokio::time::Instant::now();
+        rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
+        settle().await;
+        let before_delay = rig.transport.call_count(operation);
+        rig.sync.wait_uploads().await;
+        observations.push((multipart, before_delay, rig.transport.call_count(operation), started.elapsed() >= small().backoff.delay(0) + small().backoff.delay(1), stored_state(&rig).retries));
+        assert_eq!(rig.transport.call_count("CreateMoment"), 0);
+    }
+    assert_eq!(observations, [(false, 1, 3, true, 2), (true, 1, 3, true, 2)]);
+}
+
+#[tokio::test]
+async fn wait_uploads_parks_while_resume_owns_the_upload() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Wake, Waker};
+    struct Wakes(std::sync::atomic::AtomicUsize);
+    impl Wake for Wakes {
+        fn wake(self: Arc<Self>) { self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+    }
+    let rig = upload_rig(small());
+    let source = file(b"abcdef");
+    let seq = rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+    let owner = crate::transport::RequestOwner { seq, item_position: 0, stage: "prepare".into() };
+    let resume = rig.sync.inner.claim_upload_resume(&owner).await.unwrap().unwrap();
+    let wakes = Arc::new(Wakes(std::sync::atomic::AtomicUsize::new(0)));
+    let waker = Waker::from(wakes.clone());
+    let (send, receive) = std::sync::mpsc::channel();
+    let sync = rig.sync.clone();
+    let thread = std::thread::spawn(move || {
+        let mut waiting = Box::pin(sync.wait_uploads());
+        let first = waiting.as_mut().poll(&mut Context::from_waker(&waker));
+        send.send(matches!(first, Poll::Pending)).unwrap();
+    });
+    let parked = receive.recv_timeout(Duration::from_secs(1));
+    assert_eq!(wakes.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let active = locked(&rig.sync.inner.uploads).active.remove(&(seq, 0)).unwrap();
+    active.done.send_replace(true);
+    thread.join().unwrap();
+    rig.db.discard("moments", &rid("m1")).unwrap();
+    drop(resume);
+    assert_eq!(parked, Ok(true), "wait_uploads did not return Pending");
+}
+
+#[tokio::test(start_paused = true)]
 async fn retryable_storage_refusal_retries_upload() {
     for code in ["UPLOAD_STORAGE_FAILURE", "IN_PROGRESS", "RATE_LIMITED", "INVALID_RECEIPT", "INVALID_OPERATION", "SERVICE_UNAVAILABLE"] {
         let rig = upload_rig(small());

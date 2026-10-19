@@ -132,6 +132,9 @@ impl Runner {
         match tokio::time::timeout(self.inner.config.upload.put_timeout, self.inner.transport.put(request)).await {
             Err(_) => Err(StepError::Retry(OperationFailure::new(FailureKind::Network, "put timed out"))),
             Ok(Err(error)) => Err(step_error(error, self.token.is_cancelled())),
+            Ok(Ok(response)) if !(200..300).contains(&response.status) => {
+                Err(step_error(TransportError::Http { status: response.status, body: String::new() }, self.token.is_cancelled()))
+            }
             Ok(Ok(response)) => Ok(response.etag),
         }
     }
@@ -141,7 +144,6 @@ impl Runner {
         F: FnMut() -> Fut,
         Fut: Future<Output = Result<T, StepError>>,
     {
-        let backoff = self.inner.config.upload.backoff;
         let mut attempt = 0;
         loop {
             self.await_online().await?;
@@ -154,24 +156,30 @@ impl Runner {
                     if !self.inner.connectivity.is_online() {
                         continue;
                     }
-                    if !backoff.allows(attempt) {
-                        return Err(Stop::Failed(failure));
-                    }
-                    let delay = backoff.delay(attempt);
-                    self.save(|state| {
-                        state.retries += 1;
-                        state.retry_at = Some((self.inner.clock.now() + delay).as_millis() as u64);
-                        state.error = Some(failure.clone());
-                    })?;
-                    tokio::select! {
-                        () = tokio::time::sleep(delay) => {}
-                        () = self.token.cancelled() => return Err(Stop::Cancelled),
-                    }
-                    self.save(|state| { state.retry_at = None; state.error = None; })?;
+                    self.pause_retry(attempt, failure).await?;
                     attempt += 1;
                 }
             }
         }
+    }
+
+    pub(super) async fn pause_retry(&self, attempt: u32, failure: OperationFailure) -> Result<(), Stop> {
+        self.await_online().await?;
+        let backoff = self.inner.config.upload.backoff;
+        if !backoff.allows(attempt) {
+            return Err(Stop::Failed(failure));
+        }
+        let delay = backoff.delay(attempt);
+        self.save(|state| {
+            state.retries += 1;
+            state.retry_at = Some((self.inner.clock.now() + delay).as_millis() as u64);
+            state.error = Some(failure);
+        })?;
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            () = self.token.cancelled() => return Err(Stop::Cancelled),
+        }
+        self.save(|state| { state.retry_at = None; state.error = None; })
     }
 
     pub(super) async fn await_online(&self) -> Result<(), Stop> {

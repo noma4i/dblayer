@@ -156,7 +156,9 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 
 ### Rules
 
-- Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts. A `403` on a part asks for a new url for that part only. Urls older than the presign lifetime are requested again for unfinished parts.
+- Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts, including multipart abort after cancellation.
+- A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
+- A `403` renews the single-upload url or the affected part url after the configured backoff, within the renewal attempt limit. Renewals count in upload attempts. Urls older than the presign lifetime are requested again for unfinished parts.
 - The content mutation follows the same rules as other mutations ([writing data](writing-data.md)). Offline it waits for `setOnline(true)`. If it could not reach the server, the upload stays pending and the mutation is sent again with a growing pause, up to 40 attempts, without a new transfer. If the transfer started and no answer is observed, the upload becomes `deliveryUnknown` and is never sent again by itself. A rejected mutation, or 40 unreached attempts, becomes `failed`.
 - The grant, including `signedId`, `blobId`, URL and headers, is stored before PUT. A separate flag records confirmed transfer.
 - A restarted unfinished PUT uses its saved grant. `retry()` after a failed or unknown content mutation skips confirmed transfers.

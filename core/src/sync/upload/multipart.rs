@@ -88,10 +88,10 @@ impl Runner {
                 Ok(None) => return self.stop_flight(flight, Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, "the part answer has no etag"))).await,
                 Err(Stop::Expired) => {
                     let count = expired.entry(number).or_default();
-                    *count += 1;
-                    if !config.backoff.allows(*count - 1) {
-                        return self.stop_flight(flight, Stop::Failed(OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE))).await;
+                    if let Err(stop) = self.pause_retry(*count, OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await {
+                        return self.stop_flight(flight, stop).await;
                     }
+                    *count += 1;
                     match self.presign(&steps.presign, &key, &upload_id, &[number]).await {
                         Ok(fresh) => targets.extend(fresh),
                         Err(stop) => return self.stop_flight(flight, stop).await,

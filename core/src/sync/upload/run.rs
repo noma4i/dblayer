@@ -269,7 +269,8 @@ impl Runner {
                     })?;
                     return Ok(());
                 }
-                Err(Stop::Expired) if self.inner.config.upload.backoff.allows(renewals) => {
+                Err(Stop::Expired) => {
+                    self.pause_retry(renewals, OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await?;
                     renewals += 1;
                     self.save(|state| { state.put_url = None; state.headers.clear(); })?;
                 }
@@ -320,6 +321,7 @@ impl Runner {
         let state = self.snapshot();
         let (Some(key), Some(upload_id)) = (state.key, state.upload_id) else { return };
         if let Some(steps) = &self.input.steps.multipart {
+            self.inner.connectivity.online().await;
             if self.graphql(&steps.abort, json!({"key": key, "uploadId": upload_id}), false).await.is_err() {
                 return;
             }
