@@ -30,7 +30,6 @@ impl HttpExchange for Exchange {
         } else { json!({"ok": true}) };
         Ok(HttpReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), reply) })
     }
-    async fn get(&self, _: &str) -> Result<HttpReply, TransportError> { unreachable!() }
 }
 
 fn encrypted(db: &Db, exchange: Arc<Exchange>, credentials: Arc<MemoryCredentials>) -> (Sync, Arc<EncryptedClient>) {

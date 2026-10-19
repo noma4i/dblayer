@@ -5,9 +5,9 @@ use std::sync::Arc;
 use super::encrypted_tests::{code, failure, SubscriptionsOnly, ThroughServer};
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, SessionCode};
 use crate::pacing::SystemClock;
-use crate::transport::encrypted::fake_server_tests::{config_body, FakeServer, MemoryCredentials};
+use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64, SHORT_KEY_PIN};
-use crate::transport::{CredentialSlot as CoreCredentials, HttpReply};
+use crate::transport::{CredentialSlot as CoreCredentials};
 
 pub(super) const SOCIAL_BODY: &str = r#"{"provider":"google","idToken":"t"}"#;
 
@@ -64,10 +64,6 @@ async fn a_pin_mismatch_at_open_and_in_the_config_never_touches_the_credential_s
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     let (credential, before) = (rig.credentials.inner.value(), rig.touched());
 
-    for body in [config_body(SHORT_KEY_PIN, PUBLIC_KEY_DER_B64, 3072), config_body(PIN, PUBLIC_KEY_DER_B64, 2048)] {
-        rig.server.serve_config(HttpReply { status: 200, body: body.to_string() });
-        assert_eq!(code(database.server_config(None, None).await.unwrap_err()), SessionCode::ServerKeyMismatch);
-    }
 
     assert_eq!((rig.touched(), rig.credentials.inner.value()), (before, credential));
     database.session_call("confirm".into(), r#"{"code":"1"}"#.into()).await.unwrap_err();

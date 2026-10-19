@@ -4,9 +4,9 @@ use async_trait::async_trait;
 
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, SessionCode, Transport};
 use crate::pacing::SystemClock;
-use crate::transport::encrypted::fake_server_tests::{config_body, FakeServer, MemoryCredentials};
-use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64, SHORT_KEY_DER_B64, SHORT_KEY_PIN};
-use crate::transport::{CredentialSlot as CoreCredentials, HttpExchange, HttpReply, TransportError};
+use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
+use crate::transport::encrypted::vectors::{ORIGIN, PIN, PUBLIC_KEY_DER_B64};
+use crate::transport::{CredentialSlot as CoreCredentials, HttpExchange, TransportError};
 
 pub(super) struct ThroughServer(pub(super) Arc<FakeServer>);
 
@@ -18,10 +18,6 @@ pub(super) fn failure(error: TransportError) -> DbError {
 impl EncryptedHttp for ThroughServer {
     async fn post(&self, path: String, body: String) -> Result<EncryptedReply, DbError> {
         let reply = self.0.post(&path, body).await.map_err(failure)?;
-        Ok(EncryptedReply { status: reply.status, body: reply.body })
-    }
-    async fn get(&self, path: String) -> Result<EncryptedReply, DbError> {
-        let reply = self.0.get(&path).await.map_err(failure)?;
         Ok(EncryptedReply { status: reply.status, body: reply.body })
     }
 }
@@ -86,13 +82,4 @@ async fn a_sequence_conflict_is_a_typed_code_and_the_credential_stays() {
 
     assert_eq!(code(conflict), SessionCode::SequenceConflict);
     assert_eq!(credentials.value(), Some(credential));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_config_is_typed_and_a_key_other_than_the_pinned_one_is_refused() {
-    let (database, server, _) = rig(PUBLIC_KEY_DER_B64, PIN);
-    assert_eq!(database.server_config(None, None).await.unwrap().server_key.kid, PIN);
-
-    server.serve_config(HttpReply { status: 200, body: config_body(SHORT_KEY_PIN, SHORT_KEY_DER_B64, 2048).to_string() });
-    assert_eq!(code(database.server_config(None, None).await.unwrap_err()), SessionCode::ServerKeyMismatch);
 }

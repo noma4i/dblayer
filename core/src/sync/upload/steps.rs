@@ -32,6 +32,7 @@ pub(super) fn fatal(kind: FailureKind, message: impl Into<String>) -> StepError 
 fn step_error(error: TransportError, cancelled: bool) -> StepError {
     let message = error.to_string();
     match error {
+        TransportError::Security { .. } | TransportError::Config { .. } => fatal(FailureKind::Unrecognized, message),
         TransportError::Interrupted(_) if cancelled => StepError::Cancelled,
         TransportError::Network(_) | TransportError::Interrupted(_) => StepError::Retry(OperationFailure::new(FailureKind::Network, message)),
         TransportError::Http { status: 403, .. } => StepError::Expired,

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::fake_server_tests::{config_body, FakeServer, MemoryCredentials};
+use super::fake_server_tests::{FakeServer, MemoryCredentials};
 use super::state;
 use super::vectors::*;
 use super::*;
@@ -88,10 +88,6 @@ async fn a_key_that_does_not_match_the_pin_leaves_the_credential_and_the_session
 
     let wrong_pin = EncryptedConfig { origin: ORIGIN.to_string(), server_key: PUBLIC_KEY_DER_B64.to_string(), pin: SHORT_KEY_PIN.to_string() };
     assert!(EncryptedClient::new(&wrong_pin, rig.server.clone(), rig.credentials.clone(), db.clone(), rig.clock.clone()).is_err());
-    for body in [config_body(SHORT_KEY_PIN, PUBLIC_KEY_DER_B64, 3072), config_body(PIN, SHORT_KEY_DER_B64, 3072), config_body(PIN, PUBLIC_KEY_DER_B64, 2048)] {
-        rig.server.serve_config(HttpReply { status: 200, body: body.to_string() });
-        assert!(matches!(client.server_config(None, None).await, Err(ConfigError::KeyMismatch(_))));
-    }
 
     assert_eq!((rig.touched(), rig.credentials.inner.value(), rows(&db).0), (before, credential, session));
 }

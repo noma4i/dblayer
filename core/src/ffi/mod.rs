@@ -10,9 +10,9 @@ mod transport;
 pub mod wire;
 
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
-pub use encrypted::{CredentialStore, EncryptedHttp, EncryptedReply};
+pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply};
 pub use crate::transport::SessionCode;
-pub use crate::transport::{EncryptedConfig, ServerConfig, ServerKeyInfo};
+pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, SecurityCode, ServerConfig};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
 pub use live::{LiveChange, LiveSubscription, QueryListener};
 pub use retention::{RetentionChange, RetentionPool};
@@ -22,6 +22,10 @@ pub use transport::{ByteProgress, EncryptedSocketEvent, OnlineSink, PutReply, Su
 
 #[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum DbError {
+    #[error("security {code:?}: {detail}")]
+    Security { code: SecurityCode, detail: String },
+    #[error("config {code:?}: {detail}")]
+    Config { code: ConfigCode, detail: String },
     #[error("invalid: {detail}")]
     Invalid { detail: String },
     #[error("database: {detail}")]
@@ -51,6 +55,8 @@ impl From<crate::sync::SyncError> for DbError {
         use crate::sync::SyncError;
         use crate::transport::TransportError;
         match error {
+            SyncError::Transport(TransportError::Security { code, detail }) => Self::Security { code, detail },
+            SyncError::Transport(TransportError::Config { code, detail }) => Self::Config { code, detail },
             SyncError::Transport(TransportError::Http { status, body }) => Self::Http { status, detail: body },
             SyncError::Transport(TransportError::RequestTooLarge { size, limit }) => Self::RequestTooLarge { size, limit },
             SyncError::Transport(TransportError::Network(detail)) => Self::Network { detail },

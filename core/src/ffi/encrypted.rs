@@ -14,7 +14,6 @@ pub struct EncryptedReply { pub status: u16, pub body: String }
 #[async_trait]
 pub trait EncryptedHttp: Send + Sync {
     async fn post(&self, path: String, body: String) -> Result<EncryptedReply, DbError>;
-    async fn get(&self, path: String) -> Result<EncryptedReply, DbError>;
 }
 
 #[uniffi::export(rust, foreign)]
@@ -33,10 +32,6 @@ impl core::HttpExchange for ForeignHttp {
         Ok(core::HttpReply { status: reply.status, body: reply.body })
     }
 
-    async fn get(&self, path: &str) -> Result<core::HttpReply, core::TransportError> {
-        let reply = self.0.get(path.to_string()).await.map_err(transport_error)?;
-        Ok(core::HttpReply { status: reply.status, body: reply.body })
-    }
 }
 
 struct ForeignCredentials(Arc<dyn CredentialStore>);
@@ -120,17 +115,6 @@ impl Database {
         executor()?.spawn(resume(client, sync)).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
     }
 
-    #[uniffi::method(default(platform = None, version = None))]
-    pub async fn server_config(&self, platform: Option<String>, version: Option<String>) -> Result<ServerConfig, DbError> {
-        let client = self.session()?.clone();
-        let config = executor()?.spawn(async move { client.server_config(platform.as_deref(), version.as_deref()).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-        match config {
-            Ok(config) => Ok(config),
-            Err(core::ConfigError::KeyMismatch(detail)) => Err(DbError::Session { code: SessionCode::ServerKeyMismatch, detail }),
-            Err(core::ConfigError::Transport(error)) => Err(typed(error)),
-        }
-    }
-
     pub fn session_reset(&self) -> Result<(), DbError> {
         self.session()?.reset().map_err(typed)
     }
@@ -140,4 +124,11 @@ impl Database {
     fn session(&self) -> Result<&Arc<EncryptedClient>, DbError> {
         self.session.as_ref().ok_or_else(|| DbError::Invalid { detail: "the database was not opened with an encrypted session".into() })
     }
+}
+
+#[uniffi::export]
+pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>) -> Result<ServerConfig, DbError> {
+    executor()?.spawn(async move {
+        core::encrypted::bootstrap::fetch_with(&encrypted, platform, &version, build.as_deref(), Arc::new(ForeignHttp(http)), &crate::pacing::SystemClock).await.map_err(typed)
+    }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }

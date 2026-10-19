@@ -109,6 +109,8 @@ pub(super) struct ForeignTransport(pub Arc<dyn Transport>);
 
 pub(super) fn transport_error(error: DbError) -> core::TransportError {
     match error {
+        DbError::Security { code, detail } => core::TransportError::Security { code, detail },
+        DbError::Config { code, detail } => core::TransportError::Config { code, detail },
         DbError::Network { detail } => core::TransportError::Network(detail),
         DbError::Interrupted { detail } => core::TransportError::Interrupted(detail),
         DbError::Http { status, detail } => core::TransportError::Http { status, body: detail },

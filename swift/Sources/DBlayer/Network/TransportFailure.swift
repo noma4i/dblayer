@@ -9,7 +9,15 @@ enum TransportFailure {
   }
 
   static func classifyEncryptedHttp(_ error: Error) -> DbError {
-    .Network(detail: error.localizedDescription)
+    if let error = error as? DbError { return error }
+    if error is CancellationError { return .Interrupted(detail: error.localizedDescription) }
+    if let error = error as? URLError {
+      if error.code == .cancelled { return .Interrupted(detail: error.localizedDescription) }
+      if [.secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted, .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .clientCertificateRejected, .clientCertificateRequired].contains(error.code) {
+        return .Security(code: .tlsTrust, detail: error.localizedDescription)
+      }
+    }
+    return .Network(detail: error.localizedDescription)
   }
 
   private static let notDelivered: Set<URLError.Code> = [

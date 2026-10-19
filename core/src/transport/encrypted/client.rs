@@ -5,7 +5,6 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex as Gate;
 
-use super::config::{ConfigError, ServerConfig};
 use super::jwe::{open_response, random_token, seal_request, RequestPlain};
 use super::key::ServerKey;
 use super::state::{self, Pending};
@@ -15,7 +14,6 @@ use crate::pacing::Clock;
 use crate::transport::TransportError;
 
 pub const LOGOUT_PATH: &str = "/api/v3/logout";
-const CONFIG_PATH: &str = "/api/v3/config";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const REPLAYED: &str = "REPLAYED_REQUEST";
 
@@ -46,16 +44,6 @@ pub struct EncryptedClient {
 
 pub(super) fn digest_of(credential: &str) -> String {
     Sha256::digest(credential.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn config_path(platform: Option<&str>, version: Option<&str>) -> String {
-    let pairs = [("platform", platform), ("version", version)];
-    let query: Vec<String> = pairs.iter().filter_map(|(name, value)| value.map(|value| format!("{name}={}", percent_encoded(value)))).collect();
-    if query.is_empty() { CONFIG_PATH.to_string() } else { format!("{CONFIG_PATH}?{}", query.join("&")) }
-}
-
-fn percent_encoded(value: &str) -> String {
-    value.bytes().map(|byte| if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') { (byte as char).to_string() } else { format!("%{byte:02X}") }).collect()
 }
 
 fn check_path(path: &str) -> Result<(), TransportError> {
@@ -137,14 +125,6 @@ impl EncryptedClient {
             answer = self.exchange(&credential, &uuid::Uuid::new_v4().to_string(), &random_token(), None, path, &body).await?;
         }
         Ok(answer)
-    }
-
-    pub async fn server_config(&self, platform: Option<&str>, version: Option<&str>) -> Result<ServerConfig, ConfigError> {
-        let reply = self.http.get(&config_path(platform, version)).await.map_err(ConfigError::Transport)?;
-        if reply.status != 200 {
-            return Err(ConfigError::Transport(TransportError::Http { status: reply.status, body: reply.body }));
-        }
-        ServerConfig::parse(&reply.body, &self.key)
     }
 
     pub fn reset(&self) -> Result<(), TransportError> {

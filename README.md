@@ -115,6 +115,19 @@ val moment = Moment.create(text = "hello")            // optimistic, queued, syn
 
 ### Encrypted sign-in
 
+Fetch config before opening the database. Both platforms use the same Rust code without credentials or local storage.
+
+```swift
+let config = try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: appVersion)
+if config.updateRequired { showUpdate(config.storeUrl) }
+```
+
+```kotlin
+val config = DBlayer.serverConfig(encrypted, AppPlatform.ANDROID, appVersion)
+if (config.updateRequired) showUpdate(config.storeUrl)
+```
+
+
 ```swift
 try DB.open(
   encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin),

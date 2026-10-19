@@ -7,23 +7,16 @@ private let serverKey = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtzb67l/cXul
 private let serverPin = "fab4f816eb33917161942684230405ae47ad4df5b456bd973085599b1364342a"
 private let otherPin = String(repeating: "0", count: 64)
 
-private func configBody(kid: String) -> String {
-  """
-  {"protocol_version":1,"min_app_version":"3.8.0","graphql_url":"https://api.example.com/api/v3/graphql","cable_url":"wss://api.example.com/api/v3/cable","server_key":{"kid":"\(kid)","public_key_der":"\(serverKey)","alg":"RSA-OAEP","enc":"A256GCM","bits":3072}}
-  """
-}
 
 private final class ScriptedHttp: EncryptedHttp, @unchecked Sendable {
   private let lock = NSLock()
   private var recorded: [String] = []
   private var status: UInt16 = 503
   private var offline = false
-  private var config = ""
 
   var paths: [String] { lock.withLock { recorded } }
   func answer(status: UInt16) { lock.withLock { self.status = status } }
   func goOffline(_ value: Bool) { lock.withLock { offline = value } }
-  func serve(config: String) { lock.withLock { self.config = config } }
 
   func post(path: String, body: String) async throws -> EncryptedReply {
     let (status, offline) = lock.withLock { () -> (UInt16, Bool) in
@@ -32,10 +25,6 @@ private final class ScriptedHttp: EncryptedHttp, @unchecked Sendable {
     }
     if offline { throw DbError.Network(detail: "offline") }
     return EncryptedReply(status: status, body: "")
-  }
-
-  func get(path: String) async throws -> EncryptedReply {
-    EncryptedReply(status: 200, body: lock.withLock { config })
   }
 }
 
@@ -74,19 +63,11 @@ private func temporaryFile() throws -> (URL, String) {
 extension BridgeProbeTests {
 struct SessionGuardsTests {
   @Test
-  func aPinMismatchAtOpenAndInTheConfigNeverTouchesTheCredentialStore() async throws {
+  func aPinMismatchAtOpenNeverTouchesTheCredentialStore() async throws {
     let http = ScriptedHttp()
     let credentials = CountedCredential("kept")
     #expect(throws: DbError.self) { try open(http, credentials, pin: otherPin) }
-    let database = try open(http, credentials)
-    http.serve(config: configBody(kid: otherPin))
-
-    do {
-      _ = try await database.serverConfig()
-      Issue.record("expected a key mismatch")
-    } catch DbError.Session(let code, _) {
-      #expect(code == .serverKeyMismatch)
-    }
+    _ = try open(http, credentials)
 
     #expect(credentials.current == "kept")
     #expect(credentials.touched == (0, 0))

@@ -16,7 +16,6 @@ pub enum KeyError {
 #[derive(Clone)]
 pub struct ServerKey {
     pub(super) public: RsaPublicKey,
-    der: Vec<u8>,
     pin: String,
 }
 
@@ -31,14 +30,11 @@ impl ServerKey {
         if public.size() * 8 < MIN_KEY_BITS {
             return Err(KeyError::Untrusted(format!("the key has {} bits, the minimum is {MIN_KEY_BITS}", public.size() * 8)));
         }
-        Ok(Self { public, der, pin: pin.to_string() })
+        Ok(Self { public, pin: pin.to_string() })
     }
 
     pub fn pin(&self) -> &str {
         &self.pin
     }
 
-    pub fn der(&self) -> &[u8] {
-        &self.der
-    }
 }

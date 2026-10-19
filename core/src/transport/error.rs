@@ -1,5 +1,9 @@
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TransportError {
+    #[error("security {code:?}: {detail}")]
+    Security { code: super::SecurityCode, detail: String },
+    #[error("config {code:?}: {detail}")]
+    Config { code: super::ConfigCode, detail: String },
     #[error("network: {0}")]
     Network(String),
     #[error("http {status}: {body}")]

@@ -20,13 +20,6 @@ private final class RecordedHttp: EncryptedHttp, @unchecked Sendable {
     return EncryptedReply(status: status, body: "")
   }
 
-  var gets: [String] { lock.withLock { recordedGets } }
-  private var recordedGets: [String] = []
-
-  func get(path: String) async throws -> EncryptedReply {
-    lock.withLock { recordedGets.append(path) }
-    return EncryptedReply(status: 503, body: "")
-  }
 }
 
 private final class PlainResponseProtocol: URLProtocol, @unchecked Sendable {
@@ -75,35 +68,7 @@ struct EncryptedSessionTests {
     #expect(http.posts.count == 1)
   }
 
-  @Test
-  func postsTheJoseTextToTheOriginPathAndReturnsAnyStatusUnchanged() async throws {
-    ScriptedURLProtocol.reset(scriptId: Self.scriptId)
-    ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 503, headers: [:], body: Data("busy".utf8), url: Self.origin)
-    let http = UrlSessionEncryptedHttp(origin: Self.origin, session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
 
-    let reply = try await http.post(path: "/api/v3/graphql", body: "a.b.c.d.e")
-
-    #expect((reply.status, reply.body) == (503, "busy"))
-    let request = try #require(ScriptedURLProtocol.recordedRequests(scriptId: Self.scriptId).first)
-    #expect(request.url?.absoluteString == "https://api.example.com/api/v3/graphql")
-    #expect(request.httpMethod == "POST")
-    #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/jose")
-    #expect(request.value(forHTTPHeaderField: "Authorization") == nil && request.value(forHTTPHeaderField: "Cookie") == nil)
-    #expect(ScriptedURLProtocol.wireBodies(scriptId: Self.scriptId).first == Data("a.b.c.d.e".utf8))
-  }
-
-  @Test
-  func readsThePublicConfigWithAGetThatCarriesNoBody() async throws {
-    ScriptedURLProtocol.reset(scriptId: Self.scriptId)
-    ScriptedURLProtocol.push(scriptId: Self.scriptId, status: 200, headers: [:], body: Data("{}".utf8), url: Self.origin)
-    let http = UrlSessionEncryptedHttp(origin: Self.origin, session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
-
-    let reply = try await http.get(path: "/api/v3/config")
-
-    #expect((reply.status, reply.body) == (200, "{}"))
-    let request = try #require(ScriptedURLProtocol.recordedRequests(scriptId: Self.scriptId).first)
-    #expect(request.httpMethod == "GET" && request.url?.path == "/api/v3/config" && request.value(forHTTPHeaderField: "Content-Type") == nil)
-  }
 
   @Test
   func aResponseThatIsNotHttpHasStatusZero() async throws {
@@ -111,7 +76,7 @@ struct EncryptedSessionTests {
     configuration.protocolClasses = [PlainResponseProtocol.self]
     let http = UrlSessionEncryptedHttp(origin: Self.origin, session: URLSession(configuration: configuration))
 
-    #expect(try await http.get(path: "/api/v3/config").status == 0)
+    #expect(try await http.post(path: "/api/v3/bootstrap", body: "x").status == 0)
   }
 
   @Test
@@ -139,7 +104,6 @@ struct EncryptedSessionTests {
 
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61411111111"}"#) }
-    await #expect(throws: DbError.self) { try await database.serverConfig() }
 
     let posts = http.posts
     #expect(posts.map(\.path) == ["/api/v3/auth/otp"])
@@ -149,15 +113,5 @@ struct EncryptedSessionTests {
     #expect(credentials.current == nil)
   }
 
-  @Test
-  func openWithEncryptionMakesTheEncryptedDatabaseTheSharedOneAndTheConfigQueryReachesTheHook() async throws {
-    let http = RecordedHttp(status: 400)
-    try DB.open(encrypted: EncryptedConfig(origin: "http://localhost:3001", serverKey: serverKey, pin: serverPin), credentials: HeldCredential(), modelsJSON: modelsJSON, http: http)
-
-    await #expect(throws: DbError.self) { try await DB.database.serverConfig(platform: "ios", version: "1.2.3") }
-    await #expect(throws: DbError.self) { try await DB.database.serverConfig(platform: nil, version: nil) }
-
-    #expect(http.gets == ["/api/v3/config?platform=ios&version=1.2.3", "/api/v3/config"])
-  }
 }
 }

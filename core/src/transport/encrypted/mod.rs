@@ -6,6 +6,7 @@ use super::error::TransportError;
 mod client;
 pub mod cable;
 mod config;
+pub(crate) mod bootstrap;
 #[cfg(test)]
 pub(crate) mod fake_server_tests;
 mod graphql;
@@ -17,7 +18,7 @@ mod state;
 pub(crate) mod vectors;
 
 pub use client::{Answer, EncryptedClient, EncryptedConfig, LOGOUT_PATH};
-pub use config::{ConfigError, Country, ServerConfig, ServerKeyInfo};
+pub use config::{AppPlatform, ConfigCode, Country, SecurityCode, ServerConfig};
 pub use graphql::{missing_from_registry, repeats, response_of, EncryptedTransport};
 pub(crate) use graphql::pending_matches;
 #[cfg(test)]
@@ -32,7 +33,6 @@ pub struct HttpReply {
 #[async_trait]
 pub trait HttpExchange: Send + Sync {
     async fn post(&self, path: &str, body: String) -> Result<HttpReply, TransportError>;
-    async fn get(&self, path: &str) -> Result<HttpReply, TransportError>;
 }
 
 pub trait CredentialSlot: Send + Sync {
@@ -44,7 +44,7 @@ pub trait CredentialSlot: Send + Sync {
 #[cfg(test)]
 mod client_tests;
 #[cfg(test)]
-mod config_tests;
+mod bootstrap_tests;
 #[cfg(test)]
 mod graphql_tests;
 #[cfg(test)]

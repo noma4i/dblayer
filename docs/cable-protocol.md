@@ -22,7 +22,9 @@ An incoming failure retires both keys. An authenticated `closing` message return
 X25519 private material, derived keys and temporary hello plaintext use zeroing storage. Dropping a connection also erases its stored keys.
 The public vectors in `fixtures/v3-cable/kat.json` contain test keys only. Tests compare hello plaintext and all four encrypted frames without printing key material.
 
-Swift and Kotlin retain the same `EncryptedConfig(origin, serverKey, pin)` and `open` calls.
+Swift and Kotlin use the same `EncryptedConfig(origin, serverKey, pin)` for config and `open` calls.
+Fetch config with `DB.serverConfig` or `DBlayer.serverConfig` before opening the database.
+Config uses `POST /api/v3/bootstrap` without credentials, sequence or Cable connection. See [server sync](server-sync.md).
 The platform passes WebSocket text through `openCable`, `cableSend`, `cableNext` and `cableClose`. Rust handles encryption, subscriptions, reopening and timers.
 
 ## Platform sockets

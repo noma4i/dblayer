@@ -34,7 +34,6 @@ impl CredentialStore for Unused {
 #[async_trait::async_trait]
 impl EncryptedHttp for Unused {
     async fn post(&self, _: String, _: String) -> Result<EncryptedReply, DbError> { unreachable!() }
-    async fn get(&self, _: String) -> Result<EncryptedReply, DbError> { unreachable!() }
 }
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }

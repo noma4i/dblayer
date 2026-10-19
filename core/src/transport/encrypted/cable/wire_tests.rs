@@ -285,7 +285,6 @@ async fn authentication_refusal_before_ready_stops_without_reopening() {
 
 #[async_trait]
 impl crate::transport::HttpExchange for Http {
-    async fn get(&self, _: &str) -> Result<crate::transport::HttpReply, TransportError> { unreachable!() }
     async fn post(&self, path: &str, token: String) -> Result<crate::transport::HttpReply, TransportError> {
         assert_eq!(path, "/api/v3/graphql");
         let key = self.key.decrypt(Oaep::new::<sha1::Sha1>(), &URL_SAFE_NO_PAD.decode(token.split('.').nth(1).unwrap()).unwrap()).unwrap();

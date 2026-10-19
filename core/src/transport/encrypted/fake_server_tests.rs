@@ -142,8 +142,6 @@ pub struct FakeServer {
     state: Mutex<State>,
     clock: Arc<dyn Clock>,
     on_request: Mutex<Option<Box<dyn Fn() + Send>>>,
-    config: Mutex<HttpReply>,
-    config_paths: Mutex<Vec<String>>,
 }
 
 fn digest_of(data: &Value) -> String {
@@ -152,13 +150,6 @@ fn digest_of(data: &Value) -> String {
     Sha256::digest(copy.to_string().as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-pub fn config_body(kid: &str, der: &str, bits: u32) -> Value {
-    json!({
-        "protocol_version": 1, "min_app_version": "3.8.0",
-        "graphql_url": "https://api.example.com/api/v3/graphql", "cable_url": "wss://api.example.com/api/v3/cable",
-        "server_key": { "kid": kid, "public_key_der": der, "alg": "RSA-OAEP", "enc": "A256GCM", "bits": bits }
-    })
-}
 
 impl FakeServer {
     pub fn rewind_sequence(&self, credential: &str, sequence: i64) {
@@ -185,16 +176,9 @@ impl FakeServer {
         self.state.lock().unwrap().faults.refuse_hashes = true;
     }
 
-    pub fn config_paths(&self) -> Vec<String> {
-        self.config_paths.lock().unwrap().clone()
-    }
-
-    pub fn serve_config(&self, reply: HttpReply) {
-        *self.config.lock().unwrap() = reply;
-    }
 
     pub fn new(clock: Arc<dyn Clock>) -> Arc<Self> {
-        Arc::new(Self { state: Mutex::default(), clock, on_request: Mutex::new(None), config: Mutex::new(HttpReply { status: 200, body: config_body(&vectors::PIN, &vectors::PUBLIC_KEY_DER_B64, 3072).to_string() }), config_paths: Mutex::default() })
+        Arc::new(Self { state: Mutex::default(), clock, on_request: Mutex::new(None) })
     }
 
     pub fn with_sequence(self: Arc<Self>, credential: &str, sequence: i64) -> Arc<Self> {
@@ -305,11 +289,6 @@ impl FakeServer {
 
 #[async_trait]
 impl HttpExchange for FakeServer {
-    async fn get(&self, path: &str) -> Result<HttpReply, TransportError> {
-        assert!(path == "/api/v3/config" || path.starts_with("/api/v3/config?"));
-        self.config_paths.lock().unwrap().push(path.to_string());
-        Ok(self.config.lock().unwrap().clone())
-    }
 
     async fn post(&self, path: &str, body: String) -> Result<HttpReply, TransportError> {
         if let Some(hook) = self.on_request.lock().unwrap().as_ref() {

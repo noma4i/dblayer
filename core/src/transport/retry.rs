@@ -31,6 +31,7 @@ impl RetryClass {
 
     pub fn of_error(error: &TransportError) -> RetryClass {
         match error {
+            TransportError::Security { .. } | TransportError::Config { .. } => RetryClass::Fatal,
             TransportError::Network(_) => RetryClass::Network,
             TransportError::Http { status, .. } => RetryClass::classify(false, Some(*status), &[]),
             TransportError::Graphql { .. } => RetryClass::classify(false, Some(200), &[]),

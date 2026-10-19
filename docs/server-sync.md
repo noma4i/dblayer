@@ -54,7 +54,7 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 | Piece | What it is |
 | ----- | ---------- |
 | `EncryptedConfig` | `origin` (`https://host[:port]`, no path; see the origin rule below), `serverKey` (the server public key, base64 DER) and `pin` (SHA-256 of that DER, lowercase hex). The key must have at least 3072 bits and match the pin. Ship both with the app. Do not download them |
-| `EncryptedHttp` | `post` sends the request text to `origin + path` as `application/jose`. `get` reads the public config. Both return the status and the body. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
+| `EncryptedHttp` | `post` sends the request text to `origin + path` as `application/jose` and returns status and body. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
 | `CredentialStore` | `get`, `set` and `clear` keep one string in the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite |
 
 The database uses V3 JWE for queries and mutations, and encrypted Cable for subscriptions.
@@ -105,7 +105,7 @@ val answer = database.sessionCall("confirm", """{"code":"123456"}""")
 | `rateLimited`, `accountUnavailable` | too many codes or a disabled account | kept, the sequence is confirmed |
 | `sequenceConflict`, `unauthenticated`, `sessionEnded` | the server holds another request for this sequence or no session | kept, the pending request stays |
 | `replayedRequest` | a read arrived twice. The core already repeated it once with a new request id | kept |
-| `serverKeyMismatch` | the key in the config differs from the pinned key | kept |
+| `serverKeyMismatch` | the session key differs from the pinned key | kept |
 | `other` | any other `error` value, the text is in `detail` | kept |
 
 ### Session errors in loads and mutations
@@ -212,29 +212,63 @@ try {
 }
 ```
 
-`serverConfig(platform:version:)` (`serverConfig(platform, version)` in Kotlin) reads `GET /api/v3/config`. Both arguments are optional. When set, the core sends them as the URL-encoded query `?platform=ios&version=1.2.3`; the server decides what an unknown platform means. Encrypted paths (`/api/v3/graphql`, sign-in) never carry a query: the core refuses them. The answer is not cached by the server and depends on the request address.
-
-| Field | Meaning |
-| ----- | ------- |
-| `protocolVersion`, `minAppVersion`, `graphqlUrl`, `cableUrl` | versions and addresses. Take them from here |
-| `updateRequired` | `true` when `version` is below the minimum for `platform`. `false` without both arguments |
-| `country`, `countryDisabled` | the country of the device address, or `nil`. `countryDisabled` is `true` when phone sign-in is off there |
-| `countries` | sign-up countries: `name`, `code`, `flag`, `phoneCode`, `phoneMask`, `phoneFormatter` (a string to string map, empty when absent), `enabled`, `phoneAuthEnabled` |
-| `trackingPromptEnabled` | `true` when the app shows the tracking prompt |
-| `iosStoreUrl`, `androidStoreUrl` | store links, or `nil` |
-| `serverKey` | the announced key, compared with the pin |
-
-A missing or `null` field reads as `false`, an empty list or `nil`. Unknown fields are ignored. The core compares the announced key id with the pin and the announced DER with `EncryptedConfig.serverKey`, and throws `serverKeyMismatch` when either differs or when the algorithms are not RSA-OAEP with A256GCM. Never take the key from the config.
+Fetch the encrypted config before opening a database. `DB.serverConfig` and `DBlayer.serverConfig` call the same Rust function without credentials or SQLite.
 
 ```swift
-let config = try await DB.database.serverConfig(platform: "ios", version: appVersion)
-if config.updateRequired { showUpdate(config.iosStoreUrl) }
+let encrypted = EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin)
+let config = try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: appVersion, build: appBuild)
+if config.updateRequired { showUpdate(config.storeUrl) }
 ```
 
 ```kotlin
-val config = DBlayer.database.serverConfig("android", appVersion)
-if (config.updateRequired) showUpdate(config.androidStoreUrl)
+val encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin)
+val config = DBlayer.serverConfig(encrypted, AppPlatform.ANDROID, appVersion, appBuild)
+if (config.updateRequired) showUpdate(config.storeUrl)
 ```
+
+`AppPlatform` accepts iOS and Android. Version contains 2 or 3 numeric segments separated by dots. Optional build contains at most 32 characters.
+The core refuses invalid input and a mismatched pin before HTTP. The optional `http` argument defaults to the platform client on the origin.
+
+The request is `POST /api/v3/bootstrap`, with `Content-Type: application/jose`, no query, cookies, credentials or old encryption headers.
+Redirects are refused. HTTP implementations do not reuse added application headers, cookie storage or authenticators.
+URLSession sends empty Accept, Accept-Language and User-Agent values to suppress system defaults.
+Each attempt creates a UUID, a response key and an issuedAt timestamp from the core clock. No sequence or pending request is stored.
+The server accepts issuedAt from 30 seconds ahead through 120 seconds old and returns `Cache-Control: no-store`.
+
+The request JWE uses RSA-OAEP and A256GCM. Its plaintext contains audience, kid, method, path, requestId, issuedAt, responseKey and body.
+The body contains platform, version and optional build.
+The response JWE uses dir and A256GCM under responseKey. Its plaintext contains requestId, requestDigest, sequence=null and body.
+requestDigest is lowercase SHA-256 of the request JSON without issuedAt, with top-level keys sorted.
+Body retains the order platform, version, build. See `fixtures/v3-config/bootstrap_kat.json`.
+The client checks the response key, algorithms, requestId and requestDigest before reading config fields.
+
+| Field | Meaning |
+| ----- | ------- |
+| `configVersion` | required structure version, currently 1 |
+| `protocolVersion`, `minAppVersion` | protocol and minimum application versions |
+| `updateRequired` | a successful result requesting an app update |
+| `country`, `countryDisabled` | nullable country code and phone sign-in restriction |
+| `countries` | name, code, flag, phoneCode, phoneMask, phoneFormatter, enabled, phoneAuthEnabled |
+| `trackingPromptEnabled` | whether the app shows the tracking prompt |
+| `storeUrl` | nullable store link for the requested platform |
+| `flagsJson` | flags object encoded as JSON, including future values |
+
+Country phoneFormatter maps strings to strings. Required booleans and lists never default from missing or null values.
+Unknown fields are accepted. Unsupported configVersion and wrong field types have distinct typed config errors.
+
+| Result | Swift / Kotlin outcome |
+| ------ | ---------------------- |
+| Offline or timeout | Network |
+| Cancellation | Interrupted |
+| HTTP 400, 413 or 503 | Http, retry without inferring a verified cause |
+| Wrong bundled pin | Security with ServerKeyMismatch, 0 HTTP |
+| Invalid JWE, key, requestId or digest | Security with ResponseAuthentication |
+| TLS trust failure | Security with TlsTrust |
+| Sealed INVALID_REQUEST or invalid local arguments | Config with InvalidRequest |
+| Invalid config fields | Config with InvalidFormat |
+| Unknown configVersion | Config with UnsupportedVersion |
+
+The classifiers preserve typed errors. Config failures do not clear credentials, reset sessions or enable entry from cached data.
 
 Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]` is accepted only for development hosts: the name `localhost`, a name that ends with the label `.local`, and the IP literals of loopback (`127.0.0.0/8`, `::1`), private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`). The core parses the host strictly: decimal, hex and octal address forms, trailing dots, user info, paths, queries and fragments are refused. The request audience stays the origin you gave. The JWE protects the payload over http, but the transport is not protected, so use http for development only. Production origins use https.
 

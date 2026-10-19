@@ -75,7 +75,16 @@ pub(super) fn seal_plain(key: &ServerKey, text: &[u8]) -> Result<String, JweErro
 }
 
 pub fn open_response(token: &str, response_key: &str) -> Result<ResponsePlain, JweError> {
-    let parts: Vec<&str> = token.trim().split('.').collect();
+    let data = open_plain(token, response_key)?;
+    Ok(ResponsePlain {
+        request_id: data["requestId"].as_str().ok_or_else(|| invalid("the response has no requestId"))?.to_string(),
+        sequence: data["sequence"].as_i64(),
+        body: data["body"].clone(),
+    })
+}
+
+pub(super) fn open_plain(token: &str, response_key: &str) -> Result<Value, JweError> {
+    let parts: Vec<&str> = token.split('.').collect();
     let [header, wrapped, iv, ciphertext, tag] = parts[..] else { return Err(invalid("a compact JWE has 5 segments")) };
     let header_json: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(header).map_err(invalid)?).map_err(invalid)?;
     if header_json != json!({ "alg": "dir", "enc": "A256GCM" }) || !wrapped.is_empty() {
@@ -93,10 +102,5 @@ pub fn open_response(token: &str, response_key: &str) -> Result<ResponsePlain, J
         .map_err(invalid)?
         .decrypt(Nonce::from_slice(&iv), Payload { msg: &sealed, aad: header.as_bytes() })
         .map_err(|_| invalid("the response does not authenticate"))?;
-    let data: Value = serde_json::from_slice(&plain).map_err(invalid)?;
-    Ok(ResponsePlain {
-        request_id: data["requestId"].as_str().ok_or_else(|| invalid("the response has no requestId"))?.to_string(),
-        sequence: data["sequence"].as_i64(),
-        body: data["body"].clone(),
-    })
+    serde_json::from_slice(&plain).map_err(invalid)
 }

@@ -33,7 +33,6 @@ impl EncryptedHttp for Remote {
         let reply = self.call(json!({"post": path, "body": body}))?;
         Ok(EncryptedReply { status: reply["status"].as_u64().unwrap() as u16, body: reply["body"].as_str().unwrap().into() })
     }
-    async fn get(&self, _: String) -> Result<EncryptedReply, DbError> { unreachable!() }
 }
 
 impl CredentialStore for Remote {

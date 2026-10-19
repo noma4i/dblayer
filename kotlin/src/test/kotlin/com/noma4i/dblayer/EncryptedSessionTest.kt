@@ -19,12 +19,6 @@ private class RecordedHttp(private val status: UShort) : EncryptedHttp {
         return EncryptedReply(status, "")
     }
 
-    val gets = CopyOnWriteArrayList<String>()
-
-    override suspend fun get(path: String): EncryptedReply {
-        gets.add(path)
-        return EncryptedReply(503u, "")
-    }
 }
 
 private class HeldCredential : CredentialStore {
@@ -92,20 +86,6 @@ class EncryptedSessionTest {
         }
     }
 
-    @Test
-    fun readsThePublicConfigWithAGetThatCarriesNoBody() = bounded {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
-            server.start()
-
-            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).get("/api/v3/config")
-
-            assertEquals(200.toUShort() to "{}", reply.status to reply.body)
-            val request = server.takeRequest()
-            assertEquals("GET /api/v3/config", "${request.method} ${request.path}")
-            assertNull(request.getHeader("Content-Type"))
-        }
-    }
 
     @Test
     fun aTransportFailureIsANetworkError() = bounded {
@@ -133,7 +113,6 @@ class EncryptedSessionTest {
 
         failsWith<DbException.Http> { database.sessionCall("otp", """{"phone":"+61400000000"}""") }
         failsWith<DbException.Network> { database.sessionCall("otp", """{"phone":"+61411111111"}""") }
-        failsWith<DbException.Http> { database.serverConfig() }
 
         assertEquals(listOf("/api/v3/auth/otp"), http.posts.map { it.first })
         assertEquals(5, http.posts[0].second.split(".").size)
@@ -142,14 +121,4 @@ class EncryptedSessionTest {
         assertNull(credentials.current)
     }
 
-    @Test
-    fun openWithEncryptionMakesTheEncryptedDatabaseTheSharedOneAndTheConfigQueryReachesTheHook() = bounded {
-        val http = RecordedHttp(400u)
-        DBlayer.open(encrypted = EncryptedConfig("http://localhost:3001", SERVER_KEY, SERVER_PIN), credentials = HeldCredential(), modelsJson = modelsJSON, http = http)
-
-        failsWith<DbException.Http> { DBlayer.database.serverConfig("android", "1.2.3") }
-        failsWith<DbException.Http> { DBlayer.database.serverConfig(null, null) }
-
-        assertEquals(listOf("/api/v3/config?platform=android&version=1.2.3", "/api/v3/config"), http.gets)
-    }
 }

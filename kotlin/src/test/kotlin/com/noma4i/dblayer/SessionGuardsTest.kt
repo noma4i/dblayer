@@ -14,14 +14,10 @@ private const val PIN = "fab4f816eb33917161942684230405ae47ad4df5b456bd973085599
 private val OTHER_PIN = "0".repeat(64)
 private const val OTP = """{"phone":"+61400000000"}"""
 
-private fun configBody(kid: String) =
-    """{"protocol_version":1,"min_app_version":"3.8.0","graphql_url":"https://api.example.com/api/v3/graphql","cable_url":"wss://api.example.com/api/v3/cable","server_key":{"kid":"$kid","public_key_der":"$KEY","alg":"RSA-OAEP","enc":"A256GCM","bits":3072}}"""
-
 private class ScriptedHttp : EncryptedHttp {
     val paths = CopyOnWriteArrayList<String>()
     @Volatile var status: UShort = 503u
     @Volatile var offline = false
-    @Volatile var config = ""
 
     override suspend fun post(path: String, body: String): EncryptedReply {
         paths.add(path)
@@ -29,7 +25,6 @@ private class ScriptedHttp : EncryptedHttp {
         return EncryptedReply(status, "")
     }
 
-    override suspend fun get(path: String): EncryptedReply = EncryptedReply(200u, config)
 }
 
 private class CountedCredential(initial: String? = null) : CredentialStore {
@@ -81,19 +76,11 @@ private inline fun withDirectory(block: (File) -> Unit) {
 
 class SessionGuardsTest {
     @Test
-    fun aPinMismatchAtOpenAndInTheConfigNeverTouchesTheCredentialStore() = bounded {
+    fun aPinMismatchAtOpenNeverTouchesTheCredentialStore() = bounded {
         val http = ScriptedHttp()
         val credentials = CountedCredential("kept")
         rejects<DbException.Invalid> { open(http, credentials, pin = OTHER_PIN) }
-        val database = open(http, credentials)
-        http.config = configBody(OTHER_PIN)
-
-        try {
-            database.serverConfig()
-            throw AssertionError("expected a key mismatch")
-        } catch (error: DbException.Session) {
-            assertEquals(SessionCode.SERVER_KEY_MISMATCH, error.code)
-        }
+        open(http, credentials)
 
         assertEquals("kept", credentials.current)
         assertEquals(0 to 0, credentials.sets to credentials.clears)
