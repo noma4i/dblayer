@@ -77,9 +77,16 @@ class SingletonEntityTest {
         assertTrue(entity.value.value == null && entity.id.isEmpty())
         delay(300)
         assertNull(entity.value.value)
+        assertTrue(User.entity() === entity)
+        assertEquals(0uL, DBlayer.subscriptionCensus().observedQueries)
+        assertNull(registry.currentSingleFeed)
         login("2", "Bob")
+        DBlayer.resume()
         assertEquals("Bob", loaded(entity)?.name)
         assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
+        val resumed = registry.currentSingleFeed
+        DBlayer.resume()
+        assertTrue(resumed === registry.currentSingleFeed)
     }
 
     /** A delivery of a feed that a newly opened database replaced writes nothing. */
@@ -90,12 +97,14 @@ class SingletonEntityTest {
         val old = registry.currentSingleFeed!!
         login("1", "Ann")
         loaded(entity)
+        DBlayer.logout()
         open()
         assertTrue(User.entity() === entity && entity.value.value == null)
         registry.receive(old, Long.MAX_VALUE, User(id = "9", name = "Late", typing = false))
         assertNull(entity.value.value)
         login("2", "Bob")
         assertEquals("Bob", loaded(entity)?.name)
+        assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
     }
 
     /** REL-27: 10 seconds without an event add no delivery and no subscription. */

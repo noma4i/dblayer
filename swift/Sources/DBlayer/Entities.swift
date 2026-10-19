@@ -132,6 +132,7 @@ public final class Entities<Model: DBModel> {
     guard followsDatabase, database !== current else { return }
     if database != nil || single != nil { reset() }
     database = current
+    startSingleton()
   }
 
   public func entities(_ ids: [String]) -> [Entity<Model>] { ids.map(entity) }
@@ -172,10 +173,14 @@ public final class Entities<Model: DBModel> {
     kept.clear(Model.modelName)
     for id in all { steps[id] = .release }
     scheduleFlush()
-    if let single {
-      single.detach()
-      startSingleton()
-    }
+    singleFeed?.cancel()
+    singleFeed = nil
+    single?.detach()
+  }
+
+  fileprivate func resume() {
+    follow(DB.database)
+    if singleFeed == nil { startSingleton() }
   }
 
   var retainedCount: Int {
@@ -224,6 +229,7 @@ enum EntityRegistries {
   static let retained = RetainedValues()
   private static var registries: [ObjectIdentifier: AnyObject] = [:]
   private static var resets: [() -> Void] = []
+  private static var resumes: [() -> Void] = []
 
   static func registry<Model: DBModel>(for _: Model.Type) -> Entities<Model> {
     let key = ObjectIdentifier(Model.self)
@@ -231,10 +237,12 @@ enum EntityRegistries {
     let made = Entities<Model>()
     registries[key] = made
     resets.append { made.reset() }
+    resumes.append { made.resume() }
     return made
   }
 
   static func resetAll() { resets.forEach { $0() } }
+  static func resumeAll() { resumes.forEach { $0() } }
 }
 
 extension DBModel {

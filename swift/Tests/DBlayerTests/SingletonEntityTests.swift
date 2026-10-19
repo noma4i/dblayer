@@ -79,9 +79,16 @@ extension BridgeProbeTests {
     withObservationTracking { _ = entity.value } onChange: { seen.add() }
     try await Task.sleep(for: .milliseconds(200))
     #expect(entity.value == nil)
+    #expect(User.entity() === entity)
+    #expect(DB.subscriptionCensus().observedQueries == 0)
+    #expect(Entities<User>.shared.singleFeed == nil)
     try await Self.login(transport, "2", "Bob")
+    try await DB.resume()
     await eventually(#"entity.value != nil"#) { entity.value != nil }
     #expect(entity.value?.name == "Bob" && DB.subscriptionCensus().observedQueries == 1)
+    let resumed = Entities<User>.shared.singleFeed
+    try await DB.resume()
+    #expect(resumed === Entities<User>.shared.singleFeed)
   }
 
   /// A delivery of a feed that a newly opened database replaced writes nothing.
@@ -94,6 +101,7 @@ extension BridgeProbeTests {
     let old = try #require(registry.singleFeed)
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
+    try await DB.logout()
     let second = try Self.openSingletonRig()
     #expect(User.entity() === entity && entity.value == nil)
     registry.receive(from: old, revision: Int64.max, row: entity.value ?? User(id: "9", name: "Late"))
@@ -101,6 +109,7 @@ extension BridgeProbeTests {
     try await Self.login(second, "2", "Bob")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
     #expect(entity.value?.name == "Bob")
+    #expect(DB.subscriptionCensus().observedQueries == 1)
   }
 
   /// REL-27: 10 seconds without an event add no delivery and no subscription.

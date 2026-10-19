@@ -116,6 +116,7 @@ class Entities<Model : DBModel> internal constructor(
         if (!followsDatabase || database === current) return
         if (database != null || single != null) reset()
         database = current
+        startSingleton()
     }
 
     fun entities(ids: List<String>): List<Entity<Model>> = ids.map(::entity)
@@ -155,10 +156,14 @@ class Entities<Model : DBModel> internal constructor(
         kept.clear(modelName)
         all.forEach { steps[it] = Step.Release }
         scheduleFlush()
-        single?.let {
-            it.cell.clear()
-            startSingleton()
-        }
+        singleFeed?.cancel()
+        singleFeed = null
+        single?.cell?.clear()
+    }
+
+    internal fun resume() = synchronized(lock) {
+        follow(DBlayer.databaseOrNull)
+        if (singleFeed == null) startSingleton()
     }
 
     internal val retainedCount: Int get() = synchronized(lock) { kept.count(modelName, now()) }
@@ -300,6 +305,7 @@ internal object EntityRegistries {
         registries.getOrPut(modelName) { Entities(modelName, decoder) } as Entities<Model>
 
     fun resetAll() = registries.values.forEach { it.reset() }
+    fun resumeAll() = registries.values.forEach { it.resume() }
 }
 
 /** The live entity of a record by id. */

@@ -657,6 +657,7 @@ DBlayer.unlisten()
 | Successful mutation with `refetch` | the listed relations become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit |
 | `fresh_for` expired | refetched when next read or when the app resumes |
 | App resumes | the app calls `DB.resume()` (Swift) or `DBlayer.resume()` (Kotlin), stale relations with readers are refetched in small groups |
+| Explicit resume after logout | stopped singleton subscriptions restart, existing singleton entities receive values again |
 | Network is back | the queue is sent and stale relations are refetched |
 | Subscription reconnects | the relation is refetched |
 

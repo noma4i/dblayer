@@ -36,7 +36,7 @@ val cached = Session.find(edited.id).current()
 edited.destroy()
 ```
 
-A database with only local models needs no server. Open it without a transport. Online tracking, `listen`, `resume`, `flush` and `retry` then do nothing, and calls that need the server fail with `DbError.Invalid`.
+A database with only local models needs no server. Open it without a transport. Online tracking, `listen`, `flush` and `retry` then do nothing, and calls that need the server fail with `DbError.Invalid`. `resume()` restarts singleton subscriptions stopped by logout, even without a transport.
 
 ```swift
 try DB.open(transport: nil, modelsJSON: modelsJSON, path: path)

@@ -12,6 +12,8 @@ try await DB.logout()
 DBlayer.logout()
 ```
 
+Logout also stops singleton subscriptions and empties their entities. After signing in again, call `DB.resume()` (Swift) or `DBlayer.resume()` (Kotlin).
+
 All writes are optimistic: they apply to the local database at once, so every live read updates immediately. A write that must reach the server is also placed in a durable queue in the same commit.
 
 ```swift

@@ -10,7 +10,10 @@ object DBlayer {
     fun listen() = database.listen()
     fun unlisten() = database.unlisten()
     /** Reloads the stale relations that have readers. Call it when the app returns to the foreground. */
-    suspend fun resume() = database.resume()
+    suspend fun resume() {
+        database.resume()
+        EntityRegistries.resumeAll()
+    }
 
     /** Ends the session: clears the stored data and drops every entity, lease and retained value. */
     suspend fun logout() {
