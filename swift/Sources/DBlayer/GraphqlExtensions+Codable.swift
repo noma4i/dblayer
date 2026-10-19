@@ -1,13 +1,14 @@
 import Foundation
 
 extension GraphqlExtensions: Codable {
-  private enum CodingKeys: String, CodingKey { case code, transactionDisposition }
+  private enum CodingKeys: String, CodingKey { case code, transactionDisposition, fields }
 
   public init(from decoder: any Decoder) throws {
     let fields = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
       code: try fields.decodeIfPresent(String.self, forKey: .code),
-      transactionDisposition: try fields.decodeIfPresent(TransactionDisposition.self, forKey: .transactionDisposition)
+      transactionDisposition: try fields.decodeIfPresent(TransactionDisposition.self, forKey: .transactionDisposition),
+      fields: try fields.decode([String: String].self, forKey: .fields)
     )
   }
 
@@ -15,6 +16,7 @@ extension GraphqlExtensions: Codable {
     var fields = encoder.container(keyedBy: CodingKeys.self)
     try fields.encodeIfPresent(code, forKey: .code)
     try fields.encodeIfPresent(transactionDisposition, forKey: .transactionDisposition)
+    try fields.encode(self.fields, forKey: .fields)
   }
 }
 

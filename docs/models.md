@@ -45,10 +45,13 @@ Every scalar and enum field is its own typed SQLite column, indexed or not. An u
 ### GraphQL errors
 
 GraphQL failures expose `extensions` on Swift `DbError.Graphql` and Kotlin `DbException.Graphql`, including failures from `settled()`.
-`GraphqlExtensions.code` is the optional server string, such as `UNKNOWN_PRODUCT`, `REACTIVATION_GRANT_MISSING` or `DUPLICATE_CLIENT_KEY`.
+`GraphqlExtensions.code` is the optional server string, such as `REFUSED`.
 `transactionDisposition` is an optional `TransactionDisposition`: `finish` / `Finish`, `keep` / `Keep`, or `unknown(value:)` / `Unknown(value)`.
 Unknown values retain their original text, just like model enums.
-Only `errors[0].extensions` supplies these fields. Missing, null and non-string fields remain absent, even when later errors have values.
+Only `errors[0].extensions` supplies these fields. Missing, null and non-string typed fields remain absent, even when later errors have values.
+`fields` contains every other entry as JSON text: `[String: String]` in Swift and `Map<String, String>` in Kotlin.
+Strings keep their JSON quotes, numbers keep their JSON representation, and objects, arrays, booleans and null retain their values.
+An error containing only these entries still has `extensions`. Stored operation errors retain the same entries after reopening the database.
 Messages remain available separately. Transaction disposition describes the server decision, and does not change queue retry or rollback rules.
 
 ```swift
@@ -56,6 +59,7 @@ do {
   _ = try await DB.database.run(operation: "PurchaseCreate", variablesJson: inputJSON)
 } catch let DbError.Graphql(messages, extensions) {
   let code = extensions?.code
+  let detail = try extensions?.fields["detail"].map { try JSONValue.decode(Data($0.utf8)) }
   switch extensions?.transactionDisposition {
   case .finish: finishTransaction()
   case .keep: keepTransaction()
@@ -70,6 +74,7 @@ try {
     DBlayer.database.run("PurchaseCreate", inputJSON)
 } catch (error: DbException.Graphql) {
     val code = error.extensions?.code
+    val detail = error.extensions?.fields?.get("detail")?.let { Json.parseToJsonElement(it) }
     when (val disposition = error.extensions?.transactionDisposition) {
         TransactionDisposition.Finish -> finishTransaction()
         TransactionDisposition.Keep -> keepTransaction()

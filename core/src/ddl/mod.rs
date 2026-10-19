@@ -90,8 +90,7 @@ const CORE_STATEMENTS: [&str; 25] = [
   since INTEGER NOT NULL,
   error_kind TEXT,
   error_message TEXT,
-  error_code TEXT,
-  error_disposition TEXT
+  error_extensions TEXT
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS op_item (
   seq INTEGER NOT NULL REFERENCES op(seq) ON DELETE CASCADE,
@@ -111,8 +110,7 @@ const CORE_STATEMENTS: [&str; 25] = [
   retry_at INTEGER,
   error_kind TEXT,
   error_message TEXT,
-  error_code TEXT,
-  error_disposition TEXT,
+  error_extensions TEXT,
   storage_key TEXT,
   upload_id TEXT,
   signed_id TEXT,
@@ -170,8 +168,7 @@ const CORE_STATEMENTS: [&str; 25] = [
   state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'failed', 'delivery_unknown')),
   error_kind TEXT,
   error_message TEXT,
-  error_code TEXT,
-  error_disposition TEXT,
+  error_extensions TEXT,
   attempts INTEGER NOT NULL,
   since INTEGER NOT NULL,
   up_status TEXT,
@@ -182,8 +179,7 @@ const CORE_STATEMENTS: [&str; 25] = [
   up_attempts INTEGER,
   up_error_kind TEXT,
   up_error_message TEXT,
-  up_error_code TEXT,
-  up_error_disposition TEXT,
+  up_error_extensions TEXT,
   PRIMARY KEY (model, row_id)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS sync_action (

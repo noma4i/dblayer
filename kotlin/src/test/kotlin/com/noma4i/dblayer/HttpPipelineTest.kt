@@ -69,7 +69,7 @@ class HttpPipelineTest {
         for (status in listOf(200, 201, 400, 403, 422)) {
             server.enqueue(reply(status, """{"errors":[{"message":"Rejected","extensions":{"code":"REGISTRATION_REQUIRED"}}]}"""))
             val error = assertThrows(GraphQLTransportError::class.java) { bounded { transport().query(ProbeQuery, Unit) } }
-            assertEquals(GraphQLTransportError.GraphQL(listOf("Rejected"), GraphqlExtensions("REGISTRATION_REQUIRED", null)), error)
+            assertEquals(GraphQLTransportError.GraphQL(listOf("Rejected"), GraphqlExtensions("REGISTRATION_REQUIRED", null, emptyMap())), error)
         }
     }
 

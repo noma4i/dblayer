@@ -156,7 +156,7 @@ impl CableSession {
             }
             Some("error") => {
                 let code = body["code"].as_str().ok_or(CableError::Frame)?.to_string();
-                let error = crate::transport::TransportError::Graphql { messages: vec![code.clone()], extensions: Some(crate::transport::GraphqlExtensions { code: Some(code), transaction_disposition: None }) };
+                let error = crate::transport::TransportError::Graphql { messages: vec![code.clone()], extensions: Some(crate::transport::GraphqlExtensions { code: Some(code), transaction_disposition: None, fields: Default::default() }) };
                 let mut failure = SubscriptionFailure::from_error(error);
                 if body["retryable"] == true { failure.kind = SubscriptionFailureKind::Transport; }
                 let _ = entry.events.send(SubscriptionEvent::Failed(failure));

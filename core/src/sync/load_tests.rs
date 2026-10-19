@@ -144,7 +144,7 @@ async fn retry_budget_is_spent_then_the_error_is_returned() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn server_error_code_is_retried_and_fatal_code_is_not() {
+async fn server_code_is_retried_and_fatal_code_is_not() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("busy", "SERVICE_UNAVAILABLE"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));

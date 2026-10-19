@@ -15,11 +15,11 @@ fn database() -> Connection {
 
 fn insert_upload(connection: &Connection, status: &str, started: i64, state: &UploadState) -> i64 {
     let failure = (status == "failed").then(|| OperationFailure::new(FailureKind::Network, "offline"));
-    let [kind, message, code, disposition] = failure_cells(failure.as_ref());
+    let [kind, message, extensions] = failure_cells(failure.as_ref()).unwrap();
     connection
         .execute(
-            "INSERT INTO op (action_key, status, transport_started, created_at, since, error_kind, error_message, error_code, error_disposition) VALUES ('moments:upload', ?1, ?2, 5, 5, ?3, ?4, ?5, ?6)",
-            rusqlite::params![status, started, kind, message, code, disposition],
+            "INSERT INTO op (action_key, status, transport_started, created_at, since, error_kind, error_message, error_extensions) VALUES ('moments:upload', ?1, ?2, 5, 5, ?3, ?4, ?5)",
+            rusqlite::params![status, started, kind, message, extensions],
         )
         .unwrap();
     let seq = connection.last_insert_rowid();

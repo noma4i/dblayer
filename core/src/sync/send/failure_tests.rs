@@ -14,7 +14,7 @@ async fn graphql_auth_refusals_keep_unsent_rows_failed() {
             Reply::fail(TransportError::refusal(code)),
             Reply::fail(TransportError::Graphql {
                 messages: vec!["refused".into()],
-                extensions: Some(GraphqlExtensions { code: Some(code.into()), transaction_disposition: None }),
+                extensions: Some(GraphqlExtensions { code: Some(code.into()), transaction_disposition: None, fields: Default::default() }),
             }),
         ] {
             let rig = rig();

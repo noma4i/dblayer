@@ -330,7 +330,7 @@ async fn kept_update_stays_failed_with_the_error_and_blocks_only_its_own_record(
     let failed = info(&rig, "m1");
     assert_eq!((failed.state, failed.attempts, failed.error), (SyncState::Failed, 1, Some(OperationFailure {
         kind: FailureKind::Rejected, message: "not allowed".into(),
-        extensions: Some(crate::transport::GraphqlExtensions { code: Some("FORBIDDEN".into()), transaction_disposition: None }),
+        extensions: Some(crate::transport::GraphqlExtensions { code: Some("FORBIDDEN".into()), transaction_disposition: None, fields: Default::default() }),
     })));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("new".to_string()));
     assert!(info(&rig, "m2").is_synced());

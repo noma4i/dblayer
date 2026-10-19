@@ -11,8 +11,8 @@ use crate::nodes::{delete_trees, read_trees, write_tree};
 use crate::syncstate::OperationFailure;
 use crate::upload::{UploadInfo, UploadPart, UploadRequest, UploadState};
 
-pub const UPLOAD_COLUMNS: &str = "phase, stage, scenario, total_bytes, sent_bytes, attempts, storage_key, upload_id, signed_id, blob_id, document, operation, transferred, confirmed_bytes, checksum, put_url, url_issued_at, retry_at, error_kind, error_message, error_code, error_disposition";
-pub const INFO_COLUMNS: &str = "up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_code, up_error_disposition";
+pub const UPLOAD_COLUMNS: &str = "phase, stage, scenario, total_bytes, sent_bytes, attempts, storage_key, upload_id, signed_id, blob_id, document, operation, transferred, confirmed_bytes, checksum, put_url, url_issued_at, retry_at, error_kind, error_message, error_extensions";
+pub const INFO_COLUMNS: &str = "up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_extensions";
 
 pub fn enum_text<T: Serialize>(value: &T) -> Option<String> {
     match serde_json::to_value(value) {
@@ -29,32 +29,28 @@ fn text_cell(text: Option<String>) -> SqlValue {
     text.map_or(SqlValue::Null, SqlValue::Text)
 }
 
-pub fn failure_cells(failure: Option<&OperationFailure>) -> [SqlValue; 4] {
+pub fn failure_cells(failure: Option<&OperationFailure>) -> Result<[SqlValue; 3]> {
     let extensions = failure.and_then(|failure| failure.extensions.as_ref());
-    [
+    Ok([
         text_cell(failure.and_then(|failure| enum_text(&failure.kind))),
         text_cell(failure.map(|failure| failure.message.clone())),
-        text_cell(extensions.and_then(|fields| fields.code.clone())),
-        text_cell(extensions.and_then(|fields| fields.transaction_disposition.as_ref()).map(|value| value.as_text().to_string())),
-    ]
+        text_cell(extensions.map(serde_json::to_string).transpose().map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?),
+    ])
 }
 
 pub fn failure_at(row: &Row<'_>, first: usize) -> Result<Option<OperationFailure>> {
     let kind: Option<String> = row.get(first)?;
     let message: Option<String> = row.get(first + 1)?;
-    let code: Option<String> = row.get(first + 2)?;
-    let disposition: Option<String> = row.get(first + 3)?;
-    let extensions = (code.is_some() || disposition.is_some()).then(|| crate::transport::GraphqlExtensions {
-        code,
-        transaction_disposition: disposition.as_deref().map(crate::transport::TransactionDisposition::from_text),
-    });
+    let text: Option<String> = row.get(first + 2)?;
+    let extensions = text.map(|text| serde_json::from_str(&text)).transpose()
+        .map_err(|error| rusqlite::Error::FromSqlConversionFailure(first + 2, rusqlite::types::Type::Text, Box::new(error)))?;
     Ok(kind.and_then(|kind| enum_from(&kind)).zip(message).map(|(kind, message)| OperationFailure { kind, message, extensions }))
 }
 
-pub fn upload_cells(state: Option<&UploadState>) -> Vec<SqlValue> {
-    let Some(state) = state else { return vec![SqlValue::Null; 22] };
-    let [kind, message, code, disposition] = failure_cells(state.error.as_ref());
-    vec![
+pub fn upload_cells(state: Option<&UploadState>) -> Result<Vec<SqlValue>> {
+    let Some(state) = state else { return Ok(vec![SqlValue::Null; 21]) };
+    let [kind, message, extensions] = failure_cells(state.error.as_ref())?;
+    Ok(vec![
         text_cell(enum_text(&state.phase)),
         text_cell(enum_text(&state.stage)),
         text_cell(state.scenario.and_then(|scenario| enum_text(&scenario))),
@@ -75,9 +71,8 @@ pub fn upload_cells(state: Option<&UploadState>) -> Vec<SqlValue> {
         state.retry_at.map_or(SqlValue::Null, |time| SqlValue::Integer(time as i64)),
         kind,
         message,
-        code,
-        disposition,
-    ]
+        extensions,
+    ])
 }
 
 pub fn upload_at(row: &Row<'_>, first: usize) -> Result<Option<UploadState>> {
@@ -136,7 +131,7 @@ pub fn write_upload(connection: &Connection, seq: i64, position: i64, state: &Up
     let marks = (3..columns.len() + 3).map(|at| format!("?{at}")).collect::<Vec<_>>().join(", ");
     let assignments = columns.iter().map(|name| format!("{name} = excluded.{name}")).collect::<Vec<_>>().join(", ");
     let mut values = vec![SqlValue::Integer(seq), SqlValue::Integer(position)];
-    values.extend(upload_cells(Some(state)));
+    values.extend(upload_cells(Some(state))?);
     let saved = connection.execute(&format!("INSERT INTO op_item (seq, position, {UPLOAD_COLUMNS}) SELECT ?1, ?2, {marks} WHERE EXISTS (SELECT 1 FROM op WHERE seq = ?1) ON CONFLICT (seq, position) DO UPDATE SET {assignments}"), rusqlite::params_from_iter(values))?;
     if saved > 0 {
         connection.execute("DELETE FROM op_item_header WHERE seq = ?1 AND position = ?2", params![seq, position])?;
@@ -149,10 +144,10 @@ pub fn write_upload(connection: &Connection, seq: i64, position: i64, state: &Up
     Ok(saved)
 }
 
-pub fn info_cells(info: Option<&UploadInfo>) -> Vec<SqlValue> {
-    let Some(info) = info else { return vec![SqlValue::Null; 10] };
-    let [kind, message, code, disposition] = failure_cells(info.error.as_ref());
-    vec![
+pub fn info_cells(info: Option<&UploadInfo>) -> Result<Vec<SqlValue>> {
+    let Some(info) = info else { return Ok(vec![SqlValue::Null; 9]) };
+    let [kind, message, extensions] = failure_cells(info.error.as_ref())?;
+    Ok(vec![
         text_cell(enum_text(&info.status)),
         text_cell(enum_text(&info.stage)),
         SqlValue::Integer(info.sent_bytes as i64),
@@ -161,9 +156,8 @@ pub fn info_cells(info: Option<&UploadInfo>) -> Vec<SqlValue> {
         SqlValue::Integer(i64::from(info.attempts)),
         kind,
         message,
-        code,
-        disposition,
-    ]
+        extensions,
+    ])
 }
 
 pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {

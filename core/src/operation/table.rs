@@ -44,7 +44,7 @@ pub fn operation_input(connection: &Connection, sequence: i64) -> rusqlite::Resu
 
 pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operation>> {
     let sql = format!(
-        "SELECT seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_code, error_disposition, since, client_mutation_id \
+        "SELECT seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_extensions, since, client_mutation_id \
          FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq"
     );
     let mut rows_of = read_all_rows(connection)?;
@@ -67,9 +67,9 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
                 dedupe_key: row.get(7)?,
                 attempts: row.get(8)?,
                 error: failure_at(row, 9)?,
-                since: row.get(13)?,
+                since: row.get(12)?,
                 upload: None,
-                client_mutation_id: row.get(14)?,
+                client_mutation_id: row.get(13)?,
             },
             OperationStatus::from_sql(&status).is_some(),
         ))

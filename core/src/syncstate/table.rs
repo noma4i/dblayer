@@ -14,9 +14,9 @@ pub type SyncKey = (String, String);
 
 const CHUNK: usize = 500;
 
-const SELECT_STORED_WITH_ID: &str = "SELECT row_id, state, error_kind, error_message, error_code, error_disposition, attempts, since, up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_code, up_error_disposition FROM row_sync";
+const SELECT_STORED_WITH_ID: &str = "SELECT row_id, state, error_kind, error_message, error_extensions, attempts, since, up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_extensions FROM row_sync";
 
-const SELECT_STORED: &str = "SELECT state, error_kind, error_message, error_code, error_disposition, attempts, since, up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_code, up_error_disposition FROM row_sync";
+const SELECT_STORED: &str = "SELECT state, error_kind, error_message, error_extensions, attempts, since, up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_extensions FROM row_sync";
 
 pub fn operation_keys(action_key: &str, row_ids: &[RowId], temp_id: Option<&RowId>) -> Vec<SyncKey> {
     let Some((model, _)) = Operation::split_action_key(action_key) else { return Vec::new() };
@@ -30,7 +30,7 @@ fn open_entries(connection: &Connection) -> rusqlite::Result<HashMap<SyncKey, Ve
     let mut rows_of = read_all_rows(connection)?;
     let mut uploads = read_uploads(connection)?;
     let mut fields_of = read_all_fields(connection)?;
-    let sql = "SELECT seq, action_key, status, temp_id, transport_started, attempts, error_kind, error_message, error_code, error_disposition, since FROM op WHERE status IN ('pending', 'failed', 'delivery_unknown') ORDER BY seq";
+    let sql = "SELECT seq, action_key, status, temp_id, transport_started, attempts, error_kind, error_message, error_extensions, since FROM op WHERE status IN ('pending', 'failed', 'delivery_unknown') ORDER BY seq";
     let mut statement = connection.prepare_cached(&sql)?;
     let mut rows = statement.query([])?;
     let mut grouped: HashMap<SyncKey, Vec<SyncEntry>> = HashMap::new();
@@ -49,7 +49,7 @@ fn open_entries(connection: &Connection) -> rusqlite::Result<HashMap<SyncKey, Ve
             transport_started: row.get::<_, i64>(4)? != 0,
             attempts: row.get::<_, u32>(5)?,
             error: failure_at(row, 6)?,
-            since: row.get(10)?,
+            since: row.get(9)?,
             fields,
             upload,
         };
@@ -72,9 +72,9 @@ fn stored_info(connection: &Connection, key: &SyncKey, row: &Row<'_>, first: usi
         actions: names_of(connection, "sync_action", key)?,
         dirty_fields: names_of(connection, "sync_field", key)?,
         error: failure_at(row, first + 1)?,
-        attempts: row.get(first + 5)?,
-        since: row.get(first + 6)?,
-        upload: info_at(row, first + 7)?,
+        attempts: row.get(first + 4)?,
+        since: row.get(first + 5)?,
+        upload: info_at(row, first + 6)?,
     })
 }
 
@@ -113,12 +113,12 @@ pub fn clear_sync(connection: &Connection, model: Option<&str>) -> rusqlite::Res
 
 fn write(connection: &Connection, key: &SyncKey, info: &SyncInfo) -> rusqlite::Result<()> {
     remove(connection, key)?;
-    let [kind, message, code, disposition] = failure_cells(info.error.as_ref());
-    let mut cells: Vec<SqlValue> = vec![key.0.clone().into(), key.1.clone().into(), info.state.as_sql().to_string().into(), kind, message, code, disposition, i64::from(info.attempts).into(), info.since.into()];
-    cells.extend(info_cells(info.upload.as_ref()));
+    let [kind, message, extensions] = failure_cells(info.error.as_ref())?;
+    let mut cells: Vec<SqlValue> = vec![key.0.clone().into(), key.1.clone().into(), info.state.as_sql().to_string().into(), kind, message, extensions, i64::from(info.attempts).into(), info.since.into()];
+    cells.extend(info_cells(info.upload.as_ref())?);
     let marks = vec!["?"; cells.len()].join(", ");
     connection
-        .prepare_cached(&format!("INSERT INTO row_sync (model, row_id, state, error_kind, error_message, error_code, error_disposition, attempts, since, {INFO_COLUMNS}) VALUES ({marks})"))?
+        .prepare_cached(&format!("INSERT INTO row_sync (model, row_id, state, error_kind, error_message, error_extensions, attempts, since, {INFO_COLUMNS}) VALUES ({marks})"))?
         .execute(params_from_iter(cells))?;
     for (table, names) in [("sync_action", &info.actions), ("sync_field", &info.dirty_fields)] {
         let mut insert = connection.prepare_cached(&format!("INSERT INTO {table} (model, row_id, pos, name) VALUES (?1, ?2, ?3, ?4)"))?;

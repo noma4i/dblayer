@@ -779,10 +779,10 @@ fn apply_transitions(
             }
             OperationTransition::Postpone { seq, failure } => {
                 synced.extend(op_keys_of(connection, *seq)?);
-                let [kind, message, code, disposition] = failure_cells(Some(failure));
+                let [kind, message, extensions] = failure_cells(Some(failure))?;
                 let postponed = connection.execute(
-                    "UPDATE op SET transport_started = 0, error_kind = ?2, error_message = ?3, since = ?4, error_code = ?5, error_disposition = ?6 WHERE seq = ?1 AND status = 'pending' AND transport_started = 1",
-                    params![seq, kind, message, now_ms, code, disposition],
+                    "UPDATE op SET transport_started = 0, error_kind = ?2, error_message = ?3, since = ?4, error_extensions = ?5 WHERE seq = ?1 AND status = 'pending' AND transport_started = 1",
+                    params![seq, kind, message, now_ms, extensions],
                 )?;
                 if postponed == 0 {
                     result.unknown_operation_acks += 1;
@@ -804,7 +804,7 @@ fn apply_transitions(
             OperationTransition::Retry { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let retried = connection.execute(
-                    "UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error_kind = NULL, error_message = NULL, error_code = NULL, error_disposition = NULL, since = ?2 \
+                    "UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error_kind = NULL, error_message = NULL, error_extensions = NULL, since = ?2 \
                      WHERE seq = ?1 AND status IN ('failed', 'delivery_unknown')",
                     params![seq, now_ms],
                 )?;
@@ -836,10 +836,10 @@ fn apply_transitions(
 
 fn set_open_status(connection: &Connection, seq: i64, status: OperationStatus, error: Option<&OperationFailure>, now_ms: i64) -> Result<usize, StoreError> {
     let dedupe = if status == OperationStatus::Failed { ", dedupe_key = NULL" } else { "" };
-    let [kind, message, code, disposition] = failure_cells(error);
+    let [kind, message, extensions] = failure_cells(error)?;
     Ok(connection.execute(
-        &format!("UPDATE op SET status = ?1, error_kind = ?2, error_message = ?3, since = ?4, error_code = ?6, error_disposition = ?7{dedupe} WHERE seq = ?5"),
-        params![status.as_sql(), kind, message, now_ms, seq, code, disposition],
+        &format!("UPDATE op SET status = ?1, error_kind = ?2, error_message = ?3, since = ?4, error_extensions = ?6{dedupe} WHERE seq = ?5"),
+        params![status.as_sql(), kind, message, now_ms, seq, extensions],
     )?)
 }
 

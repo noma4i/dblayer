@@ -41,6 +41,7 @@ impl<'de> Deserialize<'de> for TransactionDisposition {
 pub struct GraphqlExtensions {
     pub code: Option<String>,
     pub transaction_disposition: Option<TransactionDisposition>,
+    pub fields: std::collections::HashMap<String, String>,
 }
 
 impl super::Response {
@@ -49,7 +50,8 @@ impl super::Response {
         Some(GraphqlExtensions {
             code: fields.get("code").and_then(serde_json::Value::as_str).map(str::to_string),
             transaction_disposition: fields.get("transactionDisposition").and_then(serde_json::Value::as_str).map(TransactionDisposition::from_text),
-        }).filter(|extensions| extensions.code.is_some() || extensions.transaction_disposition.is_some())
+            fields: fields.iter().filter(|(key, _)| !matches!(key.as_str(), "code" | "transactionDisposition")).map(|(key, value)| (key.clone(), value.to_string())).collect(),
+        }).filter(|extensions| extensions.code.is_some() || extensions.transaction_disposition.is_some() || !extensions.fields.is_empty())
     }
 }
 

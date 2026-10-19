@@ -58,7 +58,7 @@ struct GraphQLChannelTests {
       GraphQLChannel.event(from: payload, requestId: "abc:1")
         == .payload(JSONValue.object(["chatUpdated": .object(["id": .string("1")])]))
     )
-    #expect(GraphQLChannel.event(from: errors, requestId: "abc:1") == .errors(.Graphql(messages: ["boom"], extensions: GraphqlExtensions(code: "NOT_FOUND", transactionDisposition: nil))))
+    #expect(GraphQLChannel.event(from: errors, requestId: "abc:1") == .errors(.Graphql(messages: ["boom"], extensions: GraphqlExtensions(code: "NOT_FOUND", transactionDisposition: nil, fields: [:]))))
     #expect(GraphQLChannel.event(from: pong, requestId: "abc:1") == nil)
     #expect(GraphQLChannel.event(from: emptyData, requestId: "abc:1") == nil)
   }

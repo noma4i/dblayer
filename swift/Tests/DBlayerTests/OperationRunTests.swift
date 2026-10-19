@@ -180,7 +180,7 @@ extension OperationRunTests {
     defer { ScriptedURLProtocol.reset(scriptId: scriptId) }
     let run = try makeSignatureRun(scriptId: scriptId, code: "SIGNATURE_REPLAY", responseBody: nil)
 
-    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Signature error"], extensions: GraphqlExtensions(code: "SIGNATURE_REPLAY", transactionDisposition: nil))) {
+    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Signature error"], extensions: GraphqlExtensions(code: "SIGNATURE_REPLAY", transactionDisposition: nil, fields: [:]))) {
       _ = try await run.send(
         operationName: "AuthSignIn",
         document: "mutation AuthSignIn { authSignIn { userId } }",

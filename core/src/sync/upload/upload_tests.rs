@@ -609,9 +609,9 @@ async fn a_rejected_mutation_fails_without_repeating_and_discard_removes_the_ope
 #[tokio::test(start_paused = true)]
 async fn graphql_extensions_survive_upload_step_failures() {
     use crate::transport::{GraphqlExtensions, TransactionDisposition};
-    let fields = GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: Some(TransactionDisposition::Keep) };
+    let fields = GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: Some(TransactionDisposition::Keep), fields: Default::default() };
     for (reply, expected) in [
-        (Reply::graphql_error("nope", "DUPLICATE_CLIENT_KEY"), GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: None }),
+        (Reply::graphql_error("nope", "DUPLICATE_CLIENT_KEY"), GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: None, fields: Default::default() }),
         (Reply::fail(TransportError::Graphql { messages: vec!["nope".into()], extensions: Some(fields.clone()) }), fields),
     ] {
         let rig = upload_rig(small());

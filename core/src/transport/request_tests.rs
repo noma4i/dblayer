@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn error_code_is_read_only_from_a_string_extension() {
+fn graphql_code_is_read_only_from_a_string_extension() {
     let cases = [
         ("string code", r#"{"message":"x","extensions":{"code":"SIGNATURE_EXPIRED"}}"#, Some("SIGNATURE_EXPIRED")),
         ("no extensions", r#"{"message":"x"}"#, None),

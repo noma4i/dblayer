@@ -10,6 +10,18 @@ const THROWN: [(SessionCode, &str); 4] = [
     (SessionCode::RateLimited, "slow down"),
 ];
 
+#[test]
+fn graphql_extensions_keep_server_fields() {
+    for typed in [serde_json::json!({"code":"REFUSED","transactionDisposition":"KEEP"}), serde_json::json!({})] {
+        let mut fields = typed.as_object().unwrap().clone();
+        fields.extend(serde_json::json!({"detail":"refused","limit":3,"context":{"values":[true,null,2]}}).as_object().unwrap().clone());
+        let response = serde_json::json!({"errors":[{"message":"refused","extensions":fields}]}).to_string();
+        let extensions = crate::transport::graphql_extensions(response).unwrap().unwrap();
+        let encoded = serde_json::to_value(extensions).unwrap();
+        assert_eq!(encoded["fields"], serde_json::json!({"detail":"\"refused\"","limit":"3","context":"{\"values\":[true,null,2]}"}));
+    }
+}
+
 struct Refusing(SessionCode, String);
 
 struct GraphqlRefusal(String);
@@ -33,11 +45,11 @@ impl Transport for GraphqlRefusal {
 async fn graphql_extensions_reach_run_refresh_and_settled() {
     use crate::transport::{GraphqlExtensions, TransactionDisposition};
     for (fields, expected) in [
-        (serde_json::json!({"code":"UNKNOWN_PRODUCT","transactionDisposition":"FINISH"}), Some(GraphqlExtensions { code: Some("UNKNOWN_PRODUCT".into()), transaction_disposition: Some(TransactionDisposition::Finish) })),
-        (serde_json::json!({"code":"REACTIVATION_GRANT_MISSING","transactionDisposition":"KEEP"}), Some(GraphqlExtensions { code: Some("REACTIVATION_GRANT_MISSING".into()), transaction_disposition: Some(TransactionDisposition::Keep) })),
-        (serde_json::json!({"code":"DUPLICATE_CLIENT_KEY","transactionDisposition":"LATER"}), Some(GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: Some(TransactionDisposition::Unknown { value: "LATER".into() }) })),
-        (serde_json::json!({"code":"DUPLICATE_CLIENT_KEY"}), Some(GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: None })),
-        (serde_json::json!({"transactionDisposition":"KEEP"}), Some(GraphqlExtensions { code: None, transaction_disposition: Some(TransactionDisposition::Keep) })),
+        (serde_json::json!({"code":"UNKNOWN_PRODUCT","transactionDisposition":"FINISH"}), Some(GraphqlExtensions { code: Some("UNKNOWN_PRODUCT".into()), transaction_disposition: Some(TransactionDisposition::Finish), fields: Default::default() })),
+        (serde_json::json!({"code":"REACTIVATION_GRANT_MISSING","transactionDisposition":"KEEP"}), Some(GraphqlExtensions { code: Some("REACTIVATION_GRANT_MISSING".into()), transaction_disposition: Some(TransactionDisposition::Keep), fields: Default::default() })),
+        (serde_json::json!({"code":"DUPLICATE_CLIENT_KEY","transactionDisposition":"LATER"}), Some(GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: Some(TransactionDisposition::Unknown { value: "LATER".into() }), fields: Default::default() })),
+        (serde_json::json!({"code":"DUPLICATE_CLIENT_KEY"}), Some(GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: None, fields: Default::default() })),
+        (serde_json::json!({"transactionDisposition":"KEEP"}), Some(GraphqlExtensions { code: None, transaction_disposition: Some(TransactionDisposition::Keep), fields: Default::default() })),
         (serde_json::json!({"code":42,"transactionDisposition":false}), None),
         (serde_json::Value::Null, None),
     ] {

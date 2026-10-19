@@ -6,19 +6,19 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 @Serializable
-private data class EncodedGraphqlExtensions(val code: String?, val transactionDisposition: String?)
+private data class EncodedGraphqlExtensions(val code: String?, val transactionDisposition: String?, val fields: Map<String, String>)
 
 object GraphqlExtensionsSerializer : KSerializer<GraphqlExtensions> {
     override val descriptor = EncodedGraphqlExtensions.serializer().descriptor
 
     override fun deserialize(decoder: Decoder): GraphqlExtensions {
         val fields = EncodedGraphqlExtensions.serializer().deserialize(decoder)
-        return GraphqlExtensions(fields.code, fields.transactionDisposition?.let(::transactionDisposition))
+        return GraphqlExtensions(fields.code, fields.transactionDisposition?.let(::transactionDisposition), fields.fields)
     }
 
     override fun serialize(encoder: Encoder, value: GraphqlExtensions) {
         EncodedGraphqlExtensions.serializer().serialize(encoder, EncodedGraphqlExtensions(
-            value.code, value.transactionDisposition?.let(::transactionDispositionText),
+            value.code, value.transactionDisposition?.let(::transactionDispositionText), value.fields,
         ))
     }
 }

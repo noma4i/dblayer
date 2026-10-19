@@ -80,25 +80,35 @@ fn a_failure_and_the_upload_progress_are_columns() {
 fn graphql_extensions_survive_stored_failures_and_retry_clears_them() {
     use crate::transport::{GraphqlExtensions, TransactionDisposition};
     for disposition in [TransactionDisposition::Finish, TransactionDisposition::Keep, TransactionDisposition::Unknown { value: "LATER".into() }] {
-        let (store, seq) = begun();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("operations.sqlite");
+        let store = Store::open(&path).unwrap();
+        store.boot(&[messages_spec(), items_spec()], None).unwrap();
+        store.mark_ready();
+        let seq = send(&store, vec![OperationTransition::Begin(record())]);
         let failure = OperationFailure {
             kind: FailureKind::Rejected,
             message: "purchase refused".into(),
-            extensions: Some(GraphqlExtensions { code: Some("DUPLICATE_CLIENT_KEY".into()), transaction_disposition: Some(disposition) }),
+            extensions: Some(serde_json::from_value::<GraphqlExtensions>(json!({"code":"REFUSED","transaction_disposition":disposition,"fields":{"detail":"\"refused\"","limit":"3","context":"{\"values\":[true,null,2]}"}})).unwrap()),
         };
         send(&store, vec![OperationTransition::Start { seq }]);
         send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        store.boot(&[messages_spec(), items_spec()], None).unwrap();
+        store.mark_ready();
         store.read(&[], |reader| {
             let stored = crate::operation::open_operations(reader.connection())?;
             assert_eq!(stored[0].error.as_ref(), Some(&failure));
+            assert_eq!(serde_json::to_value(&stored[0].error.as_ref().unwrap().extensions).unwrap()["fields"], json!({"detail":"\"refused\"","limit":"3","context":"{\"values\":[true,null,2]}"}));
             let rows = crate::syncstate::read_sync(reader.connection(), "messages", &["m1".into(), "m2".into()])?;
             assert_eq!(rows.len(), 2);
             assert!(rows.values().all(|row| row.error.as_ref() == Some(&failure)));
             Ok(())
         }).unwrap();
         send(&store, vec![OperationTransition::Retry { seq }]);
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NULL AND error_message IS NULL AND error_code IS NULL AND error_disposition IS NULL"), 1);
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync WHERE error_kind IS NULL AND error_message IS NULL AND error_code IS NULL AND error_disposition IS NULL"), 2);
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NULL AND error_message IS NULL AND error_extensions IS NULL"), 1);
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync WHERE error_kind IS NULL AND error_message IS NULL AND error_extensions IS NULL"), 2);
     }
 }
 

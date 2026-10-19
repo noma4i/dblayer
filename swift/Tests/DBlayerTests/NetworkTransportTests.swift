@@ -83,7 +83,7 @@ struct NetworkTransportTests {
     let run = OperationRun(transport: httpTransport, hashes: PersistedQueryHashes())
     let transport: any GraphQLTransport = NetworkTransport(run: run, cable: makeCableClient())
 
-    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Rejected"], extensions: GraphqlExtensions(code: "REGISTRATION_REQUIRED", transactionDisposition: nil))) {
+    await #expect(throws: GraphQLTransportError.graphQL(messages: ["Rejected"], extensions: GraphqlExtensions(code: "REGISTRATION_REQUIRED", transactionDisposition: nil, fields: [:]))) {
       _ = try await transport.query(ProbeQuery.self, variables: ProbeQuery.Variables())
     }
     #expect(ScriptedURLProtocol.recordedRequests(scriptId: scriptId).count == 1)
