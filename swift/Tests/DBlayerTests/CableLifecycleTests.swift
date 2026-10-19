@@ -73,6 +73,8 @@ struct CableLifecycleTests {
 
     bench.sockets[0].fail()
     await eventually { bench.sockets[0].isClosed }
+    #expect(await !client.isConnected)
+    await bench.clock.waitForSleepers(1, requestedSeconds: CableHeartbeat.staleAfter)
     await bench.clock.advance(by: 7)
     await bench.clock.waitForSleepers(1, requestedSeconds: CableHeartbeat.reopenDelay)
     await bench.clock.advance(by: CableHeartbeat.reopenDelay)
@@ -118,12 +120,18 @@ struct CableLifecycleTests {
       await client.stop()
     }
     await eventually { bench.sockets[0].isClosed }
+    if cause == .serverDisconnectReconnectTrue {
+      #expect(await !client.isConnected)
+      await bench.clock.waitForSleepers(1, requestedSeconds: CableHeartbeat.staleAfter)
+    } else {
+      await start.value
+    }
     await bench.clock.advance(by: 7)
     if cause == .serverDisconnectReconnectTrue {
       await bench.clock.waitForSleepers(1, requestedSeconds: CableHeartbeat.reopenDelay)
       await bench.clock.advance(by: CableHeartbeat.reopenDelay)
+      await eventually { bench.sockets.count == 2 }
     }
-    await settle()
 
     #expect(bench.sockets.count == (cause == .serverDisconnectReconnectTrue ? 2 : 1))
     await client.stop()

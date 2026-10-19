@@ -71,7 +71,7 @@ Test conventions:
 
 - Swift tests that replace `DB.database`, including calls through `DB.open`, belong to the serialized `BridgeProbeTests` suite. Nest related suites there. Separate serialized suites still run concurrently and can replace each other's database during an awaited call.
 - Kotlin tests that replace `DBlayer.database` run sequentially with JUnit 4. Keep that shared state sequential if changing the test runner. Tests using independent database handles can run concurrently on either platform.
-- Before advancing manual cable clocks, await the registered deadline in Swift and Kotlin. A received frame's timestamp does not prove its asynchronous sleep has registered.
+- Before advancing manual cable clocks, await the registered deadline in Swift and Kotlin. A received frame's timestamp does not prove its asynchronous sleep has registered. A closed socket also precedes the connection actor's completion and its reconnect sleep registration. Read the actor's closed state, then await that sleep. After a reopen delay, await the new socket rather than a fixed settling interval. For terminal closure, await the client's start task before advancing time.
 - A test waits only through `eventually` or `Cursor` (Swift, `Waiting.swift`) and `bounded` or `eventually` (Kotlin, `TestWaiting.kt`). Each wait has a timeout and its failure names the condition. `check_waits.sh` rejects loops, raw iterators and `runBlocking` in tests.
 - Tests are never embedded in source files. A module is a directory with `mod.rs`, and the tests of `x.rs` are in `x_tests.rs` next to it.
 - Every behavior test is written first and seen failing.
