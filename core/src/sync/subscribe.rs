@@ -14,7 +14,7 @@ use crate::store::PlanCommitError;
 use crate::syncstate::operation_keys;
 use crate::transport::{
     EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFault,
-    SubscriptionRetry, TransportError, RETRY_BACKOFF,
+    SubscriptionRetry, SubscriptionFailure, TransportError, RETRY_BACKOFF,
 };
 use crate::value::{fractional_between, read_id};
 
@@ -64,13 +64,14 @@ fn is_truthy(value: &Value) -> bool {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SubscriptionStatus {
     pub connects: u32,
     pub applied: usize,
     pub rejected: usize,
     pub degraded: bool,
     pub stopped: bool,
+    pub failure: Option<SubscriptionFailure>,
 }
 
 type SharedStatus = Arc<Mutex<SubscriptionStatus>>;
@@ -78,6 +79,7 @@ type SharedStatus = Arc<Mutex<SubscriptionStatus>>;
 pub struct EventSubscription {
     abort: AbortHandle,
     status: SharedStatus,
+    pub(crate) definition: SubscriptionDef,
 }
 
 impl EventSubscription {
@@ -111,6 +113,13 @@ struct Feed {
 }
 
 impl Feed {
+    fn notify_failure(&self, failure: &SubscriptionFailure) {
+        locked(&self.status).failure = Some(failure.clone());
+        if matches!(failure.error, TransportError::Session { .. }) {
+            let _ = self.inner.subscription_failures.send(Some((format!("{}|{}", self.def.model, self.def.operation), failure.clone())));
+        }
+    }
+
     async fn invalidation(&self, response: &Response) -> bool {
         if self.inner.db.spec(&self.def.model).is_ok_and(|spec| spec.is_memory()) { return false; }
         let Some(data) = response.data.as_ref() else { return false };
@@ -316,6 +325,7 @@ impl Feed {
                         }
                     }
                     Some(SubscriptionEvent::Failed(failure)) => {
+                        self.notify_failure(&failure);
                         self.apply(std::mem::take(&mut pending), &self.def.model, self.def.effect).await;
                         return Some(failure.kind);
                     }
@@ -364,15 +374,22 @@ impl Feed {
                     }
                     connection
                 }
-                Err(_) if !self.inner.connectivity.is_online() => continue,
-                Err(_) => {
-                    let Some(delay) = self.register_failure(&mut retry, SubscriptionFault::Transient) else { return };
+                Err(error) => {
+                    let failure = SubscriptionFailure::from_error(error);
+                    let fault = failure.kind.fault();
+                    if fault == SubscriptionFault::Transient && !self.inner.connectivity.is_online() { continue; }
+                    self.notify_failure(&failure);
+                    let Some(delay) = self.register_failure(&mut retry, fault) else { return };
                     tokio::time::sleep(delay).await;
                     continue;
                 }
             };
             let fault = self.pump(&mut connection, &mut retry).await.map_or(SubscriptionFault::Transient, SubscriptionFailureKind::fault);
             drop(connection);
+            if fault != SubscriptionFault::Transient {
+                self.register_failure(&mut retry, fault);
+                return;
+            }
             if !self.inner.connectivity.is_online() {
                 continue;
             }
@@ -401,10 +418,11 @@ impl Inner {
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
         let first = self.transport.subscribe(request.clone()).await;
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
+        let definition = def.clone();
         let def_root = def.root.clone();
         let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone() };
         let task = tokio::spawn(self.until_closed(feed.run(request, first)));
-        Ok(EventSubscription { abort: task.abort_handle(), status })
+        Ok(EventSubscription { abort: task.abort_handle(), status, definition })
     }
 }
 

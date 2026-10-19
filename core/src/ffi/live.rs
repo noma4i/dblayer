@@ -82,10 +82,36 @@ pub(super) struct LiveHandles {
     pub window: Option<WindowHandle>,
     pub _watch: Option<crate::sync::Watch>,
     pub load: Option<tokio::task::AbortHandle>,
+    pub failure: Option<tokio::task::AbortHandle>,
 }
 
 impl Drop for LiveHandles {
-    fn drop(&mut self) { if let Some(load) = self.load.take() { load.abort(); } }
+    fn drop(&mut self) {
+        for task in [self.load.take(), self.failure.take()].into_iter().flatten() { task.abort(); }
+    }
+}
+
+pub(super) fn forward_failure(watch: Option<&mut crate::sync::Watch>, latest: &watch::Sender<Option<LiveChange>>, listener: std::sync::Arc<dyn QueryListener>) -> Option<tokio::task::AbortHandle> {
+    let (current, mut failures, subscriptions) = watch?.failures()?;
+    let latest = latest.clone();
+    Some(tokio::spawn(async move {
+        let post = |failure: crate::transport::SubscriptionFailure| {
+            let revision = latest.borrow().as_ref().map_or(0, |change| change.revision);
+            let change = LiveChange::failed(revision, super::DbError::from(crate::sync::SyncError::Transport(failure.error)));
+            latest.send_replace(Some(change.clone()));
+            listener.changed(change);
+        };
+        let mut failed = current.is_some();
+        if let Some(failure) = current { post(failure); }
+        loop {
+            match failures.recv().await {
+                Ok(None) => failed = false,
+                Ok(Some((source, failure))) if subscriptions.contains(&source) && !failed => { post(failure); failed = true; }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                _ => {}
+            }
+        }
+    }).abort_handle())
 }
 
 #[derive(uniffi::Object)]

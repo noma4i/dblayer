@@ -39,6 +39,7 @@ pub use subscription::{
 #[async_trait]
 pub trait Transport: Send + Sync {
     fn set_online(&self, _online: bool) {}
+    fn resume_subscriptions(&self) {}
     async fn open_cable(&self) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {
         Err(TransportError::Network("encrypted cable socket is not connected".into()))
     }

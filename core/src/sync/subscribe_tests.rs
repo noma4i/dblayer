@@ -445,6 +445,42 @@ async fn graphql_failure_stops_the_subscription() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn terminal_session_failure_stops_even_while_offline() {
+    for online in [false, true] {
+        let rig = rig_with_subscription();
+        let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+        rig.sync.set_online(online);
+        let error = crate::transport::TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "session_unknown".into() };
+        rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(crate::transport::SubscriptionFailure::from_error(error.clone())));
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        assert!(subscription.status().stopped, "online={online}");
+        assert_eq!(subscription.status().failure.unwrap().error, error);
+        assert_eq!(rig.transport.call_count("MomentChanged"), 1);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_typed_session_refusal_during_subscribe_stops_without_retry() {
+    struct Refusal;
+    #[async_trait::async_trait]
+    impl crate::transport::Transport for Refusal {
+        async fn query(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
+        async fn mutate(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
+        async fn subscribe(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Subscription, crate::transport::TransportError> {
+            Err(crate::transport::TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "session_unknown".into() })
+        }
+        async fn put(&self, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> { unreachable!() }
+    }
+    let rig = rig_with_subscription();
+    let sync = crate::sync::Sync::new(rig.db.clone(), std::sync::Arc::new(Refusal), std::sync::Arc::new(rig.clock.clone()), Default::default());
+    *super::locked(&sync.inner.operations) = super::locked(&rig.sync.inner.operations).clone();
+    let subscription = sync.subscribe(upsert_def()).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    assert!(subscription.status().stopped);
+    assert!(matches!(subscription.status().failure.unwrap().error, crate::transport::TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }));
+}
+
+#[tokio::test(start_paused = true)]
 async fn debounced_events_land_once_per_row_after_the_interval() {
     let rig = rig_with_subscription();
     put(&rig, "moments", json!({"id": "m1", "text": "start", "userId": null}));

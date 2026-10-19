@@ -8,6 +8,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class TransportFailureTest {
+    @Test
+    fun sessionFailureKeepsItsCodeAndDetail() {
+        for (code in listOf(SessionCode.UNAUTHENTICATED, SessionCode.ACCOUNT_UNAVAILABLE, SessionCode.SESSION_ENDED)) {
+            val error = DbException.Session(code, "session_unknown")
+            for (kind in GraphQLOperationKind.entries) {
+                assertEquals(error, classifyTransportFailure(error, kind))
+            }
+        }
+    }
+
     private fun describe(error: DbException): String = when (error) {
         is DbException.Network -> "Network"
         is DbException.Interrupted -> "Interrupted"

@@ -3,6 +3,25 @@ import Testing
 @testable import DBlayer
 
 struct TransportFailureTests {
+  @Test(arguments: [SessionCode.unauthenticated, .accountUnavailable, .sessionEnded])
+  func sessionFailureKeepsItsCodeAndDetail(code: SessionCode) {
+    let error = DbError.Session(code: code, detail: "session_unknown")
+    for kind in [GraphQLOperationKind.query, .mutation] {
+      guard case let .Session(actual, detail) = TransportFailure.classify(error, kind: kind) else {
+        Issue.record("session failure lost its type")
+        continue
+      }
+      #expect(actual == code)
+      #expect(detail == "session_unknown")
+    }
+    guard case let .Session(actual, detail) = TransportFailure.classifySubscription(error) else {
+      Issue.record("subscription failure lost its session code")
+      return
+    }
+    #expect(actual == code)
+    #expect(detail == "session_unknown")
+  }
+
   struct Case: Sendable, CustomTestStringConvertible {
     let name: String
     let error: any Error & Sendable

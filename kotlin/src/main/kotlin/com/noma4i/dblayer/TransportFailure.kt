@@ -4,6 +4,7 @@ import java.net.ConnectException
 import java.net.UnknownHostException
 
 internal fun classifyTransportFailure(error: Exception, kind: GraphQLOperationKind): DbException {
+    if (error is DbException) return error
     val detail = error.message ?: error.toString()
     return when (error) {
         is GraphQLTransportError.Unauthenticated -> DbException.Http(401u, detail)

@@ -17,6 +17,7 @@ enum TransportFailure {
   ]
 
   static func classify(_ error: Error, kind: GraphQLOperationKind) -> DbError {
+    if let error = error as? DbError { return error }
     let detail = String(describing: error)
     switch error {
     case let failure as GraphQLTransportError: return answered(failure, detail: detail)

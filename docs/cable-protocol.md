@@ -78,18 +78,25 @@ The REACTION area may point to several node reads. Then 1 HTTP request runs for 
 
 While a live subscription exists, 25 seconds without traffic start an encrypted ping.
 If no pong or next arrives within 20 seconds, the client closes the socket and reopens it.
+Each pong restarts the 25-second idle interval. Its `ts` echoes the ping timestamp.
+The pending socket receive survives timer, subscription and cancellation events until it returns a frame or the connection closes.
+The client reads its credential before opening a socket. A handshake timeout closes the socket.
 Without subscriptions there are no connections and no timers. Failed opens increase `pacing::Backoff`. A successful ready resets the counter.
 Offline state and an empty subscription list use no attempts and add no retry delay. This includes a cancel during the handshake.
 `Sync.set_online` passes the connection state to the transport.
 
 | Close | Result |
 | --- | --- |
-| 4401 | `SessionCode::Unauthenticated`, subscriptions end |
-| 4403 or ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, subscriptions end |
-| LOGGED_OUT | `SessionCode::SessionEnded`, subscriptions end |
+| 4401, including session_unknown | `SessionCode::Unauthenticated`, stop until explicit listen or resume |
+| 4403 or ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, stop until explicit listen or resume |
+| LOGGED_OUT | `SessionCode::SessionEnded`, stop until explicit listen or resume |
 | 1003, 1006, 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Reopen with backoff |
 
 No close deletes the credential. Cable receives only the function that reads the credential.
+Terminal refusals also reject later subscriptions without opening sockets or triggering rereads.
+After sign-in, call `listen` or `resume` to clear the refusal and restart stopped subscriptions.
+Each watched query receives one `LiveChange.error` with the typed session failure until that explicit restart.
+`SubscriptionStatus.failure` retains the typed subscription error. User-initiated configuration requests and queries remain available.
 `SubscriptionFailure.close` keeps the close code. GraphQL errors keep their messages and `GraphqlExtensions` in the shared error type.
 Swift `LiveChange.error`, `SubscriptionSink.failed` and `GraphQLSubscriptionEvent.errors` take `DbError`. Kotlin uses `DbException`.
 

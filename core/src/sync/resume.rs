@@ -22,6 +22,17 @@ pub struct Watch {
     inner: Arc<Inner>,
     id: Option<u64>,
     live: Vec<String>,
+    failures: Option<tokio::sync::broadcast::Receiver<super::SubscriptionFailureNotice>>,
+}
+
+impl Watch {
+    pub(crate) fn failures(&mut self) -> Option<(Option<crate::transport::SubscriptionFailure>, tokio::sync::broadcast::Receiver<super::SubscriptionFailureNotice>, Vec<String>)> {
+        let failures = self.failures.take()?;
+        let current = self.live.iter().find_map(|key| {
+            locked(&self.inner.lives).get(key)?.subscription.as_ref()?.status().failure
+        });
+        Some((current.filter(|failure| matches!(failure.error, crate::transport::TransportError::Session { .. })), failures, self.live.clone()))
+    }
 }
 
 impl Drop for Watch {
@@ -44,11 +55,14 @@ impl Sync {
             locked(&self.inner.watches).insert(id, entry);
             Some(id)
         } else { None };
+        let failures = self.inner.subscription_failures.subscribe();
         let live = self.inner.acquire_live(model, relation);
-        Ok(Watch { inner: self.inner.clone(), id, live })
+        Ok(Watch { inner: self.inner.clone(), id, live, failures: Some(failures) })
     }
 
     pub async fn resume(&self) -> Result<ResumeReport, SyncError> {
+        self.inner.transport.resume_subscriptions();
+        self.inner.restart_live();
         let now = self.inner.clock.now();
         let drain = self.inner.config.resume;
         let watched: BTreeMap<String, (String, String, Map<String, Value>)> = locked(&self.inner.watches)

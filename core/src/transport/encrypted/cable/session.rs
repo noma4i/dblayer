@@ -21,6 +21,7 @@ pub struct CableSession {
     pong_due: Option<Instant>,
     opened: bool,
     retry: SubscriptionRetry,
+    terminal: Option<SubscriptionFailure>,
 }
 
 impl Default for CableSession {
@@ -30,14 +31,18 @@ impl Default for CableSession {
 impl CableSession {
     pub fn new() -> Self {
         let (cancel, cancellations) = mpsc::unbounded_channel();
-        Self { entries: BTreeMap::new(), next_id: 0, cancellations, cancel, last_traffic: Instant::now(), pong_due: None, opened: false, retry: SubscriptionRetry::default() }
+        Self { entries: BTreeMap::new(), next_id: 0, cancellations, cancel, last_traffic: Instant::now(), pong_due: None, opened: false, retry: SubscriptionRetry::default(), terminal: None }
     }
 
     pub fn subscribe(&mut self, request: GraphQLRequest) -> (String, Subscription) {
         self.next_id += 1;
         let id = self.next_id.to_string();
         let (events, receiver) = mpsc::unbounded_channel();
-        self.entries.insert(id.clone(), Entry { request, events });
+        if let Some(failure) = &self.terminal {
+            let _ = events.send(SubscriptionEvent::Failed(failure.clone()));
+        } else {
+            self.entries.insert(id.clone(), Entry { request, events });
+        }
         let cancel = self.cancel.clone();
         let token = id.clone();
         let subscription = Subscription::new(receiver, SubscriptionHandle::new(move || { let _ = cancel.send(token.clone()); }));
@@ -53,6 +58,15 @@ impl CableSession {
     }
 
     pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+    pub fn resume(&mut self) { self.terminal = None; }
+
+    pub fn refuse(&mut self, failure: SubscriptionFailure) {
+        self.terminal = Some(failure.clone());
+        for (_, entry) in std::mem::take(&mut self.entries) {
+            let _ = entry.events.send(SubscriptionEvent::Failed(failure.clone()));
+        }
+    }
 
     pub fn frame(&self, id: &str) -> Option<Value> {
         self.entries.get(id).map(|entry| json!({
@@ -89,11 +103,9 @@ impl CableSession {
         };
         let close = SubscriptionClose { code, terminal: session.is_some(), session };
         if let Some(code) = &close.session {
-            for (_, entry) in std::mem::take(&mut self.entries) {
-                let mut failure = SubscriptionFailure::from_error(crate::transport::TransportError::Session { code: code.clone(), detail: reason.into() });
-                failure.close = Some(close.clone());
-                let _ = entry.events.send(SubscriptionEvent::Failed(failure));
-            }
+            let mut failure = SubscriptionFailure::from_error(crate::transport::TransportError::Session { code: *code, detail: reason.into() });
+            failure.close = Some(close.clone());
+            self.refuse(failure);
         }
         close
     }

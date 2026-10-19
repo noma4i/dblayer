@@ -34,6 +34,7 @@ struct Add {
 
 enum Command {
     Add(Add),
+    Resume,
     #[cfg(test)]
     Settled(oneshot::Sender<()>),
 }
@@ -60,6 +61,8 @@ impl CableSubscriptions {
 
     pub fn wake_count(&self) -> usize { self.wakes.load(Ordering::Relaxed) }
     pub fn set_online(&self, online: bool) { self.online.set(online); }
+
+    pub fn resume(&self) { let _ = self.commands.send(Command::Resume); }
 
     #[cfg(test)]
     pub async fn settled(&self) -> Result<(), TransportError> {
@@ -90,9 +93,11 @@ async fn disconnect(connection: &mut Option<(Arc<dyn CableSocket>, CableLink)>, 
 
 async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credential: &str, session: &mut CableSession, commands: &mut mpsc::UnboundedReceiver<Command>, online: &Connectivity) -> Result<CableLink, TransportError> {
     let mut link = None;
+    let next = socket.next();
+    tokio::pin!(next);
     loop {
         let event = tokio::select! {
-            event = socket.next() => event,
+            event = &mut next => event,
             _ = session.cancelled() => {
                 if session.is_empty() { return Err(TransportError::Interrupted("cable has no subscribers".into())); }
                 continue;
@@ -100,6 +105,7 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
             command = commands.recv() => {
                 match command {
                     Some(Command::Add(add)) => { let (_, subscription) = session.subscribe(add.request); let _ = add.reply.send(subscription); }
+                    Some(Command::Resume) => session.resume(),
                     #[cfg(test)]
                     Some(Command::Settled(sender)) => { let _ = sender.send(()); }
                     None => return Err(TransportError::Interrupted("cable stopped".into())),
@@ -108,6 +114,7 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
             }
             _ = online.offline() => return Err(TransportError::Network("offline".into())),
         };
+        next.set(socket.next());
         let text = match event {
             Some(SocketEvent::Text(text)) => text,
             Some(SocketEvent::Closed { code, reason }) => {
@@ -142,18 +149,19 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
     let mut session = CableSession::new();
     let mut connection: Option<(Arc<dyn CableSocket>, CableLink)> = None;
     let mut retry_at: Option<Instant> = None;
+    let mut incoming = None;
     loop {
         if session.is_empty() {
             if let Some((socket, mut link)) = connection.take() { link.close(); socket.close().await; }
             retry_at = None;
         }
+        if connection.is_none() { incoming = None; }
         if !session.is_empty() && connection.is_none() && retry_at.is_none() && online.is_online() {
             let attempt = async {
+                let credential = credential()?;
+                if credential.is_empty() { return Err(TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "empty cable credential".into() }); }
                 let socket = tokio::time::timeout(Duration::from_secs(10), connect.open()).await.map_err(|_| TransportError::Network("cable opening timeout".into()))??;
-                let result = match credential() {
-                    Ok(credential) => tokio::time::timeout(Duration::from_secs(10), handshake(socket.as_ref(), &config, &credential, &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable handshake timeout".into())).and_then(|result| result),
-                    Err(error) => Err(error),
-                };
+                let result = tokio::time::timeout(Duration::from_secs(10), handshake(socket.as_ref(), &config, &credential, &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable handshake timeout".into())).and_then(|result| result);
                 match result {
                     Ok(link) => Ok((socket, link)),
                     Err(error) => { socket.close().await; Err(error) }
@@ -165,10 +173,16 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                     for body in session.ready() {
                         if send(socket.as_ref(), &mut link, &mut session, body).await.is_err() { success = false; break; }
                     }
-                    if success { connection = Some((socket, link)); }
+                    if success {
+                        incoming = Some(Box::pin(receive(socket.clone())));
+                        connection = Some((socket, link));
+                    }
                     else { socket.close().await; retry_at = session.failed_open(online.is_online()).map(|delay| Instant::now() + delay); }
                 }
-                Err(_) => { retry_at = session.failed_open(online.is_online()).map(|delay| Instant::now() + delay); }
+                Err(error) => {
+                    if matches!(error, TransportError::Session { .. }) { session.refuse(crate::transport::SubscriptionFailure::from_error(error)); }
+                    retry_at = session.failed_open(online.is_online()).map(|delay| Instant::now() + delay);
+                }
             }
         }
         let deadline = retry_at.or_else(|| session.deadline().filter(|_| connection.is_some()));
@@ -176,6 +190,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
             add = commands.recv() => {
                 let add = match add {
                     Some(Command::Add(add)) => add,
+                    Some(Command::Resume) => { session.resume(); continue; }
                     #[cfg(test)]
                     Some(Command::Settled(sender)) => { let _ = sender.send(()); continue; }
                     None => break,
@@ -197,7 +212,8 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                     }
                 }
             }
-            event = async { match &connection { Some((socket, _)) => socket.next().await, None => std::future::pending().await } } => {
+            event = async { match incoming.as_mut() { Some(next) if connection.is_some() => next.await, _ => std::future::pending().await } } => {
+                incoming = connection.as_ref().map(|(socket, _)| Box::pin(receive(socket.clone())));
                 let mut closed = None;
                 match event {
                     Some(SocketEvent::Text(text)) => {
@@ -247,3 +263,5 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
     }
     if let Some((socket, _)) = connection { socket.close().await; }
 }
+
+async fn receive(socket: Arc<dyn CableSocket>) -> Option<SocketEvent> { socket.next().await }

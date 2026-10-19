@@ -60,6 +60,7 @@ impl Default for SyncConfig {
 }
 
 pub(crate) type FlightResult = Result<LoadOutcome, SyncError>;
+pub(crate) type SubscriptionFailureNotice = Option<(String, crate::transport::SubscriptionFailure)>;
 
 #[derive(Default)]
 pub(crate) struct Flights {
@@ -88,6 +89,7 @@ pub(crate) struct Inner {
     pub watches: Mutex<HashMap<u64, WatchEntry>>,
     pub next_watch: AtomicI64,
     pub lives: Mutex<HashMap<String, live::Live>>,
+    pub subscription_failures: tokio::sync::broadcast::Sender<SubscriptionFailureNotice>,
     pub states: Mutex<state::States>,
     pub outbox_gate: tokio::sync::Mutex<()>,
     pub uploads: Mutex<upload::UploadRuns>,
@@ -143,6 +145,7 @@ impl Sync {
             watches: Mutex::new(HashMap::new()),
             next_watch: AtomicI64::new(0),
             lives: Mutex::new(HashMap::new()),
+            subscription_failures: tokio::sync::broadcast::channel(32).0,
             states: Mutex::new(HashMap::new()),
             outbox_gate: tokio::sync::Mutex::new(()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),

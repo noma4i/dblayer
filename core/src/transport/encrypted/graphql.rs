@@ -78,6 +78,7 @@ pub fn missing_from_registry(response: &Response) -> bool {
 #[async_trait]
 impl Transport for EncryptedTransport {
     fn set_online(&self, online: bool) { self.cable.set_online(online); }
+    fn resume_subscriptions(&self) { self.cable.resume(); }
 
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let response = response_of(self.client.read(GRAPHQL_PATH, graphql_body(&request, false)).await?)?;

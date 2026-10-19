@@ -175,16 +175,18 @@ impl Database {
     pub fn live_window(&self, query_json: String, tail: u32, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         let (query, relation) = self.parsed_query(&query_json)?;
         let _entered = executor()?.enter();
-        let watch = match (self.sync.as_ref(), relation) {
+        let mut watch = match (self.sync.as_ref(), relation) {
             (Some(sync), Some((relation, params))) => Some(sync.watch(query.model.as_str(), &relation, &params)?),
             _ => None,
         };
         let (latest, _) = tokio::sync::watch::channel(None);
         let post = latest.clone();
+        let failures_listener = listener.clone();
         let wire = self.wire(query.model.as_str())?.clone();
         let window = self.db.observe_window(query, WindowSpec::Tail { size: tail as usize }, move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); listener.changed(value); })?;
+        let failure = super::live::forward_failure(watch.as_mut(), &latest, failures_listener);
         let (_, initial_load) = tokio::sync::watch::channel(Some(Ok(())));
-        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None })) }))
+        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None, failure })) }))
     }
     pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         self.connect_json(&query_json, true, listener)
@@ -443,6 +445,7 @@ impl Database {
         let (latest, _) = tokio::sync::watch::channel(None);
         let post = latest.clone();
         let callback = listener.clone();
+        let failures_listener = listener.clone();
         if !count {
             let _ = self.db.warm(&query);
         }
@@ -456,7 +459,7 @@ impl Database {
             self.db.observe(query.clone(), move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); callback.changed(value); })?
         };
         let (completed, initial_load) = tokio::sync::watch::channel(None);
-        let (watch, load) = match remote {
+        let (mut watch, load) = match remote {
             Some((relation, params)) => {
                 let sync = self.sync()?.clone();
                 let watch = sync.watch(query.model.as_str(), &relation, &params)?;
@@ -477,7 +480,8 @@ impl Database {
             }
             None => { completed.send_replace(Some(Ok(()))); (None, None) },
         };
-        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: Some(observer), window: None, _watch: watch, load })) }))
+        let failure = super::live::forward_failure(watch.as_mut(), &latest, failures_listener);
+        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: Some(observer), window: None, _watch: watch, load, failure })) }))
     }
     fn related(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         let row_id = id(&row_id)?;
@@ -492,6 +496,6 @@ impl Database {
             post.send_replace(Some(value.clone())); listener.changed(value);
         })?;
         let (_, initial_load) = tokio::sync::watch::channel(Some(Ok(())));
-        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: Some(observer), window: None, _watch: None, load: None })) }))
+        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: Some(observer), window: None, _watch: None, load: None, failure: None })) }))
     }
 }

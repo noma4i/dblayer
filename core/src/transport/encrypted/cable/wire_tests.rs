@@ -10,6 +10,81 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rsa::{pkcs1::DecodeRsaPrivateKey, Oaep, RsaPrivateKey};
 use sha2::{Digest, Sha256};
 
+struct ReceiveCancellation<'a>(&'a AtomicUsize, bool);
+
+impl Drop for ReceiveCancellation<'_> {
+    fn drop(&mut self) {
+        if self.1 { self.0.fetch_add(1, Ordering::SeqCst); }
+    }
+}
+
+struct LifecycleSocket {
+    socket: Arc<FakeSocket>,
+    cancellations: AtomicUsize,
+}
+
+#[async_trait]
+impl CableSocket for LifecycleSocket {
+    async fn send(&self, text: String) -> Result<(), TransportError> {
+        if self.cancellations.load(Ordering::SeqCst) > 0 { return Err(TransportError::Network("cancelled receive closed socket".into())); }
+        self.socket.send(text).await
+    }
+    async fn next(&self) -> Option<SocketEvent> {
+        let mut cancellation = ReceiveCancellation(&self.cancellations, true);
+        let event = self.socket.next().await;
+        cancellation.1 = false;
+        event
+    }
+    async fn close(&self) { self.socket.close().await; }
+}
+
+#[tokio::test(start_paused = true)]
+async fn server_pongs_keep_pending_receive_alive_for_120_seconds() {
+    let (incoming, receiver) = mpsc::unbounded_channel();
+    let (outgoing, sent) = mpsc::unbounded_channel();
+    let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
+    let lifecycle = Arc::new(LifecycleSocket { socket: socket.clone(), cancellations: AtomicUsize::new(0) });
+    struct Connect(Arc<LifecycleSocket>, AtomicUsize);
+    #[async_trait]
+    impl CableConnect for Connect {
+        async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> {
+            self.1.fetch_add(1, Ordering::SeqCst);
+            Ok(self.0.clone())
+        }
+    }
+    let connect = Arc::new(Connect(lifecycle.clone(), AtomicUsize::new(0)));
+    let (kat, config, challenge, credential) = super::link_tests::inputs();
+    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
+    let _subscription = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}))).await.unwrap();
+    let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key: [0;32], sequence: 0 };
+    peer.handshake(&kat, &config, challenge).await;
+    let subscribe = peer.next().await;
+    peer.emit(json!({"t":"subscribed", "id":subscribe["id"]}));
+    let pongs = Arc::new(AtomicUsize::new(0));
+    let count = pongs.clone();
+    let server = tokio::spawn(async move {
+        while let Some(text) = peer.outgoing.recv().await {
+            let command: Value = serde_json::from_str(&text).unwrap();
+            let data: Value = serde_json::from_str(command["data"].as_str().unwrap()).unwrap();
+            let body = frame::decrypt(&peer.receive_key, data["frame"].as_str().unwrap()).unwrap();
+            if body["t"] == "ping" {
+                count.fetch_add(1, Ordering::SeqCst);
+                peer.emit(json!({"t":"pong", "ts":body["ts"]}));
+            }
+        }
+    });
+    for _ in 0..120 {
+        for _ in 0..20 { tokio::task::yield_now().await; }
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        for _ in 0..20 { tokio::task::yield_now().await; }
+    }
+    assert_eq!(socket.closes.load(Ordering::SeqCst), 0);
+    assert_eq!(connect.1.load(Ordering::SeqCst), 1);
+    assert_eq!(lifecycle.cancellations.load(Ordering::SeqCst), 0);
+    assert_eq!(pongs.load(Ordering::SeqCst), 4);
+    server.abort();
+}
+
 struct Peer {
     incoming: mpsc::UnboundedSender<SocketEvent>,
     outgoing: mpsc::UnboundedReceiver<String>,
@@ -107,6 +182,26 @@ struct Credentials {
     writes: AtomicUsize,
 }
 
+#[tokio::test(start_paused = true)]
+async fn credential_failure_never_opens_a_socket() {
+    for credential in [Err(TransportError::Network("credential unavailable".into())), Ok(String::new())] {
+        let (_incoming, receiver) = mpsc::unbounded_channel();
+        let (outgoing, mut sent) = mpsc::unbounded_channel();
+        let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
+        let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
+        let (_, config, _, _) = super::link_tests::inputs();
+        let cable = CableSubscriptions::new(config, Arc::new(move || credential.clone()), connect.clone(), Connectivity::new());
+        let _subscription = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}))).await.unwrap();
+        for _ in 0..120 {
+            cable.settled().await.unwrap();
+            tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        }
+        assert_eq!(connect.opens.load(Ordering::SeqCst), 0);
+        assert_eq!(socket.closes.load(Ordering::SeqCst), 0);
+        assert!(sent.try_recv().is_err());
+    }
+}
+
 impl crate::transport::CredentialSlot for Credentials {
     fn get(&self) -> Result<Option<String>, TransportError> { Ok(self.value.lock().unwrap().clone()) }
     fn set(&self, value: &str) -> Result<(), TransportError> {
@@ -169,16 +264,23 @@ async fn authentication_refusal_before_ready_stops_without_reopening() {
     let (incoming, receiver) = mpsc::unbounded_channel();
     let (outgoing, _sent) = mpsc::unbounded_channel();
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
-    let connect = Arc::new(FakeConnect { socket, opens: AtomicUsize::new(0) });
+    let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
     let (_, config, _, credential) = super::link_tests::inputs();
     let cable = CableSubscriptions::new(config, Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
     let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}))).await.unwrap();
     incoming.send(SocketEvent::Closed { code:4401, reason:"UNAUTHENTICATED".into() }).unwrap();
     let event = tokio::time::timeout(std::time::Duration::from_secs(1), subscription.next()).await.expect("terminal refusal");
     assert!(matches!(event, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error:TransportError::Session { .. }, .. }))));
-    tokio::time::advance(std::time::Duration::from_secs(100)).await;
+    tokio::time::advance(std::time::Duration::from_secs(120)).await;
+    cable.settled().await.unwrap();
+    let mut late = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "LateChanges", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
+    assert!(matches!(late.next().await, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error: TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }, .. }))));
+    cable.resume();
+    let _signed_in = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "SignedInChanges", json!({}))).await.unwrap();
+    cable.settled().await.unwrap();
+    assert_eq!(connect.opens.load(Ordering::SeqCst), 2);
 }
 
 #[async_trait]

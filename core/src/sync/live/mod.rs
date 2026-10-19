@@ -16,7 +16,7 @@ const CHANGES_QUERY: &str = "subscription DblayerViewerChanges { viewerChanges {
 #[derive(Default)]
 pub(crate) struct Live {
     readers: usize,
-    subscription: Option<EventSubscription>,
+    pub(crate) subscription: Option<EventSubscription>,
     starting: Option<AbortHandle>,
     closing: Option<AbortHandle>,
 }
@@ -30,6 +30,29 @@ impl Drop for Live {
 }
 
 impl Inner {
+    pub(crate) fn restart_live(self: &std::sync::Arc<Self>) {
+        let _ = self.subscription_failures.send(None);
+        let mut lives = locked(&self.lives);
+        for (key, live) in lives.iter_mut() {
+            let Some(subscription) = live.subscription.as_ref().filter(|subscription| {
+                let status = subscription.status();
+                status.stopped && status.failure.is_some_and(|failure| matches!(failure.error, crate::transport::TransportError::Session { .. }))
+            }) else { continue };
+            let definition = subscription.definition.clone();
+            live.subscription = None;
+            let inner = self.clone();
+            let slot = key.clone();
+            let task = tokio::spawn(self.until_closed(async move {
+                let started = inner.subscribe(definition).await;
+                if let Some(live) = locked(&inner.lives).get_mut(&slot) {
+                    live.starting = None;
+                    live.subscription = started.ok();
+                }
+            }));
+            live.starting = Some(task.abort_handle());
+        }
+    }
+
     pub(crate) fn acquire_live(self: &std::sync::Arc<Self>, model: &str, relation: &str) -> Vec<String> {
         let Ok(spec) = self.db.spec(model) else { return Vec::new() };
         let updates = spec.relations.iter().find(|candidate| candidate.name == relation).map(|relation| relation.updates.clone()).unwrap_or_default();
