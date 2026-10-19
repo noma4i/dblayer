@@ -3,6 +3,45 @@ use crate::transport::{GraphQLRequest, SubscriptionEvent};
 use serde_json::json;
 
 #[tokio::test(start_paused = true)]
+async fn invalid_frames_preserve_failure_history() {
+    let mut failures = Vec::new();
+    for body in [
+        json!({"t":"next", "id":"1", "result":{"errors":42}}),
+        json!({"t":"next", "id":"1", "result":{}}),
+        json!({"t":"next", "id":"missing", "result":{"data":{}}}),
+        json!({"t":"subscribed", "id":"missing"}),
+        json!({"t":"pong", "ts":999}),
+    ] {
+        let mut session = CableSession::new();
+        let _subscription = session.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({})));
+        for _ in 0..3 { ready_then_close(&mut session, None); }
+        session.ready();
+        tokio::time::advance(std::time::Duration::from_secs(25)).await;
+        session.tick().unwrap().unwrap();
+        let deadline = session.deadline();
+        let _ = session.receive(body.clone());
+        let preserved_deadline = session.deadline() == deadline;
+        session.closed(4400, "");
+        let delay = session.failed_open(true).unwrap();
+        if !within_jitter(delay, 8) || !preserved_deadline {
+            failures.push(format!("{body}: delay {delay:?}, preserved deadline {preserved_deadline}"));
+        }
+    }
+    assert!(failures.is_empty(), "invalid frames reset failure history: {failures:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn independent_cable_sessions_do_not_retry_in_lockstep() {
+    let mut sessions: Vec<_> = (0..3).map(|_| {
+        let mut session = CableSession::new();
+        let subscription = session.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({})));
+        (session, subscription)
+    }).collect();
+    let delays: Vec<_> = sessions.iter_mut().map(|(session, _)| session.failed_open(true).unwrap()).collect();
+    assert!(delays.windows(2).any(|pair| pair[0] != pair[1]), "independent sessions use identical delays: {delays:?}");
+}
+
+#[tokio::test(start_paused = true)]
 async fn multiplexes_registered_subscriptions_and_cancels_only_the_selected_id() {
     let mut session = CableSession::new();
     let mut subscriptions = Vec::new();
@@ -131,7 +170,14 @@ async fn first_server_frame_after_ready_resets_attempts_and_other_frames_do_not(
         let mut session = CableSession::new();
         let _subscription = session.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({})));
         for _ in 0..3 { ready_then_close(&mut session, None); }
-        let delay = ready_then_close(&mut session, frame.clone());
+        session.ready();
+        if frame.as_ref().is_some_and(|body| body["t"] == "pong") {
+            tokio::time::advance(std::time::Duration::from_secs(25)).await;
+            session.tick().unwrap().unwrap();
+        }
+        if let Some(frame) = frame.clone() { session.receive(frame).unwrap(); }
+        session.closed(1006, "");
+        let delay = session.failed_open(true).unwrap();
         let (first, second) = if resets { (1, 2) } else { (8, 16) };
         assert!(within_jitter(delay, first), "{frame:?}: {delay:?}");
         let delay = ready_then_close(&mut session, None);

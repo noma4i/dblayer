@@ -155,6 +155,84 @@ struct FakeConnect {
     opens: AtomicUsize,
 }
 
+#[tokio::test(start_paused = true)]
+async fn stopping_subscriptions_drops_pending_open() {
+    struct PendingOpen {
+        started: mpsc::UnboundedSender<()>,
+        stopped: mpsc::UnboundedSender<()>,
+    }
+    struct Opening(mpsc::UnboundedSender<()>);
+    impl Drop for Opening {
+        fn drop(&mut self) { let _ = self.0.send(()); }
+    }
+    #[async_trait]
+    impl CableConnect for PendingOpen {
+        async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> {
+            let _opening = Opening(self.stopped.clone());
+            self.started.send(()).unwrap();
+            std::future::pending().await
+        }
+    }
+    let mut failures = Vec::new();
+    for action in ["cancel", "offline", "drop"] {
+        let (started, mut starts) = mpsc::unbounded_channel();
+        let (stopped, mut stops) = mpsc::unbounded_channel();
+        let connect = Arc::new(PendingOpen { started, stopped });
+        let (_, config, _, _) = super::link_tests::inputs();
+        let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect, Connectivity::new());
+        let subscription = cable.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({}))).await.unwrap();
+        starts.recv().await.unwrap();
+        match action {
+            "cancel" => subscription.cancel(),
+            "offline" => cable.set_online(false),
+            _ => drop(cable),
+        }
+        if tokio::time::timeout(std::time::Duration::from_secs(1), stops.recv()).await.is_err() { failures.push(action); }
+    }
+    assert!(failures.is_empty(), "pending socket open survived: {failures:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn terminal_open_refusals_are_not_retried() {
+    struct Refused(u16, AtomicUsize);
+    #[async_trait]
+    impl CableConnect for Refused {
+        async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> {
+            self.1.fetch_add(1, Ordering::SeqCst);
+            Err(TransportError::Http { status: self.0, body: "Forbidden".into() })
+        }
+    }
+    for status in [403, 401] {
+        let connect = Arc::new(Refused(status, AtomicUsize::new(0)));
+        let (_, config, _, _) = super::link_tests::inputs();
+        let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect.clone(), Connectivity::new());
+        let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({}))).await.unwrap();
+        cable.settled().await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        cable.settled().await.unwrap();
+        assert_eq!(connect.1.load(Ordering::SeqCst), 1, "HTTP {status} opened the socket again");
+        let Some(SubscriptionEvent::Failed(failure)) = subscription.next().await else { panic!("terminal refusal") };
+        assert!(matches!(failure.error, TransportError::Session { .. }));
+        assert_eq!(cable.wake_count(), 0);
+    }
+    let (incoming, receiver) = mpsc::unbounded_channel();
+    let (outgoing, _sent) = mpsc::unbounded_channel();
+    let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
+    let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
+    let (_, config, _, _) = super::link_tests::inputs();
+    let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect.clone(), Connectivity::new());
+    incoming.send(SocketEvent::Text(json!({"type":"reject_subscription"}).to_string())).unwrap();
+    let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({}))).await.unwrap();
+    cable.settled().await.unwrap();
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    cable.settled().await.unwrap();
+    assert_eq!(connect.opens.load(Ordering::SeqCst), 1, "rejected channel opened again");
+    let Some(SubscriptionEvent::Failed(failure)) = subscription.next().await else { panic!("terminal channel refusal") };
+    assert!(matches!(failure.error, TransportError::Session { .. }));
+    assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
+    assert_eq!(cable.wake_count(), 0);
+}
+
 #[async_trait]
 impl CableConnect for FakeConnect {
     async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> {

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -8,7 +9,7 @@ use super::CableError;
 use crate::pacing::Backoff;
 use crate::transport::{SubscriptionRetry, SubscriptionFault, RETRY_BACKOFF};
 
-const CABLE_BACKOFF: Backoff = RETRY_BACKOFF.with_jitter(0.2, 0xcab1_e5ee);
+static SESSION_SEED: AtomicU64 = AtomicU64::new(0xcab1_e5ee);
 
 struct Entry {
     request: GraphQLRequest,
@@ -22,8 +23,10 @@ pub struct CableSession {
     cancel: mpsc::UnboundedSender<String>,
     last_traffic: Instant,
     pong_due: Option<Instant>,
+    ping_ts: u64,
     opened: bool,
     retry: SubscriptionRetry,
+    backoff: Backoff,
     terminal: Option<SubscriptionFailure>,
 }
 
@@ -34,7 +37,8 @@ impl Default for CableSession {
 impl CableSession {
     pub fn new() -> Self {
         let (cancel, cancellations) = mpsc::unbounded_channel();
-        Self { entries: BTreeMap::new(), next_id: 0, cancellations, cancel, last_traffic: Instant::now(), pong_due: None, opened: false, retry: SubscriptionRetry::default(), terminal: None }
+        let backoff = RETRY_BACKOFF.with_jitter(0.2, SESSION_SEED.fetch_add(1, Ordering::Relaxed));
+        Self { entries: BTreeMap::new(), next_id: 0, cancellations, cancel, last_traffic: Instant::now(), pong_due: None, ping_ts: 0, opened: false, retry: SubscriptionRetry::default(), backoff, terminal: None }
     }
 
     pub fn subscribe(&mut self, request: GraphQLRequest) -> (String, Subscription) {
@@ -91,7 +95,7 @@ impl CableSession {
     pub fn failed_open(&mut self, online: bool) -> Option<Duration> {
         if !online || self.is_empty() { return None; }
         self.retry = self.retry.record_failure(SubscriptionFault::Transient).state;
-        Some(CABLE_BACKOFF.delay(self.retry.attempts.saturating_sub(1)))
+        Some(self.backoff.delay(self.retry.attempts.saturating_sub(1)))
     }
 
     pub fn closed(&mut self, code: u16, reason: &str) -> SubscriptionClose {
@@ -124,21 +128,31 @@ impl CableSession {
             return Err(CableError::Closed);
         }
         self.pong_due = Some(Instant::now() + Duration::from_secs(20));
-        Ok(Some(json!({"t":"ping", "ts":self.next_id})))
+        self.ping_ts = self.ping_ts.wrapping_add(1);
+        Ok(Some(json!({"t":"ping", "ts":self.ping_ts})))
     }
 
     pub fn receive(&mut self, body: Value) -> Result<(), CableError> {
-        self.traffic();
-        if matches!(body["t"].as_str(), Some("pong" | "next")) { self.pong_due = None; }
-        if matches!(body["t"].as_str(), Some("subscribed" | "next" | "pong")) { self.retry = self.retry.confirmed(); }
-        if body["t"] == "pong" { return Ok(()); }
+        if body["t"] == "pong" {
+            if self.pong_due.is_none() || body["ts"].as_u64() != Some(self.ping_ts) { return Ok(()); }
+            self.pong_due = None;
+            self.retry = self.retry.confirmed();
+            self.traffic();
+            return Ok(());
+        }
         let id = body["id"].as_str().ok_or(CableError::Frame)?;
         let Some(entry) = self.entries.get(id) else { return Ok(()) };
         match body["t"].as_str() {
-            Some("subscribed") => { let _ = entry.events.send(SubscriptionEvent::Ready); }
+            Some("subscribed") => {
+                let _ = entry.events.send(SubscriptionEvent::Ready);
+                self.retry = self.retry.confirmed();
+            }
             Some("next") => {
-                let response = serde_json::from_value(body["result"].clone()).map_err(|_| CableError::Frame)?;
+                let response: crate::transport::Response = serde_json::from_value(body["result"].clone()).map_err(|_| CableError::Frame)?;
+                if response.shape() == crate::transport::ResponseShape::Empty { return Err(CableError::Frame); }
                 let _ = entry.events.send(SubscriptionEvent::response(response));
+                self.pong_due = None;
+                self.retry = self.retry.confirmed();
             }
             Some("error") => {
                 let code = body["code"].as_str().ok_or(CableError::Frame)?.to_string();
@@ -151,6 +165,7 @@ impl CableSession {
             Some("complete") => { self.entries.remove(id); }
             _ => return Err(CableError::Frame),
         }
+        self.traffic();
         Ok(())
     }
 }

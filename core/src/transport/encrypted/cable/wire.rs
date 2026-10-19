@@ -91,13 +91,11 @@ async fn disconnect(connection: &mut Option<(Arc<dyn CableSocket>, CableLink)>, 
     session.failed_open(online).map(|delay| Instant::now() + delay)
 }
 
-async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credential: &str, session: &mut CableSession, commands: &mut mpsc::UnboundedReceiver<Command>, online: &Connectivity) -> Result<CableLink, TransportError> {
-    let mut link = None;
-    let next = socket.next();
+async fn await_connected<T>(next: impl std::future::Future<Output = T>, session: &mut CableSession, commands: &mut mpsc::UnboundedReceiver<Command>, online: &Connectivity) -> Result<T, TransportError> {
     tokio::pin!(next);
     loop {
-        let event = tokio::select! {
-            event = &mut next => event,
+        tokio::select! {
+            event = &mut next => return Ok(event),
             _ = session.cancelled() => {
                 if session.is_empty() { return Err(TransportError::Interrupted("cable has no subscribers".into())); }
                 continue;
@@ -113,8 +111,14 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
                 continue;
             }
             _ = online.offline() => return Err(TransportError::Network("offline".into())),
-        };
-        next.set(socket.next());
+        }
+    }
+}
+
+async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credential: &str, session: &mut CableSession, commands: &mut mpsc::UnboundedReceiver<Command>, online: &Connectivity) -> Result<CableLink, TransportError> {
+    let mut link = None;
+    loop {
+        let event = await_connected(socket.next(), session, commands, online).await?;
         let text = match event {
             Some(SocketEvent::Text(text)) => text,
             Some(SocketEvent::Closed { code, reason }) => {
@@ -134,7 +138,7 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
                 let (_, hello) = link.as_ref().ok_or_else(|| TransportError::Decode("confirmation before challenge".into()))?;
                 socket.send(command("message", Some(json!({"action":"hello", "hello":hello})))).await?;
             }
-            Some("reject_subscription") => return Err(TransportError::Decode("cable subscription refused".into())),
+            Some("reject_subscription") => return Err(TransportError::Session { code: crate::transport::SessionCode::AccountUnavailable, detail: "cable subscription refused".into() }),
             _ => if let Some(token) = body["message"]["frame"].as_str() {
                 let (mut opened, _) = link.take().ok_or_else(|| TransportError::Decode("frame before challenge".into()))?;
                 let ready = opened.receive(token).map_err(|error| TransportError::Decode(error.to_string()))?;
@@ -160,7 +164,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
             let attempt = async {
                 let credential = credential()?;
                 if credential.is_empty() { return Err(TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "empty cable credential".into() }); }
-                let socket = tokio::time::timeout(Duration::from_secs(10), connect.open()).await.map_err(|_| TransportError::Network("cable opening timeout".into()))??;
+                let socket = tokio::time::timeout(Duration::from_secs(10), await_connected(connect.open(), &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable opening timeout".into()))???;
                 let result = tokio::time::timeout(Duration::from_secs(10), handshake(socket.as_ref(), &config, &credential, &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable handshake timeout".into())).and_then(|result| result);
                 match result {
                     Ok(link) => Ok((socket, link)),
@@ -180,6 +184,11 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                     else { socket.close().await; retry_at = session.failed_open(online.is_online()).map(|delay| Instant::now() + delay); }
                 }
                 Err(error) => {
+                    let error = match error {
+                        TransportError::Http { status: 401, body } => TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: body },
+                        TransportError::Http { status: 403, body } => TransportError::Session { code: crate::transport::SessionCode::AccountUnavailable, detail: body },
+                        error => error,
+                    };
                     if matches!(error, TransportError::Session { .. }) { session.refuse(crate::transport::SubscriptionFailure::from_error(error)); }
                     retry_at = session.failed_open(online.is_online()).map(|delay| Instant::now() + delay);
                 }

@@ -80,16 +80,23 @@ The REACTION area may point to several node reads. Then 1 HTTP request runs for 
 
 While a live subscription exists, 25 seconds without traffic start an encrypted ping.
 If no pong or next arrives within 20 seconds, the client closes the socket and reopens it.
-Each pong restarts the 25-second idle interval. Its `ts` echoes the ping timestamp.
+Only a pong matching the pending ping's `ts` restarts the 25-second idle interval.
+Each ping gets a new session counter value, so delayed pongs cannot confirm a later ping.
 The pending socket receive survives timer, subscription and cancellation events until it returns a frame or the connection closes.
 The client reads its credential before opening a socket. A handshake timeout closes the socket.
 Without subscriptions there are no connections and no timers. Failed opens and closes before any server frame increase a cable backoff: 1 s doubling to 30 s with 20% jitter.
-Ready does not reset the counter. The first `subscribed`, `next` or `pong` frame after ready resets it.
-Offline state and an empty subscription list use no attempts and add no retry delay. This includes a cancel during the handshake.
+Each session owns its jitter seed, allocated from an atomic session counter without reading a clock.
+Ready does not reset the counter. A known subscription's `subscribed` or parsed, nonempty `next` response resets it.
+A pong resets it only when its `ts` matches the pending ping.
+Unknown subscription ids, malformed or empty responses and unmatched pongs preserve the retry count and pending ping deadline.
+Offline state and an empty subscription list use no attempts and add no retry delay.
+The last cancellation, offline transition or transport drop interrupts a pending socket open or handshake receive.
 `Sync.set_online` passes the connection state to the transport.
 
 | Close | Result |
 | --- | --- |
+| HTTP 401 during open | `SessionCode::Unauthenticated`, stop until explicit listen or resume |
+| HTTP 403 during open or channel `reject_subscription` | `SessionCode::AccountUnavailable`, stop until explicit listen or resume |
 | 4401, including session_unknown | `SessionCode::Unauthenticated`, stop until explicit listen or resume |
 | 4403 or ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, stop until explicit listen or resume |
 | LOGGED_OUT | `SessionCode::SessionEnded`, stop until explicit listen or resume |
