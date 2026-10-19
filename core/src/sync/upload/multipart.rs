@@ -28,7 +28,7 @@ impl Runner {
             let checksum = md5_base64(std::path::Path::new(&self.input.path))
                 .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
             let variables = json!({"filename": self.file_name(), "contentType": self.content_type(), "byteSize": total, "checksum": checksum});
-            let data = self.retrying(|| self.graphql(&steps.init, variables.clone(), true)).await?;
+            let data = self.retrying(UploadStage::Init, 0, || self.graphql(&steps.init, variables.clone(), true)).await?;
             let (key, upload_id) = (text(&data, "key").map_err(stop_of)?, text(&data, "uploadId").map_err(stop_of)?);
             self.save(|state| {
                 state.key = Some(key);
@@ -49,7 +49,6 @@ impl Runner {
         let mut queue: VecDeque<u32> = (1..=part_count(total, config.part_size)).filter(|number| !finished.contains_key(number)).collect();
         let mut targets: HashMap<u32, PartTarget> = HashMap::new();
         let mut presigned_at = Duration::ZERO;
-        let mut expired: HashMap<u32, u32> = HashMap::new();
         let mut flight: JoinSet<PartOutcome> = JoinSet::new();
         let limit = config.parallel_parts.max(1);
         loop {
@@ -68,7 +67,7 @@ impl Runner {
                 let (offset, length) = part_range(total, config.part_size, number);
                 let runner = self.clone();
                 flight.spawn(async move {
-                    let outcome = runner.retrying(|| runner.put_once(&url, &headers, offset, length, number)).await;
+                    let outcome = runner.retrying(UploadStage::Part, number, || runner.put_once(&url, &headers, offset, length, number)).await;
                     (number, outcome)
                 });
             }
@@ -87,11 +86,9 @@ impl Runner {
                 }
                 Ok(None) => return self.stop_flight(flight, Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, "the part answer has no etag"))).await,
                 Err(Stop::Expired) => {
-                    let count = expired.entry(number).or_default();
-                    if let Err(stop) = self.pause_retry(*count, OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await {
+                    if let Err(stop) = self.pause_retry(UploadStage::Part, number, OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await {
                         return self.stop_flight(flight, stop).await;
                     }
-                    *count += 1;
                     match self.presign(&steps.presign, &key, &upload_id, &[number]).await {
                         Ok(fresh) => targets.extend(fresh),
                         Err(stop) => return self.stop_flight(flight, stop).await,
@@ -104,7 +101,7 @@ impl Runner {
         self.save(|state| state.stage = UploadStage::Complete)?;
         let parts: Vec<Value> = self.snapshot().parts.iter().map(|part| json!({"partNumber": part.number, "etag": part.etag})).collect();
         let variables = json!({"key": key, "uploadId": upload_id, "parts": parts});
-        let data = self.retrying(|| self.graphql(&steps.complete, variables.clone(), true)).await?;
+        let data = self.retrying(UploadStage::Complete, 0, || self.graphql(&steps.complete, variables.clone(), true)).await?;
         let (signed, blob) = (text(&data, "signedId").map_err(stop_of)?, text(&data, "blobId").map_err(stop_of)?);
         self.save(|state| {
             state.signed_id = Some(signed);
@@ -121,7 +118,7 @@ impl Runner {
     async fn presign(self: &Arc<Self>, operation: &str, key: &str, upload_id: &str, numbers: &[u32]) -> Result<HashMap<u32, PartTarget>, Stop> {
         self.save(|state| state.stage = UploadStage::Presign)?;
         let variables = json!({"key": key, "uploadId": upload_id, "partNumbers": numbers});
-        let data = self.retrying(|| self.graphql(operation, variables.clone(), true)).await?;
+        let data = self.retrying(UploadStage::Presign, 0, || self.graphql(operation, variables.clone(), true)).await?;
         let mut targets = HashMap::new();
         for item in data.get("parts").and_then(Value::as_array).into_iter().flatten() {
             let (Some(number), Some(url)) = (item.get("partNumber").and_then(Value::as_u64), item.get("url").and_then(Value::as_str)) else { continue };

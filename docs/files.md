@@ -147,7 +147,7 @@ The final content mutation does not hold a file permit.
 | `waitReason` | why a `waiting` upload does not run yet: `createUnconfirmed` (the record is still local, its `create` has no answer). `nil` in every other status |
 | `stage` | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation` |
 | `sentBytes`, `totalBytes`, `fraction` | for multipart the sum over all parts divided by the file size |
-| `attempts` | transport retries used since the last start |
+| `attempts` | sum of retries for unfinished steps, preserved across restarts |
 | `error` | kind and message, `isRetryable` is false for a rejection |
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `fraction` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
@@ -157,8 +157,10 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 ### Rules
 
 - Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts.
+- Each step and multipart part stores its retry count and next retry time. Restarting preserves both. A successful step removes its retry record.
+- An explicit `retry()` after failure clears saved retry counts and times, giving unfinished steps a fresh budget.
 - A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
-- A `403` renews the single-upload url or the affected part url after the configured backoff, within the renewal attempt limit. Renewals count in upload attempts. Urls older than the presign lifetime are requested again for unfinished parts.
+- A `403` renews the single-upload url or affected part url after backoff. The renewal uses that PUT step's retry budget. Urls older than the presign lifetime are requested again for unfinished parts.
 - The content mutation follows the same rules as other mutations ([writing data](writing-data.md)). Offline it waits for `setOnline(true)`. If it could not reach the server, the upload stays pending and the mutation is sent again with a growing pause, up to 40 attempts, without a new transfer. If the transfer started and no answer is observed, the upload becomes `deliveryUnknown` and is never sent again by itself. A rejected mutation, or 40 unreached attempts, becomes `failed`.
 - The grant, including `signedId`, `blobId`, URL and headers, is stored before PUT. A separate flag records confirmed transfer.
 - A restarted unfinished PUT uses its saved grant. `retry()` after a failed or unknown content mutation skips confirmed transfers.

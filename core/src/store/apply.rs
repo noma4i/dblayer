@@ -812,6 +812,7 @@ fn apply_transitions(
                     result.unknown_operation_acks += 1;
                     continue;
                 }
+                connection.execute("DELETE FROM op_item_retry WHERE seq = ?1", [seq])?;
                 result.operations.insert(*seq);
                 wrote = true;
             }

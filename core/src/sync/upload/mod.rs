@@ -246,3 +246,5 @@ mod upload_tests;
 mod generation_tests;
 #[cfg(test)]
 mod resume_tests;
+#[cfg(test)]
+mod steps_tests;

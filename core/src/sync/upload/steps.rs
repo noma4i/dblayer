@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::syncstate::{FailureKind, OperationFailure};
 use crate::transport::{GraphQLRequest, PutRequest, ResponseOutcome, RetryClass, TransportError};
-use crate::upload::read_range;
+use crate::upload::{read_range, UploadRetry, UploadStage};
 
 use super::super::extract::root_value;
 use super::super::locked;
@@ -139,16 +139,19 @@ impl Runner {
         }
     }
 
-    pub(super) async fn retrying<T, F, Fut>(&self, mut call: F) -> Result<T, Stop>
+    pub(super) async fn retrying<T, F, Fut>(&self, stage: UploadStage, part_number: u32, mut call: F) -> Result<T, Stop>
     where
         F: FnMut() -> Fut,
         Fut: Future<Output = Result<T, StepError>>,
     {
-        let mut attempt = 0;
         loop {
+            self.wait_retry(stage, part_number).await?;
             self.await_online().await?;
             match call().await {
-                Ok(value) => return Ok(value),
+                Ok(value) => {
+                    self.save(|state| state.retries.retain(|retry| retry.stage != stage || retry.part_number != part_number))?;
+                    return Ok(value);
+                }
                 Err(StepError::Cancelled) => return Err(Stop::Cancelled),
                 Err(StepError::Expired) => return Err(Stop::Expired),
                 Err(StepError::Fatal(failure)) => return Err(Stop::Failed(failure)),
@@ -156,30 +159,40 @@ impl Runner {
                     if !self.inner.connectivity.is_online() {
                         continue;
                     }
-                    self.pause_retry(attempt, failure).await?;
-                    attempt += 1;
+                    self.pause_retry(stage, part_number, failure).await?;
                 }
             }
         }
     }
 
-    pub(super) async fn pause_retry(&self, attempt: u32, failure: OperationFailure) -> Result<(), Stop> {
+    pub(super) async fn pause_retry(&self, stage: UploadStage, part_number: u32, failure: OperationFailure) -> Result<(), Stop> {
         self.await_online().await?;
+        let attempt = self.snapshot().retries.iter().find(|retry| retry.stage == stage && retry.part_number == part_number).map_or(0, |retry| retry.attempts);
         let backoff = self.inner.config.upload.backoff;
         if !backoff.allows(attempt) {
             return Err(Stop::Failed(failure));
         }
         let delay = backoff.delay(attempt);
         self.save(|state| {
-            state.retries += 1;
-            state.retry_at = Some((self.inner.clock.now() + delay).as_millis() as u64);
+            state.retries.retain(|retry| retry.stage != stage || retry.part_number != part_number);
+            state.retries.push(UploadRetry { stage, part_number, attempts: attempt + 1, retry_at: Some((self.inner.clock.now() + delay).as_millis() as u64) });
             state.error = Some(failure);
         })?;
+        self.wait_retry(stage, part_number).await
+    }
+
+    async fn wait_retry(&self, stage: UploadStage, part_number: u32) -> Result<(), Stop> {
+        let deadline = self.snapshot().retries.iter().find(|retry| retry.stage == stage && retry.part_number == part_number).and_then(|retry| retry.retry_at);
+        let Some(deadline) = deadline else { return Ok(()) };
+        let delay = std::time::Duration::from_millis(deadline).saturating_sub(self.inner.clock.now());
         tokio::select! {
             () = tokio::time::sleep(delay) => {}
             () = self.token.cancelled() => return Err(Stop::Cancelled),
         }
-        self.save(|state| { state.retry_at = None; state.error = None; })
+        self.save(|state| {
+            if let Some(retry) = state.retries.iter_mut().find(|retry| retry.stage == stage && retry.part_number == part_number) { retry.retry_at = None; }
+            state.error = None;
+        })
     }
 
     pub(super) async fn await_online(&self) -> Result<(), Stop> {

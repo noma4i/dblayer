@@ -51,6 +51,7 @@ data class UploadInfo(
     @SerialName("sent_bytes") val sentBytes: ULong,
     @SerialName("total_bytes") val totalBytes: ULong,
     @SerialName("wait_reason") val waitReason: String? = null,
+    /** Sum of retries for unfinished steps, preserved across restarts. */
     val attempts: Int = 0,
     val error: OperationFailure? = null,
 ) {

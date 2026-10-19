@@ -149,7 +149,7 @@ async fn cancel_multipart_offline_returns_and_aborts_after_reconnecting() {
     assert!(cancelled.is_ok(), "offline cancellation waited for connectivity");
     assert!(cancelled.unwrap().unwrap());
     assert_eq!(rig.transport.call_count("AbortMultipart"), 0);
-    assert_eq!(stored_state(&rig).retries, 0);
+    assert_eq!(stored_state(&rig).attempts(), 0);
     assert_eq!(stored_state(&rig).upload_id.as_deref(), Some("u1"));
     rig.sync.set_online(true);
     settle().await;
@@ -176,7 +176,7 @@ async fn repeated_expired_grants_wait_before_renewal() {
         settle().await;
         let before_delay = rig.transport.call_count(operation);
         rig.sync.wait_uploads().await;
-        observations.push((multipart, before_delay, rig.transport.call_count(operation), started.elapsed() >= small().backoff.delay(0) + small().backoff.delay(1), stored_state(&rig).retries));
+        observations.push((multipart, before_delay, rig.transport.call_count(operation), started.elapsed() >= small().backoff.delay(0) + small().backoff.delay(1), stored_state(&rig).attempts()));
         assert_eq!(rig.transport.call_count("CreateMoment"), 0);
     }
     assert_eq!(observations, [(false, 1, 3, true, 2), (true, 1, 3, true, 2)]);

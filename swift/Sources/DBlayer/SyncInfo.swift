@@ -26,6 +26,7 @@ public struct UploadInfo: Codable, Sendable, Equatable {
   public let sentBytes: UInt64
   public let totalBytes: UInt64
   public let waitReason: String?
+  /// Sum of retries for unfinished steps, preserved across restarts.
   public let attempts: Int
   public let error: OperationFailure?
 

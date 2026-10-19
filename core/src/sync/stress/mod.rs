@@ -173,7 +173,7 @@ fn dump(world: &World, progress: &Progress) -> String {
         .iter()
         .map(|entry| {
             let operation = &entry.operation;
-            let upload = operation.upload.as_ref().map_or(String::new(), |state| format!(" upload {:?} {:?} retries {} sent {}/{}", state.phase, state.stage, state.retries, state.sent_bytes, state.total_bytes));
+            let upload = operation.upload.as_ref().map_or(String::new(), |state| format!(" upload {:?} {:?} retries {} sent {}/{}", state.phase, state.stage, state.attempts(), state.sent_bytes, state.total_bytes));
             format!("  seq {} {} {:?} rows {:?} temp {:?} attempts {} started {}{upload}", operation.id.0, operation.action_key, operation.status, operation.row_ids, operation.temp_id, operation.attempts, operation.transport_started)
         })
         .collect();

@@ -168,13 +168,6 @@ impl Runner {
         if let Some(error) = &self.source_error {
             return Err(Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))));
         }
-        if let Some(deadline) = self.snapshot().retry_at {
-            let delay = std::time::Duration::from_millis(deadline).saturating_sub(self.inner.clock.now());
-            tokio::select! {
-                () = tokio::time::sleep(delay) => {}
-                () = self.token.cancelled() => return Err(Stop::Cancelled),
-            }
-        }
         let permit = tokio::select! {
             permit = permits.acquire_owned() => permit.ok(),
             () = self.token.cancelled() => None,
@@ -183,8 +176,6 @@ impl Runner {
         self.save(|state| {
             state.phase = UploadStatus::Preparing;
             state.stage = UploadStage::Prepare;
-            state.retries = 0;
-            state.retry_at = None;
             state.error = None;
         })?;
         let total = file_len(Path::new(&self.input.path))
@@ -231,7 +222,6 @@ impl Runner {
             .ok_or_else(|| Stop::Failed(OperationFailure::new(FailureKind::Rejected, "the upload has no single-upload steps")))?;
         let checksum = md5_base64(Path::new(&self.input.path))
             .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
-        let mut renewals = 0;
         loop {
             if self.snapshot().put_url.is_none() {
                 self.save(|state| state.stage = UploadStage::Create)?;
@@ -241,7 +231,7 @@ impl Runner {
                     "byteSize": total,
                     "checksum": checksum,
                 });
-                let data = self.retrying(|| self.graphql(&steps.create, variables.clone(), true)).await?;
+                let data = self.retrying(UploadStage::Create, 0, || self.graphql(&steps.create, variables.clone(), true)).await?;
                 let url = text(&data, "url").map_err(stop_of)?;
                 let headers = crate::upload::parse_headers(data.get("headers"));
                 let (signed, blob) = (text(&data, "signedId").map_err(stop_of)?, text(&data, "blobId").map_err(stop_of)?);
@@ -259,7 +249,7 @@ impl Runner {
             let headers = grant.headers;
             self.save(|state| state.stage = UploadStage::Put)?;
             self.progress().begin_phase([]);
-            match self.retrying(|| self.put_once(&url, &headers, 0, total, 1)).await {
+            match self.retrying(UploadStage::Put, 0, || self.put_once(&url, &headers, 0, total, 1)).await {
                 Ok(_) => {
                     self.progress().finish(1, total);
                     self.save(|state| {
@@ -270,8 +260,7 @@ impl Runner {
                     return Ok(());
                 }
                 Err(Stop::Expired) => {
-                    self.pause_retry(renewals, OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await?;
-                    renewals += 1;
+                    self.pause_retry(UploadStage::Put, 0, OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await?;
                     self.save(|state| { state.put_url = None; state.headers.clear(); })?;
                 }
                 Err(other) => return Err(other),

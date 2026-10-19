@@ -52,13 +52,21 @@ pub struct UploadPart {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadRetry {
+    pub stage: UploadStage,
+    pub part_number: u32,
+    pub attempts: u32,
+    pub retry_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UploadState {
     pub phase: UploadStatus,
     pub stage: UploadStage,
     pub scenario: Option<UploadScenario>,
     pub total_bytes: u64,
     pub sent_bytes: u64,
-    pub retries: u32,
+    pub retries: Vec<UploadRetry>,
     pub key: Option<String>,
     pub upload_id: Option<String>,
     pub parts: Vec<UploadPart>,
@@ -71,7 +79,6 @@ pub struct UploadState {
     pub put_url: Option<String>,
     pub url_issued_at: Option<u64>,
     pub headers: Vec<(String, String)>,
-    pub retry_at: Option<u64>,
     pub error: Option<OperationFailure>,
 }
 
@@ -96,7 +103,7 @@ impl UploadState {
             scenario: None,
             total_bytes: 0,
             sent_bytes: 0,
-            retries: 0,
+            retries: Vec::new(),
             key: None,
             upload_id: None,
             parts: Vec::new(),
@@ -109,13 +116,16 @@ impl UploadState {
             put_url: None,
             url_issued_at: None,
             headers: Vec::new(),
-            retry_at: None,
             error: None,
         }
     }
 
     pub fn is_transferred(&self) -> bool {
         self.transferred
+    }
+
+    pub fn attempts(&self) -> u32 {
+        self.retries.iter().map(|retry| retry.attempts).sum()
     }
 }
 
@@ -140,7 +150,7 @@ impl UploadInfo {
             _ => state.phase,
         };
         let wait_reason = (shown == UploadStatus::Waiting).then_some(wait_reason).flatten();
-        Self { status: shown, stage: state.stage, sent_bytes: state.sent_bytes, total_bytes: state.total_bytes, wait_reason, attempts: state.retries, error }
+        Self { status: shown, stage: state.stage, sent_bytes: state.sent_bytes, total_bytes: state.total_bytes, wait_reason, attempts: state.attempts(), error }
     }
 
     #[cfg(test)]

@@ -71,7 +71,7 @@ END",
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 25] = [
+const CORE_STATEMENTS: [&str; 26] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -106,8 +106,6 @@ const CORE_STATEMENTS: [&str; 25] = [
   scenario TEXT,
   total_bytes INTEGER NOT NULL,
   sent_bytes INTEGER NOT NULL,
-  attempts INTEGER NOT NULL,
-  retry_at INTEGER,
   error_kind TEXT,
   error_message TEXT,
   error_extensions TEXT,
@@ -123,6 +121,16 @@ const CORE_STATEMENTS: [&str; 25] = [
   put_url TEXT,
   url_issued_at INTEGER,
   PRIMARY KEY (seq, position)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS op_item_retry (
+  seq INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  stage TEXT NOT NULL,
+  part_number INTEGER NOT NULL,
+  attempts INTEGER NOT NULL,
+  retry_at INTEGER,
+  PRIMARY KEY (seq, position, stage, part_number),
+  FOREIGN KEY (seq, position) REFERENCES op_item(seq, position) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS op_item_header (
   seq INTEGER NOT NULL,
