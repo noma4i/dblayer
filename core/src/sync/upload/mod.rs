@@ -15,7 +15,7 @@ use crate::db::{read_outbox, OutboxOperation};
 use crate::identity::RowId;
 use crate::operation::Operation;
 use crate::transport::CancelToken;
-use crate::upload::{UploadInput, UploadState};
+use crate::upload::{UploadInput, UploadState, UploadStatus};
 
 use super::error::SyncError;
 use super::{locked, Inner, Sync};
@@ -73,7 +73,10 @@ impl Inner {
                 if owner != seq { continue; }
                 match entry.operation.status {
                     OperationStatus::Pending if !entry.operation.transport_started && !self.is_waiting(&entry.operation) => self.spawn_run(seq, position, Mode::Transfer),
-                    OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() && !crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()) => self.spawn_run(seq, position, Mode::Orphan),
+                    OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() && !crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()) => {
+                        let mode = if state.phase == UploadStatus::Cancelled { Mode::Cancel } else { Mode::Orphan };
+                        self.spawn_run(seq, position, mode);
+                    }
                     _ => {}
                 }
             }

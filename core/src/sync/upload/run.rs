@@ -321,7 +321,9 @@ impl Runner {
         let state = self.snapshot();
         let (Some(key), Some(upload_id)) = (state.key, state.upload_id) else { return };
         if let Some(steps) = &self.input.steps.multipart {
-            self.inner.connectivity.online().await;
+            if !self.inner.connectivity.is_online() {
+                return;
+            }
             if self.graphql(&steps.abort, json!({"key": key, "uploadId": upload_id}), false).await.is_err() {
                 return;
             }

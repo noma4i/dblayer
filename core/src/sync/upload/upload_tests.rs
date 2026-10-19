@@ -138,23 +138,22 @@ async fn http_put_failure_does_not_confirm_transfer() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn cancel_multipart_offline_waits_before_abort() {
+async fn cancel_multipart_offline_returns_and_aborts_after_reconnecting() {
     let rig = upload_rig(small());
     let source = file(TWELVE);
     rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
     rig.transport.enqueue("AbortMultipart", abort());
     rig.sync.set_online(false);
     let id = rid("m1");
-    let cancel = rig.sync.cancel_upload("moments", &id);
-    tokio::pin!(cancel);
-    tokio::select! {
-        result = &mut cancel => panic!("offline cancellation completed: {result:?}"),
-        () = settle() => {}
-    }
+    let cancelled = tokio::time::timeout(Duration::from_secs(1), rig.sync.cancel_upload("moments", &id)).await;
+    assert!(cancelled.is_ok(), "offline cancellation waited for connectivity");
+    assert!(cancelled.unwrap().unwrap());
     assert_eq!(rig.transport.call_count("AbortMultipart"), 0);
     assert_eq!(stored_state(&rig).retries, 0);
+    assert_eq!(stored_state(&rig).upload_id.as_deref(), Some("u1"));
     rig.sync.set_online(true);
-    assert!(cancel.await.unwrap());
+    settle().await;
+    rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("AbortMultipart"), 1);
     assert!(rig.db.outbox().unwrap().is_empty());
 }

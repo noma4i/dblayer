@@ -156,7 +156,7 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 
 ### Rules
 
-- Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts, including multipart abort after cancellation.
+- Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts.
 - A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
 - A `403` renews the single-upload url or the affected part url after the configured backoff, within the renewal attempt limit. Renewals count in upload attempts. Urls older than the presign lifetime are requested again for unfinished parts.
 - The content mutation follows the same rules as other mutations ([writing data](writing-data.md)). Offline it waits for `setOnline(true)`. If it could not reach the server, the upload stays pending and the mutation is sent again with a growing pause, up to 40 attempts, without a new transfer. If the transfer started and no answer is observed, the upload becomes `deliveryUnknown` and is never sent again by itself. A rejected mutation, or 40 unreached attempts, becomes `failed`.
@@ -164,4 +164,5 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 - A restarted unfinished PUT uses its saved grant. `retry()` after a failed or unknown content mutation skips confirmed transfers.
 - A failed multipart upload calls `abort` and clears its parts. After a restart a stored multipart continues from its finished parts, and an upload that failed with an unfinished `abort` is aborted again.
 - `retry()` and `discard()` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.
+- Offline cancellation returns without a network call and keeps the multipart upload id. After `setOnline(true)`, the saved cancellation aborts the multipart and removes the operation.
 - One record has one upload at a time.
