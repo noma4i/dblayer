@@ -5,7 +5,7 @@ use rsa::{pkcs1::DecodeRsaPrivateKey, pkcs8::EncodePublicKey, Oaep, RsaPrivateKe
 use serde_json::json;
 use sha1::Sha1;
 
-fn vectors() -> Value { serde_json::from_str(include_str!("../../../../../fixtures/v3-cable/kat.json")).unwrap() }
+fn vectors() -> Value { serde_json::from_str(include_str!("../../../../../fixtures/change-events/kat.json")).unwrap() }
 fn hex(text: &str) -> Vec<u8> { text.as_bytes().chunks_exact(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap()).collect() }
 fn bytes(value: &Value) -> [u8; 32] { hex(value.as_str().unwrap()).try_into().unwrap() }
 

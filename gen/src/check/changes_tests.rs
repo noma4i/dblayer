@@ -1,29 +1,35 @@
 use super::*;
 
 #[test]
-fn removes_on_requires_a_node_and_known_removal_kinds() {
-    let source = "model Chat do\n field :title, type: :string\n node ChatNode\n scope :current do\n fetch CurrentChat\n end\n changed_by :chat, via: :node, removes_on: [:deleted, :access_revoked]\nend";
+fn application_declares_change_subscription_and_payload_paths() {
+    let source = "model Record do\n node RecordNode\n changes RecordEvents, root: \"recordEvents.entries\", area: :topic, kind: :action, id: :recordId\n changed_by :record, via: :node, removes_on: [:erased]\nend";
+    let models = crate::parse_models(source).unwrap();
+    let value = serde_json::to_value(&models[0]).unwrap();
+    assert_eq!(value["change_feed"], serde_json::json!({"subscription":"RecordEvents", "root":"recordEvents.entries", "area":"topic", "kind":"action", "id":"recordId"}));
+}
+
+#[test]
+fn removes_on_requires_a_node() {
+    let source = "model Chat do\n changes RecordEvents, root: \"recordEvents.entries\", area: :topic, kind: :action, id: :recordId\n field :title, type: :string\n node ChatNode\n scope :current do\n fetch CurrentChat\n end\n changed_by :chat, via: :node, removes_on: [:deleted, :access_revoked]\nend";
     let models = crate::parse_models(source).unwrap();
     assert_eq!(serde_json::to_value(&models[0]).unwrap()["changes"][0]["removes_on"], serde_json::json!(["DELETED", "ACCESS_REVOKED"]));
     for (input, expected) in [
         (source.replace("via: :node", "via: :current"), "via: :node"),
-        (source.replace(":deleted, :access_revoked", ":updated"), "unknown removal kind"),
     ] {
         let errors = crate::parse_models(&input).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains(expected) && error.line == 7 && error.column > 0), "{errors:?}");
+        assert!(errors.iter().any(|error| error.message.contains(expected) && error.line == 8 && error.column > 0), "{errors:?}");
     }
 }
 
 #[test]
 fn changes_declarations_resolve_remote_reads_and_reject_ambiguous_targets() {
-    let model = |name: &str, declaration: &str| format!("model {name} do\n schema do\n string :title\n end\n remote :node do\n query Read\n end\n {declaration}\nend\n");
+    let model = |name: &str, declaration: &str| format!("model {name} do\n schema do\n string :title\n end\n remote :node do\n query Read\n end\n changes RecordEvents, root: \"recordEvents.entries\", area: :topic, kind: :action, id: :recordId\n {declaration}\nend\n");
     let valid = model("Chat", "changed_by :chat, via: :node");
     let models = check_source(&valid).unwrap();
     let serialized = serde_json::to_value(&models[0]).unwrap();
     assert_eq!(serialized["changes"][0]["area"], "CHAT");
     assert_eq!(serialized["changes"][0]["relation"], "node");
     for (declaration, message) in [
-        ("changed_by :unknown, via: :node", "unknown change area"),
         ("changed_by :chat, via: :absent", "unknown relation"),
         ("changed_by :chat, via: :node, id: :absent", "parameter"),
     ] {
@@ -35,7 +41,7 @@ fn changes_declarations_resolve_remote_reads_and_reject_ambiguous_targets() {
 
 #[test]
 fn public_changes_declarations_accept_shared_node_areas_and_reject_shared_lists() {
-    let source = include_str!("../../../fixtures/v3-cable/changes.dbl");
+    let source = include_str!("../../../fixtures/change-events/changes.dbl");
     let models = crate::parse_models(source).unwrap();
     assert_eq!(models.iter().flat_map(|model| &model.changes).filter(|change| change.area == "REACTION").count(), 2);
     let invalid = source.replace("changed_by :counters", "changed_by :reaction");

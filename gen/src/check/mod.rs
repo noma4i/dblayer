@@ -166,6 +166,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         (Context::Model, "listen") => {
             plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
         }
+        (Context::Model, "changes") => plain(Shape::Const, vec![key("root", Want::Any, true), key("area", Want::Symbol, true), key("kind", Want::Symbol, true), key("id", Want::Symbol, true)]),
         (Context::Model, "changed_by") => plain(Shape::Name, vec![key("via", Want::Symbol, true), key("id", Want::Symbol, false), key("removes_on", Want::Symbols, false)]),
         (Context::Remote, "updates") => {
             plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])

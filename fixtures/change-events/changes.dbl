@@ -1,0 +1,28 @@
+model Notebook do
+  changes RecordEvents, root: "recordEvents.entries", area: :topic, kind: :action, id: :recordId
+  field :title, type: :string
+  node NotebookNode
+  changed_by :notebook, via: :node, removes_on: [:deleted, :access_revoked]
+end
+
+model Entry do
+  field :text, type: :string
+  node EntryNode
+  changed_by :entry, via: :node, removes_on: [:deleted, :access_revoked]
+  changed_by :reaction, via: :node
+end
+
+model Article do
+  field :text, type: :string
+  node ArticleNode
+  changed_by :article, via: :node, removes_on: [:deleted, :access_revoked]
+  changed_by :reaction, via: :node
+end
+
+model Totals do
+  field :unread, type: :int
+  scope :current do
+    fetch CurrentTotals
+  end
+  changed_by :counters, via: :current
+end

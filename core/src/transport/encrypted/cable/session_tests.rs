@@ -45,7 +45,7 @@ async fn independent_cable_sessions_do_not_retry_in_lockstep() {
 async fn multiplexes_registered_subscriptions_and_cancels_only_the_selected_id() {
     let mut session = CableSession::new();
     let mut subscriptions = Vec::new();
-    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../../../fixtures/v3-cable/subscriptions.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../../../fixtures/change-events/subscriptions.json")).unwrap();
     for fixture in &fixtures {
         let request = GraphQLRequest::new(fixture["query"].as_str().unwrap(), fixture["operationName"].as_str().unwrap(), fixture["variables"].clone());
         let (id, subscription) = session.subscribe(request);
@@ -76,7 +76,7 @@ async fn ping_deadline_exists_only_for_live_subscriptions_and_expires_without_po
         tokio::time::advance(Duration::from_secs(25)).await;
         assert!(session.deadline().is_none());
     }
-    let (id, _subscription) = session.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({})));
+    let (id, _subscription) = session.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({})));
     session.ready();
     let deadline = session.deadline().unwrap();
     assert_eq!(deadline - tokio::time::Instant::now(), Duration::from_secs(25));
@@ -94,7 +94,7 @@ async fn ping_deadline_exists_only_for_live_subscriptions_and_expires_without_po
 async fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry() {
     for (code, reason, terminal) in [(1000, "LOGGED_OUT", true), (4403, "ACCOUNT_LOCKED", true), (4503, "SERVER_RESTART", false)] {
         let mut session = CableSession::new();
-        let (_, mut subscription) = session.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({})));
+        let (_, mut subscription) = session.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({})));
         let close = session.closed(code, reason);
         assert_eq!(close.code, code);
         assert_eq!(close.terminal, terminal);
@@ -113,7 +113,7 @@ async fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry
 async fn failed_openings_increase_backoff_only_with_online_subscribers() {
     let mut retry = CableSession::new();
     assert_eq!(retry.failed_open(true), None);
-    let request = GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}));
+    let request = GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}));
     let (_, subscription) = retry.subscribe(request.clone());
     assert!(within_jitter(retry.failed_open(true).unwrap(), 1));
     assert_eq!(retry.failed_open(false), None);
@@ -146,7 +146,7 @@ fn ready_then_close(session: &mut CableSession, frame: Option<serde_json::Value>
 #[tokio::test(start_paused = true)]
 async fn closes_right_after_ready_grow_jittered_delays_up_to_the_cap() {
     let mut session = CableSession::new();
-    let _subscription = session.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({})));
+    let _subscription = session.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({})));
     let mut previous = std::time::Duration::ZERO;
     let mut below_ceiling = false;
     for ceiling in [1u64, 2, 4, 8, 16, 30, 30, 30] {
@@ -168,7 +168,7 @@ async fn first_server_frame_after_ready_resets_attempts_and_other_frames_do_not(
         (None, false),
     ] {
         let mut session = CableSession::new();
-        let _subscription = session.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({})));
+        let _subscription = session.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({})));
         for _ in 0..3 { ready_then_close(&mut session, None); }
         session.ready();
         if frame.as_ref().is_some_and(|body| body["t"] == "pong") {

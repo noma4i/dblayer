@@ -136,20 +136,22 @@ impl Feed {
             return true;
         }
         if data.get("viewerNotice").is_some() { return true; }
-        let changes = if let Some(changes) = data["viewerChanges"]["changes"].as_array() {
-            changes.clone()
-        } else if let Some(notice) = data.get("interactionReceived") {
-            vec![json!({"area":"MESSAGE", "kind":"UPDATED", "entityId":notice["messageId"]}), json!({"area":"USER", "kind":"UPDATED", "entityId":notice["actorUserId"]})]
-        } else { return false };
+        let (feed, changes) = if let Some(notice) = data.get("interactionReceived") {
+            (crate::schema::ChangeFeed { subscription: self.def.operation.clone(), root: String::new(), area: "area".into(), kind: "kind".into(), id: "entityId".into() },
+                vec![json!({"area":"MESSAGE", "kind":"UPDATED", "entityId":notice["messageId"]}), json!({"area":"USER", "kind":"UPDATED", "entityId":notice["actorUserId"]})])
+        } else {
+            let Some((_, feed)) = self.inner.change_feed().filter(|(_, feed)| feed.subscription == self.def.operation) else { return false };
+            let Some(changes) = root_value(data, &feed.root).and_then(Value::as_array) else {
+                locked(&self.status).rejected += 1;
+                return true;
+            };
+            (feed, changes.clone())
+        };
         for change in changes {
-            let (Some(area), Some(id), Some(kind)) = (change["area"].as_str(), change["entityId"].as_str(), change["kind"].as_str()) else {
+            let (Some(area), Some(id), Some(kind)) = (root_value(&change, &feed.area).and_then(Value::as_str), root_value(&change, &feed.id).and_then(Value::as_str), root_value(&change, &feed.kind).and_then(Value::as_str)) else {
                 locked(&self.status).rejected += 1;
                 continue;
             };
-            if !["CREATED", "UPDATED", "DELETED", "ACCESS_REVOKED"].contains(&kind) {
-                locked(&self.status).rejected += 1;
-                continue;
-            }
             let targets: Vec<_> = self.inner.db.shared.specs.values().flat_map(|spec| spec.changes.iter().filter(|read| read.area == area).map(|read| (spec.key.to_string(), read.clone()))).collect();
             if targets.is_empty() { locked(&self.status).rejected += 1; }
             for (model, read) in targets {

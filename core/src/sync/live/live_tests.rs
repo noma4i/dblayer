@@ -51,19 +51,23 @@ async fn memory_scope_events_follow_readers_and_expire_without_http() {
 async fn changes_declarations_share_one_subscription_until_the_last_reader_leaves() {
     let mut spec = users_spec();
     spec.changes.push(crate::schema::ChangeRead { area: "USER".into(), relation: "current".into(), parameter: None, removes_on: vec![] });
+    let mut serialized = serde_json::to_value(spec).unwrap();
+    serialized["change_feed"] = json!({"subscription":"RecordEvents", "root":"recordEvents.entries", "area":"topic", "kind":"action", "id":"recordId"});
+    let spec = serde_json::from_value(serialized).unwrap();
     let rig = rig_on(crate::db::Db::open_in_memory(vec![spec], None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig { live_linger: Duration::from_secs(1), ..Default::default() });
+    rig.sync.register(super::super::OperationDef::new("RecordEvents", "subscription RecordEvents { recordEvents { entries { topic action recordId } } }", "recordEvents"));
     let first = rig.sync.watch("users", "current", &none()).unwrap();
     let second = rig.sync.watch("users", "current", &none()).unwrap();
     settle().await;
-    assert_eq!(rig.transport.call_count("DblayerViewerChanges"), 1);
+    assert_eq!(rig.transport.call_count("RecordEvents"), 1);
     drop(first);
     settle().await;
-    assert_eq!(rig.transport.cancellations("DblayerViewerChanges"), 0);
+    assert_eq!(rig.transport.cancellations("RecordEvents"), 0);
     drop(second);
     settle().await;
     tokio::time::advance(Duration::from_secs(10)).await;
     settle().await;
-    assert_eq!(rig.transport.cancellations("DblayerViewerChanges"), 1);
+    assert_eq!(rig.transport.cancellations("RecordEvents"), 1);
 }
 
 #[tokio::test(start_paused = true)]

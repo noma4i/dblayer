@@ -534,42 +534,49 @@ edge?.rank                                                // FeedRank?
 
 ## Node reads
 
-### Reading after a V3 event
+### Reading after a declared event
 
-`changed_by` links the `viewerChanges` area to the HTTP read of the model. The declaration adds no other way to subscribe.
+Declare one shared change subscription beside the model reads. The application registers its GraphQL document through the existing operations argument.
 
 ```ruby
-model Chat do
+model Notebook do
   field :title, type: :string
-  node ChatNode
-  changed_by :chat, via: :node, removes_on: [:deleted, :access_revoked]
+  node NotebookNode
+  changes RecordEvents, root: "recordEvents.entries", area: :topic, kind: :action, id: :recordId
+  changed_by :notebook, via: :node, removes_on: [:erased, :hidden]
 end
 ```
 
-A node read gets `entityId` automatically. For a relation with 1 parameter, set `id: :messageId`.
-A singleton read needs no parameter: `changed_by :counters, via: :current`.
-Allowed areas are CHAT, MESSAGE, MOMENT, REACTION, GIFT, WALLET, COUNTERS, USER and CUSTOM_SCREEN. The case of the declaration does not matter.
-An unknown area, a missing read or a wrong parameter gives a generator error with the position of the declaration.
-An area may repeat only for node reads of several models. Each receiver follows its own declaration.
-`removes_on` accepts `:deleted` and `:access_revoked` only with `via: :node`. Other values or reads produce a generator error with a position.
+`changes` names the registered subscription and the path to its array of changes.
+`area`, `kind` and `id` name response paths within each entry.
+Declare `changes` once across the input files. Every `changed_by` declaration uses that subscription.
+Missing declarations, duplicate subscriptions and empty paths produce generator errors.
 
-| Event kind | With the kind in `removes_on` | Without the kind in `removes_on` |
-| ---------- | ---------------------------- | ------------------------------- |
-| CREATED | HTTP reread | HTTP reread |
-| UPDATED | HTTP reread | HTTP reread |
-| DELETED | Remove the local row by `entityId` | HTTP reread |
-| ACCESS_REVOKED | Remove the local row by `entityId` | HTTP reread |
-| Unknown | Reject the event | Reject the event |
+A node read uses the declared change ID. For a relation with 1 parameter, set `id: :recordId`.
+A singleton read needs no parameter: `changed_by :totals, via: :current`.
+Area and removal values belong to the application. Symbol declarations become uppercase values.
+An area can repeat for node reads of several models. Each receiver follows its own declaration.
+`removes_on` requires `via: :node`. Matching kinds remove rows. Other kinds reread them.
+Missing entry fields and undeclared areas are rejected.
 
-Removal uses no mutation or outbox entry. It closes queued writes without sending or rollback and destroys children declared with `dependent: :destroy`.
-Observers receive 1 change for the removal. `DELETED` has nothing to load. `ACCESS_REVOKED` means the viewer cannot read the entity.
-For REACTION, `entityId` identifies the message or moment. Leave `removes_on` off that declaration to reread after a reaction is removed.
-Observing a model opens the shared `viewerChanges` subscription. The last cancel releases it after `live_linger`.
-After a reconnect, only observed reads whose answers have expired are reread. Fresh answers keep their existing `fresh_for` time.
-Node reads and remote relations default to `5.minutes` when `fresh_for` is omitted. A zero duration always expires.
-The server does not replay missed events. For a fresh read, a missed change waits until a read after `fresh_for` expires.
-Expiration alone starts no request. A later reconnect or read checks freshness again. Received events still reread immediately, regardless of freshness.
-The first `Ready` keeps its existing behavior and does not trigger an extra reread.
+```swift
+try DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [RecordEvents.self])
+try DB.listen()
+```
+
+```kotlin
+DB.open(endpoint = endpoint, modelsJson = modelsJSON, operations = listOf(RecordEvents))
+DB.listen()
+```
+
+The generated Swift and Kotlin model declarations carry identical subscription data.
+Removal sends no mutation. It closes queued writes without sending or rollback and destroys children declared with `dependent: :destroy`.
+Observers receive 1 change for the removal.
+Observing a model opens the shared subscription. The last cancel releases it after `live_linger`.
+After a reconnect, only observed reads whose answers have expired are reread.
+Node reads and remote relations default to `5.minutes` when `fresh_for` is omitted.
+Expiration alone starts no request. A later reconnect or read checks freshness again.
+Received events reread immediately. The first `Ready` does not trigger an extra reread.
 The full exchange is described in [Cable protocol](cable-protocol.md).
 
 GraphQL `node(id:)` reads one entity of any type that implements `Node`. A model reads it with `node`, a related list reads it through `root:`.

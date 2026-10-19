@@ -72,6 +72,13 @@ fn build_model(node: &ModelNode) -> ModelSpec {
             "scope" => model.relations.push(build_scope(call)),
             "remote" => model.relations.push(build_remote(call, &node.name)),
             "listen" => model.listens.push(updates_spec(call)),
+            "changes" => model.change_feed = Some(dblayer::schema::ChangeFeed {
+                subscription: first_name(call),
+                root: option(call, "root").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
+                area: option(call, "area").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
+                kind: option(call, "kind").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
+                id: option(call, "id").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
+            }),
             "changed_by" => model.changes.push(dblayer::schema::ChangeRead {
                 area: first_name(call).to_ascii_uppercase(),
                 relation: option(call, "via").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),

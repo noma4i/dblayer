@@ -1,9 +1,9 @@
 [
   {
-    "operationName": "ViewerChanges",
-    "query": "subscription ViewerChanges { viewerChanges { changes { area kind entityId } } }",
+    "operationName": "RecordEvents",
+    "query": "subscription RecordEvents { recordEvents { changes { area kind entityId } } }",
     "variables": {},
-    "result": {"data": {"viewerChanges": {"changes": [{"area": "CHAT", "kind": "UPDATED", "entityId": "c1"}]}}}
+    "result": {"data": {"recordEvents": {"changes": [{"area": "CHAT", "kind": "UPDATED", "entityId": "c1"}]}}}
   },
   {
     "operationName": "ViewerNotice",

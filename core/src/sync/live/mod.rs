@@ -10,9 +10,6 @@ use crate::transport::EventSpec;
 use super::subscribe::{EventEffect, EventSubscription, SubscriptionDef};
 use super::{locked, Inner};
 
-const CHANGES: &str = "DblayerViewerChanges";
-const CHANGES_QUERY: &str = "subscription DblayerViewerChanges { viewerChanges { changes { area kind entityId } } }";
-
 #[derive(Default)]
 pub(crate) struct Live {
     readers: usize,
@@ -78,17 +75,16 @@ impl Inner {
         for key in keys {
             self.release_live(&key);
         }
-        if let Some(model) = self.change_model() { self.release_live(&format!("{model}|{CHANGES}")); }
+        if let Some((model, feed)) = self.change_feed() { self.release_live(&format!("{model}|{}", feed.subscription)); }
     }
 
-    fn change_model(&self) -> Option<String> {
-        self.db.shared.specs.values().filter(|spec| !spec.changes.is_empty()).map(|spec| spec.key.to_string()).min()
+    pub(super) fn change_feed(&self) -> Option<(String, crate::schema::ChangeFeed)> {
+        self.db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| (spec.key.to_string(), feed.clone())))
     }
 
     fn acquire_changes(self: &std::sync::Arc<Self>) -> Option<String> {
-        let model = self.change_model()?;
-        locked(&self.operations).entry(CHANGES.into()).or_insert_with(|| super::OperationDef::new(CHANGES, CHANGES_QUERY, "viewerChanges"));
-        Some(self.acquire_one(&model, UpdatesSpec { subscription: CHANGES.into(), deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }))
+        let (model, feed) = self.change_feed()?;
+        Some(self.acquire_one(&model, UpdatesSpec { subscription: feed.subscription, deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }))
     }
 
     fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec) -> String {

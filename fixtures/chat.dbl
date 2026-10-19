@@ -10,6 +10,7 @@ model Chat do
   belongs_to :lastMessage, model: Message
 
   node ChatNode
+  changes RecordEvents, root: "recordEvents.entries", area: :topic, kind: :action, id: :recordId
   changed_by :chat, via: :node, removes_on: [:deleted, :access_revoked]
   nodes ChatsByIds
 

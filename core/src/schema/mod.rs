@@ -877,6 +877,17 @@ pub struct ModelSpec {
     pub listens: Vec<UpdatesSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub changes: Vec<ChangeRead>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_feed: Option<ChangeFeed>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeFeed {
+    pub subscription: String,
+    pub root: String,
+    pub area: String,
+    pub kind: String,
+    pub id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -906,6 +917,7 @@ impl ModelSpec {
             expire_after: None,
             listens: Vec::new(),
             changes: Vec::new(),
+            change_feed: None,
         }
     }
 

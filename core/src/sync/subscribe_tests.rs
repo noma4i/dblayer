@@ -13,6 +13,10 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+fn change_feed() -> crate::schema::ChangeFeed {
+    crate::schema::ChangeFeed { subscription: "Changes".into(), root: "recordEvents.changes".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() }
+}
+
 fn rig_with_subscription() -> Rig {
     let rig = rig();
     rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
@@ -112,9 +116,10 @@ async fn removal_closes_pending_writes(kind: &str) {
         let mut children = AssociationSpec::new("moments", AssociationKind::HasMany, "moments", "userId");
         children.dependent = Some(Dependent::Destroy);
         users.associations.push(children);
+        users.change_feed = Some(change_feed());
         users.changes.push(serde_json::from_value(json!({"area":area, "relation":"node", "parameter":null, "removes_on":["DELETED", "ACCESS_REVOKED"]})).unwrap());
         let rig = rig_on(Db::open_in_memory(vec![users, moments_spec()], None).unwrap(), MockTransport::new(), SyncConfig::default());
-        rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { viewerChanges { changes { area kind entityId } } }", "viewerChanges"));
+        rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
         put(&rig, "users", json!({"id":"u1", "name":"Ann"}));
         put(&rig, "moments", json!({"id":"m1", "text":"before", "userId":"u1"}));
         rig.db.update("moments", &crate::identity::RowId::new("m1").unwrap(), json!({"text":"pending"}).as_object().unwrap().clone()).unwrap();
@@ -126,7 +131,7 @@ async fn removal_closes_pending_writes(kind: &str) {
         rig.db.settle();
         log.lock().unwrap().clear();
         let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "users", EventEffect::Upsert)).await.unwrap();
-        rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"viewerChanges":{"changes":[{"area":area, "kind":kind, "entityId":"u1"}]}}))));
+        rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":area, "action":kind, "recordId":"u1"}]}}))));
         settle().await;
         rig.db.settle();
         assert!(rig.db.query(&Query::new("users")).unwrap().is_empty(), "{kind}");
@@ -140,13 +145,14 @@ async fn removal_closes_pending_writes(kind: &str) {
 }
 
 #[tokio::test(start_paused = true)]
-async fn unknown_change_kind_is_rejected_before_reading() {
+async fn missing_change_kind_is_rejected_before_reading() {
     let mut users = users_spec();
-    users.changes.push(serde_json::from_value(json!({"area":"USER", "relation":"current", "parameter":null})).unwrap());
+    users.change_feed = Some(change_feed());
+        users.changes.push(serde_json::from_value(json!({"area":"USER", "relation":"current", "parameter":null})).unwrap());
     let rig = rig_on(Db::open_in_memory(vec![users], None).unwrap(), MockTransport::new(), SyncConfig::default());
-    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { viewerChanges { changes { area kind entityId } } }", "viewerChanges"));
+    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "users", EventEffect::Upsert)).await.unwrap();
-    rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"viewerChanges":{"changes":[{"area":"USER", "kind":"FUTURE", "entityId":"u1"}]}}))));
+    rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"USER", "action":null, "recordId":"u1"}]}}))));
     settle().await;
     assert_eq!(subscription.status().rejected, 1);
     assert_eq!(rig.transport.calls().iter().filter(|call| call.kind != crate::transport::CallKind::Subscription).count(), 0);
@@ -158,13 +164,14 @@ async fn declared_removals_keep_created_and_updated_node_reads() {
         let original = super::node_tests::node_rig();
         let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
         specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(serde_json::from_value(json!({"area":"CHAT", "relation":"node", "parameter":null, "removes_on":["DELETED", "ACCESS_REVOKED"]})).unwrap());
-        let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
+        specs[0].change_feed = Some(change_feed());
+    let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
         for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register(operation.clone()); }
-        rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { viewerChanges { changes { area kind entityId } } }", "viewerChanges"));
+        rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
         put(&rig, "chats", json!({"id":"c1", "title":"before"}));
         rig.transport.enqueue("ChatNode", crate::transport::Reply::data(json!({"node":{"id":"c1", "title":"after"}})));
         let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "chats", EventEffect::Upsert)).await.unwrap();
-        rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"viewerChanges":{"changes":[{"area":"CHAT", "kind":kind, "entityId":"c1"}]}}))));
+        rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"CHAT", "action":kind, "recordId":"c1"}]}}))));
         settle().await;
         assert_eq!(rig.transport.call_count("ChatNode"), 1, "{kind}");
         assert_eq!(rig.db.find("chats", &crate::identity::RowId::new("c1").unwrap()).unwrap().unwrap().text("title"), Some("after"), "{kind}");
@@ -178,13 +185,14 @@ async fn change_ids_reread_registered_nodes_and_count_undeclared_areas() {
     let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
     specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(crate::schema::ChangeRead { area: "CHAT".into(), relation: "node".into(), parameter: None, removes_on: vec![] });
     specs.iter_mut().find(|spec| spec.key.as_str() == "messages").unwrap().changes.push(serde_json::from_value(json!({"area":"CHAT", "relation":"transcode_status", "parameter":null, "removes_on":["DELETED"]})).unwrap());
+    specs[0].change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
     for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register(operation.clone()); }
-    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { viewerChanges { changes { area entityId } } }", "viewerChanges"));
+    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     rig.transport.enqueue("ChatNode", crate::transport::Reply::data(json!({"node":{"id":"c1", "title":"reread"}})));
     let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "chats", EventEffect::Upsert)).await.unwrap();
     put(&rig, "messages", json!({"id":"c1", "text":"remove"}));
-    rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"viewerChanges":{"changes":[{"area":"CHAT", "kind":"DELETED", "entityId":"c1", "title":"untrusted"}, {"area":"UNKNOWN", "kind":"UPDATED", "entityId":"x"}]}}))));
+    rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"CHAT", "action":"DELETED", "recordId":"c1", "title":"untrusted"}, {"topic":"UNKNOWN", "action":"UPDATED", "recordId":"x"}]}}))));
     settle().await;
     let row = rig.db.find("chats", &crate::identity::RowId::new("c1").unwrap()).unwrap();
     assert_eq!(row.and_then(|row| row.text("title").map(str::to_string)), Some("reread".into()));
@@ -219,13 +227,14 @@ async fn a_shared_change_area_reads_each_declared_node_once() {
         spec.changes.push(crate::schema::ChangeRead { area:"REACTION".into(), relation: relation.clone(), parameter:None, removes_on: vec![] });
         spec.changes.push(crate::schema::ChangeRead { area:"MESSAGE".into(), relation, parameter:None, removes_on: vec!["DELETED".into(), "ACCESS_REVOKED".into()] });
     }
+    specs[0].change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
     for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register(operation.clone()); }
-    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { viewerChanges { changes { area entityId } } }", "viewerChanges"));
+    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     rig.transport.enqueue("ChatNode", crate::transport::Reply::data(json!({"node":null})));
     rig.transport.enqueue("MessageTranscodeStatus", crate::transport::Reply::data(json!({"node":{"id":"m1", "text":"updated"}})));
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "messages", EventEffect::Upsert)).await.unwrap();
-    rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"viewerChanges":{"changes":[{"area":"REACTION", "kind":"DELETED", "entityId":"m1"}]}}))));
+    rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"REACTION", "action":"DELETED", "recordId":"m1"}]}}))));
     settle().await;
     assert_eq!(rig.transport.calls().iter().filter(|call| call.kind == crate::transport::CallKind::Query).count(), 2);
     assert_eq!(rig.db.find("messages", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap().text("text"), Some("updated"));
@@ -234,7 +243,7 @@ async fn a_shared_change_area_reads_each_declared_node_once() {
 
 #[tokio::test(start_paused = true)]
 async fn memory_events_without_server_ids_create_distinct_expiring_rows() {
-    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../fixtures/v3-cable/subscriptions.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../fixtures/change-events/subscriptions.json")).unwrap();
     for index in [1, 3] {
         let fixture = &fixtures[index];
         let root = fixture["result"]["data"].as_object().unwrap().keys().next().unwrap();

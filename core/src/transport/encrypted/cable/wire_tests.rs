@@ -55,7 +55,7 @@ async fn server_pongs_keep_pending_receive_alive_for_120_seconds() {
     let connect = Arc::new(Connect(lifecycle.clone(), AtomicUsize::new(0)));
     let (kat, config, challenge, credential) = super::link_tests::inputs();
     let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
-    let _subscription = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}))).await.unwrap();
+    let _subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key: [0;32], sequence: 0 };
     peer.handshake(&kat, &config, challenge).await;
     let subscribe = peer.next().await;
@@ -327,7 +327,7 @@ async fn credential_failure_never_opens_a_socket() {
         let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
         let (_, config, _, _) = super::link_tests::inputs();
         let cable = CableSubscriptions::new(config, Arc::new(move || credential.clone()), connect.clone(), Connectivity::new());
-        let _subscription = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}))).await.unwrap();
+        let _subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
         for _ in 0..120 {
             cable.settled().await.unwrap();
             tokio::time::advance(std::time::Duration::from_secs(1)).await;
@@ -366,7 +366,7 @@ async fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retri
         let credentials = Arc::new(Credentials { value:std::sync::Mutex::new(Some(credential.clone())), writes:AtomicUsize::new(0) });
         let slot = credentials.clone();
         let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(slot.get()?.unwrap())), connect.clone(), Connectivity::new());
-        let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}))).await.unwrap();
+        let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
         let mut peer = Peer { incoming, outgoing:sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
         peer.handshake(&kat, &config, challenge).await;
         let subscribe = peer.next().await;
@@ -403,18 +403,18 @@ async fn authentication_refusal_before_ready_stops_without_reopening() {
     let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
     let (_, config, _, credential) = super::link_tests::inputs();
     let cable = CableSubscriptions::new(config, Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
-    let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}))).await.unwrap();
+    let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
     incoming.send(SocketEvent::Closed { code:4401, reason:"UNAUTHENTICATED".into() }).unwrap();
     let event = tokio::time::timeout(std::time::Duration::from_secs(1), subscription.next()).await.expect("terminal refusal");
     assert!(matches!(event, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error:TransportError::Session { .. }, .. }))));
     tokio::time::advance(std::time::Duration::from_secs(120)).await;
     cable.settled().await.unwrap();
-    let mut late = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "LateChanges", json!({}))).await.unwrap();
+    let mut late = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "LateChanges", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
     assert!(matches!(late.next().await, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error: TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }, .. }))));
     cable.resume();
-    let _signed_in = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "SignedInChanges", json!({}))).await.unwrap();
+    let _signed_in = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "SignedInChanges", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 2);
 }
@@ -449,6 +449,7 @@ async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
     relation.remote.as_mut().unwrap().variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
     model.relations.push(relation);
     model.changes.push(ChangeRead { area:"CHAT".into(), relation:"node".into(), parameter:None, removes_on: vec![] });
+    model.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.changes".into(), area: "area".into(), kind: "kind".into(), id: "entityId".into() });
     let db = crate::db::Db::open_in_memory(vec![model], None).unwrap();
     let http = Arc::new(Http { key:RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads:AtomicUsize::new(0) });
     let clock = Arc::new(crate::pacing::ManualClock::default());
@@ -456,12 +457,13 @@ async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
     let transport = Arc::new(crate::transport::EncryptedTransport::new(client, connect));
     let sync = crate::sync::Sync::new(db.clone(), transport, clock, Default::default());
     sync.register(crate::sync::OperationDef::new("ChatNode", "query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title } } }", "node"));
+    sync.register(crate::sync::OperationDef::new("RecordEvents", "subscription RecordEvents { recordEvents { changes { area kind entityId } } }", "recordEvents"));
     let _watch = sync.watch("Chat", "node", &serde_json::Map::from_iter([(NODE_PARAM.into(), json!("c1"))])).unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
     peer.handshake(&kat, &config, challenge).await;
     let subscription = peer.next().await;
     peer.emit(json!({"t":"subscribed", "id":subscription["id"]}));
-    peer.emit(json!({"t":"next", "id":subscription["id"], "result":{"data":{"viewerChanges":{"changes":[{"area":"CHAT", "kind":"UPDATED", "entityId":"c1", "title":"forged"}]}}}}));
+    peer.emit(json!({"t":"next", "id":subscription["id"], "result":{"data":{"recordEvents":{"changes":[{"area":"CHAT", "kind":"UPDATED", "entityId":"c1", "title":"forged"}]}}}}));
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     let row = db.find("Chat", &crate::identity::RowId::new("c1").unwrap()).unwrap().expect("HTTP row");
     assert_eq!(row.text("title"), Some("from HTTP"));
@@ -493,7 +495,7 @@ async fn closing_the_last_subscription_or_transport_releases_the_socket() {
         let connect = Arc::new(FakeConnect { socket:socket.clone(), opens:AtomicUsize::new(0) });
         let (kat, config, challenge, credential) = super::link_tests::inputs();
         let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
-        let subscription = cable.subscribe(GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}))).await.unwrap();
+        let subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
         let mut peer = Peer { incoming, outgoing:sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
         let subscribe = if ready { peer.handshake(&kat, &config, challenge).await; Some(peer.next().await) } else { None };
         if drop_transport { drop(cable); }
@@ -522,7 +524,7 @@ async fn a_failed_write_closes_the_connection_before_backoff() {
     let connect = Arc::new(FakeConnect { socket:socket.clone(), opens:AtomicUsize::new(0) });
     let (kat, config, challenge, credential) = super::link_tests::inputs();
     let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
-    let request = GraphQLRequest::new("subscription { viewerChanges { __typename } }", "Changes", json!({}));
+    let request = GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}));
     let _first = cable.subscribe(request.clone()).await.unwrap();
     let mut peer = Peer { incoming, outgoing:sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
     peer.handshake(&kat, &config, challenge).await;
@@ -542,7 +544,7 @@ async fn encrypted_subscription_sends_one_ping_then_closes_on_missing_pong() {
     let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
     let (kat, config, challenge, credential) = super::link_tests::inputs();
     let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect, Connectivity::new());
-    let mut subscription = cable.subscribe(GraphQLRequest::new("subscription Changes { viewerChanges { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
+    let mut subscription = cable.subscribe(GraphQLRequest::new("subscription Changes { recordEvents { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key:[0;32], sequence:0 };
     peer.handshake(&kat, &config, challenge).await;
     let subscribe = peer.next().await;

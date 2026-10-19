@@ -20,7 +20,7 @@ An incoming failure retires both keys. An authenticated `closing` message return
 `CableError` distinguishes untrusted pins, invalid challenges, invalid frames, sequence failures, size limits, exhausted keys and closed connections.
 
 X25519 private material, derived keys and temporary hello plaintext use zeroing storage. Dropping a connection also erases its stored keys.
-The public vectors in `fixtures/v3-cable/kat.json` contain test keys only. Tests compare hello plaintext and all four encrypted frames without printing key material.
+The public vectors in `fixtures/change-events/kat.json` contain test keys only. Tests compare hello plaintext and all four encrypted frames without printing key material.
 
 Swift and Kotlin use the same `EncryptedConfig(origin, serverKey, pin)` for config and `open` calls.
 Fetch config with `DB.serverConfig` or `DBlayer.serverConfig` before opening the database.
@@ -85,12 +85,12 @@ The code-shape check is shared by error codes and closing reasons, so new server
 
 | Subscription | Handling |
 | --- | --- |
-| `viewerChanges` | `area`, `kind` and `entityId` select the reread or local removal from `changed_by` |
+| `recordEvents` | `area`, `kind` and `entityId` select the reread or local removal from `changed_by` |
 | `viewerNotice` | The event creates a row of the memory model Notice without an HTTP read |
 | `chatActivity` | `TYPING` updates the ephemeral `typing` of the user, `reset_after` resets the value |
 | `interactionReceived` | The event creates a row of the memory model InteractionNotice without an HTTP read |
 
-`viewerChanges` does not replace row fields. A matching `removes_on` kind removes the cached row without HTTP or a mutation.
+`recordEvents` does not replace row fields. A matching `removes_on` kind removes the cached row without HTTP or a mutation.
 Other known kinds use the HTTP reread through the existing V3 JWE client and the normal SQLite column write.
 Memory model notices get a UUID when the server sends no id. Their rows live in memory only and `expire_after` deletes them.
 A local scope with `updates` opens the subscription at the first reader. It releases the subscription after the last reader leaves, honoring `live_linger`.
@@ -135,5 +135,5 @@ Each watched query receives one `LiveChange.error` with the typed session failur
 `SubscriptionFailure.close` keeps the close code. GraphQL errors keep their messages and `GraphqlExtensions` in the shared error type.
 Swift `LiveChange.error`, `SubscriptionSink.failed` and `GraphQLSubscriptionEvent.errors` take `DbError`. Kotlin uses `DbException`.
 
-The fixtures `fixtures/v3-cable/subscriptions.json` hold the requests and responses of all 4 subscriptions.
-`fixtures/v3-cable/changes.dbl` shows the choice of HTTP reads. A fake socket checks the full exchange, the HTTP JWE and the row write.
+The fixtures `fixtures/change-events/subscriptions.json` hold the requests and responses of all 4 subscriptions.
+`fixtures/change-events/changes.dbl` shows the choice of HTTP reads. A fake socket checks the full exchange, the HTTP JWE and the row write.
