@@ -32,6 +32,8 @@ extension BridgeProbeTests {
   /// The server answers the profile request with this user.
   @MainActor
   static func login(_ transport: MockTransport, _ id: String, _ name: String) async throws {
+    transport.enqueue("UserProfile", reply: #"{"data":{"me":null}}"#)
+    try await User.profile.load()
     transport.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"\#(id)","name":"\#(name)"}}}"#)
     try await User.profile.refresh()
   }

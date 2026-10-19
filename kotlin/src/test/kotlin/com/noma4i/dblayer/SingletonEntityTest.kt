@@ -21,6 +21,8 @@ class SingletonEntityTest {
 
     /** The server answers the profile request with this user. */
     private suspend fun login(id: String, name: String) {
+        transport.enqueue("UserProfile", reply = """{"data":{"me":null}}""")
+        User.profile.load()
         transport.enqueue("UserProfile", reply = """{"data":{"me":{"__typename":"User","id":"$id","name":"$name"}}}""")
         User.profile.refresh()
     }
