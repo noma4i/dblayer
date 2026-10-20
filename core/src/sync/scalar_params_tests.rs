@@ -1,6 +1,7 @@
 use super::error::SyncError;
 use super::load::LoadOptions;
 use super::rig::*;
+use crate::transport::Reply;
 use serde_json::json;
 
 #[tokio::test(start_paused = true)]
@@ -52,4 +53,19 @@ async fn ascending_and_descending_windows_never_share_a_cursor() {
     let down = rig.sync.window_key("moments", "tail", &same).unwrap();
     assert!(up.ends_with(":forward") && down.ends_with(":backward"), "{up} {down}");
     assert_eq!(rig.db.shared.store.window(&down).unwrap().unwrap().cursor.as_deref(), Some("down2"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_typed_param_beside_a_column_keys_the_window_and_fills_the_column() {
+    let rig = rig();
+    let at = |n: i64| params(json!({"userId": "u1", "afterSequence": n}));
+    rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
+    rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [{"id": "b", "text": "b"}]})));
+    rig.sync.load("moments", "user_since", &at(5), LoadOptions::default()).await.unwrap();
+    rig.sync.load("moments", "user_since", &at(6), LoadOptions::default()).await.unwrap();
+    assert_eq!(rig.transport.calls()[0].variables, json!({"userId": "u1", "afterSequence": 5}));
+    assert_eq!(member_ids(&rig, "moments", "user_since", &at(5)), ["a"]);
+    assert_eq!(member_ids(&rig, "moments", "user_since", &at(6)), ["b"]);
+    let row = rig.db.find("moments", &crate::identity::RowId::new("a").unwrap()).unwrap().unwrap();
+    assert_eq!(row.text("userId"), Some("u1"));
 }
