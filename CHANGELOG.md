@@ -1,5 +1,42 @@
 # Changelog
 
+## 3.0.0 - 2026-10-20
+
+### Added
+- `node` and `nodes` read entities by id, with freshness windows and `force`.
+- Interface and union lists, input lists and `oneOf` inputs in operation arguments.
+- Enum lists and enum scope params with defaults.
+- Connection edge values and totals are stored per scope and read beside the list.
+- Stable order for scopes with `order_stable: true`.
+- Encrypted cable subscriptions with Swift and Kotlin sockets.
+- Declared change subscriptions: `changes` and `changed_by` reread or remove rows.
+- `apply` on `listen` and `updates` selects `ephemeral`, `reread` or `ignore`.
+- `EncryptedConfig` takes `endpoints`, `protocolLabel`, `cablePurpose` and `cableChannel`.
+- `GraphqlExtensions.fields` carries any other extensions key as JSON text.
+- Persisted query retry and versioned user agents.
+- Database opens without a transport.
+- Uploads are stored as operation items and resume through their saved requests.
+- Upload retries are kept per step and `UploadInfo.attempts` sums unfinished steps.
+- Mutation idempotency keys survive restarts.
+
+### Changed
+- Cable retries back off with jitter and reset only after a server frame.
+- Any server error code of 1 to 64 uppercase characters is accepted.
+- A refused subscription stops until an explicit resume.
+- Singleton subscriptions stay stopped after logout until `resume`.
+- Queued mutations are kept after a lost session.
+- Server paths and protocol labels come from the application, not the library.
+- Bootstrap config is fetched before the database opens.
+
+### Fixed
+- A cable that closed after `hello` no longer reconnects every second.
+- Upload status checks and offline cancellation no longer block.
+- An explicit null resets a `belongs_to` key.
+
+### Removed
+- Window membership snapshots.
+- Built-in server paths, channel names and change subscription.
+
 ## 2.0.0 - 2026-10-17
 
 ### Added
