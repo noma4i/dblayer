@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.0.0 - 2026-10-20
+
+### Added
+- `EncryptedSessionOperation` marks a session operation as sessionless in `sessionOperations`.
+
+### Changed
+- `sessionOperations` maps each name to an `EncryptedSessionOperation` with a path and `sessionless`.
+- A sessionless call is sealed without a credential and a sequence.
+- A sessionless call stores no pending request and takes no mutation lock.
+- A pending request refused with HTTP 400, 404, 405, 413, 415 or 422 is dropped.
+- A dropped request keeps the sequence and fails its queued operation.
+- `sessionResume()` returns `nil` or `null` for a dropped request instead of throwing.
+
+### Fixed
+- A stored pending request of a sessionless operation no longer blocks every app start.
+
 ## 3.0.0 - 2026-10-20
 
 ### Added
