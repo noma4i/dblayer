@@ -72,28 +72,27 @@ async fn answers_come_back_as_json_and_error_answers_as_typed_codes_that_keep_th
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn support_posts_all_fields_without_a_session() {
-    struct SupportPost;
+async fn a_sessionless_operation_posts_all_fields_without_a_session() {
+    struct TicketPost;
 
     let body = r#"{"name":"Alex","contact":"alex@example.com","message":"Need assistance","step":"phone","device":"iPhone","os":"iOS","appVersion":"3.0","country":"AU"}"#;
 
     #[async_trait]
-    impl EncryptedHttp for SupportPost {
+    impl EncryptedHttp for TicketPost {
         async fn post(&self, path: String, body: String) -> Result<EncryptedReply, DbError> {
-            use crate::transport::encrypted::fake_server_tests::{open_request, seal_response};
-            use crate::pacing::Clock;
+            use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
 
-            assert_eq!(path, "/api/support");
-            let request = open_request(&body, &path, SystemClock.now().as_secs() as i64).unwrap();
+            assert_eq!(path, "/api/ticket");
+            let request = decrypt_request(&body).unwrap();
             assert_eq!(request["body"], serde_json::json!({"name":"Alex","contact":"alex@example.com","message":"Need assistance","step":"phone","device":"iPhone","os":"iOS","appVersion":"3.0","country":"AU"}));
-            Ok(EncryptedReply { status: 200, body: seal_response(&request, Some(1), serde_json::json!({})) })
+            Ok(EncryptedReply { status: 200, body: seal_response(&request, None, serde_json::json!({})) })
         }
     }
 
     let mut encrypted = EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() };
-    encrypted.endpoints.session_operations = [("ticket".into(), "/api/support".into())].into();
+    encrypted.endpoints.session_operations = [("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true })].into();
     let credentials = Arc::new(MemoryCredentials::default());
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(SupportPost))).unwrap();
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(TicketPost))).unwrap();
     assert!(credentials.value().is_none());
 
     database.session_call("ticket".into(), body.into()).await.unwrap();
@@ -110,4 +109,37 @@ async fn a_sequence_conflict_is_a_typed_code_and_the_credential_stays() {
 
     assert_eq!(code(conflict), SessionCode::SequenceConflict);
     assert_eq!(credentials.value(), Some(credential));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sessionless_calls_leave_no_session_state_even_when_refused() {
+    for status in [200, 400] {
+        struct Reply(u16);
+        #[async_trait]
+        impl EncryptedHttp for Reply {
+            async fn post(&self, path: String, body: String) -> Result<EncryptedReply, DbError> {
+                let request = crate::transport::encrypted::fake_server_tests::decrypt_request(&body).unwrap();
+                let status = if path == "/api/ticket" { self.0 } else { 200 };
+                Ok(EncryptedReply { status, body: if status == 200 {
+                    crate::transport::encrypted::fake_server_tests::seal_response(&request, request["sequence"].as_i64(), serde_json::json!({}))
+                } else { String::new() } })
+            }
+        }
+        let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+        encrypted.endpoints.session_operations.insert("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true });
+        let credentials = Arc::new(MemoryCredentials::default());
+        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(Reply(status)))).unwrap();
+        let result = database.session_call("ticket".into(), "{}".into()).await;
+        if status == 200 { assert_eq!(result.unwrap(), "{}"); }
+        else { assert!(matches!(result, Err(DbError::Http { status: 400, .. })), "{result:?}"); }
+        let second = database.session_call("ticket".into(), "{}".into()).await;
+        if status == 200 { assert_eq!(second.unwrap(), "{}"); }
+        else { assert!(matches!(second, Err(DbError::Http { status: 400, .. })), "{second:?}"); }
+        let inner = database.db.shared.store.lock();
+        let counts: (i64, i64) = inner.connection.query_row("SELECT (SELECT count(*) FROM encrypted_session), (SELECT count(*) FROM encrypted_pending)", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(counts, (0, 0), "status {status}");
+        assert_eq!(credentials.value(), None);
+        drop(inner);
+        assert_eq!(database.session_call("social".into(), "{}".into()).await.unwrap(), "{}");
+    }
 }

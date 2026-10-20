@@ -110,7 +110,13 @@ database.sessionCall("otp", """{"phone":"+61400000000"}""")
 val answer = database.sessionCall("confirm", """{"code":"123456"}""")
 ```
 
-`sessionCall` sends one of the sign-in operations and returns the answer body as JSON text. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`.
+`sessionCall` sends a configured operation and returns the answer body as JSON text. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`.
+
+Each `EncryptedSessionOperation` declares `path` and `sessionless`. This replaces the former path string on both platforms.
+For `sessionless: true`, the request contains exactly `audience`, `kid`, `method`, `path`, `requestId`, `issuedAt`, `responseKey`, and `body`.
+It omits `credential` and `sequence`, stores no pending request, and does not acquire the mutation lock.
+Errors return to the caller. The application decides whether to repeat the call.
+Bootstrap keeps its separate envelope and shares only the JWE encryption primitive.
 
 | Operation | Body | Answer |
 | --------- | ---- | ------ |
@@ -140,7 +146,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | `settled()`, `confirmedId()` and `answer()` of a row or an action that has a mutation | the queued mutation got the sealed refusal. `unauthenticated` and `accountUnavailable` keep the operation failed and the optimistic row in place, `error.kind` is `session:<CODE>` and `error.message` is the detail. Recover as in "Recover a queued mutation" below. Every other code follows the `onFailure` rule of the action, as for any refusal |
 | live reads (`live`, `LiveList`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
-`flush()` and `retry()` do not throw for the refusal of one operation. `sessionResume()` throws the refusal of the stored request. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. A refusal with a code outside the `SessionCode` table (for example `INTERNAL_SERVER_ERROR`) stays a `Graphql` error. Errors inside `data` and `errors` of a normal answer stay `Graphql` too.
+`flush()` and `retry()` do not throw for the refusal of one operation. `sessionResume()` throws sealed refusals but returns `nil` / `null` for permanent HTTP refusals listed below. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. A refusal with a code outside the `SessionCode` table (for example `INTERNAL_SERVER_ERROR`) stays a `Graphql` error. Errors inside `data` and `errors` of a normal answer stay `Graphql` too.
 
 The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensions.code` also keep the optimistic row and the `Failed` operation.
 This applies to the GraphQL response and to the typed `Graphql` exception.
@@ -148,13 +154,22 @@ This applies to the GraphQL response and to the typed `Graphql` exception.
 
 ### Recover a queued mutation
 
-One rule decides, the sequence of the refusal:
+Recovery depends on the response and whether it confirms the sequence:
 
 | The refusal | The request | Do |
 | ----------- | ----------- | -- |
 | confirmed the sequence (`accountUnavailable`, `rateLimited`, every sign-in code) | spent, nothing is pending | fix the cause, then `retry`. The core sends the mutation as a new request |
 | did not confirm it, and the code is `unauthenticated`, `sessionEnded` or `sequenceConflict` | pending, and it blocks every other mutation, sign-in too | `sessionReset()`, sign in again, then `retry` |
-| no answer at all (lost connection, the server returned an error status) | pending, the server may have run it | `sessionResume()` or `retry` or the next `flush()`: each sends the identical request, the server answers from its record |
+| HTTP 400, 404, 405, 413, 415, or 422 without a sealed answer | removed without advancing the sequence, the owner becomes `Failed` with a typed rejection | `sessionResume()` returns `nil` / `null`. Fix the cause before sending again |
+| lost connection or any other HTTP error status | pending | `sessionResume()`, `retry`, or the next `flush()` sends the identical request |
+| stored request whose path is now declared sessionless | removed without sending or advancing the sequence | `sessionResume()` returns `nil` / `null` |
+
+The permanent statuses apply to the first send and every repeat through the same settlement code.
+The first send still throws its HTTP error. A second resume sends nothing after removal.
+The server refuses these requests before consuming their sequence, so the next request reuses that sequence.
+HTTP 401, 403, 407, 408, 418, 425, 429, other unlisted statuses, and 5xx remain retryable with pending preserved.
+Bare HTTP 401 and 403 remain HTTP errors and are not converted to `SessionCode`.
+Opening the database does not call `sessionResume()`. The application calls it explicitly.
 
 `sessionResume()` closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
 
@@ -318,8 +333,8 @@ DBlayer.open(encrypted = encrypted, credentials = credentials, transport = testT
 
 Rules of the session:
 
-- Every mutation, including a sign-in operation, carries the next sequence number. A query carries none and gets a new request id each time.
-- The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call, `sessionResume()` or a restart sends the identical request again and the server answers from its record. Only the time stamp changes. A GraphQL call that was stored with its document after a miss counts as the same call when you repeat it.
+- Every mutation, including a credentialed sign-in operation, carries the next sequence number. A query carries none and gets a new request id each time.
+- The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call or an explicit `sessionResume()` sends the identical request again, including after restart. The server answers from its record. Only the time stamp changes. A GraphQL call that was stored with its document after a miss counts as the same call when you repeat it.
 - While a request is pending, a different mutation fails with a network error and sends nothing. `sessionResume()` sends the pending request and returns its answer. When a queued operation owns the request, the answer also closes that operation.
 - A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
 - A credential with no matching session state (for example a restored Keychain with a new database file) is replaced by a new credential. The next call is unauthenticated.
@@ -672,12 +687,15 @@ Loading state (idle, loading, error with its kind, has more pages, last loaded t
 `EncryptedConfig` requires `endpoints`, `protocolLabel`, `cablePurpose`, and `cableChannel` alongside `origin`, `serverKey`, and `pin`.
 These arguments have no defaults. Paths start with one slash and contain no query or fragment.
 Protocol labels are nonempty and contain no control characters.
-The session operation dictionary maps application names to HTTP paths. The reserved `logout` operation uses `endpoints.logout`.
+The session operation dictionary maps application names to `EncryptedSessionOperation` records. The reserved `logout` operation uses `endpoints.logout` with a credential.
 
 ```swift
 let endpoints = EncryptedEndpoints(
   graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout",
-  bootstrap: "/api/bootstrap", sessionOperations: ["signIn": "/api/sign-in"]
+  bootstrap: "/api/bootstrap", sessionOperations: [
+    "signIn": EncryptedSessionOperation(path: "/api/sign-in", sessionless: false),
+    "ticket": EncryptedSessionOperation(path: "/api/ticket", sessionless: true)
+  ]
 )
 let protocolLabel = "example-ws-v1"
 let cablePurpose = "ws.hello"
@@ -694,7 +712,10 @@ try DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJS
 ```kotlin
 val endpoints = EncryptedEndpoints(
     graphql = "/api/graphql", cable = "/api/cable", logout = "/api/logout",
-    bootstrap = "/api/bootstrap", sessionOperations = mapOf("signIn" to "/api/sign-in")
+    bootstrap = "/api/bootstrap", sessionOperations = mapOf(
+        "signIn" to EncryptedSessionOperation("/api/sign-in", false),
+        "ticket" to EncryptedSessionOperation("/api/ticket", true)
+    )
 )
 val protocolLabel = "example-ws-v1"
 val cablePurpose = "ws.hello"

@@ -28,7 +28,7 @@ const SETTLE_ATTEMPTS: usize = 3;
 
 enum Delivery {
     Response(Response),
-    Rejected(OperationFailure),
+    Rejected(OperationFailure, bool),
     Unreached(OperationFailure),
     Unknown(OperationFailure),
 }
@@ -106,18 +106,19 @@ fn delivery_of(result: Result<Response, TransportError>) -> Delivery {
             let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
             let auth = codes.iter().filter_map(|code| crate::transport::SessionCode::from_wire(code)).find(|code| code.keeps_queue());
             let kind = auth.map(FailureKind::Session).unwrap_or_else(|| if RetryClass::classify(false, None, &codes) == RetryClass::Retriable { FailureKind::Server } else { FailureKind::Rejected });
-            Delivery::Rejected(OperationFailure { kind, message: message_of(&response), extensions: response.extensions() })
+            Delivery::Rejected(OperationFailure { kind, message: message_of(&response), extensions: response.extensions() }, false)
         }
         Err(error @ TransportError::Network(_)) => Delivery::Unreached(OperationFailure::new(FailureKind::Network, error.to_string())),
         Err(error @ TransportError::Interrupted(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, error.to_string())),
         Err(error @ TransportError::Http { status, .. }) if status >= 500 => Delivery::Unknown(OperationFailure::new(FailureKind::Server, error.to_string())),
-        Err(TransportError::Session { code, detail }) => Delivery::Rejected(OperationFailure::new(FailureKind::Session(code), detail)),
+        Err(error) if crate::transport::encrypted::permanently_refused(&error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string()), true),
+        Err(TransportError::Session { code, detail }) => Delivery::Rejected(OperationFailure::new(FailureKind::Session(code), detail), false),
         Err(TransportError::Graphql { messages, extensions }) => {
             let auth = extensions.as_ref().and_then(|fields| fields.code.as_deref()).and_then(crate::transport::SessionCode::from_wire).filter(|code| code.keeps_queue());
-            Delivery::Rejected(OperationFailure { kind: auth.map_or(FailureKind::Rejected, FailureKind::Session), message: messages.join("\n"), extensions })
+            Delivery::Rejected(OperationFailure { kind: auth.map_or(FailureKind::Rejected, FailureKind::Session), message: messages.join("\n"), extensions }, false)
         }
         Err(error @ TransportError::Decode(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),
-        Err(error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string())),
+        Err(error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string()), false),
     }
 }
 
@@ -305,14 +306,14 @@ impl Inner {
     async fn settle_delivery(&self, sending: &Sending<'_>, operation: &OperationDef, delivery: Delivery, keep: bool) -> Result<SendResult, SyncError> {
         let unsettled = match &delivery {
             Delivery::Response(_) => OperationFailure::new(FailureKind::Unrecognized, "the answer arrived after the database was reset"),
-            Delivery::Rejected(failure) | Delivery::Unreached(failure) | Delivery::Unknown(failure) => failure.clone(),
+            Delivery::Rejected(failure, _) | Delivery::Unreached(failure) | Delivery::Unknown(failure) => failure.clone(),
         };
         let unreached = matches!(delivery, Delivery::Unreached(_));
-        let keep = keep || matches!(&delivery, Delivery::Rejected(OperationFailure { kind: FailureKind::Session(code), .. }) if code.keeps_queue());
-        let rejected = matches!(delivery, Delivery::Rejected(_));
+        let keep = keep || matches!(&delivery, Delivery::Rejected(_, true)) || matches!(&delivery, Delivery::Rejected(OperationFailure { kind: FailureKind::Session(code), .. }, _) if code.keeps_queue());
+        let rejected = matches!(delivery, Delivery::Rejected(..));
         let result = match delivery {
             Delivery::Response(response) => self.settle_response(sending, operation, response).await?,
-            Delivery::Rejected(failure) => self.refuse(sending, failure, keep).await?,
+            Delivery::Rejected(failure, _) => self.refuse(sending, failure, keep).await?,
             Delivery::Unreached(failure) if self.send_backoff(sending.entry.operation.id.0).allows(sending.entry.operation.attempts + 1) => {
                 self.postpone(sending, failure)?
             }

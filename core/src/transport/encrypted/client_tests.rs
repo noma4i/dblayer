@@ -57,6 +57,58 @@ fn fixed(request: &Value) -> Vec<Value> {
 }
 
 #[tokio::test]
+async fn resume_discards_a_legacy_sessionless_pending_without_sending() {
+    let rig = Rig::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    let db = file_db(&path);
+    let client = rig.client(&db);
+    rig.server.drop_next_request();
+    assert!(client.mutate("/api/auth/otp", json!({})).await.is_err());
+    drop(client);
+    drop(db);
+    let db = file_db(&path);
+    let mut config = config();
+    config.endpoints.session_operations.get_mut("otp").unwrap().sessionless = true;
+    let client = EncryptedClient::new(&config, rig.server.clone(), rig.credentials.clone(), db.clone(), rig.clock.clone()).unwrap();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = calls.clone();
+    rig.server.on_request(move || { counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst); });
+    assert_eq!(client.resume().await, Ok(None));
+    assert_eq!(rows(&db).1, None);
+    assert_eq!(rows(&db).0.unwrap().sequence, 0);
+    assert_eq!(client.resume().await, Ok(None));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    client.session_call("social", json!({})).await.unwrap();
+    assert_eq!(rows(&db).0.unwrap().sequence, 1);
+}
+
+#[tokio::test]
+async fn a_sessionless_call_does_not_wait_for_an_inflight_mutation() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    struct Waiting;
+    #[async_trait::async_trait]
+    impl HttpExchange for Waiting {
+        async fn post(&self, path: &str, _: String) -> Result<HttpReply, TransportError> {
+            if path == "/api/ticket" { return Ok(HttpReply { status: 400, body: String::new() }); }
+            std::future::pending().await
+        }
+    }
+    let rig = Rig::new();
+    let db = memory_db();
+    let mut config = config();
+    config.endpoints.session_operations.insert("ticket".into(), EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true });
+    let client = EncryptedClient::new(&config, Arc::new(Waiting), rig.credentials, db.clone(), rig.clock).unwrap();
+    let mut mutation = Box::pin(client.mutate("/api/auth/otp", json!({})));
+    assert!(mutation.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+    let before = rows(&db);
+    let mut sessionless = Box::pin(client.session_call("ticket", json!({})));
+    assert!(matches!(sessionless.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(TransportError::Http { status: 400, .. }))));
+    assert_eq!(rows(&db), before);
+}
+
+#[tokio::test]
 async fn a_mutation_is_stored_as_pending_before_it_is_sent_and_confirmed_by_its_sequence() {
     let rig = Rig::new();
     let db = memory_db();
@@ -156,16 +208,45 @@ async fn http_refusals_keep_the_pending_request_and_the_next_attempt_executes_it
     client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     let body = graphql("mutation { m }");
     let mut statuses = Vec::new();
-    for status in [503, 400] {
+    for status in [503, 500] {
         rig.server.status_next(status);
         let Err(TransportError::Http { status, .. }) = client.mutate("/api/graphql", body.clone()).await else { panic!("expected an HTTP error") };
         statuses.push(status);
     }
 
-    assert_eq!(statuses, [503, 400]);
+    assert_eq!(statuses, [503, 500]);
     assert_eq!(rows(&db).1.unwrap().sequence, 2);
     client.mutate("/api/graphql", body).await.unwrap();
     assert_eq!(rig.server.executed().len(), 2);
+}
+
+#[tokio::test]
+async fn permanent_http_refusals_drop_pending_without_spending_sequence() {
+    for (status, permanent) in [(400, true), (404, true), (405, true), (413, true), (415, true), (422, true), (401, false), (403, false), (408, false), (429, false), (418, false), (500, false), (503, false)] {
+        for resume in [false, true] {
+            let rig = Rig::new();
+            let db = memory_db();
+            let client = rig.client(&db);
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counter = calls.clone();
+            rig.server.on_request(move || { counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst); });
+            if resume {
+                rig.server.drop_next_request();
+                assert!(client.mutate("/api/auth/otp", json!({})).await.is_err());
+            }
+            rig.server.status_next(status);
+            let result = if resume { client.resume().await } else { client.mutate("/api/auth/otp", json!({})).await.map(Some) };
+            if resume && permanent { assert_eq!(result, Ok(None), "status {status}"); }
+            else { assert!(matches!(result, Err(TransportError::Http { status: actual, .. }) if actual == status), "{result:?}"); }
+            assert_eq!(rows(&db).1.is_none(), permanent, "status {status}, resume {resume}");
+            assert_eq!(rows(&db).0.unwrap().sequence, 0);
+            let before = calls.load(std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(client.resume().await.unwrap().is_none(), permanent);
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), before + usize::from(!permanent));
+            client.mutate("/api/auth/otp", json!({})).await.unwrap();
+            assert_eq!(rows(&db).0.unwrap().sequence, if permanent { 1 } else { 2 });
+        }
+    }
 }
 
 #[tokio::test]

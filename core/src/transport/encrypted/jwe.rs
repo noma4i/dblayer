@@ -31,9 +31,14 @@ pub struct RequestPlain {
     pub request_id: String,
     pub issued_at: i64,
     pub response_key: String,
+    pub session: Option<RequestSession>,
+    pub body: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequestSession {
     pub credential: String,
     pub sequence: Option<i64>,
-    pub body: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,13 +55,15 @@ pub fn random_token() -> String {
 }
 
 pub fn seal_request(key: &ServerKey, plain: &RequestPlain) -> Result<String, JweError> {
-    let text = json!({
+    let mut text = json!({
         "audience": plain.audience, "kid": plain.kid, "method": "POST", "path": plain.path, "requestId": plain.request_id,
-        "issuedAt": plain.issued_at, "responseKey": plain.response_key, "credential": plain.credential,
-        "sequence": plain.sequence, "body": plain.body,
-    })
-    .to_string();
-    seal_plain(key, text.as_bytes())
+        "issuedAt": plain.issued_at, "responseKey": plain.response_key, "body": plain.body,
+    });
+    if let Some(session) = &plain.session {
+        text["credential"] = json!(session.credential);
+        text["sequence"] = json!(session.sequence);
+    }
+    seal_plain(key, text.to_string().as_bytes())
 }
 
 pub(super) fn seal_plain(key: &ServerKey, text: &[u8]) -> Result<String, JweError> {

@@ -76,3 +76,8 @@ pub fn clear(connection: &Connection) -> rusqlite::Result<()> {
     transaction.execute("DELETE FROM encrypted_session", [])?;
     transaction.commit()
 }
+
+pub fn drop_pending(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute("DELETE FROM encrypted_pending", [])?;
+    Ok(())
+}

@@ -13,6 +13,27 @@ fn mutation_effects(rig: &Rig) -> usize {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_permanently_refused_pending_owner_is_failed_by_resume() {
+  for resume in [false, true] {
+    let rig = Rig::new();
+    let database = signed_in(&rig).await;
+    rig.server.status_next(if resume { 503 } else { 400 });
+    let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+    database.flush().await.unwrap();
+    if resume {
+        assert_eq!(database.db.outbox().unwrap()[0].operation.status, OperationStatus::DeliveryUnknown);
+        rig.server.status_next(400);
+    }
+    assert_eq!(database.session_resume().await.unwrap(), None);
+    let entries = database.db.outbox().unwrap();
+    assert_eq!(entries[0].operation.status, OperationStatus::Failed);
+    assert_eq!(entries[0].operation.error.as_ref().unwrap().kind, crate::syncstate::FailureKind::Rejected);
+    assert!(database.settled("Moment".into(), row.id).await.is_err());
+    assert_eq!(database.session_resume().await.unwrap(), None);
+  }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_queued_create_refused_without_a_sequence_is_executed_once_by_resume_and_retry() {
     let rig = Rig::new();
     let database = signed_in(&rig).await;

@@ -16,8 +16,7 @@ fn request_plain() -> RequestPlain {
         request_id: "11111111-2222-4333-8444-555555555555".to_string(),
         issued_at: 1_800_000_000,
         response_key: published_response_key().to_string(),
-        credential: "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8".to_string(),
-        sequence: Some(2),
+        session: Some(super::jwe::RequestSession { credential: "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8".to_string(), sequence: Some(2) }),
         body: json!({ "query": "mutation { x }" }),
     }
 }
@@ -78,7 +77,8 @@ fn a_sealed_request_opens_on_the_server_side_with_exactly_the_ten_fields() {
         "requestId": "11111111-2222-4333-8444-555555555555", "issuedAt": 1_800_000_000, "responseKey": published_response_key(),
         "credential": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8", "sequence": 2, "body": { "query": "mutation { x }" }
     }));
-    let read = RequestPlain { sequence: None, ..request_plain() };
+    let mut read = request_plain();
+    read.session.as_mut().unwrap().sequence = None;
     let token = seal_request(&ServerKey::parse(public_key_der_b64(), pin()).unwrap(), &read).unwrap();
     assert!(open_request(&token, "/api/graphql", 1_800_000_000).unwrap()["sequence"].is_null());
 }
@@ -90,4 +90,16 @@ fn a_response_sealed_by_the_test_server_opens_in_the_client() {
 
     let opened = open_response(&sealed, request["responseKey"].as_str().unwrap()).unwrap();
     assert_eq!(opened.body, json!({ "ok": true }));
+}
+
+#[test]
+fn a_sessionless_request_has_exactly_eight_fields() {
+    let plain = RequestPlain { session: None, ..request_plain() };
+    let token = seal_request(&ServerKey::parse(public_key_der_b64(), pin()).unwrap(), &plain).unwrap();
+    let opened = super::fake_server_tests::decrypt_request(&token).unwrap();
+    assert_eq!(opened, json!({
+        "audience": origin(), "kid": pin(), "method": "POST", "path": "/api/graphql",
+        "requestId": "11111111-2222-4333-8444-555555555555", "issuedAt": 1_800_000_000,
+        "responseKey": published_response_key(), "body": { "query": "mutation { x }" }
+    }));
 }

@@ -68,14 +68,18 @@ pub(super) async fn resume(client: Arc<EncryptedClient>, sync: Option<crate::syn
         _ => None,
     };
     if client.pending_call().map_err(typed)? != stored { return Ok(None); }
-    let Some(answer) = client.resume().await.map_err(typed)? else { return Ok(None) };
+    let (answer, result) = match client.resume_pending().await {
+        Ok(Some(answer)) => (Some(answer.clone()), core::response_of(answer)),
+        Ok(None) => (None, Err(core::TransportError::Graphql { messages: vec!["the stored request belongs to a sessionless operation".into()], extensions: None })),
+        Err(error) if core::encrypted::permanently_refused(&error) => (None, Err(error)),
+        Err(error) => return Err(typed(error)),
+    };
     if let (Some(sync), Some(serial), Some(owner)) = (&sync, &serial, owner) {
-        let result = core::response_of(answer.clone());
         if !matches!(&result, Ok(response) if core::missing_from_registry(response)) {
             sync.inner.settle_resumed(serial, upload, owner, result).await?;
         }
     }
-    refused(answer).map(|answer| Some(answer.body.to_string()))
+    answer.map(refused).transpose().map(|answer| answer.map(|answer| answer.body.to_string()))
 }
 
 pub(super) fn wire(
@@ -96,9 +100,9 @@ pub(super) fn wire(
 impl Database {
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
         let client = self.session()?.clone();
-        let path = client.session_path(&operation).ok_or_else(|| DbError::Invalid { detail: format!("unknown session operation {operation}") })?.to_string();
+        if !client.has_session_operation(&operation) { return Err(DbError::Invalid { detail: format!("unknown session operation {operation}") }); }
         let body = serde_json::from_str::<Value>(&body_json)?;
-        let answer = executor()?.spawn(async move { client.mutate(&path, body).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(typed)?;
+        let answer = executor()?.spawn(async move { client.session_call(&operation, body).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(typed)?;
         Ok(refused(answer)?.body.to_string())
     }
 

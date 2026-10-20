@@ -5,7 +5,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex as Gate;
 
-use super::jwe::{open_response, random_token, seal_request, RequestPlain};
+use super::jwe::{open_response, random_token, seal_request, RequestPlain, RequestSession};
 use super::key::ServerKey;
 use super::state::{self, Pending};
 use super::{CredentialSlot, HttpExchange};
@@ -15,6 +15,11 @@ use crate::transport::TransportError;
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const REPLAYED: &str = "REPLAYED_REQUEST";
+const PERMANENT_HTTP_REFUSALS: [u16; 6] = [400, 404, 405, 413, 415, 422];
+
+pub(crate) fn permanently_refused(error: &TransportError) -> bool {
+    matches!(error, TransportError::Http { status, .. } if PERMANENT_HTTP_REFUSALS.contains(status))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EncryptedConfig {
@@ -33,12 +38,18 @@ pub struct EncryptedEndpoints {
     pub cable: String,
     pub logout: String,
     pub bootstrap: String,
-    pub session_operations: std::collections::HashMap<String, String>,
+    pub session_operations: std::collections::HashMap<String, EncryptedSessionOperation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EncryptedSessionOperation {
+    pub path: String,
+    pub sessionless: bool,
 }
 
 impl EncryptedConfig {
     pub fn validate(&self) -> Result<(), TransportError> {
-        for path in [&self.endpoints.graphql, &self.endpoints.cable, &self.endpoints.logout, &self.endpoints.bootstrap].into_iter().chain(self.endpoints.session_operations.values()) {
+        for path in [&self.endpoints.graphql, &self.endpoints.cable, &self.endpoints.logout, &self.endpoints.bootstrap].into_iter().chain(self.endpoints.session_operations.values().map(|operation| &operation.path)) {
             check_path(path)?;
         }
         if [&self.protocol_label, &self.cable_purpose, &self.cable_channel].into_iter().any(|value| value.trim().is_empty() || value.chars().any(char::is_control)) {
@@ -96,9 +107,18 @@ fn confirmed_error(body: &Value) -> Option<&str> {
 }
 
 impl EncryptedClient {
-    pub fn session_path(&self, operation: &str) -> Option<&str> {
-        if operation == "logout" { return Some(&self.config.endpoints.logout); }
-        self.config.endpoints.session_operations.get(operation).map(String::as_str)
+    pub async fn session_call(&self, operation: &str, body: Value) -> Result<Answer, TransportError> {
+        if operation == "logout" { return self.mutate(&self.config.endpoints.logout, body).await; }
+        let operation = self.config.endpoints.session_operations.get(operation).ok_or_else(|| TransportError::Decode(format!("unknown session operation {operation}")))?;
+        if !operation.sessionless { return self.mutate(&operation.path, body).await; }
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let response_key = random_token();
+        let token = self.request_token(None, &request_id, &response_key, &operation.path, &body)?;
+        self.post(&operation.path, token, &request_id, &response_key).await
+    }
+
+    pub fn has_session_operation(&self, operation: &str) -> bool {
+        operation == "logout" || self.config.endpoints.session_operations.contains_key(operation)
     }
 
     pub fn new(
@@ -159,7 +179,19 @@ impl EncryptedClient {
     }
 
     pub async fn resume(&self) -> Result<Option<Answer>, TransportError> {
+        match self.resume_pending().await {
+            Err(error) if permanently_refused(&error) => Ok(None),
+            result => result,
+        }
+    }
+
+    pub(crate) async fn resume_pending(&self) -> Result<Option<Answer>, TransportError> {
         let _turn = self.mutations.lock().await;
+        let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
+        if self.config.endpoints.session_operations.values().any(|operation| operation.sessionless && operation.path == pending.path) {
+            self.with_connection(state::drop_pending)?;
+            return Ok(None);
+        }
         let credential = self.credential()?;
         let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
         let token = self.pending_token(&credential, &pending)?;
@@ -184,11 +216,17 @@ impl EncryptedClient {
 
     fn pending_token(&self, credential: &str, pending: &Pending) -> Result<String, TransportError> {
         let body: Value = serde_json::from_str(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))?;
-        self.request_token(credential, &pending.request_id, &pending.response_key, Some(pending.sequence), &pending.path, &body)
+        self.request_token(Some(RequestSession { credential: credential.into(), sequence: Some(pending.sequence) }), &pending.request_id, &pending.response_key, &pending.path, &body)
     }
 
     async fn settle(&self, pending: Pending, token: String) -> Result<Answer, TransportError> {
-        let answer = self.post(&pending.path, token, &pending.request_id, &pending.response_key).await?;
+        let answer = match self.post(&pending.path, token, &pending.request_id, &pending.response_key).await {
+            Err(error) if permanently_refused(&error) => {
+                self.with_connection(state::drop_pending)?;
+                return Err(error);
+            }
+            result => result?,
+        };
         if answer.sequence != Some(pending.sequence) {
             return Err(match confirmed_error(&answer.body) {
                 Some(code) => TransportError::refusal(code),
@@ -203,11 +241,11 @@ impl EncryptedClient {
     }
 
     async fn exchange(&self, credential: &str, request_id: &str, response_key: &str, sequence: Option<i64>, path: &str, body: &Value) -> Result<Answer, TransportError> {
-        let token = self.request_token(credential, request_id, response_key, sequence, path, body)?;
+        let token = self.request_token(Some(RequestSession { credential: credential.into(), sequence }), request_id, response_key, path, body)?;
         self.post(path, token, request_id, response_key).await
     }
 
-    fn request_token(&self, credential: &str, request_id: &str, response_key: &str, sequence: Option<i64>, path: &str, body: &Value) -> Result<String, TransportError> {
+    fn request_token(&self, session: Option<RequestSession>, request_id: &str, response_key: &str, path: &str, body: &Value) -> Result<String, TransportError> {
         let plain = RequestPlain {
             audience: self.audience.clone(),
             kid: self.key.pin().to_string(),
@@ -215,8 +253,7 @@ impl EncryptedClient {
             request_id: request_id.to_string(),
             issued_at: self.clock.now().as_secs() as i64,
             response_key: response_key.to_string(),
-            credential: credential.to_string(),
-            sequence,
+            session,
             body: body.clone(),
         };
         let token = seal_request(&self.key, &plain).map_err(|error| TransportError::Decode(error.to_string()))?;

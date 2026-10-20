@@ -20,7 +20,7 @@ fn token_ok(value: &Value) -> bool {
     value.as_str().is_some_and(|text| text.len() == 43 && text.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
 }
 
-pub fn open_request(token: &str, path: &str, now: i64) -> Result<Value, String> {
+pub fn decrypt_request(token: &str) -> Result<Value, String> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 5 {
         return Err("segments".into());
@@ -36,7 +36,11 @@ pub fn open_request(token: &str, path: &str, now: i64) -> Result<Value, String> 
     sealed.extend(URL_SAFE_NO_PAD.decode(parts[4]).map_err(|e| e.to_string())?);
     let cipher = Aes256Gcm::new_from_slice(&cek).map_err(|e| e.to_string())?;
     let plain = cipher.decrypt(Nonce::from_slice(&iv), Payload { msg: &sealed, aad: parts[0].as_bytes() }).map_err(|e| e.to_string())?;
-    let data: Value = serde_json::from_slice(&plain).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&plain).map_err(|e| e.to_string())
+}
+
+pub fn open_request(token: &str, path: &str, now: i64) -> Result<Value, String> {
+    let data = decrypt_request(token)?;
     let object = data.as_object().ok_or("not an object")?;
     let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
     keys.sort_unstable();
