@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.1.0 - 2026-10-21
 
 ### Added
 - `typed: [afterSequence: :int, pinned: :bool]` declares scope params that are sent as a JSON integer or boolean. Each value has its own window.
