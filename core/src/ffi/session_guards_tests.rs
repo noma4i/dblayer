@@ -100,7 +100,7 @@ async fn resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it
     let path = directory.path().join("session.sqlite");
     let first = rig.open(Some(&path), pin()).unwrap();
     rig.server.drop_next_request();
-    first.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into()).await.unwrap_err();
+    super::encrypted_tests::cancel_on_retry(&first, first.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into())).await;
     assert_eq!(rig.server.seen().len(), 0);
     drop(first);
 
@@ -120,7 +120,7 @@ async fn a_lost_logout_answer_is_resumed_through_the_bridge_and_clears_the_crede
     let first = rig.open(Some(&path), pin()).unwrap();
     first.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.lose_next_answer();
-    first.session_call("logout".into(), "{}".into()).await.unwrap_err();
+    super::encrypted_tests::cancel_on_retry(&first, first.session_call("logout".into(), "{}".into())).await;
     assert!(rig.credentials.inner.value().is_some());
     drop(first);
 

@@ -124,7 +124,7 @@ async fn a_request_that_never_left_is_sent_once_by_resume_after_a_restart() {
     let path = directory.path().join("session.sqlite");
     let first = rig.client(&file_db(&path));
     rig.server.drop_next_request();
-    assert!(first.mutate(SOCIAL, signed_in()).await.is_err());
+    super::client_tests::cancel_pending(first.mutate(SOCIAL, signed_in()));
     assert_eq!(rig.server.seen().len(), 0);
     drop(first);
 
@@ -143,7 +143,7 @@ async fn an_answer_that_was_executed_but_never_committed_is_confirmed_once_by_re
     let first = rig.client(&file_db(&path));
     first.mutate(SOCIAL, signed_in()).await.unwrap();
     rig.server.lose_next_answer();
-    assert!(first.mutate(GRAPHQL, json!({ "query": "mutation { m }" })).await.is_err());
+    super::client_tests::cancel_pending(first.mutate(GRAPHQL, json!({ "query": "mutation { m }" })));
     assert_eq!(rig.server.executed().len(), 2);
     drop(first);
 
@@ -173,7 +173,7 @@ async fn a_session_row_without_its_credential_drops_the_old_pending_request_and_
     let rig = Rig::new();
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     rig.server.drop_next_request();
-    assert!(rig.client(&db).mutate(SOCIAL, signed_in()).await.is_err());
+    super::client_tests::cancel_pending(rig.client(&db).mutate(SOCIAL, signed_in()));
     rig.credentials.inner.clear().unwrap();
 
     let restored = rig.client(&db);

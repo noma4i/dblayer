@@ -11,6 +11,8 @@ public final class UrlSessionEncryptedHttp: EncryptedHttp, @unchecked Sendable {
   init(origin: String, session: URLSession? = nil) {
     self.origin = origin
     let configuration = session?.configuration ?? .ephemeral
+    configuration.timeoutIntervalForRequest = 30
+    configuration.timeoutIntervalForResource = 30
     configuration.httpAdditionalHeaders = nil
     configuration.httpCookieStorage = nil
     configuration.httpShouldSetCookies = false

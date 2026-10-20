@@ -3,6 +3,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub trait Clock: Send + Sync {
     fn now(&self) -> Duration;
+    fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(tokio::time::sleep(duration))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]

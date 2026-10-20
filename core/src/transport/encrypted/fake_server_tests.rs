@@ -91,6 +91,7 @@ use crate::transport::TransportError;
 
 #[derive(Default)]
 struct Faults {
+    pub interrupted: bool,
     pub lose_next_answer: bool,
     pub drop_next_request: bool,
     pub status_next: Option<u16>,
@@ -211,6 +212,18 @@ impl FakeServer {
         self.state.lock().unwrap().faults.drop_next_request = true;
     }
 
+    pub fn interrupt_next_request(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.faults.drop_next_request = true;
+        state.faults.interrupted = true;
+    }
+
+    pub fn interrupt_next_answer(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.faults.lose_next_answer = true;
+        state.faults.interrupted = true;
+    }
+
     pub fn status_next(&self, status: u16) {
         self.state.lock().unwrap().faults.status_next = Some(status);
     }
@@ -300,6 +313,7 @@ impl HttpExchange for FakeServer {
         }
         let mut state = self.state.lock().unwrap();
         if std::mem::take(&mut state.faults.drop_next_request) {
+            if std::mem::take(&mut state.faults.interrupted) { return Err(TransportError::Interrupted("request cancelled".into())); }
             return Err(TransportError::Network("offline".into()));
         }
         if let Some(status) = state.faults.status_next.take() {
@@ -314,6 +328,7 @@ impl HttpExchange for FakeServer {
             answer = seal_response(&other, Some(1), json!({}));
         }
         if std::mem::take(&mut state.faults.lose_next_answer) {
+            if std::mem::take(&mut state.faults.interrupted) { return Err(TransportError::Interrupted("request cancelled".into())); }
             return Err(TransportError::Network("the answer was lost".into()));
         }
         Ok(HttpReply { status: 200, body: answer })

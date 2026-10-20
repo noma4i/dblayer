@@ -49,6 +49,14 @@ async fn on_executor<T: Send + 'static>(work: impl std::future::Future<Output = 
     executor()?.spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(DbError::from)
 }
 
+pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
+    struct Cancel(tokio::task::AbortHandle);
+    impl Drop for Cancel { fn drop(&mut self) { self.0.abort(); } }
+    let task = executor()?.spawn(work);
+    let _cancel = Cancel(task.abort_handle());
+    task.await.map_err(|error| DbError::Invalid { detail: error.to_string() })
+}
+
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
     executor()?.spawn_blocking(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }

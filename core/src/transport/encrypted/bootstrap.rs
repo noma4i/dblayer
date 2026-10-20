@@ -5,6 +5,7 @@ use crate::pacing::Clock;
 use super::{AppPlatform, ConfigCode, EncryptedConfig, HttpExchange, SecurityCode, ServerConfig, TransportError};
 use super::jwe::{open_plain, random_token, seal_plain};
 use super::key::ServerKey;
+use crate::transport::retry::{RetryEvents, Retrying};
 
 
 fn invalid(detail: impl ToString) -> TransportError {
@@ -47,6 +48,7 @@ pub(super) fn accept(token: &str, response_key: &str, request_id: &str, digest: 
         return Err(authentication("the response does not match the bootstrap request"));
     }
     let body = &response["body"];
+    if let Some(error) = super::client::temporary_error(body) { return Err(error); }
     if body.get("error").is_some() { return Err(invalid("the server refused the bootstrap request")); }
     let config: ServerConfig = serde_json::from_value(body.clone()).map_err(|error| TransportError::Config { code: ConfigCode::InvalidFormat, detail: error.to_string() })?;
     if config.config_version != 1 {
@@ -55,17 +57,28 @@ pub(super) fn accept(token: &str, response_key: &str, request_id: &str, digest: 
     Ok(config)
 }
 
+#[cfg(test)]
 pub(crate) async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn Clock) -> Result<ServerConfig, TransportError> {
+    fetch(config, platform, version, build, http, clock, &RetryEvents::default()).await
+}
+
+pub(crate) async fn fetch(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn Clock, events: &RetryEvents) -> Result<ServerConfig, TransportError> {
     config.validate()?;
     let audience = config.origin.trim_end_matches('/');
     if !super::origin::allowed(audience) { return Err(invalid("the origin must be https or a development host without a path")); }
     let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Security { code: SecurityCode::ServerKeyMismatch, detail: error.to_string() })?;
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let response_key = zeroize::Zeroizing::new(random_token());
-    let plain = request_plain(config, platform, version, build, clock, &request_id, &response_key)?;
-    let digest = request_digest(&plain);
-    let token = seal_plain(&key, request_text(&plain).as_bytes()).map_err(authentication)?;
-    let reply = http.post(&config.endpoints.bootstrap, token).await?;
-    if reply.status != 200 { return Err(TransportError::Http { status: reply.status, body: String::new() }); }
-    accept(&reply.body, &response_key, &request_id, &digest)
+    let mut retry = Retrying::new(clock, events);
+    loop {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let response_key = zeroize::Zeroizing::new(random_token());
+        let plain = request_plain(config, platform, version, build, clock, &request_id, &response_key)?;
+        let digest = request_digest(&plain);
+        let token = seal_plain(&key, request_text(&plain).as_bytes()).map_err(authentication)?;
+        let result = match http.post(&config.endpoints.bootstrap, token).await {
+            Ok(reply) if reply.status == 200 => accept(&reply.body, &response_key, &request_id, &digest),
+            Ok(reply) => Err(TransportError::Http { status: reply.status, body: String::new() }),
+            Err(error) => Err(error),
+        };
+        match result { Ok(config) => return Ok(config), Err(error) => retry.failed(error).await? }
+    }
 }

@@ -12,7 +12,7 @@ mod online;
 mod put;
 mod request;
 mod response;
-mod retry;
+pub(crate) mod retry;
 mod session_code;
 mod subscription;
 
@@ -29,7 +29,7 @@ pub use online::Connectivity;
 pub use put::{ByteSink, PutRequest, PutResponse};
 pub use request::{GraphQLError, GraphQLRequest, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};
-pub use retry::{RetryClass, RETRY_BACKOFF};
+pub use retry::{RetryClass, RetryListener, RETRY_BACKOFF};
 pub use session_code::SessionCode;
 pub use subscription::{
     Subscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionFault,

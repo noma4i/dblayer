@@ -15,7 +15,7 @@ async fn lose_the_answer_to_the_second_send(rig: &Rig) {
             server.lose_next_answer();
         }
     });
-    assert!(rig.transport().mutate(request(WRITE)).await.is_err());
+    super::client_tests::cancel_pending(rig.transport().mutate(request(WRITE)));
     assert_eq!(rig.pending_sequence(), Some(3));
 }
 

@@ -71,7 +71,29 @@ private final class BootstrapHttp: EncryptedHttp, @unchecked Sendable {
   func post(path: String, body: String) async throws -> EncryptedReply {
     lock.withLock { count += 1 }
     #expect(path == peer.encrypted.endpoints.bootstrap)
-    return kind == "service" ? EncryptedReply(status: 503, body: "") : EncryptedReply(status: 200, body: try peer.answer(body, kind: kind))
+    if kind == "timeout" { throw TransportFailure.classifyEncryptedHttp(URLError(.timedOut)) }
+    return kind == "http" ? EncryptedReply(status: 400, body: "") : EncryptedReply(status: 200, body: try peer.answer(body, kind: kind))
+  }
+}
+
+private final class BootstrapRetry: RetryListener, @unchecked Sendable {
+  let signal: AsyncStream<(UInt64, UInt64, String)>.Continuation
+  init(_ signal: AsyncStream<(UInt64, UInt64, String)>.Continuation) { self.signal = signal }
+  func retrying(attempt: UInt64, delayMs: UInt64, reason: String) { signal.yield((attempt, delayMs, reason)) }
+}
+
+private final class HeldBootstrapHttp: EncryptedHttp, @unchecked Sendable {
+  let signal: AsyncStream<String>.Continuation
+  init(_ signal: AsyncStream<String>.Continuation) { self.signal = signal }
+  func post(path: String, body: String) async throws -> EncryptedReply {
+    signal.yield("started")
+    do {
+      try await Task.sleep(for: .seconds(60))
+    } catch {
+      signal.yield(error is CancellationError ? "cancelled" : "other error")
+      throw error
+    }
+    throw DbError.Network(detail: "HTTP did not finish")
   }
 }
 
@@ -114,10 +136,38 @@ final class BootstrapListener: @unchecked Sendable {
 
 struct BootstrapConfigTests {
   @Test
+  func taskCancellationReachesTheCoreAndCancelsForeignHttp() async throws {
+    let peer = try BootstrapPeer()
+    let (events, signal) = AsyncStream<String>.makeStream()
+    let cursor = Cursor(events)
+    let http = HeldBootstrapHttp(signal)
+    let task = Task { try await DB.serverConfig(encrypted: peer.encrypted, platform: .ios, version: "1.2", http: http) }
+    #expect(await cursor.next("HTTP started") == "started")
+    task.cancel()
+    if case .success = await task.result { Issue.record("cancelled bootstrap succeeded") }
+    #expect(await cursor.next("HTTP cancelled") == "cancelled")
+    signal.finish()
+  }
+
+  @Test
+  func bootstrapTimeoutWaitsForCancellationAndReportsTheAttempt() async throws {
+    let peer = try BootstrapPeer()
+    let http = BootstrapHttp(peer, "timeout")
+    let (events, signal) = AsyncStream<(UInt64, UInt64, String)>.makeStream()
+    let task = Task { try await DB.serverConfig(encrypted: peer.encrypted, platform: .ios, version: "1.2", http: http, retryListener: BootstrapRetry(signal)) }
+    let event = try #require(await Cursor(events).next("bootstrap retry"))
+    #expect(event.0 == 1 && (800...1000).contains(event.1) && event.2 == "network")
+    task.cancel()
+    if case .success = await task.result { Issue.record("cancelled bootstrap succeeded") }
+    signal.finish()
+    #expect(http.calls == 1)
+  }
+
+  @Test
   func configBeforeDatabaseUsesTheCoreAndPreservesEveryOutcome() async throws {
     let peer = try BootstrapPeer()
     for platform in [AppPlatform.ios, .android] {
-      for kind in ["ok", "tamper", "request", "format", "service", "pin"] {
+      for kind in ["ok", "tamper", "request", "format", "http", "pin"] {
         let http = BootstrapHttp(peer, kind)
         var encrypted = peer.encrypted
         if kind == "pin" { encrypted.pin = "wrong" }
@@ -132,7 +182,7 @@ struct BootstrapConfigTests {
           switch (kind, classified) {
           case ("pin", .Security(.serverKeyMismatch, _)), ("tamper", .Security(.responseAuthentication, _)),
                ("request", .Config(.invalidRequest, _)), ("format", .Config(.unsupportedVersion, _)),
-               ("service", .Http(503, _)): break
+               ("http", .Http(400, _)): break
           default: Issue.record("\(kind): \(error), classified \(classified)")
           }
         }

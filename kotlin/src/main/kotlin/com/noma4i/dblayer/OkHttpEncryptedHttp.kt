@@ -7,12 +7,16 @@ import okhttp3.CookieJar
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class OkHttpEncryptedHttp(
     private val origin: String,
     client: OkHttpClient = OkHttpClient(),
 ) : EncryptedHttp {
     private val client = client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(30, TimeUnit.SECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
         .retryOnConnectionFailure(false)

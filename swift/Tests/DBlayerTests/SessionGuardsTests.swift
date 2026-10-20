@@ -11,7 +11,7 @@ private let otherPin = String(repeating: "0", count: 64)
 private final class ScriptedHttp: EncryptedHttp, @unchecked Sendable {
   private let lock = NSLock()
   private var recorded: [String] = []
-  private var status: UInt16 = 503
+  private var status: UInt16 = 401
   private var offline = false
 
   var paths: [String] { lock.withLock { recorded } }
@@ -60,6 +60,24 @@ private func temporaryFile() throws -> (URL, String) {
   return (directory, directory.appendingPathComponent("session.sqlite").path)
 }
 
+private final class Retried: RetryListener, @unchecked Sendable {
+  let signal: AsyncStream<UInt64>.Continuation
+  init(_ signal: AsyncStream<UInt64>.Continuation) { self.signal = signal }
+  func retrying(attempt: UInt64, delayMs: UInt64, reason: String) { signal.yield(attempt) }
+}
+
+private func cancelOnRetry(_ database: Database, operation: String, body: String) async throws {
+  let (events, signal) = AsyncStream<UInt64>.makeStream()
+  try database.setRetryListener(listener: Retried(signal))
+  let task = Task { try await database.sessionCall(operation: operation, bodyJson: body) }
+  let attempt = await Cursor(events).next("retry notification")
+  #expect(attempt == 1)
+  task.cancel()
+  _ = await task.result
+  try database.setRetryListener(listener: nil)
+  signal.finish()
+}
+
 extension BridgeProbeTests {
 struct SessionGuardsTests {
   @Test
@@ -98,7 +116,7 @@ struct SessionGuardsTests {
     let credentials = CountedCredential()
     var database = try open(http, credentials, path: path)
     http.goOffline(true)
-    await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
+    try await cancelOnRetry(database, operation: "otp", body: #"{"phone":"+61400000000"}"#)
     http.goOffline(false)
 
     database = try open(http, credentials, path: path)
@@ -121,7 +139,7 @@ struct SessionGuardsTests {
     let credentials = CountedCredential()
     var database = try open(http, credentials, path: path)
     http.goOffline(true)
-    await #expect(throws: DbError.self) { try await database.sessionCall(operation: "logout", bodyJson: "{}") }
+    try await cancelOnRetry(database, operation: "logout", body: "{}")
     http.goOffline(false)
 
     database = try open(http, credentials, path: path)

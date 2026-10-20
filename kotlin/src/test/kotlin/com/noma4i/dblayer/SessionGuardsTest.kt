@@ -8,6 +8,10 @@ import org.junit.Test
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
 
 private const val KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtzb67l/cXul2uArFqeZXsMf4tImrLcaHb3uiVNp8mjjJrFK/zwUEEazm3pmriAbj1nBzSxQLuq3jNUeFHXoQxjwWmTdv+PoAypz4ZII6Dz6rknk290/ddmimc1Z4Mx0AkT4ffAA9WHiDtLPF6tKZWNsWF/SpJps9PWrIKNOKY78ZfCgfegrWfKwoNYExyZ0IuUUgG0lsRjEEE/U59GpbNBqdKtw7KaIGK47QRk6HWOkCQtyqqjsseOJLwdI0k6jDNmcH6DulPNmar9AbwsmpngD55P8y4JdH49Eq3Nr040gmg0Y1p1FZm5PbKeC4WgZZdmg1bxjKAa+MYP0fROi4dFz05/81fqFb6DWaXencb0p/Iz+IUfQiI/0EYNv1SfdTUHzGyHFAmQHeCUIKLSkNNg3uF/jqKthFecCnWEfTUWRWFsN/8/Nb65a1UI/L1hP/qd+T6xKfchqVBEf767yeHdgsy3GeuqTsgXUPkuA1DO9HPP1xWqa6orUNWkimSwxDAgMBAAE="
 private const val PIN = "fab4f816eb33917161942684230405ae47ad4df5b456bd973085599b1364342a"
@@ -16,7 +20,7 @@ private const val OTP = """{"phone":"+61400000000"}"""
 
 private class ScriptedHttp : EncryptedHttp {
     val paths = CopyOnWriteArrayList<String>()
-    @Volatile var status: UShort = 503u
+    @Volatile var status: UShort = 401u
     @Volatile var offline = false
 
     override suspend fun post(path: String, body: String): EncryptedReply {
@@ -50,6 +54,17 @@ private class ClosingSocket : CableSocket {
     override fun close() {}
     override suspend fun send(text: String) {}
     override suspend fun receive(): String = throw CableSocketException(CableSocketException.Reason.Closed)
+}
+
+private suspend fun cancelOnRetry(database: Database, operation: String, body: String) = coroutineScope {
+    val nextAttempt = CompletableDeferred<ULong>()
+    database.setRetryListener(object : RetryListener {
+        override fun retrying(attempt: ULong, delayMs: ULong, reason: String) { nextAttempt.complete(attempt) }
+    })
+    val call = launch { database.sessionCall(operation, body) }
+    assertEquals(1uL, nextAttempt.await())
+    call.cancelAndJoin()
+    database.setRetryListener(null)
 }
 
 private suspend inline fun <reified Failure : Throwable> rejects(block: () -> Unit) {
@@ -111,7 +126,7 @@ class SessionGuardsTest {
             val credentials = CountedCredential()
             val first = open(http, credentials, path)
             http.offline = true
-            rejects<DbException.Network> { first.sessionCall("otp", OTP) }
+            cancelOnRetry(first, "otp", OTP)
             http.offline = false
 
             val restarted = open(http, credentials, path)
@@ -133,7 +148,7 @@ class SessionGuardsTest {
             val credentials = CountedCredential()
             val first = open(http, credentials, path)
             http.offline = true
-            rejects<DbException.Network> { first.sessionCall("logout", "{}") }
+            cancelOnRetry(first, "logout", "{}")
             http.offline = false
 
             val restarted = open(http, credentials, path)

@@ -76,7 +76,7 @@ async fn a_session_code_in_a_sealed_answer_is_a_typed_error_and_keeps_the_creden
 
 #[tokio::test]
 async fn a_code_outside_the_session_table_stays_a_graphql_error_in_the_response() {
-    for wire in ["INTERNAL_SERVER_ERROR", "BLOCKED"] {
+    for wire in ["BLOCKED"] {
         let rig = rig().await;
         rig.server.refuse_next(wire, true);
 

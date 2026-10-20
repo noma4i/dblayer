@@ -38,8 +38,8 @@ object DBlayer {
     lateinit var database: Database
     internal val databaseOrNull: Database? get() = if (::database.isInitialized) database else null
 
-    suspend fun serverConfig(encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null): ServerConfig =
-        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin))
+    suspend fun serverConfig(encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retryListener: RetryListener? = null): ServerConfig =
+        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retryListener)
 
     fun open(
         endpoint: String? = null,

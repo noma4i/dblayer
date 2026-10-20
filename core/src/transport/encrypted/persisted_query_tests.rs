@@ -156,7 +156,7 @@ async fn a_restart_between_the_miss_and_the_answer_to_the_second_send_resumes_th
         }
     });
 
-    assert!(rig.transport().mutate(request(WRITE)).await.is_err());
+    super::client_tests::cancel_pending(rig.transport().mutate(request(WRITE)));
     assert_eq!(rig.pending_sequence(), Some(3));
     let answer = rig.client().resume().await.unwrap().unwrap();
 

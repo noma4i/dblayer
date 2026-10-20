@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `RetryListener.retrying(attempt, delayMs, reason)` reports encrypted HTTP retries in Swift and Kotlin.
+- `Database.setRetryListener` installs or removes the listener. Bootstrap accepts `retryListener` before a database exists.
+
+### Changed
+- Encrypted bootstrap, reads, session calls, mutations and resume wait through network errors, timeouts, HTTP 408, 429 and 5xx.
+- `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR` retry without an attempt limit.
+- Delays double from 1 second to 30 seconds with 20% jitter. Applications no longer need separate startup retries.
+- A confirmed temporary refusal spends its sequence before the operation repeats with a new requestId and sequence.
+- An unconfirmed attempt preserves Pending. Cancelling the caller stops HTTP and backoff, leaving Pending available for resume.
+- Swift generation connects Task cancellation for bootstrap, `sessionCall` and `sessionResume` to UniFFI, with serialized cancel/free of future handles.
+- Other Swift async calls keep their existing cancellation behavior because non-throwing UniFFI methods cannot throw cancellation safely.
+- Kotlin encrypted HTTP uses 30-second call/read timeouts and a 10-second connect timeout.
+- Swift encrypted HTTP uses 30-second request/resource timeouts. URLSession has no separate connect timeout setting.
+
 ## 4.1.0 - 2026-10-21
 
 ### Added

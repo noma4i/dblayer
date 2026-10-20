@@ -12,8 +12,58 @@ import java.security.spec.*
 import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.spec.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CancellationException
+import java.net.SocketTimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 
 class BootstrapConfigTest {
+    @Test
+    fun coroutineCancellationReachesTheCoreAndCancelsForeignHttp() = bounded {
+        val started = CompletableDeferred<Unit>()
+        val stopped = CompletableDeferred<Throwable>()
+        val http = object : EncryptedHttp {
+            override suspend fun post(path: String, body: String): EncryptedReply {
+                started.complete(Unit)
+                try {
+                    awaitCancellation()
+                } catch (error: Throwable) {
+                    stopped.complete(error)
+                    throw error
+                }
+            }
+        }
+        val call = launch { DBlayer.serverConfig(encrypted(), AppPlatform.ANDROID, "1.2", http = http) }
+        started.await()
+        call.cancelAndJoin()
+        assertTrue(stopped.await() is CancellationException)
+    }
+
+    @Test
+    fun bootstrapTimeoutWaitsForCancellationAndReportsTheAttempt() = bounded {
+        val calls = AtomicInteger()
+        val event = CompletableDeferred<Triple<ULong, ULong, String>>()
+        val http = object : EncryptedHttp {
+            override suspend fun post(path: String, body: String): EncryptedReply {
+                calls.incrementAndGet()
+                throw classifyEncryptedHttpFailure(SocketTimeoutException("timeout"))
+            }
+        }
+        val listener = object : RetryListener {
+            override fun retrying(attempt: ULong, delayMs: ULong, reason: String) { event.complete(Triple(attempt, delayMs, reason)) }
+        }
+        val call = launch { DBlayer.serverConfig(encrypted(), AppPlatform.ANDROID, "1.2", http = http, retryListener = listener) }
+        val (attempt, delay, reason) = event.await()
+        assertEquals(1uL, attempt)
+        assertTrue(delay in 800uL..1000uL)
+        assertEquals("network", reason)
+        call.cancelAndJoin()
+        assertEquals(1, calls.get())
+    }
+
     private val kat = Json.parseToJsonElement(File("../fixtures/bootstrap-config/bootstrap_kat.json").readText()).jsonObject
     private fun JsonObject.text(key: String) = getValue(key).jsonPrimitive.content
     private fun decode(text: String) = Base64.getUrlDecoder().decode(text)
@@ -71,13 +121,13 @@ class BootstrapConfigTest {
     @Test
     fun configBeforeDatabaseUsesTheCoreAndPreservesEveryOutcome() = bounded {
         for (platform in listOf(AppPlatform.IOS, AppPlatform.ANDROID)) {
-            for (kind in listOf("ok", "tamper", "request", "format", "service", "pin")) {
+            for (kind in listOf("ok", "tamper", "request", "format", "http", "pin")) {
                 var calls = 0
                 val http = object : EncryptedHttp {
                     override suspend fun post(path: String, body: String): EncryptedReply {
                         calls++
                         assertEquals(kat.text("path"), path)
-                        return if (kind == "service") EncryptedReply(503u, "") else EncryptedReply(200u, answer(body, kind))
+                        return if (kind == "http") EncryptedReply(400u, "") else EncryptedReply(200u, answer(body, kind))
                     }
                 }
                 val config = encrypted().let { if (kind == "pin") it.copy(pin = "wrong") else it }
@@ -95,7 +145,7 @@ class BootstrapConfigTest {
                         "tamper" -> assertEquals(SecurityCode.RESPONSE_AUTHENTICATION, (error as DbException.Security).code)
                         "request" -> assertEquals(ConfigCode.INVALID_REQUEST, (error as DbException.Config).code)
                         "format" -> assertEquals(ConfigCode.UNSUPPORTED_VERSION, (error as DbException.Config).code)
-                        "service" -> assertEquals(503.toUShort(), (error as DbException.Http).status)
+                        "http" -> assertEquals(400.toUShort(), (error as DbException.Http).status)
                         else -> throw error
                     }
                     assertSame(error, classifyEncryptedHttpFailure(error))

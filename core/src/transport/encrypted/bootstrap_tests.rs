@@ -17,7 +17,7 @@ struct ConfiguredPath;
 impl HttpExchange for ConfiguredPath {
     async fn post(&self, path: &str, _: String) -> Result<HttpReply, TransportError> {
         assert_eq!(path, "/custom/bootstrap");
-        Ok(HttpReply { status: 503, body: String::new() })
+        Ok(HttpReply { status: 400, body: String::new() })
     }
 }
 
@@ -26,7 +26,7 @@ async fn sends_bootstrap_to_the_application_path() {
     let mut config = configuration();
     config.endpoints.bootstrap = "/custom/bootstrap".into();
     let result = fetch_with(&config, AppPlatform::Ios, "1.2", None, Arc::new(ConfiguredPath), &ManualClock::new(Duration::from_secs(1))).await;
-    assert!(matches!(result, Err(TransportError::Http { status: 503, .. })));
+    assert!(matches!(result, Err(TransportError::Http { status: 400, .. })));
 }
 fn text<'a>(value: &'a Value, key: &str) -> &'a str { value[key].as_str().unwrap() }
 fn configuration() -> EncryptedConfig {
@@ -114,6 +114,34 @@ fn future_fields_are_accepted_and_invalid_config_is_typed() {
 }
 
 struct Http { calls: AtomicUsize, status: u16 }
+
+struct Reconnecting { calls: AtomicUsize, ids: std::sync::Mutex<Vec<String>>, fault: &'static str }
+#[async_trait::async_trait]
+impl HttpExchange for Reconnecting {
+    async fn post(&self, path: &str, token: String) -> Result<HttpReply, TransportError> {
+        let plain: Value = serde_json::from_str(&decrypt_request(&token)).unwrap();
+        self.ids.lock().unwrap().push(text(&plain, "requestId").into());
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            if self.fault == "network" { return Err(TransportError::Network("timeout".into())); }
+            if let Ok(status) = self.fault.parse() { return Ok(HttpReply { status, body: String::new() }); }
+            let response = json!({"requestId": plain["requestId"], "requestDigest": request_digest(&plain), "sequence": null, "body": {"error": self.fault}});
+            return Ok(HttpReply { status: 200, body: seal(&response, text(&plain, "responseKey")) });
+        }
+        Http { calls: AtomicUsize::new(0), status: 200 }.post(path, token).await
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn bootstrap_retries_with_a_new_request_id() {
+  for fault in ["network", "408", "429", "500", "503", "599", "TIMEOUT", "SERVICE_UNAVAILABLE", "INTERNAL_SERVER_ERROR", "DATABASE_ERROR"] {
+    let http = Arc::new(Reconnecting { calls: AtomicUsize::new(0), ids: std::sync::Mutex::new(Vec::new()), fault });
+    let result = fetch_with(&configuration(), AppPlatform::Ios, "1.2", None, http.clone(), &ManualClock::new(Duration::from_secs(1_800_000_000))).await;
+    assert!(result.is_ok(), "{result:?}");
+    let ids = http.ids.lock().unwrap();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1]);
+  }
+}
 #[async_trait::async_trait]
 impl HttpExchange for Http {
     async fn post(&self, path: &str, token: String) -> Result<HttpReply, TransportError> {
@@ -146,7 +174,7 @@ async fn fetch_needs_no_database_validates_before_http_and_distinguishes_service
         assert!(fetch_with(&configuration(), platform, "1.2", None, http.clone(), &clock).await.is_ok());
     }
     assert_eq!(http.calls.load(Ordering::SeqCst), 2);
-    for status in [400, 413, 503] {
+    for status in [400, 413] {
         let http = Arc::new(Http { calls: AtomicUsize::new(0), status });
         assert!(matches!(fetch_with(&configuration(), AppPlatform::Ios, "1.2.3", None, http, &clock).await, Err(TransportError::Http { status: actual, .. }) if status == actual));
     }

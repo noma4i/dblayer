@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use crate::sync::SyncError;
 use crate::transport::{self as core, EncryptedClient, EncryptedConfig, EncryptedTransport, ServerConfig, SessionCode};
-use super::database::{executor, Database, Wiring};
+use super::database::{cancellable, Database, Wiring};
 use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
 
@@ -98,18 +98,23 @@ pub(super) fn wire(
 
 #[uniffi::export]
 impl Database {
+    pub fn set_retry_listener(&self, listener: Option<Arc<dyn core::RetryListener>>) -> Result<(), DbError> {
+        self.session()?.set_retry_listener(listener);
+        Ok(())
+    }
+
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
         let client = self.session()?.clone();
         if !client.has_session_operation(&operation) { return Err(DbError::Invalid { detail: format!("unknown session operation {operation}") }); }
         let body = serde_json::from_str::<Value>(&body_json)?;
-        let answer = executor()?.spawn(async move { client.session_call(&operation, body).await }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(typed)?;
+        let answer = cancellable(async move { client.session_call(&operation, body).await }).await?.map_err(typed)?;
         Ok(refused(answer)?.body.to_string())
     }
 
     pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
         let client = self.session()?.clone();
         let sync = self.sync.clone();
-        executor()?.spawn(resume(client, sync)).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
+        cancellable(resume(client, sync)).await?
     }
 
     pub fn session_reset(&self) -> Result<(), DbError> {
@@ -124,8 +129,10 @@ impl Database {
 }
 
 #[uniffi::export]
-pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>) -> Result<ServerConfig, DbError> {
-    executor()?.spawn(async move {
-        core::encrypted::bootstrap::fetch_with(&encrypted, platform, &version, build.as_deref(), Arc::new(ForeignHttp(http)), &crate::pacing::SystemClock).await.map_err(typed)
-    }).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
+pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retry_listener: Option<Arc<dyn core::RetryListener>>) -> Result<ServerConfig, DbError> {
+    cancellable(async move {
+        let events = core::retry::RetryEvents::default();
+        events.set(retry_listener);
+        core::encrypted::bootstrap::fetch(&encrypted, platform, &version, build.as_deref(), Arc::new(ForeignHttp(http)), &crate::pacing::SystemClock, &events).await.map_err(typed)
+    }).await?
 }

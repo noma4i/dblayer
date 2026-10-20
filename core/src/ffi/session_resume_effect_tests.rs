@@ -17,7 +17,7 @@ async fn a_permanently_refused_pending_owner_is_failed_by_resume() {
   for resume in [false, true] {
     let rig = Rig::new();
     let database = signed_in(&rig).await;
-    rig.server.status_next(if resume { 503 } else { 400 });
+    if resume { rig.server.interrupt_next_request(); } else { rig.server.status_next(400); }
     let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
     database.flush().await.unwrap();
     if resume {
@@ -75,7 +75,7 @@ async fn a_queued_create_whose_answer_was_lost_is_executed_once_by_resume_and_th
     database.session_call("social".into(), super::session_guards_tests::SOCIAL_BODY.into()).await.unwrap();
     rig.server.register("mutation MakeMoment { makeMoment { id text } }");
     rig.server.reply_with(serde_json::json!({ "makeMoment": { "id": "42", "text": "hello" } }));
-    rig.server.lose_next_answer();
+    rig.server.interrupt_next_answer();
     let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
 
     database.flush().await.unwrap();

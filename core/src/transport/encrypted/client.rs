@@ -12,6 +12,7 @@ use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
 use crate::pacing::Clock;
 use crate::transport::TransportError;
+use crate::transport::retry::{RetryClass, RetryEvents, Retrying};
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const REPLAYED: &str = "REPLAYED_REQUEST";
@@ -78,6 +79,7 @@ pub struct EncryptedClient {
     clock: Arc<dyn Clock>,
     credential: Mutex<Option<String>>,
     mutations: Gate<()>,
+    retry_events: RetryEvents,
 }
 
 pub(super) fn digest_of(credential: &str) -> String {
@@ -106,16 +108,30 @@ fn confirmed_error(body: &Value) -> Option<&str> {
     body.get("error").and_then(Value::as_str)
 }
 
+pub(super) fn temporary_error(body: &Value) -> Option<TransportError> {
+    let codes: Vec<_> = body.get("error").and_then(Value::as_str).into_iter().chain(
+        body.get("errors").and_then(Value::as_array).into_iter().flatten().filter_map(|error| error.get("extensions")?.get("code")?.as_str())
+    ).collect();
+    if codes.iter().any(|code| crate::transport::SessionCode::from_wire(code).is_some()) || RetryClass::classify(false, None, &codes) == RetryClass::Fatal { return None; }
+    Some(TransportError::Graphql { messages: codes.into_iter().map(str::to_string).collect(), extensions: None })
+}
+
 impl EncryptedClient {
     pub async fn session_call(&self, operation: &str, body: Value) -> Result<Answer, TransportError> {
         if operation == "logout" { return self.mutate(&self.config.endpoints.logout, body).await; }
         let operation = self.config.endpoints.session_operations.get(operation).ok_or_else(|| TransportError::Decode(format!("unknown session operation {operation}")))?;
         if !operation.sessionless { return self.mutate(&operation.path, body).await; }
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let response_key = random_token();
-        let token = self.request_token(None, &request_id, &response_key, &operation.path, &body)?;
-        self.post(&operation.path, token, &request_id, &response_key).await
+        let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events);
+        loop {
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let response_key = random_token();
+            let token = self.request_token(None, &request_id, &response_key, &operation.path, &body)?;
+            let result = self.post(&operation.path, token, &request_id, &response_key).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
+            match result { Ok(answer) => return Ok(answer), Err(error) => retry.failed(error).await? }
+        }
     }
+
+    pub fn set_retry_listener(&self, listener: Option<Arc<dyn crate::transport::RetryListener>>) { self.retry_events.set(listener); }
 
     pub fn has_session_operation(&self, operation: &str) -> bool {
         operation == "logout" || self.config.endpoints.session_operations.contains_key(operation)
@@ -134,7 +150,7 @@ impl EncryptedClient {
             return Err(TransportError::Decode(format!("the origin must be https, or http on a development host, without a path: {}", config.origin)));
         }
         let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Decode(error.to_string()))?;
-        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, credential: Mutex::new(None), mutations: Gate::new(()) })
+        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, credential: Mutex::new(None), mutations: Gate::new(()), retry_events: RetryEvents::default() })
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -219,14 +235,37 @@ impl EncryptedClient {
         self.request_token(Some(RequestSession { credential: credential.into(), sequence: Some(pending.sequence) }), &pending.request_id, &pending.response_key, &pending.path, &body)
     }
 
-    async fn settle(&self, pending: Pending, token: String) -> Result<Answer, TransportError> {
+    async fn settle(&self, mut pending: Pending, mut token: String) -> Result<Answer, TransportError> {
+      let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events);
+      loop {
         let answer = match self.post(&pending.path, token, &pending.request_id, &pending.response_key).await {
             Err(error) if permanently_refused(&error) => {
                 self.with_connection(state::drop_pending)?;
                 return Err(error);
             }
-            result => result?,
+            Err(error) => {
+                retry.failed(error).await?;
+                token = self.pending_token(&self.credential()?, &pending)?;
+                continue;
+            }
+            Ok(answer) => answer,
         };
+        if let Some(error) = temporary_error(&answer.body) {
+            if answer.sequence == Some(pending.sequence) {
+                let confirmed = pending.sequence;
+                pending.sequence += 1;
+                pending.request_id = uuid::Uuid::new_v4().to_string();
+                pending.response_key = random_token();
+                if let Err(error) = self.pending_token(&self.credential()?, &pending) {
+                    self.with_connection(|connection| state::commit(connection, confirmed))?;
+                    return Err(error);
+                }
+                self.with_connection(|connection| state::retry_confirmed(connection, &pending))?;
+            }
+            retry.failed(error).await?;
+            token = self.pending_token(&self.credential()?, &pending)?;
+            continue;
+        }
         if answer.sequence != Some(pending.sequence) {
             return Err(match confirmed_error(&answer.body) {
                 Some(code) => TransportError::refusal(code),
@@ -237,12 +276,17 @@ impl EncryptedClient {
             true => self.reset()?,
             false => self.with_connection(|connection| state::commit(connection, pending.sequence))?,
         }
-        Ok(answer)
+        return Ok(answer);
+      }
     }
 
     async fn exchange(&self, credential: &str, request_id: &str, response_key: &str, sequence: Option<i64>, path: &str, body: &Value) -> Result<Answer, TransportError> {
-        let token = self.request_token(Some(RequestSession { credential: credential.into(), sequence }), request_id, response_key, path, body)?;
-        self.post(path, token, request_id, response_key).await
+        let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events);
+        loop {
+            let token = self.request_token(Some(RequestSession { credential: credential.into(), sequence }), request_id, response_key, path, body)?;
+            let result = self.post(path, token, request_id, response_key).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
+            match result { Ok(answer) => return Ok(answer), Err(error) => retry.failed(error).await? }
+        }
     }
 
     fn request_token(&self, session: Option<RequestSession>, request_id: &str, response_key: &str, path: &str, body: &Value) -> Result<String, TransportError> {

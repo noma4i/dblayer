@@ -146,7 +146,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | `settled()`, `confirmedId()` and `answer()` of a row or an action that has a mutation | the queued mutation got the sealed refusal. `unauthenticated` and `accountUnavailable` keep the operation failed and the optimistic row in place, `error.kind` is `session:<CODE>` and `error.message` is the detail. Recover as in "Recover a queued mutation" below. Every other code follows the `onFailure` rule of the action, as for any refusal |
 | live reads (`live`, `LiveList`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
-`flush()` and `retry()` do not throw for the refusal of one operation. `sessionResume()` throws sealed refusals but returns `nil` / `null` for permanent HTTP refusals listed below. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. A refusal with a code outside the `SessionCode` table (for example `INTERNAL_SERVER_ERROR`) stays a `Graphql` error. Errors inside `data` and `errors` of a normal answer stay `Graphql` too.
+`flush()` and `retry()` do not throw for the refusal of one operation. `sessionResume()` throws sealed refusals but returns `nil` / `null` for permanent HTTP refusals listed below. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
 
 The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensions.code` also keep the optimistic row and the `Failed` operation.
 This applies to the GraphQL response and to the typed `Graphql` exception.
@@ -161,13 +161,15 @@ Recovery depends on the response and whether it confirms the sequence:
 | confirmed the sequence (`accountUnavailable`, `rateLimited`, every sign-in code) | spent, nothing is pending | fix the cause, then `retry`. The core sends the mutation as a new request |
 | did not confirm it, and the code is `unauthenticated`, `sessionEnded` or `sequenceConflict` | pending, and it blocks every other mutation, sign-in too | `sessionReset()`, sign in again, then `retry` |
 | HTTP 400, 404, 405, 413, 415, or 422 without a sealed answer | removed without advancing the sequence, the owner becomes `Failed` with a typed rejection | `sessionResume()` returns `nil` / `null`. Fix the cause before sending again |
-| lost connection or any other HTTP error status | pending | `sessionResume()`, `retry`, or the next `flush()` sends the identical request |
+| lost connection, timeout, HTTP 408, 429 or 5xx | pending | the current call automatically repeats the identical request |
+| any other HTTP error status | pending | fix the cause, then call `sessionResume()` or `retry` |
 | stored request whose path is now declared sessionless | removed without sending or advancing the sequence | `sessionResume()` returns `nil` / `null` |
 
 The permanent statuses apply to the first send and every repeat through the same settlement code.
 The first send still throws its HTTP error. A second resume sends nothing after removal.
 The server refuses these requests before consuming their sequence, so the next request reuses that sequence.
-HTTP 401, 403, 407, 408, 418, 425, 429, other unlisted statuses, and 5xx remain retryable with pending preserved.
+HTTP 408, 429 and 5xx retry automatically with pending preserved.
+HTTP 401, 403, 407, 418, 425 and other unlisted statuses return immediately with pending preserved.
 Bare HTTP 401 and 403 remain HTTP errors and are not converted to `SessionCode`.
 Opening the database does not call `sessionResume()`. The application calls it explicitly.
 
@@ -295,9 +297,10 @@ Unknown fields are accepted. Unsupported configVersion and wrong field types hav
 
 | Result | Swift / Kotlin outcome |
 | ------ | ---------------------- |
-| Offline or timeout | Network |
-| Cancellation | Interrupted |
-| HTTP 400, 413 or 503 | Http, retry without inferring a verified cause |
+| Offline or timeout | waits and retries until success or cancellation |
+| Task or coroutine cancellation | Swift CancellationError or Kotlin CancellationException |
+| HTTP 408, 429 or 5xx | waits and retries until success or cancellation |
+| Other HTTP errors | Http, without an automatic retry |
 | Wrong bundled pin | Security with ServerKeyMismatch, 0 HTTP |
 | Invalid JWE, key, requestId or digest | Security with ResponseAuthentication |
 | TLS trust failure | Security with TlsTrust |
@@ -306,6 +309,47 @@ Unknown fields are accepted. Unsupported configVersion and wrong field types hav
 | Unknown configVersion | Config with UnsupportedVersion |
 
 The classifiers preserve typed errors. Config failures do not clear credentials, reset sessions or enable entry from cached data.
+
+### Automatic encrypted HTTP retries
+
+Bootstrap, reads, sessionless calls, numbered mutations, logout and resume use the same retry classification.
+Network errors, timeouts, HTTP 408, 429 and 5xx retry without an attempt limit.
+The codes `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR` also retry.
+The delay ceilings are 1, 2, 4, 8, 16 and 30 seconds, then 30 seconds for subsequent attempts.
+Each request gets an independent random seed. Jitter subtracts up to 20% from each delay.
+No timer runs without a failed request awaiting another attempt.
+Applications await the original call and use its cancellation instead of adding their own startup retry loop.
+Retries cover HTTP exchange failures. Local Pending conflicts, credential storage failures and SQLite failures still return immediately without retrying.
+
+Security, Config, unsupported versions, invalid origins, RequestTooLarge and Session refusals return immediately.
+HTTP 400, 404, 405, 413, 415 and 422 remain permanent refusals.
+Bare HTTP 401 and 403 keep their existing immediate errors.
+Malformed or unauthenticated encrypted responses also return immediately.
+
+Bootstrap seals a new requestId and response key on every attempt.
+Numbered requests keep the same Pending requestId, response key, sequence, path, owner and body after an unconfirmed failure.
+Each attempt refreshes issuedAt and seals the request again. The mutation lock stays held across backoff and HTTP.
+A confirmed temporary refusal atomically commits the confirmed sequence and stores the next Pending with a new requestId and response key.
+The next attempt uses that new sequence and the same operation body.
+Cancellation preserves Pending for `sessionResume()` and never advances an unconfirmed sequence.
+Dropping the Rust future stops the request and its backoff.
+Swift Task and Kotlin coroutine cancellation also stop bootstrap, `sessionCall` and `sessionResume`.
+The Swift generator connects these calls to UniFFI cancellation and serializes cancel/free of each native future handle.
+Other Swift async calls keep their existing cancellation behavior.
+UniFFI generates non-throwing `current`, `cableNext` and `cableClose` with `try!`, so cancelling every async call would crash those methods.
+
+`Database.setRetryListener(listener:)` in Swift and `Database.setRetryListener(listener)` in Kotlin install the same optional `RetryListener`.
+Pass `nil` or `null` to remove it.
+`DB.serverConfig` and `DBlayer.serverConfig` also accept `retryListener`, because bootstrap runs before open.
+The callback `retrying(attempt, delayMs, reason)` runs after each temporary failure and before sleeping.
+`attempt` starts at 1 for each call. `delayMs` is the actual jittered delay until the next attempt.
+`reason` is `network`, `HTTP <status>` or the temporary error code. It contains no request payload.
+The callback runs on a library thread. Dispatch UI changes to the application's UI thread.
+Without a listener, retries behave identically. Completing or cancelling the awaited call ends its connecting indication.
+
+Kotlin `OkHttpEncryptedHttp` sets call and read timeouts to 30 seconds and connect timeout to 10 seconds.
+Swift `UrlSessionEncryptedHttp` sets request and resource timeouts to 30 seconds, including when given a custom session.
+URLSession does not expose an independent connect timeout, so Swift has no separate 10-second connect setting.
 
 Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]` is accepted only for development hosts: the name `localhost`, a name that ends with the label `.local`, and the IP literals of loopback (`127.0.0.0/8`, `::1`), private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`). The core parses the host strictly: decimal, hex and octal address forms, trailing dots, user info, paths, queries and fragments are refused. The request audience stays the origin you gave. The JWE protects the payload over http, but the transport is not protected, so use http for development only. Production origins use https.
 
@@ -338,7 +382,7 @@ Rules of the session:
 - While a request is pending, a different mutation fails with a network error and sends nothing. `sessionResume()` sends the pending request and returns its answer. When a queued operation owns the request, the answer also closes that operation.
 - A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
 - A credential with no matching session state (for example a restored Keychain with a new database file) is replaced by a new credential. The next call is unauthenticated.
-- Errors: `503` is a retryable HTTP error, `400` means a bad request or a device clock more than 2 minutes behind or 30 seconds ahead of the server. A lost connection is a network error.
+- HTTP 503 and a lost connection wait for automatic retry. HTTP 400 returns immediately.
 
 The JWE size is checked before the pending row is saved and before the HTTP send.
 If the size exceeds 256 KiB, Swift gets `DbError.RequestTooLarge(size:limit:)` and Kotlin gets `DbException.RequestTooLarge` with the fields `size` and `limit`.
@@ -346,7 +390,7 @@ This local refusal does not change the sequence of the existing session and crea
 The next short request is sent without `sessionReset()`.
 The check applies to reads, `sessionCall`, logout and the repeated APQ request with the full document.
 On an APQ miss, the hash-only request already confirmed its sequence. A local refusal of the full document does not use the next sequence.
-A real HTTP 413 stays `Http` and keeps the pending row, like other unconfirmed HTTP responses.
+A real HTTP 413 returns `Http` and removes Pending without spending its sequence.
 
 ### Retry of upload steps
 
