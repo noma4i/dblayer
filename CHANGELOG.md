@@ -8,6 +8,7 @@
 - `Database.setRetryListener` installs or removes the listener. Bootstrap accepts `retryListener` before a database exists.
 
 ### Changed
+- Allow R8 to shrink ordinary Kotlin types while preserving JNA reflection.
 - Reduce native release package size with one codegen unit and symbol stripping.
 - Remove the x86_64 simulator slice from default iOS builds.
 - Build only ARM Android libraries by default. Require `--abis` for x86 development libraries.

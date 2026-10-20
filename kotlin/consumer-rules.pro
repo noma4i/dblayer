@@ -1,4 +1,13 @@
 -dontwarn java.awt.**
--keep class com.sun.jna.** { *; }
--keepclassmembers class * extends com.sun.jna.** { public *; }
--keep class com.noma4i.dblayer.** { *; }
+-keep class com.sun.jna.* { *; }
+-keepattributes RuntimeVisibleAnnotations
+-keep class com.noma4i.dblayer.** extends com.sun.jna.Structure {
+    public <fields>;
+    public <init>(...);
+}
+-keep class com.noma4i.dblayer.** implements com.sun.jna.Callback {
+    public <methods>;
+}
+-keepclassmembers class com.noma4i.dblayer.** {
+    native <methods>;
+}

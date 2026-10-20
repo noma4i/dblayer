@@ -57,6 +57,7 @@ Typical scenarios to cover:
 | ----- | ------- |
 | Rust core and generator | `cargo test` |
 | Everything, including Swift and Kotlin | `bash scripts/check_dblayer.sh` |
+| Android R8 release and optimized JVM FFI calls | `gradle -p kotlin/r8-check probe` |
 | Touched directories only | `bash scripts/check_dblayer.sh --fast` |
 | Every invariant has a test with an assertion | `bash scripts/check_invariants.sh` |
 | Check scripts leave unrelated processes alone | `bash scripts/check_bounded.sh --selftest` |
@@ -66,6 +67,15 @@ Typical scenarios to cover:
 | No cable line that no test runs | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
 
 The coverage reports cost time: the Swift lane with coverage takes about the same as without, the Kotlin lane roughly doubles because of the coverage report task. The rule covers the cable code only. The Swift lane counts with atomic profile counters, because plain counters lose increments when suites run in parallel and report an executed line as never run.
+
+The R8 check uses the generated Kotlin bindings. Run `bash scripts/build_kotlin.sh --host` first when running it separately.
+It builds a minimal Android release application with minification enabled and the package's consumer rules.
+It also runs optimized JVM bytecode against the host Rust library, checking structures, callbacks, records, enums and errors.
+Both mappings must rename `Config`, which rejects a package-wide keep rule.
+Use `-Prules=/absolute/path/to/rules.pro` to check a changed rule file.
+Android device execution remains a separate check.
+See [Android R8 checks](android-r8.md) for the rules, mutation results and measured DEX sizes.
+The [release profile and keep-rules report](release-profile-keep-report.md) records the combined checks and artifact sizes.
 
 Test conventions:
 

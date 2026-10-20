@@ -1,0 +1,2 @@
+-keep class com.noma4i.dblayer.R8ProbeKt { public static void main(java.lang.String[]); }
+-keepattributes RuntimeVisibleAnnotations
