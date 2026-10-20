@@ -3,10 +3,14 @@
 ## Unreleased
 
 ### Added
+- Add iOS `--device` and Android `--release` build modes for CI.
 - `RetryListener.retrying(attempt, delayMs, reason)` reports encrypted HTTP retries in Swift and Kotlin.
 - `Database.setRetryListener` installs or removes the listener. Bootstrap accepts `retryListener` before a database exists.
 
 ### Changed
+- Remove the x86_64 simulator slice from default iOS builds.
+- Build only ARM Android libraries by default. Require `--abis` for x86 development libraries.
+- Generate bindings from target libraries without building an unused host dynamic library.
 - Encrypted bootstrap, reads, session calls, mutations and resume wait through network errors, timeouts, HTTP 408, 429 and 5xx.
 - `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR` retry without an attempt limit.
 - Delays double from 1 second to 30 seconds with 20% jitter. Applications no longer need separate startup retries.

@@ -1,27 +1,42 @@
 #!/usr/bin/env bash
-# build_kotlin.sh [--host | --abis]: --host builds the debug library and the Kotlin bindings (what the unit tests
-# load through JNA), --abis builds the 4 Android libraries. No argument does both.
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+module="$root/kotlin"
+part="${1:---release}"
+abis=(arm64-v8a armeabi-v7a x86_64 x86)
+[ "$#" -le 1 ] || { echo "usage: build_kotlin.sh [--host | --abis | --release]" >&2; exit 2; }
+case "$part" in
+  --host | --abis) ;;
+  --release) abis=(arm64-v8a armeabi-v7a) ;;
+  *) echo "usage: build_kotlin.sh [--host | --abis | --release]" >&2; exit 2 ;;
+esac
+if [ "${DBLAYER_BUILD_TARGETS_ONLY:-0}" = 1 ]; then
+  if [ "$part" = --host ]; then printf '%s\n' host; else printf '%s\n' "${abis[@]}"; fi
+  exit 0
+fi
+
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(sysctl -n hw.ncpu)}" RUST_TEST_THREADS="${RUST_TEST_THREADS:-$(sysctl -n hw.ncpu)}"
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$HOME"/Library/Android/sdk/ndk/* | sort -V | tail -1)}"
-module="$root/kotlin"
-part="${1:-all}"
-case "$part" in --host | --abis | all) ;; *) echo "usage: build_kotlin.sh [--host | --abis]" >&2; exit 2 ;; esac
 
-if [ "$part" != --abis ]; then
+if [ "$part" = --host ]; then
   cargo build --manifest-path "$root/core/Cargo.toml" --features cli
-  rm -rf "$module/src/main/kotlin/com/noma4i/dblayer/dblayer.kt"
-  (cd -- "$root/core" && "$root/target/debug/uniffi-bindgen" generate \
-    --library "$root/target/debug/libdblayer.dylib" --language kotlin --no-format \
-    --out-dir "$module/src/main/kotlin")
+  library="$root/target/debug/libdblayer.dylib"
+else
+  bash "$root/scripts/build_bindgen.sh"
 fi
 
 if [ "$part" != --host ]; then
-  (cd -- "$root/core" && cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 \
+  arguments=()
+  for abi in "${abis[@]}"; do arguments+=(-t "$abi"); done
+  rm -rf "$module/src/main/jniLibs"
+  (cd -- "$root/core" && cargo ndk "${arguments[@]}" \
     -o "$module/src/main/jniLibs" build --release)
   bash "$root/scripts/android_source_hash.sh" > "$module/src/main/jniLibs/SOURCE_HASH"
-  printf '%s\n' "$module"/src/main/jniLibs/{arm64-v8a,armeabi-v7a,x86,x86_64}/libdblayer.so
+  for abi in "${abis[@]}"; do printf '%s\n' "$module/src/main/jniLibs/$abi/libdblayer.so"; done
+  library="$module/src/main/jniLibs/arm64-v8a/libdblayer.so"
 fi
+
+(cd -- "$root/core" && "$root/target/debug/uniffi-bindgen" generate \
+  --library "$library" --language kotlin --no-format --out-dir "$module/src/main/kotlin")

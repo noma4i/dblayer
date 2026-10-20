@@ -5,7 +5,7 @@
 | Tool | Why |
 | ---- | --- |
 | Xcode (iOS 17+, macOS 14+) | Swift package and iOS simulator build |
-| Homebrew `rustup` with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`, `aarch64-apple-darwin`, `aarch64-linux-android`, `x86_64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android` | Rust core for every platform |
+| Homebrew `rustup` with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `aarch64-apple-darwin`, `aarch64-linux-android`, `x86_64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android` | Rust core for every platform |
 | `cargo-ndk` and Android NDK | Android libraries |
 | JDK 17 and Gradle 9 | Kotlin module |
 
@@ -21,7 +21,7 @@ export PATH=/opt/homebrew/opt/rustup/bin:$PATH
 bash scripts/check_dblayer.sh
 ```
 
-It runs the cheap checks first (generated models, duplicate mechanisms, docs, invariants and their self test) and stops there on a failure. Then 4 lanes run one after another (never 2 build slot commands at once, the first red lane stops the run): Rust tests, Swift tests on the macOS and arm64 simulator slices with an iOS simulator compile, Kotlin unit tests, and the ship lane (Android libraries for 4 ABIs, compile check of the iOS device and x86_64 simulator targets). Every step has a time limit and its process group is killed past it.
+It runs cheap checks first, including build modes, and stops on failure. Build commands run sequentially: Rust, Swift, Kotlin, then Android release libraries and an iOS device compile check. Android release builds contain arm64-v8a and armeabi-v7a. Swift tests use macOS and arm64 simulator slices. Every step has a time limit.
 
 `specs/` is not in git: the invariants check reads `specs/invariants.md` of the main tree, or the file named by `SPEC=<file>`. The summary line counts CPU seconds of waited children plus the CPU of the processes below a java process (the single-use Gradle daemon and its test executors).
 
@@ -32,8 +32,13 @@ Single steps:
 | Command | Does |
 | ------- | ---- |
 | `cargo test` | Rust core and generator tests |
-| `bash scripts/build_ios.sh` | Builds `swift/DBlayerFFI.xcframework` (the simulator slice holds arm64 and x86_64) and generates the Swift bindings |
-| `bash scripts/build_kotlin.sh` | Builds `libdblayer.so` for 4 ABIs and generates the Kotlin bindings |
+| `bash scripts/build_ios.sh` | Builds macOS, iOS device and arm64 simulator slices, and generates Swift bindings. No x86_64 simulator slice |
+| `bash scripts/build_ios.sh --device` | CI: builds only the iOS device release slice and Swift bindings |
+| `bash scripts/build_ios.sh --check` | Builds macOS and arm64 simulator release slices for checks |
+| `bash scripts/build_kotlin.sh --release` | CI: builds arm64-v8a and armeabi-v7a release libraries and Kotlin bindings. This is also the default |
+| `bash scripts/build_kotlin.sh --abis` | Local development: explicitly builds all 4 Android ABIs and Kotlin bindings |
+| `bash scripts/build_kotlin.sh --host` | Builds the host debug library and Kotlin bindings for JNA unit tests |
+| `bash scripts/check_android_artifacts.sh --release` | Checks release ABI files and source hash. Use `--abis` to check all 4 ABIs |
 | `bash scripts/check_zoo.sh` | Finds duplicate mechanisms and names (see [architecture](architecture.md)) |
 | `bash scripts/check_docs.sh` | Checks that paths mentioned in README and docs exist |
 | `bash scripts/reclaim_target.sh` | Removes the build output of `dblayer` and `dblayer-gen` from `target` and prints its size before and after. Refuses while `cargo` runs |

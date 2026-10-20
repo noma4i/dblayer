@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# The whole DBlayer check. Cheap checks run first, then the cargo, swift, kotlin and android lanes one after another: the check
-# holds one build slot command at a time and the first red lane stops the run.
-# Every step has a time limit and its process group is killed past it. --fast runs the cheap lane plus the lanes of
-# the touched paths. --list prints the steps. --only <lane> runs one lane.
+# Cheap checks precede sequential builds, each with a time limit.
 set -uo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -12,13 +9,13 @@ gradle="${GRADLE:-$(ls -d "$HOME"/.gradle/wrapper/dists/gradle-9.*-bin/*/gradle-
 slot="$HOME/.claude/bin/build-slot -- bash $root/scripts/check_bounded.sh {limit}"
 [ -x "$HOME/.claude/bin/build-slot" ] || slot="bash $root/scripts/check_bounded.sh {limit}"
 
-# shellcheck source=check_steps.sh
 source "$root/scripts/check_steps.sh"
 
 steps=(
   "cheap|fixtures|120|*|bash scripts/gen_fixtures.sh --check"
   "cheap|zoo|120|*|bash scripts/check_zoo.sh"
   "cheap|protocol-config|120|*|bash scripts/check_protocol_config.sh && bash scripts/check_protocol_config.sh --selftest"
+  "cheap|build-modes|120|*|bash scripts/check_build_modes.sh"
   "cheap|docs|120|*|bash scripts/check_docs.sh"
   "cheap|invariants|120|*|bash scripts/check_invariants.sh"
   "cheap|invariants-selftest|120|*|bash scripts/check_invariants_selftest.sh"
@@ -33,8 +30,8 @@ steps=(
   "kotlin|kotlin-bindings|600|kotlin/|$slot bash-step bash scripts/build_kotlin.sh --host"
   "kotlin|gradle-test|900|kotlin/|$slot gradle-step $gradle -p kotlin testDebugUnitTest --rerun createDebugUnitTestCoverageReport --console=plain --no-watch-fs -Dorg.gradle.daemon.idletimeout=600000 -Dorg.gradle.jvmargs=\"-Xmx1g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -XX:ErrorFile=/tmp/check-owner-\$CHECK_OWNER_ID-%p.log\" -Pkotlin.compiler.execution.strategy=in-process"
   "final|coverage|120|-|bash scripts/check_coverage.sh"
-  "ship|android-abis|900|-|$slot bash-step bash scripts/build_kotlin.sh --abis && bash scripts/check_android_artifacts.sh"
-  "ship|ios-device-check|600|-|$slot ios-check bash -c 'cargo check --manifest-path core/Cargo.toml --target aarch64-apple-ios && cargo check --manifest-path core/Cargo.toml --target x86_64-apple-ios'"
+  "ship|android-abis|900|-|$slot bash-step bash scripts/build_kotlin.sh --release && bash scripts/check_android_artifacts.sh --release"
+  "ship|ios-device-check|600|-|$slot ios-check cargo check --manifest-path core/Cargo.toml --target aarch64-apple-ios"
 )
 
 run_checks "$@"
