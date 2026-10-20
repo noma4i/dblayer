@@ -33,7 +33,7 @@ class ScalarParamTest {
         val transport = MockTransport()
         transport.enqueue("chatMedia", """{"data":{"chatMedia":{"visualCount":3,"audioCount":1,"giftCount":0,"latestSequence":120}}}""")
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"chatMedia","document":"query chatMedia(\${'$'}chatId: ID!, \${'$'}upToSequence: Int) { chatMedia(chatId: \${'$'}chatId, upToSequence: \${'$'}upToSequence) { visualCount audioCount giftCount latestSequence } }"}]""")
+        DBlayer.database.registerOperations("""[{"name":"chatMedia","document":"query chatMedia(${'$'}chatId: ID!, ${'$'}upToSequence: Int) { chatMedia(chatId: ${'$'}chatId, upToSequence: ${'$'}upToSequence) { visualCount audioCount giftCount latestSequence } }"}]""")
         val result = withTimeout(5000) { Operations.chatMediaLoad(chatId = "c1", upToSequence = 120) }
         assertEquals(3L, result.visualCount)
         assertEquals(120L, result.latestSequence)
