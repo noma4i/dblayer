@@ -583,6 +583,26 @@ val urls = found.mapNotNull { it.url }
 
 `list` needs a `result` line.
 
+An aggregate that is not a row of a model, such as the counters of a chat library, is an operation without a model. The call returns the fields as a value and writes no row. When the answer nests the aggregate under `node(id:)`, declare the nested field in `result`:
+
+```ruby
+operation :chat_media_state do
+  query "chatMediaState"
+  args chatId: :id, upToSequence: :int?
+  result mediaLibrary: { visualCount: :int, audioCount: :int, giftCount: :int, latestSequence: :int }
+end
+```
+
+```swift
+let state = try await Operations.chatMediaState(chatId: "c1", upToSequence: 120)
+let visual = state.mediaLibrary?.visualCount
+```
+
+```kotlin
+val state = Operations.chatMediaState(chatId = "c1", upToSequence = 120)
+val visual = state.mediaLibrary?.visualCount
+```
+
 An operation that takes a schema input object:
 
 ```ruby

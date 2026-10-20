@@ -60,6 +60,7 @@ enum Want {
     TypeName,
     Symbols,
     TextParams,
+    TypedParams,
     Hash,
     Duration,
     Policy,
@@ -141,7 +142,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
     let free = || Some(Word { shape: Shape::Nothing, keys: vec![], block: false, free_keys: true });
     match (context, word) {
         (Context::Model, "schema") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
-        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("text", Want::TextParams, false), key("defaults", Want::Hash, false), key("order", Want::Hash, false), key("joins", Want::Symbol, false), key("order_stable", Want::Bool, false), key("node", Want::Symbol, false)], block: true, free_keys: false }),
+        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("text", Want::TextParams, false), key("typed", Want::TypedParams, false), key("defaults", Want::Hash, false), key("order", Want::Hash, false), key("joins", Want::Symbol, false), key("order_stable", Want::Bool, false), key("node", Want::Symbol, false)], block: true, free_keys: false }),
         (Context::Model, "action") => Some(Word { shape: Shape::Name, keys: vec![key("mutation", Want::Operation, false), key("optimistic", Want::Hash, false)], block: true, free_keys: false }),
         (Context::Model, "create" | "update") => {
             plain(
@@ -851,6 +852,7 @@ fn check_value(pair: &Pair, want: Want, report: &mut impl FnMut(usize, usize, St
         }
         Want::Symbols if !is_symbol_list(value) => format!("`{key}` must be a list of symbols"),
         Want::TextParams if !is_text_params(value) => format!("`{key}` must be a list of names like `[:query]` or typed names like `[list: :ChatList]`"),
+        Want::TypedParams if !is_typed_params(value) => format!("`{key}` must be a list of typed names like `[afterSequence: :int, includeGifts: :bool]`"),
         Want::Hash if !matches!(value, Value::Hash(_)) => format!("`{key}` must be a hash like `{{ field: :param }}`"),
         Want::Duration if !matches!(value, Value::Duration { .. }) => format!("`{key}` must be a duration like `5.minutes`"),
         Want::Policy if !matches!(value, Value::Symbol(name) if is_policy(name)) => format!("`{key}` must be `:keep` or `:rollback`"),
@@ -871,6 +873,13 @@ fn is_merge(value: &Value) -> bool {
 
 fn is_policy(name: &str) -> bool {
     matches!(name, "keep" | "rollback")
+}
+
+fn is_typed_params(value: &Value) -> bool {
+    match value {
+        Value::Array(items) => !items.is_empty() && items.iter().all(|item| matches!(&item.item, Value::Hash(pairs) if pairs.iter().all(|pair| matches!(&pair.value.item, Value::Symbol(kind) if matches!(kind.as_str(), "int" | "bool"))))),
+        _ => false,
+    }
 }
 
 fn is_text_params(value: &Value) -> bool {

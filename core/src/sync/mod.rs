@@ -194,6 +194,8 @@ pub(crate) mod stable_order;
 #[cfg(test)]
 mod load_more_tests;
 #[cfg(test)]
+mod scalar_params_tests;
+#[cfg(test)]
 mod load_tests;
 #[cfg(test)]
 mod merge_tests;

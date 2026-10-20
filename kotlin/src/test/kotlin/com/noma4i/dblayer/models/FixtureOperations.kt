@@ -318,6 +318,14 @@ data class WidgetsSendResult(
     val id: String? = null,
 )
 
+@Serializable
+data class ChatMediaLoadResult(
+    val visualCount: Long? = null,
+    val audioCount: Long? = null,
+    val giftCount: Long? = null,
+    val latestSequence: Long? = null,
+)
+
 object Operations {
     suspend fun qrCodeCreate(kind: String, size: Int? = null): QrCodeCreateResult {
         val variables = mutableMapOf<String, JsonElement>()
@@ -353,5 +361,11 @@ object Operations {
         val variables = mutableMapOf<String, JsonElement>()
         if (widgets != null) variables["widgets"] = jsonValue(widgets)
         return DBlayer.run("WidgetsSend", JsonObject(variables), WidgetsSendResult.serializer())
+    }
+    suspend fun chatMediaLoad(chatId: String, upToSequence: Int? = null): ChatMediaLoadResult {
+        val variables = mutableMapOf<String, JsonElement>()
+        variables["chatId"] = jsonValue(chatId)
+        if (upToSequence != null) variables["upToSequence"] = jsonValue(upToSequence)
+        return DBlayer.run("chatMedia", JsonObject(variables), ChatMediaLoadResult.serializer())
     }
 }

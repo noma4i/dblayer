@@ -34,7 +34,7 @@ fn type_name(model: &ModelSpec, relation: &RelationSpec) -> String {
 
 fn parameters(model: &ModelSpec, relation: &RelationSpec, decls: &[EnumDecl], swift: bool) -> (String, String) {
     let columns = relation.by_columns.iter().map(|key| (key.as_str(), model.field(key).map(|field| field_type(field, swift)).unwrap_or("String".into())));
-    let all: Vec<(String, String)> = columns.map(|(key, kind)| (if swift { format!("_ {key}: {kind}") } else { format!("{key}: {kind}") }, key.to_string())).chain(relation.text_params.iter().map(|key| (text_param(relation, key, decls, swift), if swift && relation.text_types.contains_key(key) { format!("{key}: {key}") } else { key.clone() }))).collect();
+    let all: Vec<(String, String)> = columns.map(|(key, kind)| (if swift { format!("_ {key}: {kind}") } else { format!("{key}: {kind}") }, key.to_string())).chain(relation.text_params.iter().map(|key| (text_param(relation, key, decls, swift), if swift && (relation.text_types.contains_key(key) || relation.scalar_types.contains_key(key)) { format!("{key}: {key}") } else { key.clone() }))).collect();
     let declared = all.iter().map(|(parameter, _)| format!("{parameter}, ")).collect::<String>();
     let passed = all.iter().map(|(_, argument)| argument.as_str()).collect::<Vec<_>>().join(", ");
     (declared, passed)

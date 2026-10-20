@@ -54,6 +54,14 @@ pub fn moments_spec() -> ModelSpec {
     vibe_feed.text_params = vec!["vibeId".to_string()];
     vibe_feed.remote = Some(remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes"));
     vibe_feed.edge_fields = edge_fields();
+    let mut since = RelationSpec::new("since", &[]);
+    since.text_params = vec!["afterSequence".to_string(), "pinned".to_string()];
+    since.scalar_types = BTreeMap::from([("afterSequence".to_string(), ScalarKind::Int), ("pinned".to_string(), ScalarKind::Bool)]);
+    since.remote = Some(remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes"));
+    let mut tail = RelationSpec::new("tail", &[]);
+    tail.text_params = vec!["afterSequence".to_string(), "pinned".to_string()];
+    tail.scalar_types = since.scalar_types.clone();
+    tail.remote = Some(remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Backward, coverage: Coverage::Page, max_pages: None, cursor: None }, "5.minutes"));
     let mut history = RelationSpec::global("history");
     history.remote = Some(remote("MomentsHistory", backward, "5.minutes"));
     let mut by_user = RelationSpec::new("by_user", &["userId"]);
@@ -75,7 +83,7 @@ pub fn moments_spec() -> ModelSpec {
         UpdatesSpec { apply: None, subscription: "MomentRemoved".to_string(), deleted_by: None, set: Map::new(), removes: true, debounce: None, root: None, id: None },
     ];
     pulse.remote = Some(pulse_remote);
-    spec.relations.extend([feed, vibe_feed, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
+    spec.relations.extend([feed, vibe_feed, since, tail, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
     spec.listens = vec![UpdatesSpec { apply: None, subscription: "MomentListen".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None },
         UpdatesSpec { apply: None, subscription: "MomentWrapped".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: Some("momentWrapped.wrapped".to_string()), id: Some("key".to_string()) },
         UpdatesSpec { apply: None, subscription: "MomentDebounced".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: Some("300.milliseconds".to_string()), root: None, id: None },

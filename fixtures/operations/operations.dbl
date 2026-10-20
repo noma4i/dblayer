@@ -40,3 +40,9 @@ operation :widgets_send do
   args widgets: [:StickerWidgetInput]?
   result id: :string
 end
+
+operation :chat_media_load do
+  query "chatMedia"
+  args chatId: :id, upToSequence: :int?
+  result visualCount: :int, audioCount: :int, giftCount: :int, latestSequence: :int
+end

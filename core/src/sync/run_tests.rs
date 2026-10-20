@@ -39,3 +39,16 @@ async fn a_run_answered_with_errors_fails_with_every_message() {
     let error = rig.sync.run("QrCodeCreate", json!({})).await.unwrap_err();
     assert_eq!(error.to_string(), "graphql: first\nsecond");
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_aggregate_run_returns_the_nested_value_and_writes_no_rows() {
+    let rig = registered();
+    rig.sync.register(OperationDef::new("ChatMedia", "query ChatMedia($chatId: ID!, $upToSequence: Int) { node(id: $chatId) { ... on Chat { id mediaLibrary(upToSequence: $upToSequence) { visualCount latestSequence } } } }", "node"));
+    let before = rig.db.revision_seq().unwrap();
+    rig.transport.enqueue("ChatMedia", Reply::data(json!({"node": {"id": "c1", "mediaLibrary": {"visualCount": 3, "latestSequence": 120}}})));
+    let value = rig.sync.run("ChatMedia", json!({"chatId": "c1", "upToSequence": 120})).await.unwrap();
+    assert_eq!(value["mediaLibrary"], json!({"visualCount": 3, "latestSequence": 120}));
+    assert_eq!(rig.transport.calls().last().unwrap().variables, json!({"chatId": "c1", "upToSequence": 120}));
+    assert_eq!(rig.db.revision_seq().unwrap(), before);
+    assert_eq!(member_ids(&rig, "moments", "feed", &params(json!({}))), Vec::<String>::new());
+}

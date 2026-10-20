@@ -228,6 +228,8 @@ mod enum_list_tests;
 #[cfg(test)]
 mod scope_enum_tests;
 #[cfg(test)]
+mod scalar_param_tests;
+#[cfg(test)]
 mod order_stable_tests;
 #[cfg(test)]
 mod scope_default_tests;

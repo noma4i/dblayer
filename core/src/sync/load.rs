@@ -131,8 +131,17 @@ impl Inner {
         let scope_values = scope_params.clone();
         for param in &declared.text_params {
             let value = params.get(param).ok_or_else(|| SyncError::Params(format!("missing param {param}")))?;
+            let kind = declared.scalar_types.get(param).copied().unwrap_or(ScalarKind::Str);
+            let sent_as_declared = match kind {
+                ScalarKind::Int => value.is_null() || value.is_i64() || value.is_u64(),
+                ScalarKind::Bool => value.is_null() || value.is_boolean(),
+                _ => true,
+            };
+            if !sent_as_declared {
+                return Err(SyncError::Params(format!("param {param} must be a JSON {}", if kind == ScalarKind::Int { "integer" } else { "boolean" })));
+            }
             scope_params.insert(param.clone(), value.clone());
-            kinds.insert(param.clone(), ScalarKind::Str);
+            kinds.insert(param.clone(), kind);
         }
         let normalized = normalize_relation_params(&scope_params, &kinds).map_err(|error| SyncError::Params(error.to_string()))?;
         let scope_key = relation_scope_key(model, relation, &normalized).map_err(|error| SyncError::Params(error.to_string()))?;

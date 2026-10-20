@@ -341,6 +341,13 @@ fn build_remote(call: &Call, owner: &str) -> RelationSpec {
             }
         }
     }
+    if let Some(Value::Array(items)) = option(call, "typed").map(|pair| &pair.value.item) {
+        for pair in items.iter().filter_map(|item| match &item.item { Value::Hash(pairs) => Some(pairs), _ => None }).flatten() {
+            relation.text_params.push(pair.key.clone());
+            let kind = if text_of(&pair.value.item).as_deref() == Some("bool") { ScalarKind::Bool } else { ScalarKind::Int };
+            relation.scalar_types.insert(pair.key.clone(), kind);
+        }
+    }
     if let Some(Value::Hash(pairs)) = option(call, "defaults").map(|pair| &pair.value.item) {
         for pair in pairs {
             if let Some(value) = text_of(&pair.value.item) { relation.text_defaults.insert(pair.key.clone(), value); }

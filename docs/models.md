@@ -409,6 +409,23 @@ A `fetch Operation` line connects a scope to the server. A relation that depends
 
 `where` accepts scalar and enum columns. A param passed as `nil` is a value of its own: `Moment.by_user(nil)` is the unfiltered list and has its own window. A param column gives the row one owner list: a row that belongs to several lists at once (a moment in the default feed and in a vibe feed) needs one relation per list, and the vibe id goes in `text: [:vibeId]`, not in a column param. `text: [:query]` declares params that are not columns, such as a search string. They are sent as variables, always strings, and each value gets its own window: `scope :search, text: [:query] do ... end` generates `Model.search("cats")`.
 
+`typed: [afterSequence: :int, includeGifts: :bool]` declares params that are sent as a JSON integer or boolean, not as text. The call takes `Int` and `Bool` (`Long` and `Boolean` in Kotlin), and the core refuses a text value. Each value has its own window and its own members. The document variable of the same name (or the name on the left of `variables name: :param`) must be `Int` or `Boolean`. A scope that pages in ascending order and one that pages in descending order are two scopes: a window key holds the scope, its params and the direction, so their cursors never meet.
+
+```ruby
+scope :since, text: [:chatId], typed: [afterSequence: :int] do
+  fetch MessagesSince, root: "chat.messages"
+  paginate 50
+end
+```
+
+```swift
+Message.since("c1", afterSequence: 120)
+```
+
+```kotlin
+Message.since("c1", afterSequence = 120L)
+```
+
 A text param takes the name of a schema enum as its type: `text: [list: :ChatList]`, mixed with plain ones as `text: [:chatId, list: :ChatList]`. The call takes the generated enum and sends its text, and each value has its own window and its own members, the rows of the server answer. The schema check needs the enum in the schema and a document variable with the same name (or the name on the left of `variables name: :param`) typed with that enum, nullable or not. An enum param is a labeled argument in Swift (`list: .primary`) and a named one in Kotlin.
 
 `defaults: { list: :PRIMARY }` on the scope gives an enum param a default value in the call: `Chat.list()` sends `PRIMARY`. The value must be one of the schema enum and the key a typed param, or the generator stops. The param is always sent, so a call with and without the default share one window.

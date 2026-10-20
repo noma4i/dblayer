@@ -251,6 +251,20 @@ impl<'a> Run<'a> {
             let renamed = lines.iter().filter(|call| call.word == "variables").flat_map(|call| &call.options).find(|pair| matches!(&pair.value.item, Value::Symbol(source) if source == param));
             renamed.map_or(param.to_string(), |pair| pair.key.clone())
         };
+        let typed: &[Node<Value>] = match option(remote, "typed") {
+            Some(Pair { value: Node { item: Value::Array(items), .. }, .. }) => items,
+            _ => &[],
+        };
+        for pair in typed.iter().filter_map(|item| match &item.item { Value::Hash(pairs) => Some(pairs), _ => None }).flatten() {
+            let kind = if text(&pair.value.item) == Some("bool") { "Boolean" } else { "Int" };
+            let variable = mapped(&pair.key);
+            let Some(operation) = document.and_then(|name| self.operations.named.get(name)) else { continue };
+            match operation.variables.get(&variable) {
+                None => self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` is `{kind}` but operation `{}` has no variable `${variable}`", name_of(remote), pair.key, document.unwrap_or_default())),
+                Some(declared) if declared.is_list() || declared.name() != kind => self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` is `{kind}` but the variable `${variable}` of `{}` is `{}`", name_of(remote), pair.key, document.unwrap_or_default(), declared.describe())),
+                Some(_) => {}
+            }
+        }
         for item in items {
             let Value::Hash(pairs) = &item.item else { continue };
             for pair in pairs {

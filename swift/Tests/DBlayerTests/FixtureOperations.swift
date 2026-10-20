@@ -653,6 +653,35 @@ public struct WidgetsSendResult: Codable, Sendable, Equatable {
     }
 }
 
+public struct ChatMediaLoadResult: Codable, Sendable, Equatable {
+    public let visualCount: Int?
+    public let audioCount: Int?
+    public let giftCount: Int?
+    public let latestSequence: Int?
+
+    public init(visualCount: Int? = nil, audioCount: Int? = nil, giftCount: Int? = nil, latestSequence: Int? = nil) {
+        self.visualCount = visualCount
+        self.audioCount = audioCount
+        self.giftCount = giftCount
+        self.latestSequence = latestSequence
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case visualCount = "visualCount"
+        case audioCount = "audioCount"
+        case giftCount = "giftCount"
+        case latestSequence = "latestSequence"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        visualCount = try container.decodeIfPresent(Int.self, forKey: .visualCount)
+        audioCount = try container.decodeIfPresent(Int.self, forKey: .audioCount)
+        giftCount = try container.decodeIfPresent(Int.self, forKey: .giftCount)
+        latestSequence = try container.decodeIfPresent(Int.self, forKey: .latestSequence)
+    }
+}
+
 public enum Operations {
     public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {
         var variables: [String: JSONValue] = [:]
@@ -688,5 +717,11 @@ public enum Operations {
         var variables: [String: JSONValue] = [:]
         if let value = widgets { variables["widgets"] = JSONValue.encode(value) }
         return try await DB.run("WidgetsSend", variables: variables, as: WidgetsSendResult.self)
+    }
+    public static func chatMediaLoad(chatId: String, upToSequence: Int? = nil) async throws -> ChatMediaLoadResult {
+        var variables: [String: JSONValue] = [:]
+        variables["chatId"] = JSONValue.encode(chatId)
+        if let value = upToSequence { variables["upToSequence"] = JSONValue.encode(value) }
+        return try await DB.run("chatMedia", variables: variables, as: ChatMediaLoadResult.self)
     }
 }

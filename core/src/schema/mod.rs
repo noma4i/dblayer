@@ -94,6 +94,8 @@ pub enum DeclarationError {
     UnknownByColumn { relation: String, column: String },
     #[error("relation {relation} lists {param} as a text param but the model has a field with that name")]
     TextParamIsField { relation: String, param: String },
+    #[error("relation {relation} types {param} as int or bool but it is not a typed param of that kind")]
+    ScalarParamKind { relation: String, param: String },
     #[error("relation {relation} groups by unindexed column {column}")]
     IndexMissing { relation: String, column: String },
     #[error("relation {relation} sorts by unknown column {column}")]
@@ -613,6 +615,8 @@ pub struct RelationSpec {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub text_types: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub scalar_types: BTreeMap<String, ScalarKind>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub text_defaults: BTreeMap<String, String>,
     #[serde(default)]
     pub remote: Option<RemoteSpec>,
@@ -640,6 +644,7 @@ impl RelationSpec {
             by_columns: by_columns.iter().map(|column| column.to_string()).collect(),
             text_params: Vec::new(),
             text_types: BTreeMap::new(),
+            scalar_types: BTreeMap::new(),
             text_defaults: BTreeMap::new(),
             remote: None,
             is_global: false,
@@ -708,6 +713,9 @@ impl RelationSpec {
         }
         if let Some(param) = self.text_params.iter().find(|param| model.field(param).is_some()) {
             return Err(DeclarationError::TextParamIsField { relation: relation(), param: param.clone() });
+        }
+        if let Some(param) = self.scalar_types.iter().find(|(param, kind)| !self.text_params.contains(param) || !matches!(kind, ScalarKind::Int | ScalarKind::Bool)).map(|(param, _)| param) {
+            return Err(DeclarationError::ScalarParamKind { relation: relation(), param: param.clone() });
         }
         for column in &self.by_columns {
             if model.ephemeral_field(column).is_some() {

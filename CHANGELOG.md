@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `typed: [afterSequence: :int, pinned: :bool]` declares scope params that are sent as a JSON integer or boolean. Each value has its own window.
+- Swift and Kotlin take the typed params as `Int` and `Bool` (`Long` and `Boolean` in Kotlin).
+
 ## 4.0.0 - 2026-10-20
 
 ### Added

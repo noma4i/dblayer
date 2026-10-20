@@ -363,6 +363,20 @@ fn relation_name_by_columns_and_remote_faults_match_spec() {
 }
 
 #[test]
+fn typed_params_must_be_int_or_bool_text_params() {
+    let typed = |kind: ScalarKind, listed: bool| RelationSpec {
+        text_params: if listed { vec!["after".into()] } else { Vec::new() },
+        scalar_types: [("after".to_string(), kind)].into(),
+        ..RelationSpec::new("since", &["chatId"])
+    };
+    assert_eq!(relation_host(typed(ScalarKind::Int, true)).validate(&[]), Ok(()));
+    assert_eq!(relation_host(typed(ScalarKind::Bool, true)).validate(&[]), Ok(()));
+    let refused = Err(DeclarationError::ScalarParamKind { relation: "since".into(), param: "after".into() });
+    assert_eq!(relation_host(typed(ScalarKind::Date, true)).validate(&[]), refused);
+    assert_eq!(relation_host(typed(ScalarKind::Int, false)).validate(&[]), refused);
+}
+
+#[test]
 fn relation_columns_must_exist_and_be_indexed() {
     assert_eq!(relation_host(RelationSpec::new("thread", &["chatId"])).validate(&[]), Ok(()));
     assert_eq!(

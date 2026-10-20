@@ -78,6 +78,7 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
 }
 
 pub(super) fn text_param(relation: &RelationSpec, key: &str, decls: &[EnumDecl], swift: bool) -> String {
+    if let Some(kind) = relation.scalar_types.get(key) { return format!("{key}: {}", scalar(*kind, swift)); }
     let Some(kind) = relation.text_types.get(key) else { return if swift { format!("_ {key}: String") } else { format!("{key}: String") } };
     let default = relation.text_defaults.get(key).and_then(|value| {
         let declaration = decls.iter().find(|declaration| &declaration.name == kind)?;
