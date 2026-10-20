@@ -4,8 +4,11 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 python3 - "$root" <<'PY'
 import os
+from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 
 root = sys.argv[1]
 cases = [
@@ -28,5 +31,20 @@ for platform in ("ios", "kotlin"):
                                 env={**os.environ, "DBLAYER_BUILD_TARGETS_ONLY": "1"},
                                 capture_output=True, text=True)
         assert result.returncode == 2 and "usage:" in result.stderr, (platform, args, result)
+with tempfile.TemporaryDirectory() as directory:
+    fixture = Path(directory)
+    (fixture / "scripts").mkdir()
+    (fixture / "core/src").mkdir(parents=True)
+    script = fixture / "scripts/android_source_hash.sh"
+    shutil.copyfile(Path(root) / "scripts/android_source_hash.sh", script)
+    for name in ("Cargo.toml", "Cargo.lock", "core/Cargo.toml", "core/src/lib.rs"):
+        (fixture / name).write_text("initial\n")
+    subprocess.run(["git", "init", "-q", directory], check=True)
+    subprocess.run(["git", "-C", directory, "add", "."], check=True)
+    before = subprocess.check_output(["bash", str(script)], text=True)
+    (fixture / "Cargo.toml").write_text("[profile.release]\nopt-level = 3\n")
+    after = subprocess.check_output(["bash", str(script)], text=True)
+    assert before != after, "Android SOURCE_HASH ignores the workspace release profile"
 print("build modes: all target sets and invalid arguments passed")
+print("Android SOURCE_HASH includes the workspace release profile")
 PY

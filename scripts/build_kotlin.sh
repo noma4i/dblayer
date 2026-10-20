@@ -35,7 +35,7 @@ if [ "$part" != --host ]; then
     -o "$module/src/main/jniLibs" build --release)
   bash "$root/scripts/android_source_hash.sh" > "$module/src/main/jniLibs/SOURCE_HASH"
   for abi in "${abis[@]}"; do printf '%s\n' "$module/src/main/jniLibs/$abi/libdblayer.so"; done
-  library="$module/src/main/jniLibs/arm64-v8a/libdblayer.so"
+  library="$root/target/aarch64-linux-android/release/libdblayer.a"
 fi
 
 (cd -- "$root/core" && "$root/target/debug/uniffi-bindgen" generate \

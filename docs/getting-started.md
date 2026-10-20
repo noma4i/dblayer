@@ -23,6 +23,12 @@ bash scripts/check_dblayer.sh
 
 It runs cheap checks first, including build modes, and stops on failure. Build commands run sequentially: Rust, Swift, Kotlin, then Android release libraries and an iOS device compile check. Android release builds contain arm64-v8a and armeabi-v7a. Swift tests use macOS and arm64 simulator slices. Every step has a time limit.
 
+The workspace release profile uses optimization level 3, no LTO, one codegen unit, symbol stripping and panic unwinding.
+It applies to Android and iOS builds. Panic unwinding remains enabled for UniFFI.
+Android binding generation reads the static archive, which retains UniFFI metadata after the shared library loses its symbol table.
+The Android source hash includes the workspace manifest, so changing the release profile invalidates older native artifacts.
+See [release profile measurements](release-profile-measurements.md) for the size, query CPU and compilation CPU comparisons.
+
 `specs/` is not in git: the invariants check reads `specs/invariants.md` of the main tree, or the file named by `SPEC=<file>`. The summary line counts CPU seconds of waited children plus the CPU of the processes below a java process (the single-use Gradle daemon and its test executors).
 
 `bash scripts/check_dblayer.sh --fast` runs the cheap checks and only the steps of the touched directories (`core/`, `gen/`, `swift/`, `kotlin/`). `--list` prints the steps, `--only <lane>` runs one lane. Run the full check before a merge.
