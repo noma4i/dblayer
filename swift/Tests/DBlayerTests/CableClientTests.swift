@@ -355,6 +355,16 @@ final class TestCableClientSocket: CableSocket, @unchecked Sendable {
     lock.withLock { recordedText }
   }
 
+  func push(_ incoming: [String]) {
+    let delivery = lock.withLock { () -> (CheckedContinuation<String, any Error>, String)? in
+      frames.append(contentsOf: incoming)
+      guard let continuation = pendingReceive, !frames.isEmpty else { return nil }
+      pendingReceive = nil
+      return (continuation, frames.removeFirst())
+    }
+    if let (continuation, frame) = delivery { continuation.resume(returning: frame) }
+  }
+
   func waitForRecordedCount(_ count: Int) async {
     await eventually("\(count) recorded frames") { recordedTexts().count >= count }
   }

@@ -152,15 +152,7 @@ struct NetworkTransportTests {
     let identifier = GraphQLChannel.identifier(channelId: "abc")
     let readyPayload = #"{"result":{"data":null},"more":true,"requestId":"abc:1","subscriptionId":"s1","subscriptionReady":true}"#
     let payload = #"{"result":{"data":{"id":"9"}},"more":true,"subscriptionId":"s1"}"#
-    let socket = TestCableClientSocket(
-      frames: [
-        "{\"type\":\"welcome\"}",
-        confirmationFrame(identifier: identifier),
-        messageFrame(identifier: identifier, payload: readyPayload),
-        messageFrame(identifier: identifier, payload: payload),
-        rejectionFrame(identifier: identifier)
-      ]
-    )
+    let socket = TestCableClientSocket(frames: ["{\"type\":\"welcome\"}"])
     let cable = makeCableClient(socket: socket)
     let (httpTransport, _) = try makeScriptedTransport(
       scriptId: "network-transport-subscription-ready"
@@ -178,6 +170,14 @@ struct NetworkTransportTests {
       onError: { failure in continuation.yield(.error(failure)) }
     )
     let startTask = Task { await cable.start() }
+    await socket.waitForRecordedCount(1)
+    socket.push([confirmationFrame(identifier: identifier)])
+    await socket.waitForRecordedCount(2)
+    socket.push([
+      messageFrame(identifier: identifier, payload: readyPayload),
+      messageFrame(identifier: identifier, payload: payload),
+      rejectionFrame(identifier: identifier)
+    ])
     let iterator = Cursor(callbacks)
 
     let ready = await iterator.next()
@@ -241,7 +241,8 @@ struct NetworkTransportTests {
   }
 
   private func firstFailure(frames: [String], scriptId: String) async throws -> SubscriptionFailure? {
-    let cable = makeCableClient(socket: TestCableClientSocket(frames: frames))
+    let socket = TestCableClientSocket(frames: Array(frames.prefix(1)))
+    let cable = makeCableClient(socket: socket)
     let (httpTransport, _) = try makeScriptedTransport(scriptId: scriptId)
     let transport: any GraphQLTransport = NetworkTransport(
       run: OperationRun(transport: httpTransport, hashes: PersistedQueryHashes()),
@@ -256,6 +257,12 @@ struct NetworkTransportTests {
       onError: { failure in continuation.yield(.error(failure)) }
     )
     let startTask = Task { await cable.start() }
+    await socket.waitForRecordedCount(1)
+    socket.push(Array(frames.dropFirst().prefix(1)))
+    if frames.count > 2 {
+      await socket.waitForRecordedCount(2)
+      socket.push(Array(frames.dropFirst(2)))
+    }
     let iterator = Cursor(callbacks)
 
     var callback = await iterator.next()
