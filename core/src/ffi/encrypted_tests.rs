@@ -63,17 +63,16 @@ pub(super) fn code(error: DbError) -> SessionCode {
 }
 
 pub(super) async fn cancel_on_retry(db: &Database, call: impl std::future::Future) {
-    struct Retried(Arc<tokio::sync::Notify>);
+    struct Retried(tokio::sync::watch::Sender<bool>);
     impl crate::transport::RetryListener for Retried {
-        fn retrying(&self, _: u64, _: u64, _: String) { self.0.notify_one(); }
+        fn retrying(&self, _: u64, _: u64, _: String) { self.0.send_replace(true); }
     }
-    let notified = Arc::new(tokio::sync::Notify::new());
-    db.set_retry_listener(Some(Arc::new(Retried(notified.clone())))).unwrap();
+    let (reached, mut retried) = tokio::sync::watch::channel(false);
+    db.set_retry_listener(Some(Arc::new(Retried(reached)))).unwrap();
     {
         let mut call = Box::pin(call);
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            tokio::select! { _ = notified.notified() => {}, _ = &mut call => panic!("call completed before retry") }
-        }).await.unwrap();
+        tokio::select! { _ = retried.wait_for(|reached| *reached) => {}, _ = &mut call => {} }
+        assert!(*retried.borrow(), "call completed before retry");
     }
     db.set_retry_listener(None).unwrap();
 }

@@ -93,7 +93,7 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(start_paused = true)]
 async fn resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it_once() {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
@@ -112,7 +112,7 @@ async fn resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it
     assert_eq!(rig.server.executed().len(), 1);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(start_paused = true)]
 async fn a_lost_logout_answer_is_resumed_through_the_bridge_and_clears_the_credential() {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
