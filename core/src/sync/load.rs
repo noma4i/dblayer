@@ -10,6 +10,7 @@ use crate::read::{LoadMoreVerdict, PageChain};
 use crate::schema::{Coverage, FieldSpec, PageDirection, RemoteShape, RemoteSpec};
 use crate::store::window_key;
 use crate::transport::{FetchAttempt, FetchReport, GraphQLRequest, Response, ResponseOutcome, RetryClass, RETRY_BACKOFF};
+use crate::transport::retry::INVALID_CURSOR;
 use crate::value::{normalize_relation_params, relation_scope_key, ScalarKind};
 
 use super::error::SyncError;
@@ -230,12 +231,23 @@ impl Inner {
         }
     }
 
-    async fn execute(&self, resolved: &Resolved, cursor: Option<String>, force: bool) -> FlightResult {
+    async fn execute(&self, resolved: &Resolved, mut cursor: Option<String>, force: bool) -> FlightResult {
         let attempt = self.begin_attempt(&resolved.window_key)?;
         let has_window = self.db.shared.store.window(&resolved.window_key)?.is_some();
         let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &resolved.remote.variables);
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);
-        let fetched = self.query_with_retry(request).await.and_then(|(response, attempts)| {
+        let mut replace_window = false;
+        let response = match self.query_with_cursor_error(request, cursor.is_some()).await {
+            Ok((response, attempts)) if response.errors.iter().any(|error| error.code() == Some(INVALID_CURSOR)) => {
+                replace_window = true;
+                cursor = None;
+                let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), None, &resolved.remote.variables);
+                let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);
+                self.query_with_retry(request).await.map(|(response, retried)| (response, attempts + retried))
+            }
+            result => result,
+        };
+        let fetched = response.and_then(|(response, attempts)| {
             let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;
             Ok((extract(&data, resolved.remote.root.as_deref().unwrap_or(&resolved.operation.root_path), &resolved.remote.shape, resolved.remote.total_from.as_deref())?, attempts))
         });
@@ -255,6 +267,7 @@ impl Inner {
             window_key: resolved.window_key.clone(),
             normalized,
             is_first_page,
+            replace_window,
             plans_as_first,
             coverage: resolved.remote.coverage(),
             edge_fields: resolved.edge_fields.clone(),
@@ -277,6 +290,10 @@ impl Inner {
     }
 
     pub(crate) async fn query_with_retry(&self, request: GraphQLRequest) -> Result<(Response, u32), SyncError> {
+        self.query_with_cursor_error(request, false).await
+    }
+
+    async fn query_with_cursor_error(&self, request: GraphQLRequest, return_invalid_cursor: bool) -> Result<(Response, u32), SyncError> {
         let mut attempt = 0;
         let backoff = RETRY_BACKOFF.randomized();
         loop {
@@ -288,6 +305,9 @@ impl Inner {
                 Ok(response) if response.shape().outcome() == ResponseOutcome::Commit => return Ok((response, attempt + 1)),
                 Ok(response) => {
                     let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
+                    if return_invalid_cursor && codes.contains(&INVALID_CURSOR) {
+                        return Ok((response, attempt + 1));
+                    }
                     let mut messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
                     if messages.is_empty() {
                         messages.push("empty response".to_string());

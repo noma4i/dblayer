@@ -5,6 +5,8 @@ use super::error::TransportError;
 use crate::pacing::Backoff;
 
 const RETRIABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
+// GraphQL list cursor errors require restarting pagination from the first page.
+pub(crate) const INVALID_CURSOR: &str = "INVALID_CURSOR";
 
 pub const RETRY_BACKOFF: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30)).with_jitter(0.2, 0);
 

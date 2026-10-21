@@ -23,6 +23,7 @@ pub(crate) struct Landing {
     pub window_key: String,
     pub normalized: Normalized,
     pub is_first_page: bool,
+    pub replace_window: bool,
     pub plans_as_first: bool,
     pub coverage: Coverage,
     pub edge_fields: Vec<FieldSpec>,
@@ -142,7 +143,7 @@ impl Inner {
 
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
-        let Landing { model, scope, window_key, normalized, is_first_page, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
+        let Landing { model, scope, window_key, normalized, is_first_page, replace_window, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
         let generation = attempt.generation;
         if !attempt.applies_to(self.db.generation()) {
             return Ok(Landed::Discarded(DiscardReason::StaleGeneration));
@@ -160,7 +161,7 @@ impl Inner {
         }
         let model_key = ModelKey::new(&model);
         let applied = if is_first_page { attempt.issued } else { applied_before.unwrap_or(attempt.issued) };
-        let last = if plans_as_first && coverage == Coverage::Page && window.is_some() {
+        let last = if plans_as_first && !replace_window && coverage == Coverage::Page && window.is_some() {
             store.read(&[&model], |reader| reader.scope_last_id(&model, scope.key.as_str()))?
         } else { None };
         let tail = window.as_ref().zip(last).and_then(|(window, last)| {
@@ -175,7 +176,8 @@ impl Inner {
             admitted_roots = roots.len();
             invalid_roots = invalid;
             let plan = if plans_as_first {
-                let request = ReplaceRequest::new(scope.clone(), coverage);
+                let mut request = ReplaceRequest::new(scope.clone(), coverage);
+                request.replace_all = replace_window;
                 self.db.replace_plan(reader, &request, &roots, Some(attempt.base_revision)).map_err(|error| SyncError::Malformed(error.to_string()))?
             } else {
                 let ids: Vec<String> = incoming_ids(&roots).iter().map(ToString::to_string).collect();

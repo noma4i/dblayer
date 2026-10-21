@@ -16,6 +16,7 @@ fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
         window_key: key.clone(),
         normalized: Normalized { roots, ..Default::default() },
         is_first_page: true,
+        replace_window: false,
         plans_as_first: true,
         coverage: crate::schema::Coverage::Complete,
         edge_fields: Vec::new(),

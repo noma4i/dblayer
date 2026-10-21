@@ -1,13 +1,77 @@
 use super::error::SyncError;
 use super::load::{DiscardReason, LoadOptions, LoadStatus};
 use super::rig::*;
+use super::SyncConfig;
+use crate::db::Db;
 use crate::read::LoadMoreVerdict;
-use crate::transport::Reply;
+use crate::transport::{MockTransport, Reply};
 use serde_json::{json, Map};
 use std::time::Duration;
 
 fn none() -> Map<String, serde_json::Value> {
     Map::new()
+}
+
+async fn reset_invalid_cursor(rig: &Rig, ids: &[&str]) {
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], true, "c4"));
+    rig.transport.enqueue("MomentsFeed", Reply::graphql_error("expired", "INVALID_CURSOR"));
+    rig.transport.enqueue("MomentsFeed", feed_reply(ids, true, "n2"));
+    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load_more("moments", "feed", &none()).await.unwrap();
+    let outcome = rig.sync.load_more("moments", "feed", &none()).await.unwrap();
+    assert_eq!((outcome.status, outcome.has_next), (LoadStatus::Loaded, true));
+    assert_eq!(rig.transport.calls()[3].variables, json!({"first": 2}));
+    assert!(rig.sync.relation_state("moments", "feed", &none()).unwrap().borrow().error.is_none());
+}
+
+fn cursor_specs() -> Vec<crate::schema::ModelSpec> {
+    let mut models = specs();
+    let model = models.iter_mut().find(|model| model.key.as_str() == "moments").unwrap();
+    let feed = model.relations.iter_mut().find(|relation| relation.name == "feed").unwrap();
+    if let crate::schema::RemoteShape::Connection { max_pages, .. } = &mut feed.remote.as_mut().unwrap().shape {
+        *max_pages = Some(3);
+    }
+    models
+}
+
+#[tokio::test(start_paused = true)]
+async fn invalid_cursor_replaces_the_window_and_keeps_nodes() {
+    for ids in [["x", "y"], ["x", "b"]] {
+        let rig = rig_on(Db::open_in_memory(cursor_specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());
+        reset_invalid_cursor(&rig, &ids).await;
+        assert_eq!(member_ids(&rig, "moments", "feed", &none()), ids);
+        assert!(text_of(&rig, "moments", "a").is_some());
+        let key = rig.sync.window_key("moments", "feed", &none()).unwrap();
+        let window = rig.db.shared.store.window(&key).unwrap().unwrap();
+        assert_eq!((window.cursor.as_deref(), window.has_next), (Some("n2"), true));
+        rig.transport.enqueue("MomentsFeed", feed_reply(&["z"], false, "n3"));
+        assert_eq!(rig.sync.load_more("moments", "feed", &none()).await.unwrap().status, LoadStatus::Loaded);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn invalid_cursor_window_survives_reopening() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cursor.sqlite");
+    {
+        let rig = rig_on(Db::open(&path, cursor_specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());
+        reset_invalid_cursor(&rig, &["x", "y"]).await;
+    }
+    let rig = rig_on(Db::open(&path, cursor_specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());
+    assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["x", "y"]);
+    let key = rig.sync.window_key("moments", "feed", &none()).unwrap();
+    let window = rig.db.shared.store.window(&key).unwrap().unwrap();
+    assert_eq!((window.cursor.as_deref(), window.has_next), (Some("n2"), true));
+}
+
+#[tokio::test(start_paused = true)]
+async fn invalid_cursor_on_first_page_is_not_repeated() {
+    let rig = rig();
+    rig.transport.enqueue("MomentsFeed", Reply::graphql_error("expired", "INVALID_CURSOR"));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["x", "y"], true, "n2"));
+    assert!(matches!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await, Err(SyncError::Graphql { .. })));
+    assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
 }
 
 #[tokio::test(start_paused = true)]
