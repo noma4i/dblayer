@@ -9,7 +9,7 @@ public enum DB {
     let endpoint: URL?
     let headers: [String: String]
     let encrypted: EncryptedConfig?
-    let references: [ObjectIdentifier?]
+    let references: [AnyHashable?]
     let models: String
     let path: String?
     let operations: [String]
@@ -49,8 +49,12 @@ public enum DB {
     try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retryListener: retryListener)
   }
 
+  private static func reference(_ object: AnyObject) -> AnyHashable {
+    (object as? AnyHashable) ?? AnyHashable(ObjectIdentifier(object))
+  }
+
   @MainActor public static func open(endpoint: URL? = nil, headers: [String: String] = [:], encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
-    let arguments = OpenArguments(endpoint: endpoint, headers: headers, encrypted: encrypted, references: [credentials.map(ObjectIdentifier.init), transport.map(ObjectIdentifier.init), http.map(ObjectIdentifier.init)], models: modelsJSON, path: path, operations: operations.flatMap { [$0.operationName, $0.document] })
+    let arguments = OpenArguments(endpoint: endpoint, headers: headers, encrypted: encrypted, references: [credentials.map(reference), transport.map(reference), http.map(reference)], models: modelsJSON, path: path, operations: operations.flatMap { [$0.operationName, $0.document] })
     if let (previous, task) = opening {
       guard previous == arguments else { throw DbError.Invalid(detail: "The database is already opening or open with different parameters") }
       return try await task.value

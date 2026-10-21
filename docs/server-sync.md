@@ -20,7 +20,7 @@ Without `encrypted`, requests use ordinary GraphQL HTTP and the transport's exis
 Opening is asynchronous: use `try await DB.open(...)` in Swift and suspend `DBlayer.open(...)` in Kotlin.
 The library opens files and runs migrations on its worker pool.
 Repeated calls with identical parameters reuse the database. Different parameters fail. An opening error permits retry.
-Custom transport, credentials and HTTP objects must be the same instances when repeating an open.
+Credentials, transport and HTTP values use `equals` in Kotlin and `Hashable` equality in Swift, otherwise object identity.
 
 ```swift
 try await DB.open(endpoint: endpoint, headers: headers, modelsJSON: modelsJSON, operations: GraphQLOperations.all)

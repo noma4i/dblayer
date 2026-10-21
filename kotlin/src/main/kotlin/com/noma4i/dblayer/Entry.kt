@@ -12,7 +12,7 @@ object DBlayer {
     private var opened: OpenArguments? = null
 
     private data class OpenArguments(val values: List<Any?>, val transport: Transport?, val credentials: CredentialStore?, val http: EncryptedHttp?) {
-        fun matches(other: OpenArguments) = values == other.values && transport === other.transport && credentials === other.credentials && http === other.http
+        fun matches(other: OpenArguments) = values == other.values && transport == other.transport && credentials == other.credentials && http == other.http
     }
     /** Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`. */
     fun listen() = database.listen()
