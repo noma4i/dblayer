@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Stream decoded list changes in Swift and Kotlin without copying complete lists.
 - Mark generated Kotlin models and nested values with Compose `@Immutable`.
 - Add iOS `--device` and Android `--release` build modes for CI.
 - `RetryListener.retrying(attempt, delayMs, reason)` reports encrypted HTTP retries in Swift and Kotlin.

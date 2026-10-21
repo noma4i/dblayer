@@ -40,11 +40,19 @@ pub struct LiveChange {
     pub error: Option<super::DbError>,
     #[uniffi(default = None)]
     pub window: Option<LiveWindowEdge>,
+    #[uniffi(default = [])]
+    pub inserted: Vec<u32>,
+    #[uniffi(default = [])]
+    pub updated: Vec<u32>,
+    #[uniffi(default = [])]
+    pub moved: Vec<Placement>,
 }
 
 impl LiveChange {
     pub(super) fn rows(change: &Change, wire: &WireModel) -> Self {
         let diff = &change.diff;
+        let inserted: std::collections::HashSet<_> = diff.inserted.iter().collect();
+        let (inserted, updated) = change.rows.iter().enumerate().partition::<Vec<_>, _>(|(_, row)| change.full || inserted.contains(&row.id));
         let row_indexes = if change.full { Vec::new() } else { change.rows.iter().map(|row| diff.at[&row.id] as u32).collect() };
         Self {
             revision: change.revision, full: change.full, size: change.size as u32, rows: change.rows.iter().map(|row| wire.row(row)).collect(), row_indexes,
@@ -54,15 +62,18 @@ impl LiveChange {
             renamed: diff.renamed.iter().map(|(from, to)| Replacement { from: from.to_string(), to: to.to_string() }).collect(),
             count: None, error: None,
             window: change.window.map(|edge| LiveWindowEdge { has_before: edge.has_before, has_after: edge.has_after, total: edge.total.map(|total| total as u32) }),
+            inserted: inserted.into_iter().map(|(index, _)| index as u32).collect(),
+            updated: updated.into_iter().map(|(index, _)| index as u32).collect(),
+            moved: diff.moved.iter().map(|id| Placement { id: id.to_string(), index: diff.at[id] as u32 }).collect(),
         }
     }
 
     fn empty(revision: i64) -> Self {
-        Self { revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None, window: None }
+        Self { revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None, window: None, inserted: Vec::new(), updated: Vec::new(), moved: Vec::new() }
     }
 
     pub(super) fn whole(revision: i64, rows: Vec<WireRow>) -> Self {
-        Self { full: true, size: rows.len() as u32, rows, ..Self::empty(revision) }
+        Self { full: true, size: rows.len() as u32, inserted: (0..rows.len() as u32).collect(), rows, ..Self::empty(revision) }
     }
 
     pub(super) fn counted(revision: i64, count: i64) -> Self {

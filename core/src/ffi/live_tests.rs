@@ -6,6 +6,31 @@ use crate::value::ScalarKind;
 
 struct Tape(Mutex<Vec<LiveChange>>);
 
+#[tokio::test]
+async fn changes_classify_insert_update_move_and_remove_without_list_state() {
+    let (db, ids) = with_rows(3).await;
+    let tape = Arc::new(Tape(Mutex::default()));
+    let live = db.live_query(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), tape.clone()).unwrap();
+    db.db.settle();
+    assert_eq!(tape.0.lock().unwrap()[0].inserted, vec![0, 1, 2]);
+    let row = db.create("Moment".into(), r#"{"text":"z"}"#.into(), "{}".into()).await.unwrap();
+    db.db.settle();
+    let inserted = tape.0.lock().unwrap().last().unwrap().clone();
+    assert_eq!(inserted.inserted, vec![0]);
+    assert_eq!(inserted.row_indexes, vec![3]);
+    assert!(inserted.updated.is_empty());
+    db.update("Moment".into(), ids[0].clone(), r#"{"text":"zz"}"#.into(), "{}".into()).await.unwrap();
+    db.db.settle();
+    let updated = tape.0.lock().unwrap().last().unwrap().clone();
+    assert!(updated.inserted.is_empty());
+    assert_eq!(updated.updated, vec![0]);
+    assert_eq!(updated.moved.iter().map(|place| (&place.id, place.index)).collect::<Vec<_>>(), vec![(&ids[0], 3)]);
+    db.destroy("Moment".into(), row.id.clone()).await.unwrap();
+    db.db.settle();
+    assert_eq!(tape.0.lock().unwrap().last().unwrap().removed, vec![row.id]);
+    live.cancel();
+}
+
 impl QueryListener for Tape {
     fn changed(&self, change: LiveChange) {
         self.0.lock().unwrap().push(change);

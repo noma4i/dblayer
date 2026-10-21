@@ -27,6 +27,33 @@ A delivery that does not fit the rows of the reader (unknown id, index out of ra
 
 A commit of a row that is outside the list and fails the filter of a query on a whole model does not read the list and does not deliver.
 
+## Changes without a list snapshot
+
+`query.changes` delivers decoded `ListChange<Model>` values without rebuilding or copying the full list.
+`inserted` and `updated` contain `IndexedRow` values with `row` and its final `index`.
+`removed` contains ids, `moved` contains ids with final indices, and `replaced` contains `from`/`to` id pairs.
+`revision` and `size` describe the delivered state. `failure` reports query or decoding errors.
+The first delivery of each collection contains every initial row in `inserted`, including after a restart.
+Later deliveries contain only changed rows. No limit or window is applied.
+An id replacement carries the new row in `updated`, and a moved row can also be updated.
+Every delivery is queued in order for a slow reader. Cancel the collection to release its subscription and unread deliveries.
+An indefinitely slower consumer can accumulate queued deliveries.
+Existing `live`, `snapshots` and `LiveList.rows` keep their list behavior.
+
+```swift
+for await change in await Message.where(Message.chatId == chatId).changes.stream() {
+  for inserted in change.inserted { process(inserted.row) }
+  remove(change.removed)
+}
+```
+
+```kotlin
+Message.where(Message.chatId eq chatId).changes.collect { change ->
+    change.inserted.forEach { process(it.row) }
+    remove(change.removed)
+}
+```
+
 ## Ephemeral values
 
 Ephemeral fields (see [models](models.md)) arrive in the same change. A write or a timed reset puts the row in `diff.updated` and `revision` stays the same, because nothing was written to the database. Two deliveries of one observer can therefore share a revision, and the later one is always newer.
