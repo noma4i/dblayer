@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.1.0 - 2026-10-21
+
+### Added
+- `uploadCreate` with a list of `UploadItem` creates 2 to 10 rows with uploads.
+- `batch` in an upload operation declares one content mutation with an items list.
+- Batch rows are replaced by the answer through their `correlate` key without duplicates.
+- One failed file fails only its row. Below the minimum, single mutations are sent.
+
 ## 5.0.3 - 2026-10-21
 
 ### Fixed
