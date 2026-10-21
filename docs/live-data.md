@@ -218,6 +218,8 @@ try await feed.refresh()
 try await feed.loadMore()
 ```
 
+A `loadMore` that the server refuses with the error code `INVALID_CURSOR` restarts the list: the window keeps only the new first page and its cursor, and the load state shows no error.
+
 A list often shows records that its rows refer to by id (the users of a chat, the last message of a chat). Read those through [entities](entities.md): one live value per id, no second subscription to write.
 
 ```kotlin

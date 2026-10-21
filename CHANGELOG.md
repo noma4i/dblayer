@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.0.1 - 2026-10-21
+
+### Fixed
+- A `loadMore` refused with `INVALID_CURSOR` replaces the list window with the first page.
+
 ## 5.0.0 - 2026-10-21
 
 ### Added
