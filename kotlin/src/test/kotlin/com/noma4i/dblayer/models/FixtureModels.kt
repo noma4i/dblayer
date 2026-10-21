@@ -1,10 +1,12 @@
 package com.noma4i.dblayer.models
 
+import androidx.compose.runtime.Immutable
 import com.noma4i.dblayer.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
+@Immutable
 data class Chat(
     override val id: String,
     val title: String,
@@ -79,6 +81,7 @@ data class Chat(
     val lastMessage get() = related("lastMessage", Message)
 }
 
+@Immutable
 data class Message(
     override val id: String,
     val chatId: String,
@@ -174,6 +177,7 @@ data class Message(
     val chat get() = related("chat", Chat)
 }
 
+@Immutable
 data class Moment(
     override val id: String,
     val uuid: String,
@@ -266,9 +270,11 @@ data class Moment(
     val vibes get() = related("vibes", Vibe)
 }
 
+@Immutable
 @Serializable
 data class MomentShareResult(val copies: Int? = null, val successMessage: String? = null)
 
+@Immutable
 data class NestedSample(
     override val id: String,
     val phase: NestedSamplePhase? = null,
@@ -329,6 +335,7 @@ data class NestedSample(
     }
 }
 
+@Immutable
 data class NestedReference(
     override val id: String,
     val values: List<NestedValue>,
@@ -369,6 +376,7 @@ data class NestedReference(
     }
 }
 
+@Immutable
 data class Notice(
     override val id: String,
     val body: String,
@@ -419,6 +427,7 @@ data class Notice(
     }
 }
 
+@Immutable
 data class InteractionNotice(
     override val id: String,
     val messageId: String,
@@ -474,6 +483,7 @@ data class InteractionNotice(
     }
 }
 
+@Immutable
 data class Presence(
     override val id: String,
     val userId: String,
@@ -529,6 +539,7 @@ data class Presence(
     val user get() = related("user", User)
 }
 
+@Immutable
 data class CustomScreen(
     override val id: String,
     val slug: String,
@@ -575,6 +586,7 @@ data class CustomScreen(
     }
 }
 
+@Immutable
 data class StorageRow(
     override val id: String,
     val record: String,
@@ -615,6 +627,7 @@ data class StorageRow(
     }
 }
 
+@Immutable
 data class Tail(
     override val id: String,
     val text: String,
@@ -659,6 +672,7 @@ data class Tail(
     }
 }
 
+@Immutable
 data class UnionSample(
     override val id: String,
     val label: String? = null,
@@ -709,6 +723,7 @@ data class UnionSample(
     }
 }
 
+@Immutable
 data class User(
     override val id: String,
     val name: String,
@@ -778,6 +793,7 @@ data class User(
     }
 }
 
+@Immutable
 data class Vibe(
     override val id: String,
     val momentId: String,
@@ -828,6 +844,7 @@ data class Vibe(
     }
 }
 
+@Immutable
 data class MomentFeedEdge(
     val impressionUuid: String? = null,
     val impressionScore: Long? = null
@@ -835,6 +852,7 @@ data class MomentFeedEdge(
     internal constructor(values: JsonObject) : this((values["impressionUuid"] as? JsonPrimitive)?.contentOrNull, (values["impressionScore"] as? JsonPrimitive)?.longOrNull)
 }
 
+@Immutable
 data class MomentVibeFeedEdge(
     val impressionUuid: String? = null,
     val score: Long? = null,
@@ -843,6 +861,7 @@ data class MomentVibeFeedEdge(
     internal constructor(values: JsonObject) : this((values["impressionUuid"] as? JsonPrimitive)?.contentOrNull, (values["score"] as? JsonPrimitive)?.longOrNull, (values["rank"] as? JsonPrimitive)?.contentOrNull?.let { FeedRank.of(it) })
 }
 
+@Immutable
 @Serializable
 data class MessageReactionNode(
     val body: String? = null,
@@ -861,6 +880,7 @@ data class MessageReactionNode(
     }
 }
 
+@Immutable
 @Serializable
 data class MessageReactionUser(
     @Serializable(with = IDText::class) val id: String? = null,
@@ -875,12 +895,18 @@ data class MessageReactionUser(
     }
 }
 
+@Immutable
 @Serializable(with = MessageAttachmentSerializer::class)
 sealed class MessageAttachment {
+    @Immutable
     data class Gift(val value: GiftAttachment) : MessageAttachment()
+    @Immutable
     data class Moment(val value: MomentAttachment) : MessageAttachment()
+    @Immutable
     data class Profile(val value: ProfileAttachment) : MessageAttachment()
+    @Immutable
     data class Reaction(val value: ReactionAttachment) : MessageAttachment()
+    @Immutable
     data class Unknown(val typename: String) : MessageAttachment()
 
     val kind: MessageAttachmentKind?
@@ -932,6 +958,7 @@ enum class MessageAttachmentKind {
     @SerialName("ReactionAttachment") Reaction,
 }
 
+@Immutable
 @Serializable
 data class GiftAttachment(
     @Serializable(with = IDText::class) val id: String,
@@ -952,6 +979,7 @@ data class GiftAttachment(
     }
 }
 
+@Immutable
 @Serializable
 data class MomentAttachment(
     @Serializable(with = IDText::class) val momentId: String,
@@ -968,6 +996,7 @@ data class MomentAttachment(
     }
 }
 
+@Immutable
 @Serializable
 data class ProfileAttachment(
     val user: AttachmentUser? = null,
@@ -982,6 +1011,7 @@ data class ProfileAttachment(
     }
 }
 
+@Immutable
 @Serializable
 data class AttachmentUser(
     @Serializable(with = IDText::class) val id: String,
@@ -998,6 +1028,7 @@ data class AttachmentUser(
     }
 }
 
+@Immutable
 @Serializable
 data class ReactionAttachment(
     val body: String,
@@ -1012,6 +1043,7 @@ data class ReactionAttachment(
     }
 }
 
+@Immutable
 @Serializable
 data class MessageMedia(
     val kind: String? = null,
@@ -1030,6 +1062,7 @@ data class MessageMedia(
     }
 }
 
+@Immutable
 @Serializable
 data class NestedValue(
     val title: String,
@@ -1088,6 +1121,7 @@ data class NestedValue(
     }
 }
 
+@Immutable
 @Serializable
 data class NestedValuePreferences(
     val label: String,
@@ -1104,6 +1138,7 @@ data class NestedValuePreferences(
     }
 }
 
+@Immutable
 @Serializable
 data class NestedValueChild(
     val body: String? = null,
@@ -1120,6 +1155,7 @@ data class NestedValueChild(
     }
 }
 
+@Immutable
 @Serializable
 data class NestedTree(
     val name: String,
@@ -1136,6 +1172,7 @@ data class NestedTree(
     }
 }
 
+@Immutable
 @Serializable
 data class MessageReplyNode(
     @Serializable(with = IDText::class) val id: String? = null,
@@ -1160,6 +1197,7 @@ data class MessageReplyNode(
     }
 }
 
+@Immutable
 @Serializable
 data class MessageUserRef(
     @Serializable(with = IDText::class) val id: String? = null,
@@ -1182,6 +1220,7 @@ data class MessageUserRef(
     }
 }
 
+@Immutable
 @Serializable
 data class NestedMedia(
     @Serializable(with = IDText::class) val id: String = "",
@@ -1198,6 +1237,7 @@ data class NestedMedia(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenSpec(
     @Serializable(with = IDText::class) val root: String,
@@ -1216,14 +1256,22 @@ data class ScreenSpec(
     }
 }
 
+@Immutable
 @Serializable(with = ScreenElementSerializer::class)
 sealed class ScreenElement {
+    @Immutable
     data class Button(val value: ScreenButton) : ScreenElement()
+    @Immutable
     data class Column(val value: ScreenColumn) : ScreenElement()
+    @Immutable
     data class Heading(val value: ScreenHeading) : ScreenElement()
+    @Immutable
     data class Pressable(val value: ScreenPressable) : ScreenElement()
+    @Immutable
     data class Spacer(val value: ScreenSpacer) : ScreenElement()
+    @Immutable
     data class Switch(val value: ScreenSwitch) : ScreenElement()
+    @Immutable
     data class Unknown(val typename: String) : ScreenElement()
 
     val kind: ScreenElementKind?
@@ -1329,6 +1377,7 @@ enum class ScreenElementKind {
     @SerialName("ScreenSwitch") Switch,
 }
 
+@Immutable
 @Serializable
 data class ScreenButton(
     @Serializable(with = IDText::class) val id: String,
@@ -1353,12 +1402,18 @@ data class ScreenButton(
     }
 }
 
+@Immutable
 @Serializable(with = ScreenActionSerializer::class)
 sealed class ScreenAction {
+    @Immutable
     data class Navigate(val value: ScreenNavigateAction) : ScreenAction()
+    @Immutable
     data class OpenChat(val value: ScreenOpenChatAction) : ScreenAction()
+    @Immutable
     data class OpenExternal(val value: ScreenOpenExternalAction) : ScreenAction()
+    @Immutable
     data class OpenProfile(val value: ScreenOpenProfileAction) : ScreenAction()
+    @Immutable
     data class Unknown(val typename: String) : ScreenAction()
 
     val kind: ScreenActionKind?
@@ -1410,6 +1465,7 @@ enum class ScreenActionKind {
     @SerialName("ScreenOpenProfileAction") OpenProfile,
 }
 
+@Immutable
 @Serializable
 data class ScreenNavigateAction(
     val slug: String,
@@ -1426,6 +1482,7 @@ data class ScreenNavigateAction(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenOpenChatAction(
     val chatId: String,
@@ -1440,6 +1497,7 @@ data class ScreenOpenChatAction(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenOpenExternalAction(
     val url: String,
@@ -1454,6 +1512,7 @@ data class ScreenOpenExternalAction(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenOpenProfileAction(
     val userId: String,
@@ -1468,12 +1527,18 @@ data class ScreenOpenProfileAction(
     }
 }
 
+@Immutable
 @Serializable(with = ScreenVisibilitySerializer::class)
 sealed class ScreenVisibility {
+    @Immutable
     data class Condition(val value: ScreenCondition) : ScreenVisibility()
+    @Immutable
     data class VisibleAll(val value: ScreenVisibleAll) : ScreenVisibility()
+    @Immutable
     data class VisibleAny(val value: ScreenVisibleAny) : ScreenVisibility()
+    @Immutable
     data class VisibleFlag(val value: ScreenVisibleFlag) : ScreenVisibility()
+    @Immutable
     data class Unknown(val typename: String) : ScreenVisibility()
 
     val kind: ScreenVisibilityKind?
@@ -1525,6 +1590,7 @@ enum class ScreenVisibilityKind {
     @SerialName("ScreenVisibleFlag") VisibleFlag,
 }
 
+@Immutable
 @Serializable
 data class ScreenCondition(
     val comparison: String,
@@ -1545,12 +1611,18 @@ data class ScreenCondition(
     }
 }
 
+@Immutable
 @Serializable(with = ScreenOperandSerializer::class)
 sealed class ScreenOperand {
+    @Immutable
     data class FlagLiteral(val value: ScreenFlagLiteral) : ScreenOperand()
+    @Immutable
     data class NumberLiteral(val value: ScreenNumberLiteral) : ScreenOperand()
+    @Immutable
     data class StateRef(val value: ScreenStateRef) : ScreenOperand()
+    @Immutable
     data class TextLiteral(val value: ScreenTextLiteral) : ScreenOperand()
+    @Immutable
     data class Unknown(val typename: String) : ScreenOperand()
 
     val kind: ScreenOperandKind?
@@ -1602,6 +1674,7 @@ enum class ScreenOperandKind {
     @SerialName("ScreenTextLiteral") TextLiteral,
 }
 
+@Immutable
 @Serializable
 data class ScreenFlagLiteral(
     val flag: Boolean,
@@ -1616,6 +1689,7 @@ data class ScreenFlagLiteral(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenNumberLiteral(
     val number: Double,
@@ -1630,6 +1704,7 @@ data class ScreenNumberLiteral(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenStateRef(
     val path: String,
@@ -1644,6 +1719,7 @@ data class ScreenStateRef(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenTextLiteral(
     val text: String,
@@ -1658,6 +1734,7 @@ data class ScreenTextLiteral(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenVisibleAll(
     val conditions: List<ScreenCondition>,
@@ -1672,6 +1749,7 @@ data class ScreenVisibleAll(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenVisibleAny(
     val conditions: List<ScreenCondition>,
@@ -1686,6 +1764,7 @@ data class ScreenVisibleAny(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenVisibleFlag(
     val flag: Boolean,
@@ -1700,10 +1779,14 @@ data class ScreenVisibleFlag(
     }
 }
 
+@Immutable
 @Serializable(with = ScreenTextValueSerializer::class)
 sealed class ScreenTextValue {
+    @Immutable
     data class StateRef(val value: ScreenStateRef) : ScreenTextValue()
+    @Immutable
     data class TextLiteral(val value: ScreenTextLiteral) : ScreenTextValue()
+    @Immutable
     data class Unknown(val typename: String) : ScreenTextValue()
 
     val kind: ScreenTextValueKind?
@@ -1745,10 +1828,14 @@ enum class ScreenTextValueKind {
     @SerialName("ScreenTextLiteral") TextLiteral,
 }
 
+@Immutable
 @Serializable(with = ScreenFlagValueSerializer::class)
 sealed class ScreenFlagValue {
+    @Immutable
     data class FlagLiteral(val value: ScreenFlagLiteral) : ScreenFlagValue()
+    @Immutable
     data class StateRef(val value: ScreenStateRef) : ScreenFlagValue()
+    @Immutable
     data class Unknown(val typename: String) : ScreenFlagValue()
 
     val kind: ScreenFlagValueKind?
@@ -1790,6 +1877,7 @@ enum class ScreenFlagValueKind {
     @SerialName("ScreenStateRef") StateRef,
 }
 
+@Immutable
 @Serializable
 data class ScreenColumn(
     @Serializable(with = IDText::class) val id: String,
@@ -1814,10 +1902,14 @@ data class ScreenColumn(
     }
 }
 
+@Immutable
 @Serializable(with = ScreenNumberValueSerializer::class)
 sealed class ScreenNumberValue {
+    @Immutable
     data class NumberLiteral(val value: ScreenNumberLiteral) : ScreenNumberValue()
+    @Immutable
     data class StateRef(val value: ScreenStateRef) : ScreenNumberValue()
+    @Immutable
     data class Unknown(val typename: String) : ScreenNumberValue()
 
     val kind: ScreenNumberValueKind?
@@ -1859,6 +1951,7 @@ enum class ScreenNumberValueKind {
     @SerialName("ScreenStateRef") StateRef,
 }
 
+@Immutable
 @Serializable
 data class ScreenHeading(
     @Serializable(with = IDText::class) val id: String,
@@ -1883,6 +1976,7 @@ data class ScreenHeading(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenPressable(
     @Serializable(with = IDText::class) val id: String,
@@ -1903,6 +1997,7 @@ data class ScreenPressable(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenSpacer(
     @Serializable(with = IDText::class) val id: String,
@@ -1925,6 +2020,7 @@ data class ScreenSpacer(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenSwitch(
     @Serializable(with = IDText::class) val id: String,
@@ -1949,6 +2045,7 @@ data class ScreenSwitch(
     }
 }
 
+@Immutable
 @Serializable
 data class ScreenStateEntry(
     val path: String,
@@ -1965,11 +2062,16 @@ data class ScreenStateEntry(
     }
 }
 
+@Immutable
 @Serializable(with = ScreenStateValueSerializer::class)
 sealed class ScreenStateValue {
+    @Immutable
     data class Flag(val value: ScreenFlagLiteral) : ScreenStateValue()
+    @Immutable
     data class Number(val value: ScreenNumberLiteral) : ScreenStateValue()
+    @Immutable
     data class Text(val value: ScreenTextLiteral) : ScreenStateValue()
+    @Immutable
     data class Unknown(val typename: String) : ScreenStateValue()
 
     val kind: ScreenStateValueKind?
@@ -2016,10 +2118,14 @@ enum class ScreenStateValueKind {
     @SerialName("ScreenTextLiteral") Text,
 }
 
+@Immutable
 @Serializable(with = MomentWidgetItemPropsSerializer::class)
 sealed class MomentWidgetItemProps {
+    @Immutable
     data class Emoji(val value: MomentEmojiProps) : MomentWidgetItemProps()
+    @Immutable
     data class Label(val value: MomentLabelProps) : MomentWidgetItemProps()
+    @Immutable
     data class Unknown(val typename: String) : MomentWidgetItemProps()
 
     val kind: MomentWidgetItemPropsKind?
@@ -2061,6 +2167,7 @@ enum class MomentWidgetItemPropsKind {
     @SerialName("MomentLabelProps") Label,
 }
 
+@Immutable
 @Serializable
 data class MomentEmojiProps(
     val emoji: String,
@@ -2075,6 +2182,7 @@ data class MomentEmojiProps(
     }
 }
 
+@Immutable
 @Serializable
 data class MomentLabelProps(
     val text: String,
@@ -2091,10 +2199,12 @@ data class MomentLabelProps(
     }
 }
 
+@Immutable
 @Serializable(with = ChatShelfSerializer::class)
 sealed class ChatShelf(override val raw: String) : RawEnum {
     data object Primary : ChatShelf("PRIMARY")
     data object Secondary : ChatShelf("SECONDARY")
+    @Immutable
     data class Unknown(val value: String) : ChatShelf(value)
 
     companion object {
@@ -2108,10 +2218,12 @@ sealed class ChatShelf(override val raw: String) : RawEnum {
 
 object ChatShelfSerializer : RawEnumSerializer<ChatShelf>("ChatShelf", { ChatShelf.of(it) })
 
+@Immutable
 @Serializable(with = FeedRankSerializer::class)
 sealed class FeedRank(override val raw: String) : RawEnum {
     data object Top : FeedRank("top")
     data object Normal : FeedRank("normal")
+    @Immutable
     data class Unknown(val value: String) : FeedRank(value)
 
     companion object {
@@ -2125,10 +2237,12 @@ sealed class FeedRank(override val raw: String) : RawEnum {
 
 object FeedRankSerializer : RawEnumSerializer<FeedRank>("FeedRank", { FeedRank.of(it) })
 
+@Immutable
 @Serializable(with = NestedSamplePhaseSerializer::class)
 sealed class NestedSamplePhase(override val raw: String) : RawEnum {
     data object Draft : NestedSamplePhase("draft")
     data object Live : NestedSamplePhase("live")
+    @Immutable
     data class Unknown(val value: String) : NestedSamplePhase(value)
 
     companion object {
@@ -2142,10 +2256,12 @@ sealed class NestedSamplePhase(override val raw: String) : RawEnum {
 
 object NestedSamplePhaseSerializer : RawEnumSerializer<NestedSamplePhase>("NestedSamplePhase", { NestedSamplePhase.of(it) })
 
+@Immutable
 @Serializable(with = NestedValueStateSerializer::class)
 sealed class NestedValueState(override val raw: String) : RawEnum {
     data object Ready : NestedValueState("ready")
     data object Done : NestedValueState("done")
+    @Immutable
     data class Unknown(val value: String) : NestedValueState(value)
 
     companion object {
@@ -2159,11 +2275,13 @@ sealed class NestedValueState(override val raw: String) : RawEnum {
 
 object NestedValueStateSerializer : RawEnumSerializer<NestedValueState>("NestedValueState", { NestedValueState.of(it) })
 
+@Immutable
 @Serializable(with = VibeKindSerializer::class)
 sealed class VibeKind(override val raw: String) : RawEnum {
     data object Like : VibeKind("like")
     data object Love : VibeKind("love")
     data object Laugh : VibeKind("laugh")
+    @Immutable
     data class Unknown(val value: String) : VibeKind(value)
 
     companion object {

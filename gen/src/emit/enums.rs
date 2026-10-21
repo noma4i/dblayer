@@ -20,9 +20,9 @@ pub(super) fn emit_kotlin_enums(out: &mut String, enums: &[EnumDecl]) {
     for declared in enums {
         let name = &declared.name;
         let cases = declared.cases(false);
-        writeln!(out, "@Serializable(with = {name}Serializer::class)\nsealed class {name}(override val raw: String) : RawEnum {{").unwrap();
+        writeln!(out, "@Immutable\n@Serializable(with = {name}Serializer::class)\nsealed class {name}(override val raw: String) : RawEnum {{").unwrap();
         for (case, value) in cases.iter().zip(&declared.values) { writeln!(out, "    data object {case} : {name}({})", string_literal(value, false)).unwrap(); }
-        writeln!(out, "    data class Unknown(val value: String) : {name}(value)\n\n    companion object {{\n        fun of(raw: String): {name} = when (raw) {{").unwrap();
+        writeln!(out, "    @Immutable\n    data class Unknown(val value: String) : {name}(value)\n\n    companion object {{\n        fun of(raw: String): {name} = when (raw) {{").unwrap();
         for (case, value) in cases.iter().zip(&declared.values) { writeln!(out, "            {} -> {case}", string_literal(value, false)).unwrap(); }
         writeln!(out, "            else -> Unknown(raw)\n        }}\n    }}\n}}\n\nobject {name}Serializer : RawEnumSerializer<{name}>(\"{name}\", {{ {name}.of(it) }})\n").unwrap();
     }

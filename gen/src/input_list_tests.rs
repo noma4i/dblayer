@@ -77,7 +77,7 @@ fn a_one_of_input_becomes_an_enum_with_one_case_per_field() {
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     for line in [
-        "@Serializable(with = PropsInputSerializer::class)\nsealed interface PropsInput {\n    data class Text(val value: TextInput) : PropsInput\n    data class Emoji(val value: EmojiInput) : PropsInput\n}\n",
+        "@Serializable(with = PropsInputSerializer::class)\nsealed interface PropsInput {\n    @Immutable\n    data class Text(val value: TextInput) : PropsInput\n    @Immutable\n    data class Emoji(val value: EmojiInput) : PropsInput\n}\n",
         "object PropsInputSerializer : KSerializer<PropsInput> {",
         "is PropsInput.Text -> \"text\" to jsonValue(value.value)",
         "val props: PropsInput",

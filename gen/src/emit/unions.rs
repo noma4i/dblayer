@@ -42,9 +42,9 @@ pub(super) fn emit_kotlin_union(out: &mut String, declaration: &FieldSpec) {
     let name = declaration.app_type.as_deref().unwrap();
     let cases = cases(declaration, false);
     let inside = |case: &str, variant: &str| if case == variant { format!("com.noma4i.dblayer.models.{variant}") } else { variant.to_string() };
-    writeln!(out, "@Serializable(with = {name}Serializer::class)\nsealed class {name} {{").unwrap();
-    for (case, variant, _) in &cases { writeln!(out, "    data class {case}(val value: {}) : {name}()", inside(case, variant)).unwrap(); }
-    writeln!(out, "    data class Unknown(val typename: String) : {name}()\n\n    val kind: {name}Kind?\n        get() = when (this) {{").unwrap();
+    writeln!(out, "@Immutable\n@Serializable(with = {name}Serializer::class)\nsealed class {name} {{").unwrap();
+    for (case, variant, _) in &cases { writeln!(out, "    @Immutable\n    data class {case}(val value: {}) : {name}()", inside(case, variant)).unwrap(); }
+    writeln!(out, "    @Immutable\n    data class Unknown(val typename: String) : {name}()\n\n    val kind: {name}Kind?\n        get() = when (this) {{").unwrap();
     for (case, _, _) in &cases { writeln!(out, "            is {case} -> {name}Kind.{case}").unwrap(); }
     writeln!(out, "            is Unknown -> null\n        }}\n").unwrap();
     for field in &declaration.shared {

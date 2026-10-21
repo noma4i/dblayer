@@ -118,7 +118,7 @@ pub(super) fn emit_swift_type(out: &mut String, declaration: &FieldSpec, types: 
 }
 
 pub(super) fn emit_kotlin_type(out: &mut String, declaration: &FieldSpec, types: &[&FieldSpec], cells: bool) {
-    writeln!(out, "@Serializable\ndata class {}(", declaration.app_type.as_ref().unwrap()).unwrap();
+    writeln!(out, "@Immutable\n@Serializable\ndata class {}(", declaration.app_type.as_ref().unwrap()).unwrap();
     for field in &declaration.fields {
         let mut notes = String::new();
         if key_of(field) != field.name { write!(notes, "@SerialName({}) ", string_literal(key_of(field), false)).unwrap(); }

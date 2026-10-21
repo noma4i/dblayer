@@ -56,8 +56,8 @@ fn emit_swift_one_of(out: &mut String, input: &InputObject) {
 
 fn emit_kotlin_one_of(out: &mut String, input: &InputObject) {
     let name = &input.name;
-    writeln!(out, "@Serializable(with = {name}Serializer::class)\nsealed interface {name} {{").unwrap();
-    for field in &input.fields { writeln!(out, "    data class {}(val value: {}) : {name}", case_name(field), payload(field, false)).unwrap(); }
+    writeln!(out, "@Immutable\n@Serializable(with = {name}Serializer::class)\nsealed interface {name} {{").unwrap();
+    for field in &input.fields { writeln!(out, "    @Immutable\n    data class {}(val value: {}) : {name}", case_name(field), payload(field, false)).unwrap(); }
     writeln!(out, "}}\n\nobject {name}Serializer : KSerializer<{name}> {{\n    override val descriptor: SerialDescriptor = buildClassSerialDescriptor(\"{name}\")\n\n    override fun serialize(encoder: Encoder, value: {name}) {{\n        val (key, element) = when (value) {{").unwrap();
     for field in &input.fields { writeln!(out, "            is {name}.{} -> \"{}\" to jsonValue(value.value)", case_name(field), field.name).unwrap(); }
     writeln!(out, "        }}\n        (encoder as JsonEncoder).encodeJsonElement(JsonObject(mapOf(key to element)))\n    }}\n\n    override fun deserialize(decoder: Decoder): {name} = throw SerializationException(\"{name} is only sent\")\n}}\n").unwrap();
@@ -95,6 +95,6 @@ pub(super) fn emit_kotlin_inputs(out: &mut String, inputs: &[InputObject]) {
             if field.ty.optional() { format!("@EncodeDefault(EncodeDefault.Mode.NEVER) val {}: {} = {}", field.name, field_type(field, false), if field.ty.nullable { "GraphQLNullable.Omitted" } else { "null" }) }
             else { format!("val {}: {}", field.name, field_type(field, false)) }
         }).collect::<Vec<_>>().join(", ");
-        writeln!(out, "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class {}({fields})\n", input.name).unwrap();
+        writeln!(out, "@Immutable\n@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class {}({fields})\n", input.name).unwrap();
     }
 }

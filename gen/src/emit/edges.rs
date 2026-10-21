@@ -70,7 +70,7 @@ pub(super) fn kotlin_accessors(out: &mut String, types: &mut String, model: &Mod
     writeln!(out, "        fun {method}Edge({declared}id: String): {class}? = {scope}.edgeValues(id)?.let {{ {class}(it) }}").unwrap();
     writeln!(out, "        suspend fun read{}Edge({declared}id: String): {class}? = {scope}.readEdgeValues(id)?.let {{ {class}(it) }}", pascal(&method)).unwrap();
     let fields: Vec<String> = relation.edge_fields.iter().map(|field| format!("    val {}: {} = null", field.name, field_type(field, false))).collect();
-    writeln!(types, "data class {class}(\n{}\n) {{", fields.join(",\n")).unwrap();
+    writeln!(types, "@Immutable\ndata class {class}(\n{}\n) {{", fields.join(",\n")).unwrap();
     let reads: Vec<String> = relation.edge_fields.iter().map(|field| read(field, false)).collect();
     writeln!(types, "    internal constructor(values: JsonObject) : this({})\n}}\n", reads.join(", ")).unwrap();
 }

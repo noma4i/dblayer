@@ -30,6 +30,7 @@ android {
 }
 
 dependencies {
+  api("androidx.compose.runtime:runtime-annotation:1.11.4")
   api("androidx.compose.runtime:runtime:1.11.4")
   api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
   api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

@@ -350,13 +350,13 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
     let decls = checked_enum_decls(models, operations, schema_types);
     let one_of = if schema_types.inputs.iter().any(|input| input.one_of) { "import kotlinx.serialization.KSerializer\nimport kotlinx.serialization.SerializationException\nimport kotlinx.serialization.descriptors.SerialDescriptor\nimport kotlinx.serialization.descriptors.buildClassSerialDescriptor\nimport kotlinx.serialization.encoding.Decoder\nimport kotlinx.serialization.encoding.Encoder\n" } else { "" };
     let encoding = if schema_types.inputs.is_empty() { String::new() } else { format!("import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n{one_of}") };
-    let mut out = format!("package com.noma4i.dblayer.models\n\nimport com.noma4i.dblayer.*\n{encoding}import kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n");
+    let mut out = format!("package com.noma4i.dblayer.models\n\nimport androidx.compose.runtime.Immutable\nimport com.noma4i.dblayer.*\n{encoding}import kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n");
     let mut edge_types = String::new();
     for model in models {
         let class = model.key.as_str();
         let values = local_name(model, "values");
         let built = local_name(model, "built");
-        writeln!(out, "data class {class}(").unwrap();
+        writeln!(out, "@Immutable\ndata class {class}(").unwrap();
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    {}val {}: {}{},", if field.name == "id" { "override " } else { "" }, field.name, field_type(field, false), if field.nullable || field.optional { " = null" } else { "" }).unwrap();
         }
@@ -450,7 +450,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         out.push_str("}\n\n");
         for action in model.actions.iter().filter(|action| !action.result.is_empty()) {
             let fields = action.result.iter().map(|(field, kind)| format!("val {field}: {}? = null", arg_type(kind, false))).collect::<Vec<_>>().join(", ");
-            writeln!(out, "@Serializable\ndata class {}({fields})\n", result_type(class, &action.name)).unwrap();
+            writeln!(out, "@Immutable\n@Serializable\ndata class {}({fields})\n", result_type(class, &action.name)).unwrap();
         }
     }
     out.push_str(&edge_types);

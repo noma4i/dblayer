@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Mark generated Kotlin models and nested values with Compose `@Immutable`.
 - Add iOS `--device` and Android `--release` build modes for CI.
 - `RetryListener.retrying(attempt, delayMs, reason)` reports encrypted HTTP retries in Swift and Kotlin.
 - `Database.setRetryListener` installs or removes the listener. Bootstrap accepts `retryListener` before a database exists.

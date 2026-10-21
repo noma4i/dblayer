@@ -1,5 +1,6 @@
 package com.noma4i.dblayer.models
 
+import androidx.compose.runtime.Immutable
 import com.noma4i.dblayer.*
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -13,6 +14,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
+@Immutable
 data class Clip(
     override val id: String,
     val title: String? = null,
@@ -56,6 +58,7 @@ data class Clip(
     }
 }
 
+@Immutable
 data class Inbox(
     override val id: String,
     val title: String,
@@ -100,6 +103,7 @@ data class Inbox(
     }
 }
 
+@Immutable
 data class Roster(
     override val id: String,
     val title: String,
@@ -144,10 +148,12 @@ data class Roster(
     }
 }
 
+@Immutable
 @Serializable(with = ChatShelfKindSerializer::class)
 sealed class ChatShelfKind(override val raw: String) : RawEnum {
     data object Primary : ChatShelfKind("PRIMARY")
     data object Secondary : ChatShelfKind("SECONDARY")
+    @Immutable
     data class Unknown(val value: String) : ChatShelfKind(value)
 
     companion object {
@@ -161,10 +167,12 @@ sealed class ChatShelfKind(override val raw: String) : RawEnum {
 
 object ChatShelfKindSerializer : RawEnumSerializer<ChatShelfKind>("ChatShelfKind", { ChatShelfKind.of(it) })
 
+@Immutable
 @Serializable(with = ChatMemberOrderSerializer::class)
 sealed class ChatMemberOrder(override val raw: String) : RawEnum {
     data object Joined : ChatMemberOrder("JOINED")
     data object OwnerFirst : ChatMemberOrder("OWNER_FIRST")
+    @Immutable
     data class Unknown(val value: String) : ChatMemberOrder(value)
 
     companion object {
@@ -178,10 +186,12 @@ sealed class ChatMemberOrder(override val raw: String) : RawEnum {
 
 object ChatMemberOrderSerializer : RawEnumSerializer<ChatMemberOrder>("ChatMemberOrder", { ChatMemberOrder.of(it) })
 
+@Immutable
 @Serializable(with = WidgetKindSerializer::class)
 sealed class WidgetKind(override val raw: String) : RawEnum {
     data object Emoji : WidgetKind("EMOJI")
     data object Gif : WidgetKind("GIF")
+    @Immutable
     data class Unknown(val value: String) : WidgetKind(value)
 
     companion object {
@@ -195,10 +205,12 @@ sealed class WidgetKind(override val raw: String) : RawEnum {
 
 object WidgetKindSerializer : RawEnumSerializer<WidgetKind>("WidgetKind", { WidgetKind.of(it) })
 
+@Immutable
 @Serializable(with = MoodSerializer::class)
 sealed class Mood(override val raw: String) : RawEnum {
     data object Happy : Mood("HAPPY")
     data object Sad : Mood("SAD")
+    @Immutable
     data class Unknown(val value: String) : Mood(value)
 
     companion object {
@@ -212,22 +224,29 @@ sealed class Mood(override val raw: String) : RawEnum {
 
 object MoodSerializer : RawEnumSerializer<Mood>("Mood", { Mood.of(it) })
 
+@Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class StickerWidgetInput(val kind: WidgetKind, val props: StickerPropsInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val extras: GraphQLNullable<List<StickerPropsInput>> = GraphQLNullable.Omitted)
 
+@Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Int> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)
 
+@Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class MomentInput(val file: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val widgets: GraphQLNullable<List<WidgetInput>> = GraphQLNullable.Omitted)
 
+@Immutable
 @Serializable(with = StickerPropsInputSerializer::class)
 sealed interface StickerPropsInput {
+    @Immutable
     data class Text(val value: StickerTextInput) : StickerPropsInput
+    @Immutable
     data class Emoji(val value: StickerEmojiInput) : StickerPropsInput
+    @Immutable
     data class Tags(val value: List<String>) : StickerPropsInput
 }
 
@@ -246,36 +265,44 @@ object StickerPropsInputSerializer : KSerializer<StickerPropsInput> {
     override fun deserialize(decoder: Decoder): StickerPropsInput = throw SerializationException("StickerPropsInput is only sent")
 }
 
+@Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: GraphQLNullable<String> = GraphQLNullable.Omitted)
 
+@Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class WidgetInput(val kind: WidgetKind, val settings: SettingsInput)
 
+@Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class StickerTextInput(val body: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val sizes: GraphQLNullable<List<Int>> = GraphQLNullable.Omitted)
 
+@Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class StickerEmojiInput(val code: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val kind: GraphQLNullable<WidgetKind> = GraphQLNullable.Omitted)
 
+@Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class SettingsInput(val itemProps: JsonElement, @EncodeDefault(EncodeDefault.Mode.NEVER) val rotate: GraphQLNullable<Double> = GraphQLNullable.Omitted)
 
+@Immutable
 @Serializable
 data class QrCodeCreateResult(
     val url: String? = null,
 )
 
+@Immutable
 @Serializable
 data class StickerSendResult(
     val id: String? = null,
 )
 
+@Immutable
 @Serializable
 data class PricingLoadResult(
     val gifts: List<PricingLoadResultGifts>? = null,
@@ -284,6 +311,7 @@ data class PricingLoadResult(
     val spec: JsonElement? = null,
 )
 
+@Immutable
 @Serializable
 data class PricingLoadResultGifts(
     @Serializable(with = IDText::class) val id: String? = null,
@@ -291,21 +319,25 @@ data class PricingLoadResultGifts(
     val price: Long? = null,
 )
 
+@Immutable
 @Serializable
 data class PricingLoadResultVideoIntro(
     val enabled: Boolean? = null,
 )
 
+@Immutable
 @Serializable
 data class MomentCreateResult(
     val moment: MomentCreateResultMoment? = null,
 )
 
+@Immutable
 @Serializable
 data class MomentCreateResultMoment(
     @Serializable(with = IDText::class) val id: String? = null,
 )
 
+@Immutable
 @Serializable
 data class GiphyLoadResult(
     @Serializable(with = IDText::class) val id: String? = null,
@@ -313,11 +345,13 @@ data class GiphyLoadResult(
     val isSticker: Boolean? = null,
 )
 
+@Immutable
 @Serializable
 data class WidgetsSendResult(
     val id: String? = null,
 )
 
+@Immutable
 @Serializable
 data class ChatMediaLoadResult(
     val visualCount: Long? = null,

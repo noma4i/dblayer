@@ -4,6 +4,11 @@ A model is described once in a `.dbl` file. The syntax follows Ruby on Rails: a 
 
 ## Fields
 
+Generated Kotlin models and their nested value types carry Compose `@Immutable` from its lightweight annotation dependency.
+Applications need no stability config for these models or their read-only `List`, `Set`, and `Map` fields.
+Treat collection contents as immutable and replace model instances when values change.
+Swift generation is unchanged.
+
 Declare fields and indexes directly inside `model`. Use `field :name, type: :string` for an explicit storage type.
 
 With `--schema`, `field :name` infers its type and nullability from the matching GraphQL type. Local fields require an explicit type.
