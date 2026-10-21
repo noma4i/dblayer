@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.0.2 - 2026-10-21
+
+### Fixed
+- A repeated open with equal credentials, transport and HTTP values reuses the database.
+
 ## 5.0.1 - 2026-10-21
 
 ### Fixed
