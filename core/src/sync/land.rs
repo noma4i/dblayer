@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, EdgeValue, EdgeWrite, EntityOp, EnvelopeFault, ScopeRef, WindowSave, WindowTail, WriteOrigin};
+use crate::commit::{CommitEnvelope, EdgeValue, EdgeWrite, EntityOp, EnvelopeFault, ScopeOp, ScopeRef, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
 use crate::db::{Db, Prior, ReplaceRequest};
 use crate::schema::{Coverage, FieldKind, FieldSpec};
@@ -10,12 +10,38 @@ use crate::value::ScalarKind;
 use crate::read::{incoming_ids, plan_landing, StoredMember, StoredScope};
 use crate::store::{admit_upsert, PageInfo, PlanCommitError, Reader, StoreError, UpsertAdmission};
 use crate::transport::FetchAttempt;
-use crate::value::read_id;
+use crate::value::{fractional_between, read_id};
 
 use super::error::SyncError;
 use super::load::DiscardReason;
 use super::normalize::Normalized;
 use super::{locked, Inner};
+
+impl Inner {
+    pub(super) fn joins_of(&self, reader: &Reader<'_>, model: &str, id: &RowId, row: &Map<String, Value>) -> Result<Vec<ScopeOp>, SyncError> {
+        let spec = self.db.spec(model)?;
+        let mut joins = Vec::new();
+        for relation in spec.relations.iter().filter(|relation| relation.joins_events && relation.remote.is_some() && relation.text_params.is_empty()) {
+            let params: Map<String, Value> = relation.by_columns.iter().filter_map(|column| row.get(column).filter(|value| !value.is_null()).map(|value| (column.clone(), value.clone()))).collect();
+            if params.len() != relation.by_columns.len() {
+                continue;
+            }
+            let Ok(resolved) = self.resolve(model, &relation.name, &params) else { continue };
+            let loaded = rusqlite::OptionalExtension::optional(reader.connection().query_row("SELECT 1 FROM query_window WHERE key = ?1", [&resolved.window_key], |row| row.get::<_, i64>(0)))
+                .map_err(|error| SyncError::Event(error.to_string()))?;
+            if loaded.is_none() {
+                continue;
+            }
+            if reader.scope_has_member(model, resolved.scope.key.as_str(), id.as_str())? {
+                continue;
+            }
+            let last = reader.scope_last_key(model, resolved.scope.key.as_str())?;
+            let order_key = fractional_between(last.as_deref(), None).map_err(|error| SyncError::Event(error.to_string()))?;
+            joins.push(ScopeOp::Append { scope: resolved.scope, row: id.clone(), order_key });
+        }
+        Ok(joins)
+    }
+}
 
 pub(crate) struct Landing {
     pub model: String,

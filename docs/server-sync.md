@@ -494,6 +494,7 @@ What a refresh does, in one commit:
 
 The encrypted event carries identifiers. `changed_by` selects the HTTP reread, and its response updates the database in the usual way.
 Events of the plain transport with a full row save that row directly. `joins: :events` adds such a row to loaded selections without server filters.
+`joins: :events` also accepts new rows from operation responses with `lands`, using the same matching and ordering rules in the row transaction.
 A relation with `text:` parameters stores the server response as it was and does not accept event rows.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
 

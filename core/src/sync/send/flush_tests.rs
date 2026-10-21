@@ -494,6 +494,62 @@ async fn action_lands_the_rows_it_declares_outside_its_root() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn lands_joins_only_loaded_matching_threads_and_keeps_existing_places() {
+    use crate::sync::stable_order::rig::*;
+    for stable in [false, true] {
+        let mut message_spec = messages_spec(stable);
+        let mut text_thread = message_spec.relations[0].clone();
+        text_thread.name = "search".into();
+        text_thread.order_stable = false;
+        text_thread.text_params.push("query".into());
+        message_spec.relations.push(text_thread);
+        let mut moments = moments_spec();
+        moments.actions.iter_mut().find(|action| action.name == "star").unwrap().lands = vec![crate::schema::ActionLanding { model: "messages".into(), root: "starMoment.message".into() }];
+        let rig = rig_on(crate::db::Db::open_in_memory(vec![users_spec(), moments, message_spec], None).unwrap(), crate::transport::MockTransport::new(), Default::default());
+        rig.sync.register(crate::sync::OperationDef::new("MessagesThread", "query MessagesThread { chat { id } }", "chat"));
+        put(&rig, "moments", moment("m1", "t"));
+        let (log, _window) = watch_thread(&rig, 10);
+        enqueue_page(&rig, vec![message("a", Some(1), 1), message("z", Some(5), 5)], false, "end");
+        rig.transport.enqueue("MessagesThread", thread_page(vec![], false, "end"));
+        rig.transport.enqueue("MessagesThread", thread_page(vec![], false, "end"));
+        load_first_page(&rig).await;
+        rig.sync.load("messages", "thread", &params(json!({"chatId":"c2"})), Default::default()).await.unwrap();
+        rig.sync.load("messages", "search", &params(json!({"chatId":"c1", "query":"x"})), Default::default()).await.unwrap();
+        put(&rig, "messages", message("stored", Some(4), 4));
+        let answers = [("new", "c1"), ("new", "c1"), ("stored", "c1"), ("other", "c2"), ("unloaded", "c3")];
+        for (id, chat) in answers {
+            let mut row = message(id, Some(3), 3);
+            row["chatId"] = json!(chat);
+            rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"message": row}})));
+        }
+        for (id, _) in answers {
+            rig.db.act("moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
+            assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
+            rig.db.settle();
+            assert_eq!(shown(&log), ["a", "new", "z"], "stable={stable}, id={id}");
+        }
+        assert_eq!(member_ids(&rig, "messages", "thread", &params(json!({"chatId":"c2"}))), ["other"]);
+        assert_eq!(member_ids(&rig, "messages", "thread", &params(json!({"chatId":"c3"}))), Vec::<String>::new());
+        assert_eq!(member_ids(&rig, "messages", "search", &params(json!({"chatId":"c1", "query":"x"}))), Vec::<String>::new());
+        rig.sync.inner.commit(rig.db.generation(), |reader| {
+            let row = reader.point("messages", "a")?.unwrap();
+            assert!(rig.sync.inner.joins_of(reader, "messages", &rid("a"), &row)?.is_empty(), "an existing scope member keeps its place");
+            Ok(None)
+        }).unwrap();
+        rig.db.act("moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
+        let entry = rig.db.outbox().unwrap().remove(0);
+        let before = rig.db.revision_seq().unwrap();
+        let sending = super::Sending { entry: &entry, model: "moments".into(), action: "star".into(), generation: rig.db.generation(), base_revision: before };
+        let operation = rig.sync.inner.operations.lock().unwrap()["StarMoment"].clone();
+        let response = crate::transport::Response::data(json!({"starMoment": {"message": message("atomic", Some(4), 4)}}));
+        assert_eq!(rig.sync.inner.settle_response(&sending, &operation, response).await.unwrap(), SendResult::Committed);
+        assert_eq!(rig.db.revision_seq().unwrap(), before + 1, "the response writes its row and membership in one commit");
+        rig.db.settle();
+        assert_eq!(shown(&log), ["a", "new", "atomic", "z"]);
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn action_that_ignores_its_response_keeps_the_local_row() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));

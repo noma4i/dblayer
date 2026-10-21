@@ -412,6 +412,8 @@ When a response row has no value for a column the relation groups by, the param 
 
 A `fetch Operation` line connects a scope to the server. A relation that depends on columns names them: `where :userId` loads and lists the rows whose `userId` equals the param. `order createdAt: :desc` sorts the rows locally, otherwise the server order is kept. A row whose param column changes (a message moving to another `chatId`) leaves the list of the old value and joins the head of the list of the new value in the same commit, for relations that list every row of their params. `joins: :created` on a relation without params makes the list take the rows this device creates, at its head; `joins: :events` makes it take rows from its subscription events.
 
+`joins: :events` also accepts a new row from an operation response with `lands` into loaded windows matching its `where` columns.
+
 `where` accepts scalar and enum columns. A param passed as `nil` is a value of its own: `Moment.by_user(nil)` is the unfiltered list and has its own window. A param column gives the row one owner list: a row that belongs to several lists at once (a moment in the default feed and in a vibe feed) needs one relation per list, and the vibe id goes in `text: [:vibeId]`, not in a column param. `text: [:query]` declares params that are not columns, such as a search string. They are sent as variables, always strings, and each value gets its own window: `scope :search, text: [:query] do ... end` generates `Model.search("cats")`.
 
 `typed: [afterSequence: :int, includeGifts: :bool]` declares params that are sent as a JSON integer or boolean, not as text. The call takes `Int` and `Bool` (`Long` and `Boolean` in Kotlin), and the core refuses a text value. Each value has its own window and its own members. The document variable of the same name (or the name on the left of `variables name: :param`) must be `Int` or `Boolean`. A scope that pages in ascending order and one that pages in descending order are two scopes: a window key holds the scope, its params and the direction, so their cursors never meet.
@@ -467,7 +469,7 @@ model Message do
 end
 ```
 
-`joins: :events` adds a row from an event to the windows whose `where` columns the row matches. A scope with `text:` has no columns to match, so the combination stops the run: remove `joins:`. The window reloads from the server when it is stale or marked by `refetch`, and the new answer replaces its members.
+`joins: :events` adds a row from an event to the windows whose `where` columns the row matches. It also accepts new rows from operation responses with `lands`, using the same loaded windows and ordering rules. A scope with `text:` has no columns to match, so the combination stops the run: remove `joins:`. The window reloads from the server when it is stale or marked by `refetch`, and the new answer replaces its members.
 
 | Line | Meaning | Default |
 | ---- | ------- | ------- |

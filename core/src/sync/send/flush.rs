@@ -402,11 +402,11 @@ impl Inner {
         }
     }
 
-    async fn settle_response(&self, sending: &Sending<'_>, operation: &OperationDef, response: Response) -> Result<SendResult, SyncError> {
+    pub(super) async fn settle_response(&self, sending: &Sending<'_>, operation: &OperationDef, response: Response) -> Result<SendResult, SyncError> {
         let data = response.data.unwrap_or(Value::Null);
         let entry = sending.entry;
         let temp = entry.operation.temp_id.clone();
-        let normalized = self.read_response(sending, operation, &data);
+        let (normalized, landings) = self.read_response(sending, operation, &data);
         let real = normalized.roots.first().and_then(|row| row.get("id")).and_then(read_id);
         let creatable = normalized.roots.first().is_some_and(|row| self.db.spec(&sending.model).is_ok_and(|spec| spec.normalize(row).is_ok()));
         if temp.is_some() && (normalized.roots.len() != 1 || real.is_none() || real == temp || !creatable) {
@@ -430,6 +430,13 @@ impl Inner {
                 }));
                 if !lands_rows {
                     envelope.entity_ops = temp.iter().map(|temp| EntityOp::Destroy { model: ModelKey::new(&sending.model), id: temp.clone(), reason: crate::commit::DestroyReason::Expired }).collect();
+                } else {
+                    for op in &envelope.entity_ops {
+                        let EntityOp::Upsert { model, id, row } = op else { continue };
+                        if landings.contains(&RowRef::new(model.clone(), id.clone())) && reader.point(model.as_str(), id.as_str())?.is_none() {
+                            envelope.scope_ops.extend(self.joins_of(reader, model.as_str(), id, row)?);
+                        }
+                    }
                 }
                 envelope.operation_transitions.push(OperationTransition::Close { seq: entry.operation.id.0, status: OperationStatus::Committed, once: false });
                 Ok(Some(envelope))
@@ -464,25 +471,27 @@ impl Inner {
         locked(&self.outcomes).answered(entry.operation.id.0, &sending.model, rows, Value::Object(fields.collect()));
     }
 
-    fn read_response(&self, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> Normalized {
+    fn read_response(&self, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> (Normalized, Vec<RowRef>) {
         let ignored = self.db.spec(&sending.model).ok().is_some_and(|spec| spec.actions.iter().any(|declared| declared.name == sending.action && declared.ignore_response));
         if sending.action == "destroy" || ignored {
-            return Normalized::default();
+            return (Normalized::default(), Vec::new());
         }
         let declared = self.db.spec(&sending.model).ok().and_then(|spec| spec.actions.iter().find(|declared| declared.name == sending.action).cloned());
         let root = declared.as_ref().and_then(|declared| declared.root.as_deref()).unwrap_or(&operation.root_path);
         let mut normalized = extract(data, root, &RemoteShape::Single, None)
             .and_then(|extracted| normalize_nodes(&self.db, &sending.model, &extracted.nodes))
             .unwrap_or_default();
+        let mut landings = Vec::new();
         for landing in declared.iter().flat_map(|declared| &declared.lands) {
             let Ok(landed) = extract(data, &landing.root, &RemoteShape::Single, None).and_then(|extracted| normalize_nodes(&self.db, &landing.model, &extracted.nodes)) else { continue };
             let model = ModelKey::new(&landing.model);
+            landings.extend(landed.roots.iter().filter_map(|row| row.get("id").and_then(read_id)).map(|id| RowRef::new(model.clone(), id)));
             normalized.related.extend(landed.roots.into_iter().map(|row| (model.clone(), row)));
             normalized.related.extend(landed.related);
             normalized.dropped += landed.dropped;
         }
         normalized.coalesce(&sending.model);
-        normalized
+        (normalized, landings)
     }
 
     fn quarantine(&self, sending: &Sending<'_>, data: &Value) -> Result<SendResult, SyncError> {

@@ -16,7 +16,7 @@ use crate::transport::{
     EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFault,
     SubscriptionRetry, SubscriptionFailure, TransportError, RETRY_BACKOFF,
 };
-use crate::value::{fractional_between, read_id};
+use crate::value::read_id;
 
 use super::error::SyncError;
 use super::extract::root_value;
@@ -454,31 +454,5 @@ impl Inner {
         let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone(), backoff: RETRY_BACKOFF.randomized() };
         let task = tokio::spawn(self.until_closed(feed.run(request, first)));
         Ok(EventSubscription { abort: task.abort_handle(), status, definition })
-    }
-}
-
-impl Inner {
-    fn joins_of(&self, reader: &crate::store::Reader<'_>, model: &str, id: &RowId, row: &Map<String, Value>) -> Result<Vec<ScopeOp>, SyncError> {
-        let spec = self.db.spec(model)?;
-        let mut joins = Vec::new();
-        for relation in spec.relations.iter().filter(|relation| relation.joins_events && relation.remote.is_some() && relation.text_params.is_empty()) {
-            let params: Map<String, Value> = relation.by_columns.iter().filter_map(|column| row.get(column).filter(|value| !value.is_null()).map(|value| (column.clone(), value.clone()))).collect();
-            if params.len() != relation.by_columns.len() {
-                continue;
-            }
-            let Ok(resolved) = self.resolve(model, &relation.name, &params) else { continue };
-            let loaded = rusqlite::OptionalExtension::optional(reader.connection().query_row("SELECT 1 FROM query_window WHERE key = ?1", [&resolved.window_key], |row| row.get::<_, i64>(0)))
-                .map_err(|error| SyncError::Event(error.to_string()))?;
-            if loaded.is_none() {
-                continue;
-            }
-            if reader.scope_has_member(model, resolved.scope.key.as_str(), id.as_str())? {
-                continue;
-            }
-            let last = reader.scope_last_key(model, resolved.scope.key.as_str())?;
-            let order_key = fractional_between(last.as_deref(), None).map_err(|error| SyncError::Event(error.to_string()))?;
-            joins.push(ScopeOp::Append { scope: resolved.scope, row: id.clone(), order_key });
-        }
-        Ok(joins)
     }
 }
