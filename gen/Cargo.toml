@@ -1,6 +1,6 @@
 [package]
 name = "dblayer-gen"
-version = "4.1.0"
+version = "5.0.0"
 edition = "2021"
 
 [lib]
@@ -11,7 +11,7 @@ name = "dblayer-gen"
 path = "src/main.rs"
 
 [dependencies]
-dblayer = { version = "4.1.0", path = "../core" }
+dblayer = { version = "5.0.0", path = "../core" }
 graphql-parser = "0.4.1"
 serde_json = "1.0.151"
 thiserror = "2.0.21"

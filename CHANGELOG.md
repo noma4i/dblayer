@@ -1,32 +1,32 @@
 # Changelog
 
-## Unreleased
+## 5.0.0 - 2026-10-21
 
 ### Added
-- Stream decoded list changes in Swift and Kotlin without copying complete lists.
-- Mark generated Kotlin models and nested values with Compose `@Immutable`.
-- Add iOS `--device` and Android `--release` build modes for CI.
-- `RetryListener.retrying(attempt, delayMs, reason)` reports encrypted HTTP retries in Swift and Kotlin.
-- `Database.setRetryListener` installs or removes the listener. Bootstrap accepts `retryListener` before a database exists.
+- `Query.changes` delivers inserted, updated, moved and removed rows of a live query in Swift and Kotlin.
+- `RetryListener.retrying(attempt, delayMs, reason)` reports encrypted HTTP retries.
+- `Database.setRetryListener` installs or removes the listener. `serverConfig` takes `retryListener`.
+- Generated Kotlin models carry Compose `@Immutable`, so applications need no stability config.
+- `build_ios.sh --device` builds the iPhone slice only. `build_kotlin.sh --release` builds the two ARM libraries only.
 
 ### Changed
-- Detect available build cores with `nproc` and fall back to `sysctl`.
-- Open databases asynchronously on library workers in Swift and Kotlin.
-- Reuse identical opens and reject changed parameters after successful opening.
-- Allow R8 to shrink ordinary Kotlin types while preserving JNA reflection.
-- Reduce native release package size with one codegen unit and symbol stripping.
-- Remove the x86_64 simulator slice from default iOS builds.
-- Build only ARM Android libraries by default. Require `--abis` for x86 development libraries.
-- Generate bindings from target libraries without building an unused host dynamic library.
-- Encrypted bootstrap, reads, session calls, mutations and resume wait through network errors, timeouts, HTTP 408, 429 and 5xx.
+- `DB.open` is `async throws` in Swift and `DBlayer.open` is `suspend` in Kotlin.
+- Opening runs on the library worker pool. Repeated identical opens do nothing, changed parameters throw.
+- Encrypted requests wait through network errors, timeouts, HTTP 408, 429 and 5xx instead of failing.
 - `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR` retry without an attempt limit.
-- Delays double from 1 second to 30 seconds with 20% jitter. Applications no longer need separate startup retries.
-- A confirmed temporary refusal spends its sequence before the operation repeats with a new requestId and sequence.
-- An unconfirmed attempt preserves Pending. Cancelling the caller stops HTTP and backoff, leaving Pending available for resume.
-- Swift generation connects Task cancellation for bootstrap, `sessionCall` and `sessionResume` to UniFFI, with serialized cancel/free of future handles.
-- Other Swift async calls keep their existing cancellation behavior because non-throwing UniFFI methods cannot throw cancellation safely.
-- Kotlin encrypted HTTP uses 30-second call/read timeouts and a 10-second connect timeout.
-- Swift encrypted HTTP uses 30-second request/resource timeouts. URLSession has no separate connect timeout setting.
+- Delays double from 1 to 30 seconds with 20% jitter. Applications need no startup retry.
+- A confirmed temporary refusal repeats with a new requestId and the next sequence.
+- Cancelling an encrypted call stops the HTTP request and backoff and keeps Pending for resume.
+- Swift `Task.cancel` reaches the core for bootstrap, `sessionCall` and `sessionResume` only.
+- Kotlin encrypted HTTP uses 30-second call and read timeouts and a 10-second connect timeout.
+- Swift encrypted HTTP uses 30-second request and resource timeouts without a separate connect timeout.
+- Native release libraries use one codegen unit and symbol stripping. Android libraries shrink by about 39%.
+- Android consumer rules keep JNA classes and native methods instead of every DBlayer class.
+- Build scripts read the core count with `nproc` and fall back to `sysctl`.
+
+### Removed
+- The x86_64 simulator slice is no longer in the default iOS build.
+- The default Android build no longer includes x86 and x86_64. `--abis` builds all four ABIs.
 
 ## 4.1.0 - 2026-10-21
 

@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "dblayer"
-version = "4.1.0"
+version = "5.0.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "dblayer-gen"
-version = "4.1.0"
+version = "5.0.0"
 dependencies = [
  "dblayer",
  "graphql-parser",
