@@ -13,9 +13,9 @@ extension BridgeProbeTests {
     ("MomentTranscodeStatus", "query MomentTranscodeStatus($momentId: ID!) { node(id: $momentId) { ... on Moment { id uuid createdAt media } } }"),
   ]
 
-  private func openNodeRig(models: String = modelsJSON) throws -> MockTransport {
+  private func openNodeRig(models: String = modelsJSON) async throws -> MockTransport {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: models, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: models, transport: transport)
     let defs = Self.nodeDocuments.map { JSONValue.object(["name": .string($0.0), "document": .string($0.1)]) }
     try DB.database.registerOperations(defsJson: JSONValue.array(defs).text)
     return transport
@@ -27,7 +27,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func aNodeReadReturnsTheTypedRowAndOnlyAnEventForcesAnotherRequest() async throws {
-    let transport = try openNodeRig()
+    let transport = try await openNodeRig()
     transport.enqueue("ChatNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
     transport.enqueue("ChatNode", reply: #"{"data":{"node":{"id":"c1","title":"two"}}}"#)
 
@@ -43,7 +43,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func aRelationUnderNodeLandsAndASubsetReadChangesOnlyTheSelectedFields() async throws {
-    let transport = try openNodeRig()
+    let transport = try await openNodeRig()
     let message = #"{"id":"m1","chatId":"c1","authorId":"a","text":"keep","createdAt":"2026-10-01T00:00:00.000Z","media":{"kind":"VIDEO","transcoded":false,"fileUrl":"http://f"}}"#
     transport.enqueue("ChatMedia", reply: #"{"data":{"node":{"messages":{"edges":[{"node":\#(message)}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#)
     try await Message.chatMedia("c1").load()
@@ -57,7 +57,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func theVariableNameOfANodeReadFollowsTheDeclaration() async throws {
-    let transport = try openNodeRig()
+    let transport = try await openNodeRig()
     transport.enqueue("MomentTranscodeStatus", reply: #"{"data":{"node":{"id":"mo1","uuid":"u","createdAt":"2026-10-01T00:00:00.000Z","media":{"kind":"VIDEO"}}}}"#)
     #expect(try await Moment.transcodeStatus("mo1")?.id == "mo1")
     #expect(nodeCalls(transport, "MomentTranscodeStatus").first?.variablesJson == #"{"momentId":"mo1"}"#)
@@ -65,7 +65,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func nodesReadsManyInOneRequestInTheAnsweredOrder() async throws {
-    let transport = try openNodeRig()
+    let transport = try await openNodeRig()
     transport.enqueue("ChatsByIds", reply: #"{"data":{"nodes":[{"id":"c2","title":"b"},null,{},{"id":"c1","title":"a"}]}}"#)
     let rows = try await Chat.nodes(["c2", "x", "y", "c1"])
     #expect(rows.map(\.title) == ["b", "a"])
@@ -75,7 +75,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func anAnswerWithoutAMatchingTypeIsNilAndWritesNothing() async throws {
-    let transport = try openNodeRig()
+    let transport = try await openNodeRig()
     transport.enqueue("ChatNode", reply: #"{"data":{"node":{"id":"c1","title":"old"}}}"#)
     _ = try await Chat.node("c1")
     for answer in [#"{"data":{"node":null}}"#, #"{"data":{"node":{}}}"#, #"{"data":{"node":{"__typename":"Gadget"}}}"#] {
@@ -87,7 +87,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func nodesKeepsDuplicatesInResponseOrder() async throws {
-    let transport = try openNodeRig()
+    let transport = try await openNodeRig()
     transport.enqueue("ChatsByIds", reply: #"{"data":{"nodes":[{"id":"c2","title":"old","shareUrl":"kept"},null,{"id":"c1","title":"middle"},{"id":"c2","title":"last"}]}}"#)
     let rows = try await Chat.nodes(["c2", "missing", "c1", "c2"])
     #expect(rows.map(\.id) == ["c2", "c1", "c2"])
@@ -103,7 +103,7 @@ extension BridgeProbeTests {
     let field = try #require(fields.firstIndex { $0["name"] as? String == "shareUrl" })
     fields[field]["from"] = "profile.url"
     models[index]["fields"] = fields
-    let transport = try openNodeRig(models: String(decoding: JSONSerialization.data(withJSONObject: models), as: UTF8.self))
+    let transport = try await openNodeRig(models: String(decoding: JSONSerialization.data(withJSONObject: models), as: UTF8.self))
     for (patch, expected) in [(#""profile":{}"#, "kept" as String?), (#""profile":null"#, nil), (#""profile":{"url":null}"#, nil)] {
       transport.enqueue("ChatNode", reply: #"{"data":{"node":{"id":"c1","title":"chat","profile":{"url":"kept"}}}}"#)
       #expect(try await Chat.node("c1", force: true)?.shareUrl == "kept")

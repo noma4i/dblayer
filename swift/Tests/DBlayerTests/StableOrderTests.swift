@@ -15,7 +15,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     let page = [Self.stableNode("m1", 1, text: "t1"), Self.stableNode("m2", 2, text: "t2"), Self.stableNode("m5", 5, text: "t5")]
     transport.enqueue("ChatThread", reply: #"{"data":{"chat":{"messages":{"nodes":[\#(page.joined(separator: ","))],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: Self.stableOperations)
     let thread = Message.thread("c1")
     try await thread.load()

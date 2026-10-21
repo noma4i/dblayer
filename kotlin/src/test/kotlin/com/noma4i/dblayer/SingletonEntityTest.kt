@@ -14,7 +14,7 @@ import org.junit.Test
 class SingletonEntityTest {
     private val transport = MockTransport()
 
-    private fun open() {
+    private suspend fun open() {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
     }

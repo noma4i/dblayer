@@ -7,7 +7,7 @@ extension BridgeProbeTests {
   @Test
   func memoryNoticesReachTheGeneratedLiveQueryWithoutAReadRequest() async throws {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     let notices = Cursor(await Notice.recent.live.stream())
     #expect(await notices.next()?.isEmpty == true)

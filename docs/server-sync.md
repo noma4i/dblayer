@@ -17,8 +17,13 @@ HTTP subscription errors follow query retry classification: 5xx errors retry, wh
 Use `DB.open` (Swift) or `DBlayer.open` (Kotlin) for every database.
 Without `encrypted`, requests use ordinary GraphQL HTTP and the transport's existing subscriptions, without credentials, sequence numbers or APQ.
 
+Opening is asynchronous: use `try await DB.open(...)` in Swift and suspend `DBlayer.open(...)` in Kotlin.
+The library opens files and runs migrations on its worker pool.
+Repeated calls with identical parameters reuse the database. Different parameters fail. An opening error permits retry.
+Custom transport, credentials and HTTP objects must be the same instances when repeating an open.
+
 ```swift
-try DB.open(endpoint: endpoint, headers: headers, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
+try await DB.open(endpoint: endpoint, headers: headers, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
 ```
 
 ```kotlin
@@ -84,7 +89,7 @@ The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin f
 
 ```swift
 let origin = URL(string: "https://api.example.com")!
-let database = try Database.open(
+let database = try await Database.open(
   config: Config(path: path, dataVersion: nil, cacheRows: 4096),
   modelsJson: modelsJSON,
   transport: DatabaseTransport(cable: { await cable.current }),
@@ -358,7 +363,7 @@ Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]
 `transport` defaults to `UrlSessionTransport` or `OkHttpTransport` on the same origin, including the WebSocket at `encrypted.endpoints.cable`.
 
 ```swift
-try DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel), credentials: KeychainCredentials(), modelsJSON: modelsJSON)
+try await DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel), credentials: KeychainCredentials(), modelsJSON: modelsJSON)
 ```
 
 ```kotlin
@@ -368,7 +373,7 @@ DBlayer.open(encrypted = EncryptedConfig(origin, bundledServerKey, bundledServer
 Tests can pass their own transport and HTTP replies. A test that opens cable must also implement the 4 WebSocket calls.
 
 ```swift
-try DB.open(encrypted: encrypted, credentials: credentials, transport: testTransport, modelsJSON: modelsJSON, http: testHttp)
+try await DB.open(encrypted: encrypted, credentials: credentials, transport: testTransport, modelsJSON: modelsJSON, http: testHttp)
 ```
 
 ```kotlin
@@ -770,7 +775,7 @@ let encrypted = EncryptedConfig(
   cablePurpose: cablePurpose, cableChannel: cableChannel
 )
 let config = try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: appVersion)
-try DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
+try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
 ```
 
 ```kotlin

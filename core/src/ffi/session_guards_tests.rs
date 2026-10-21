@@ -46,8 +46,8 @@ impl Rig {
         Self { server: FakeServer::new(Arc::new(SystemClock)), credentials: Arc::default() }
     }
 
-    pub(super) fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
-        Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), Some(self.credentials.clone()), Some(Arc::new(ThroughServer(self.server.clone()))))
+    pub(super) async fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
+        Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), Some(self.credentials.clone()), Some(Arc::new(ThroughServer(self.server.clone())))).await
     }
 
     pub(super) fn touched(&self) -> (usize, usize) {
@@ -58,9 +58,9 @@ impl Rig {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pin_mismatch_at_open_and_in_the_config_never_touches_the_credential_store() {
     let rig = Rig::new();
-    assert!(matches!(rig.open(None, short_key_pin()), Err(DbError::Invalid { .. })));
+    assert!(matches!(rig.open(None, short_key_pin()).await, Err(DbError::Invalid { .. })));
     assert_eq!(rig.touched(), (0, 0));
-    let database = rig.open(None, pin()).unwrap();
+    let database = rig.open(None, pin()).await.unwrap();
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     let (credential, before) = (rig.credentials.inner.value(), rig.touched());
 
@@ -80,7 +80,7 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
     for (wire, expected) in table {
         for confirmed in [false, true] {
             let rig = Rig::new();
-            let database = rig.open(None, pin()).unwrap();
+            let database = rig.open(None, pin()).await.unwrap();
             database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
             let credential = rig.credentials.inner.value();
             rig.server.refuse_next(wire, confirmed);
@@ -98,13 +98,13 @@ async fn resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
-    let first = rig.open(Some(&path), pin()).unwrap();
+    let first = rig.open(Some(&path), pin()).await.unwrap();
     rig.server.drop_next_request();
     super::encrypted_tests::cancel_on_retry(&first, first.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into())).await;
     assert_eq!(rig.server.seen().len(), 0);
     drop(first);
 
-    let restarted = rig.open(Some(&path), pin()).unwrap();
+    let restarted = rig.open(Some(&path), pin()).await.unwrap();
     let resumed = restarted.session_resume().await.unwrap();
 
     assert_eq!(resumed.as_deref(), Some(r#"{"nextStep":"authenticated"}"#));
@@ -117,14 +117,14 @@ async fn a_lost_logout_answer_is_resumed_through_the_bridge_and_clears_the_crede
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
-    let first = rig.open(Some(&path), pin()).unwrap();
+    let first = rig.open(Some(&path), pin()).await.unwrap();
     first.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.lose_next_answer();
     super::encrypted_tests::cancel_on_retry(&first, first.session_call("logout".into(), "{}".into())).await;
     assert!(rig.credentials.inner.value().is_some());
     drop(first);
 
-    let restarted = rig.open(Some(&path), pin()).unwrap();
+    let restarted = rig.open(Some(&path), pin()).await.unwrap();
     let resumed = restarted.session_resume().await.unwrap();
 
     assert_eq!(resumed.as_deref(), Some(r#"{"revoked":true}"#));
@@ -134,7 +134,7 @@ async fn a_lost_logout_answer_is_resumed_through_the_bridge_and_clears_the_crede
 #[tokio::test(flavor = "multi_thread")]
 async fn a_logout_whose_credential_could_not_be_cleared_is_finished_by_resume_through_the_bridge() {
     let rig = Rig::new();
-    let database = rig.open(None, pin()).unwrap();
+    let database = rig.open(None, pin()).await.unwrap();
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.credentials.fail_next_clear.store(true, Ordering::SeqCst);
 

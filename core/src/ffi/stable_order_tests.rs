@@ -24,9 +24,9 @@ fn land(db: &Database, scope: Option<&ScopeRef>, id: &str, sequence: serde_json:
     db.db.land(envelope).unwrap();
 }
 
-#[test]
-fn a_live_window_over_a_relation_that_keeps_its_order_follows_the_member_order() {
-    let db = Database::open(Config { path: None, data_version: None, cache_rows: 64 }, serde_json::to_string(&vec![messages_spec(true)]).unwrap(), None::<Arc<dyn Transport>>, None, None, None).unwrap();
+#[tokio::test]
+async fn a_live_window_over_a_relation_that_keeps_its_order_follows_the_member_order() {
+    let db = Database::open(Config { path: None, data_version: None, cache_rows: 64 }, serde_json::to_string(&vec![messages_spec(true)]).unwrap(), None::<Arc<dyn Transport>>, None, None, None).await.unwrap();
     let query = db.db.remote_relation_query("messages", "thread", json!({"chatId": "c1"}).as_object().unwrap()).unwrap().unwrap();
     let scope = ScopeRef::new(ModelKey::new("messages"), query.scope.unwrap());
     for (id, sequence) in [("m1", json!(1)), ("m2", json!(2)), ("m5", json!(5)), ("m9", json!(null))] {

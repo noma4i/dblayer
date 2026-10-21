@@ -13,7 +13,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aListOfInputObjectsWithOneOfValuesIsSentWithOneKeyPerValue() async throws {
-    let transport = try Self.openOperationRig("WidgetsSend", document: "mutation WidgetsSend($widgets: [StickerWidgetInput!]) { widgetsSend(widgets: $widgets) { id } }", reply: #"{"data":{"widgetsSend":{"id":"w1"}}}"#)
+    let transport = try await Self.openOperationRig("WidgetsSend", document: "mutation WidgetsSend($widgets: [StickerWidgetInput!]) { widgetsSend(widgets: $widgets) { id } }", reply: #"{"data":{"widgetsSend":{"id":"w1"}}}"#)
 
     let result = try await Operations.widgetsSend(widgets: Self.widgets)
 
@@ -25,7 +25,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func anOmittedOptionalListIsNotSent() async throws {
-    let transport = try Self.openOperationRig("WidgetsSend", document: "mutation WidgetsSend($widgets: [StickerWidgetInput!]) { widgetsSend(widgets: $widgets) { id } }", reply: #"{"data":{"widgetsSend":{"id":"w0"}}}"#)
+    let transport = try await Self.openOperationRig("WidgetsSend", document: "mutation WidgetsSend($widgets: [StickerWidgetInput!]) { widgetsSend(widgets: $widgets) { id } }", reply: #"{"data":{"widgetsSend":{"id":"w0"}}}"#)
 
     _ = try await Operations.widgetsSend()
 

@@ -50,8 +50,8 @@ private final class ClosingSocket: CableSocket, @unchecked Sendable {
   func receive() async throws -> String { throw CableSocketError.closed }
 }
 
-private func open(_ http: ScriptedHttp, _ credentials: CountedCredential, path: String? = nil, pin: String = serverPin) throws -> Database {
-  try Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", sessionless: false), "confirm": EncryptedSessionOperation(path: "/api/auth/confirm", sessionless: false), "social": EncryptedSessionOperation(path: "/api/auth/social", sessionless: false), "ticket": EncryptedSessionOperation(path: "/api/ticket", sessionless: true)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: credentials, http: http)
+private func open(_ http: ScriptedHttp, _ credentials: CountedCredential, path: String? = nil, pin: String = serverPin) async throws -> Database {
+  try await Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: DatabaseTransport(cable: { nil }), encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", sessionless: false), "confirm": EncryptedSessionOperation(path: "/api/auth/confirm", sessionless: false), "social": EncryptedSessionOperation(path: "/api/auth/social", sessionless: false), "ticket": EncryptedSessionOperation(path: "/api/ticket", sessionless: true)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: credentials, http: http)
 }
 
 private func temporaryFile() throws -> (URL, String) {
@@ -84,8 +84,8 @@ struct SessionGuardsTests {
   func aPinMismatchAtOpenNeverTouchesTheCredentialStore() async throws {
     let http = ScriptedHttp()
     let credentials = CountedCredential("kept")
-    #expect(throws: DbError.self) { try open(http, credentials, pin: otherPin) }
-    _ = try open(http, credentials)
+    await #expect(throws: DbError.self) { try await open(http, credentials, pin: otherPin) }
+    _ = try await open(http, credentials)
 
     #expect(credentials.current == "kept")
     #expect(credentials.touched == (0, 0))
@@ -96,7 +96,7 @@ struct SessionGuardsTests {
     for status: UInt16 in [401, 403, 423, 451] {
       let http = ScriptedHttp()
       let credentials = CountedCredential()
-      let database = try open(http, credentials)
+      let database = try await open(http, credentials)
       http.answer(status: status)
       await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
       let issued = credentials.current
@@ -114,19 +114,19 @@ struct SessionGuardsTests {
     defer { try? FileManager.default.removeItem(at: directory) }
     let http = ScriptedHttp()
     let credentials = CountedCredential()
-    var database = try open(http, credentials, path: path)
+    var database = try await open(http, credentials, path: path)
     http.goOffline(true)
     try await cancelOnRetry(database, operation: "otp", body: #"{"phone":"+61400000000"}"#)
     http.goOffline(false)
 
-    database = try open(http, credentials, path: path)
+    database = try await open(http, credentials, path: path)
     await #expect(throws: DbError.self) { try await database.sessionResume() }
     #expect(http.paths == ["/api/auth/otp", "/api/auth/otp"])
 
     let (fresh, freshPath) = try temporaryFile()
     defer { try? FileManager.default.removeItem(at: fresh) }
     let quiet = ScriptedHttp()
-    let nothing = try open(quiet, CountedCredential(), path: freshPath)
+    let nothing = try await open(quiet, CountedCredential(), path: freshPath)
     #expect(try await nothing.sessionResume() == nil)
     #expect(quiet.paths.isEmpty)
   }
@@ -137,12 +137,12 @@ struct SessionGuardsTests {
     defer { try? FileManager.default.removeItem(at: directory) }
     let http = ScriptedHttp()
     let credentials = CountedCredential()
-    var database = try open(http, credentials, path: path)
+    var database = try await open(http, credentials, path: path)
     http.goOffline(true)
     try await cancelOnRetry(database, operation: "logout", body: "{}")
     http.goOffline(false)
 
-    database = try open(http, credentials, path: path)
+    database = try await open(http, credentials, path: path)
     await #expect(throws: DbError.self) { try await database.sessionResume() }
 
     #expect(http.paths == ["/api/logout", "/api/logout"])
@@ -153,7 +153,7 @@ struct SessionGuardsTests {
   func aCredentialSavedBeforeItsSessionRowIsReplacedByTheNextCall() async throws {
     let http = ScriptedHttp()
     let credentials = CountedCredential("saved-before-the-crash")
-    let database = try open(http, credentials)
+    let database = try await open(http, credentials)
 
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
 
@@ -165,7 +165,7 @@ struct SessionGuardsTests {
   func aClosedCableLeavesTheCredentialInTheAppStore() async throws {
     let http = ScriptedHttp()
     let credentials = CountedCredential()
-    try DB.open(encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", sessionless: false), "confirm": EncryptedSessionOperation(path: "/api/auth/confirm", sessionless: false), "social": EncryptedSessionOperation(path: "/api/auth/social", sessionless: false), "ticket": EncryptedSessionOperation(path: "/api/ticket", sessionless: true)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: credentials, transport: DatabaseTransport(cable: { nil }), modelsJSON: modelsJSON, http: http)
+    DB.database = try await open(http, credentials)
     await #expect(throws: DbError.self) { try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
     let issued = credentials.current
     let connection = CableConnection(url: URL(fileURLWithPath: "/test"), token: "token", makeSocket: { _, _ in ClosingSocket() })

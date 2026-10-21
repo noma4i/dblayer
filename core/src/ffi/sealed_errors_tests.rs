@@ -40,7 +40,7 @@ pub(super) fn moment_spec() -> ModelSpec {
 }
 
 pub(super) async fn signed_in(rig: &Rig) -> Arc<Database> {
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))))
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone())))).await
     .unwrap();
     database.register_operations(OPERATIONS.into()).unwrap();
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
@@ -119,7 +119,7 @@ impl Transport for Refusing {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_load_run_and_settled() {
     for (_, code) in TABLE {
-        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Refusing(code))), None, None, None).unwrap();
+        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Refusing(code))), None, None, None).await.unwrap();
         database.register_operations(OPERATIONS.into()).unwrap();
 
         let load = database.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();

@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 class ListWindowTest {
     private val byText get() = Query("Moment", Moment).order(Order("text", "asc"))
 
-    private fun open() {
+    private suspend fun open() {
         DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, null)
     }
 

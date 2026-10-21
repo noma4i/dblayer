@@ -25,7 +25,7 @@ class NodeReadTest {
         "MomentTranscodeStatus" to "query MomentTranscodeStatus(\$momentId: ID!) { node(id: \$momentId) { ... on Moment { id uuid createdAt media } } }",
     )
 
-    private fun open(models: String = modelsJSON): MockTransport {
+    private suspend fun open(models: String = modelsJSON): MockTransport {
         val transport = MockTransport()
         DBlayer.database = Database.open(Config(null, null, 64u), models, transport)
         val defs = documents.map { (name, document) -> buildJsonObject { put("name", JsonPrimitive(name)); put("document", JsonPrimitive(document)) } }

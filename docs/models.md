@@ -582,13 +582,13 @@ An area can repeat for node reads of several models. Each receiver follows its o
 Missing entry fields and undeclared areas are rejected.
 
 ```swift
-try DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [RecordEvents.self])
+try await DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [RecordEvents.self])
 try DB.listen()
 ```
 
 ```kotlin
-DB.open(endpoint = endpoint, modelsJson = modelsJSON, operations = listOf(RecordEvents))
-DB.listen()
+DBlayer.open(endpoint = endpoint, modelsJson = modelsJSON, operations = listOf(RecordEvents))
+DBlayer.listen()
 ```
 
 The generated Swift and Kotlin model declarations carry identical subscription data.

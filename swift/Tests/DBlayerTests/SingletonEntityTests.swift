@@ -9,7 +9,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func singletonRefreshStoresBeforeAnyReaderExists() async throws {
-    let transport = try Self.openSingletonRig()
+    let transport = try await Self.openSingletonRig()
     #expect(DB.subscriptionCensus().observedQueries == 0)
     try await Self.login(transport, "1", "Ann")
     try await User.profile.warm()
@@ -22,9 +22,9 @@ extension BridgeProbeTests {
   }
 
   @MainActor
-  static func openSingletonRig() throws -> MockTransport {
+  static func openSingletonRig() async throws -> MockTransport {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
     return transport
   }
@@ -42,7 +42,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func tenReadersCostOneSubscriptionAndSeeOneValue() async throws {
-    let transport = try Self.openSingletonRig()
+    let transport = try await Self.openSingletonRig()
     let readers = (0 ..< 10).map { _ in User.entity() }
     let feed = Entities<User>.shared.singleFeed
     try await Self.login(transport, "1", "Ann")
@@ -57,7 +57,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func emptyUntilTheRowLoadsAndTheReaderIsTold() async throws {
-    let transport = try Self.openSingletonRig()
+    let transport = try await Self.openSingletonRig()
     let entity = User.entity()
     #expect(entity.value == nil && entity.id.isEmpty && !entity.isStale)
     let told = Counter()
@@ -71,7 +71,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func logoutEmptiesItAndALaterLoginLoadsTheNewUser() async throws {
-    let transport = try Self.openSingletonRig()
+    let transport = try await Self.openSingletonRig()
     let entity = User.entity()
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
@@ -97,14 +97,14 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func aDeliveryOfAReplacedFeedNeverWrites() async throws {
-    let transport = try Self.openSingletonRig()
+    let transport = try await Self.openSingletonRig()
     let entity = User.entity()
     let registry = Entities<User>.shared
     let old = try #require(registry.singleFeed)
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
     try await DB.logout()
-    let second = try Self.openSingletonRig()
+    let second = try await Self.openSingletonRig()
     #expect(User.entity() === entity && entity.value == nil)
     registry.receive(from: old, revision: Int64.max, row: entity.value ?? User(id: "9", name: "Late"))
     #expect(entity.value == nil)
@@ -118,7 +118,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func idleTenSecondsCreatesNoWork() async throws {
-    let transport = try Self.openSingletonRig()
+    let transport = try await Self.openSingletonRig()
     let entity = User.entity()
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }

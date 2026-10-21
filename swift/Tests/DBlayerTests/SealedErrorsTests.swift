@@ -12,8 +12,8 @@ private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed(
 
 extension BridgeProbeTests {
   @MainActor
-  private func openSealedRig(_ transport: MockTransport) throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+  private func openSealedRig(_ transport: MockTransport) async throws {
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: operations)
   }
 
@@ -29,7 +29,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)), arguments: sessionCodes)
   func aSessionCodeArrivesTypedThroughALoadAnOperationCallAndASettledMutation(_ code: SessionCode) async throws {
     let transport = MockTransport()
-    try openSealedRig(transport)
+    try await openSealedRig(transport)
     let failure = DbError.Session(code: code, detail: "\(code)")
 
     transport.enqueue("MomentsFeed", failure: failure)
@@ -62,7 +62,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)), arguments: [SessionCode.unauthenticated, .accountUnavailable])
   func aLostSessionKeepsTheQueuedMutationFailedAndRetrySendsItOnce(_ code: SessionCode) async throws {
     let transport = MockTransport()
-    try openSealedRig(transport)
+    try await openSealedRig(transport)
     transport.enqueue("CreateMoment", failure: DbError.Session(code: code, detail: "\(code)"))
     let local = try await Moment.create(text: "hello", media: nil)
     await #expect(throws: DbError.self) { try await local.settled() }
@@ -79,7 +79,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func anotherSessionCodeRollsTheQueuedMutationBack() async throws {
     let transport = MockTransport()
-    try openSealedRig(transport)
+    try await openSealedRig(transport)
     transport.enqueue("CreateMoment", failure: DbError.Session(code: .rateLimited, detail: "RATE_LIMITED"))
     let local = try await Moment.create(text: "hello", media: nil)
 

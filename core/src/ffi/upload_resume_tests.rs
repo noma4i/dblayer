@@ -24,8 +24,8 @@ impl Transport for Bytes {
     }
 }
 
-fn open(rig: &Rig, path: &std::path::Path) -> Arc<Database> {
-    let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone())))).unwrap();
+async fn open(rig: &Rig, path: &std::path::Path) -> Arc<Database> {
+    let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone())))).await.unwrap();
     let operations: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);
@@ -44,7 +44,7 @@ async fn resume_does_not_repeat_a_step_owned_by_an_active_upload() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
-    let database = open(&rig, &directory.path().join("db.sqlite"));
+    let database = open(&rig, &directory.path().join("db.sqlite")).await;
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"}}));
     let sync = database.sync.as_ref().unwrap().clone();
@@ -81,7 +81,7 @@ async fn upload_resume_and_retry_execute_the_saved_step_once_after_reopen() {
         let path = directory.path().join("db.sqlite");
         let source = directory.path().join("clip.mp4");
         std::fs::write(&source, if multipart { vec![0; 11 * 1024 * 1024] } else { b"abc".to_vec() }).unwrap();
-        let database = open(&rig, &path);
+        let database = open(&rig, &path).await;
         database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
         rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"},
             "initMultipart": {"key": "key", "uploadId": "upload"}, "presignParts": {"parts": ([1, 2, 3].map(|number| json!({"partNumber": number, "url": "https://upload"})))},
@@ -96,7 +96,7 @@ async fn upload_resume_and_retry_execute_the_saved_step_once_after_reopen() {
         });
         database.upload("Moment".into(), "42".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
-        let database = if restart { drop(database); open(&rig, &path) } else { database };
+        let database = if restart { drop(database); open(&rig, &path).await } else { database };
         database.session_resume().await.unwrap();
         database.retry("Moment".into(), "42".into()).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
@@ -113,7 +113,7 @@ async fn upload_preserves_the_session_code_in_its_failure() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
-    let database = open(&rig, &directory.path().join("db.sqlite"));
+    let database = open(&rig, &directory.path().join("db.sqlite")).await;
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
     let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
@@ -127,7 +127,7 @@ async fn upload_preserves_the_session_code_in_its_failure() {
 async fn resume_returns_a_direct_mutation_without_creating_an_upload_owner() {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
-    let database = open(&rig, &directory.path().join("db.sqlite"));
+    let database = open(&rig, &directory.path().join("db.sqlite")).await;
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.reply_with(json!({"makeMoment": {"id": "42"}}));
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
@@ -146,7 +146,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     let path = directory.path().join("db.sqlite");
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
-    let database = open(&rig, &path);
+    let database = open(&rig, &path).await;
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.reply_with(json!({"abortMultipart": {"ok": true}}));
     let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart"));
@@ -156,7 +156,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
     database.cancel_upload("Moment".into(), "42".into()).await.unwrap();
     drop(database);
-    let database = open(&rig, &path);
+    let database = open(&rig, &path).await;
     database.session_resume().await.unwrap();
     database.retry("Moment".into(), "42".into()).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
@@ -170,7 +170,7 @@ async fn resume_consumes_a_lost_upload_answer_without_repeating_the_effect() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
-    let database = open(&rig, &directory.path().join("db.sqlite"));
+    let database = open(&rig, &directory.path().join("db.sqlite")).await;
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42"}}));
     let server = Arc::downgrade(&rig.server);

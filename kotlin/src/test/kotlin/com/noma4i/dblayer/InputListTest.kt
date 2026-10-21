@@ -21,7 +21,7 @@ class InputListTest {
     )
     private val widgetsJson = """[{"kind":"EMOJI","props":{"emoji":{"code":"fire","kind":"GIF"}},"extras":[{"tags":["a"]},{"text":{"body":"hi"}}]},{"kind":"GIF","props":{"tags":["b"]}}]"""
 
-    private fun rig(reply: String): MockTransport {
+    private suspend fun rig(reply: String): MockTransport {
         val transport = MockTransport()
         transport.enqueue("WidgetsSend", reply)
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)

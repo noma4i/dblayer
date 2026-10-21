@@ -59,7 +59,7 @@ class InterfaceTest {
     private fun reply(elements: String, state: String = """[{"path":"user.name","value":{"__typename":"ScreenTextLiteral","text":"Ada"}},{"path":"n","value":{"__typename":"ScreenNumberLiteral","number":3}}]""") =
         """{"data":{"node":{"__typename":"CustomScreen","id":"s1","slug":"main","spec":{"root":"root","elements":$elements,"state":$state}}}}"""
 
-    private fun openRig(): MockTransport {
+    private suspend fun openRig(): MockTransport {
         val transport = MockTransport()
         DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, transport)
         DBlayer.database.registerOperations(JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("ScreenNode")); put("document", JsonPrimitive(document)) })).toString())

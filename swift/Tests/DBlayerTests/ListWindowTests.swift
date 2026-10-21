@@ -6,15 +6,15 @@ import Testing
 extension BridgeProbeTests {
   fileprivate static let byText = Query<Moment>().order(Order(field: "text", direction: "asc"))
 
-  fileprivate static func openWindowBase() throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
+  fileprivate static func openWindowBase() async throws {
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
   }
 
   @Test
   func aWindowDecodesOnlyItsRowsAtEveryListSize() async throws {
     var costs: [[Int]] = []
     for count in [20, 200, 2000] {
-      try Self.openWindowBase()
+      try await Self.openWindowBase()
       var created: [Moment] = []
       for number in 0 ..< count { created.append(try await Moment.create(text: String(format: "t%05d", number))) }
       let feed = ListFeed<Moment>()
@@ -40,7 +40,7 @@ extension BridgeProbeTests {
 
   @Test @MainActor
   func aLiveWindowFollowsTheTailAndExpandsBefore() async throws {
-    try Self.openWindowBase()
+    try await Self.openWindowBase()
     for number in 0 ..< 30 { _ = try await Moment.create(text: String(format: "t%05d", number)) }
     let live = LiveWindow(Self.byText.window(tail: 5))
     await eventually("the window") { live.rows.count == 5 }
@@ -76,7 +76,7 @@ extension BridgeProbeTests {
   func aWindowOverTheThreadShapeDecodesOnlyItsRows() async throws {
     let transport = MockTransport()
     transport.enqueue("ChatThread", reply: Self.threadReply((1 ... 7).map { Self.threadNode($0) }))
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"ChatThread","document":"query ChatThread($chatId: ID!, $first: Int, $after: String) { chat(id: $chatId) { messages(first: $first, after: $after) { nodes { id chatId authorId text createdAt sequenceNumber } pageInfo { hasNextPage endCursor } } } }"},{"name":"CreateMessage","document":"mutation CreateMessage($chatId: ID!, $text: String, $signedId: String, $attachedUserId: ID) { createMessage(chatId: $chatId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id chatId authorId text createdAt sequenceNumber } }"}]"#)
     let thread = Message.thread("c1")
     try await thread.load()

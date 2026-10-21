@@ -18,7 +18,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aTypedScopeParamReachesTheServerAsANumberAndAKeyOfItsOwnWindow() async throws {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("tailSince"), "document": .string(Self.tailDocument)])]).text)
     transport.enqueue("tailSince", reply: #"{"data":{"tailSince":{"edges":[{"cursor":"c1","node":{"id":"t1","text":"a"}}],"pageInfo":{"hasNextPage":false,"endCursor":"c1"}}}}"#)
 
@@ -31,7 +31,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func anAggregateOperationReturnsItsFieldsAsAValue() async throws {
-    let transport = try Self.openOperationRig("chatMedia", document: "query chatMedia($chatId: ID!, $upToSequence: Int) { chatMedia(chatId: $chatId, upToSequence: $upToSequence) { visualCount audioCount giftCount latestSequence } }", reply: #"{"data":{"chatMedia":{"visualCount":3,"audioCount":1,"giftCount":0,"latestSequence":120}}}"#)
+    let transport = try await Self.openOperationRig("chatMedia", document: "query chatMedia($chatId: ID!, $upToSequence: Int) { chatMedia(chatId: $chatId, upToSequence: $upToSequence) { visualCount audioCount giftCount latestSequence } }", reply: #"{"data":{"chatMedia":{"visualCount":3,"audioCount":1,"giftCount":0,"latestSequence":120}}}"#)
 
     let result = try await Operations.chatMediaLoad(chatId: "c1", upToSequence: 120)
 

@@ -10,6 +10,8 @@
 
 ### Changed
 - Detect available build cores with `nproc` and fall back to `sysctl`.
+- Open databases asynchronously on library workers in Swift and Kotlin.
+- Reuse identical opens and reject changed parameters after successful opening.
 - Allow R8 to shrink ordinary Kotlin types while preserving JNA reflection.
 - Reduce native release package size with one codegen unit and symbol stripping.
 - Remove the x86_64 simulator slice from default iOS builds.

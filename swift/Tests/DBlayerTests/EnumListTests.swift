@@ -4,13 +4,13 @@ import Testing
 @testable import DBlayer
 
 extension BridgeProbeTests.EnumTests {
-  private func openShelves() throws -> Database {
-    try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+  private func openShelves() async throws -> Database {
+    try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
   }
 
   @Test @MainActor
   func aListOfEnumValuesIsStoredReadBackAndKeepsAValueTheDeclarationLacks() async throws {
-    let database = try openShelves()
+    let database = try await openShelves()
     let wire = try await database.create(model: "Chat", valuesJson: #"{"title":"t","shelves":["PRIMARY","FUTURE"]}"#, argsJson: "{}")
     let chat = try Chat.decode(wire)
     #expect(chat.shelves == [.primary, .unknown("FUTURE")])
@@ -18,7 +18,7 @@ extension BridgeProbeTests.EnumTests {
 
   @Test @MainActor
   func aListOfEnumValuesWrittenAsTextsReadsBackTypedAndAnAbsentListReadsAsNil() async throws {
-    let database = try openShelves()
+    let database = try await openShelves()
     let create: (String, [ChatShelf]?) async throws -> Chat = { try await Chat.create(title: $0, shelves: $1) }
     _ = create
     let typed = JSONValue.object(["title": .string("t"), "shelves": JSONValue.encode([ChatShelf.secondary])])

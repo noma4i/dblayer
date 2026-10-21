@@ -10,7 +10,7 @@ struct SwiftAsyncCancellationTests {
   @Test
   func aNonThrowingCurrentKeepsItsResultInACancelledTask() async throws {
     let models = #"[{"key":"Moment","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}},{"name":"text","kind":{"type":"scalar","kind":"str"}}]}]"#
-    let database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: models, transport: nil, encrypted: nil, credentials: nil, http: nil)
+    let database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: models, transport: nil, encrypted: nil, credentials: nil, http: nil)
     let row = try await database.create(model: "Moment", valuesJson: #"{"text":"hello"}"#, argsJson: "{}")
     let subscription = try database.liveQuery(queryJson: #"{"model":"Moment"}"#, listener: SilentQuery())
     let call = Task {

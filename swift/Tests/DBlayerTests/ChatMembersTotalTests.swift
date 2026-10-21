@@ -15,7 +15,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func chatMembersTotalIsTheMemberCountOfTheChat() async throws {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ChatMembers"), "document": .string(Self.countedMembersDocument)])]).text)
     transport.enqueue("ChatMembers", reply: countedPage(0..<30, hasNext: true, count: 53))
     transport.enqueue("ChatMembers", reply: countedPage(30..<45, hasNext: true, count: nil))

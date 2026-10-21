@@ -17,14 +17,14 @@ extension BridgeProbeTests {
     return try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/union.json"))).map(\.objectValue)
   }
 
-  private func open(_ transport: MockTransport? = nil) throws -> Database {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+  private func open(_ transport: MockTransport? = nil) async throws -> Database {
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     return DB.database
   }
 
   @Test
   func aStoredUnionReadsFromCellsAndEncodesLikeTheSharedCases() async throws {
-    let database = try open()
+    let database = try await open()
     for fields in try vectors() {
       let label = fields["name"]!.stringValue!
       let values = fields["attachment"].map { JSONValue.object(["attachment": $0]) } ?? .object([:])
@@ -41,7 +41,7 @@ extension BridgeProbeTests {
 
   @Test
   func typedVariantsAreWrittenReadSwitchedAndKeptWhenUnknown() async throws {
-    _ = try open()
+    _ = try await open()
     let gift = MessageAttachment.gift(GiftAttachment(id: "g2", tier: "silver", status: nil, tags: ["x"]))
     let created = try await UnionSample.create(attachment: gift, props: .emoji(MomentEmojiProps(emoji: "fire")))
     #expect(created.attachment == gift && created.props == .emoji(MomentEmojiProps(emoji: "fire")))
@@ -62,7 +62,7 @@ extension BridgeProbeTests {
 
   @Test
   func rowsFilterByTheVariantKind() async throws {
-    _ = try open()
+    _ = try await open()
     _ = try await UnionSample.create(attachment: .moment(MomentAttachment(momentId: "m1")))
     _ = try await UnionSample.create(attachment: .moment(MomentAttachment(momentId: "m2")))
     _ = try await UnionSample.create(attachment: .reaction(ReactionAttachment(body: "x")))
@@ -96,7 +96,7 @@ extension BridgeProbeTests {
   func aServerAnswerCarriesEveryVariantAndLaterAnswersReplaceTheVariant() async throws {
     let transport = MockTransport()
     transport.enqueue("ChatThread", reply: Self.threadReply(Self.nodes))
-    _ = try open(transport)
+    _ = try await open(transport)
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ChatThread"), "document": .string(Self.threadDocument)])]).text)
     let thread = Message.thread("c1")
     try await thread.load()
@@ -131,7 +131,7 @@ extension BridgeProbeTests {
   func aCreatedMessageTakesItsVariantFromTheServerAnswer() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMessage", reply: #"{"data":{"createMessage":{"__typename":"Message","id":"x1","chatId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z","attachment":{"__typename":"MomentAttachment","momentId":"m9","caption":"look"}}}}"#)
-    _ = try open(transport)
+    _ = try await open(transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMessage","document":"mutation CreateMessage($chatId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createMessage(chatId: $chatId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id chatId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]"#)
 
     let local = try await Message.create(chatId: "c", authorId: "u1", text: "hi")

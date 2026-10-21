@@ -118,7 +118,7 @@ fn id(value: &str) -> Result<RowId, DbError> {
 #[uniffi::export]
 impl Database {
     #[uniffi::constructor(default(encrypted = None, credentials = None, http = None))]
-    pub fn open(
+    pub async fn open(
         config: Config,
         models_json: String,
         transport: Option<Arc<dyn Transport>>,
@@ -126,24 +126,26 @@ impl Database {
         credentials: Option<Arc<dyn super::CredentialStore>>,
         http: Option<Arc<dyn super::EncryptedHttp>>,
     ) -> Result<Arc<Self>, DbError> {
-        let Some(encrypted) = encrypted else {
-            if credentials.is_some() || http.is_some() {
-                return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
-            }
-            return Self::start(config, models_json, transport, Arc::new(SystemClock));
-        };
-        let credentials = credentials.ok_or_else(|| DbError::Invalid { detail: "encrypted requires credentials".into() })?;
-        let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
-        let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
-        let _entered = executor()?.enter();
-        Self::start_with(config, models_json, Arc::new(SystemClock), |db, clock| {
-            super::encrypted::wire(db, clock, encrypted, http, credentials, transport)
-        })
+        blocking(move || {
+            let Some(encrypted) = encrypted else {
+                if credentials.is_some() || http.is_some() {
+                    return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
+                }
+                return Self::start(config, models_json, transport, Arc::new(SystemClock));
+            };
+            let credentials = credentials.ok_or_else(|| DbError::Invalid { detail: "encrypted requires credentials".into() })?;
+            let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
+            let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
+            let _entered = executor()?.enter();
+            Self::start_with(config, models_json, Arc::new(SystemClock), |db, clock| {
+                super::encrypted::wire(db, clock, encrypted, http, credentials, transport)
+            })
+        }).await
     }
 
     #[uniffi::constructor]
-    pub fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<TestClock>) -> Result<Arc<Self>, DbError> {
-        Self::start(config, models_json, transport, clock.clock.clone())
+    pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<TestClock>) -> Result<Arc<Self>, DbError> {
+        blocking(move || Self::start(config, models_json, transport, clock.clock.clone())).await
     }
 
     pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {

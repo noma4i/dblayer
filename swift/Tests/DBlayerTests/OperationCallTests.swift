@@ -5,10 +5,10 @@ import Testing
 
 extension BridgeProbeTests {
   @MainActor
-  static func openOperationRig(_ name: String, document: String, reply: String) throws -> MockTransport {
+  static func openOperationRig(_ name: String, document: String, reply: String) async throws -> MockTransport {
     let transport = MockTransport()
     transport.enqueue(name, reply: reply)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"\#(name)","document":"\#(document)"}]"#)
     return transport
   }
@@ -16,7 +16,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func anOperationWithoutAModelSendsItsVariablesAndReadsTheDeclaredResult() async throws {
-    let transport = try Self.openOperationRig("QrCodeCreate", document: "mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }", reply: #"{"data":{"qrCodeCreate":{"url":"https://q"}}}"#)
+    let transport = try await Self.openOperationRig("QrCodeCreate", document: "mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }", reply: #"{"data":{"qrCodeCreate":{"url":"https://q"}}}"#)
 
     let result = try await Operations.qrCodeCreate(kind: "chat", size: 3)
 
@@ -33,7 +33,7 @@ extension BridgeProbeTests {
   func aRefusalOfTheServerArrivesTypedThroughAnOperationCall(_ name: String, _ failure: DbError, _ expected: String) async throws {
     let transport = MockTransport()
     transport.enqueue("QrCodeCreate", failure: failure)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#)
 
     do {
@@ -49,7 +49,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aGraphqlErrorsAnswerArrivesWithEveryMessageThroughAnOperationCall() async throws {
-    _ = try Self.openOperationRig("QrCodeCreate", document: "mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }", reply: #"{"errors":[{"message":"nope"},{"message":"bad"}]}"#)
+    _ = try await Self.openOperationRig("QrCodeCreate", document: "mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }", reply: #"{"errors":[{"message":"nope"},{"message":"bad"}]}"#)
 
     do {
       _ = try await Operations.qrCodeCreate(kind: "chat", size: 3)
@@ -64,7 +64,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func inputObjectsDistinguishOmittedNullAndValues() async throws {
-    let transport = try Self.openOperationRig("StickerSend", document: "mutation StickerSend($input: StickerInput!) { stickerSend(input: $input) { id } }", reply: #"{"data":{"stickerSend":{"id":"s1"}}}"#)
+    let transport = try await Self.openOperationRig("StickerSend", document: "mutation StickerSend($input: StickerInput!) { stickerSend(input: $input) { id } }", reply: #"{"data":{"stickerSend":{"id":"s1"}}}"#)
     let input = StickerInput(name: "wave", mood: .null, tags: ["a", "b"], notes: .value(["n", nil]), pinned: true, owner: OwnerInput(id: "7"), helpers: .value([OwnerInput(id: "8", nickname: .value("ann"))]))
 
     let result = try await Operations.stickerSend(input: input)
@@ -78,7 +78,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aResultWithListsObjectsAndRawJsonIsDecodedIntoGeneratedTypes() async throws {
-    _ = try Self.openOperationRig("Pricing", document: "query Pricing { pricing { gifts { id name price } videoIntro { enabled } tags spec } }", reply: #"{"data":{"pricing":{"gifts":[{"id":7,"name":"rose","price":5},{"id":"8","name":"ring"}],"videoIntro":{"enabled":true},"tags":["a","b"],"spec":{"k":[1,2]}}}}"#)
+    _ = try await Self.openOperationRig("Pricing", document: "query Pricing { pricing { gifts { id name price } videoIntro { enabled } tags spec } }", reply: #"{"data":{"pricing":{"gifts":[{"id":7,"name":"rose","price":5},{"id":"8","name":"ring"}],"videoIntro":{"enabled":true},"tags":["a","b"],"spec":{"k":[1,2]}}}}"#)
 
     let result = try await Operations.pricingLoad()
 
@@ -93,7 +93,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aListOperationReturnsOneGeneratedResultPerElementOfTheRootList() async throws {
-    _ = try Self.openOperationRig("Giphy", document: "query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { id url isSticker } }", reply: #"{"data":{"giphy":[{"id":1,"url":"u1","isSticker":true},{"id":"2"}]}}"#)
+    _ = try await Self.openOperationRig("Giphy", document: "query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { id url isSticker } }", reply: #"{"data":{"giphy":[{"id":1,"url":"u1","isSticker":true},{"id":"2"}]}}"#)
 
     let result = try await Operations.giphyLoad(type: "gif")
 
@@ -105,7 +105,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aJsonScalarOfAnInputObjectIsSentAsAnObjectAndAnOmittedListIsNotSent() async throws {
-    let transport = try Self.openOperationRig("MomentCreate", document: "mutation MomentCreate($input: MomentInput!) { momentCreate(input: $input) { moment { id } } }", reply: #"{"data":{"momentCreate":{"moment":{"id":9}}}}"#)
+    let transport = try await Self.openOperationRig("MomentCreate", document: "mutation MomentCreate($input: MomentInput!) { momentCreate(input: $input) { moment { id } } }", reply: #"{"data":{"momentCreate":{"moment":{"id":9}}}}"#)
     let widget = WidgetInput(kind: .emoji, settings: SettingsInput(itemProps: .object(["emoji": "fire", "size": 3, "tags": .array(["a"])]), rotate: .value(1.5)))
 
     let sent = try await Operations.momentCreate(input: MomentInput(file: "s1", widgets: .value([widget])))

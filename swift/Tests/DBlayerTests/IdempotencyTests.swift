@@ -12,7 +12,7 @@ struct IdempotencyTests {
       let transport = MockTransport()
       transport.enqueue("MessageSend", reply: fixture["refusal"]!.text)
       transport.enqueue("MessageSend", reply: fixture["answer"]!.text)
-      let database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: fixture["models"]!.text, transport: transport)
+      let database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: fixture["models"]!.text, transport: transport)
       try database.registerOperations(defsJson: fixture["operations"]!.text)
       let row = try await database.create(model: "Message", valuesJson: #"{"text":"hello"}"#, argsJson: explicit ? #"{"clientMutationId":"app-key"}"# : "{}")
       try await database.flush()

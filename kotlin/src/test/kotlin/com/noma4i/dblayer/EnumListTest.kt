@@ -12,7 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class EnumListTest {
-    private fun open() = Database.open(Config(null, null, 32u), modelsJSON, null).also { DBlayer.database = it }
+    private suspend fun open() = Database.open(Config(null, null, 32u), modelsJSON, null).also { DBlayer.database = it }
 
     @Test
     fun aListOfEnumValuesIsStoredReadBackAndKeepsAValueTheDeclarationLacks() = bounded {

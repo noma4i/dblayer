@@ -4,8 +4,16 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 object DBlayer {
+    private val opening = Mutex()
+    private var opened: OpenArguments? = null
+
+    private data class OpenArguments(val values: List<Any?>, val transport: Transport?, val credentials: CredentialStore?, val http: EncryptedHttp?) {
+        fun matches(other: OpenArguments) = values == other.values && transport === other.transport && credentials === other.credentials && http === other.http
+    }
     /** Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`. */
     fun listen() = database.listen()
     fun unlisten() = database.unlisten()
@@ -41,7 +49,7 @@ object DBlayer {
     suspend fun serverConfig(encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retryListener: RetryListener? = null): ServerConfig =
         fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retryListener)
 
-    fun open(
+    suspend fun open(
         endpoint: String? = null,
         headers: Map<String, String> = emptyMap(),
         encrypted: EncryptedConfig? = null,
@@ -51,9 +59,17 @@ object DBlayer {
         path: String? = null,
         operations: List<GraphQLOperation> = emptyList(),
         http: EncryptedHttp? = null,
-    ) {
-        val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, { headers }, cablePath = encrypted?.endpoints?.cable) }
-        install(Database.open(Config(path, null, 2000u), modelsJson, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }), selectedTransport, operations)
+    ) = opening.withLock {
+        val encryption = encrypted?.copy(endpoints = encrypted.endpoints.copy(sessionOperations = encrypted.endpoints.sessionOperations.mapValues { it.value.copy() }))
+        val selectedHeaders = headers.toMap()
+        val arguments = OpenArguments(listOf(endpoint, selectedHeaders, encryption, modelsJson, path, operations.map { it.operationName to it.document }), transport, credentials, http)
+        opened?.let {
+            if (!it.matches(arguments)) throw DbException.Invalid("The database is already open with different parameters")
+            return@withLock
+        }
+        val selectedTransport = transport ?: (endpoint ?: encryption?.origin)?.let { OkHttpTransport(it, { selectedHeaders }, cablePath = encryption?.endpoints?.cable) }
+        install(Database.open(Config(path, null, 2000u), modelsJson, selectedTransport, encryption, credentials, http ?: encryption?.let { OkHttpEncryptedHttp(it.origin) }), selectedTransport, operations)
+        opened = arguments
     }
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {

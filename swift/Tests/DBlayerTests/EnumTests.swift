@@ -5,8 +5,8 @@ import Testing
 
 extension BridgeProbeTests {
 struct EnumTests {
-  private func open() throws -> Database {
-    try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+  private func open() async throws -> Database {
+    try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
   }
 
   @Test
@@ -19,7 +19,7 @@ struct EnumTests {
 
   @Test @MainActor
   func aValueOutsideTheDeclaredOnesIsStoredReadBackAndKeptByAnEdit() async throws {
-    let database = try open()
+    let database = try await open()
     DB.database = database
     let wire = try await database.create(model: "NestedSample", valuesJson: #"{"phase":"archived"}"#, argsJson: "{}")
     let sample = try NestedSample.decode(wire)
@@ -34,7 +34,7 @@ struct EnumTests {
 
   @Test @MainActor
   func theTypedApiWritesADeclaredCaseAndQueriesCompareTypedValues() async throws {
-    DB.database = try open()
+    DB.database = try await open()
     let sample = try await NestedSample.create(phase: .live)
     #expect(sample.phase == .live)
     let live = Cursor(await NestedSample.where(NestedSample.phase == .live).snapshots.stream())
@@ -47,7 +47,7 @@ struct EnumTests {
   func aNestedEnumKeepsAValueTheDeclarationLacksOnBothDecodePaths() async throws {
     let json = Data(#"{"title":"t","state":"mystery"}"#.utf8)
     #expect(try JSONDecoder().decode(NestedValue.self, from: json).state == .unknown("mystery"))
-    let database = try open()
+    let database = try await open()
     let wire = try await database.create(model: "NestedSample", valuesJson: #"{"value":{"title":"t","state":"mystery"}}"#, argsJson: "{}")
     let sample = try NestedSample.decode(wire)
     #expect(sample.value?.state == .unknown("mystery"))

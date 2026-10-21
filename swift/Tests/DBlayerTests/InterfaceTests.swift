@@ -30,16 +30,16 @@ extension BridgeProbeTests {
     #"{"data":{"node":{"__typename":"CustomScreen","id":"s1","slug":"main","spec":{"root":"root","elements":\#(elements),"state":\#(state)}}}}"#
   }
 
-  private func openScreenRig() throws -> MockTransport {
+  private func openScreenRig() async throws -> MockTransport {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ScreenNode"), "document": .string(Self.screenDocument)])]).text)
     return transport
   }
 
   @Test(.timeLimit(.minutes(1)))
   func aServerAnswerCarriesEveryElementVariantAndALaterAnswerReplacesTheList() async throws {
-    let transport = try openScreenRig()
+    let transport = try await openScreenRig()
     transport.enqueue("ScreenNode", reply: Self.screenReply(elements: Self.screenElements))
     let screen = try #require(try await CustomScreen.node("s1"))
     let spec = try #require(screen.spec)
@@ -80,7 +80,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func aScreenWrittenWithTypedElementsReadsBackAndAnElementCanChangeItsVariant() async throws {
-    _ = try openScreenRig()
+    _ = try await openScreenRig()
     let button = ScreenElement.button(ScreenButton(id: "b1", children: [], press: .openProfile(ScreenOpenProfileAction(userId: "u1")), label: .textLiteral(ScreenTextLiteral(text: "Go"))))
     let pressable = ScreenElement.pressable(ScreenPressable(id: "p1", children: ["b1"]))
     let spec = ScreenSpec(root: "b1", elements: [button, pressable, .unknown(typename: "ScreenFuture")], state: [])

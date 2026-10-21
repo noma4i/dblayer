@@ -6,8 +6,8 @@ import Testing
 extension BridgeProbeTests {
   fileprivate static let byText = Query<Moment>().order(Order(field: "text", direction: "asc"))
 
-  fileprivate static func open() throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
+  fileprivate static func open() async throws {
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
   }
 
   fileprivate static func watching(_ query: Query<Moment>, feed: ListFeed<Moment>) async -> LiveStream<[Moment]> {
@@ -23,7 +23,7 @@ extension BridgeProbeTests {
   func inv_observe_17_anUpdateOfOneRowDecodesOneRowAtEveryListSize() async throws {
     var decoded: [Int] = []
     for count in [20, 200, 2000] {
-      try Self.open()
+      try await Self.open()
       var created: [Moment] = []
       for number in 0 ..< count { created.append(try await Moment.create(text: String(format: "t%05d", number))) }
       let feed = ListFeed<Moment>()
@@ -40,7 +40,7 @@ extension BridgeProbeTests {
 
   @Test
   func inv_observe_15_theFeedRebuildsTheListThatAFreshQueryReturns() async throws {
-    try Self.open()
+    try await Self.open()
     let feed = ListFeed<Moment>()
     let changes = Cursor(await Self.watching(Self.byText, feed: feed))
     #expect(await changes.first("the empty list") { $0.isEmpty } != nil)
@@ -65,7 +65,7 @@ extension BridgeProbeTests {
 
   @Test
   func inv_observe_15_aSnapshotMarksAReorderOnlyWhenTheIdsChange() async throws {
-    try Self.open()
+    try await Self.open()
     let first = try await Moment.create(text: "a")
     _ = try await Moment.create(text: "b")
     let snapshots = Cursor(await Self.byText.snapshots.stream())
@@ -184,7 +184,7 @@ extension BridgeProbeTests {
   func inv_observe_18_aSnapshotNamesTheReplacedIdWhenTheTemporaryRowWasNeverDelivered() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let gate = DispatchSemaphore(value: 0)
     let deliveries = OpenCounter()

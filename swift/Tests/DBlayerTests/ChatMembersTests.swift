@@ -14,7 +14,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func chatMembersPageThroughTheNodeAndKeepEveryChatApart() async throws {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ChatMembers"), "document": .string(Self.membersDocument)])]).text)
     transport.enqueue("ChatMembers", reply: membersPage("a", 0..<30, hasNext: true))
     transport.enqueue("ChatMembers", reply: membersPage("b", 0..<2, hasNext: false))

@@ -42,15 +42,15 @@ struct NestedTypesTests {
 
 @Suite(.serialized)
 struct CellDecoderTests {
-  private func open() throws -> Database {
-    try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+  private func open() async throws -> Database {
+    try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
   }
 
   @Test
   func aStoredRowDecodesFromCellsLikeTheSharedJSONCases() async throws {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let cases = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/nested.json")))
-    let database = try open()
+    let database = try await open()
     for row in cases {
       let fields = row.objectValue
       guard fields["error"] != .bool(true), let input = fields["input"] else { continue }
@@ -65,7 +65,7 @@ struct CellDecoderTests {
 
   @Test
   func aRowWithAnotherLayoutIsRefused() async throws {
-    let database = try open()
+    let database = try await open()
     var wire = try await database.create(model: "NestedSample", valuesJson: "{}", argsJson: "{}")
     wire.layout = "other"
     #expect(throws: (any Error).self) { try NestedSample.decode(wire) }

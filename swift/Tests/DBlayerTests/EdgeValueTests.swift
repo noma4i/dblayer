@@ -12,16 +12,16 @@ extension BridgeProbeTests {
     return #"{"data":{"feed":{"edges":[{"impressionUuid":\#(uuidText),"impressionScore":\#(score.map(String.init) ?? "null"),"node":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"\#(body)}}],"pageInfo":{"hasNextPage":false,"endCursor":"c"}}}}"#
   }
 
-  private func openEdgeRig() throws -> MockTransport {
+  private func openEdgeRig() async throws -> MockTransport {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("MomentsFeed"), "document": .string(Self.edgeFeedDocument)])]).text)
     return transport
   }
 
   @Test(.timeLimit(.minutes(1)))
   func edgeValuesBelongToTheirConnectionAndAnotherConnectionDoesNotChangeThem() async throws {
-    let transport = try openEdgeRig()
+    let transport = try await openEdgeRig()
     transport.enqueue("MomentsFeed", reply: Self.edgeReply(uuid: "imp-1", score: 5))
     try await Moment.feed.refresh()
     #expect(try Moment.feedEdge(of: "1") == MomentFeedEdge(["impressionUuid": "imp-1", "impressionScore": 5]))

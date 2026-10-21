@@ -129,7 +129,7 @@ if (config.updateRequired) showUpdate(config.storeUrl)
 
 
 ```swift
-try DB.open(
+try await DB.open(
   encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
   credentials: KeychainCredentials(), modelsJSON: modelsJSON, path: path
 )
@@ -143,6 +143,10 @@ DBlayer.open(
 )
 DBlayer.database.sessionCall("otp", """{"phone":"+61400000000"}""")
 ```
+
+Await `DB.open` in Swift or call suspend `DBlayer.open` from a Kotlin coroutine.
+Opening files, WAL and migrations runs on the library's worker pool.
+Identical repeated calls reuse the opened database. Different parameters throw an error. Failed opens allow retry.
 
 Omit `encrypted` and `credentials` for ordinary GraphQL through `endpoint` or a custom `transport`.
 Omit the endpoint and transport too for a local database. See [server sync](docs/server-sync.md) for arguments and errors.

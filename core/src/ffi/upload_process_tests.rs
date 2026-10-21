@@ -47,7 +47,7 @@ async fn child(mode: &str) {
         std::fs::remove_file(format!("{path}.mp4")).unwrap();
     }
     let remote = Arc::new(Remote(std::env::var("DBLAYER_UPLOAD_PEER").unwrap()));
-    let database = Database::open(Config { path: Some(path.clone()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(remote.clone()), Some(remote.clone())).unwrap();
+    let database = Database::open(Config { path: Some(path.clone()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(remote.clone()), Some(remote.clone())).await.unwrap();
     database.register_operations(json!([
         {"name": "CreateBlob", "document": "mutation CreateBlob { createBlob { id } }", "rootPath": "createBlob"},
         {"name": "MakeMoment", "document": "mutation MakeMoment { makeMoment { id } }", "rootPath": "makeMoment"}

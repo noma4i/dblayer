@@ -26,7 +26,7 @@ impl Transport for Refusing {
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
-fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<Database>, Arc<Refusing>) {
+async fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<Database>, Arc<Refusing>) {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     let mut relation = RelationSpec::global("feed");
     relation.remote = Some(RemoteSpec {
@@ -36,7 +36,7 @@ fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<Database>, Arc<Ref
     model.relations.push(relation);
     let transport = Arc::new(Refusing { calls: AtomicUsize::new(0), answer });
     let models = serde_json::to_string(&vec![model]).unwrap();
-    let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, models, Some(transport.clone() as Arc<dyn Transport>), None, None, None).unwrap();
+    let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, models, Some(transport.clone() as Arc<dyn Transport>), None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id } }","rootPath":"moments"}]"#.into()).unwrap();
     (db, transport)
 }
@@ -49,7 +49,7 @@ const REFUSED: &str = r#"{"errors":[{"message":"nope"},{"message":"bad"}]}"#;
 
 #[tokio::test]
 async fn a_run_refused_with_http_401_keeps_its_status_and_is_sent_once() {
-    let (db, transport) = rig(Err(unauthorized));
+    let (db, transport) = rig(Err(unauthorized)).await;
     let error = db.run("Feed".into(), "{}".into()).await.unwrap_err();
     assert!(matches!(&error, DbError::Http { status: 401, detail } if detail.contains("unauthorized")), "{error:?}");
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
@@ -57,7 +57,7 @@ async fn a_run_refused_with_http_401_keeps_its_status_and_is_sent_once() {
 
 #[tokio::test]
 async fn a_load_refused_with_http_401_keeps_its_status_and_is_sent_once() {
-    let (db, transport) = rig(Err(unauthorized));
+    let (db, transport) = rig(Err(unauthorized)).await;
     let error = db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
     assert!(matches!(&error, DbError::Http { status: 401, detail } if detail.contains("unauthorized")), "{error:?}");
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
@@ -65,7 +65,7 @@ async fn a_load_refused_with_http_401_keeps_its_status_and_is_sent_once() {
 
 #[tokio::test]
 async fn a_run_answered_with_graphql_errors_keeps_every_message_and_is_sent_once() {
-    let (db, transport) = rig(Ok(REFUSED));
+    let (db, transport) = rig(Ok(REFUSED)).await;
     let error = db.run("Feed".into(), "{}".into()).await.unwrap_err();
     assert!(matches!(&error, DbError::Graphql { messages, .. } if messages == &["nope", "bad"]), "{error:?}");
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
@@ -73,7 +73,7 @@ async fn a_run_answered_with_graphql_errors_keeps_every_message_and_is_sent_once
 
 #[tokio::test]
 async fn a_load_answered_with_graphql_errors_keeps_every_message_and_is_sent_once() {
-    let (db, transport) = rig(Ok(REFUSED));
+    let (db, transport) = rig(Ok(REFUSED)).await;
     let error = db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
     assert!(matches!(&error, DbError::Graphql { messages, .. } if messages == &["nope", "bad"]), "{error:?}");
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);

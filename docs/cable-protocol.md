@@ -44,7 +44,7 @@ Every open returns a new token. Calls for that token send and receive text witho
 | Open or send failure | Typed transport error from the platform classifier |
 
 ```swift
-try DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
+try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
 ```
 
 ```kotlin

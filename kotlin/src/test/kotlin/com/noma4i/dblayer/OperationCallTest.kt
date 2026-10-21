@@ -16,7 +16,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Test
 
 class OperationCallTest {
-    private fun rig(name: String, document: String, reply: String): MockTransport {
+    private suspend fun rig(name: String, document: String, reply: String): MockTransport {
         val transport = MockTransport()
         transport.enqueue(name, reply)
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)

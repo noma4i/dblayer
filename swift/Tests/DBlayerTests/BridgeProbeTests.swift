@@ -7,7 +7,7 @@ import Testing
 struct BridgeProbeTests {
   @Test @MainActor
   func releasedEntitiesRespectTheSharedMemoryBudget() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let row = try await Moment.create(text: String(repeating: "x", count: 9 * 1024 * 1024))
     var entity: Entity<Moment>? = Moment.entity(row.id)
     await eventually("the large row is delivered") { entity?.value != nil }
@@ -34,7 +34,7 @@ struct BridgeProbeTests {
 
   @Test
   func aSearchFindsRowsByWordPrefixesAndFollowsEdits() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let prefix = Cursor(await Query<Moment>().search("hel").live.stream())
     let whole = Cursor(await Query<Moment>().search("hel", wholeWords: true).live.stream())
     #expect(await prefix.next()?.isEmpty == true)
@@ -50,7 +50,7 @@ struct BridgeProbeTests {
 
   @Test
   func writesReachTypedLiveRows() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let changes = Cursor(await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.create(text: "m")
@@ -63,14 +63,14 @@ struct BridgeProbeTests {
 
   @Test
   func aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     #expect(Moment.recent.cached() == nil)
     let moment = try await Moment.create(text: "m")
     try await Moment.recent.warm()
     let warm = try #require(Moment.recent.cached())
     #expect(warm.value.map(\.id) == [moment.id] && warm.value.first?.text == "m")
     #expect(Moment.recent.cachedRow("ghost") == nil)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     #expect(Moment.recent.cached() == nil)
     _ = try await Moment.create(text: "n")
     #expect(await Moment.recent.live.current().count == 1)
@@ -79,7 +79,7 @@ struct BridgeProbeTests {
 
   @Test
   func aLocalWriteReachesTheTypedLiveRow() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let changes = Cursor(await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.create(text: "m")
@@ -93,7 +93,7 @@ struct BridgeProbeTests {
   @MainActor
   @Test
   func anEntityFollowsAnEditAndLetsGoOfTheRecordWhenItIsDropped() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let first = try await Moment.create(text: "one")
     var entity: Entity<Moment>? = Moment.entity(first.id)
     await eventually(#"not (entity?.value == nil)"#) { !(entity?.value == nil) }
@@ -122,7 +122,7 @@ struct BridgeProbeTests {
   func feedLoadsFromTheTransportIntoLiveRows() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
     try await Moment.feed.refresh()
@@ -140,7 +140,7 @@ struct BridgeProbeTests {
   func loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let before = DB.subscriptionCensus()
 
@@ -156,7 +156,7 @@ struct BridgeProbeTests {
   func aFailedLoadThrowsLikeRefresh() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Network(detail: "offline"))
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
     do {
@@ -170,7 +170,7 @@ struct BridgeProbeTests {
   func aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Network(detail: "offline"))
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
 
@@ -192,7 +192,7 @@ struct BridgeProbeTests {
   func aFatalFailureMarksTheRelationFailedWithoutAnyRetry() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
     let connectLoad = await Cursor(await Moment.feed.state.stream()).first("the live connect's load to fail") { $0.phase == .failed }
@@ -218,7 +218,7 @@ struct BridgeProbeTests {
   func liveListLoadsTheRelationAndReportsItsState() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"totalCount":9}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
     let list = LiveList(Moment.feed)
@@ -236,7 +236,7 @@ struct BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func eachNewListCanRefreshAndAwaitItsOwnInitialRequest() async throws {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed { feed { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     for index in 0..<3 {
       if index == 2 {
@@ -260,7 +260,7 @@ struct BridgeProbeTests {
   @Test
   func aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndSendsAfterRegisteringAndRetrying() async throws {
     let transport = MockTransport()
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
 
     let local = try await Moment.create(text: "hello", media: nil)
     let entity = Moment.entity(local.id)
@@ -281,7 +281,7 @@ struct BridgeProbeTests {
   func confirmedIdWaitsForTheServerIdOfALocalCreate() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
     let local = try await Moment.create(text: "hello", media: nil)
@@ -295,7 +295,7 @@ struct BridgeProbeTests {
   func aCreateSendsItsArgsAndTheRowNeverStoresThem() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMessage", reply: #"{"data":{"createMessage":{"__typename":"Message","id":"x1","chatId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMessage","document":"mutation CreateMessage($chatId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createMessage(chatId: $chatId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id chatId authorId text createdAt } }"}]"#)
 
     let local = try await Message.create(chatId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1")
@@ -309,7 +309,7 @@ struct BridgeProbeTests {
   func aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let snapshots = Cursor(await Moment.recent.snapshots.stream())
     _ = await snapshots.next()
@@ -323,7 +323,7 @@ struct BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func anEntityOfARecordThatAnotherRecordRefersToFollowsItsCreateAndDestroy() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let message = try await Message.create(chatId: "c", authorId: "u1", text: "hi")
     let entity = Message.entity(message.id)
     await eventually(#"not (entity.value == nil)"#) { !(entity.value == nil) }
@@ -363,7 +363,7 @@ struct BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://s3/x","headers":{},"signedId":"sid","blobId":"b1"}}}"#)
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateBlob","document":"mutation CreateBlob($filename: String!, $contentType: String!, $byteSize: Int!, $checksum: String!) { createBlob(filename: $filename, contentType: $contentType, byteSize: $byteSize, checksum: $checksum) { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let file = FileManager.default.temporaryDirectory.appending(path: "clip-\(UUID().uuidString).mp4")
     try Data("abcdef".utf8).write(to: file)
@@ -381,7 +381,7 @@ struct BridgeProbeTests {
 
   @Test
   func aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let initial = try await Message.create(chatId: "c1", authorId: "u1", text: "hello")
     let row = try await initial.update(reactions: [MessageReactionNode(body: "A", userId: "u1")])
     let changed = try await row.react(reactionBody: "C", userId: "u1")
@@ -397,7 +397,7 @@ struct BridgeProbeTests {
     }
     transport.enqueue("ChatGroupCreateFile", reply: #"{"data":{"groupChatCreate":{"chat":{"id":"c77","title":"created"}}}}"#)
     transport.enqueue("ChatGroupUpdateFile", reply: #"{"data":{"groupChatUpdate":{"chat":{"id":"c77","title":"updated"}}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url signedId blobId } }"},{"name":"ChatGroupCreateFile","document":"mutation ChatGroupCreateFile { groupChatCreate { chat { id title } } }"},{"name":"ChatGroupUpdateFile","document":"mutation ChatGroupUpdateFile { groupChatUpdate { chat { id title } } }"}]"#)
     let file = FileManager.default.temporaryDirectory.appending(path: "chat-\(UUID().uuidString).jpg")
     try Data("photo".utf8).write(to: file)
@@ -415,7 +415,7 @@ struct BridgeProbeTests {
   func resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
     _ = await Self.failedState(of: Moment.feed)
@@ -435,7 +435,7 @@ struct BridgeProbeTests {
     transport.enqueue("MomentsFeed", reply: empty, delay: 1)
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let list = LiveList(Moment.feed)
     await eventually(#"not (list.state.loadedAt == nil)"#) { !(list.state.loadedAt == nil) }
@@ -455,7 +455,7 @@ struct BridgeProbeTests {
   func aRefusalAnsweredBeforeSettledStartedIsStillThrownOnce() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id uuid likedByMe media createdAt } }"}]"#)
     let local = try await Moment.create(text: "hello", media: nil)
     try await local.settled()
@@ -473,7 +473,7 @@ struct BridgeProbeTests {
 
   private func openWithAMoment(_ transport: MockTransport) async throws -> Moment {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment($momentId: ID!) { shareMoment(momentId: $momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]"#)
     let local = try await Moment.create(text: "hello", media: nil)
     try await local.settled()
@@ -515,7 +515,7 @@ final class EntityCollector: EntityListener, @unchecked Sendable {
 extension BridgeProbeTests {
   @Test
   func retainedRowsReachTheBridgeAsChangedRowsAndReleasedRowsStayQuiet() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let first = try await Moment.create(text: "one")
     let second = try await Moment.create(text: "two")
     let collector = EntityCollector()
@@ -542,13 +542,13 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func aNewDatabaseStartsWithNoEntityOfTheOldOne() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let moment = try await Moment.create(text: "old")
     let old = Moment.entity(moment.id)
     await eventually(#"not (old.value == nil)"#) { !(old.value == nil) }
     #expect(old.value?.text == "old")
 
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let fresh = Moment.entity(moment.id)
     try await Task.sleep(for: .milliseconds(200))
     #expect(old.value == nil && fresh.value == nil && fresh !== old)

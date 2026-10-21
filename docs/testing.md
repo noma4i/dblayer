@@ -9,7 +9,7 @@ import DBlayerTesting
 
 let transport = MockTransport()
 transport.enqueue("MomentsFeed", reply: feedJSON)
-DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
 ```
 
 ```kotlin
@@ -28,7 +28,7 @@ A live query loads by itself when something subscribes, and an explicit refresh 
 Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. The production `open` has no clock parameter.
 
 ```swift
-let clock = try DB.openTesting(transport: transport, modelsJSON: modelsJSON)
+let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
 try await Moment.feed.load()
 clock.advance(by: 5 * 60 + 1)   // 1 second past fresh_for
 try await Moment.feed.load()    // requests again

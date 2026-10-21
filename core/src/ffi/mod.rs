@@ -112,6 +112,8 @@ mod stable_order_tests;
 #[cfg(test)]
 mod local_open_tests;
 #[cfg(test)]
+mod open_tests;
+#[cfg(test)]
 mod write_calls_tests;
 #[cfg(test)]
 mod retention_tests;

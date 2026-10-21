@@ -6,7 +6,7 @@ extension BridgeProbeTests {
 struct ParentSetsTests {
   @Test
   func aLocalMessageMovesTheChatPointerAndDiscardingItGivesThePointerBack() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let chat = try await Chat.create(title: "t")
     let message = try await Message.create(chatId: chat.id, authorId: "u1", text: "hi")
 

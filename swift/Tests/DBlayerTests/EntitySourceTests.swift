@@ -5,12 +5,12 @@ import Testing
 extension BridgeProbeTests {
   @Test @MainActor
   func aReplacedDatabaseCannotDeliverRowsOrRemovalsToCurrentEntities() async throws {
-    let old = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let old = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     DB.database = old
     let former = try await Moment.create(values: ["id": .string("same"), "text": .string("old")])
     let registry = Entities<Moment>()
     let previous = registry.entity(former.id)
-    let current = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let current = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     DB.database = current
     let row = try await Moment.create(values: ["id": .string("same"), "text": .string("current")])
     try await Moment.recent.warm()
@@ -26,7 +26,7 @@ extension BridgeProbeTests {
 
   @Test @MainActor
   func droppingAnEntitySourceReleasesItsObserver() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let row = try await Moment.create(text: "held")
     let delivered = Counter()
     var source: CoreEntitySource<Moment>? = CoreEntitySource()

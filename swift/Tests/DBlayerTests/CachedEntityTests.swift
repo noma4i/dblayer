@@ -4,7 +4,7 @@ import Testing
 extension BridgeProbeTests {
   @Test @MainActor
   func cachedFirstReadAndRetainedNewerValueAreAvailableBeforeDelivery() async throws {
-    DB.database = try Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let row = try await Moment.create(text: "cached")
     try await Moment.recent.warm()
     let cached = try #require(try DB.database.peekRow(model: "Moment", rowId: row.id))

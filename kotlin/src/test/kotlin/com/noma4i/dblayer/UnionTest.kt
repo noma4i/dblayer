@@ -32,7 +32,7 @@ class UnionTest {
         is JsonPrimitive -> value
     }
 
-    private fun open(transport: MockTransport? = null) = Database.open(Config(null, null, 64u), modelsJSON, transport).also { DBlayer.database = it }
+    private suspend fun open(transport: MockTransport? = null) = Database.open(Config(null, null, 64u), modelsJSON, transport).also { DBlayer.database = it }
 
     @Test
     fun aStoredUnionReadsFromCellsAndEncodesLikeTheSharedCases() = bounded {

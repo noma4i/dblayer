@@ -9,7 +9,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StorageTest {
@@ -21,7 +21,7 @@ class StorageTest {
             val name = (fields.getValue("name") as JsonPrimitive).content
             val models = fields.getValue("models").toString()
             if (fields["error"] == JsonPrimitive(true)) {
-                assertThrows(name, DbException::class.java) { Database.open(Config(null, null, 32u), models, null) }
+                assertTrue(name, runCatching { Database.open(Config(null, null, 32u), models, null) }.exceptionOrNull() is DbException)
                 continue
             }
             val directory = Files.createTempDirectory("dblayer-storage").toFile()
