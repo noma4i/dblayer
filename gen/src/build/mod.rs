@@ -427,6 +427,12 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
         match line.word.as_str() {
             "mutation" => action.mutation = Some(first_name(line)),
             "upload" => { action.mutation = Some(first_name(line)); action.upload = true; }
+            "batch" => {
+                let number = |key| option(line, key).and_then(|pair| json_of(&pair.value.item).as_u64()).unwrap_or(0) as usize;
+                action.batch = Some(dblayer::schema::UploadBatchDeclaration {
+                    min: number("min"), max: number("max"), items: symbol_of(line, "items"), single: symbol_of(line, "single"), input: Default::default(),
+                });
+            }
             "input" => action.variables = line.options.iter().filter_map(variable_binding).collect(),
             "optimistic" => action.optimistic = line.options.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
             "on_failure" => action.on_failure = on_failure_of(&first_name(line)),
@@ -441,6 +447,9 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
             "correlate" => action.correlate = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
             _ => {}
         }
+    }
+    if let Some(batch) = &mut action.batch {
+        batch.input = call.block.iter().flatten().filter(|line| line.word == "item").flat_map(|line| line.options.iter().filter_map(variable_binding)).collect();
     }
     for value in action.optimistic.values_mut() {
         if let Json::String(name) = value {

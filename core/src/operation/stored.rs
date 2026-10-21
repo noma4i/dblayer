@@ -128,7 +128,11 @@ pub fn read_upload_items(connection: &Connection) -> Result<HashMap<(i64, i64), 
 }
 
 pub fn read_uploads(connection: &Connection) -> Result<HashMap<i64, UploadState>> {
-    Ok(read_upload_items(connection)?.into_iter().filter_map(|((seq, position), state)| (position == 0).then_some((seq, state))).collect())
+    let mut items: Vec<_> = read_upload_items(connection)?.into_iter().collect();
+    items.sort_by_key(|(key, _)| *key);
+    let mut uploads = HashMap::new();
+    for ((seq, _), state) in items { uploads.entry(seq).or_insert(state); }
+    Ok(uploads)
 }
 
 pub fn write_upload(connection: &Connection, seq: i64, position: i64, state: &UploadState) -> Result<usize> {

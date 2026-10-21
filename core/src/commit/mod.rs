@@ -159,6 +159,9 @@ pub struct OperationRecord {
 #[derive(Debug, Clone, PartialEq)]
 pub enum OperationTransition {
     Begin(OperationRecord),
+    BeginUploadBatch { record: OperationRecord, items: Vec<(RowId, String, crate::upload::UploadInput)> },
+    RemoveUploadItem { seq: i64, position: i64 },
+    SeparateUploads { seq: i64, single_action: String, single_mutation: String },
     Close { seq: i64, status: OperationStatus, once: bool },
     Start { seq: i64 },
     Fail { seq: i64, status: OperationStatus, failure: OperationFailure },

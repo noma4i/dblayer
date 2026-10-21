@@ -6,6 +6,8 @@ use crate::store::StoreError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
+    #[error("invalid upload: {0}")]
+    InvalidUpload(String),
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error(transparent)]

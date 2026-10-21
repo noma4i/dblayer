@@ -121,6 +121,9 @@ If the mutation input type accepts `clientMutationId`, the generator marks it in
 The library stores the key in the operation column before the first send. A retry of the same operation uses the same key after restart.
 A new operation gets a new key. An explicit app value takes priority.
 This rule is the same for Swift and Kotlin, including the final upload mutation.
+
+[Batch uploads](files.md#create-several-records-with-uploads) create several local records in one operation and submit one ordered list after every remaining file finishes.
+Their `correlate` field matches each server record to its temporary record, independently of response order.
 With `on_failure: :keep`, the errors `IN_PROGRESS` and `DUPLICATE_CLIENT_KEY` keep the row in `failed`.
 `retry()` and `retryAll()` repeat the stored key. A response with a server row confirms success.
 The server defines how long it keeps the result. After that period, the key no longer guarantees a repeated successful response.

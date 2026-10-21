@@ -172,6 +172,34 @@ fn restore_edit(
 }
 
 impl Db {
+    pub(crate) fn remove_upload_item(&self, model: &str, id: &RowId, seq: i64, remove_row: bool) -> Result<bool, DbError> {
+        let generation = self.generation();
+        let mut removed = false;
+        self.commit_following(generation, |reader| {
+            let outbox = read_outbox(reader)?;
+            let Some(entry) = outbox.iter().find(|entry| entry.operation.id.0 == seq) else { return Ok(None) };
+            if entry.operation.transport_started { return Err(DbError::InFlight { model: model.into(), id: id.to_string() }); }
+            let position = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get(0))?;
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
+            let mut prior = Prior::of(entry).unwrap_or_default();
+            if remove_row {
+                let mut selected = entry.clone();
+                selected.rollback = Some(Prior { rows: prior.rows.iter().filter(|row| row.id() == id.as_str()).cloned().collect() }.to_value());
+                let plan = restore(reader, &outbox, &selected)?;
+                envelope.entity_ops = plan.entity_ops;
+                envelope.scope_ops = plan.scope_ops;
+                envelope.operation_transitions = plan.transitions;
+            }
+            prior.rows.retain(|row| row.id() != id.as_str());
+            let rows = entry.operation.row_ids.iter().filter(|row| *row != id).cloned().collect();
+            envelope.operation_transitions.push(entry.rewritten(rows, entry.input.clone(), Some(prior.to_value())));
+            envelope.operation_transitions.push(OperationTransition::RemoveUploadItem { seq, position });
+            removed = true;
+            Ok(Some(envelope))
+        }).map_err(plan_fault)?;
+        Ok(removed)
+    }
+
     pub fn roll_back(&self, seq: i64) -> Result<CommitResult, DbError> {
         self.roll_back_at(seq, self.generation())
     }

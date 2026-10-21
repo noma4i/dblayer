@@ -1,0 +1,18 @@
+model Asset do
+  field :clientKey, type: :string
+  field :size, type: :int
+  operation :create_file do
+    upload CreateAsset
+    correlate :clientKey
+    root "createAsset.asset"
+    local_effect :none, reason: "created with its file"
+  end
+  operation :create_files do
+    upload CreateAssets
+    batch min: 2, max: 10, items: :items, single: :create_file
+    item clientKey: :clientKey
+    correlate :clientKey
+    root "createAssets.assets"
+    local_effect :none, reason: "created with their files"
+  end
+end

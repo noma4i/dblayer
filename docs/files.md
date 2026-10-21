@@ -89,6 +89,66 @@ moment.upload?.percent      // 42.0
 moment.confirmedId()
 ```
 
+### Create several records with uploads
+
+A batch creates all temporary records and owns their source files in one commit.
+Declare its minimum and maximum size, item variable mapping, correlation field, and single-record upload operation.
+The application supplies a nonempty, unique correlation key in each record's values.
+The library preserves these keys and adds each confirmed `signedId` to the ordered mutation items.
+The response replaces temporary records by correlation key, including responses received before the mutation answer.
+
+An individual file failure leaves other transfers running and delays the final mutation until all remaining files finish.
+Retrying a failed file preserves completed transfers.
+Discarding a record removes it from the operation and recalculates the remaining count.
+Below the declared minimum, the remaining records use the declared single-record mutation.
+The application updates its own grouping fields on the remaining records after `discard()`.
+The library does not interpret or rewrite those fields.
+
+During the final mutation, changing membership returns `InFlight`.
+After `deliveryUnknown`, retrying any member repeats the complete saved request with the same operation key.
+Discarding any member then rolls back the entire uncertain operation.
+
+```ruby
+operation :create_file do
+  upload CreateAsset
+  correlate :clientKey
+  root "createAsset.asset"
+  local_effect :none, reason: "created with its file"
+end
+operation :create_files do
+  upload CreateAssets
+  batch min: 2, max: 10, items: :items, single: :create_file
+  item clientKey: :clientKey
+  correlate :clientKey
+  root "createAssets.assets"
+  local_effect :none, reason: "created with their files"
+end
+```
+
+`item` maps input object fields to model fields.
+The declared limits must fit within 2 through 10.
+The GraphQL mutation accepts an input object list containing the correlation key and `signedId`.
+Its response includes every created record with the same correlation key, in any order.
+
+```swift
+let records = try await Asset.uploadCreate(
+  items: files.map { UploadItem(values: $0.values, path: $0.path) },
+  request: UploadBatchRequest(operation: "create_files", createBlob: "CreateBlob")
+)
+```
+
+```kotlin
+val records = Asset.uploadCreate(
+    items = files.map { UploadItem(values = it.values, path = it.path) },
+    request = UploadBatchRequest(operation = "create_files", createBlob = "CreateBlob"),
+)
+```
+
+Each returned record has a temporary id, local file preview, `Sending` state, and independent upload progress.
+Use item `variables` for additional input object fields and request `variables` for shared mutation arguments.
+`cancelUpload()` removes only the selected transfer and keeps its local record.
+Offline cancellation and restart use the same stored file and multipart state as a single upload.
+
 ### Typed variables of the content mutation
 
 The library sets `signedId` itself. Other mutation variables go in `variables`. Declare schema input objects in the named operation's `args`. The generator checks mutation variables and writes a typed builder named after the operation, such as `createFileVariables`. Do not declare `signedId`.

@@ -146,6 +146,54 @@ impl Db {
         self.insert_local(model, values, Map::new(), Action::Named("upload".to_string()), Some((input, state)))
     }
 
+    pub(crate) fn create_upload_batch(&self, model: &str, items: Vec<crate::upload::UploadItem>, request: crate::upload::UploadBatchInput) -> Result<Vec<RowId>, DbError> {
+        let spec = self.shared.spec(model)?;
+        let action = spec.actions.iter().find(|action| action.name == request.operation).ok_or_else(|| DbError::InvalidUpload("unknown upload operation".into()))?;
+        let batch = action.batch.as_ref().ok_or_else(|| DbError::InvalidUpload("operation has no upload batch declaration".into()))?;
+        if items.len() < batch.min || items.len() > batch.max {
+            return Err(DbError::InvalidUpload(format!("upload batch requires {}..{} items", batch.min, batch.max)));
+        }
+        let field = &action.correlate[0];
+        let mut keys = HashSet::new();
+        let now = self.shared.store.lock().now_ms();
+        let mut rows = Vec::new();
+        let mut files = Vec::new();
+        for item in items {
+            let key = item.values.get(field).and_then(Value::as_str).filter(|key| !key.trim().is_empty()).ok_or_else(|| DbError::InvalidUpload("upload correlation key is empty".into()))?.to_owned();
+            if !keys.insert(key.clone()) { return Err(DbError::InvalidUpload("upload correlation keys must be unique".into())); }
+            let id = RowId::generate_temp(None);
+            let mut values = item.values;
+            values.insert("id".into(), Value::String(id.to_string()));
+            let data = spec.normalize_local(&values, now)?;
+            let mut variables = item.variables;
+            for (target, source) in &batch.input {
+                variables.insert(target.clone(), data.get(source).cloned().unwrap_or(Value::Null));
+            }
+            let mut steps = request.steps.clone();
+            steps.mutation = action.mutation.clone().ok_or_else(|| DbError::InvalidUpload("upload mutation is missing".into()))?;
+            files.push((id.clone(), key, crate::upload::UploadInput { path: item.path, name: item.name, mime: item.mime, variables, steps }));
+            rows.push((id, data));
+        }
+        let ids: Vec<_> = rows.iter().map(|(id, _)| id.clone()).collect();
+        let record = OperationRecord {
+            seq: None, action_key: Operation::action_key(model, &action.name), status: OperationStatus::Pending,
+            row_ids: ids.clone(), temp_id: None, input: Value::Object(request.variables), transport_started: false,
+            base_revision: Some(self.revision_seq()?), created_at: now, dedupe_key: None, upload: None,
+            rollback: Some(Prior { rows: ids.iter().map(|id| PriorRow::Created { model: model.into(), id: id.to_string() }).collect() }.to_value()),
+        };
+        let generation = self.generation();
+        self.commit_following(generation, |reader| {
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
+            for (id, data) in &rows {
+                envelope.scope_ops.extend(local_scope_ops(reader, spec, id, data)?);
+                envelope.entity_ops.push(EntityOp::Upsert { model: spec.key.clone(), id: id.clone(), row: data.clone() });
+            }
+            envelope.operation_transitions.push(OperationTransition::BeginUploadBatch { record: record.clone(), items: files.clone() });
+            Ok(Some(envelope))
+        }).map_err(plan_fault)?;
+        Ok(ids)
+    }
+
     fn insert_local(&self, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: Option<(Value, UploadState)>) -> Result<RowId, DbError> {
         let spec = self.shared.spec(model)?;
         let mut input = values;

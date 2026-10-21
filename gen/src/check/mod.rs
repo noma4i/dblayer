@@ -154,6 +154,8 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
             plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false)])
         }
         (Context::Action, "mutation" | "upload") => plain(Shape::Const, vec![]),
+        (Context::Action, "batch") => plain(Shape::Nothing, vec![key("min", Want::Any, true), key("max", Want::Any, true), key("items", Want::Symbol, true), key("single", Want::Symbol, true)]),
+        (Context::Action, "item") => free(),
         (Context::Action, "local_effect") => plain(Shape::Name, vec![key("reason", Want::Any, false)]),
         (Context::Action, "on_failure") => plain(Shape::Name, vec![]),
         (Context::Action, "wrap" | "response") => plain(Shape::Name, vec![]),

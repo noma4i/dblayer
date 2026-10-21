@@ -37,12 +37,33 @@ impl Db {
 
     pub fn retry(&self, model: &str, id: &RowId) -> Result<usize, DbError> {
         let stuck = self.stuck_operations(model, id)?;
-        self.retry_operations(stuck)
+        Ok(self.retry_operations(stuck)? + self.retry_upload_items(Some((model, id)))?)
     }
 
     pub fn retry_all(&self) -> Result<usize, DbError> {
         let stuck: Vec<OutboxOperation> = self.outbox()?.into_iter().filter(is_stuck).collect();
-        self.retry_operations(stuck)
+        Ok(self.retry_operations(stuck)? + self.retry_upload_items(None)?)
+    }
+
+    fn retry_upload_items(&self, target: Option<(&str, &RowId)>) -> Result<usize, DbError> {
+        let generation = self.generation();
+        let mut retried = 0;
+        self.commit_following(generation, |reader| {
+            let connection = reader.connection();
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
+            for ((seq, position), mut state) in crate::operation::read_upload_items(connection)? {
+                if state.phase != crate::upload::UploadStatus::Failed { continue; }
+                let (action, status, row): (String, String, String) = connection.query_row("SELECT op.action_key, op.status, op_item.row_id FROM op JOIN op_item USING (seq) WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+                if status != "pending" || target.is_some_and(|(model, id)| row != id.as_str() || crate::operation::Operation::split_action_key(&action).is_none_or(|(owner, _)| owner != model)) { continue; }
+                state.phase = crate::upload::UploadStatus::Queued;
+                state.error = None;
+                state.retries.clear();
+                envelope.operation_transitions.push(OperationTransition::Progress { seq, item_position: position, state });
+                retried += 1;
+            }
+            Ok::<_, DbError>(Some(envelope))
+        }).map_err(super::local_write::plan_fault)?;
+        Ok(retried)
     }
 
     pub(crate) fn retry_operations(&self, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
@@ -66,7 +87,12 @@ impl Db {
         }
         let mut discarded = 0;
         while let Some(entry) = self.record_operations(model, id)?.first() {
-            self.roll_back(entry.operation.id.0)?;
+            let batched = self.spec(model)?.actions.iter().any(|action| action.batch.is_some() && entry.operation.action_key == crate::operation::Operation::action_key(model, &action.name));
+            if batched && entry.operation.status != OperationStatus::DeliveryUnknown {
+                self.remove_upload_item(model, id, entry.operation.id.0, true)?;
+            } else {
+                self.roll_back(entry.operation.id.0)?;
+            }
             discarded += 1;
         }
         Ok(discarded)

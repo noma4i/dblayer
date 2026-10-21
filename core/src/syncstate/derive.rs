@@ -22,7 +22,7 @@ impl SyncEntry {
             (OperationStatus::Failed, _) => SyncState::Failed,
             (OperationStatus::DeliveryUnknown, _) => SyncState::DeliveryUnknown,
             (OperationStatus::Pending, true) => SyncState::Sending,
-            (OperationStatus::Pending, false) if self.upload.as_ref().is_some_and(|state| state.phase == UploadStatus::Uploading) => {
+            (OperationStatus::Pending, false) if self.upload.as_ref().is_some_and(|state| state.phase == UploadStatus::Uploading || self.action != "upload") => {
                 SyncState::Sending
             }
             _ => SyncState::Pending,

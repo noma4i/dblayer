@@ -256,6 +256,37 @@ impl Inner {
 
     fn owned_request(&self, sending: &Sending<'_>, operation: &OperationDef) -> Result<GraphQLRequest, SyncError> {
         let entry = sending.entry;
+        let spec = self.db.spec(&sending.model)?;
+        let declaration = spec.actions.iter().find(|action| action.name == sending.action);
+        if let Some((declaration, batch)) = declaration.and_then(|action| action.batch.as_ref().map(|batch| (action, batch))) {
+            let mut states: Vec<_> = self.upload_items()?.into_iter().filter(|(key, _)| key.0 == entry.operation.id.0).collect();
+            states.sort_by_key(|(key, _)| key.1);
+            let mut items = Vec::new();
+            for ((seq, position), state) in &states {
+                let input = self.db.shared.read(&[], |reader| Ok(crate::operation::read_item_value(reader.connection(), *seq, *position, "input")?))?;
+                let input: crate::upload::UploadInput = serde_json::from_value(input.unwrap_or(Value::Null)).map_err(|error| SyncError::Malformed(error.to_string()))?;
+                let mut item = input.variables;
+                let signed = state.signed_id.as_ref().filter(|_| state.is_transferred()).ok_or_else(|| SyncError::Malformed("an upload item is unfinished".into()))?;
+                item.insert(input.steps.signed_id_variable, Value::String(signed.clone()));
+                items.push(Value::Object(item));
+            }
+            let mut variables = entry.input.as_object().cloned().ok_or_else(|| SyncError::Malformed("upload variables must be an object".into()))?;
+            variables.insert(batch.items.clone(), Value::Array(items));
+            let variables = super::variables::upload_variables(declaration, Value::Object(variables), &entry.operation.client_mutation_id);
+            let request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+            self.commit(sending.generation, |_| {
+                let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
+                for ((seq, position), state) in &states {
+                    let mut state = state.clone();
+                    state.phase = crate::upload::UploadStatus::Sending;
+                    state.stage = crate::upload::UploadStage::Mutation;
+                    state.request = Some(crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() });
+                    envelope.operation_transitions.push(OperationTransition::Progress { seq: *seq, item_position: *position, state });
+                }
+                Ok(Some(envelope))
+            })?;
+            return Ok(request);
+        }
         let variables = match &entry.operation.upload {
             None => self.bind(entry)?.ok_or_else(|| SyncError::Malformed("the operation has no declaration".into()))?.variables,
             Some(state) => {
@@ -378,12 +409,24 @@ impl Inner {
 
     fn start(&self, sending: &Sending<'_>) -> Result<Option<(OutboxOperation, i64)>, SyncError> {
         let seq = sending.entry.operation.id.0;
+        let spec = self.db.spec(&sending.model)?;
+        let batch = spec.actions.iter().find(|action| action.name == sending.action).and_then(|action| action.batch.as_ref());
         let mut frozen = None;
         let committed = self.commit(sending.generation, |reader| {
             let Some(entry) = read_outbox(reader)?.into_iter().find(|entry| entry.operation.id.0 == seq) else { return Ok(None) };
             if entry.operation.status != OperationStatus::Pending || entry.operation.transport_started || entry.operation.client_mutation_id != sending.entry.operation.client_mutation_id { return Ok(None); }
-            frozen = Some((entry, reader.revision_seq()?));
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
+            if let Some(batch) = batch {
+                let items = crate::operation::read_upload_items(reader.connection()).map_err(StoreError::from)?;
+                if items.iter().any(|(key, state)| key.0 == seq && (!state.is_transferred() || matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled))) { return Ok(None); }
+                if entry.operation.row_ids.len() < batch.min {
+                    let single = spec.actions.iter().find(|action| action.name == batch.single).ok_or_else(|| SyncError::Malformed("single upload declaration is missing".into()))?;
+                    let mutation = single.mutation.clone().ok_or_else(|| SyncError::Malformed("single upload mutation is missing".into()))?;
+                    envelope.operation_transitions.push(OperationTransition::SeparateUploads { seq, single_action: Operation::action_key(&sending.model, &single.name), single_mutation: mutation });
+                    return Ok(Some(envelope));
+                }
+            }
+            frozen = Some((entry, reader.revision_seq()?));
             envelope.operation_transitions.push(OperationTransition::Start { seq });
             Ok(Some(envelope))
         })?;
@@ -407,6 +450,27 @@ impl Inner {
         let entry = sending.entry;
         let temp = entry.operation.temp_id.clone();
         let (normalized, landings) = self.read_response(sending, operation, &data);
+        let spec = self.db.spec(&sending.model)?;
+        let batch_action = spec.actions.iter().find(|action| action.name == sending.action && action.batch.is_some());
+        let mut replacements = Vec::new();
+        if let Some(action) = batch_action {
+            let expected = self.db.shared.read(&[], |reader| {
+                let mut statement = reader.connection().prepare("SELECT row_id, client_key FROM op_item WHERE seq = ?1 ORDER BY position")?;
+                let rows = statement.query_map([entry.operation.id.0], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })?;
+            let field = &action.correlate[0];
+            let mut seen = HashSet::new();
+            for row in &normalized.roots {
+                let key = row.get(field).and_then(Value::as_str);
+                let real = row.get("id").and_then(read_id);
+                let found = expected.iter().find(|(_, expected)| Some(expected.as_str()) == key);
+                let (Some((temp, _)), Some(real), Some(key)) = (found, real, key) else { return self.quarantine(sending, &data) };
+                if !seen.insert(key) || real.is_temp() || spec.normalize(row).is_err() { return self.quarantine(sending, &data); }
+                replacements.push((RowId::new(temp).map_err(|error| SyncError::Malformed(error.to_string()))?, real));
+            }
+            if replacements.len() != expected.len() { return self.quarantine(sending, &data); }
+        }
         let real = normalized.roots.first().and_then(|row| row.get("id")).and_then(read_id);
         let creatable = normalized.roots.first().is_some_and(|row| self.db.spec(&sending.model).is_ok_and(|spec| spec.normalize(row).is_ok()));
         if temp.is_some() && (normalized.roots.len() != 1 || real.is_none() || real == temp || !creatable) {
@@ -424,6 +488,11 @@ impl Inner {
                 envelope.entity_ops = response_ops(&self.db, reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
                 if let (Some(temp), Some(real)) = (&temp, &real) {
                     self.db.swap_temp(reader, &mut envelope, &outbox, &sending.model, temp, real, entry.operation.id.0)?;
+                }
+                for (temp, real) in &replacements {
+                    if reader.point(&sending.model, temp.as_str())?.is_some() {
+                        self.db.swap_temp(reader, &mut envelope, &outbox, &sending.model, temp, real, entry.operation.id.0)?;
+                    }
                 }
                 envelope.file_ops.extend(held.iter().filter_map(|file| {
                     Some(FileOp::Remove { model: ModelKey::new(&file.model), row_id: RowId::new(&file.row_id).ok()?, field: file.field.clone() })
@@ -452,6 +521,7 @@ impl Inner {
         if let (Some(temp), Some(real)) = (&temp, &real) {
             locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string());
         }
+        for (temp, real) in replacements { locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string()); }
         self.db.shared.files.discard(&held.iter().map(|file| file.id.clone()).collect::<Vec<_>>());
         self.keep_answer(sending, operation, &data);
         self.invalidate_after(&sending.model, &sending.action).await?;
@@ -478,7 +548,8 @@ impl Inner {
         }
         let declared = self.db.spec(&sending.model).ok().and_then(|spec| spec.actions.iter().find(|declared| declared.name == sending.action).cloned());
         let root = declared.as_ref().and_then(|declared| declared.root.as_deref()).unwrap_or(&operation.root_path);
-        let mut normalized = extract(data, root, &RemoteShape::Single, None)
+        let shape = if declared.as_ref().is_some_and(|action| action.batch.is_some()) { RemoteShape::List { coverage: crate::schema::Coverage::Complete } } else { RemoteShape::Single };
+        let mut normalized = extract(data, root, &shape, None)
             .and_then(|extracted| normalize_nodes(&self.db, &sending.model, &extracted.nodes))
             .unwrap_or_default();
         let mut landings = Vec::new();

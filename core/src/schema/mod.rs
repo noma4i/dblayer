@@ -36,6 +36,8 @@ pub enum SchemaError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DeclarationError {
+    #[error("invalid upload batch declaration: {0}")]
+    InvalidUploadBatch(String),
     #[error("model key is empty")]
     EmptyModelKey,
     #[error("model key {0} is declared twice")]
@@ -766,6 +768,8 @@ pub enum RootShape {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActionDeclaration {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<UploadBatchDeclaration>,
     #[serde(default)]
     pub client_mutation_id: bool,
     pub name: String,
@@ -818,9 +822,19 @@ pub struct ActionLanding {
     pub root: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadBatchDeclaration {
+    pub min: usize,
+    pub max: usize,
+    pub items: String,
+    pub single: String,
+    pub input: BTreeMap<String, String>,
+}
+
 impl ActionDeclaration {
     pub fn new(name: &str, root_shape: RootShape) -> Self {
         Self {
+            batch: None,
             client_mutation_id: false,
             name: name.to_string(),
             root_shape,
@@ -848,6 +862,17 @@ impl ActionDeclaration {
     }
 
     fn check(&self, model: &ModelSpec, taken_names: &HashSet<String>) -> Result<(), DeclarationError> {
+        if let Some(batch) = &self.batch {
+            let single = model.actions.iter().find(|action| action.name == batch.single);
+            if !self.upload || batch.min < 2 || batch.max > 10 || batch.min > batch.max
+                || batch.items.is_empty() || self.correlate.len() != 1
+                || !batch.input.values().any(|field| self.correlate.contains(field))
+                || batch.input.values().any(|field| model.field(field).is_none())
+                || single.is_none_or(|action| !action.upload || action.batch.is_some() || action.correlate != self.correlate)
+            {
+                return Err(DeclarationError::InvalidUploadBatch(self.name.clone()));
+            }
+        }
         let name = || self.name.clone();
         let unknown = self.correlate.iter().any(|path| !model.fields.iter().any(|field| field.name == path.split('.').next().unwrap_or_default()));
         if unknown {

@@ -110,8 +110,11 @@ impl Runner {
 
     pub(super) fn commit(&self, build: impl FnOnce(&mut CommitEnvelope)) -> Result<(), Stop> {
         let generation = self.inner.db.generation();
-        let committed = self.inner.commit(generation, |_| {
+        let committed = self.inner.commit(generation, |reader| {
             if !self.inner.is_current(self.seq, self.position, self.run) {
+                return Ok(None);
+            }
+            if !reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM op_item WHERE seq = ?1 AND position = ?2)", rusqlite::params![self.seq, self.position], |row| row.get::<_, bool>(0)).map_err(crate::store::StoreError::from)? {
                 return Ok(None);
             }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
@@ -269,6 +272,7 @@ impl Runner {
     }
 
     async fn mutation(self: &Arc<Self>) -> Result<(), Stop> {
+        self.await_online().await?;
         let items = self.inner.upload_items().map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
         if items.iter().any(|(key, state)| key.0 == self.seq && !state.is_transferred()) {
             return Ok(());
@@ -283,7 +287,6 @@ impl Runner {
         if self.token.is_cancelled() {
             return Err(Stop::Cancelled);
         }
-        self.await_online().await?;
         let Some(entry) = self.inner.db.outbox().ok().and_then(|entries| entries.into_iter().find(|entry| entry.operation.id.0 == self.seq)) else {
             return Err(Stop::Superseded);
         };
@@ -303,6 +306,7 @@ impl Runner {
                 envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::DeliveryUnknown, failure })
             });
         }
+        self.inner.start_uploads().map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
         Ok(())
     }
 
@@ -327,6 +331,7 @@ impl Runner {
     }
 
     async fn failed(&self, failure: OperationFailure) {
+        let batch = self.inner.db.spec(&self.model).is_ok_and(|spec| spec.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&self.input.steps.mutation)));
         let stage = self.snapshot().stage;
         if self.snapshot().upload_id.is_some() && !self.has_pending_request() {
             let _ = self.save(|state| state.stage = UploadStage::Abort);
@@ -339,15 +344,17 @@ impl Runner {
                 state.stage = stage;
             }
             state.error = Some(failure.clone());
+            if batch { state.phase = UploadStatus::Failed; }
             state.clone()
         };
         let _ = self.commit(|envelope| {
             envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state });
-            envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure });
+            if !batch { envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure }); }
         });
     }
 
     pub(super) async fn cancelled(&self) {
+        let batch = self.inner.db.spec(&self.model).is_ok_and(|spec| spec.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&self.input.steps.mutation)));
         let _ = self.save(|state| state.phase = UploadStatus::Cancelled);
         if self.snapshot().upload_id.is_some() {
             let _ = self.save(|state| state.stage = UploadStage::Abort);
@@ -355,7 +362,16 @@ impl Runner {
         }
         if self.snapshot().upload_id.is_some() {
             let failure = OperationFailure::new(FailureKind::Network, "the upload was cancelled but its remote parts are not aborted yet");
+            if batch { let _ = self.save(|state| state.error = Some(failure)); return; }
             let _ = self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure }));
+            return;
+        }
+        if batch {
+            let row = self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT row_id FROM op_item WHERE seq = ?1 AND position = ?2", rusqlite::params![self.seq, self.position], |row| row.get::<_, String>(0))?));
+            if let Ok(row) = row {
+                if let Ok(id) = crate::identity::RowId::new(&row) { let _ = self.inner.db.remove_upload_item(&self.model, &id, self.seq, false); }
+            }
+            let _ = self.inner.start_uploads();
             return;
         }
         let _ = self.commit(|envelope| {

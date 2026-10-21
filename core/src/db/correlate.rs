@@ -50,10 +50,13 @@ impl Db {
                 let key = Operation::action_key(model.as_str(), &action.name);
                 for entry in open.iter().filter(|entry| entry.operation.action_key == key) {
                     let sent = matches!(entry.operation.status, OperationStatus::Pending | OperationStatus::DeliveryUnknown) && entry.operation.transport_started;
-                    let Some(temp) = entry.operation.temp_id.clone().filter(|temp| sent && !swapped.contains(temp)) else { continue };
-                    let Some(stored) = reader.point(model.as_str(), temp.as_str())? else { continue };
-                    if same_record(&action.correlate, &stored, &row) {
-                        found.push((entry.operation.id.0, temp));
+                    if !sent { continue; }
+                    let candidates: Vec<_> = if action.batch.is_some() { entry.operation.row_ids.clone() } else { entry.operation.temp_id.clone().into_iter().collect() };
+                    for temp in candidates.into_iter().filter(|temp| temp.is_temp() && !swapped.contains(temp)) {
+                        let Some(stored) = reader.point(model.as_str(), temp.as_str())? else { continue };
+                        if same_record(&action.correlate, &stored, &row) {
+                            found.push((entry.operation.id.0, temp));
+                        }
                     }
                 }
             }

@@ -303,6 +303,9 @@ impl<'a> Run<'a> {
                     let same_names: Vec<Pair> = pairs("args").iter().map(|arg| Pair { value: Node { item: Value::Symbol(arg.key.clone()), ..arg.value.clone() }, ..arg.clone() }).collect();
                     let input = if line("upload").is_some() && pairs("input").is_empty() { same_names.as_slice() } else { pairs("input") };
                     self.check_args_of(node.file, call, name, wrap, pairs("args"), input);
+                    if let Some(batch) = line("batch") {
+                        self.check_upload_batch(node, call, batch, name, wrap, pairs("item"));
+                    }
                 }
                 _ => {}
             }
@@ -345,6 +348,53 @@ impl<'a> Run<'a> {
                 self.fail(file, call.line, call.column, format!("arg `{}` of kind `{}` does not fit `{variable}: {}`{}", arg.key, crate::operation::display_kind(kind), declared.describe(), self.unmapped_hint(declared.name())));
             } else if kind.ends_with('?') && !declared.optional() {
                 self.fail(file, call.line, call.column, format!("arg `{}` may be nil but `{variable}: {}` is required", arg.key, declared.describe()));
+            }
+        }
+    }
+
+    fn check_upload_batch(&mut self, node: &ModelNode, call: &Call, batch: &Call, mutation: Option<&str>, wrap: Option<&str>, mappings: &[Pair]) {
+        let fail = |run: &mut Self, message| run.fail(node.file, call.line, call.column, message);
+        let Some(operation) = mutation.and_then(|name| self.operations.named.get(name)) else {
+            fail(self, "upload batch mutation is missing from the operation documents".into());
+            return;
+        };
+        let accepted = match wrap {
+            Some(wrap) => operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())).unwrap_or_default(),
+            None => operation.variables.clone(),
+        };
+        let items = option_text(batch, "items").unwrap_or_default();
+        let Some(ty) = accepted.get(items).filter(|ty| ty.is_list()) else {
+            fail(self, format!("upload batch `{items}` must be a list of input objects"));
+            return;
+        };
+        let Some(fields) = self.schema.input_fields(ty.name()) else {
+            fail(self, format!("upload batch `{items}` must contain input objects"));
+            return;
+        };
+        if fields.get("signedId").is_none_or(|ty| !self.arg_fits("string", ty)) {
+            fail(self, "upload batch items require a string signedId".into());
+        }
+        for mapping in mappings {
+            let source = text(&mapping.value.item).unwrap_or_default();
+            let kind = node.body.iter().filter(|call| call.word == "schema").flat_map(|call| call.block.iter().flatten()).find(|field| name_of(field) == source).map(|field| field.word.as_str());
+            if fields.get(&mapping.key).is_none_or(|ty| kind.is_none_or(|kind| !self.arg_fits(kind, ty))) {
+                fail(self, format!("upload item `{}` does not accept field `{source}`", mapping.key));
+            }
+        }
+        let single = option_text(batch, "single").unwrap_or_default();
+        let lines = node.body.iter().find(|call| call.word == "action" && name_of(call) == single).and_then(|call| call.block.as_deref()).unwrap_or_default();
+        let name = lines.iter().find(|call| call.word == "upload").map(name_of);
+        let Some(operation) = name.and_then(|name| self.operations.named.get(name)) else {
+            fail(self, "single upload mutation is missing from the operation documents".into());
+            return;
+        };
+        let single_fields = match lines.iter().find(|call| call.word == "wrap").map(name_of) {
+            Some(wrap) => operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())).unwrap_or_default(),
+            None => operation.variables.clone(),
+        };
+        for key in std::iter::once("signedId").chain(mappings.iter().map(|mapping| mapping.key.as_str())) {
+            if single_fields.get(key).is_none_or(|ty| fields.get(key).is_none_or(|item| item != ty)) {
+                fail(self, format!("single upload variable `{key}` must match the batch item field"));
             }
         }
     }

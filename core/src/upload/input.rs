@@ -2,6 +2,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadItem {
+    pub values: Map<String, Value>,
+    pub path: String,
+    pub name: Option<String>,
+    pub mime: Option<String>,
+    pub variables: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadBatchInput {
+    pub operation: String,
+    pub steps: UploadSteps,
+    pub variables: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SingleSteps {
     pub create: String,
 }

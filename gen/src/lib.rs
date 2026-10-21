@@ -248,3 +248,6 @@ mod enum_walk_tests;
 
 #[cfg(test)]
 mod enum_schema_conflict_tests;
+
+#[cfg(test)]
+mod upload_batch_tests;

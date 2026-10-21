@@ -4,6 +4,9 @@ mod run;
 mod run_tests;
 mod steps;
 
+#[cfg(test)]
+mod batch_tests;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -72,7 +75,9 @@ impl Inner {
             for (&(owner, position), state) in &items {
                 if owner != seq { continue; }
                 match entry.operation.status {
-                    OperationStatus::Pending if !entry.operation.transport_started && !self.is_waiting(&entry.operation) => self.spawn_run(seq, position, Mode::Transfer),
+                    OperationStatus::Pending if state.phase == UploadStatus::Cancelled => self.spawn_run(seq, position, Mode::Cancel),
+                    OperationStatus::Pending if state.phase == UploadStatus::Failed && state.upload_id.is_some() => self.spawn_run(seq, position, Mode::Orphan),
+                    OperationStatus::Pending if !entry.operation.transport_started && !self.is_waiting(&entry.operation) && !matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled) => self.spawn_run(seq, position, Mode::Transfer),
                     OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() && !crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()) => {
                         let mode = if state.phase == UploadStatus::Cancelled { Mode::Cancel } else { Mode::Orphan };
                         self.spawn_run(seq, position, mode);
@@ -132,7 +137,7 @@ impl Inner {
         let retried = self.db.outbox().ok().into_iter().flatten().any(|entry| {
             entry.operation.id.0 == seq && entry.operation.upload.is_some() && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation)
         });
-        let unfinished = self.upload_items().ok().and_then(|mut items| items.remove(&(seq, position))).is_some_and(|state| !state.is_transferred());
+        let unfinished = self.upload_items().ok().and_then(|mut items| items.remove(&(seq, position))).is_some_and(|state| !state.is_transferred() && !matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled));
         if retried && unfinished {
             self.spawn_run(seq, position, Mode::Transfer);
         }
@@ -187,6 +192,13 @@ impl Inner {
 }
 
 impl Sync {
+    pub async fn upload_create_batch(&self, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput) -> Result<Vec<crate::db::Row>, SyncError> {
+        let ids = self.inner.db.create_upload_batch(model, items, input)?;
+        let rows = ids.iter().map(|id| self.inner.db.find(model, id)?.ok_or_else(|| crate::db::DbError::NotFound { model: model.into(), id: id.to_string() })).collect::<Result<Vec<_>, _>>()?;
+        self.inner.start_uploads()?;
+        Ok(rows)
+    }
+
     pub async fn upload(&self, model: &str, id: &RowId, input: UploadInput) -> Result<i64, SyncError> {
         let seq = self.inner.begin_upload(model, id, &input, UploadState::queued())?;
         self.inner.spawn_run(seq, 0, Mode::Transfer);
@@ -204,11 +216,16 @@ impl Sync {
     pub async fn cancel_upload(&self, model: &str, id: &RowId) -> Result<bool, SyncError> {
         let Some(entry) = upload_entry(self.inner.db.outbox()?, model, id) else { return Ok(false) };
         let seq = entry.operation.id.0;
-        let running: Vec<_> = locked(&self.inner.uploads).active.iter().filter(|(key, _)| key.0 == seq).map(|(_, active)| (active.token.clone(), active.done.subscribe())).collect();
+        let batched = self.inner.db.spec(model)?.actions.iter().any(|action| action.batch.is_some() && entry.operation.action_key == Operation::action_key(model, &action.name));
+        if batched && entry.operation.transport_started { return Err(crate::db::DbError::InFlight { model: model.into(), id: id.to_string() }.into()); }
+        let position = if batched {
+            Some(self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get::<_, i64>(0))?))?)
+        } else { None };
+        let running: Vec<_> = locked(&self.inner.uploads).active.iter().filter(|(key, _)| key.0 == seq && position.is_none_or(|position| key.1 == position)).map(|(_, active)| (active.token.clone(), active.done.subscribe())).collect();
         for (token, _) in &running { token.cancel(); }
         if running.is_empty() {
-            for ((owner, position), _) in self.inner.upload_items()? {
-                if owner == seq { self.run_inline(seq, position, Mode::Cancel).await; }
+            for ((owner, item), _) in self.inner.upload_items()? {
+                if owner == seq && position.is_none_or(|position| item == position) { self.run_inline(seq, item, Mode::Cancel).await; }
             }
         } else {
             for (_, mut done) in running { let _ = done.wait_for(|finished| *finished).await; }

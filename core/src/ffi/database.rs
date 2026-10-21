@@ -359,6 +359,11 @@ impl Database {
         Ok(())
     }
     pub async fn discard(&self, model: String, row_id: String) -> Result<(), DbError> {
+        if let Some(sync) = self.sync.clone() {
+            let row = id(&row_id)?;
+            on_executor(async move { sync.discard(&model, &row).await }).await?;
+            return Ok(());
+        }
         let database = self.clone();
         blocking(move || {
             database.db.discard(&model, &id(&row_id)?)?; Ok(())
@@ -385,6 +390,15 @@ impl Database {
         let row_id = on_executor(async move { sync.upload_create(&owner, values, input).await }).await?;
         let row = self.db.find(&model, &row_id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {row_id} was not created") })?;
         Ok(self.wire(&model)?.row(&row))
+    }
+    pub async fn upload_create_batch(&self, model: String, items_json: String, input_json: String) -> Result<Vec<WireRow>, DbError> {
+        let sync = self.sync()?.clone();
+        let items = serde_json::from_str(&items_json)?;
+        let input = serde_json::from_str(&input_json)?;
+        let owner = model.clone();
+        let rows = on_executor(async move { sync.upload_create_batch(&owner, items, input).await }).await?;
+        let wire = self.wire(&model)?;
+        Ok(rows.iter().map(|row| wire.row(row)).collect())
     }
     pub async fn confirmed(&self, model: String, row_id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
