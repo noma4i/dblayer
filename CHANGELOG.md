@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.2.0 - 2026-10-21
+
+### Added
+- `renumber` in a batch declaration rewrites position and size of the remaining rows after `discard` or `cancelUpload`.
+
 ## 5.1.0 - 2026-10-21
 
 ### Added
