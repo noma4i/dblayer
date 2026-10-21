@@ -430,7 +430,7 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
             "batch" => {
                 let number = |key| option(line, key).and_then(|pair| json_of(&pair.value.item).as_u64()).unwrap_or(0) as usize;
                 action.batch = Some(dblayer::schema::UploadBatchDeclaration {
-                    min: number("min"), max: number("max"), items: symbol_of(line, "items"), single: symbol_of(line, "single"), input: Default::default(),
+                    min: number("min"), max: number("max"), items: symbol_of(line, "items"), single: symbol_of(line, "single"), input: Default::default(), renumber: None,
                 });
             }
             "input" => action.variables = line.options.iter().filter_map(variable_binding).collect(),
@@ -450,6 +450,11 @@ fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
     }
     if let Some(batch) = &mut action.batch {
         batch.input = call.block.iter().flatten().filter(|line| line.word == "item").flat_map(|line| line.options.iter().filter_map(variable_binding)).collect();
+        batch.renumber = call.block.iter().flatten().find(|line| line.word == "renumber").map(|line| dblayer::schema::UploadBatchRenumber {
+            position: option(line, "position").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
+            size: option(line, "size").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
+            position_from: option(line, "position_from").and_then(|pair| json_of(&pair.value.item).as_u64()).and_then(|value| usize::try_from(value).ok()).unwrap_or(usize::MAX),
+        });
     }
     for value in action.optimistic.values_mut() {
         if let Json::String(name) = value {

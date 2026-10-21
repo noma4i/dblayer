@@ -15,6 +15,30 @@ import org.junit.Test
 
 class UploadBatchTest {
     @Test
+    fun batchDiscardRenumbersSnapshots() = bounded {
+        for (cancel in listOf(false, true)) {
+            val source = Files.createTempFile("renumber", ".png").toFile().apply { writeText("file") }
+            val database = Database.open(Config(null, null, 32u), modelsJSON, MockTransport())
+            try {
+                DBlayer.database = database
+                database.setOnline(false)
+                val items = (0..3).map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("position", it); put("size", 4) }, path = source.path) }
+                val rows = Asset.uploadCreate(items, UploadBatchRequest(operation = "create_files", createBlob = "CreateBlob"))
+                if (cancel) assertTrue(rows[1].cancelUpload()) else rows[1].discard()
+                database.warm("""{"model":"Asset"}""")
+                listOf(0, 2, 3).forEachIndexed { position, original ->
+                    val snapshot = Asset.read(requireNotNull(database.peekRow("Asset", rows[original].id)))
+                    assertEquals(position.toLong(), snapshot.position)
+                    assertEquals(3L, snapshot.size)
+                }
+            } finally {
+                database.close()
+                source.delete()
+            }
+        }
+    }
+
+    @Test
     fun batchOwnsSourcesAndPreservesMembership() = bounded {
         for (cancel in listOf(false, true)) {
             val directory = Files.createTempDirectory("upload-batch").toFile()

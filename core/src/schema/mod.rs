@@ -829,6 +829,15 @@ pub struct UploadBatchDeclaration {
     pub items: String,
     pub single: String,
     pub input: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renumber: Option<UploadBatchRenumber>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadBatchRenumber {
+    pub position: String,
+    pub size: String,
+    pub position_from: usize,
 }
 
 impl ActionDeclaration {
@@ -863,11 +872,19 @@ impl ActionDeclaration {
 
     fn check(&self, model: &ModelSpec, taken_names: &HashSet<String>) -> Result<(), DeclarationError> {
         if let Some(batch) = &self.batch {
+            if let Some(fields) = &batch.renumber {
+                for path in [&fields.position, &fields.size] {
+                    if model.integer_path(path).is_none() {
+                        return Err(DeclarationError::InvalidUploadBatch(format!("{} renumber field `{path}` must name an integer field", self.name)));
+                    }
+                }
+            }
             let single = model.actions.iter().find(|action| action.name == batch.single);
             if !self.upload || batch.min < 2 || batch.max > 10 || batch.min > batch.max
                 || batch.items.is_empty() || self.correlate.len() != 1
                 || !batch.input.values().any(|field| self.correlate.contains(field))
                 || batch.input.values().any(|field| model.field(field).is_none())
+                || batch.renumber.as_ref().is_some_and(|fields| fields.position_from > 1 || fields.position == fields.size)
                 || single.is_none_or(|action| !action.upload || action.batch.is_some() || action.correlate != self.correlate)
             {
                 return Err(DeclarationError::InvalidUploadBatch(self.name.clone()));
@@ -974,6 +991,21 @@ impl ModelSpec {
 
     pub fn field(&self, name: &str) -> Option<&FieldSpec> {
         self.fields.iter().find(|field| field.name == name)
+    }
+
+    pub(crate) fn integer_path<'a>(&'a self, path: &str) -> Option<Vec<&'a str>> {
+        fn resolve<'a>(fields: &'a [FieldSpec], path: &str) -> Option<Vec<&'a str>> {
+            if let Some(field) = fields.iter().find(|field| field.name == path) {
+                return matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Int }).then(|| vec![field.name.as_str()]);
+            }
+            fields.iter().filter(|field| field.kind == FieldKind::Object).find_map(|field| {
+                let tail = path.strip_prefix(&field.name)?.strip_prefix('.')?;
+                let mut keys = resolve(&field.fields, tail)?;
+                keys.insert(0, &field.name);
+                Some(keys)
+            })
+        }
+        resolve(&self.fields, path)
     }
 
     pub fn list_scopes(&self, row: &Map<String, Value>) -> Vec<ScopeKey> {

@@ -11,6 +11,110 @@ use crate::transport::MockTransport;
 use crate::upload::{UploadBatchInput, UploadItem, UploadSteps};
 use crate::value::ScalarKind;
 
+#[tokio::test]
+async fn batch_renumber_preserves_order_and_publishes_complete_rows() {
+    for (removed, cancel, declared, minimum, base, nested) in [
+        (1, false, true, 2, 0, false),
+        (0, false, true, 2, 1, false),
+        (3, false, true, 2, 0, false),
+        (1, true, true, 2, 0, false),
+        (1, false, false, 2, 0, false),
+        (1, false, true, 4, 0, false),
+        (1, false, true, 2, 1, true),
+    ] {
+        let mut model = spec();
+        model.fields.push(FieldSpec::scalar("position", ScalarKind::Int));
+        let mut object = FieldSpec::object("object");
+        object.fields = vec![FieldSpec::scalar("position", ScalarKind::Int), FieldSpec::scalar("size", ScalarKind::Int), FieldSpec::scalar("label", ScalarKind::Str)];
+        model.fields.push(object);
+        let mut batch = serde_json::to_value(model.actions[1].batch.as_ref().unwrap()).unwrap();
+        batch["min"] = json!(minimum);
+        if declared {
+            batch["renumber"] = json!({"position":if nested { "object.position" } else { "position" },"size":if nested { "object.size" } else { "size" },"position_from":base});
+        }
+        model.actions[1].batch = Some(serde_json::from_value(batch).unwrap());
+        let db = Db::open_in_memory(vec![model], None).unwrap();
+        let sync = Sync::new(db.clone(), Arc::new(MockTransport::new()), Arc::new(ManualClock::new(std::time::Duration::ZERO)), SyncConfig::default());
+        sync.set_online(false);
+        let source = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(source.path(), b"file").unwrap();
+        let items = (0..4).map(|position| UploadItem {
+            values: json!({"clientKey":format!("key-{position}"),"position":position + base,"size":4,"object":{"position":position + base,"size":4,"label":"keep"}}).as_object().unwrap().clone(),
+            path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
+        }).collect();
+        let request = UploadBatchInput { operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default() };
+        let rows = sync.upload_create_batch("Asset", items, request).await.unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let _subscription = db.observe(crate::query::Query::new("Asset"), move |change| sink.lock().unwrap().push(change.rows.clone())).unwrap();
+        db.settle();
+        seen.lock().unwrap().clear();
+        if cancel { assert!(sync.cancel_upload("Asset", &rows[removed].id).await.unwrap()); }
+        else { assert_eq!(db.discard("Asset", &rows[removed].id).unwrap(), 1); }
+        db.settle();
+        let remaining: Vec<_> = rows.iter().enumerate().filter(|(index, _)| *index != removed).collect();
+        for (index, (original, row)) in remaining.iter().enumerate() {
+            let row = db.find("Asset", &row.id).unwrap().unwrap();
+            let values = if nested { row.data["object"].as_object().unwrap() } else { &row.data };
+            let changes = declared && minimum <= 3;
+            assert_eq!(values["position"], json!(if changes { index + base } else { original + base }), "removed={removed}, cancel={cancel}, nested={nested}");
+            assert_eq!(values["size"], json!(if changes { 3 } else { 4 }));
+            assert_eq!(row.data["object"]["label"], "keep");
+        }
+        let seen = seen.lock().unwrap();
+        assert!(!seen.is_empty());
+        if !cancel && declared && minimum <= 3 {
+            assert_eq!(seen.len(), 1, "membership and renumber must publish together");
+            assert_eq!(seen[0].len(), 3);
+            for row in &seen[0] {
+                let values = if nested { row.data["object"].as_object().unwrap() } else { &row.data };
+                assert_eq!(values["size"], 3);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn batch_renumber_delivery_unknown_discards_every_member_without_rewriting() {
+    let mut model = spec();
+    model.fields.push(FieldSpec::scalar("position", ScalarKind::Int));
+    let mut declaration = serde_json::to_value(model.actions[1].batch.as_ref().unwrap()).unwrap();
+    declaration["renumber"] = json!({"position":"position","size":"size","position_from":0});
+    model.actions[1].batch = Some(serde_json::from_value(declaration).unwrap());
+    let db = Db::open_in_memory(vec![model], None).unwrap();
+    let transport = Arc::new(MockTransport::new());
+    let sync = Sync::new(db.clone(), transport.clone(), Arc::new(ManualClock::new(std::time::Duration::ZERO)), SyncConfig::default());
+    sync.register(crate::sync::OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
+    sync.register(crate::sync::OperationDef::new("CreateAssets", "mutation x { x }", "createAssets.assets"));
+    transport.enqueue("CreateBlob", crate::transport::Reply::data(json!({"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}})));
+    transport.enqueue("CreateAssets", crate::transport::Reply::fail(crate::transport::TransportError::Interrupted("lost answer".into())));
+    let source = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(source.path(), b"file").unwrap();
+    let items = (0..4).map(|position| UploadItem {
+        values: json!({"clientKey":format!("key-{position}"),"position":position,"size":4}).as_object().unwrap().clone(),
+        path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
+    }).collect();
+    let request = UploadBatchInput { operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default() };
+    let rows = sync.upload_create_batch("Asset", items, request).await.unwrap();
+    sync.wait_uploads().await;
+    assert_eq!(transport.call_count("CreateAssets"), 1);
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let _subscription = db.observe(crate::query::Query::new("Asset"), move |change| sink.lock().unwrap().push(change.rows.clone())).unwrap();
+    db.settle();
+    seen.lock().unwrap().clear();
+    for (position, row) in rows.iter().enumerate() {
+        let stored = db.find("Asset", &row.id).unwrap().unwrap();
+        assert_eq!(stored.sync.state, SyncState::DeliveryUnknown);
+        assert_eq!(stored.data["position"], position);
+        assert_eq!(stored.data["size"], 4);
+    }
+    assert_eq!(db.discard("Asset", &rows[1].id).unwrap(), 1);
+    db.settle();
+    assert!(rows.iter().all(|row| db.find("Asset", &row.id).unwrap().is_none()));
+    assert!(seen.lock().unwrap().iter().all(Vec::is_empty));
+}
+
 #[tokio::test(start_paused = true)]
 async fn batch_sends_ordered_items_once_and_replaces_by_key() {
     for early in [false, true] {

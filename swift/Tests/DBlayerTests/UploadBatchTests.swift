@@ -6,6 +6,27 @@ import Testing
 extension BridgeProbeTests {
   @MainActor
   @Test(arguments: [false, true])
+  func batchDiscardRenumbersSnapshots(cancel: Bool) async throws {
+    let source = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try Data("file".utf8).write(to: source)
+    defer { try? FileManager.default.removeItem(at: source) }
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
+    try DB.database.setOnline(online: false)
+    let items = (0..<4).map { UploadItem(values: ["clientKey": .string("key-\($0)"), "position": .number(Double($0)), "size": .number(4)], path: source.path) }
+    let rows = try await Asset.uploadCreate(items: items, request: UploadBatchRequest(operation: "create_files", createBlob: "CreateBlob"))
+    if cancel { #expect(try await rows[1].cancelUpload()) }
+    else { try await rows[1].discard() }
+    try await DB.database.warm(queryJson: #"{"model":"Asset"}"#)
+    for (position, original) in [0, 2, 3].enumerated() {
+      let wire = try #require(try DB.database.peekRow(model: "Asset", rowId: rows[original].id))
+      let snapshot = try Asset.decode(wire)
+      #expect(snapshot.position == position)
+      #expect(snapshot.size == 3)
+    }
+  }
+
+  @MainActor
+  @Test(arguments: [false, true])
   func batchOwnsSourcesAndPreservesMembership(cancel: Bool) async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

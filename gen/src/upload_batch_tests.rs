@@ -1,6 +1,42 @@
 use crate::compile_files;
 
 #[test]
+fn batch_renumber_requires_known_integer_fields_and_an_explicit_base() {
+    let source = include_str!("../../fixtures/asset.dbl").replace("    renumber position: :position, size: :size, position_from: 0\n", "");
+    for (declaration, accepted) in [
+        ("renumber position: :position, size: :size, position_from: 0", true),
+        ("renumber position: :position, size: :size, position_from: 1", true),
+        ("renumber position: :missing, size: :size, position_from: 0", false),
+        ("renumber position: :position, size: :missing, position_from: 0", false),
+        ("renumber position: :clientKey, size: :size, position_from: 0", false),
+        ("renumber position: :position, size: :size", false),
+        ("renumber position: :position, size: :size, position_from: 2", false),
+        ("renumber position: :position, size: :size, position_from: 0.5", false),
+    ] {
+        let text = source.replace("    item clientKey:", &format!("    {declaration}\n    item clientKey:"));
+        let result = crate::parse_models(&text);
+        assert_eq!(result.is_ok(), accepted, "{declaration}: {result:?}");
+        if declaration.contains("missing") {
+            assert!(result.as_ref().unwrap_err().iter().any(|error| error.message.contains("missing")), "{result:?}");
+        }
+        if let Ok(models) = result {
+            let batch = serde_json::to_value(models[0].actions[1].batch.as_ref().unwrap()).unwrap();
+            assert_eq!(batch["renumber"]["position"], "position");
+            assert_eq!(batch["renumber"]["size"], "size");
+            assert_eq!(batch["renumber"]["position_from"], if declaration.ends_with('1') { 1 } else { 0 });
+        }
+    }
+    let nested = source.replace("field :position, type: :int, default: 0", "field :object, type: AssetOrder do\n    field :position, type: :int\n    field :size, type: :int\n  end");
+    for (position, size, accepted) in [("object.position", "object.size", true), ("object.missing", "object.size", false), ("object.position", "size", true)] {
+        let declaration = format!("renumber position: \"{position}\", size: \"{size}\", position_from: 1");
+        let result = crate::parse_models(&nested.replace("    item clientKey:", &format!("    {declaration}\n    item clientKey:")));
+        assert_eq!(result.is_ok(), accepted, "{result:?}");
+    }
+    let unbatched = source.replace("    batch min: 2, max: 10, items: :items, single: :create_file", "    renumber position: :position, size: :size, position_from: 0");
+    assert!(crate::parse_models(&unbatched).is_err());
+}
+
+#[test]
 fn batch_items_require_an_input_list_with_the_key_and_signed_id() {
     for (items, fields, single_key, accepted) in [
         ("[AssetInput!]!", "clientKey: String!, signedId: String!", true, true),

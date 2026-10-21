@@ -101,8 +101,10 @@ An individual file failure leaves other transfers running and delays the final m
 Retrying a failed file preserves completed transfers.
 Discarding a record removes it from the operation and recalculates the remaining count.
 Below the declared minimum, the remaining records use the declared single-record mutation.
-The application updates its own grouping fields on the remaining records after `discard()`.
-The library does not interpret or rewrite those fields.
+An optional `renumber` declaration rewrites the remaining records' position and size in that same commit after `discard()` or `cancelUpload()`.
+Positions follow the original item order, starting at the required `position_from: 0` or `position_from: 1`.
+Below the declared minimum, these fields stay unchanged and the application decides how to represent a single record.
+Without `renumber`, the library preserves these fields.
 
 During the final mutation, changing membership returns `InFlight`.
 After `deliveryUnknown`, retrying any member repeats the complete saved request with the same operation key.
@@ -118,6 +120,7 @@ end
 operation :create_files do
   upload CreateAssets
   batch min: 2, max: 10, items: :items, single: :create_file
+  renumber position: :position, size: :size, position_from: 0
   item clientKey: :clientKey
   correlate :clientKey
   root "createAssets.assets"
@@ -126,6 +129,10 @@ end
 ```
 
 `item` maps input object fields to model fields.
+`renumber` names distinct integer fields and accepts dotted paths inside declared objects, such as `position: "object.position", size: "object.size"`.
+Nested writes preserve other object values and use canonical stored field names, including names declared with `from`.
+The rewrite changes local row values without queuing another mutation, and the correlated server response replaces them as usual.
+Only an unsent final mutation permits membership changes, and `deliveryUnknown` never renumbers records.
 The declared limits must fit within 2 through 10.
 The GraphQL mutation accepts an input object list containing the correlation key and `signedId`.
 Its response includes every created record with the same correlation key, in any order.
@@ -135,6 +142,7 @@ let records = try await Asset.uploadCreate(
   items: files.map { UploadItem(values: $0.values, path: $0.path) },
   request: UploadBatchRequest(operation: "create_files", createBlob: "CreateBlob")
 )
+try await records[1].discard()
 ```
 
 ```kotlin
@@ -142,6 +150,7 @@ val records = Asset.uploadCreate(
     items = files.map { UploadItem(values = it.values, path = it.path) },
     request = UploadBatchRequest(operation = "create_files", createBlob = "CreateBlob"),
 )
+records[1].discard()
 ```
 
 Each returned record has a temporary id, local file preview, `Sending` state, and independent upload progress.

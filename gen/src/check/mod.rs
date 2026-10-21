@@ -155,6 +155,7 @@ fn word_for(context: Context, word: &str) -> Option<Word> {
         }
         (Context::Action, "mutation" | "upload") => plain(Shape::Const, vec![]),
         (Context::Action, "batch") => plain(Shape::Nothing, vec![key("min", Want::Any, true), key("max", Want::Any, true), key("items", Want::Symbol, true), key("single", Want::Symbol, true)]),
+        (Context::Action, "renumber") => plain(Shape::Nothing, vec![key("position", Want::Any, true), key("size", Want::Any, true), key("position_from", Want::Any, true)]),
         (Context::Action, "item") => free(),
         (Context::Action, "local_effect") => plain(Shape::Name, vec![key("reason", Want::Any, false)]),
         (Context::Action, "on_failure") => plain(Shape::Name, vec![]),
@@ -432,6 +433,9 @@ fn check_action(action: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, 
     if action.block.is_some() && seen.contains("mutation") == seen.contains("upload") {
         report(action.line, action.column, "`action` needs exactly one `mutation` or `upload` line".to_string());
     }
+    if seen.contains("renumber") && !seen.contains("batch") {
+        report(action.line, action.column, "`renumber` requires a batch declaration".into());
+    }
     check_local_effect(action, &seen, report);
 }
 
@@ -453,6 +457,16 @@ fn check_local_effect(action: &Call, seen: &HashSet<&str>, report: &mut impl FnM
 
 fn check_action_line(call: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
     match call.word.as_str() {
+        "renumber" => {
+            for pair in &call.options {
+                let valid = match pair.key.as_str() {
+                    "position_from" => matches!(pair.value.item, Value::Int(0 | 1)),
+                    "position" | "size" => matches!(&pair.value.item, Value::Symbol(value) | Value::Str(value) if !value.is_empty()),
+                    _ => true,
+                };
+                if !valid { report(pair.line, pair.column, "renumber requires field paths and position_from: 0 or 1".into()); }
+            }
+        }
         "input" => {
             for pair in call.options.iter().filter(|pair| !matches!(pair.value.item, Value::Symbol(_))) {
                 report(pair.value.line, pair.value.column, "input value must be a field symbol".to_string());

@@ -1,6 +1,7 @@
 model Asset do
   field :clientKey, type: :string
   field :size, type: :int
+  field :position, type: :int, default: 0
   operation :create_file do
     upload CreateAsset
     correlate :clientKey
@@ -10,6 +11,7 @@ model Asset do
   operation :create_files do
     upload CreateAssets
     batch min: 2, max: 10, items: :items, single: :create_file
+    renumber position: :position, size: :size, position_from: 0
     item clientKey: :clientKey
     correlate :clientKey
     root "createAssets.assets"

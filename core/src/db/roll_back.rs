@@ -174,6 +174,7 @@ fn restore_edit(
 impl Db {
     pub(crate) fn remove_upload_item(&self, model: &str, id: &RowId, seq: i64, remove_row: bool) -> Result<bool, DbError> {
         let generation = self.generation();
+        let spec = self.spec(model)?;
         let mut removed = false;
         self.commit_following(generation, |reader| {
             let outbox = read_outbox(reader)?;
@@ -191,7 +192,21 @@ impl Db {
                 envelope.operation_transitions = plan.transitions;
             }
             prior.rows.retain(|row| row.id() != id.as_str());
-            let rows = entry.operation.row_ids.iter().filter(|row| *row != id).cloned().collect();
+            let rows: Vec<_> = entry.operation.row_ids.iter().filter(|row| *row != id).cloned().collect();
+            if let Some(batch) = spec.actions.iter().find(|action| entry.operation.action_key == crate::operation::Operation::action_key(model, &action.name)).and_then(|action| action.batch.as_ref()).filter(|batch| rows.len() >= batch.min) {
+                if let Some(fields) = &batch.renumber {
+                    let position = spec.integer_path(&fields.position).ok_or_else(|| DbError::InvalidUpload(fields.position.clone()))?;
+                    let size = spec.integer_path(&fields.size).ok_or_else(|| DbError::InvalidUpload(fields.size.clone()))?;
+                    for (index, row_id) in rows.iter().enumerate() {
+                        if let Some(stored) = reader.stored_row(model, row_id.as_str())? {
+                            let mut row = stored.row;
+                            write_number(&mut row, &position, index + fields.position_from);
+                            write_number(&mut row, &size, rows.len());
+                            envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: row_id.clone(), row });
+                        }
+                    }
+                }
+            }
             envelope.operation_transitions.push(entry.rewritten(rows, entry.input.clone(), Some(prior.to_value())));
             envelope.operation_transitions.push(OperationTransition::RemoveUploadItem { seq, position });
             removed = true;
@@ -222,4 +237,15 @@ impl Db {
         self.shared.files.discard(&discarded);
         Ok(result)
     }
+}
+
+fn write_number(row: &mut Map<String, Value>, keys: &[&str], number: usize) {
+    let key = keys[0];
+    if keys.len() == 1 {
+        row.insert(key.to_string(), Value::from(number));
+        return;
+    }
+    let value = row.entry(key.to_string()).or_insert_with(|| Value::Object(Map::new()));
+    if !value.is_object() { *value = Value::Object(Map::new()); }
+    if let Value::Object(object) = value { write_number(object, &keys[1..], number); }
 }
