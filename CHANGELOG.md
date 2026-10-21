@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.0.3 - 2026-10-21
+
+### Fixed
+- A new row from an operation response with `lands` joins loaded `joins: :events` lists.
+
 ## 5.0.2 - 2026-10-21
 
 ### Fixed
