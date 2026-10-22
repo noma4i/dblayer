@@ -101,6 +101,18 @@ impl Inner {
         });
     }
 
+    pub(crate) fn abandon_load(&self, window_key: &str, kind: LoadKind) {
+        let mut states = locked(&self.states);
+        let entry = self.state_entry(&mut states, window_key);
+        entry.loading[kind as usize] = entry.loading[kind as usize].saturating_sub(1);
+        let counts = entry.loading;
+        let loading = counts.iter().sum::<u32>() > 0;
+        entry.sender.send_modify(|state| {
+            apply_kinds(state, counts);
+            state.phase = if loading { LoadPhase::Loading } else { LoadPhase::Idle };
+        });
+    }
+
     pub(crate) fn end_load(&self, window_key: &str, kind: LoadKind, result: &FlightResult) {
         let settled = self.stored_state(window_key);
         let mut states = locked(&self.states);

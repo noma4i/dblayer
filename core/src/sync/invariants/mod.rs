@@ -3,6 +3,8 @@ mod event_tests;
 #[cfg(test)]
 mod fault_tests;
 #[cfg(test)]
+mod flight_tests;
+#[cfg(test)]
 mod fixtures;
 #[cfg(test)]
 mod gate_tests;

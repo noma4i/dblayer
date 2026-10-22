@@ -59,12 +59,18 @@ impl Default for SyncConfig {
 }
 
 pub(crate) type FlightResult = Result<LoadOutcome, SyncError>;
+
+#[derive(Clone)]
+pub(crate) enum FlightEnd {
+    Settled(FlightResult),
+    Abandoned,
+}
 pub(crate) type SubscriptionFailureNotice = Option<(String, crate::transport::SubscriptionFailure)>;
 
 #[derive(Default)]
 pub(crate) struct Flights {
     pub coalescing: FetchCoalescing,
-    pub waiting: HashMap<String, watch::Receiver<Option<FlightResult>>>,
+    pub waiting: HashMap<String, watch::Receiver<Option<FlightEnd>>>,
 }
 
 pub(crate) struct WatchEntry {

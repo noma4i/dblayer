@@ -21,7 +21,8 @@ use super::land::{Landed, Landing};
 use super::normalize::normalize_nodes;
 use super::registry::OperationDef;
 use super::variables::load_variables;
-use super::{locked, FlightResult, Inner, Sync};
+use super::state::LoadKind;
+use super::{locked, FlightEnd, FlightResult, Inner, Sync};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LoadOptions {
@@ -83,22 +84,33 @@ impl Resolved<'_> {
 struct FlightGuard<'a> {
     inner: &'a Inner,
     key: String,
-    sender: Option<watch::Sender<Option<FlightResult>>>,
+    sender: Option<watch::Sender<Option<FlightEnd>>>,
+    loading: Option<(String, LoadKind)>,
 }
 
 impl FlightGuard<'_> {
-    fn release(&mut self, result: FlightResult) {
+    fn settle(&mut self, result: FlightResult) {
+        if let Some((window_key, kind)) = self.loading.take() {
+            self.inner.end_load(&window_key, kind, &result);
+        }
+        self.release(FlightEnd::Settled(result));
+    }
+
+    fn release(&mut self, end: FlightEnd) {
         let Some(sender) = self.sender.take() else { return };
         let mut flights = locked(&self.inner.flights);
         flights.coalescing.finish(&self.key);
         flights.waiting.remove(&self.key);
-        sender.send_replace(Some(result));
+        sender.send_replace(Some(end));
     }
 }
 
 impl Drop for FlightGuard<'_> {
     fn drop(&mut self) {
-        self.release(Err(SyncError::Cancelled));
+        if let Some((window_key, kind)) = self.loading.take() {
+            self.inner.abandon_load(&window_key, kind);
+        }
+        self.release(FlightEnd::Abandoned);
     }
 }
 
@@ -193,43 +205,45 @@ impl Inner {
     }
 
     pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
-        if !self.connectivity.is_online() { return Err(SyncError::Offline); }
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
             None => resolved.window_key.clone(),
         };
         let forced = force || cursor.is_some();
-        let verdict = {
-            let mut flights = locked(&self.flights);
-            let verdict = flights.coalescing.request(&flight_key, forced, || self.window_is_fresh(resolved).unwrap_or(false));
-            match verdict {
-                FetchVerdict::StartFetch => {
-                    let (sender, receiver) = watch::channel(None);
-                    flights.waiting.insert(flight_key.clone(), receiver);
-                    Ok(Some(sender))
+        loop {
+            if !self.connectivity.is_online() { return Err(SyncError::Offline); }
+            let verdict = {
+                let mut flights = locked(&self.flights);
+                let verdict = flights.coalescing.request(&flight_key, forced, || self.window_is_fresh(resolved).unwrap_or(false));
+                match verdict {
+                    FetchVerdict::StartFetch => {
+                        let (sender, receiver) = watch::channel(None);
+                        flights.waiting.insert(flight_key.clone(), receiver);
+                        Ok(Some(sender))
+                    }
+                    FetchVerdict::AwaitInFlight => match flights.waiting.get(&flight_key) {
+                        Some(receiver) => Err(Some(receiver.clone())),
+                        None => Err(None),
+                    },
+                    FetchVerdict::SkipFresh => Err(None),
                 }
-                FetchVerdict::AwaitInFlight => match flights.waiting.get(&flight_key) {
-                    Some(receiver) => Err(Some(receiver.clone())),
-                    None => Err(None),
-                },
-                FetchVerdict::SkipFresh => Err(None),
+            };
+            match verdict {
+                Ok(sender) => {
+                    let mut guard = FlightGuard { inner: self, key: flight_key, sender, loading: None };
+                    let kind = self.load_kind(&resolved.scope, cursor.as_deref());
+                    self.begin_load(&resolved.window_key, kind);
+                    guard.loading = Some((resolved.window_key.clone(), kind));
+                    let result = self.execute(resolved, cursor, force).await;
+                    guard.settle(result.clone());
+                    return result;
+                }
+                Err(Some(mut receiver)) => {
+                    let end = receiver.wait_for(Option::is_some).await.ok().and_then(|end| end.clone());
+                    if let Some(FlightEnd::Settled(result)) = end { return result; }
+                }
+                Err(None) => return Ok(LoadOutcome::of(LoadStatus::SkippedFresh)),
             }
-        };
-        match verdict {
-            Ok(sender) => {
-                let mut guard = FlightGuard { inner: self, key: flight_key, sender };
-                let kind = self.load_kind(&resolved.scope, cursor.as_deref());
-                self.begin_load(&resolved.window_key, kind);
-                let result = self.execute(resolved, cursor, force).await;
-                self.end_load(&resolved.window_key, kind, &result);
-                guard.release(result.clone());
-                result
-            }
-            Err(Some(mut receiver)) => {
-                let finished = receiver.wait_for(Option::is_some).await.map_err(|_| SyncError::Cancelled)?;
-                finished.clone().ok_or(SyncError::Cancelled)?
-            }
-            Err(None) => Ok(LoadOutcome::of(LoadStatus::SkippedFresh)),
         }
     }
 
