@@ -40,3 +40,10 @@ fi
 
 (cd -- "$root/core" && "$root/target/debug/uniffi-bindgen" generate \
   --library "$library" --language kotlin --no-format --out-dir "$module/src/main/kotlin")
+
+generated="$module/src/main/kotlin/com/noma4i/dblayer/dblayer.kt"
+marker='        Native.register(UniffiLib::class.java, findLibraryName(componentName = "dblayer"))'
+[ "$(grep -cxF -- "$marker" "$generated")" = 1 ] || { echo "build_kotlin.sh: expected exactly 1 UniffiLib Native.register line in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
+awk -v marker="$marker" '$0 == marker { print "        ProcessOwner.claim()" } { print }' "$generated" > "$generated.claimed"
+mv "$generated.claimed" "$generated"
+[ "$(grep -cxF -- '        ProcessOwner.claim()' "$generated")" = 1 ] || { echo "build_kotlin.sh: ProcessOwner.claim() was not inserted into dblayer.kt" >&2; exit 1; }

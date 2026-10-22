@@ -13,6 +13,8 @@ public final class MockTransport: Transport, @unchecked Sendable {
   private var replies: [String: [Reply]] = [:]
   private var sinks: [String: SubscriptionSink] = [:]
   private var recorded: [TransportRequest] = []
+  private var issuedTokens: Set<String> = []
+  private var unknown: [String] = []
 
   public init() {}
 
@@ -22,6 +24,7 @@ public final class MockTransport: Transport, @unchecked Sendable {
   public func cableClose(token: String) async {}
 
   public var calls: [TransportRequest] { lock.withLock { recorded } }
+  public var unknownTokens: [String] { lock.withLock { unknown } }
 
   public func enqueue(_ operation: String, reply: String, delay: TimeInterval = 0) {
     lock.withLock { replies[operation, default: []].append(Reply(body: reply, failure: nil, delay: delay)) }
@@ -43,12 +46,17 @@ public final class MockTransport: Transport, @unchecked Sendable {
   public func mutate(request: TransportRequest) async throws -> String { try await answer(request) }
 
   public func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws -> String {
-    lock.withLock { recorded.append(request); sinks[request.operationName] = sink }
+    lock.withLock { recorded.append(request); sinks[request.operationName] = sink; issuedTokens.insert(request.operationName) }
     sink.ready()
     return request.operationName
   }
 
-  public func unsubscribe(token: String) { lock.withLock { _ = sinks.removeValue(forKey: token) } }
+  public func unsubscribe(token: String) {
+    lock.withLock {
+      if !issuedTokens.contains(token) { unknown.append(token) }
+      _ = sinks.removeValue(forKey: token)
+    }
+  }
 
   public func put(url: String, headers: [String: String], bytes: Data, progress: ByteProgress) async throws -> PutReply {
     progress.sent(bytes: UInt64(bytes.count))

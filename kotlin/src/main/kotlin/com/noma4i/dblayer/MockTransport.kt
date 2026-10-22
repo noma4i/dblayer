@@ -36,6 +36,8 @@ class MockTransport : Transport {
 
     private val replies = ConcurrentHashMap<String, java.util.ArrayDeque<Reply>>()
     private val sinks = ConcurrentHashMap<String, SubscriptionSink>()
+    private val issuedTokens = ConcurrentHashMap.newKeySet<String>()
+    val unknownTokens = CopyOnWriteArrayList<String>()
     private val recorded = CopyOnWriteArrayList<TransportRequest>()
 
     val calls: List<TransportRequest> get() = recorded.toList()
@@ -59,11 +61,18 @@ class MockTransport : Transport {
     override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink): String {
         recorded.add(request)
         sinks[request.operationName] = sink
+        issuedTokens.add(request.operationName)
         sink.ready()
         return request.operationName
     }
 
-    override fun unsubscribe(token: String) { sinks.remove(token) }
+    override fun unsubscribe(token: String) {
+        if (token !in issuedTokens) {
+            unknownTokens.add(token)
+            throw IllegalStateException("unsubscribe got a token the transport never issued: $token")
+        }
+        sinks.remove(token)
+    }
 
     override suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray, progress: ByteProgress): PutReply {
         progress.sent(bytes.size.toULong())
