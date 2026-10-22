@@ -324,6 +324,10 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
   }
 
   private func changed(delivery: EntityDelivery) {
+    if let failure = delivery.failure {
+      lock.withLock { failures += 1 }
+      entityLog.error("Entity read of \(Model.modelName, privacy: .public) failed: \(failure, privacy: .public)")
+    }
     let rows = delivery.rows.compactMap { row -> (Model, UInt64)? in
       do { return (try Model.decode(row), row.estimatedBytes) } catch {
         lock.withLock { failures += 1 }

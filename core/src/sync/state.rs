@@ -47,12 +47,6 @@ impl Inner {
 }
 
 impl Sync {
-    pub fn reject_relation(&self, model: &str, relation: &str, params: &Map<String, Value>, message: &str) -> Result<(), SyncError> {
-        let resolved = self.inner.resolve(model, relation, params)?;
-        self.inner.owner.reject(&resolved.window_key, resolved.target(), LoadError::invalid(message.to_string()));
-        Ok(())
-    }
-
     pub fn relation_state(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<watch::Receiver<RelationState>, SyncError> {
         let resolved = self.inner.resolve(model, relation, params)?;
         Ok(self.inner.owner.observe(&resolved.window_key, resolved.target(), self.inner.stored(&resolved)))

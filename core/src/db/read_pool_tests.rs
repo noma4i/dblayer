@@ -76,6 +76,7 @@ fn inv_observe_22_a_retain_whose_read_failed_keeps_the_id_and_reports_the_failur
     observer.retain(&[rid("late")]).unwrap();
     db.settle();
     assert_eq!(db.counters().entity_reads_failed, 1);
+    assert_eq!(log.lock().unwrap().iter().filter(|change| change.failure.is_some()).count(), 1, "the failure reaches the subscriber of the ids");
     put(&db, "users", json!({"id": "late", "name": "arrived"}));
     let rows: Vec<_> = log.lock().unwrap().iter().flat_map(|change| change.rows.iter().map(|row| row.id.to_string())).collect();
     assert_eq!(rows, ["late"]);

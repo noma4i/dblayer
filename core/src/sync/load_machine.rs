@@ -30,10 +30,6 @@ pub struct LoadError {
 impl LoadError {
     pub(crate) const NETWORK: &'static str = "network";
 
-    pub(crate) fn invalid(message: String) -> Self {
-        Self { kind: "invalid", message }
-    }
-
     pub(crate) fn internal() -> Self {
         Self { kind: "internal", message: "load panicked".to_string() }
     }
@@ -101,7 +97,6 @@ struct WindowFacts {
     order: Order,
     last_end: LastEnd,
     retry_on_online: Option<LoadKind>,
-    invalid: Option<LoadError>,
     read_error: Option<LoadError>,
     published: Option<RelationState>,
 }
@@ -136,16 +131,12 @@ impl WindowFacts {
             order: Order::NONE,
             last_end: LastEnd::None,
             retry_on_online: None,
-            invalid: None,
             read_error: None,
             published: None,
         }
     }
 
     fn rest(&self) -> State {
-        if self.invalid.is_some() {
-            return State::failed();
-        }
         if !self.flights.is_empty() {
             return State::loading();
         }
@@ -171,7 +162,7 @@ impl WindowFacts {
             LastEnd::Failed(error) => Some(error),
             _ => None,
         };
-        let error = self.invalid.as_ref().or(self.read_error.as_ref()).or(failed).cloned();
+        let error = self.read_error.as_ref().or(failed).cloned();
         let running = |kind: LoadKind| self.flights.values().any(|running| *running == kind);
         RelationState {
             phase,
@@ -296,7 +287,6 @@ impl WindowFacts {
                 }
             }
             Event::Close => return Transition(State::closed()),
-            Event::Rejected { error, .. } => self.invalid = Some(error.clone()),
             Event::ReadOk { has_rows, .. } => {
                 self.has_rows = *has_rows;
                 self.read_error = None;
@@ -391,7 +381,6 @@ pub(crate) enum Event {
     Offline,
     Online { observed: BTreeSet<String> },
     Close,
-    Rejected { window: String, model: String, error: LoadError },
     #[allow(dead_code)]
     ReadOk { window: String, has_rows: bool },
     ReadFailed { window: String, error: LoadError },
@@ -411,7 +400,6 @@ impl Event {
             | Event::Failed { window, .. }
             | Event::Abandoned { window, .. }
             | Event::Panicked { window, .. }
-            | Event::Rejected { window, .. }
             | Event::ReadOk { window, .. }
             | Event::ReadFailed { window, .. } => Some(window),
             Event::Reset { .. } | Event::Online { .. } | Event::Close | Event::Offline => None,
@@ -462,7 +450,7 @@ impl Machine {
             }
         }
         let mut context = Context { epochs: Epochs { all: self.all_epoch, by_model: Some(&self.model_epochs) }, effects, orphan_ends: 0, quiet: false };
-        if let Event::Observe { window, model, .. } | Event::Start { window, model, .. } | Event::Rejected { window, model, .. } = event {
+        if let Event::Observe { window, model, .. } | Event::Start { window, model, .. } = event {
             self.windows.entry(window.clone()).or_insert_with(|| {
                 context.quiet = true;
                 let machine = WindowFacts::new(window, model).uninitialized_state_machine().init_with_context(&mut context);

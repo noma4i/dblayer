@@ -248,6 +248,7 @@ internal class CoreEntitySource<Model : DBModel>(
     private fun open(): LiveEntities = observer ?: DBlayer.database.liveEntities(modelName, Changes(this)).also { observer = it }
 
     private fun changed(delivery: EntityDelivery) {
+        delivery.failure?.let { failures.incrementAndGet(); entityLog.severe("Entity read of $modelName failed: $it") }
         val rows = delivery.rows.mapNotNull { row ->
             runCatching { decoder.read(row) to row.estimatedBytes }
                 .onFailure { failures.incrementAndGet(); entityLog.severe("Row of $modelName failed to decode for its entity: $it") }

@@ -94,7 +94,8 @@ fn inv_observe_19_a_refresh_that_cannot_read_is_counted_and_a_reset_tells_every_
     let key = locked(&db.shared.observers).entities.keys().next().cloned().unwrap();
     db.shared.refresh_entities(&key, &crate::identity::ModelKey::new("users"), [rid("u1")].into_iter().collect());
     db.settle();
-    assert_eq!((db.counters().entity_reads_failed, log.lock().unwrap().len()), (1, 1), "the failed read is counted and tells nothing");
+    let failures: Vec<_> = log.lock().unwrap().iter().map(|change| change.failure.is_some()).collect();
+    assert_eq!((db.counters().entity_reads_failed, failures), (1, vec![false, true]), "the failed read is counted and tells its subscriber the failure");
     db.reset(&["users"]).unwrap();
     db.settle();
     let mut removed: Vec<String> = log.lock().unwrap().iter().flat_map(|change| change.removed.iter().map(ToString::to_string)).collect();
@@ -200,8 +201,10 @@ fn inv_observe_19_a_retain_whose_read_failed_reports_it_and_keeps_the_id_dirty_u
     db.shared.store.fail_next_entity_reads(1);
     observer.retain(&[rid("u1")]).unwrap();
     db.settle();
-    assert_eq!((log.lock().unwrap().len(), db.keyed_rows(), db.counters().entity_reads_failed), (0, 1, 1), "nothing told, the failure is counted and the id is indexed for the next read");
+    let failures: Vec<_> = log.lock().unwrap().iter().map(|change| (change.failure.is_some(), change.rows.len())).collect();
+    assert_eq!((failures, db.keyed_rows(), db.counters().entity_reads_failed), (vec![(true, 0)], 1, 1), "the failure is told and counted and the id is indexed for the next read");
     observer.retain(&[rid("u1")]).unwrap();
     db.settle();
-    assert_eq!(log.lock().unwrap().len(), 1, "the next retain tells the row");
+    let told: Vec<_> = log.lock().unwrap().iter().map(|change| (change.failure.is_some(), change.rows.len())).collect();
+    assert_eq!(told, [(true, 0), (false, 1)], "the next retain tells the row");
 }

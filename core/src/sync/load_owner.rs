@@ -96,11 +96,6 @@ impl LoadOwner {
         state.senders.entry(window.to_string()).or_insert_with(|| watch::channel(view).0).subscribe()
     }
 
-    pub(crate) fn reject(&self, window: &str, target: Target, error: LoadError) {
-        self.remember(window, &target);
-        self.submit(Event::Rejected { window: window.to_string(), model: target.model, error });
-    }
-
     pub(crate) fn begin_flight(&self, window: &str, target: Target, cursor: bool, seed: Option<Stored>) -> FlightId {
         let flight = self.next_flight.fetch_add(1, Ordering::SeqCst);
         self.remember(window, &target);

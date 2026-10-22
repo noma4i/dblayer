@@ -20,6 +20,7 @@ pub struct EntityChange {
     pub revision: i64,
     pub rows: Vec<Row>,
     pub removed: Vec<RowId>,
+    pub failure: Option<String>,
 }
 
 struct Known {
@@ -91,6 +92,7 @@ struct Pending {
     rows: BTreeMap<RowId, Row>,
     removed: BTreeSet<RowId>,
     revision: i64,
+    failure: Option<String>,
     scheduled: bool,
 }
 
@@ -130,6 +132,17 @@ impl EntitySubscriber {
 }
 
 impl EntitySubscriber {
+    pub(crate) fn post_failure(self: &Arc<Self>, executor: &Arc<Executor>, error: &DbError) {
+        let needs_run = {
+            let mut pending = locked(&self.pending);
+            pending.failure = Some(error.to_string());
+            !std::mem::replace(&mut pending.scheduled, true)
+        };
+        if needs_run {
+            executor.schedule(self.clone());
+        }
+    }
+
     fn discard(&self, ids: &[RowId]) {
         let mut pending = locked(&self.pending);
         for id in ids {
@@ -144,13 +157,13 @@ impl Runnable for EntitySubscriber {
         loop {
             let change = {
                 let mut pending = locked(&self.pending);
-                if pending.rows.is_empty() && pending.removed.is_empty() {
+                if pending.rows.is_empty() && pending.removed.is_empty() && pending.failure.is_none() {
                     pending.scheduled = false;
                     return;
                 }
                 let rows = std::mem::take(&mut pending.rows).into_values().collect();
                 let removed = std::mem::take(&mut pending.removed).into_iter().collect();
-                EntityChange { revision: std::mem::take(&mut pending.revision), rows, removed }
+                EntityChange { revision: std::mem::take(&mut pending.revision), rows, removed, failure: pending.failure.take() }
             };
             if self.cancelled.load(Ordering::SeqCst) {
                 continue;
@@ -246,9 +259,13 @@ impl Shared {
         }
         let mut observers = self.observers();
         let Some(group) = observers.entities.get_mut(key) else { return };
-        let Ok((position, loaded)) = read else {
-            group.dirty.extend(ids.iter().filter(|id| group.known.contains_key(*id)).cloned());
-            return;
+        let (position, loaded) = match read {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                group.dirty.extend(ids.iter().filter(|id| group.known.contains_key(*id)).cloned());
+                group.subscriber.clone().post_failure(&self.executor, &error);
+                return;
+            }
         };
         group.dirty.retain(|id| !ids.contains(id));
         let changes = group.settle(position, &loaded, ids.iter().cloned());

@@ -11,11 +11,12 @@ pub struct EntityDelivery {
     pub revision: i64,
     pub rows: Vec<WireRow>,
     pub removed: Vec<String>,
+    pub failure: Option<String>,
 }
 
 impl EntityDelivery {
     pub(super) fn of(change: &EntityChange, wire: &WireModel) -> Self {
-        Self { revision: change.revision, rows: change.rows.iter().map(|row| wire.row(row)).collect(), removed: change.removed.iter().map(ToString::to_string).collect() }
+        Self { revision: change.revision, rows: change.rows.iter().map(|row| wire.row(row)).collect(), removed: change.removed.iter().map(ToString::to_string).collect(), failure: change.failure.clone() }
     }
 }
 

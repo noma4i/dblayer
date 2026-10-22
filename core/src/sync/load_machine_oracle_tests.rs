@@ -81,10 +81,9 @@ impl Script {
                 Event::Reset { epoch: self.epoch, models }
             }
             (11, _) => if self.random.chance(2) { Event::Offline } else { Event::Online { observed: WINDOWS.iter().filter(|_| self.random.chance(2)).map(|(window, _)| window.to_string()).collect() } },
-            (12, _) => match self.random.below(4) {
+            (12, _) => match self.random.below(3) {
                 0 => Event::ReadOk { window, has_rows: self.random.chance(2) },
                 1 => Event::ReadFailed { window, error: self.error() },
-                2 => Event::Rejected { window, model, error: self.error() },
                 _ => Event::Landed { window, flight: 9_000 + self.random.below(3) as u64, stored: None },
             },
             (_, _) => if self.random.chance(12) { Event::Close } else { Event::Abandoned { window, flight: 9_100 } },
@@ -106,7 +105,6 @@ struct Seen {
     has_rows: bool,
     outcome: Outcome,
     retry: Option<LoadKind>,
-    invalid: Option<LoadError>,
     read_error: Option<LoadError>,
 }
 
@@ -118,7 +116,7 @@ struct Replay {
 }
 
 fn seen<'a>(run: &'a mut Replay, window: &str, model: &str) -> &'a mut Seen {
-    run.windows.entry(window.to_string()).or_insert_with(|| Seen { model: model.to_string(), open: vec![], accepted: None, has_rows: false, outcome: Outcome::Nothing, retry: None, invalid: None, read_error: None })
+    run.windows.entry(window.to_string()).or_insert_with(|| Seen { model: model.to_string(), open: vec![], accepted: None, has_rows: false, outcome: Outcome::Nothing, retry: None, read_error: None })
 }
 
 fn replay(history: &[Event]) -> Replay {
@@ -234,7 +232,6 @@ fn replay(history: &[Event]) -> Replay {
                 run.retried = retried;
             }
             Event::Close => run.closed = true,
-            Event::Rejected { window, model, error } => seen(&mut run, window, model).invalid = Some(error.clone()),
             Event::ReadOk { window, has_rows } => {
                 if let Some(seen) = run.windows.get_mut(window) {
                     seen.has_rows = *has_rows;
@@ -264,7 +261,6 @@ fn expected(run: &Replay, window: &str) -> Option<RelationState> {
     let landed_or_local = matches!(&seen.accepted, Some((_, Data::Landed { .. } | Data::Local)));
     let ladder = [
         (run.closed, LoadPhase::Closed),
-        (seen.invalid.is_some(), LoadPhase::Failed),
         (!seen.open.is_empty(), LoadPhase::Loading),
         (seen.read_error.is_some(), LoadPhase::Failed),
         (last_failure.is_some() && !seen.has_rows, LoadPhase::Failed),
@@ -281,7 +277,7 @@ fn expected(run: &Replay, window: &str) -> Option<RelationState> {
         fetching_more: running(LoadKind::More),
         has_more,
         total,
-        error: seen.invalid.clone().or(seen.read_error.clone()).or(last_failure),
+        error: seen.read_error.clone().or(last_failure),
         loaded_at,
     })
 }
