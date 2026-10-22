@@ -14,6 +14,7 @@ use super::{locked, Inner};
 
 #[derive(Default)]
 pub(crate) struct Live {
+    runtime: Option<Handle>,
     readers: usize,
     pub(crate) subscription: Option<EventSubscription>,
     starting: Option<AbortHandle>,
@@ -102,8 +103,10 @@ impl Inner {
             Some((scope, variables)) => (format!("{model}|{}|{scope}", updates.subscription), variables),
             None => (format!("{model}|{}", updates.subscription), json!({})),
         };
+        let Ok(runtime) = Handle::try_current() else { return key };
         let mut lives = locked(&self.lives);
         let live = lives.entry(key.clone()).or_default();
+        live.runtime = Some(runtime.clone());
         live.readers += 1;
         if let Some(closing) = live.closing.take() {
             closing.abort();
@@ -111,7 +114,6 @@ impl Inner {
         if live.subscription.is_some() || live.starting.is_some() {
             return key;
         }
-        let Ok(runtime) = Handle::try_current() else { return key };
         let inner = self.clone();
         let model = model.to_string();
         let slot = key.clone();
@@ -145,7 +147,7 @@ impl Inner {
         if live.readers > 0 || live.closing.is_some() {
             return;
         }
-        let Ok(runtime) = Handle::try_current() else {
+        let Some(runtime) = live.runtime.clone() else {
             lives.remove(key);
             return;
         };

@@ -772,8 +772,8 @@ end
 - A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.
 - Events preserve fields owned by unconfirmed local edits. Loaded windows of scopes with `insert_on: [:event]` accept matching rows.
 - If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
-- The subscription starts when the first reader connects, is shared by all readers and closes some time after the last reader leaves (30 seconds by default).
-- After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once.
+- The subscription starts when the first reader connects, is shared by all readers and closes some time after the last reader leaves (30 seconds by default). A reader that leaves from any thread starts that wait, so a reader that arrives within it reuses the open subscription.
+- After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it.
 - Bursts of events are merged into one commit.
 
 ### Subscriptions with arguments

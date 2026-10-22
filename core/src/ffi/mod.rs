@@ -129,3 +129,7 @@ mod open_tests;
 mod write_calls_tests;
 #[cfg(test)]
 mod retention_tests;
+#[cfg(test)]
+mod viewer_changes_tests;
+#[cfg(test)]
+mod stale_window_tests;

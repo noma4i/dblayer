@@ -259,6 +259,8 @@ mod run_tests;
 #[cfg(test)]
 mod subscribe_tests;
 #[cfg(test)]
+mod subscribe_clock_tests;
+#[cfg(test)]
 mod variables_tests;
 #[cfg(test)]
 mod response_paths_tests;
