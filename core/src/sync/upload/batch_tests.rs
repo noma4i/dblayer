@@ -202,7 +202,7 @@ async fn discard_while_the_final_mutation_waits_offline_uses_the_single_operatio
     use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, Subscription, Transport, TransportError};
     struct PauseAfterTransfer {
         transport: Arc<MockTransport>,
-        online: std::sync::Mutex<Option<crate::transport::Connectivity>>,
+        online: std::sync::Mutex<Option<Arc<crate::transport::Connectivity>>>,
     }
     #[async_trait::async_trait]
     impl Transport for PauseAfterTransfer {
@@ -211,7 +211,7 @@ async fn discard_while_the_final_mutation_waits_offline_uses_the_single_operatio
         async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> { self.transport.subscribe(request).await }
         async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
             let result = self.transport.put(request).await;
-            if self.transport.put_calls().len() == 2 { self.online.lock().unwrap().as_ref().unwrap().set(false); }
+            if self.transport.put_calls().len() == 2 { self.online.lock().unwrap().as_ref().unwrap().set_online(false); }
             result
         }
     }

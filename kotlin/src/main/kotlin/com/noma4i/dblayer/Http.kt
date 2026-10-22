@@ -1,8 +1,6 @@
 package com.noma4i.dblayer
 
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -22,7 +20,6 @@ import java.io.IOException
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 enum class GraphQLOperationKind { Query, Mutation }
@@ -300,12 +297,13 @@ class GraphQLHttpTransport(
 @kotlinx.serialization.Serializable
 internal data class EnvelopeWire(val v: Int, val iv: String, val ct: String, val tag: String)
 
-internal suspend fun <T> Call.exchange(read: (HttpResponse) -> T): T = withContext(Dispatchers.IO) { await().use(read) }
-
-private suspend fun Call.await(): HttpResponse = suspendCancellableCoroutine { continuation ->
+internal suspend fun <T> Call.exchange(read: (HttpResponse) -> T): T = suspendCancellableCoroutine { continuation ->
     enqueue(object : Callback {
         override fun onFailure(call: Call, e: IOException) = continuation.resumeWithException(e)
-        override fun onResponse(call: Call, response: HttpResponse) = continuation.resume(response)
+        override fun onResponse(call: Call, response: HttpResponse) {
+            val result = runCatching { response.use(read) }
+            continuation.resumeWith(result)
+        }
     })
     continuation.invokeOnCancellation { cancel() }
 }

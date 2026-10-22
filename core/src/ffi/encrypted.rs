@@ -129,10 +129,10 @@ impl Database {
 }
 
 #[uniffi::export]
-pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retry_listener: Option<Arc<dyn core::RetryListener>>) -> Result<ServerConfig, DbError> {
+pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retry_listener: Option<Arc<dyn core::RetryListener>>, connectivity: Arc<core::Connectivity>) -> Result<ServerConfig, DbError> {
     cancellable(async move {
         let events = core::retry::RetryEvents::default();
         events.set(retry_listener);
-        core::encrypted::bootstrap::fetch(&encrypted, platform, &version, build.as_deref(), Arc::new(ForeignHttp(http)), &crate::pacing::SystemClock, &events).await.map_err(typed)
+        core::encrypted::bootstrap::fetch(&encrypted, platform, &version, build.as_deref(), Arc::new(ForeignHttp(http)), &crate::pacing::SystemClock, &events, &connectivity).await.map_err(typed)
     }).await?
 }

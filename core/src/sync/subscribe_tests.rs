@@ -2,7 +2,7 @@ use super::error::SyncError;
 use super::subscribe::{EventEffect, SubscriptionDef};
 use super::rig::*;
 use crate::db::Db;
-use crate::pacing::ManualClock;
+use crate::pacing::TestClock;
 use crate::query::Query;
 use crate::schema::{AssociationKind, AssociationSpec, Dependent, FieldSpec};
 use crate::value::ScalarKind;
@@ -604,7 +604,8 @@ async fn debounced_events_land_once_per_row_after_the_interval() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(text_of(&rig, "moments", "m1"), Some("start".to_string()));
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    rig.clock.advance(Duration::from_millis(400));
+    settle().await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("three".to_string()));
     rig.db.settle();
     assert_eq!(rig.db.counters().observer_calls, 2);
@@ -741,7 +742,7 @@ async fn a_refused_first_connection_is_retried_like_a_reconnect() {
     let inner = MockTransport::new();
     let transport = Arc::new(RefusingFirstSubscribe { inner: inner.clone(), refusals: 1.into() });
     let db = Db::open_in_memory(specs(), None).unwrap();
-    let sync = Sync::new(db.clone(), transport, Arc::new(ManualClock::new(Duration::from_millis(START_MS))), SyncConfig::default());
+    let sync = Sync::new(db.clone(), transport, Arc::new(TestClock::new(Duration::from_millis(START_MS))), SyncConfig::default());
     register_operations(&sync);
     sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
     let subscription = sync.subscribe(upsert_def()).await.unwrap();

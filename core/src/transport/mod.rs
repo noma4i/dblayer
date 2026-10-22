@@ -29,7 +29,7 @@ pub use online::Connectivity;
 pub use put::{ByteSink, PutRequest, PutResponse};
 pub use request::{GraphQLError, GraphQLRequest, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};
-pub use retry::{RetryClass, RetryListener, RETRY_BACKOFF};
+pub use retry::{RetryClass, RetryListener};
 pub use session_code::SessionCode;
 pub use subscription::{
     Subscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionFault,
@@ -38,6 +38,7 @@ pub use subscription::{
 
 #[async_trait]
 pub trait Transport: Send + Sync {
+    fn retries_queries(&self) -> bool { false }
     fn set_online(&self, _online: bool) {}
     fn resume_subscriptions(&self) {}
     async fn open_cable(&self) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {

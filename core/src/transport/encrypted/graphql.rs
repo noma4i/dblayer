@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use super::client::{Answer, EncryptedClient};
 use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutResponse, Response, Subscription, Transport, TransportError};
-use crate::transport::{CableConnect, CableSocket, CableSubscriptions, Connectivity};
+use crate::transport::{CableConnect, CableSocket, CableSubscriptions};
 
 const PERSISTED_QUERY_VERSION: u32 = 1;
 const PERSISTED_QUERY_NOT_FOUND: &str = "PERSISTED_QUERY_NOT_FOUND";
@@ -27,7 +27,7 @@ impl CableConnect for TransportCable {
 impl EncryptedTransport {
     pub fn new(client: Arc<EncryptedClient>, rest: Arc<dyn Transport>) -> Self {
         let credentials = client.clone();
-        let cable = CableSubscriptions::new(client.config.clone(), Arc::new(move || credentials.credential()), Arc::new(TransportCable(rest.clone())), Connectivity::new());
+        let cable = CableSubscriptions::new(client.config.clone(), Arc::new(move || credentials.credential()), Arc::new(TransportCable(rest.clone())), client.online.clone(), client.clock.clone());
         Self { client, rest, cable }
     }
 }
@@ -76,6 +76,7 @@ pub fn missing_from_registry(response: &Response) -> bool {
 
 #[async_trait]
 impl Transport for EncryptedTransport {
+    fn retries_queries(&self) -> bool { true }
     fn set_online(&self, online: bool) { self.cable.set_online(online); }
     fn resume_subscriptions(&self) { self.cable.resume(); }
 

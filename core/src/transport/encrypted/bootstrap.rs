@@ -59,16 +59,17 @@ pub(super) fn accept(token: &str, response_key: &str, request_id: &str, digest: 
 
 #[cfg(test)]
 pub(crate) async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn Clock) -> Result<ServerConfig, TransportError> {
-    fetch(config, platform, version, build, http, clock, &RetryEvents::default()).await
+    fetch(config, platform, version, build, http, clock, &RetryEvents::default(), &crate::transport::Connectivity::new(true)).await
 }
 
-pub(crate) async fn fetch(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn Clock, events: &RetryEvents) -> Result<ServerConfig, TransportError> {
+pub(crate) async fn fetch(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn Clock, events: &RetryEvents, online: &crate::transport::Connectivity) -> Result<ServerConfig, TransportError> {
     config.validate()?;
     let audience = config.origin.trim_end_matches('/');
     if !super::origin::allowed(audience) { return Err(invalid("the origin must be https or a development host without a path")); }
     let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Security { code: SecurityCode::ServerKeyMismatch, detail: error.to_string() })?;
-    let mut retry = Retrying::new(clock, events);
+    let mut retry = Retrying::new(clock, events, online, crate::pacing::RetryPolicy::Http);
     loop {
+        online.online().await;
         let request_id = uuid::Uuid::new_v4().to_string();
         let response_key = zeroize::Zeroizing::new(random_token());
         let plain = request_plain(config, platform, version, build, clock, &request_id, &response_key)?;

@@ -10,7 +10,7 @@ use super::key::ServerKey;
 use super::state::{self, Pending};
 use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
-use crate::pacing::Clock;
+use crate::pacing::{Clock, RetryPolicy};
 use crate::transport::TransportError;
 use crate::transport::retry::{RetryClass, RetryEvents, Retrying};
 
@@ -76,7 +76,8 @@ pub struct EncryptedClient {
     http: Arc<dyn HttpExchange>,
     credentials: Arc<dyn CredentialSlot>,
     db: Db,
-    clock: Arc<dyn Clock>,
+    pub(super) clock: Arc<dyn Clock>,
+    pub(super) online: Arc<crate::transport::Connectivity>,
     credential: Mutex<Option<String>>,
     mutations: Gate<()>,
     retry_events: RetryEvents,
@@ -121,8 +122,9 @@ impl EncryptedClient {
         if operation == "logout" { return self.mutate(&self.config.endpoints.logout, body).await; }
         let operation = self.config.endpoints.session_operations.get(operation).ok_or_else(|| TransportError::Decode(format!("unknown session operation {operation}")))?;
         if !operation.sessionless { return self.mutate(&operation.path, body).await; }
-        let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events);
+        let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events, &self.online, RetryPolicy::Http);
         loop {
+            self.online.online().await;
             let request_id = uuid::Uuid::new_v4().to_string();
             let response_key = random_token();
             let token = self.request_token(None, &request_id, &response_key, &operation.path, &body)?;
@@ -150,7 +152,7 @@ impl EncryptedClient {
             return Err(TransportError::Decode(format!("the origin must be https, or http on a development host, without a path: {}", config.origin)));
         }
         let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Decode(error.to_string()))?;
-        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, credential: Mutex::new(None), mutations: Gate::new(()), retry_events: RetryEvents::default() })
+        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, online: crate::transport::Connectivity::new(true), credential: Mutex::new(None), mutations: Gate::new(()), retry_events: RetryEvents::default() })
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -161,10 +163,10 @@ impl EncryptedClient {
         check_path(path)?;
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
-        let (pending, token) = match self.with_connection(state::pending)? {
+        let pending = match self.with_connection(state::pending)? {
             Some(pending) if pending.owner == owner && pending.path == path && serde_json::from_str::<Value>(&pending.body).ok().as_ref() == Some(&body) => {
-                let token = self.pending_token(&credential, &pending)?;
-                (pending, token)
+                self.pending_token(&credential, &pending)?;
+                pending
             }
             Some(_) => return Err(TransportError::Network("another encrypted request is pending, resolve it first".into())),
             None => {
@@ -178,12 +180,12 @@ impl EncryptedClient {
                     body: body.to_string(),
                     owner,
                 };
-                let token = self.pending_token(&credential, &pending)?;
+                self.pending_token(&credential, &pending)?;
                 self.with_connection(|connection| state::store_pending(connection, &pending))?;
-                (pending, token)
+                pending
             }
         };
-        self.settle(pending, token).await
+        self.settle(pending).await
     }
 
     pub fn pending_call(&self) -> Result<Option<(String, Value)>, TransportError> {
@@ -210,8 +212,8 @@ impl EncryptedClient {
         }
         let credential = self.credential()?;
         let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
-        let token = self.pending_token(&credential, &pending)?;
-        self.settle(pending, token).await.map(Some)
+        self.pending_token(&credential, &pending)?;
+        self.settle(pending).await.map(Some)
     }
 
     pub async fn read(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -235,17 +237,19 @@ impl EncryptedClient {
         self.request_token(Some(RequestSession { credential: credential.into(), sequence: Some(pending.sequence) }), &pending.request_id, &pending.response_key, &pending.path, &body)
     }
 
-    async fn settle(&self, mut pending: Pending, mut token: String) -> Result<Answer, TransportError> {
-      let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events);
+    async fn settle(&self, mut pending: Pending) -> Result<Answer, TransportError> {
+      let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events, &self.online, RetryPolicy::Http);
       loop {
+        self.online.online().await;
+        let token = self.pending_token(&self.credential()?, &pending)?;
         let answer = match self.post(&pending.path, token, &pending.request_id, &pending.response_key).await {
             Err(error) if permanently_refused(&error) => {
                 self.with_connection(state::drop_pending)?;
                 return Err(error);
             }
             Err(error) => {
+                if pending.owner.is_some() { return Err(error); }
                 retry.failed(error).await?;
-                token = self.pending_token(&self.credential()?, &pending)?;
                 continue;
             }
             Ok(answer) => answer,
@@ -262,8 +266,8 @@ impl EncryptedClient {
                 }
                 self.with_connection(|connection| state::retry_confirmed(connection, &pending))?;
             }
+            if pending.owner.is_some() { return Err(error); }
             retry.failed(error).await?;
-            token = self.pending_token(&self.credential()?, &pending)?;
             continue;
         }
         if answer.sequence != Some(pending.sequence) {
@@ -281,8 +285,9 @@ impl EncryptedClient {
     }
 
     async fn exchange(&self, credential: &str, request_id: &str, response_key: &str, sequence: Option<i64>, path: &str, body: &Value) -> Result<Answer, TransportError> {
-        let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events);
+        let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events, &self.online, RetryPolicy::Http);
         loop {
+            self.online.online().await;
             let token = self.request_token(Some(RequestSession { credential: credential.into(), sequence }), request_id, response_key, path, body)?;
             let result = self.post(path, token, request_id, response_key).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
             match result { Ok(answer) => return Ok(answer), Err(error) => retry.failed(error).await? }

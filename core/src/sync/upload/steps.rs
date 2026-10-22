@@ -31,7 +31,9 @@ pub(super) fn fatal(kind: FailureKind, message: impl Into<String>) -> StepError 
 
 fn step_error(error: TransportError, cancelled: bool) -> StepError {
     let message = error.to_string();
+    let retryable = RetryClass::of_error(&error) == RetryClass::Retriable;
     match error {
+        TransportError::Graphql { extensions, .. } if retryable => StepError::Retry(OperationFailure { kind: FailureKind::Server, message, extensions }),
         TransportError::Security { .. } | TransportError::Config { .. } => fatal(FailureKind::Unrecognized, message),
         TransportError::Interrupted(_) if cancelled => StepError::Cancelled,
         TransportError::Network(_) | TransportError::Interrupted(_) => StepError::Retry(OperationFailure::new(FailureKind::Network, message)),
@@ -69,7 +71,7 @@ impl Runner {
         request.owner = Some(crate::transport::RequestOwner { seq: self.seq, item_position: self.position, stage: crate::operation::enum_text(&self.snapshot().stage).unwrap_or_default() });
         self.remember(&request)?;
         let resumed = locked(&self.resumed).take();
-        let call = tokio::time::timeout(self.inner.config.upload.step_timeout, async {
+        let call = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.step_timeout, async {
             match resumed {
                 Some(result) => result,
                 None => self.inner.transport.mutate(request).await,
@@ -129,7 +131,7 @@ impl Runner {
             cancel: self.token.clone(),
             sent: Arc::new(move |bytes| runner.report(part, bytes)),
         };
-        match tokio::time::timeout(self.inner.config.upload.put_timeout, self.inner.transport.put(request)).await {
+        match crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.put_timeout, self.inner.transport.put(request)).await {
             Err(_) => Err(StepError::Retry(OperationFailure::new(FailureKind::Network, "put timed out"))),
             Ok(Err(error)) => Err(step_error(error, self.token.is_cancelled())),
             Ok(Ok(response)) if !(200..300).contains(&response.status) => {
@@ -186,7 +188,7 @@ impl Runner {
         let Some(deadline) = deadline else { return Ok(()) };
         let delay = std::time::Duration::from_millis(deadline).saturating_sub(self.inner.clock.now());
         tokio::select! {
-            () = tokio::time::sleep(delay) => {}
+            () = self.inner.connectivity.wait(self.inner.clock.as_ref(), delay) => {}
             () = self.token.cancelled() => return Err(Stop::Cancelled),
         }
         self.save(|state| {

@@ -6,7 +6,7 @@ use super::error::SyncError;
 use super::{locked, Sync};
 
 impl Sync {
-    /// Sends one registered operation and returns the value at the root field of its answer. Nothing is queued, stored or retried.
+    /// Sends a registered operation without adding it to the outbox.
     pub async fn run(&self, operation: &str, variables: Value) -> Result<Value, SyncError> {
         let definition = locked(&self.inner.operations).get(operation).cloned().ok_or_else(|| SyncError::UnknownOperation(operation.to_string()))?;
         if !self.inner.connectivity.is_online() {

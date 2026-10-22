@@ -1,15 +1,12 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use tokio::time::Instant;
 use crate::transport::{GraphQLRequest, SessionCode, Subscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionHandle};
 use super::CableError;
-use crate::pacing::Backoff;
-use crate::transport::{SubscriptionRetry, SubscriptionFault, RETRY_BACKOFF};
-
-static SESSION_SEED: AtomicU64 = AtomicU64::new(0xcab1_e5ee);
+use crate::pacing::{Backoff, Clock, RetryPolicy};
+use crate::transport::{SubscriptionRetry, SubscriptionFault};
 
 struct Entry {
     request: GraphQLRequest,
@@ -21,8 +18,9 @@ pub struct CableSession {
     next_id: u64,
     cancellations: mpsc::UnboundedReceiver<String>,
     cancel: mpsc::UnboundedSender<String>,
-    last_traffic: Instant,
-    pong_due: Option<Instant>,
+    clock: Arc<dyn Clock>,
+    last_traffic: Duration,
+    pong_due: Option<Duration>,
     ping_ts: u64,
     opened: bool,
     retry: SubscriptionRetry,
@@ -30,15 +28,11 @@ pub struct CableSession {
     terminal: Option<SubscriptionFailure>,
 }
 
-impl Default for CableSession {
-    fn default() -> Self { Self::new() }
-}
-
 impl CableSession {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         let (cancel, cancellations) = mpsc::unbounded_channel();
-        let backoff = RETRY_BACKOFF.with_jitter(0.2, SESSION_SEED.fetch_add(1, Ordering::Relaxed));
-        Self { entries: BTreeMap::new(), next_id: 0, cancellations, cancel, last_traffic: Instant::now(), pong_due: None, ping_ts: 0, opened: false, retry: SubscriptionRetry::default(), backoff, terminal: None }
+        let backoff = RetryPolicy::Subscription.backoff().randomized();
+        Self { entries: BTreeMap::new(), next_id: 0, cancellations, cancel, last_traffic: clock.now(), clock, pong_due: None, ping_ts: 0, opened: false, retry: SubscriptionRetry::default(), backoff, terminal: None }
     }
 
     pub fn subscribe(&mut self, request: GraphQLRequest) -> (String, Subscription) {
@@ -90,7 +84,9 @@ impl CableSession {
         self.unsubscribe(&id)
     }
 
-    pub fn traffic(&mut self) { self.last_traffic = Instant::now(); }
+    pub fn traffic(&mut self) { self.last_traffic = self.clock.now(); }
+
+    pub(super) fn now(&self) -> Duration { self.clock.now() }
 
     pub fn failed_open(&mut self, online: bool) -> Option<Duration> {
         if !online || self.is_empty() { return None; }
@@ -116,18 +112,18 @@ impl CableSession {
         close
     }
 
-    pub fn deadline(&self) -> Option<Instant> {
+    pub fn deadline(&self) -> Option<Duration> {
         (self.opened && !self.entries.is_empty()).then(|| self.pong_due.unwrap_or(self.last_traffic + Duration::from_secs(25)))
     }
 
     pub fn tick(&mut self) -> Result<Option<Value>, CableError> {
         let Some(deadline) = self.deadline() else { return Ok(None) };
-        if Instant::now() < deadline { return Ok(None); }
+        if self.clock.now() < deadline { return Ok(None); }
         if self.pong_due.is_some() {
             self.opened = false;
             return Err(CableError::Closed);
         }
-        self.pong_due = Some(Instant::now() + Duration::from_secs(20));
+        self.pong_due = Some(self.clock.now() + Duration::from_secs(20));
         self.ping_ts = self.ping_ts.wrapping_add(1);
         Ok(Some(json!({"t":"ping", "ts":self.ping_ts})))
     }

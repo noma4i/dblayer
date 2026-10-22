@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 
 use crate::db::Db;
-use crate::pacing::ManualClock;
+use crate::pacing::TestClock;
 use crate::schema::{
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, OnFailure, PageDirection, RelationSpec,
     RemoteShape, RemoteSpec, RootShape, UpdatesSpec, EphemeralSpec, MergeRule,
@@ -163,7 +163,7 @@ pub struct Rig {
     pub sync: Sync,
     pub db: Db,
     pub transport: MockTransport,
-    pub clock: ManualClock,
+    pub(crate) clock: TestClock,
 }
 
 pub fn rig() -> Rig {
@@ -211,7 +211,7 @@ pub fn rig_on(db: Db, transport: MockTransport, config: SyncConfig) -> Rig {
 }
 
 pub fn rig_without_operations(db: Db, transport: MockTransport, config: SyncConfig) -> Rig {
-    let clock = ManualClock::new(Duration::from_millis(START_MS));
+    let clock = TestClock::new(Duration::from_millis(START_MS));
     let sync = Sync::new(db.clone(), Arc::new(transport.clone()), Arc::new(clock.clone()), config);
     Rig { sync, db, transport, clock }
 }

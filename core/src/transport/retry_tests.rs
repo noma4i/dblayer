@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn retry_class_follows_code_and_budgets_limit_retries() {
+fn retry_class_follows_code() {
     assert_eq!(RetryClass::classify(true, None, &[]), RetryClass::Network);
     assert_eq!(RetryClass::classify(false, Some(503), &[]), RetryClass::Server);
     assert_eq!(RetryClass::classify(false, Some(400), &["TIMEOUT"]), RetryClass::Retriable);
@@ -11,13 +11,6 @@ fn retry_class_follows_code_and_budgets_limit_retries() {
     assert_eq!(RetryClass::classify(false, Some(600), &[]), RetryClass::Fatal);
     assert_eq!(RetryClass::classify(false, Some(499), &[]), RetryClass::Fatal);
     assert_eq!(RetryClass::classify(false, None, &[""]), RetryClass::Fatal);
-    assert!(RetryClass::Network.allows_retry(2));
-    assert!(!RetryClass::Network.allows_retry(3));
-    assert!(!RetryClass::Fatal.allows_retry(0));
-    assert_eq!(RetryClass::Network.budget(), 3);
-    assert_eq!(RetryClass::Server.budget(), 2);
-    assert_eq!(RetryClass::Retriable.budget(), 2);
-    assert_eq!(RetryClass::Fatal.budget(), 0);
 }
 
 #[test]
@@ -63,7 +56,8 @@ async fn retry_listener_reports_unlimited_attempts_and_capped_jittered_sleeps() 
     let events = RetryEvents::default();
     let tape = Arc::new(Tape::default());
     events.set(Some(tape.clone()));
-    let mut retry = Retrying::new(&clock, &events);
+    let online = Connectivity::new(true);
+    let mut retry = Retrying::new(&clock, &events, &online, crate::pacing::RetryPolicy::Http);
     assert!(clock.0.lock().unwrap().is_empty());
     for index in 0..40 {
         retry.failed(TransportError::Network("timeout".into())).await.unwrap();
@@ -99,7 +93,8 @@ async fn dropping_backoff_drops_the_clock_sleep() {
     let dropped = Arc::new(AtomicBool::new(false));
     let clock = Time(dropped.clone());
     let events = RetryEvents::default();
-    let mut retry = Retrying::new(&clock, &events);
+    let online = Connectivity::new(true);
+    let mut retry = Retrying::new(&clock, &events, &online, crate::pacing::RetryPolicy::Http);
     let mut wait = Box::pin(retry.failed(TransportError::Network("offline".into())));
     assert!(wait.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     assert!(!dropped.load(Ordering::SeqCst));

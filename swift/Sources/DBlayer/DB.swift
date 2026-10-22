@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DB {
-  static let reachability = Reachability()
+  static let reachability = Reachability.shared
   public nonisolated(unsafe) static var database: Database!
   @MainActor private static var opening: (OpenArguments, Task<Void, Error>)?
 
@@ -46,7 +46,7 @@ public enum DB {
   }
 
   public static func serverConfig(encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = nil, http: EncryptedHttp? = nil, retryListener: RetryListener? = nil) async throws -> ServerConfig {
-    try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retryListener: retryListener)
+    try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retryListener: retryListener, connectivity: reachability.start())
   }
 
   private static func reference(_ object: AnyObject) -> AnyHashable {

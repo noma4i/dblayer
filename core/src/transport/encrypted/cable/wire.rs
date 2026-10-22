@@ -4,7 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::Instant;
+use crate::pacing::{Clock, timeout};
 use crate::transport::{Connectivity, GraphQLRequest, Subscription, TransportError};
 use super::{CableLink, CableSession, EncryptedConfig};
 
@@ -41,14 +41,14 @@ enum Command {
 pub struct CableSubscriptions {
     commands: mpsc::UnboundedSender<Command>,
     wakes: Arc<AtomicUsize>,
-    online: Connectivity,
+    online: Arc<Connectivity>,
 }
 
 impl CableSubscriptions {
-    pub fn new(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Connectivity) -> Self {
+    pub fn new(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, clock: Arc<dyn Clock>) -> Self {
         let (commands, receiver) = mpsc::unbounded_channel();
         let wakes = Arc::new(AtomicUsize::new(0));
-        tokio::spawn(run(config, credential, connect, online.clone(), receiver, wakes.clone()));
+        tokio::spawn(run(config, credential, connect, online.clone(), receiver, wakes.clone(), clock));
         Self { commands, wakes, online }
     }
 
@@ -59,7 +59,7 @@ impl CableSubscriptions {
     }
 
     pub fn wake_count(&self) -> usize { self.wakes.load(Ordering::Relaxed) }
-    pub fn set_online(&self, online: bool) { self.online.set(online); }
+    pub fn set_online(&self, online: bool) { self.online.set_online(online); }
 
     pub fn resume(&self) { let _ = self.commands.send(Command::Resume); }
 
@@ -84,10 +84,10 @@ async fn send(channel: &str, socket: &dyn CableSocket, link: &mut CableLink, ses
     Ok(())
 }
 
-async fn disconnect(connection: &mut Option<(Arc<dyn CableSocket>, CableLink)>, session: &mut CableSession, online: bool) -> Option<Instant> {
+async fn disconnect(connection: &mut Option<(Arc<dyn CableSocket>, CableLink)>, session: &mut CableSession, online: bool) -> Option<Duration> {
     if let Some((socket, mut link)) = connection.take() { link.close(); socket.close().await; }
     session.closed(1006, "connection lost");
-    session.failed_open(online).map(|delay| Instant::now() + delay)
+    session.failed_open(online).map(|delay| session.now() + delay)
 }
 
 async fn await_connected<T>(next: impl std::future::Future<Output = T>, session: &mut CableSession, commands: &mut mpsc::UnboundedReceiver<Command>, online: &Connectivity) -> Result<T, TransportError> {
@@ -148,10 +148,10 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
     }
 }
 
-async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Connectivity, mut commands: mpsc::UnboundedReceiver<Command>, wakes: Arc<AtomicUsize>) {
-    let mut session = CableSession::new();
+async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, mut commands: mpsc::UnboundedReceiver<Command>, wakes: Arc<AtomicUsize>, clock: Arc<dyn Clock>) {
+    let mut session = CableSession::new(clock.clone());
     let mut connection: Option<(Arc<dyn CableSocket>, CableLink)> = None;
-    let mut retry_at: Option<Instant> = None;
+    let mut retry_at: Option<Duration> = None;
     let mut incoming = None;
     loop {
         if session.is_empty() {
@@ -164,8 +164,8 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                 config.validate()?;
                 let credential = credential()?;
                 if credential.is_empty() { return Err(TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "empty cable credential".into() }); }
-                let socket = tokio::time::timeout(Duration::from_secs(10), await_connected(connect.open(), &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable opening timeout".into()))???;
-                let result = tokio::time::timeout(Duration::from_secs(10), handshake(socket.as_ref(), &config, &credential, &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable handshake timeout".into())).and_then(|result| result);
+                let socket = timeout(clock.as_ref(), Duration::from_secs(10), await_connected(connect.open(), &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable opening timeout".into()))???;
+                let result = timeout(clock.as_ref(), Duration::from_secs(10), handshake(socket.as_ref(), &config, &credential, &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable handshake timeout".into())).and_then(|result| result);
                 match result {
                     Ok(link) => Ok((socket, link)),
                     Err(error) => { socket.close().await; Err(error) }
@@ -181,7 +181,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                         incoming = Some(Box::pin(receive(socket.clone())));
                         connection = Some((socket, link));
                     }
-                    else { socket.close().await; retry_at = session.failed_open(online.is_online()).map(|delay| Instant::now() + delay); }
+                    else { socket.close().await; retry_at = session.failed_open(online.is_online()).map(|delay| clock.now() + delay); }
                 }
                 Err(error) => {
                     let error = match error {
@@ -190,7 +190,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                         error => error,
                     };
                     if matches!(error, TransportError::Session { .. }) { session.refuse(crate::transport::SubscriptionFailure::from_error(error)); }
-                    retry_at = session.failed_open(online.is_online()).map(|delay| Instant::now() + delay);
+                    retry_at = session.failed_open(online.is_online()).map(|delay| clock.now() + delay);
                 }
             }
         }
@@ -243,10 +243,10 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                 if let Some((code, reason)) = closed {
                     session.closed(code, &reason);
                     if let Some((socket, mut link)) = connection.take() { link.close(); socket.close().await; }
-                    retry_at = session.failed_open(online.is_online()).map(|delay| Instant::now() + delay);
+                    retry_at = session.failed_open(online.is_online()).map(|delay| clock.now() + delay);
                 }
             }
-            _ = async { match deadline { Some(deadline) => tokio::time::sleep_until(deadline).await, None => std::future::pending().await } } => {
+            _ = async { match deadline { Some(deadline) => clock.sleep(deadline.saturating_sub(clock.now())).await, None => std::future::pending().await } } => {
                 wakes.fetch_add(1, Ordering::Relaxed);
                 if retry_at.take().is_none() {
                     match session.tick() {

@@ -38,12 +38,11 @@ use serde_json::{Map, Value};
 use tokio::sync::watch;
 
 use crate::db::Db;
-use crate::pacing::{Backoff, Clock, Counters, FetchCoalescing, ResumeDrain};
-use crate::transport::{Connectivity, Transport, RETRY_BACKOFF};
+use crate::pacing::{Backoff, Clock, Counters, FetchCoalescing, ResumeDrain, RetryPolicy};
+use crate::transport::{Connectivity, Transport};
 use crate::upload::UploadConfig;
 
 pub const LIVE_LINGER: Duration = Duration::from_secs(30);
-pub const SEND_BACKOFF: Backoff = RETRY_BACKOFF.with_jitter(0.2, 0x5eed_5eed).limited(40);
 
 #[derive(Debug, Clone)]
 pub struct SyncConfig {
@@ -55,7 +54,7 @@ pub struct SyncConfig {
 
 impl Default for SyncConfig {
     fn default() -> Self {
-        Self { resume: ResumeDrain::default(), live_linger: LIVE_LINGER, upload: UploadConfig::default(), send_backoff: SEND_BACKOFF.randomized() }
+        Self { resume: ResumeDrain::default(), live_linger: LIVE_LINGER, upload: UploadConfig::default(), send_backoff: RetryPolicy::Outbox.backoff().randomized() }
     }
 }
 
@@ -93,7 +92,7 @@ pub(crate) struct Inner {
     pub states: Mutex<state::States>,
     pub outbox_gate: tokio::sync::Mutex<()>,
     pub uploads: Mutex<upload::UploadRuns>,
-    pub connectivity: Connectivity,
+    pub connectivity: Arc<Connectivity>,
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
     pub replaced: Mutex<HashMap<String, String>>,
     pub outcomes: Mutex<send::Outcomes>,
@@ -150,7 +149,7 @@ impl Sync {
             states: Mutex::new(HashMap::new()),
             outbox_gate: tokio::sync::Mutex::new(()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
-            connectivity: Connectivity::new(),
+            connectivity: Connectivity::new(true),
             wake: Mutex::new(None),
             replaced: Mutex::new(HashMap::new()),
             outcomes: Mutex::new(send::Outcomes::default()),

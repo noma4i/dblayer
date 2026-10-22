@@ -100,7 +100,7 @@ async fn dropping_foreign_calls_cancels_the_inflight_http_future() {
         let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(config.clone()), Some(Arc::new(Held(Arc::new(MemoryCredentials::default())))), Some(http.clone())).await.unwrap();
         let mut call = Box::pin(async {
             if bootstrap {
-                super::fetch_server_config(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http.clone(), None).await.map(|_| ())
+                super::fetch_server_config(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http.clone(), None, crate::transport::Connectivity::new(true)).await.map(|_| ())
             } else { db.session_call("social".into(), "{}".into()).await.map(|_| ()) }
         });
         tokio::time::timeout(std::time::Duration::from_secs(2), async {

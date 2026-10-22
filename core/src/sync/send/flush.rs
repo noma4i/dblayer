@@ -99,20 +99,28 @@ fn row_of(entry: &OutboxOperation) -> Option<RowRef> {
     Some(RowRef::new(ModelKey::new(&model), entry.operation.row_ids.first()?.clone()))
 }
 
-fn delivery_of(result: Result<Response, TransportError>) -> Delivery {
+fn delivery_of(result: Result<Response, TransportError>, replayable: bool) -> Delivery {
+    let retryable = result.as_ref().err().is_some_and(|error| RetryClass::of_error(error) != RetryClass::Fatal);
     match result {
         Ok(response) if response.shape().outcome() == ResponseOutcome::Commit => Delivery::Response(response),
         Ok(response) => {
             let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
             let auth = codes.iter().filter_map(|code| crate::transport::SessionCode::from_wire(code)).find(|code| code.keeps_queue());
-            let kind = auth.map(FailureKind::Session).unwrap_or_else(|| if RetryClass::classify(false, None, &codes) == RetryClass::Retriable { FailureKind::Server } else { FailureKind::Rejected });
+            if auth.is_none() && RetryClass::classify(false, None, &codes) == RetryClass::Retriable {
+                return Delivery::Unreached(OperationFailure { kind: FailureKind::Server, message: message_of(&response), extensions: response.extensions() });
+            }
+            let kind = auth.map_or(FailureKind::Rejected, FailureKind::Session);
             Delivery::Rejected(OperationFailure { kind, message: message_of(&response), extensions: response.extensions() }, false)
         }
         Err(error @ TransportError::Network(_)) => Delivery::Unreached(OperationFailure::new(FailureKind::Network, error.to_string())),
         Err(error @ TransportError::Interrupted(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, error.to_string())),
+        Err(error @ TransportError::Http { status, .. }) if status == 408 || status == 429 || replayable && (500..600).contains(&status) => Delivery::Unreached(OperationFailure::new(FailureKind::Server, error.to_string())),
         Err(error @ TransportError::Http { status, .. }) if status >= 500 => Delivery::Unknown(OperationFailure::new(FailureKind::Server, error.to_string())),
         Err(error) if crate::transport::encrypted::permanently_refused(&error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string()), true),
         Err(TransportError::Session { code, detail }) => Delivery::Rejected(OperationFailure::new(FailureKind::Session(code), detail), false),
+        Err(TransportError::Graphql { messages, extensions }) if retryable => {
+            Delivery::Unreached(OperationFailure { kind: FailureKind::Server, message: messages.join("\n"), extensions })
+        }
         Err(TransportError::Graphql { messages, extensions }) => {
             let auth = extensions.as_ref().and_then(|fields| fields.code.as_deref()).and_then(crate::transport::SessionCode::from_wire).filter(|code| code.keeps_queue());
             Delivery::Rejected(OperationFailure { kind: auth.map_or(FailureKind::Rejected, FailureKind::Session), message: messages.join("\n"), extensions }, false)
@@ -348,7 +356,7 @@ impl Inner {
             Delivery::Unreached(failure) if self.send_backoff(sending.entry.operation.id.0).allows(sending.entry.operation.attempts + 1) => {
                 self.postpone(sending, failure)?
             }
-            Delivery::Unreached(failure) => self.refuse(sending, failure, keep).await?,
+            Delivery::Unreached(failure) => self.refuse(sending, failure, true).await?,
             Delivery::Unknown(failure) => self.fail(sending, OperationStatus::DeliveryUnknown, failure, SendResult::DeliveryUnknown)?,
         };
         if result == SendResult::Discarded {
@@ -435,12 +443,18 @@ impl Inner {
 
     async fn deliver(&self, request: GraphQLRequest) -> Delivery {
         locked(&self.counters).record_transport_call();
-        delivery_of(self.transport.mutate(request).await)
+        let owner = request.owner.clone();
+        let result = self.transport.mutate(request).await;
+        let replayable = owner.is_some_and(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage));
+        delivery_of(result, replayable)
     }
 
     async fn deliver_or_resume(&self, request: GraphQLRequest, resumed: Option<Result<Response, TransportError>>) -> Delivery {
         match resumed {
-            Some(result) => delivery_of(result),
+            Some(result) => {
+                let replayable = request.owner.is_some_and(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage));
+                delivery_of(result, replayable)
+            }
             None => self.deliver(request).await,
         }
     }

@@ -199,7 +199,7 @@ The file is read in ranges: a single upload in one range up to the 10 MB thresho
 | part size | 5 MB |
 | parallel parts | 3 (1 means sequential) |
 | files at a time | 1, the others wait as `queued` |
-| retry backoff | 1 s doubling to 15 s with jitter, independent seeds per client, 50 attempts per step |
+| retry backoff | [Upload retry policy](server-sync.md#retries), with a saved budget for each step and part |
 | PUT timeout / GraphQL step timeout | 120 s / 45 s |
 | presigned url lifetime | 50 minutes |
 
@@ -230,7 +230,8 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 - An explicit `retry()` after failure clears saved retry counts and times, giving unfinished steps a fresh budget.
 - A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
 - A `403` renews the single-upload url or affected part url after backoff. The renewal uses that PUT step's retry budget. Urls older than the presign lifetime are requested again for unfinished parts.
-- The content mutation follows the same rules as other mutations ([writing data](writing-data.md)). Offline it waits for `setOnline(true)`. If it could not reach the server, the upload stays pending and the mutation is sent again with a growing pause, up to 40 attempts, without a new transfer. If the transfer started and no answer is observed, the upload becomes `deliveryUnknown` and is never sent again by itself. A rejected mutation, or 40 unreached attempts, becomes `failed`.
+- The final content mutation uses the [outbox retry policy](server-sync.md#retries), including its saved budget and encrypted request identity.
+- Retrying the content mutation preserves confirmed file transfers.
 - The grant, including `signedId`, `blobId`, URL and headers, is stored before PUT. A separate flag records confirmed transfer.
 - A restarted unfinished PUT uses its saved grant. `retry()` after a failed or unknown content mutation skips confirmed transfers.
 - A failed multipart upload calls `abort` and clears its parts. After a restart a stored multipart continues from its finished parts, and an upload that failed with an unfinished `abort` is aborted again.

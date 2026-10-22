@@ -102,13 +102,21 @@ async fn the_pause_ends_by_itself_without_another_flush() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn forty_unreached_attempts_roll_an_update_back() {
+async fn forty_unreached_attempts_keep_the_edit_failed_and_own_pending() {
     let rig = rig();
     queue_update(&rig, "new");
+    let seq = rig.db.outbox().unwrap()[0].operation.id.0;
+    rig.db.shared.store.lock().connection.execute(
+        "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage) VALUES (1, 'digest', 'request', 'key', 1, '/graphql', '{}', ?1, -1, 'mutation')",
+        [seq],
+    ).unwrap();
     exhaust(&rig, "UpdateMoment").await;
     assert_eq!(rig.transport.call_count("UpdateMoment"), 40);
-    assert!(rig.db.outbox().unwrap().is_empty());
-    assert_eq!(text_of(&rig, "moments", "m1"), Some("old".to_string()));
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("new".to_string()));
+    let failed = info(&rig, "m1");
+    assert_eq!((failed.state, failed.attempts), (SyncState::Failed, 40));
+    assert_eq!(rig.db.outbox().unwrap()[0].operation.id.0, seq);
+    assert!(crate::transport::encrypted::pending_matches(&rig.db, seq, -1, "mutation"));
 }
 
 #[tokio::test(start_paused = true)]

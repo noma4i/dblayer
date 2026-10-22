@@ -102,9 +102,13 @@ final class BootstrapListener: @unchecked Sendable {
   private let lock = NSLock()
   private var received: [String] = []
   var requests: [String] { lock.withLock { received } }
+  private var stopped = false
+  var disconnected: Bool { lock.withLock { stopped } }
+  private let holdBody: Bool
   private let responseStatus: String?
-  init(responseStatus: String? = nil) throws {
+  init(responseStatus: String? = nil, holdBody: Bool = false) throws {
     self.responseStatus = responseStatus
+    self.holdBody = holdBody
     listener = try NWListener(using: .tcp, on: .any)
   }
   func start() async throws -> URL {
@@ -126,6 +130,15 @@ final class BootstrapListener: @unchecked Sendable {
         let length = header.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }.flatMap { Int($0.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
         if text[end.upperBound...].utf8.count < length { receive(connection, data); return }
         lock.withLock { received.append(text) }
+        if holdBody {
+          connection.send(content: Data("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n".utf8), completion: .contentProcessed { _ in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, done, error in
+              self.lock.withLock { self.stopped = done || error != nil }
+              connection.cancel()
+            }
+          })
+          return
+        }
         let status = responseStatus ?? (requests.count == 1 ? "302 Found\r\nLocation: /redirect" : "200 OK")
         connection.send(content: Data("HTTP/1.1 \(status)\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbusy".utf8), completion: .contentProcessed { _ in connection.cancel() })
       } else if !done { receive(connection, data) }
@@ -135,6 +148,20 @@ final class BootstrapListener: @unchecked Sendable {
 }
 
 struct BootstrapConfigTests {
+  @Test
+  func nativeHttpCancellationClosesTheConnectionDuringResponseBody() async throws {
+    let peer = try BootstrapPeer()
+    let server = try BootstrapListener(holdBody: true)
+    let origin = try await server.start()
+    var config = peer.encrypted
+    config.origin = origin.absoluteString
+    let task = Task { try await DB.serverConfig(encrypted: config, platform: .ios, version: "1.2", http: UrlSessionEncryptedHttp(origin: origin)) }
+    await eventually("native HTTP received") { server.requests.count == 1 }
+    task.cancel()
+    await eventually("native HTTP disconnected", timeout: .seconds(2)) { server.disconnected }
+    if case .success = await task.result { Issue.record("cancelled bootstrap succeeded") }
+  }
+
   @Test
   func taskCancellationReachesTheCoreAndCancelsForeignHttp() async throws {
     let peer = try BootstrapPeer()

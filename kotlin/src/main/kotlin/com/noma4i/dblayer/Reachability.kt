@@ -5,28 +5,41 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 
-class Reachability(context: Context) {
-    private val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    private var callback: ConnectivityManager.NetworkCallback? = null
+internal object Reachability {
+    private val connectivity = Connectivity(false)
+    private var manager: ConnectivityManager? = null
+    private var sink: OnlineSink? = null
+    private var online = false
 
-    fun start(sink: OnlineSink) {
-        sink.setOnline(isOnline())
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = sink.setOnline(true)
-            override fun onLost(network: Network) = sink.setOnline(isOnline())
+    @Synchronized
+    fun start(context: Context): Connectivity {
+        if (manager != null) return connectivity
+        val manager = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        this.manager = manager
+        manager.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = changed(isOnline(manager))
+            override fun onLost(network: Network) = changed(isOnline(manager))
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) =
-                sink.setOnline(capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
-        }
-        this.callback = callback
-        manager.registerDefaultNetworkCallback(callback)
+                changed(capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+        })
+        changed(isOnline(manager))
+        return connectivity
     }
 
-    fun stop() {
-        callback?.let { manager.unregisterNetworkCallback(it) }
-        callback = null
+    @Synchronized
+    fun connect(sink: OnlineSink) {
+        this.sink = sink
+        sink.setOnline(online)
     }
 
-    private fun isOnline(): Boolean {
+    @Synchronized
+    private fun changed(online: Boolean) {
+        this.online = online
+        connectivity.setOnline(online)
+        sink?.setOnline(online)
+    }
+
+    private fun isOnline(manager: ConnectivityManager): Boolean {
         val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }

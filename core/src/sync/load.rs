@@ -9,7 +9,7 @@ use crate::pacing::{selected_policy, FetchVerdict};
 use crate::read::{LoadMoreVerdict, PageChain};
 use crate::schema::{Coverage, FieldSpec, PageDirection, RemoteShape, RemoteSpec};
 use crate::store::window_key;
-use crate::transport::{FetchAttempt, FetchReport, GraphQLRequest, Response, ResponseOutcome, RetryClass, RETRY_BACKOFF};
+use crate::transport::{FetchAttempt, FetchReport, GraphQLRequest, Response, ResponseOutcome};
 use crate::transport::retry::INVALID_CURSOR;
 use crate::value::{normalize_relation_params, relation_scope_key, ScalarKind};
 
@@ -192,6 +192,7 @@ impl Inner {
     }
 
     pub(crate) async fn fetch(&self, resolved: &Resolved, cursor: Option<String>, force: bool) -> FlightResult {
+        if !self.connectivity.is_online() { return Err(SyncError::Offline); }
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
             None => resolved.window_key.clone(),
@@ -283,6 +284,7 @@ impl Inner {
     }
 
     fn failed(error: SyncError, force: bool, has_window: bool) -> FlightResult {
+        if error == SyncError::Offline { return Err(error); }
         match FetchReport::of(force, has_window, Some(&error.to_string())) {
             FetchReport::KeptStale => Ok(LoadOutcome::of(LoadStatus::KeptStale)),
             _ => Err(error),
@@ -294,34 +296,17 @@ impl Inner {
     }
 
     async fn query_with_cursor_error(&self, request: GraphQLRequest, return_invalid_cursor: bool) -> Result<(Response, u32), SyncError> {
-        let mut attempt = 0;
-        let backoff = RETRY_BACKOFF.randomized();
-        loop {
-            if !self.connectivity.is_online() {
-                return Err(SyncError::Offline);
-            }
-            locked(&self.counters).record_transport_call();
-            let (class, error) = match self.transport.query(request.clone()).await {
-                Ok(response) if response.shape().outcome() == ResponseOutcome::Commit => return Ok((response, attempt + 1)),
-                Ok(response) => {
-                    let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
-                    if return_invalid_cursor && codes.contains(&INVALID_CURSOR) {
-                        return Ok((response, attempt + 1));
-                    }
-                    let mut messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
-                    if messages.is_empty() {
-                        messages.push("empty response".to_string());
-                    }
-                    (RetryClass::classify(false, None, &codes), SyncError::Graphql { messages, extensions: response.extensions() })
-                }
-                Err(error) => (RetryClass::of_error(&error), SyncError::Transport(error)),
-            };
-            if !class.allows_retry(attempt) {
-                return Err(error);
-            }
-            tokio::time::sleep(backoff.delay(attempt)).await;
-            attempt += 1;
+        let (response, attempts) = tokio::select! {
+            biased;
+            () = self.connectivity.offline() => return Err(SyncError::Offline),
+            result = crate::transport::retry::query(self.transport.as_ref(), request, self.clock.as_ref(), &self.connectivity, || locked(&self.counters).record_transport_call()) => result.map_err(SyncError::Transport)?,
+        };
+        if response.shape().outcome() == ResponseOutcome::Commit || return_invalid_cursor && response.errors.iter().any(|error| error.code() == Some(INVALID_CURSOR)) {
+            return Ok((response, attempts));
         }
+        let mut messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
+        if messages.is_empty() { messages.push("empty response".to_string()); }
+        Err(SyncError::Graphql { messages, extensions: response.extensions() })
     }
 
     pub(crate) async fn load_more(&self, resolved: &Resolved) -> FlightResult {

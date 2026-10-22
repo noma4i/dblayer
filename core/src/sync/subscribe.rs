@@ -4,17 +4,16 @@ use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 use tokio::task::AbortHandle;
-use tokio::time::Instant;
 
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, FileOp, OperationTransition, ScopeOp, WriteOrigin};
 use crate::db::{read_outbox, Prior};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
-use crate::pacing::{Backoff, Debounce};
+use crate::pacing::{Backoff, Debounce, RetryPolicy};
 use crate::store::PlanCommitError;
 use crate::syncstate::operation_keys;
 use crate::transport::{
     EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFault,
-    SubscriptionRetry, SubscriptionFailure, TransportError, RETRY_BACKOFF,
+    SubscriptionRetry, SubscriptionFailure, TransportError,
 };
 use crate::value::read_id;
 
@@ -312,10 +311,10 @@ impl Feed {
     async fn pump(&self, connection: &mut Subscription, retry: &mut SubscriptionRetry) -> Option<SubscriptionFailureKind> {
         let debounce = self.def.event.debounce_interval.map(|interval| Debounce::new(interval, |item: &Pending| item.bucket.clone()));
         let mut pending: Vec<Pending> = Vec::new();
-        let mut deadline: Option<Instant> = None;
+        let mut deadline: Option<Duration> = None;
         let mut ready = false;
         loop {
-            let wake = deadline.unwrap_or_else(Instant::now);
+            let wait = deadline.unwrap_or_default().saturating_sub(self.inner.clock.now());
             tokio::select! {
                 event = connection.next() => match event {
                     None => {
@@ -339,7 +338,7 @@ impl Feed {
                         match &debounce {
                             Some(debounce) => {
                                 pending = debounce.coalesce(std::mem::take(&mut pending), item);
-                                deadline.get_or_insert_with(|| Instant::now() + debounce.interval);
+                                deadline.get_or_insert_with(|| self.inner.clock.now() + debounce.interval);
                             }
                             None => self.apply(vec![item], &self.def.model, self.def.effect).await,
                         }
@@ -350,7 +349,7 @@ impl Feed {
                         return Some(failure.kind);
                     }
                 },
-                _ = tokio::time::sleep_until(wake), if deadline.is_some() => {
+                _ = self.inner.clock.sleep(wait), if deadline.is_some() => {
                     self.apply(std::mem::take(&mut pending), &self.def.model, self.def.effect).await;
                     deadline = None;
                 }
@@ -399,7 +398,7 @@ impl Feed {
                     if fault == SubscriptionFault::Transient && !self.inner.connectivity.is_online() { continue; }
                     self.notify_failure(&failure);
                     let Some(delay) = self.register_failure(&mut retry, fault) else { return };
-                    tokio::time::sleep(delay).await;
+                    self.inner.connectivity.wait(self.inner.clock.as_ref(), delay).await;
                     continue;
                 }
             };
@@ -413,7 +412,7 @@ impl Feed {
                 continue;
             }
             let Some(delay) = self.register_failure(&mut retry, fault) else { return };
-            tokio::time::sleep(delay).await;
+            self.inner.connectivity.wait(self.inner.clock.as_ref(), delay).await;
         }
     }
 }
@@ -451,7 +450,7 @@ impl Inner {
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
         let definition = def.clone();
         let def_root = def.root.clone();
-        let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone(), backoff: RETRY_BACKOFF.randomized() };
+        let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone(), backoff: RetryPolicy::Subscription.backoff().randomized() };
         let task = tokio::spawn(self.until_closed(feed.run(request, first)));
         Ok(EventSubscription { abort: task.abort_handle(), status, definition })
     }

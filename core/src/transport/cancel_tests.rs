@@ -16,15 +16,15 @@ async fn cancelled_resolves_after_cancel_and_for_late_waiters() {
 
 #[tokio::test(start_paused = true)]
 async fn offline_blocks_until_online() {
-    let link = Connectivity::new();
+    let link = Connectivity::new(true);
     assert!(link.is_online());
-    link.set(false);
+    link.set_online(false);
     let waiting = tokio::spawn({
         let link = link.clone();
         async move { link.online().await }
     });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     assert!(!waiting.is_finished());
-    link.set(true);
+    link.set_online(true);
     waiting.await.unwrap();
 }

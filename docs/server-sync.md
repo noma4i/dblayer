@@ -2,9 +2,7 @@
 
 DBlayer talks to a GraphQL endpoint. You describe operations and models once. Requests, pagination, retries, refetching and subscriptions are handled for you.
 
-Queries and subscription reconnects double retry delays from 1 second to a 30-second ceiling, with 20% jitter and independent random seeds.
-Default send retries also receive independent seeds. An explicitly configured send backoff keeps its seed and assigned delays.
-Subscriptions wait offline before every attempt, including the first. Dropping the subscription cancels waiting and pending work.
+See [Retries](#retries) for request ownership, delays, budgets and cancellation.
 `Ready` alone does not reset failure history or clear degraded status. The first `Next` after `Ready` confirms recovery.
 HTTP subscription errors follow query retry classification: 5xx errors retry, while terminal errors including 401 and 403 stop.
 
@@ -166,14 +164,14 @@ Recovery depends on the response and whether it confirms the sequence:
 | confirmed the sequence (`accountUnavailable`, `rateLimited`, every sign-in code) | spent, nothing is pending | fix the cause, then `retry`. The core sends the mutation as a new request |
 | did not confirm it, and the code is `unauthenticated`, `sessionEnded` or `sequenceConflict` | pending, and it blocks every other mutation, sign-in too | `sessionReset()`, sign in again, then `retry` |
 | HTTP 400, 404, 405, 413, 415, or 422 without a sealed answer | removed without advancing the sequence, the owner becomes `Failed` with a typed rejection | `sessionResume()` returns `nil` / `null`. Fix the cause before sending again |
-| lost connection, timeout, HTTP 408, 429 or 5xx | pending | the current call automatically repeats the identical request |
+| lost connection, timeout, HTTP 408, 429 or 5xx | pending | the durable owner repeats the saved request under the [retry policy](#retries) |
 | any other HTTP error status | pending | fix the cause, then call `sessionResume()` or `retry` |
 | stored request whose path is now declared sessionless | removed without sending or advancing the sequence | `sessionResume()` returns `nil` / `null` |
 
 The permanent statuses apply to the first send and every repeat through the same settlement code.
 The first send still throws its HTTP error. A second resume sends nothing after removal.
 The server refuses these requests before consuming their sequence, so the next request reuses that sequence.
-HTTP 408, 429 and 5xx retry automatically with pending preserved.
+The [retry owner](#retries) preserves Pending across temporary failures.
 HTTP 401, 403, 407, 418, 425 and other unlisted statuses return immediately with pending preserved.
 Bare HTTP 401 and 403 remain HTTP errors and are not converted to `SessionCode`.
 Opening the database does not call `sessionResume()`. The application calls it explicitly.
@@ -269,7 +267,7 @@ if config.updateRequired { showUpdate(config.storeUrl) }
 
 ```kotlin
 val encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel)
-val config = DBlayer.serverConfig(encrypted, AppPlatform.ANDROID, appVersion, appBuild)
+val config = DBlayer.serverConfig(context, encrypted, AppPlatform.ANDROID, appVersion, appBuild)
 if (config.updateRequired) showUpdate(config.storeUrl)
 ```
 
@@ -319,13 +317,32 @@ Unknown fields are accepted. Unsupported configVersion and wrong field types hav
 
 The classifiers preserve typed errors. Config failures do not clear credentials, reset sessions or enable entry from cached data.
 
-### Automatic encrypted HTTP retries
+## Retries
 
-Bootstrap, reads, sessionless calls, numbered mutations, logout and resume use the same retry classification.
-Network errors, timeouts, HTTP 408, 429 and 5xx retry without an attempt limit.
-The codes `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR` also retry.
+Each request has one retry owner. Core `RetryPolicy` defines the common delay calculation and the budgets below.
+
+| Request | Retry owner | Budget |
+| --- | --- | --- |
+| Encrypted read, bootstrap, standalone mutation, session call, logout | Encrypted HTTP | Unlimited until success, terminal refusal or cancellation |
+| Plain load | Query executor | 3 retries for network failures, 2 for temporary server failures |
+| Queued mutation, including encrypted and final upload mutations | Durable outbox | 40 undelivered attempts, then Failed with the edit and Pending owner preserved |
+| Upload transfer step or multipart part | Durable upload step | 50 retries per step or part |
+| Logical subscription and shared socket reconnect | Each connection independently | Unlimited while needed |
+
+Encrypted HTTP retries network errors, timeouts, HTTP 408, 429 and 5xx.
+The temporary GraphQL codes are `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR`.
+Queued mutations retain optimistic edits for these codes on both transports.
+An owned encrypted mutation returns each temporary failure to its durable owner without starting another HTTP retry loop.
+An unconfirmed encrypted HTTP failure retains Pending, allowing the owner to repeat the same request safely.
+Plain mutations without a confirmed answer retain `deliveryUnknown` for interrupted transfers, unreadable responses and HTTP 5xx.
 The delay ceilings are 1, 2, 4, 8, 16 and 30 seconds, then 30 seconds for subsequent attempts.
 Each request gets an independent random seed. Jitter subtracts up to 20% from each delay.
+Upload steps cap delays at 15 seconds with 50% jitter and preserve their attempt count and deadline across restarts.
+An explicit outbox backoff keeps its configured seed and delays.
+Clock drives retry waits, upload deadlines, subscription debounce and socket deadlines.
+Offline requests wait for online without making HTTP attempts or running retry timers.
+Loads return Offline immediately, including when connectivity disappears during an in-flight request or retry wait.
+Bootstrap receives Connectivity before a database exists and waits for online before its first HTTP attempt.
 No timer runs without a failed request awaiting another attempt.
 Applications await the original call and use its cancellation instead of adding their own startup retry loop.
 Retries cover HTTP exchange failures. Local Pending conflicts, credential storage failures and SQLite failures still return immediately without retrying.
@@ -337,7 +354,8 @@ Malformed or unauthenticated encrypted responses also return immediately.
 
 Bootstrap seals a new requestId and response key on every attempt.
 Numbered requests keep the same Pending requestId, response key, sequence, path, owner and body after an unconfirmed failure.
-Each attempt refreshes issuedAt and seals the request again. The mutation lock stays held across backoff and HTTP.
+Each attempt refreshes issuedAt after waiting for online and seals the request again.
+The mutation lock stays held across the current encrypted call.
 A confirmed temporary refusal atomically commits the confirmed sequence and stores the next Pending with a new requestId and response key.
 The next attempt uses that new sequence and the same operation body.
 Cancellation preserves Pending for `sessionResume()` and never advances an unconfirmed sequence.
@@ -350,7 +368,8 @@ UniFFI generates non-throwing `current`, `cableNext` and `cableClose` with `try!
 `Database.setRetryListener(listener:)` in Swift and `Database.setRetryListener(listener)` in Kotlin install the same optional `RetryListener`.
 Pass `nil` or `null` to remove it.
 `DB.serverConfig` and `DBlayer.serverConfig` also accept `retryListener`, because bootstrap runs before open.
-The callback `retrying(attempt, delayMs, reason)` runs after each temporary failure and before sleeping.
+For encrypted HTTP that owns retries, `retrying(attempt, delayMs, reason)` runs after each temporary failure and before sleeping.
+Durable outbox and upload owners expose their saved attempts through operation state.
 `attempt` starts at 1 for each call. `delayMs` is the actual jittered delay until the next attempt.
 `reason` is `network`, `HTTP <status>` or the temporary error code. It contains no request payload.
 The callback runs on a library thread. Dispatch UI changes to the application's UI thread.
@@ -401,10 +420,9 @@ The check applies to reads, `sessionCall`, logout and the repeated APQ request w
 On an APQ miss, the hash-only request already confirmed its sequence. A local refusal of the full document does not use the next sequence.
 A real HTTP 413 returns `Http` and removes Pending without spending its sequence.
 
-### Retry of upload steps
+### Upload failures
 
-File transfer steps retry by `pacing::Backoff` when the GraphQL error has `extensions.retryable: true`.
-Offline state waits for the network to return and uses no attempts.
+File transfer steps also retry when the GraphQL error has `extensions.retryable: true`.
 The rule applies to upload creation, multipart init, presign and complete.
 Abort keeps its earlier behavior: after a refusal the uploadId stays, and the next start repeats the cleanup.
 The final content mutation follows the [write rules](files.md#rules-1): a confirmed refusal keeps `Failed` without an automatic retry.
@@ -416,7 +434,7 @@ The final content mutation follows the [write rules](files.md#rules-1): a confir
 | `RATE_LIMITED` | retry with a pause | `Failed` |
 | `INVALID_RECEIPT` | retry with a pause if the step returned this code | `Failed`, transactionDisposition is kept |
 | `INVALID_OPERATION` | retry with a pause if the step returned this code | `Failed` |
-| `SERVICE_UNAVAILABLE` | retry with a pause | `Failed` |
+| `SERVICE_UNAVAILABLE` | retry with a pause | retry with a pause |
 - `sessionReset()` deletes the credential and the stored state without contacting the server.
 - A `logout` answer with `revoked` clears the credential and the state in one step, without confirming the sequence first. If your `CredentialStore.clear` fails, the pending logout stays and `sessionResume()` finishes it with the answer the server stored.
 - The core never clears the credential for a refusal code, an HTTP error, a key mismatch or a closed cable.
@@ -468,8 +486,7 @@ Moment.feed.refresh()            // pull to refresh, replaces in one commit
 
 - Fresh data is not requested again. `fresh_for` sets how long data counts as fresh.
 - Identical parallel loads become one request.
-- Network and server errors of a load are retried within a budget; fatal errors are returned. Mutations are never retried by themselves, see [sync state](sync-state.md).
-- The built-in transports tell the core whether the server answered. A GraphQL error reaches the core with its messages and a 401 or a 5xx answer as an HTTP error: a mutation is rejected (answers below 500) or delivery unknown (5xx) and is never sent again by itself, a load retries a 5xx. A request that never left the device (offline, host not found, connection refused) is a network error and is retried. A timeout or a lost connection after the request was sent is a network error for a load and delivery unknown for a mutation.
+- Loads and mutations use the [retry policy](#retries). Terminal refusals return immediately.
 - A response older than the data already stored never overwrites it.
 - A row that another response stored while this one was in flight keeps its stored data and still joins the list this response names.
 - `max_pages` limits how many pages one load takes.
@@ -571,7 +588,10 @@ println(code.url)
 - Required inputs remain required. Nullable fields use `GraphQLNullable`: omitted by default, explicit null, or a supplied value. Lists preserve every dimension and element nullability.
 - A required field with a schema default can be omitted. Nullable fields with defaults still distinguish omission from explicit null.
 - `args kind: :WidgetKind` and `result kind: :WidgetKind` name a schema enum. It becomes a typed enum with an `unknown` case, in inputs too (see [models](models.md#enums)). A custom scalar needs a `scalar` line (see [models](models.md#custom-scalars)). The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.
-- The call is sent at once. It is not queued, stored or retried, and it fails when the device is offline, when the transport fails or when the answer carries errors. The error text holds every message.
+- The call does not enter the outbox and returns Offline when started offline.
+- Encrypted calls follow the [retry policy](#retries). A numbered mutation stores Pending before HTTP, including for a standalone operation.
+- Cancelling a standalone encrypted mutation preserves Pending for `sessionResume()` and leaves its result unconfirmed.
+- Plain standalone calls return transport failures and GraphQL errors directly.
 - A failed call or load throws a typed error. `Http` carries the status and the body (401, 503), `Graphql` carries every message of an answer with errors in order, `Session` carries the session code of a refusal of the encrypted session (see [session errors in loads and mutations](#session-errors-in-loads-and-mutations)), `Network` and `Interrupted` tell whether the request left the device. Any other failure is a `Sync` error with its text.
 
 ```swift
@@ -715,7 +735,7 @@ end
 - An event that creates a row the library did not have makes the relations of that model stale, like a successful `create`, and refetches the ones someone is reading.
 - If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
 - The subscription starts when the first reader connects, is shared by all readers and closes some time after the last reader leaves (30 seconds by default).
-- After a dropped connection the library reconnects with a growing delay and refetches the relation, because events may have been missed. Offline (`setOnline(false)`) it does not reconnect and spends no attempts. `setOnline(true)` reconnects at once.
+- After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once.
 - Bursts of events are merged into one commit.
 
 ### Model-level subscriptions
@@ -798,11 +818,11 @@ val encrypted = EncryptedConfig(
     origin, bundledServerKey, bundledServerPin, endpoints,
     protocolLabel, cablePurpose, cableChannel
 )
-val config = DBlayer.serverConfig(encrypted, AppPlatform.ANDROID, appVersion)
+val config = DBlayer.serverConfig(context, encrypted, AppPlatform.ANDROID, appVersion)
 DBlayer.open(encrypted = encrypted, credentials = credentials, modelsJson = modelsJson)
 ```
 
-`DB.open`, `DBlayer.open`, and both `serverConfig` functions retain their argument lists.
+Kotlin `serverConfig` requires Context to start process reachability before opening the database.
 Their required encrypted configuration has changed. Applications must supply every protocol value before opening or fetching config.
 Direct `UrlSessionTransport`, `OkHttpTransport`, and `DatabaseTransport` construction requires `cablePath` to open encrypted sockets.
 Omitting it disables encrypted socket opening. HTTP-only construction remains available.

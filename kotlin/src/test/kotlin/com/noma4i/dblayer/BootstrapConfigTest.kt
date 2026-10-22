@@ -20,7 +20,43 @@ import kotlinx.coroutines.CancellationException
 import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class BootstrapConfigTest {
+    private val context get() = org.robolectric.RuntimeEnvironment.getApplication()
+
+    @org.junit.Before fun onlineNetwork() {
+        val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val capabilities = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+        org.robolectric.Shadows.shadowOf(capabilities).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        org.robolectric.Shadows.shadowOf(manager).setNetworkCapabilities(manager.activeNetwork, capabilities)
+        Reachability.start(context)
+    }
+    @Test
+    fun nativeHttpCancellationClosesTheCallDuringResponseBody() = bounded {
+        val reading = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val client = OkHttpClient.Builder().eventListener(object : EventListener() {
+            override fun responseBodyStart(call: Call) { reading.complete(Unit) }
+            override fun canceled(call: Call) { cancelled.complete(Unit) }
+        }).build()
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("pending").throttleBody(1, 60, java.util.concurrent.TimeUnit.SECONDS))
+        server.start()
+        val http = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), client)
+        val task = launch { runCatching { http.post("/probe", "x") } }
+        try {
+            kotlinx.coroutines.withTimeout(5000) { reading.await() }
+            task.cancel()
+            assertTrue("native call remained active after coroutine cancellation", kotlinx.coroutines.withTimeoutOrNull(2000) { cancelled.await(); true } == true)
+            task.join()
+        } finally {
+            client.dispatcher.cancelAll()
+            server.shutdown()
+            task.cancelAndJoin()
+        }
+    }
+
     @Test
     fun coroutineCancellationReachesTheCoreAndCancelsForeignHttp() = bounded {
         val started = CompletableDeferred<Unit>()
@@ -36,7 +72,7 @@ class BootstrapConfigTest {
                 }
             }
         }
-        val call = launch { DBlayer.serverConfig(encrypted(), AppPlatform.ANDROID, "1.2", http = http) }
+        val call = launch { DBlayer.serverConfig(context, encrypted(), AppPlatform.ANDROID, "1.2", http = http) }
         started.await()
         call.cancelAndJoin()
         assertTrue(stopped.await() is CancellationException)
@@ -55,7 +91,7 @@ class BootstrapConfigTest {
         val listener = object : RetryListener {
             override fun retrying(attempt: ULong, delayMs: ULong, reason: String) { event.complete(Triple(attempt, delayMs, reason)) }
         }
-        val call = launch { DBlayer.serverConfig(encrypted(), AppPlatform.ANDROID, "1.2", http = http, retryListener = listener) }
+        val call = launch { DBlayer.serverConfig(context, encrypted(), AppPlatform.ANDROID, "1.2", http = http, retryListener = listener) }
         val (attempt, delay, reason) = event.await()
         assertEquals(1uL, attempt)
         assertTrue(delay in 800uL..1000uL)
@@ -132,7 +168,7 @@ class BootstrapConfigTest {
                 }
                 val config = encrypted().let { if (kind == "pin") it.copy(pin = "wrong") else it }
                 try {
-                    val value = DBlayer.serverConfig(config, platform, "3.8.0", "120", http)
+                    val value = DBlayer.serverConfig(context, config, platform, "3.8.0", "120", http)
                     assertEquals("ok", kind)
                     assertEquals(1u, value.configVersion)
                     assertEquals("3.7.2", value.minAppVersion)

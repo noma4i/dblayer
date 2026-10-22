@@ -2,20 +2,23 @@ use std::sync::Arc;
 
 use tokio::sync::watch;
 
-#[derive(Clone)]
+#[derive(uniffi::Object)]
 pub struct Connectivity {
-    sender: Arc<watch::Sender<bool>>,
+    sender: watch::Sender<bool>,
 }
 
+#[uniffi::export]
 impl Connectivity {
-    pub fn new() -> Self {
-        Self { sender: Arc::new(watch::channel(true).0) }
+    #[uniffi::constructor]
+    pub fn new(online: bool) -> Arc<Self> {
+        Arc::new(Self { sender: watch::channel(online).0 })
     }
 
-    pub fn set(&self, online: bool) {
+    pub fn set_online(&self, online: bool) {
         self.sender.send_replace(online);
     }
-
+}
+impl Connectivity {
     pub fn is_online(&self) -> bool {
         *self.sender.borrow()
     }
@@ -29,10 +32,15 @@ impl Connectivity {
         let mut receiver = self.sender.subscribe();
         let _ = receiver.wait_for(|online| *online).await;
     }
-}
 
-impl Default for Connectivity {
-    fn default() -> Self {
-        Self::new()
+    pub(crate) async fn wait(&self, clock: &dyn crate::pacing::Clock, delay: std::time::Duration) {
+        let deadline = clock.now().saturating_add(delay);
+        loop {
+            self.online().await;
+            tokio::select! {
+                () = clock.sleep(deadline.saturating_sub(clock.now())) => return,
+                () = self.offline() => {}
+            }
+        }
     }
 }

@@ -123,7 +123,7 @@ if config.updateRequired { showUpdate(config.storeUrl) }
 ```
 
 ```kotlin
-val config = DBlayer.serverConfig(encrypted, AppPlatform.ANDROID, appVersion)
+val config = DBlayer.serverConfig(context, encrypted, AppPlatform.ANDROID, appVersion)
 if (config.updateRequired) showUpdate(config.storeUrl)
 ```
 

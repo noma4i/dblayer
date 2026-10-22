@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use super::*;
 use super::fake_server_tests::{decrypt_request, seal_response, FakeServer, MemoryCredentials};
-use crate::{db::Db, pacing::ManualClock};
+use crate::{db::Db, pacing::TestClock};
 
 struct Fault {
     error: Mutex<Option<Result<HttpReply, TransportError>>>,
@@ -37,13 +37,70 @@ impl HttpExchange for Fault {
 }
 
 fn rig(error: Option<Result<HttpReply, TransportError>>, code: Option<(&'static str, bool)>) -> (EncryptedClient, Arc<Fault>, Db) {
-    let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
+    rig_at(error, code, Arc::new(TestClock::new(Duration::from_secs(1_800_000_000))))
+}
+
+fn rig_at(error: Option<Result<HttpReply, TransportError>>, code: Option<(&'static str, bool)>, clock: Arc<dyn crate::pacing::Clock>) -> (EncryptedClient, Arc<Fault>, Db) {
     let http = Arc::new(Fault { error: Mutex::new(error), code, seen: Mutex::new(Vec::new()), server: FakeServer::new(clock.clone()) });
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     let mut config = EncryptedConfig { origin: super::vectors_tests::origin().into(), server_key: super::vectors_tests::public_key_der_b64().into(), pin: super::vectors_tests::pin().into(), ..super::protocol_tests::config() };
     config.endpoints.session_operations.insert("ticket".into(), EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true });
     let client = EncryptedClient::new(&config, http.clone(), Arc::new(MemoryCredentials::default()), db.clone(), clock).unwrap();
     (client, http, db)
+}
+
+#[tokio::test]
+async fn audit_offline_encrypted_http_makes_zero_attempts() {
+    use std::{future::Future, task::{Context, Waker}};
+    use crate::transport::{Transport, MockTransport};
+    for failed_first in [false, true] {
+        let clock = Arc::new(crate::pacing::ManualClock::new(Duration::from_secs(1_800_000_000)));
+        let error = failed_first.then(|| Err(TransportError::Network("unavailable".into())));
+        let (client, http, db) = rig_at(error, None, clock.clone());
+        let client = Arc::new(client);
+        let transport = EncryptedTransport::new(client.clone(), Arc::new(MockTransport::new()));
+        let mut call = Box::pin(client.session_call("social", json!({})));
+        if failed_first { assert!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending()); }
+        transport.set_online(false);
+        for _ in 0..3 {
+            assert!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+            clock.advance(Duration::from_secs(60));
+            assert_eq!(http.seen.lock().unwrap().len(), usize::from(failed_first), "offline must not send HTTP");
+        }
+        assert!(super::state::pending(&db.shared.store.lock().connection).unwrap().is_some());
+        transport.set_online(true);
+        assert!(call.await.is_ok());
+        let seen = http.seen.lock().unwrap();
+        assert_eq!(seen.len(), usize::from(failed_first) + 1);
+        if failed_first {
+            for field in ["requestId", "responseKey", "sequence", "body"] { assert_eq!(seen[0][field], seen[1][field]); }
+            assert_ne!(seen[0]["issuedAt"], seen[1]["issuedAt"]);
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn audit_durable_upload_owns_the_failed_http_attempt() {
+    use std::{future::Future, task::{Context, Poll, Waker}};
+    let failures = [(Some(Err(TransportError::Network("unavailable".into()))), None), (Some(Err(TransportError::Http { status: 503, body: String::new() })), None)]
+        .into_iter().chain([false, true].map(|confirmed| (None, Some(("TIMEOUT", confirmed)))));
+    for (error, code) in failures {
+    let (client, http, db) = rig(error, code);
+    http.server.clone().with_sequence(&client.credential().unwrap(), 0);
+    let owner = crate::transport::RequestOwner { seq: 1, item_position: 0, stage: "create".into() };
+    let mut call = Box::pin(client.mutate_owned("/api/graphql", json!({}), Some(owner)));
+    assert!(matches!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(_))), "durable owner must receive the failure before another HTTP attempt");
+    drop(call);
+    assert_eq!(http.seen.lock().unwrap().len(), 1);
+    assert!(super::state::pending(&db.shared.store.lock().connection).unwrap().is_some());
+    client.resume().await.unwrap().unwrap();
+    let seen = http.seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    let confirmed = code.is_some_and(|(_, confirmed)| confirmed);
+    for field in ["requestId", "responseKey", "sequence"] { assert_eq!(seen[0][field] == seen[1][field], !confirmed, "{field}"); }
+    assert_eq!(seen[0]["body"], seen[1]["body"]);
+    assert!(super::state::pending(&db.shared.store.lock().connection).unwrap().is_none());
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -122,7 +179,7 @@ async fn local_credential_and_sqlite_failures_return_before_http_without_retryin
     for case in ["credential read", "credential write", "sqlite"] {
         let (client, http, db) = rig(None, None);
         let credentials: Arc<dyn CredentialSlot> = if case == "sqlite" { Arc::new(MemoryCredentials::default()) } else { Arc::new(BrokenCredentials(case == "credential read")) };
-        let client = EncryptedClient::new(&client.config, http.clone(), credentials, db.clone(), Arc::new(ManualClock::default())).unwrap();
+        let client = EncryptedClient::new(&client.config, http.clone(), credentials, db.clone(), Arc::new(TestClock::default())).unwrap();
         if case == "sqlite" { db.shared.store.lock().connection.execute_batch("DROP TABLE encrypted_pending").unwrap(); }
         let mut call = Box::pin(client.session_call("social", json!({})));
         assert!(matches!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(TransportError::Network(_)))), "{case}");

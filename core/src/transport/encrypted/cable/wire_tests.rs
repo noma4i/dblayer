@@ -54,7 +54,7 @@ async fn server_pongs_keep_pending_receive_alive_for_120_seconds() {
     }
     let connect = Arc::new(Connect(lifecycle.clone(), AtomicUsize::new(0)));
     let (kat, config, challenge, credential) = super::link_tests::inputs();
-    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
+    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
     let _subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key: [0;32], sequence: 0 };
     peer.handshake(&kat, &config, challenge).await;
@@ -172,7 +172,7 @@ async fn authenticated_error_retryability_controls_feed_until_resume() {
         model.relations.push(relation);
         let db = crate::db::Db::open_in_memory(vec![model], None).unwrap();
         let http = Arc::new(Http { key: RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads: AtomicUsize::new(0) });
-        let clock = Arc::new(crate::pacing::ManualClock::default());
+        let clock = Arc::new(crate::pacing::TestClock::default());
         let client = Arc::new(crate::transport::EncryptedClient::new(&config, http.clone(), Arc::new(super::super::fake_server_tests::MemoryCredentials::default()), db.clone(), clock.clone()).unwrap());
         let transport = Arc::new(crate::transport::EncryptedTransport::new(client, connect.clone()));
         let sync = crate::sync::Sync::new(db, transport, clock, Default::default());
@@ -238,7 +238,7 @@ async fn stopping_subscriptions_drops_pending_open() {
         let (stopped, mut stops) = mpsc::unbounded_channel();
         let connect = Arc::new(PendingOpen { started, stopped });
         let (_, config, _, _) = super::link_tests::inputs();
-        let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect, Connectivity::new());
+        let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect, Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
         let subscription = cable.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({}))).await.unwrap();
         starts.recv().await.unwrap();
         match action {
@@ -264,7 +264,7 @@ async fn terminal_open_refusals_are_not_retried() {
     for status in [403, 401] {
         let connect = Arc::new(Refused(status, AtomicUsize::new(0)));
         let (_, config, _, _) = super::link_tests::inputs();
-        let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect.clone(), Connectivity::new());
+        let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
         let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({}))).await.unwrap();
         cable.settled().await.unwrap();
         tokio::time::advance(std::time::Duration::from_secs(2)).await;
@@ -279,7 +279,7 @@ async fn terminal_open_refusals_are_not_retried() {
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
     let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
     let (_, config, _, _) = super::link_tests::inputs();
-    let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect.clone(), Connectivity::new());
+    let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
     incoming.send(SocketEvent::Text(json!({"type":"reject_subscription"}).to_string())).unwrap();
     let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
@@ -327,7 +327,7 @@ async fn credential_failure_never_opens_a_socket() {
         let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
         let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
         let (_, config, _, _) = super::link_tests::inputs();
-        let cable = CableSubscriptions::new(config, Arc::new(move || credential.clone()), connect.clone(), Connectivity::new());
+        let cable = CableSubscriptions::new(config, Arc::new(move || credential.clone()), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
         let _subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
         for _ in 0..120 {
             cable.settled().await.unwrap();
@@ -366,7 +366,7 @@ async fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retri
         let (kat, config, challenge, credential) = super::link_tests::inputs();
         let credentials = Arc::new(Credentials { value:std::sync::Mutex::new(Some(credential.clone())), writes:AtomicUsize::new(0) });
         let slot = credentials.clone();
-        let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(slot.get()?.unwrap())), connect.clone(), Connectivity::new());
+        let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(slot.get()?.unwrap())), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
         let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
         let mut peer = Peer { incoming, outgoing:sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
         peer.handshake(&kat, &config, challenge).await;
@@ -403,7 +403,7 @@ async fn authentication_refusal_before_ready_stops_without_reopening() {
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
     let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
     let (_, config, _, credential) = super::link_tests::inputs();
-    let cable = CableSubscriptions::new(config, Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
+    let cable = CableSubscriptions::new(config, Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
     let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
     incoming.send(SocketEvent::Closed { code:4401, reason:"UNAUTHENTICATED".into() }).unwrap();
     let event = tokio::time::timeout(std::time::Duration::from_secs(1), subscription.next()).await.expect("terminal refusal");
@@ -453,7 +453,7 @@ async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
     model.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.changes".into(), area: "area".into(), kind: "kind".into(), id: "entityId".into() });
     let db = crate::db::Db::open_in_memory(vec![model], None).unwrap();
     let http = Arc::new(Http { key:RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads:AtomicUsize::new(0) });
-    let clock = Arc::new(crate::pacing::ManualClock::default());
+    let clock = Arc::new(crate::pacing::TestClock::default());
     let client = Arc::new(crate::transport::EncryptedClient::new(&config, http.clone(), Arc::new(super::super::fake_server_tests::MemoryCredentials::default()), db.clone(), clock.clone()).unwrap());
     let transport = Arc::new(crate::transport::EncryptedTransport::new(client, connect));
     let sync = crate::sync::Sync::new(db.clone(), transport, clock, Default::default());
@@ -478,7 +478,7 @@ async fn no_socket_or_timer_work_without_subscribers() {
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
     let connect = Arc::new(FakeConnect { socket, opens: AtomicUsize::new(0) });
     let config = EncryptedConfig { origin: "https://example.test".into(), server_key: String::new(), pin: String::new(), ..crate::transport::encrypted::protocol_tests::config() };
-    let cable = CableSubscriptions::new(config, Arc::new(|| panic!("idle cable read credential")), connect.clone(), Connectivity::new());
+    let cable = CableSubscriptions::new(config, Arc::new(|| panic!("idle cable read credential")), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
     cable.settled().await.unwrap();
     tokio::time::advance(std::time::Duration::from_secs(100)).await;
     tokio::task::yield_now().await;
@@ -495,7 +495,7 @@ async fn closing_the_last_subscription_or_transport_releases_the_socket() {
         let socket = Arc::new(FakeSocket { incoming:tokio::sync::Mutex::new(receiver), outgoing, closes:AtomicUsize::new(0) });
         let connect = Arc::new(FakeConnect { socket:socket.clone(), opens:AtomicUsize::new(0) });
         let (kat, config, challenge, credential) = super::link_tests::inputs();
-        let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
+        let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
         let subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
         let mut peer = Peer { incoming, outgoing:sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
         let subscribe = if ready { peer.handshake(&kat, &config, challenge).await; Some(peer.next().await) } else { None };
@@ -524,7 +524,7 @@ async fn a_failed_write_closes_the_connection_before_backoff() {
     let socket = Arc::new(FakeSocket { incoming:tokio::sync::Mutex::new(receiver), outgoing, closes:AtomicUsize::new(0) });
     let connect = Arc::new(FakeConnect { socket:socket.clone(), opens:AtomicUsize::new(0) });
     let (kat, config, challenge, credential) = super::link_tests::inputs();
-    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new());
+    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
     let request = GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}));
     let _first = cable.subscribe(request.clone()).await.unwrap();
     let mut peer = Peer { incoming, outgoing:sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
@@ -544,7 +544,7 @@ async fn encrypted_subscription_sends_one_ping_then_closes_on_missing_pong() {
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
     let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
     let (kat, config, challenge, credential) = super::link_tests::inputs();
-    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect, Connectivity::new());
+    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect, Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
     let mut subscription = cable.subscribe(GraphQLRequest::new("subscription Changes { recordEvents { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key:[0;32], sequence:0 };
     peer.handshake(&kat, &config, challenge).await;

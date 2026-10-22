@@ -164,15 +164,24 @@ async fn server_error_status_is_not_retried_and_leaves_delivery_unknown() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn retriable_graphql_code_is_a_refusal_and_is_not_retried() {
+async fn audit_retriable_graphql_code_preserves_optimistic_edit() {
+  for code in ["TIMEOUT", "SERVICE_UNAVAILABLE", "INTERNAL_SERVER_ERROR", "DATABASE_ERROR"] {
+   for reply in [Reply::graphql_error("busy", code), Reply::fail(TransportError::refusal(code))] {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
-    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("busy", "INTERNAL_SERVER_ERROR"));
+    rig.transport.enqueue("UpdateMoment", reply);
+    rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
     let report = rig.sync.flush().await.unwrap();
-    assert_eq!(report.rejections(), ["busy"]);
+    assert!(report.rejections().is_empty(), "temporary refusal must retain the queued edit");
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
-    assert_eq!(text_of(&rig, "moments", "m1"), Some("old".to_string()));
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("new".to_string()));
+    rig.clock.advance(std::time::Duration::from_secs(2));
+    let retried = rig.sync.flush().await.unwrap();
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 2, "{retried:?}");
+    assert!(rig.db.outbox().unwrap().is_empty(), "{retried:?}");
+   }
+  }
 }
 
 #[tokio::test(start_paused = true)]
@@ -428,7 +437,7 @@ async fn follower_of_a_temp_row_moves_its_sync_state_to_the_real_id() {
 async fn kinds_follow_the_failure_class() {
     for (id, reply, state, kind) in [
         ("m1", Reply::fail(TransportError::Http { status: 502, body: "bad gateway".into() }), SyncState::DeliveryUnknown, FailureKind::Server),
-        ("m2", Reply::graphql_error("busy", "SERVICE_UNAVAILABLE"), SyncState::Failed, FailureKind::Server),
+        ("m2", Reply::graphql_error("busy", "SERVICE_UNAVAILABLE"), SyncState::Pending, FailureKind::Server),
         ("m3", Reply::fail(TransportError::Http { status: 400, body: "bad".into() }), SyncState::Failed, FailureKind::Rejected),
         ("m4", Reply::fail(TransportError::Decode("junk".into())), SyncState::DeliveryUnknown, FailureKind::Unrecognized),
         ("m5", Reply::fail(TransportError::Interrupted("reset".into())), SyncState::DeliveryUnknown, FailureKind::Network),

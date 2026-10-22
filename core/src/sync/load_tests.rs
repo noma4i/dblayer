@@ -132,6 +132,28 @@ async fn offline_load_makes_no_call_and_online_loads_again() {
     rig.sync.set_online(true);
     let outcome = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(outcome.status, LoadStatus::Loaded);
+    rig.sync.set_online(false);
+    assert_eq!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await, Err(SyncError::Offline));
+}
+
+#[tokio::test]
+async fn offline_interrupts_a_load_without_waiting_for_http() {
+    use std::{future::Future, task::{Context, Poll, Waker}};
+    for cached in [false, true] {
+    let rig = rig();
+    if cached {
+        rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
+        rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+        rig.clock.advance(Duration::from_secs(301));
+    }
+    rig.transport.respond_with(|_| Some(feed_reply(&["m1"], false, "c1").after(Duration::from_secs(60))));
+    let params = none();
+    let mut load = Box::pin(rig.sync.load("moments", "feed", &params, LoadOptions::default()));
+    assert!(load.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+    rig.sync.set_online(false);
+    assert!(matches!(load.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(SyncError::Offline))));
+    assert_eq!(rig.transport.call_count("MomentsFeed"), 1 + usize::from(cached));
+    }
 }
 
 #[tokio::test(start_paused = true)]

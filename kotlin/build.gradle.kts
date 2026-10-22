@@ -23,7 +23,9 @@ android {
   }
 
   testOptions {
+    unitTests.isIncludeAndroidResources = true
     unitTests.all {
+      it.forkEvery = 1
       it.systemProperty("jna.library.path", file("../target/debug").absolutePath)
     }
   }
@@ -38,6 +40,7 @@ dependencies {
   implementation("net.java.dev.jna:jna:5.17.0@aar")
   testImplementation("net.java.dev.jna:jna:5.17.0")
   testImplementation("junit:junit:4.13.2")
+  testImplementation("org.robolectric:robolectric:4.17")
   testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }

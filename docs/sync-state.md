@@ -83,7 +83,7 @@ Use them for an "unsent" banner, a retry-all button or a badge with the number o
 
 The network decides what happens to a mutation that did not get an answer:
 
-- Unreachable before the transfer starts (no connection, connection refused, offline): the request never left, so sending it again is safe. The record stays `pending`, `sync.attempts` counts the tries, and the next try comes after a growing pause with random spread. After 40 tries the change fails like a refusal. To send every such record again, call `retryAll()` on the sync object:
+- Unreachable before the transfer starts (no connection, connection refused, offline): the request never left, so sending it again is safe. The record stays `pending`, `sync.attempts` counts the tries, and the next try comes after a growing pause with random spread. After 40 tries the change stays `failed` for retry or discard. To send every such record again, call `retryAll()` on the sync object:
 
 ```swift
 try await sync.retryAll()
@@ -95,21 +95,28 @@ sync.retryAll()
 
 Later changes to the same record wait behind it.
 - Offline (`setOnline(false)`): the change waits and spends no attempts. When `setOnline(true)` is called, waiting changes are sent by themselves.
-- The transfer started and no answer arrived (connection broke, 5xx status, unreadable answer), or the app stopped while sending: the server may already have applied the change, so it is never sent again by itself. Only you send it again, with `retry()`.
+- A plain transfer started without a confirmed answer, or the app stopped while sending: the record enters `deliveryUnknown` and waits for `retry()`.
+- Encrypted requests with saved Pending repeat temporary failures using the saved identity. See [Retries](server-sync.md#retries).
 
-The pause is computed from the clock and the stored attempt count, so an app restart continues the count. Loads (queries) are different: they are retried within a budget, see [server sync](server-sync.md).
+The pause uses Clock and the stored attempt count, so restarting preserves the count.
+See [Retries](server-sync.md#retries) for all budgets and the distinction between plain HTTP and encrypted Pending.
+Temporary GraphQL codes keep optimistic changes pending on both transports.
 
 | How the send ends | State | What happens to the record |
 | ----------------- | ----- | -------------------------- |
 | The server confirms | `synced` | the server row replaces the local one, a temporary id is swapped for the real one, references to it are rewritten |
-| The server refuses (GraphQL errors, a 4xx status) | `failed` with `on_failure: :keep`, otherwise gone | with `:rollback` the change is rolled back in one commit and the error is reported |
-| Unreachable before the transfer starts | `pending`, then `failed` or gone after 40 attempts | sent again by itself, the final outcome follows `on_failure` like a refusal |
+| The server permanently refuses | `failed` with `on_failure: :keep`, otherwise gone | with `:rollback` the change is rolled back in one commit and the error is reported |
+| A temporary GraphQL code, HTTP 408 or HTTP 429 | `pending` until the outbox budget is exhausted | the optimistic edit remains and sending resumes after a pause |
+| Unreachable before the transfer starts | `pending`, then `failed` after 40 attempts | retains the edit and encrypted Pending owner for retry or discard |
 | The action names a mutation that is not registered in `open(operations:)` | `failed` whatever `on_failure` says, error `operation <name> is not registered` | nothing is sent, the record keeps its change, register the operation and call `retry()` |
-| No answer after the transfer started (broken connection, 5xx status, unreadable answer) | `deliveryUnknown` | the record stays as it is, whatever `on_failure` says, because the change may have reached the server |
+| No answer after a plain transfer started, including HTTP 5xx | `deliveryUnknown` | the record keeps its edit because the server may have applied it |
+| Temporary encrypted HTTP failure with saved Pending | `pending` until the outbox budget is exhausted | the next attempt uses the saved request identity |
 
 ## What happens when the server refuses
 
 You choose per action, in the model file:
+
+`on_failure: :rollback` applies only to confirmed server refusals, while 40 undelivered attempts always retain `failed` and the edit.
 
 | Setting | Result |
 | ------- | ------ |

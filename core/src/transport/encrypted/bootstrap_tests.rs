@@ -13,6 +13,35 @@ fn kat() -> Value { serde_json::from_str(include_str!("../../../../fixtures/boot
 
 struct ConfiguredPath;
 
+#[tokio::test]
+async fn offline_bootstrap_waits_without_http_and_starts_online() {
+    use std::{future::Future, task::{Context, Poll, Waker}};
+    struct Calls(AtomicUsize);
+    #[async_trait::async_trait]
+    impl HttpExchange for Calls {
+        async fn post(&self, _: &str, _: String) -> Result<HttpReply, TransportError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(HttpReply { status: 400, body: String::new() })
+        }
+    }
+    let online = crate::transport::Connectivity::new(true);
+    online.set_online(false);
+    let clock = ManualClock::new(Duration::from_secs(1_800_000_000));
+    let calls = Arc::new(Calls(AtomicUsize::new(0)));
+    let config = configuration();
+    let events = crate::transport::retry::RetryEvents::default();
+    let mut call = Box::pin(super::bootstrap::fetch(&config, AppPlatform::Ios, "1.2", None, calls.clone(), &clock, &events, &online));
+    for _ in 0..3 {
+        let result = call.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+        assert_eq!(calls.0.load(Ordering::SeqCst), 0);
+        assert!(result.is_pending());
+        clock.advance(Duration::from_secs(120));
+    }
+    online.set_online(true);
+    assert!(matches!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(TransportError::Http { status: 400, .. }))));
+    assert_eq!(calls.0.load(Ordering::SeqCst), 1);
+}
+
 #[async_trait::async_trait]
 impl HttpExchange for ConfiguredPath {
     async fn post(&self, path: &str, _: String) -> Result<HttpReply, TransportError> {
@@ -135,7 +164,7 @@ impl HttpExchange for Reconnecting {
 async fn bootstrap_retries_with_a_new_request_id() {
   for fault in ["network", "408", "429", "500", "503", "599", "TIMEOUT", "SERVICE_UNAVAILABLE", "INTERNAL_SERVER_ERROR", "DATABASE_ERROR"] {
     let http = Arc::new(Reconnecting { calls: AtomicUsize::new(0), ids: std::sync::Mutex::new(Vec::new()), fault });
-    let result = fetch_with(&configuration(), AppPlatform::Ios, "1.2", None, http.clone(), &ManualClock::new(Duration::from_secs(1_800_000_000))).await;
+    let result = fetch_with(&configuration(), AppPlatform::Ios, "1.2", None, http.clone(), &crate::pacing::TestClock::new(Duration::from_secs(1_800_000_000))).await;
     assert!(result.is_ok(), "{result:?}");
     let ids = http.ids.lock().unwrap();
     assert_eq!(ids.len(), 2);

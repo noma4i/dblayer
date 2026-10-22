@@ -1,6 +1,23 @@
 use super::*;
 use std::time::Duration;
 
+#[tokio::test]
+async fn audit_manual_clock_wakes_sleep_without_tokio_time() {
+    use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, task::{Context, Wake, Waker}};
+    struct Awake(AtomicBool);
+    impl Wake for Awake {
+        fn wake(self: Arc<Self>) { self.0.store(true, Ordering::SeqCst); }
+    }
+    let awake = Arc::new(Awake(AtomicBool::new(false)));
+    let waker = Waker::from(awake.clone());
+    let clock = ManualClock::default();
+    let mut sleep = clock.sleep(Duration::from_secs(10));
+    assert!(sleep.as_mut().poll(&mut Context::from_waker(&waker)).is_pending());
+    clock.advance(Duration::from_secs(10));
+    assert!(awake.0.load(Ordering::SeqCst));
+    assert!(sleep.as_mut().poll(&mut Context::from_waker(&waker)).is_ready());
+}
+
 #[test]
 fn manual_clock_advances_and_sets() {
     let clock = ManualClock::new(Duration::from_secs(10));

@@ -1,5 +1,6 @@
 package com.noma4i.dblayer
 
+import android.content.Context
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -46,8 +47,8 @@ object DBlayer {
     lateinit var database: Database
     internal val databaseOrNull: Database? get() = if (::database.isInitialized) database else null
 
-    suspend fun serverConfig(encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retryListener: RetryListener? = null): ServerConfig =
-        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retryListener)
+    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retryListener: RetryListener? = null): ServerConfig =
+        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retryListener, Reachability.start(context))
 
     suspend fun open(
         endpoint: String? = null,

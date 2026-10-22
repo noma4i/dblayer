@@ -1,14 +1,12 @@
-use std::time::Duration;
 use std::sync::{Arc, Mutex};
 
 use super::error::TransportError;
-use crate::pacing::Backoff;
+use crate::pacing::{Backoff, Clock, RetryPolicy};
+use super::{Connectivity, GraphQLRequest, Response, Transport};
 
 const RETRIABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
 // GraphQL list cursor errors require restarting pagination from the first page.
 pub(crate) const INVALID_CURSOR: &str = "INVALID_CURSOR";
-
-pub const RETRY_BACKOFF: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30)).with_jitter(0.2, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryClass {
@@ -48,17 +46,6 @@ impl RetryClass {
         }
     }
 
-    pub fn budget(self) -> u32 {
-        match self {
-            RetryClass::Network => 3,
-            RetryClass::Server | RetryClass::Retriable => 2,
-            RetryClass::Fatal => 0,
-        }
-    }
-
-    pub fn allows_retry(self, attempt: u32) -> bool {
-        attempt < self.budget()
-    }
 }
 
 #[uniffi::export(rust, foreign)]
@@ -78,15 +65,17 @@ pub(crate) struct Retrying<'a> {
     events: &'a RetryEvents,
     backoff: Backoff,
     attempt: u64,
+    online: &'a Connectivity,
 }
 
 impl<'a> Retrying<'a> {
-    pub(crate) fn new(clock: &'a dyn crate::pacing::Clock, events: &'a RetryEvents) -> Self {
-        Self { clock, events, backoff: RETRY_BACKOFF.randomized(), attempt: 0 }
+    pub(crate) fn new(clock: &'a dyn Clock, events: &'a RetryEvents, online: &'a Connectivity, policy: RetryPolicy) -> Self {
+        Self { clock, events, online, backoff: policy.backoff().randomized(), attempt: 0 }
     }
 
     pub(crate) async fn failed(&mut self, error: TransportError) -> Result<(), TransportError> {
-        if RetryClass::of_error(&error) == RetryClass::Fatal { return Err(error); }
+        if RetryClass::of_error(&error) == RetryClass::Fatal || !self.backoff.allows(self.attempt.min(u32::MAX as u64) as u32) { return Err(error); }
+        self.online.online().await;
         let delay = self.backoff.delay(self.attempt.min(u32::MAX as u64) as u32);
         self.attempt = self.attempt.saturating_add(1);
         let listener = crate::db::locked(&self.events.0).clone();
@@ -99,7 +88,35 @@ impl<'a> Retrying<'a> {
             };
             listener.retrying(self.attempt, delay.as_millis() as u64, reason);
         }
-        self.clock.sleep(delay).await;
+        self.online.wait(self.clock, delay).await;
         Ok(())
+    }
+}
+
+pub(crate) async fn query(transport: &dyn Transport, request: GraphQLRequest, clock: &dyn Clock, online: &Connectivity, called: impl Fn()) -> Result<(Response, u32), TransportError> {
+    if transport.retries_queries() {
+        called();
+        return transport.query(request).await.map(|response| (response, 1));
+    }
+    let events = RetryEvents::default();
+    let mut retry = Retrying::new(clock, &events, online, RetryPolicy::QueryNetwork);
+    loop {
+        online.online().await;
+        called();
+        let (error, response) = match transport.query(request.clone()).await {
+            Ok(response) => {
+                let codes: Vec<_> = response.errors.iter().filter_map(|error| error.code()).collect();
+                if RetryClass::classify(false, None, &codes) == RetryClass::Fatal { return Ok((response, retry.attempt as u32 + 1)); }
+                (TransportError::Graphql { messages: codes.into_iter().map(str::to_string).collect(), extensions: response.extensions() }, Some(response))
+            }
+            Err(error) => (error, None),
+        };
+        retry.backoff.max_attempts = match RetryClass::of_error(&error) {
+            RetryClass::Network => RetryPolicy::QueryNetwork.backoff().max_attempts,
+            _ => RetryPolicy::QueryServer.backoff().max_attempts,
+        };
+        if let Err(error) = retry.failed(error).await {
+            return response.map(|response| (response, retry.attempt as u32 + 1)).ok_or(error);
+        }
     }
 }

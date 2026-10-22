@@ -46,7 +46,7 @@ async fn inv_wait_01_answer_parks_once_per_outbox_change_while_a_retry_waits_for
 
 #[tokio::test(start_paused = true)]
 async fn inv_wait_02_a_waiting_caller_wakes_zero_times_in_ten_seconds_of_an_unchanged_outbox() {
-    let rig = rig();
+    let rig = rig_with(super::super::SyncConfig { send_backoff: crate::pacing::Backoff::new(Duration::from_secs(30), Duration::from_secs(30)), ..Default::default() });
     let id = postponed_create(&rig);
     tokio::select! {
         _ = rig.sync.settled("moments", &id) => panic!("settled returned while the backoff has not passed"),
@@ -58,7 +58,7 @@ async fn inv_wait_02_a_waiting_caller_wakes_zero_times_in_ten_seconds_of_an_unch
 
 #[tokio::test(start_paused = true)]
 async fn inv_wait_02_a_waiting_caller_returns_offline_when_the_connection_drops() {
-    let rig = rig();
+    let rig = rig_with(super::super::SyncConfig { send_backoff: crate::pacing::Backoff::new(Duration::from_secs(30), Duration::from_secs(30)), ..Default::default() });
     let id = postponed_create(&rig);
     let going_offline = async {
         tokio::time::sleep(Duration::from_secs(1)).await;
