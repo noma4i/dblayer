@@ -1,5 +1,36 @@
 # Changelog
 
+## 6.0.0 - 2026-10-22
+
+### Added
+- `parse: :json` on a `raw` field stores a JSON text string as a JSON value.
+- `Query.changes` collapses an overflowing queue into one `replaced` change with a full snapshot.
+- `retry()` and `retryAll()` return the number of retried operations and throw errors.
+- Kotlin `DBlayer.open` and `DBlayer.serverConfig` take a `Context` and watch the network.
+
+### Changed
+- A repeated `open` reuses the database only for the same callback instances.
+- Encrypted requests retry without a limit online and make no attempt offline.
+- `load()` fails at once with `Offline` when the device has no network.
+- Bootstrap waits for the network before the first request.
+- A mutation that is not delivered after 40 attempts stays `Failed` with its edit.
+- A rollback happens only when the server refuses a mutation.
+- A local write keeps fields of pending edits against loads, events and responses.
+- A row from an event or `lands` joins a loaded list missing it.
+- `lands` accepts a list root.
+- `discard` of a batch member updates the saved operation input.
+- The database format changed. The cache is rebuilt on the first open.
+
+### Fixed
+- Several rows written in one transaction no longer get the same list position.
+- A batch rollback restores the parent row values.
+- A dropped upload item removes all its saved state.
+- Cancelling a native HTTP request stops the response body read.
+
+### Removed
+- The second platform transport: Swift `DatabaseTransport`, `GraphQLTransport`, payload signing and Kotlin `Crypto`.
+- Equality of callback objects in `open`.
+
 ## 5.2.0 - 2026-10-21
 
 ### Added
