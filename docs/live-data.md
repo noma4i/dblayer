@@ -44,7 +44,7 @@ Dropping or cancelling a Swift stream or cancelling Kotlin collection releases t
 Existing `live`, `snapshots` and `LiveList.rows` keep their list behavior.
 
 ```swift
-for await change in await Note.where(Note.groupId == groupId).changes.stream() {
+for await change in try await Note.where(Note.groupId == groupId).changes.stream() {
   if change.kind == .replaced { replaceAll(change.inserted.map(\.row)) }
   else { applyDelta(change) }
 }
@@ -153,7 +153,7 @@ struct ProfileView: View {
 **Loading state.** A remote relation reports `idle`, `loading` or `failed`, whether another page exists, when it last loaded and the `total` the server reports for the whole list (`totalCount` of the connection, or the field named by `total from:` of the scope, nil when the document does not select it):
 
 ```swift
-for await state in await Moment.feed.state.stream() { if state.isLoading { showSpinner() } }
+for await state in try await Moment.feed.state.stream() { if state.isLoading { showSpinner() } }
 ```
 
 ```kotlin
@@ -169,7 +169,7 @@ A load that ends with an error reports `failed` when the list has no rows. A lis
 ```swift
 let members = User.groupMembers(groupId, order: .ownerFirst)
 try await members.load()
-for await state in await members.state.stream() { footer.isHidden = !state.hasMore }
+for await state in try await members.state.stream() { footer.isHidden = !state.hasMore }
 try await members.loadMore()                       // true while another page exists
 ```
 

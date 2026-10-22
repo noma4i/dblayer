@@ -75,7 +75,9 @@ public final class LiveWindow<Model: DBModel> {
   public init(_ window: Window<Model>) {
     self.window = window
     task = Task { [weak self] in
-      for await snapshot in await window.snapshots.stream() {
+      let stream: LiveStream<Snapshot<Model>>
+      do { stream = try await window.snapshots.stream() } catch { self?.failure = error.localizedDescription; return }
+      for await snapshot in stream {
         guard let self else { return }
         replaced = snapshot.replaced
         if snapshot.failure != failure { failure = snapshot.failure }

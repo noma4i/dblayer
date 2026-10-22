@@ -37,7 +37,7 @@ extension BridgeProbeTests {
       let subscription = try DB.database.liveWindow(queryJson: thread.json, tail: 10, listener: ChangeListener { emit(feed.apply($0).rows) })
       return { subscription.cancel() }
     }
-    let changes = Cursor(await source.stream())
+    let changes = Cursor(try await source.stream())
     #expect(await changes.first("the loaded page") { $0.map(\.text) == ["t1", "t2", "t5"] } != nil)
 
     transport.enqueue("CreateRecord", reply: #"{"data":{"createRecord":{"__typename":"Record","id":"m9","containerId":"c1","authorId":"a","text":"mine","createdAt":"2026-10-09T00:00:00.000Z","sequenceNumber":3}}}"#)

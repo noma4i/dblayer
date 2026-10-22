@@ -22,8 +22,8 @@ extension BridgeProbeTests {
 
     let members = User.containerMembers("c1")
     try await members.load()
-    #expect(await Cursor(await members.state.stream()).first("the member count") { $0.total == 53 } != nil)
+    #expect(try await Cursor(await members.state.stream()).first("the member count") { $0.total == 53 } != nil)
     #expect(try await members.loadMore() == true)
-    #expect(await Cursor(await members.state.stream()).first("the member count kept") { $0.total == 53 && $0.hasMore } != nil)
+    #expect(try await Cursor(await members.state.stream()).first("the member count kept") { $0.total == 53 && $0.hasMore } != nil)
   }
 }

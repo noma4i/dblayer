@@ -22,7 +22,7 @@ extension BridgeProbeTests {
         let subscription = try DB.database.liveWindow(queryJson: Self.byText.json, tail: 10, listener: ChangeListener { emit(feed.apply($0).rows) })
         return { subscription.cancel() }
       }
-      let changes = Cursor(await source.stream())
+      let changes = Cursor(try await source.stream())
       #expect(await changes.first("the window") { $0.count == 10 } != nil)
       let atStart = feed.decodedRows
       let edited = String(format: "t%05dx", count - 1)
@@ -85,7 +85,7 @@ extension BridgeProbeTests {
       let subscription = try DB.database.liveWindow(queryJson: thread.json, tail: 3, listener: ChangeListener { emit(feed.apply($0).rows) })
       return { subscription.cancel() }
     }
-    let changes = Cursor(await source.stream())
+    let changes = Cursor(try await source.stream())
     #expect(await changes.first("the last 3 rows") { $0.map(\.text) == ["t5", "t6", "t7"] } != nil)
     let atStart = feed.decodedRows
 

@@ -166,20 +166,20 @@ struct EntityRegistryTests {
       }
     }
     let beforeGate = DispatchSemaphore(value: 0)
-    let before = Task { await blocking(beforeGate).stream() }
+    let before = Task { try await blocking(beforeGate).stream() }
     before.cancel()
     beforeGate.signal()
-    _ = await before.value
+    _ = try await before.value
     try await Task.sleep(for: .milliseconds(200))
     #expect(active.value == 0)
 
     let duringGate = DispatchSemaphore(value: 0)
-    let during = Task { await blocking(duringGate).stream() }
+    let during = Task { try await blocking(duringGate).stream() }
     try await Task.sleep(for: .milliseconds(100))
     #expect(active.value == 1)
     during.cancel()
     duringGate.signal()
-    _ = await during.value
+    _ = try await during.value
     try await Task.sleep(for: .milliseconds(200))
     #expect(active.value == 0)
 
@@ -188,20 +188,20 @@ struct EntityRegistryTests {
       emit(1)
       return { active.add(-1) }
     }
-    let after = Task { _ = await Cursor(await immediate.stream()).next("the first element") }
-    await after.value
+    let after = Task { _ = try await Cursor(try await immediate.stream()).next("the first element") }
+    try await after.value
     try await Task.sleep(for: .milliseconds(200))
     #expect(active.value == 0)
   }
 
   /// PERF-16: a slow reader gets one pending result that holds every replacement pair of the burst.
   @Test(arguments: [10, 100, 1000])
-  func slowConsumerStreamKeepsOnePendingResultAndEveryReplacementPair(burst: Int) async {
+  func slowConsumerStreamKeepsOnePendingResultAndEveryReplacementPair(burst: Int) async throws {
     let source = LiveSource<Snapshot<Moment>>(initial: Snapshot(rows: [], replaced: [:]), merge: { Snapshot.merging($0, $1) }) { emit in
       for step in 0 ..< burst { emit(Snapshot(rows: [], replaced: ["real\(step)": "temp\(step)"])) }
       return {}
     }
-    let stream = await source.stream()
+    let stream = try await source.stream()
     let iterator = Cursor(stream)
     let merged = await iterator.next()
     #expect(merged?.replaced.count == burst)
@@ -210,12 +210,12 @@ struct EntityRegistryTests {
 
   /// A chain of replacements across missed deliveries reads as one pair from the first id to the last.
   @Test
-  func aChainOfReplacementsAcrossMissedDeliveriesReadsAsOnePair() async {
+  func aChainOfReplacementsAcrossMissedDeliveriesReadsAsOnePair() async throws {
     let source = LiveSource<Snapshot<Moment>>(initial: Snapshot(rows: [], replaced: [:]), merge: { Snapshot.merging($0, $1) }) { emit in
       for step in 0 ..< 1000 { emit(Snapshot(rows: [], replaced: ["id\(step + 1)": "id\(step)"])) }
       return {}
     }
-    let iterator = Cursor(await source.stream())
+    let iterator = Cursor(try await source.stream())
     #expect(await iterator.next()?.replaced == ["id1000": "id0"])
   }
 }

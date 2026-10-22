@@ -14,6 +14,6 @@ extension BridgeProbeTests {
     source?.retain([row.id])
     await eventually("the entity source delivers its row") { delivered.value > 0 }
     source = nil
-    await eventually("the entity source releases its observer") { released == nil && DB.subscriptionCensus().subscriptions == 0 }
+    await eventually("the entity source releases its observer") { released == nil && (try? DB.subscriptionCensus().subscriptions) == 0 }
   }
 }

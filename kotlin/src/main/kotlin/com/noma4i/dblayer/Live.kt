@@ -59,7 +59,7 @@ class LiveSource<Value>(
     val flow: Flow<Value>
         get() = flow {
             val latest = Latest(merge)
-            val cancel = runCatching { subscribe(latest::put) }.getOrNull() ?: return@flow
+            val cancel = subscribe(latest::put)
             try {
                 while (true) emit(latest.next())
             } finally {
@@ -67,7 +67,7 @@ class LiveSource<Value>(
             }
         }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
-    suspend fun current(): Value = flow.firstOrNull() ?: initial
+    suspend fun current(): Value = runCatching { flow.firstOrNull() }.getOrNull() ?: initial
 }
 
 /** The rows of a delivery with the ids it replaced: the real id of a row that replaced a temporary one, to the temporary id. */
@@ -160,9 +160,13 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
             cancel
         }
         scope.launch {
-            source.flow.collect { update ->
-                update.snapshot?.let { synchronized(this@LiveList) { pending = ListEdit.composing(pending, it.edits, it.rows.size) }; mutableReplaced.value = it.replaced; mutableFailure.value = it.failure; mutableRows.value = it.rows; if (it.reordered) mutableIds.value = it.rows.map { row -> row.id } }
-                update.state?.let { mutableState.value = it }
+            try {
+                source.flow.collect { update ->
+                    update.snapshot?.let { synchronized(this@LiveList) { pending = ListEdit.composing(pending, it.edits, it.rows.size) }; mutableReplaced.value = it.replaced; mutableFailure.value = it.failure; mutableRows.value = it.rows; if (it.reordered) mutableIds.value = it.rows.map { row -> row.id } }
+                    update.state?.let { mutableState.value = it }
+                }
+            } catch (error: IllegalStateException) {
+                mutableFailure.value = error.message
             }
         }
     }

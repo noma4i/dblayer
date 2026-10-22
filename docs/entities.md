@@ -65,7 +65,7 @@ Every delivery carries the revision of the database. An entity ignores a deliver
 
 Native callbacks hold entity sources weakly. Releasing a source releases its observer without a separate cleanup call.
 
-The process has one database. Entities, lists and subscriptions belong to it for the life of the process, and the platform code does not follow a change of database. `DB.close()` and `DBlayer.close()` end it: every held entity becomes closed (`isClosed`, empty value, no further delivery) and the next `open` starts empty.
+The process has one database. Entities, lists and subscriptions belong to it for the life of the process, and the platform code does not follow a change of database. `DB.close()` and `DBlayer.close()` end it: every held entity becomes closed (`isClosed`, empty value, no further delivery) and the next `open` starts empty. After `close` and before `open`, `DB.database` throws `DatabaseNotOpen` and `DBlayer.database` throws `IllegalStateException`, both with the text "database is not open; call DBlayer.open once at app start". Every call that reads the database throws it, and a live source throws it from `stream()` (Swift) or from collecting `flow` (Kotlin).
 
 ## Ending a session
 

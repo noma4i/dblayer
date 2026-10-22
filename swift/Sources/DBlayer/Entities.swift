@@ -149,15 +149,25 @@ public final class Entities<Model: DBModel> {
     singleFeed?.cancel()
     let feed = SingletonFeed<Model>(query: singleQuery)
     singleFeed = feed
-    feed.start { [weak self, weak feed] revision, row in
+    feed.start(deliver: { [weak self, weak feed] revision, row in
       DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.receive(from: feed, revision: revision, row: row) } } }
-    }
+    }, unopened: { [weak self, weak feed] in
+      DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.unopened(feed) } } }
+    })
   }
 
   /// A delivery of a feed that was replaced by a reset writes nothing.
   func receive(from feed: SingletonFeed<Model>, revision: Int64, row: Model?) {
     guard singleFeed === feed else { return }
     single?.accept(row, revision: revision)
+  }
+
+  fileprivate func unopened(_ feed: SingletonFeed<Model>) {
+    guard singleFeed === feed else { return }
+    singleFeed = nil
+    single?.close()
+    single = nil
+    singleQuery = nil
   }
 
   /// The account ended. The core tells every leased entity that its row is gone and later delivers the rows of the next account.
@@ -353,11 +363,10 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
 
   init(query: Query<Model>) { queryJson = query.json }
 
-  func start(deliver: @escaping @Sendable (Int64, Model?) -> Void) {
+  func start(deliver: @escaping @Sendable (Int64, Model?) -> Void, unopened: @escaping @Sendable () -> Void) {
     Task.detached(priority: .userInitiated) { [self] in
-      guard let database = DB.database else { return }
       let made = ListSession<Model, (Int64, Model?)>(
-        open: { [queryJson] listener in let subscription = try database.liveQuery(queryJson: queryJson, listener: listener); return { subscription.cancel() } },
+        open: { [queryJson] listener in let subscription = try DB.database.liveQuery(queryJson: queryJson, listener: listener); return { subscription.cancel() } },
         emit: { value in
           self.lock.withLock { self.count += 1 }
           deliver(value.0, value.1)
@@ -369,7 +378,9 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
         session = made
         return true
       }
-      if keep { try? made.start() }
+      if keep {
+        do { try made.start() } catch is DatabaseNotOpen { unopened() } catch {}
+      }
     }
   }
 

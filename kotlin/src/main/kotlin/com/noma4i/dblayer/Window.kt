@@ -52,13 +52,17 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
 
     init {
         scope.launch {
-            window.snapshots.flow.collect { snapshot ->
-                synchronized(this@LiveWindow) { pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size) }
-                mutableReplaced.value = snapshot.replaced
-                mutableFailure.value = snapshot.failure
-                snapshot.window?.let { mutableEdges.value = it }
-                mutableRows.value = snapshot.rows
-                if (snapshot.reordered) mutableIds.value = snapshot.rows.map { it.id }
+            try {
+                window.snapshots.flow.collect { snapshot ->
+                    synchronized(this@LiveWindow) { pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size) }
+                    mutableReplaced.value = snapshot.replaced
+                    mutableFailure.value = snapshot.failure
+                    snapshot.window?.let { mutableEdges.value = it }
+                    mutableRows.value = snapshot.rows
+                    if (snapshot.reordered) mutableIds.value = snapshot.rows.map { it.id }
+                }
+            } catch (error: IllegalStateException) {
+                mutableFailure.value = error.message
             }
         }
     }

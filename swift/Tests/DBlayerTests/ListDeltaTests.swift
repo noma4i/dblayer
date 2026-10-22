@@ -10,13 +10,13 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
   }
 
-  fileprivate static func watching(_ query: Query<Moment>, feed: ListFeed<Moment>) async -> LiveStream<[Moment]> {
+  fileprivate static func watching(_ query: Query<Moment>, feed: ListFeed<Moment>) async throws -> LiveStream<[Moment]> {
     let json = query.json
     let source = LiveSource<[Moment]>(initial: []) { emit in
       let subscription = try DB.database.liveQuery(queryJson: json, listener: ChangeListener { emit(feed.apply($0).rows) })
       return { subscription.cancel() }
     }
-    return await source.stream()
+    return try await source.stream()
   }
 
   @Test
@@ -27,7 +27,7 @@ extension BridgeProbeTests {
       var created: [Moment] = []
       for number in 0 ..< count { created.append(try await Moment.create(text: String(format: "t%05d", number))) }
       let feed = ListFeed<Moment>()
-      let changes = Cursor(await Self.watching(Self.byText, feed: feed))
+      let changes = Cursor(try await Self.watching(Self.byText, feed: feed))
       #expect(await changes.first("the whole list") { $0.count == count } != nil)
       let before = feed.decodedRows
       let edited = String(format: "t%05dx", count / 2)
@@ -42,7 +42,7 @@ extension BridgeProbeTests {
   func inv_observe_15_theFeedRebuildsTheListThatAFreshQueryReturns() async throws {
     try await Self.open()
     let feed = ListFeed<Moment>()
-    let changes = Cursor(await Self.watching(Self.byText, feed: feed))
+    let changes = Cursor(try await Self.watching(Self.byText, feed: feed))
     #expect(await changes.first("the empty list") { $0.isEmpty } != nil)
     var rows: [Moment] = []
     var seed: UInt64 = 0x9E3779B97F4A7C15
@@ -68,7 +68,7 @@ extension BridgeProbeTests {
     try await Self.open()
     let first = try await Moment.create(text: "a")
     _ = try await Moment.create(text: "b")
-    let snapshots = Cursor(await Self.byText.snapshots.stream())
+    let snapshots = Cursor(try await Self.byText.snapshots.stream())
     #expect(await snapshots.first("both rows") { $0.rows.count == 2 } != nil)
     _ = try await first.update(text: "ax")
     let edited = await snapshots.first("the edited row") { $0.rows.first?.text == "ax" }

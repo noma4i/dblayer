@@ -18,10 +18,10 @@ private final class RefusedRetry: Database, @unchecked Sendable {
 extension BridgeProbeTests {
   @Test @MainActor func modelRetriesPropagateErrorsToTheirCaller() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
-    let real = try #require(DB.database)
-    defer { DB.database = real }
+    let real = try DB.database
+    defer { DB.current = real }
     let row = try await Moment.create(text: "saved")
-    DB.database = RefusedRetry(noHandle: .init())
+    DB.current = RefusedRetry(noHandle: .init())
     await #expect(throws: DbError.self) { try await row.retry() }
     await #expect(throws: DbError.self) { try await Moment.retryAll() }
   }

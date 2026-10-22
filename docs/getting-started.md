@@ -66,7 +66,7 @@ Single steps:
 The open compares the database file with the build. A changed server model clears the whole server cache in one transaction: rows, query windows, list membership and tombstones of every server model, so no row keeps a reference to a cleared one. The server sends the rows again through sync. Models with `storage: :local` stay unless their own model changed. Values of `local: true` fields stay and land on the row when it comes back from the server (a changed model keeps a local value only when its field is a plain column with the same name and type in the old table; a removed field, a changed type and local keys inside an object field are lost). Open operations of the cleared models go to quarantine. A file that does not fit the build is deleted and created empty: not a database, damaged, a newer or older format version, or a changed format of the internal tables. The files beside it (`.files`, `.cache`, `-wal`, `-shm`) go with it. Unsent writes in a discarded file are lost. Keep the session of the signed-in user outside the database file. `openReport` names what the open discarded, so the app can log it: `changedModels` lists the models whose declaration changed, `resetModels` lists the models cleared.
 
 ```swift
-let report = DB.openReport()
+let report = try DB.openReport()
 if let reason = report.recreated { log("database recreated: \(reason)") }
 if !report.resetModels.isEmpty { log("models cleared: \(report.resetModels), changed: \(report.changedModels)") }
 ```

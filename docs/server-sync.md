@@ -96,7 +96,7 @@ try await DB.open(
   path: path,
   http: UrlSessionEncryptedHttp(origin: origin)
 )
-let database = DB.database!
+let database = try DB.database
 _ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
 let answer = try await database.sessionCall(operation: "confirm", bodyJson: #"{"code":"123456"}"#)
 ```

@@ -26,9 +26,9 @@ struct EnumTests {
     #expect(sample.phase == .unknown("archived"))
     let edited = try await sample.update(values: [])
     #expect(edited.phase == .unknown("archived"))
-    let matching = Cursor(await NestedSample.where(NestedSample.phase == .unknown("archived")).snapshots.stream())
+    let matching = Cursor(try await NestedSample.where(NestedSample.phase == .unknown("archived")).snapshots.stream())
     #expect(await matching.first("the row of the unknown value") { $0.rows.map(\.id) == [sample.id] } != nil)
-    let declared = Cursor(await NestedSample.where(NestedSample.phase == .live).snapshots.stream())
+    let declared = Cursor(try await NestedSample.where(NestedSample.phase == .live).snapshots.stream())
     #expect(await declared.first("no row of a declared value") { $0.rows.isEmpty } != nil)
   }
 
@@ -37,7 +37,7 @@ struct EnumTests {
     adopt(try await open())
     let sample = try await NestedSample.create(phase: .live)
     #expect(sample.phase == .live)
-    let live = Cursor(await NestedSample.where(NestedSample.phase == .live).snapshots.stream())
+    let live = Cursor(try await NestedSample.where(NestedSample.phase == .live).snapshots.stream())
     #expect(await live.first("the live row") { $0.rows.map(\.id) == [sample.id] } != nil)
     let changed = try await sample.update(phase: .unknown("later"))
     #expect(changed.phase == .unknown("later"))

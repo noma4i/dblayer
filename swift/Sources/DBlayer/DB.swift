@@ -2,8 +2,14 @@ import Foundation
 
 public enum DB {
   static let reachability = Reachability.shared
-  /// The one database of the process. Set by `open`, nil again after `close`.
-  public internal(set) nonisolated(unsafe) static var database: Database!
+  nonisolated(unsafe) static var current: Database?
+  /// The one database of the process. Throws `DatabaseNotOpen` before `open` and after `close`.
+  public static var database: Database {
+    get throws {
+      guard let current else { throw DatabaseNotOpen() }
+      return current
+    }
+  }
   private static let opener = OpenDatabase()
 
   /// Ends the session: clears the stored data. Entities that readers hold become empty and receive the next session's rows.
@@ -15,21 +21,21 @@ public enum DB {
   /// Closes the database. Every entity becomes closed, and `open` may open the database again. Meant for tests and the end of the process.
   @MainActor public static func close() {
     EntityRegistries.closeAll()
-    database?.shutdown()
-    database = nil
+    current?.shutdown()
+    current = nil
   }
 
   /// The live subscriptions of the database, for probes of how many a screen opens.
-  public static func subscriptionCensus() -> SubscriptionCensus { database.subscriptionCensus() }
+  public static func subscriptionCensus() throws -> SubscriptionCensus { try database.subscriptionCensus() }
 
   /// What the entity observers did: facts told, deliveries skipped as not newer than the row, reads that failed. A failed read leaves the id dirty and the core reads it again.
-  public static func entityCensus() -> EntityCensus { database.entityCensus() }
+  public static func entityCensus() throws -> EntityCensus { try database.entityCensus() }
 
   /// Lease calls the core refused and rows that failed to decode for an entity, for probes that tell a refused lease from a lost delivery.
   @MainActor public static func entityLeaseFailures() -> Int { EntityRegistries.leaseFailures() }
 
   /// What the open discarded: the reason the database file was recreated, and the models whose rows a schema change cleared. Empty when nothing was discarded.
-  public static func openReport() -> OpenReport { database.openReport() }
+  public static func openReport() throws -> OpenReport { try database.openReport() }
 
   /// Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`.
   public static func listen() throws { try database.listen() }
@@ -59,7 +65,7 @@ public enum DB {
     let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers, cablePath: encrypted?.endpoints.cable) }
     let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) })
     reachability.start(try opened.onlineSink())
-    database = opened
+    current = opened
   }
 
   @_spi(Testing) public static func openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock) async throws -> Database {
@@ -70,6 +76,12 @@ public enum DB {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     if transport != nil { try database.registerOperations(defsJson: JSONValue.array(definitions).text) }
     reachability.start(try database.onlineSink())
-    self.database = database
+    current = database
   }
+}
+
+public struct DatabaseNotOpen: Error, LocalizedError, CustomStringConvertible {
+  public init() {}
+  public var description: String { "database is not open; call DBlayer.open once at app start" }
+  public var errorDescription: String? { description }
 }

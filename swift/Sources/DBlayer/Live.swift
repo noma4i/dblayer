@@ -117,18 +117,18 @@ public struct LiveSource<Value: Sendable>: Sendable {
   }
 
   /// The one way to read a live value. The subscription and its first read run off the caller's thread. Cancelling the caller before, during or after the attach leaves no subscription. A slow reader gets the newest value, merged with the ones it missed.
-  public func stream() async -> LiveStream<Value> {
+  public func stream() async throws -> LiveStream<Value> {
     guard !Task.isCancelled else { return .ended }
     let latest = Latest<Value>(merge: merge)
-    let attached = await Task.detached(priority: .userInitiated) { [subscribe] in try? subscribe { latest.put($0) } }.value
-    guard let attached else { return .ended }
+    let attached = try await Task.detached(priority: .userInitiated) { [subscribe] in try subscribe { latest.put($0) } }.value
     let attachment = Attachment(attached)
     guard !Task.isCancelled else { attachment.cancel(); return .ended }
     return LiveStream(latest: latest, attachment: attachment)
   }
 
   public func current() async -> Value {
-    for await value in await stream() { return value }
+    guard let stream = try? await stream() else { return initial }
+    for await value in stream { return value }
     return initial
   }
 }
@@ -141,7 +141,8 @@ final class LiveBox<Value: Sendable>: ObservableObject {
   init(_ source: LiveSource<Value>) {
     value = source.initial
     task = Task { [weak self] in
-      for await next in await source.stream() { self?.value = next }
+      guard let stream = try? await source.stream() else { return }
+      for await next in stream { self?.value = next }
     }
   }
 
@@ -219,7 +220,9 @@ public final class LiveList<Model: DBModel> {
     }
     tasks = [
       Task { [weak self] in
-        for await next in await source.stream() {
+        let stream: LiveStream<ListUpdate<Model>>
+        do { stream = try await source.stream() } catch { self?.failure = error.localizedDescription; return }
+        for await next in stream {
           guard let self else { return }
           if let snapshot = next.snapshot {
             replaced = snapshot.replaced

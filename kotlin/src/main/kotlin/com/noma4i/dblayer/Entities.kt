@@ -127,7 +127,7 @@ class Entities<Model : DBModel> internal constructor(
     private fun startSingleton() {
         val query = singleQuery ?: return
         singleFeed?.cancel()
-        val feed = SingletonFeed(query, decoder) { from, revision, row -> receive(from, revision, row) }
+        val feed = SingletonFeed(query, decoder, { from, revision, row -> receive(from, revision, row) }, ::unopened)
         singleFeed = feed
         flusher.execute { feed.attach() }
     }
@@ -135,6 +135,14 @@ class Entities<Model : DBModel> internal constructor(
     /** A delivery of a feed that was replaced by a reset writes nothing. */
     internal fun receive(feed: SingletonFeed<Model>, revision: Long, row: Model?) = synchronized(lock) {
         if (singleFeed === feed) single?.cell?.accept(row, revision)
+    }
+
+    private fun unopened(feed: SingletonFeed<Model>) = synchronized(lock) {
+        if (singleFeed !== feed) return@synchronized
+        singleFeed = null
+        single?.cell?.let { it.closed = true; it.clear() }
+        single = null
+        singleQuery = null
     }
 
     internal val currentSingleFeed: SingletonFeed<Model>? get() = synchronized(lock) { singleFeed }
@@ -264,6 +272,7 @@ internal class SingletonFeed<Model : DBModel>(
     private val query: Query<Model>,
     private val decoder: ModelDecoder<Model>,
     private val deliver: (SingletonFeed<Model>, Long, Model?) -> Unit,
+    private val unopened: (SingletonFeed<Model>) -> Unit,
 ) {
     private var session: ListSession<Model, Pair<Long, Model?>>? = null
     private var cancelled = false
@@ -273,7 +282,7 @@ internal class SingletonFeed<Model : DBModel>(
     val delivered: Int get() = count.get()
 
     fun attach() {
-        val database = DBlayer.database
+        val database = try { DBlayer.database } catch (_: IllegalStateException) { unopened(this); return }
         val made = ListSession<Model, Pair<Long, Model?>>(
             decoder,
             { listener -> val subscription = database.liveQuery(query.json, listener); val cancel: () -> Unit = { subscription.cancel() }; cancel },

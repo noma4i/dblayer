@@ -8,7 +8,7 @@ extension BridgeProbeTests {
     @Test func aSlowConsumerReceivesABoundedReplacementWithEveryCurrentRow() async throws {
       try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
       let query = Query<Moment>().order(Moment.createdAt.desc)
-      let cursor = Cursor(await query.changes.stream())
+      let cursor = Cursor(try await query.changes.stream())
       for number in 0..<192 { _ = try await Moment.create(text: "row\(number)") }
       var rows: [Moment] = []
       var sawReplacement = false
@@ -60,7 +60,7 @@ extension BridgeProbeTests {
       try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
       let query = Query<Moment>().order(Moment.createdAt.desc)
       for number in 0..<2000 { _ = try await Moment.create(text: "row\(number)") }
-      let cursor = Cursor(await query.changes.stream())
+      let cursor = Cursor(try await query.changes.stream())
       let initial = await cursor.next("initial inserts")
       #expect(initial?.inserted.count == 2000)
       var row: Moment?
@@ -79,7 +79,7 @@ extension BridgeProbeTests {
       try await row!.destroy()
       let removed = await cursor.next("one removal")
       #expect(removed?.removed == [row!.id])
-      let restarted = Cursor(await query.changes.stream())
+      let restarted = Cursor(try await query.changes.stream())
       #expect(await restarted.next("restart inserts")?.inserted.count == 2004)
     }
 
@@ -90,7 +90,7 @@ extension BridgeProbeTests {
       try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
       try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed { feed { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
       let query = Query<Moment>()
-      var stream: LiveStream<ListChange<Moment>>? = await query.changes.stream()
+      var stream: LiveStream<ListChange<Moment>>? = try await query.changes.stream()
       var cursor: Cursor<LiveStream<ListChange<Moment>>>? = Cursor(stream!)
       #expect(await cursor!.next("empty initial")?.inserted.isEmpty == true)
       try await Moment.feed.load()
@@ -98,7 +98,7 @@ extension BridgeProbeTests {
       #expect(Set(batch?.inserted.map(\.row.id) ?? []) == Set((0..<2501).map(String.init)))
       cursor = nil
       stream = nil
-      await eventually("changes subscription released") { DB.subscriptionCensus().subscriptions == 0 }
+      await eventually("changes subscription released") { (try? DB.subscriptionCensus().subscriptions) == 0 }
     }
     static func wire(_ id: String) -> WireRow {
       WireRow(id: id, revision: 1, estimatedBytes: 1, layout: Moment.wireLayout,

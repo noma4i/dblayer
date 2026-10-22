@@ -10,13 +10,13 @@ extension BridgeProbeTests {
   @Test
   func singletonRefreshStoresBeforeAnyReaderExists() async throws {
     let transport = try await Self.openSingletonRig()
-    #expect(DB.subscriptionCensus().observedQueries == 0)
+    #expect(try DB.subscriptionCensus().observedQueries == 0)
     try await Self.login(transport, "1", "Ann")
     try await User.profile.warm()
     let rows = try #require(User.profile.cached()).value
     #expect(rows.map(\.id) == ["1"])
     #expect(rows.first?.name == "Ann")
-    #expect(DB.subscriptionCensus().observedQueries == 0)
+    #expect(try DB.subscriptionCensus().observedQueries == 0)
     let entity = User.entity()
     await eventually("the stored singleton reaches its first reader") { entity.value?.name == "Ann" }
   }
@@ -50,7 +50,7 @@ extension BridgeProbeTests {
     #expect(Set(readers.map(ObjectIdentifier.init)).count == 1)
     #expect(readers.allSatisfy { $0.value?.name == "Ann" && $0.id == readers[0].value?.id })
     #expect(feed != nil && feed === Entities<User>.shared.singleFeed)
-    #expect(DB.subscriptionCensus().observedQueries == 1)
+    #expect(try DB.subscriptionCensus().observedQueries == 1)
   }
 
   /// The value is nil before the first load and the reader is told when it loads.
@@ -82,12 +82,12 @@ extension BridgeProbeTests {
     try await Task.sleep(for: .milliseconds(200))
     #expect(entity.value == nil)
     #expect(User.entity() === entity)
-    #expect(DB.subscriptionCensus().observedQueries == 0)
+    #expect(try DB.subscriptionCensus().observedQueries == 0)
     #expect(Entities<User>.shared.singleFeed == nil)
     try await Self.login(transport, "2", "Bob")
     try await DB.resume()
     await eventually(#"entity.value != nil"#) { entity.value != nil }
-    #expect(entity.value?.name == "Bob" && DB.subscriptionCensus().observedQueries == 1)
+    #expect(try entity.value?.name == "Bob" && DB.subscriptionCensus().observedQueries == 1)
     let resumed = Entities<User>.shared.singleFeed
     try await DB.resume()
     #expect(resumed === Entities<User>.shared.singleFeed)
@@ -111,7 +111,7 @@ extension BridgeProbeTests {
     try await Self.login(transport, "2", "Bob")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
     #expect(entity.value?.name == "Bob")
-    #expect(DB.subscriptionCensus().observedQueries == 1)
+    #expect(try DB.subscriptionCensus().observedQueries == 1)
   }
 
   /// REL-27: 10 seconds without an event add no delivery and no subscription.
@@ -123,8 +123,8 @@ extension BridgeProbeTests {
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
     let feed = try #require(Entities<User>.shared.singleFeed)
-    let before = (feed.delivered, DB.subscriptionCensus().observedQueries)
+    let before = (feed.delivered, try DB.subscriptionCensus().observedQueries)
     try await Task.sleep(for: .seconds(10))
-    #expect(feed.delivered == before.0 && DB.subscriptionCensus().observedQueries == before.1 && entity.value?.name == "Ann")
+    #expect(try feed.delivered == before.0 && DB.subscriptionCensus().observedQueries == before.1 && entity.value?.name == "Ann")
   }
 }

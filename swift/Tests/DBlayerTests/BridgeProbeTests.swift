@@ -28,15 +28,15 @@ struct BridgeProbeTests {
   }
 
   /// Waits for the event that the relation failed, not for a time.
-  static func failedState(of query: Query<Moment>) async -> LoadState {
-    await Cursor(await query.state.stream()).first("the relation to fail") { $0.phase == .failed } ?? LoadState()
+  static func failedState(of query: Query<Moment>) async throws -> LoadState {
+    try await Cursor(try await query.state.stream()).first("the relation to fail") { $0.phase == .failed } ?? LoadState()
   }
 
   @Test
   func aSearchFindsRowsByWordPrefixesAndFollowsEdits() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let prefix = Cursor(await Query<Moment>().search("hel").live.stream())
-    let whole = Cursor(await Query<Moment>().search("hel", wholeWords: true).live.stream())
+    let prefix = Cursor(try await Query<Moment>().search("hel").live.stream())
+    let whole = Cursor(try await Query<Moment>().search("hel", wholeWords: true).live.stream())
     #expect(await prefix.next()?.isEmpty == true)
     #expect(await whole.next()?.isEmpty == true)
     let hello = try await Moment.create(text: "hello world")
@@ -51,7 +51,7 @@ struct BridgeProbeTests {
   @Test
   func writesReachTypedLiveRows() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let changes = Cursor(await Moment.recent.live.stream())
+    let changes = Cursor(try await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.create(text: "m")
     #expect(await changes.next()?.first?.text == "m")
@@ -80,7 +80,7 @@ struct BridgeProbeTests {
   @Test
   func aLocalWriteReachesTheTypedLiveRow() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let changes = Cursor(await Moment.recent.live.stream())
+    let changes = Cursor(try await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.create(text: "m")
     #expect(await changes.next()?.first?.tone == nil)
@@ -103,7 +103,7 @@ struct BridgeProbeTests {
     await eventually(#"not (entity?.value?.text != "edited")"#) { !(entity?.value?.text != "edited") }
     #expect(entity?.value?.text == "edited")
 
-    #expect(DB.subscriptionCensus().subscriptions == 1)
+    #expect(try DB.subscriptionCensus().subscriptions == 1)
     entity = nil
     await eventually(#"not (Entities<Moment>.shared.liveCount > 0)"#) { !(Entities<Moment>.shared.liveCount > 0) }
     #expect(Entities<Moment>.shared.liveCount == 0)
@@ -127,10 +127,10 @@ struct BridgeProbeTests {
 
     try await Moment.feed.refresh()
 
-    let changes = Cursor(await Moment.feed.live.stream())
+    let changes = Cursor(try await Moment.feed.live.stream())
     #expect(await changes.next()?.first?.uuid == "a")
     #expect(transport.calls.first?.operationName == "MomentsFeed")
-    let states = Cursor(await Moment.feed.state.stream())
+    let states = Cursor(try await Moment.feed.state.stream())
     let state = await states.next()
     #expect(state?.phase == .idle && state?.hasMore == false && state?.loadedAt != nil)
   }
@@ -142,13 +142,13 @@ struct BridgeProbeTests {
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-    let before = DB.subscriptionCensus()
+    let before = try DB.subscriptionCensus()
 
     try await Moment.feed.load()
     try await Moment.feed.load()
 
     #expect(transport.calls.count == 1)
-    #expect(DB.subscriptionCensus().subscriptions == before.subscriptions && DB.subscriptionCensus().observedQueries == before.observedQueries)
+    #expect(try DB.subscriptionCensus().subscriptions == before.subscriptions && DB.subscriptionCensus().observedQueries == before.observedQueries)
   }
 
   @MainActor
@@ -181,7 +181,7 @@ struct BridgeProbeTests {
     } catch {
       Issue.record("the failed load surfaced as \(error), not as a database error")
     }
-    let failed = await Self.failedState(of: Moment.feed)
+    let failed = try await Self.failedState(of: Moment.feed)
 
     #expect(failed.phase == .failed)
     #expect(failed.errorKind != nil)
@@ -195,7 +195,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
-    let connectLoad = await Cursor(await Moment.feed.state.stream()).first("the live connect's load to fail") { $0.phase == .failed }
+    let connectLoad = try await Cursor(try await Moment.feed.state.stream()).first("the live connect's load to fail") { $0.phase == .failed }
     #expect(connectLoad?.phase == .failed)
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
 
@@ -206,7 +206,7 @@ struct BridgeProbeTests {
     } catch {
       Issue.record("the failed load surfaced as \(error), not as a database error")
     }
-    let failed = await Self.failedState(of: Moment.feed)
+    let failed = try await Self.failedState(of: Moment.feed)
 
     #expect(failed.phase == .failed)
     #expect(failed.errorKind != nil)
@@ -311,7 +311,7 @@ struct BridgeProbeTests {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    let snapshots = Cursor(await Moment.recent.snapshots.stream())
+    let snapshots = Cursor(try await Moment.recent.snapshots.stream())
     _ = await snapshots.next()
 
     let local = try await Moment.create(text: "hello", media: nil)
@@ -418,7 +418,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
-    _ = await Self.failedState(of: Moment.feed)
+    _ = try await Self.failedState(of: Moment.feed)
     let before = transport.calls.count
 
     try await DB.resume()
