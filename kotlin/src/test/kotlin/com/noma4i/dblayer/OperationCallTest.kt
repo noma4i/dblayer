@@ -19,7 +19,7 @@ class OperationCallTest {
     private suspend fun rig(name: String, document: String, reply: String): MockTransport {
         val transport = MockTransport()
         transport.enqueue(name, reply)
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"$name","document":"$document"}]""")
         return transport
     }
@@ -46,7 +46,7 @@ class OperationCallTest {
         for ((failure, expected) in refusals) {
             val transport = MockTransport()
             transport.enqueue("QrCodeCreate", failure)
-            DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+            reopen(Config(null, null, 32u), modelsJSON, transport)
             DBlayer.database.registerOperations("""[{"name":"QrCodeCreate","document":"mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }"}]""")
             val error = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull()
             assertEquals(expected, refusal(error as DbException))

@@ -1,33 +1,30 @@
 use super::*;
 
-fn options() -> OpenOptions { OpenOptions { endpoint: None, headers: HashMap::new(), operations: "[]".into(), references: vec![1, 2, 3] } }
-async fn open(slot: &OpenDatabase, options: OpenOptions) -> Result<Arc<Database>, DbError> {
-    slot.open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), options, None, None, None, None).await
+fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
+fn options() -> OpenOptions { OpenOptions { operations: "[]".into() } }
+async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
+    slot.open(config(), "[]".into(), options(), None, None, None, None).await
 }
 
 #[tokio::test]
-async fn opening_reuses_equal_arguments_and_refuses_each_changed_argument() {
+async fn a_second_open_is_refused_even_with_equal_arguments_until_the_database_is_closed() {
     let slot = OpenDatabase::new();
-    let (first, second) = tokio::join!(open(&slot, options()), open(&slot, options()));
-    let first = first.unwrap();
-    assert!(Arc::ptr_eq(&first, &second.unwrap()), "equal concurrent opens created separate databases");
-    let mut changes = Vec::new();
-    let mut changed = options(); changed.endpoint = Some("https://other.example".into()); changes.push(changed);
-    let mut changed = options(); changed.headers.insert("Authorization".into(), "other".into()); changes.push(changed);
-    let mut changed = options(); changed.operations = r#"[{"name":"Other","document":"query Other { value }"}]"#.into(); changes.push(changed);
-    for index in 0..3 { let mut changed = options(); changed.references[index] += 10; changes.push(changed); }
-    for changed in changes { assert!(matches!(open(&slot, changed).await, Err(DbError::Invalid { .. }))); }
-    for config in [Config { path: Some("different.sqlite".into()), data_version: None, cache_rows: 8 }, Config { path: None, data_version: Some("other".into()), cache_rows: 8 }, Config { path: None, data_version: None, cache_rows: 16 }] {
-        assert!(matches!(slot.open(config, "[]".into(), options(), None, None, None, None).await, Err(DbError::Invalid { .. })));
+    let first = open(&slot).await.unwrap();
+    for _ in 0..2 {
+        match open(&slot).await {
+            Err(DbError::Invalid { detail }) => assert_eq!(detail, "database is already open; open it once at app start"),
+            other => panic!("second open gave {:?}", other.map(|_| ())),
+        }
     }
-    assert!(matches!(slot.open(Config { path: None, data_version: None, cache_rows: 8 }, "invalid".into(), options(), None, None, None, None).await, Err(DbError::Invalid { .. })));
+    first.shutdown();
+    let second = open(&slot).await.unwrap();
+    assert!(!Arc::ptr_eq(&first, &second));
+    assert!(open(&slot).await.is_err());
+}
 
+#[tokio::test]
+async fn an_open_that_fails_leaves_the_slot_free() {
     let slot = OpenDatabase::new();
-    let mut first_options = options(); first_options.operations = r#"[{"name":"Read","document":"query Read { value }"}]"#.into();
-    let first = open(&slot, first_options).await.unwrap();
-    let mut reordered = options(); reordered.operations = r#"[{"document":"query Read { value }","name":"Read"}]"#.into();
-    assert!(Arc::ptr_eq(&first, &open(&slot, reordered).await.unwrap()));
-    let slot = OpenDatabase::new();
-    assert!(slot.open(Config { path: None, data_version: None, cache_rows: 8 }, "invalid".into(), options(), None, None, None, None).await.is_err());
-    assert!(open(&slot, options()).await.is_ok());
+    assert!(slot.open(config(), "invalid".into(), options(), None, None, None, None).await.is_err());
+    assert!(open(&slot).await.is_ok());
 }

@@ -15,11 +15,16 @@ class SealedErrorsTest {
     }
 
     @Test fun modelRetriesPropagateErrorsToTheirCaller() = bounded {
-        DBlayer.database = Database.open(Config(null, null, 8u), modelsJSON, null)
+        reopen(Config(null, null, 8u), modelsJSON, null)
         val row = Moment.create(text = "saved")
+        val real = DBlayer.database
         DBlayer.database = RefusedRetry()
-        org.junit.Assert.assertTrue(runCatching { row.retry() }.exceptionOrNull() is DbException.Invalid)
-        org.junit.Assert.assertTrue(runCatching { retryAll() }.exceptionOrNull() is DbException.Invalid)
+        try {
+            org.junit.Assert.assertTrue(runCatching { row.retry() }.exceptionOrNull() is DbException.Invalid)
+            org.junit.Assert.assertTrue(runCatching { retryAll() }.exceptionOrNull() is DbException.Invalid)
+        } finally {
+            DBlayer.database = real
+        }
     }
     private val codes = listOf(
         SessionCode.SEQUENCE_CONFLICT, SessionCode.REPLAYED_REQUEST, SessionCode.RATE_LIMITED, SessionCode.ACCOUNT_UNAVAILABLE,
@@ -38,7 +43,7 @@ class SealedErrorsTest {
     fun aSessionCodeArrivesTypedThroughALoadAnOperationCallAndASettledMutation() = bounded {
         for (code in codes) {
             val transport = MockTransport()
-            DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+            reopen(Config(null, null, 32u), modelsJSON, transport)
             DBlayer.database.registerOperations(operations)
             val failure = DbException.Session(code, code.name)
 
@@ -58,7 +63,7 @@ class SealedErrorsTest {
     fun aLostSessionKeepsTheQueuedMutationFailedAndRetrySendsItOnce() = bounded {
         for (code in listOf(SessionCode.UNAUTHENTICATED, SessionCode.ACCOUNT_UNAVAILABLE)) {
             val transport = MockTransport()
-            DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+            reopen(Config(null, null, 32u), modelsJSON, transport)
             DBlayer.database.registerOperations(operations)
             transport.enqueue("CreateMoment", DbException.Session(code, code.name))
             val local = Moment.create(text = "hello", media = null)
@@ -77,7 +82,7 @@ class SealedErrorsTest {
     @Test
     fun anotherSessionCodeRollsTheQueuedMutationBack() = bounded {
         val transport = MockTransport()
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations(operations)
         transport.enqueue("CreateMoment", DbException.Session(SessionCode.RATE_LIMITED, "RATE_LIMITED"))
         val local = Moment.create(text = "hello", media = null)

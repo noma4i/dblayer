@@ -27,7 +27,7 @@ class NodeReadTest {
 
     private suspend fun open(models: String = modelsJSON): MockTransport {
         val transport = MockTransport()
-        DBlayer.database = Database.open(Config(null, null, 64u), models, transport)
+        reopen(Config(null, null, 64u), models, transport)
         val defs = documents.map { (name, document) -> buildJsonObject { put("name", JsonPrimitive(name)); put("document", JsonPrimitive(document)) } }
         DBlayer.database.registerOperations(JsonArray(defs).toString())
         return transport

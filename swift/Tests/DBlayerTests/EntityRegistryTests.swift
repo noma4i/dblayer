@@ -134,10 +134,10 @@ struct EntityRegistryTests {
 
   /// REL-24
   @Test
-  func resetDropsEveryEntityLeaseAndRetainedValue() async {
+  func resetDropsRetainedValuesAndKeepsEveryLeaseOfTheHeldEntities() async {
     let source = CountingSource()
     let registry = Entities<Moment>(source: source)
-    var held = (0 ..< 5).map { registry.entity("\($0)") }
+    let held = (0 ..< 5).map { registry.entity("\($0)") }
     var dropped: [Entity<Moment>]? = (5 ..< 10).map { registry.entity("\($0)") }
     registry.apply(delivery(1, (0 ..< 10).map { moment("\($0)", "v") }))
     #expect(dropped?.count == 5)
@@ -145,11 +145,12 @@ struct EntityRegistryTests {
     #expect(registry.retainedCount == 5)
     registry.reset()
     await settle()
-    #expect(registry.retainedCount == 0 && registry.liveCount == 0)
-    #expect(held.allSatisfy { $0.value == nil })
-    #expect(Set(source.released).isSuperset(of: (0 ..< 10).map(String.init)))
-    held = []
-    #expect(registry.retainedCount == 0)
+    #expect(registry.retainedCount == 0 && registry.liveCount == 5)
+    #expect(Set(source.released) == Set((5 ..< 10).map(String.init)))
+    registry.apply(EntityDecoding.Decoded(revision: 2, rows: [], removed: (0 ..< 5).map(String.init)))
+    #expect(held.allSatisfy { $0.value == nil && !$0.isClosed })
+    registry.apply(delivery(3, (0 ..< 5).map { moment("\($0)", "next") }))
+    #expect(held.allSatisfy { $0.value?.text == "next" })
   }
 
   /// Addendum 3a: a cancelled attach leaves no subscription, at each of the 3 timings.

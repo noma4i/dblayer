@@ -6,7 +6,7 @@ import DBlayerTesting
 extension BridgeProbeTests {
   @Suite struct ListChangeTests {
     @Test func aSlowConsumerReceivesABoundedReplacementWithEveryCurrentRow() async throws {
-      DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
+      try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
       let query = Query<Moment>().order(Moment.createdAt.desc)
       let cursor = Cursor(await query.changes.stream())
       for number in 0..<192 { _ = try await Moment.create(text: "row\(number)") }
@@ -57,7 +57,7 @@ extension BridgeProbeTests {
     }
 
     @Test func changesDeliverOnlyChangedRowsAndRestart() async throws {
-      DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
+      try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
       let query = Query<Moment>().order(Moment.createdAt.desc)
       for number in 0..<2000 { _ = try await Moment.create(text: "row\(number)") }
       let cursor = Cursor(await query.changes.stream())
@@ -87,7 +87,7 @@ extension BridgeProbeTests {
       let transport = MockTransport()
       let nodes = (0..<2501).map { "{\"__typename\":\"Moment\",\"id\":\"\($0)\",\"uuid\":\"\($0)\",\"likedByMe\":false,\"media\":{},\"createdAt\":\"2026-10-08T00:00:00.000Z\"}" }.joined(separator: ",")
       transport.enqueue("MomentsFeed", reply: "{\"data\":{\"feed\":{\"nodes\":[\(nodes)],\"pageInfo\":{\"hasNextPage\":false}}}}")
-      DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+      try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
       try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed { feed { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
       let query = Query<Moment>()
       var stream: LiveStream<ListChange<Moment>>? = await query.changes.stream()

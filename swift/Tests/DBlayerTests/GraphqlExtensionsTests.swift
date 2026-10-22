@@ -15,7 +15,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     let operation = code == "DUPLICATE_CLIENT_KEY" ? "RecordAlbumSend" : "PurchaseCreate"
     let root = code == "DUPLICATE_CLIENT_KEY" ? "recordAlbumSend" : "purchaseCreate"
-    let database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON.replacingOccurrences(of: "CreateMoment", with: operation), transport: transport)
+    let database = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON.replacingOccurrences(of: "CreateMoment", with: operation), transport: transport)
     try database.registerOperations(defsJson: #"[{"name":"\#(operation)","document":"mutation \#(operation) { \#(root) { id } }"}]"#)
     let extra = text.map { #", "transactionDisposition":"\#($0)""# } ?? ""
     let response = #"{"errors":[{"message":"refused","extensions":{"code":"\#(code)"\#(extra),"detail":"refused","limit":3,"context":{"values":[true,null,2]}}},{"message":"secondary","extensions":{"code":"SECONDARY","transactionDisposition":"KEEP"}}]}"#

@@ -19,7 +19,7 @@ class EdgeValueTest {
     @Test
     fun edgeValuesBelongToTheirConnectionAndAnotherConnectionDoesNotChangeThem() = bounded {
         val transport = MockTransport()
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, transport)
+        reopen(Config(null, null, 64u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"$document"}]""")
         transport.enqueue("MomentsFeed", reply("imp-1", 5))
         Moment.feed.refresh()

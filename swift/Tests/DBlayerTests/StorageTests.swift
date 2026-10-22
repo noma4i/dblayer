@@ -21,7 +21,7 @@ struct StorageTests {
       let models = fields["models"]!.text
       if fields["error"] == .bool(true) {
         await #expect(throws: (any Error).self, Comment(rawValue: name)) {
-          try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: models, transport: nil)
+          try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: models, transport: nil)
         }
         continue
       }
@@ -30,7 +30,7 @@ struct StorageTests {
       defer { try? FileManager.default.removeItem(at: directory) }
       let config = Config(path: directory.appendingPathComponent("db.sqlite").path, dataVersion: nil, cacheRows: 32)
       let transport = MockTransport()
-      var database = try await Database.open(config: config, modelsJson: models, transport: transport)
+      var database = try await openDatabase(config: config, modelsJson: models, transport: transport)
       let state: WireSyncState = name == "local" ? .synced : .pending
       func syncState(_ row: WireRow) -> WireSyncState { row.sync.state }
       #expect(try await Self.rows(database).isEmpty, Comment(rawValue: name))
@@ -43,7 +43,7 @@ struct StorageTests {
       #expect(try await Self.rows(database).first?.cells.first == .text(value: "two"), Comment(rawValue: name))
       try await database.flush()
       #expect(transport.calls.isEmpty, Comment(rawValue: name))
-      database = try await Database.open(config: config, modelsJson: models, transport: transport)
+      database = try await openDatabase(config: config, modelsJson: models, transport: transport)
       let reopened = try #require(await Self.rows(database).first, Comment(rawValue: name))
       #expect(reopened.cells.first == .text(value: "two") && syncState(reopened) == state, Comment(rawValue: name))
       try await database.destroy(model: "StorageRow", rowId: id)

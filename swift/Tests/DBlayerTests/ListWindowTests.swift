@@ -7,7 +7,7 @@ extension BridgeProbeTests {
   fileprivate static let byText = Query<Moment>().order(Order(field: "text", direction: "asc"))
 
   fileprivate static func openWindowBase() async throws {
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
   }
 
   @Test
@@ -76,7 +76,7 @@ extension BridgeProbeTests {
   func aWindowOverTheThreadShapeDecodesOnlyItsRows() async throws {
     let transport = MockTransport()
     transport.enqueue("ContainerThread", reply: Self.threadReply((1 ... 7).map { Self.threadNode($0) }))
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"ContainerThread","document":"query ContainerThread($containerId: ID!, $first: Int, $after: String) { container(id: $containerId) { records(first: $first, after: $after) { nodes { id containerId authorId text createdAt sequenceNumber } pageInfo { hasNextPage endCursor } } } }"},{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt sequenceNumber } }"}]"#)
     let thread = Record.thread("c1")
     try await thread.load()

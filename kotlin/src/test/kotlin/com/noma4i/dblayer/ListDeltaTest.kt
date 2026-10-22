@@ -13,7 +13,7 @@ class ListDeltaTest {
     private val byText get() = Query("Moment", Moment).order(Order("text", "asc"))
 
     private suspend fun open() {
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, null)
+        reopen(Config(null, null, 64u), modelsJSON, null)
     }
 
     private fun watching(query: Query<Moment>, feed: ListFeed<Moment>): Flow<List<Moment>> {
@@ -187,7 +187,7 @@ class ListDeltaTest {
     fun inv_observe_18_a_snapshot_names_the_replaced_id_when_the_temporary_row_was_never_delivered() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
         val gate = java.util.concurrent.CountDownLatch(1)
         val deliveries = AtomicInteger()

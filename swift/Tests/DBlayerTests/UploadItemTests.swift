@@ -27,7 +27,7 @@ struct UploadItemTests {
     let transport = MockTransport()
     transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://s3/x","headers":{},"signedId":"sid","blobId":"b1"}}}"#)
     transport.enqueue("CreateMoment", failure: .Interrupted(detail: "lost answer"))
-    var database: Database? = try await Database.open(config: config, modelsJson: modelsJSON, transport: transport)
+    var database: Database? = try await openDatabase(config: config, modelsJson: modelsJSON, transport: transport)
     defer { database = nil }
     try database!.registerOperations(defsJson: definitions)
     if cancel { try database!.setOnline(online: false) }
@@ -53,7 +53,7 @@ struct UploadItemTests {
     #expect(progress.totalBytes == 6)
     live.cancel()
     database = nil
-    database = try await Database.open(config: config, modelsJson: modelsJSON, transport: transport)
+    database = try await openDatabase(config: config, modelsJson: modelsJSON, transport: transport)
     try database!.registerOperations(defsJson: definitions)
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     _ = try await database!.retry(model: "Moment", rowId: local.id)

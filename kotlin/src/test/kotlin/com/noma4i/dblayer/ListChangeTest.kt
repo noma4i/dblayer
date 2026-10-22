@@ -12,7 +12,7 @@ import org.junit.Test
 
 class ListChangeTest {
     @Test fun aSlowConsumerReceivesABoundedReplacementWithEveryCurrentRow() = bounded {
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, null)
+        reopen(Config(null, null, 64u), modelsJSON, null)
         val query = Query("Moment", Moment).order(Moment.createdAt.desc)
         val attached = kotlinx.coroutines.CompletableDeferred<Unit>()
         val release = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -58,7 +58,7 @@ class ListChangeTest {
     }
 
     @Test fun changesDeliverOnlyChangedRowsAndRestart() = bounded {
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, null)
+        reopen(Config(null, null, 64u), modelsJSON, null)
         val query = Query("Moment", Moment).order(Moment.createdAt.desc)
         repeat(2000) { Moment.create(text = "row$it") }
         val inbox = Channel<ListChange<Moment>>(Channel.UNLIMITED)
@@ -88,7 +88,7 @@ class ListChangeTest {
         val transport = MockTransport()
         val nodes = (0 until 2501).joinToString(",") { """{"__typename":"Moment","id":"$it","uuid":"$it","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}""" }
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[$nodes],"pageInfo":{"hasNextPage":false}}}}""")
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, transport)
+        reopen(Config(null, null, 64u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed { feed { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
         val query = Query("Moment", Moment)
         val inbox = Channel<ListChange<Moment>>(Channel.UNLIMITED)

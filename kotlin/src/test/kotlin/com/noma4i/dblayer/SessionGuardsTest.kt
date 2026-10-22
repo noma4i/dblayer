@@ -72,7 +72,7 @@ private suspend inline fun <reified Failure : Throwable> rejects(block: () -> Un
 }
 
 private suspend fun open(http: ScriptedHttp, credentials: CountedCredential, path: String? = null, pin: String = PIN) =
-    Database.open(config = Config(path, null, 32u), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", KEY, pin, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
+    openDatabase(config = Config(path, null, 32u), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", KEY, pin, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
 
 private inline fun withDirectory(block: (File) -> Unit) {
     val directory = Files.createTempDirectory("dblayer-session").toFile()

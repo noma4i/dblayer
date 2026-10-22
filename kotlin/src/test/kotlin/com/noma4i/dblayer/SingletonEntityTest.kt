@@ -15,7 +15,7 @@ class SingletonEntityTest {
     private val transport = MockTransport()
 
     private suspend fun open() {
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
     }
 
@@ -91,7 +91,7 @@ class SingletonEntityTest {
         assertTrue(resumed === registry.currentSingleFeed)
     }
 
-    /** A delivery of a feed that a newly opened database replaced writes nothing. */
+    /** A delivery of a feed that a reset replaced writes nothing. */
     @Test
     fun aDeliveryOfAReplacedFeedNeverWrites() = bounded {
         open()
@@ -100,7 +100,7 @@ class SingletonEntityTest {
         login("1", "Ann")
         loaded(entity)
         DBlayer.logout()
-        open()
+        DBlayer.resume()
         assertTrue(User.entity() === entity && entity.value.value == null)
         registry.receive(old, Long.MAX_VALUE, User(id = "9", name = "Late", typing = false))
         assertNull(entity.value.value)

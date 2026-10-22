@@ -12,7 +12,7 @@ class NoticeTest {
     @Test
     fun memoryNoticesReachTheGeneratedLiveQueryWithoutAReadRequest() = bounded {
         val transport = MockTransport()
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
         val notices = async { Notice.recent.live.flow.first { it.isNotEmpty() } }
         eventually("the notice subscription opens") { transport.calls.size == 1 }

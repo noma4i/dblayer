@@ -15,7 +15,7 @@ extension BridgeProbeTests {
 
   private func openNodeRig(models: String = modelsJSON) async throws -> MockTransport {
     let transport = MockTransport()
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: models, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: models, transport: transport)
     let defs = Self.nodeDocuments.map { JSONValue.object(["name": .string($0.0), "document": .string($0.1)]) }
     try DB.database.registerOperations(defsJson: JSONValue.array(defs).text)
     return transport

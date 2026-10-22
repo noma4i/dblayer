@@ -11,7 +11,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func anEdgeValueDeclaredWithFromAndAnEdgeEnumAreReadAfterTheLoad() async throws {
     let transport = MockTransport()
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("MomentsFeed"), "document": .string(Self.renamedEdgeDocument)])]).text)
     transport.enqueue("MomentsFeed", reply: Self.renamedEdgeReply)
     try await Moment.vibeFeed("v1").refresh()

@@ -189,7 +189,7 @@ fn put_without_settle(db: &Db, model: &str, value: serde_json::Value) {
 }
 
 #[test]
-fn inv_observe_19_a_retain_whose_read_failed_reports_it_and_leaves_no_dirty_id() {
+fn inv_observe_19_a_retain_whose_read_failed_reports_it_and_keeps_the_id_dirty_until_a_read_succeeds() {
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "one"}));
     let (log, callback) = entity_recorder();
@@ -197,7 +197,7 @@ fn inv_observe_19_a_retain_whose_read_failed_reports_it_and_leaves_no_dirty_id()
     db.shared.store.fail_next_entity_reads(1);
     assert!(observer.retain(&[rid("u1")]).is_err());
     db.settle();
-    assert_eq!((log.lock().unwrap().len(), db.keyed_rows()), (0, 0), "nothing told and the id never entered the index");
+    assert_eq!((log.lock().unwrap().len(), db.keyed_rows()), (0, 1), "nothing told and the id is indexed for the next read");
     observer.retain(&[rid("u1")]).unwrap();
     db.settle();
     assert_eq!(log.lock().unwrap().len(), 1, "the next retain tells the row");

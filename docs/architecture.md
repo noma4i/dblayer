@@ -7,7 +7,7 @@ All behavior is in the Rust core (`core/`). Swift (`swift/`) and Kotlin (`kotlin
 ```
 .dbl files --dblayer-gen--> typed Swift / Kotlin models + model specification
                                   |                         |
-                           your app code             Database.open(...)
+                           your app code             DB.open / DBlayer.open (once)
                                   |                         |
                          generated bindings ------> Rust core (SQLite)
                                                             |

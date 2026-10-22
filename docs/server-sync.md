@@ -17,8 +17,7 @@ Without `encrypted`, requests use ordinary GraphQL HTTP and the transport's exis
 
 Opening is asynchronous: use `try await DB.open(...)` in Swift and suspend `DBlayer.open(context, ...)` in Kotlin.
 The library opens files and runs migrations on its worker pool.
-Repeated calls with identical parameters reuse the database. Different parameters fail. An opening error permits retry.
-Keep one instance of each credential store, transport and HTTP callback for the process. The core compares their identities.
+Open the database once at app start and use that instance everywhere. A second call to `open` while the database is open fails with `database is already open; open it once at app start`, whatever its parameters. An opening error permits retry. `close` ends the database, meant for tests and the end of the process, and the next `open` opens it again.
 
 ```swift
 try await DB.open(endpoint: endpoint, headers: headers, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
@@ -48,7 +47,7 @@ An omitted endpoint and transport opens a local database when `encrypted` is abs
 With `encrypted`, the default HTTP uses its origin. The default transport uses `endpoint`, or that origin when endpoint is absent.
 `http` is the last optional argument and accepts custom encrypted HTTP replies.
 The core rejects `encrypted` without credentials, credentials without `encrypted`, and `http` without `encrypted` as `DbError.Invalid` (`DbException.Invalid` in Kotlin).
-Direct `Database.open` calls with `encrypted` also require HTTP and transport arguments.
+`DB.open` and `DBlayer.open` with `encrypted` also require the HTTP and transport arguments.
 Encrypted sessions require JWE requests.
 
 An operation type declares `Data` (Swift) or a `dataSerializer` (Kotlin) when its generated call returns a decoded response.
@@ -89,28 +88,31 @@ The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin f
 
 ```swift
 let origin = URL(string: "https://api.example.com")!
-let database = try await Database.open(
-  config: Config(path: path, dataVersion: nil, cacheRows: 4096),
-  modelsJson: modelsJSON,
-  transport: UrlSessionTransport(endpoint: origin, cablePath: endpoints.cable),
+try await DB.open(
   encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
   credentials: KeychainCredentials(),
+  transport: UrlSessionTransport(endpoint: origin, cablePath: endpoints.cable),
+  modelsJSON: modelsJSON,
+  path: path,
   http: UrlSessionEncryptedHttp(origin: origin)
 )
+let database = DB.database!
 _ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
 let answer = try await database.sessionCall(operation: "confirm", bodyJson: #"{"code":"123456"}"#)
 ```
 
 ```kotlin
 val origin = "https://api.example.com"
-val database = Database.open(
-    config = Config(path, null, 4096u),
-    modelsJson = modelsJSON,
-    transport = OkHttpTransport(origin, cablePath = endpoints.cable),
+DBlayer.open(
+    context,
     encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel),
     credentials = KeystoreCredentials(),
+    transport = OkHttpTransport(origin, cablePath = endpoints.cable),
+    modelsJson = modelsJSON,
+    path = path,
     http = OkHttpEncryptedHttp(origin),
 )
+val database = DBlayer.database
 database.sessionCall("otp", """{"phone":"+61400000000"}""")
 val answer = database.sessionCall("confirm", """{"code":"123456"}""")
 ```

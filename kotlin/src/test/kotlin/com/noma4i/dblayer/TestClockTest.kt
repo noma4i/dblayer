@@ -10,6 +10,7 @@ class TestClockTest {
     private fun loadAfter(advanceMillis: Long): Int = bounded {
         val transport = MockTransport()
         repeat(2) { transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""") }
+        DBlayer.close()
         val clock = DBlayer.openTesting(transport, modelsJSON)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
         Moment.feed.load()

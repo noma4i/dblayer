@@ -13,6 +13,7 @@ use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
 use crate::transport::{self as core, EncryptedClient};
 use super::entities::{self, EntityListener, LiveEntities};
 use super::live::LiveHandles;
+use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::wire::{WireModel, WireRow};
 use super::{DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, RelationStateChange, StateListener, StateSubscription, Transport};
@@ -68,6 +69,9 @@ pub struct Config { pub path: Option<String>, pub data_version: Option<String>, 
 pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64 }
 
 #[derive(uniffi::Record)]
+pub struct EntityCensus { pub facts_told: u64, pub position_skips: u64, pub reads_failed: u64 }
+
+#[derive(uniffi::Record)]
 pub struct QueuedAction { pub row: WireRow, pub operation: i64 }
 
 #[derive(uniffi::Object)]
@@ -81,7 +85,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) online: Arc<core::Connectivity>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) online: Arc<core::Connectivity>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -103,21 +107,9 @@ impl Database {
         let (transport, session) = wire(&db, &clock)?;
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig::default()));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { db, sync, session, clock, online: core::Connectivity::new(true), wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, online: core::Connectivity::new(true), wires: Arc::new(wires) }))
     }
 
-    fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {
-        self.wires.get(model).ok_or_else(|| DbError::Invalid { detail: format!("model {model} is not registered") })
-    }
-}
-
-fn id(value: &str) -> Result<RowId, DbError> {
-    RowId::new(value).map_err(|error| DbError::Invalid { detail: error.to_string() })
-}
-
-#[uniffi::export]
-impl Database {
-    #[uniffi::constructor(default(encrypted = None, credentials = None, http = None))]
     pub async fn open(
         config: Config,
         models_json: String,
@@ -143,11 +135,23 @@ impl Database {
         }).await
     }
 
-    #[uniffi::constructor]
     pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<TestClock>) -> Result<Arc<Self>, DbError> {
         blocking(move || Self::start(config, models_json, transport, clock.clock.clone())).await
     }
 
+    pub(super) fn hold(&self, lease: Arc<OpenLease>) { let _ = self.lease.set(lease); }
+
+    fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {
+        self.wires.get(model).ok_or_else(|| DbError::Invalid { detail: format!("model {model} is not registered") })
+    }
+}
+
+fn id(value: &str) -> Result<RowId, DbError> {
+    RowId::new(value).map_err(|error| DbError::Invalid { detail: error.to_string() })
+}
+
+#[uniffi::export]
+impl Database {
     pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         let row_id = id(&row_id)?;
         self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, LoadOptions::default(), listener)
@@ -175,6 +179,10 @@ impl Database {
     pub fn subscription_census(&self) -> SubscriptionCensus {
         let census = self.db.observer_census();
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64 }
+    }
+    pub fn entity_census(&self) -> EntityCensus {
+        let counters = self.db.counters();
+        EntityCensus { facts_told: counters.entity_facts_told as u64, position_skips: counters.entity_position_skips as u64, reads_failed: counters.entity_reads_failed as u64 }
     }
     pub fn live_entities(&self, model: String, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
         entities::open(&self.db, &model, self.wire(&model)?.clone(), listener)
@@ -434,6 +442,7 @@ impl Database {
         let db = self.db.clone();
         blocking(move || Ok(db.maintain(&[]).map(|_| ())?)).await
     }
+    pub fn shutdown(&self) { if let Some(lease) = self.lease.get() { lease.release(); } }
     pub async fn logout(&self) -> Result<(), DbError> {
         let database = self.clone();
         blocking(move || {

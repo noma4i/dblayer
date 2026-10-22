@@ -1,4 +1,5 @@
 mod database;
+mod open_slot;
 mod opening;
 mod changes;
 mod cloud;
@@ -21,7 +22,7 @@ pub fn user_agent(application: Option<String>) -> String {
     }
 }
 
-pub use database::{Config, Database, SubscriptionCensus, TestClock};
+pub use database::{Config, Database, EntityCensus, SubscriptionCensus, TestClock};
 pub use opening::{OpenDatabase, OpenOptions};
 pub use changes::LiveChanges;
 pub use cloud::{CloudLink, CloudStateListener};

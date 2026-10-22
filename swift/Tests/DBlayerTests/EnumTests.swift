@@ -6,7 +6,7 @@ import Testing
 extension BridgeProbeTests {
 struct EnumTests {
   private func open() async throws -> Database {
-    try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
   }
 
   @Test
@@ -20,7 +20,7 @@ struct EnumTests {
   @Test @MainActor
   func aValueOutsideTheDeclaredOnesIsStoredReadBackAndKeptByAnEdit() async throws {
     let database = try await open()
-    DB.database = database
+    adopt(database)
     let wire = try await database.create(model: "NestedSample", valuesJson: #"{"phase":"archived"}"#, argsJson: "{}")
     let sample = try NestedSample.decode(wire)
     #expect(sample.phase == .unknown("archived"))
@@ -34,7 +34,7 @@ struct EnumTests {
 
   @Test @MainActor
   func theTypedApiWritesADeclaredCaseAndQueriesCompareTypedValues() async throws {
-    DB.database = try await open()
+    adopt(try await open())
     let sample = try await NestedSample.create(phase: .live)
     #expect(sample.phase == .live)
     let live = Cursor(await NestedSample.where(NestedSample.phase == .live).snapshots.stream())

@@ -21,14 +21,14 @@ class StorageTest {
             val name = (fields.getValue("name") as JsonPrimitive).content
             val models = fields.getValue("models").toString()
             if (fields["error"] == JsonPrimitive(true)) {
-                assertTrue(name, runCatching { Database.open(Config(null, null, 32u), models, null) }.exceptionOrNull() is DbException)
+                assertTrue(name, runCatching { openDatabase(Config(null, null, 32u), models, null) }.exceptionOrNull() is DbException)
                 continue
             }
             val directory = Files.createTempDirectory("dblayer-storage").toFile()
             try {
                 val config = Config(File(directory, "db.sqlite").path, null, 32u)
                 val transport = MockTransport()
-                DBlayer.database = Database.open(config, models, transport)
+                reopen(config, models, transport)
                 val state = if (name == "local") SyncState.Synced else SyncState.Pending
                 val query = Query("StorageRow", StorageRow)
                 assertEquals(emptyList<StorageRow>(), withTimeout(5000) { query.live.flow.first() })
@@ -40,7 +40,7 @@ class StorageTest {
                 assertEquals("two", withTimeout(5000) { query.live.flow.first { it.firstOrNull()?.record == "two" } }.first().record)
                 DBlayer.database.flush()
                 assertEquals(name, emptyList<TransportRequest>(), transport.calls)
-                DBlayer.database = Database.open(config, models, transport)
+                reopen(config, models, transport)
                 val reopened = withTimeout(5000) { StorageRow.find(row.id).flow.first() }!!
                 assertEquals(name, "two", reopened.record)
                 assertEquals(name, state, reopened.sync.state)

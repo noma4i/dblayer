@@ -12,7 +12,7 @@ import org.junit.Test
 class ParentSetsTest {
     @Test
     fun aLocalRecordMovesTheContainerPointerAndDiscardingItGivesThePointerBack() = bounded {
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        reopen(Config(null, null, 32u), modelsJSON, null)
         val container = Container.create(title = "t")
         val record = Record.create(containerId = container.id, authorId = "u1", text = "hi")
 

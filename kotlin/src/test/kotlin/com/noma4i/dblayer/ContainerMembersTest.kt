@@ -20,7 +20,7 @@ class ContainerMembersTest {
     @Test
     fun containerMembersPageThroughTheNodeAndKeepEveryContainerApart() = bounded {
         val transport = MockTransport()
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, transport)
+        reopen(Config(null, null, 64u), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
         DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
         transport.enqueue("ContainerMembers", page("a", 0..29, true))

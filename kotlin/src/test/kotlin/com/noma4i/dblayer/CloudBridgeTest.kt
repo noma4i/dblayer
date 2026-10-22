@@ -17,7 +17,7 @@ private class RecordingCloud : CloudIo {
 class CloudBridgeTest {
     @Test
     fun aLocalWriteReachesTheCloudAdapterThroughTheBridge() = bounded {
-        val database = Database.open(Config(null, null, 32u), CLOUD_MODELS, null)
+        val database = openDatabase(Config(null, null, 32u), CLOUD_MODELS, null)
         val cloud = RecordingCloud()
         val link = database.connectCloud(cloud)
         database.create("Note", """{"title":"hello"}""", "{}")

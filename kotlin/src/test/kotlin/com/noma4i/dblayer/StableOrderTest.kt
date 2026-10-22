@@ -13,7 +13,7 @@ class StableOrderTest {
         val schema = """[{"key":"Record","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}}],"actions":[{"name":"create","root_shape":"upsert","mutation":"CreateRecord","root":"createRecord.record","has_optimistic":true,"has_temp_row_retention":true,"lands":[{"model":"Record","root":"createRecord.extra"}]}]}]"""
         val transport = MockTransport()
         transport.enqueue("CreateRecord", """{"data":{"createRecord":{"record":{"id":"r1"},"extra":{"id":"r2"}}}}""")
-        val database = Database.open(Config(null, null, 64u), schema, transport)
+        val database = openDatabase(Config(null, null, 64u), schema, transport)
         database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]""")
         val row = database.create("Record", "{}", "{}")
         database.settled("Record", row.id)
@@ -29,7 +29,7 @@ class StableOrderTest {
         val transport = MockTransport()
         val page = listOf(node("m1", 1, "t1"), node("m2", 2, "t2"), node("m5", 5, "t5"))
         transport.enqueue("ContainerThread", """{"data":{"container":{"records":{"nodes":[${page.joinToString(",")}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}""")
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, transport)
+        reopen(Config(null, null, 64u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"ContainerThread","document":"query ContainerThread(${'$'}containerId: ID!, ${'$'}first: Int, ${'$'}after: String) { container(id: ${'$'}containerId) { records(first: ${'$'}first, after: ${'$'}after) { nodes { id containerId authorId text createdAt sequenceNumber } pageInfo { hasNextPage endCursor } } } }"},{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt sequenceNumber } }"}]""")
         val thread = Record.thread("c1")
         thread.load()

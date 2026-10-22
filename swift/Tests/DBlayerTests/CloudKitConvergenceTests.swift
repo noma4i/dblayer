@@ -16,8 +16,8 @@ struct CloudKitConvergenceTests {
   @Test
   func twoDatabasesConvergeThroughTheAdapterOnASharedStore() async throws {
     let store = FakeCloudKitStore()
-    let first = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: cloudModels, transport: nil)
-    let second = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: cloudModels, transport: nil)
+    let first = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: cloudModels, transport: nil)
+    let second = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: cloudModels, transport: nil)
     let firstLink = try first.connectCloud(io: CloudKitAdapter(wire: FakeCloudKitWire(store: store), zoneID: zone))
     let secondLink = try second.connectCloud(io: CloudKitAdapter(wire: FakeCloudKitWire(store: store), zoneID: zone))
     let created = try await first.create(model: "Note", valuesJson: #"{"title":"hello"}"#, argsJson: "{}")

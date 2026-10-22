@@ -18,7 +18,7 @@ private final class RecordingCloud: CloudIo, @unchecked Sendable {
 struct CloudBridgeTests {
   @Test
   func aLocalWriteReachesTheCloudAdapterThroughTheBridge() async throws {
-    let database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: cloudModels, transport: nil)
+    let database = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: cloudModels, transport: nil)
     let cloud = RecordingCloud()
     let link = try database.connectCloud(io: cloud)
     _ = try await database.create(model: "Note", valuesJson: #"{"title":"hello"}"#, argsJson: "{}")

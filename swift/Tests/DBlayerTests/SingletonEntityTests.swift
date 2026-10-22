@@ -24,7 +24,7 @@ extension BridgeProbeTests {
   @MainActor
   static func openSingletonRig() async throws -> MockTransport {
     let transport = MockTransport()
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
     return transport
   }
@@ -93,7 +93,7 @@ extension BridgeProbeTests {
     #expect(resumed === Entities<User>.shared.singleFeed)
   }
 
-  /// A delivery of a feed that a newly opened database replaced writes nothing.
+  /// A delivery of a feed that a reset replaced writes nothing.
   @MainActor
   @Test
   func aDeliveryOfAReplacedFeedNeverWrites() async throws {
@@ -104,11 +104,11 @@ extension BridgeProbeTests {
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
     try await DB.logout()
-    let second = try await Self.openSingletonRig()
+    try await DB.resume()
     #expect(User.entity() === entity && entity.value == nil)
     registry.receive(from: old, revision: Int64.max, row: entity.value ?? User(id: "9", name: "Late"))
     #expect(entity.value == nil)
-    try await Self.login(second, "2", "Bob")
+    try await Self.login(transport, "2", "Bob")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
     #expect(entity.value?.name == "Bob")
     #expect(DB.subscriptionCensus().observedQueries == 1)

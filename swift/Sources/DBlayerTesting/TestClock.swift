@@ -10,7 +10,7 @@ extension DB {
   @discardableResult
   public static func openTesting(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], startingAt start: Date = Date()) async throws -> TestClock {
     let clock = TestClock(startMillis: UInt64(start.timeIntervalSince1970 * 1000))
-    let database = try await Database.openWithClock(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport, clock: clock)
+    let database = try await openOnClock(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport, clock: clock)
     try install(database, transport: transport, operations: operations)
     return clock
   }

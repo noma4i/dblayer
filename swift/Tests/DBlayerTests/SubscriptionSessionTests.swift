@@ -37,7 +37,7 @@ private final class SessionChanges: QueryListener, @unchecked Sendable {
 struct SubscriptionSessionTests {
   @Test func queryListenerReceivesOneTypedSessionFailureWithoutReads() async throws {
     let transport = SessionSubscriptions()
-    let database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport)
+    let database = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport)
     try database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     let listener = SessionChanges()
     let live = try database.liveQuery(queryJson: #"{"model":"Notice","relation":"recent","params":{}}"#, listener: listener)

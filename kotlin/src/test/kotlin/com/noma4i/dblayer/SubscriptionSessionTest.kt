@@ -16,7 +16,7 @@ class SubscriptionSessionTest {
                 return mock.subscribe(request, sink)
             }
         }
-        val database = Database.open(Config(null, null, 8u), modelsJSON, transport)
+        val database = openDatabase(Config(null, null, 8u), modelsJSON, transport)
         database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
         val failures = CopyOnWriteArrayList<DbException>()
         val listener = object : QueryListener {

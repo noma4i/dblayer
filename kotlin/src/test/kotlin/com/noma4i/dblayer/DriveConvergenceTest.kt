@@ -21,8 +21,8 @@ class DriveConvergenceTest {
         val server = MockWebServer().apply { dispatcher = drive; start() }
         val token = DriveToken { "token" }
         fun cloud() = DriveCloud(DriveApi(OkHttpClient(), token, server.url("/")), token)
-        val first = Database.open(Config(null, null, 32u), CLOUD_MODELS, null)
-        val second = Database.open(Config(null, null, 32u), CLOUD_MODELS, null)
+        val first = openDatabase(Config(null, null, 32u), CLOUD_MODELS, null)
+        val second = openDatabase(Config(null, null, 32u), CLOUD_MODELS, null)
         val firstLink = first.connectCloud(cloud())
         val secondLink = second.connectCloud(cloud())
         val id = first.create("Note", """{"title":"hello"}""", "{}").id

@@ -2,17 +2,31 @@ import Foundation
 
 public enum DB {
   static let reachability = Reachability.shared
-  public nonisolated(unsafe) static var database: Database!
+  /// The one database of the process. Set by `open`, nil again after `close`.
+  public internal(set) nonisolated(unsafe) static var database: Database!
   private static let opener = OpenDatabase()
 
-  /// Ends the session: clears the stored data and drops every entity, lease and retained value.
+  /// Ends the session: clears the stored data. Entities that readers hold become empty and receive the next session's rows.
   @MainActor public static func logout() async throws {
     try await database.logout()
     EntityRegistries.resetAll()
   }
 
+  /// Closes the database. Every entity becomes closed, and `open` may open the database again. Meant for tests and the end of the process.
+  @MainActor public static func close() {
+    EntityRegistries.closeAll()
+    database?.shutdown()
+    database = nil
+  }
+
   /// The live subscriptions of the database, for probes of how many a screen opens.
   public static func subscriptionCensus() -> SubscriptionCensus { database.subscriptionCensus() }
+
+  /// What the entity observers did: facts told, deliveries skipped as not newer than the row, reads that failed. A failed read leaves the id dirty and the core reads it again.
+  public static func entityCensus() -> EntityCensus { database.entityCensus() }
+
+  /// Lease calls the core refused and rows that failed to decode for an entity, for probes that tell a refused lease from a lost delivery.
+  @MainActor public static func entityLeaseFailures() -> Int { EntityRegistries.leaseFailures() }
 
   /// What the open discarded: the reason the database file was recreated, and the models whose rows a schema change cleared. Empty when nothing was discarded.
   public static func openReport() -> OpenReport { database.openReport() }
@@ -41,12 +55,15 @@ public enum DB {
 
   @MainActor public static func open(endpoint: URL? = nil, headers: [String: String] = [:], encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
-    let references: [UInt64] = [credentials.map { UInt64(UInt(bitPattern: ObjectIdentifier($0))) } ?? 0, transport.map { UInt64(UInt(bitPattern: ObjectIdentifier($0))) } ?? 0, http.map { UInt64(UInt(bitPattern: ObjectIdentifier($0))) } ?? 0]
     let origin = encrypted.flatMap { URL(string: $0.origin) }
     let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers, cablePath: encrypted?.endpoints.cable) }
-    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(endpoint: endpoint?.absoluteString, headers: headers, operations: JSONValue.array(definitions).text, references: references), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) })
+    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) })
     reachability.start(try opened.onlineSink())
     database = opened
+  }
+
+  @_spi(Testing) public static func openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock) async throws -> Database {
+    try await opener.openWithClock(config: config, modelsJson: modelsJson, transport: transport, clock: clock)
   }
 
   @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) throws {

@@ -43,7 +43,7 @@ struct NestedTypesTests {
 @Suite(.serialized)
 struct CellDecoderTests {
   private func open() async throws -> Database {
-    try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
   }
 
   @Test

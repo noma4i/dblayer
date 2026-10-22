@@ -15,7 +15,7 @@ class ListWindowTest {
     private val byText get() = Query("Moment", Moment).order(Order("text", "asc"))
 
     private suspend fun open() {
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, null)
+        reopen(Config(null, null, 64u), modelsJSON, null)
     }
 
     @Test
@@ -78,7 +78,7 @@ class ListWindowTest {
     fun a_window_over_the_thread_shape_decodes_only_its_rows() = bounded {
         val transport = MockTransport()
         transport.enqueue("ContainerThread", reply((1..7).map { node(it) }))
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, transport)
+        reopen(Config(null, null, 64u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"ContainerThread","document":"query ContainerThread(${'$'}containerId: ID!, ${'$'}first: Int, ${'$'}after: String) { container(id: ${'$'}containerId) { records(first: ${'$'}first, after: ${'$'}after) { nodes { id containerId authorId text createdAt sequenceNumber } pageInfo { hasNextPage endCursor } } } }"},{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt sequenceNumber } }"}]""")
         val thread = Record.thread("c1")
         thread.load()

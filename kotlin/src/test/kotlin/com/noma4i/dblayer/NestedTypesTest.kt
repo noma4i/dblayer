@@ -49,7 +49,7 @@ class NestedTypesTest {
 }
 
 class CellDecoderTest {
-    private suspend fun open() = Database.open(Config(null, null, 32u), modelsJSON, null)
+    private suspend fun open() = openDatabase(Config(null, null, 32u), modelsJSON, null)
 
     @Test
     fun aStoredRowDecodesFromCellsLikeTheSharedJSONCases() = bounded {

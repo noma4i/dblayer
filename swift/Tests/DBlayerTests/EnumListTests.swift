@@ -5,7 +5,7 @@ import Testing
 
 extension BridgeProbeTests.EnumTests {
   private func openShelves() async throws -> Database {
-    try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
   }
 
   @Test @MainActor

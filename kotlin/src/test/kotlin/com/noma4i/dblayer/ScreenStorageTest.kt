@@ -31,7 +31,7 @@ class ScreenStorageTest {
             JsonObject(fields)
         })
         val transport = MockTransport()
-        DBlayer.database = Database.open(Config(null, null, 0u), modelsJSON, transport)
+        reopen(Config(null, null, 0u), modelsJSON, transport)
         val document = "query ScreenNode(\$id: ID!) { node(id: \$id) { ... on CustomScreen { id slug version requires { ios android } spec { root state { path value } elements { id type slot children padding margin background radius expand align accessibilityLabel props visible press change } } } } }"
         DBlayer.database.registerOperations(JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("ScreenNode")); put("document", JsonPrimitive(document)) })).toString())
         val row = buildJsonObject {

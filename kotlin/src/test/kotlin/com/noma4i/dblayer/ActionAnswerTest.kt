@@ -13,7 +13,7 @@ class ActionAnswerTest {
     fun anActionAnswersWithTheDeclaredFieldsOfThePayloadAndRefusesWhenTheServerRefuses() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment(${'$'}momentId: ID!) { shareMoment(momentId: ${'$'}momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]""")
         val local = Moment.create(text = "hello", media = null)
         withTimeout(5000) { local.settled() }

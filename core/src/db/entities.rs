@@ -177,20 +177,30 @@ impl EntityObserver {
         let mut observers = locked(&shared.observers);
         let Some(group) = observers.entities.get(&self.key) else { return Ok(()) };
         let model = group.model.clone();
-        let fresh: BTreeSet<RowId> = ids.iter().filter(|id| !group.known.contains_key(*id)).cloned().collect();
+        let fresh: BTreeSet<RowId> = ids.iter().filter(|id| !group.known.contains_key(*id) || group.dirty.contains(*id)).cloned().collect();
         if fresh.is_empty() {
             return Ok(());
         }
-        let (position, loaded) = shared.read_entities(&model, fresh.iter())?;
+        let read = shared.read_entities(&model, fresh.iter());
         let group = observers.entities.get_mut(&self.key).expect("group checked above");
         for id in &fresh {
-            group.known.insert(id.clone(), Known { position: (i64::MIN, 0), stamp: None, told: false });
+            group.known.entry(id.clone()).or_insert(Known { position: (i64::MIN, 0), stamp: None, told: false });
         }
-        let changes = group.settle(position, &loaded, fresh.iter().cloned());
+        let (changes, failure) = match read {
+            Ok((position, loaded)) => {
+                group.dirty.retain(|id| !fresh.contains(id));
+                (group.settle(position, &loaded, fresh.iter().cloned()), None)
+            }
+            Err(error) => {
+                group.dirty.extend(fresh.iter().cloned());
+                locked(&shared.counters).entity_reads_failed += 1;
+                (Vec::new(), Some(error))
+            }
+        };
         let subscriber = group.subscriber.clone();
         observers.index_rows(&self.key, &model, fresh.iter());
         subscriber.post(&shared.executor, changes);
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 
     pub fn release(&self, ids: &[RowId]) {

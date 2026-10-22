@@ -1,7 +1,6 @@
 package com.noma4i.dblayer
 
 import android.content.Context
-import java.util.IdentityHashMap
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -12,10 +11,7 @@ import kotlinx.coroutines.sync.withLock
 object DBlayer {
     private val opening = Mutex()
     private val opener = OpenDatabase()
-    private val references = IdentityHashMap<Any, ULong>()
-    private var nextReference = 1uL
-
-    private fun reference(value: Any?): ULong = value?.let { references.getOrPut(it) { nextReference++ } } ?: 0uL
+    private var opened: Database? = null
 
     /** Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`. */
     fun listen() = database.listen()
@@ -26,14 +22,27 @@ object DBlayer {
         EntityRegistries.resumeAll()
     }
 
-    /** Ends the session: clears the stored data and drops every entity, lease and retained value. */
+    /** Ends the session: clears the stored data. Entities that readers hold become empty and receive the next session's rows. */
     suspend fun logout() {
         database.logout()
         EntityRegistries.resetAll()
     }
 
+    /** Closes the database. Every entity becomes closed, and `open` may open the database again. Meant for tests and the end of the process. */
+    fun close() {
+        EntityRegistries.closeAll()
+        opened?.shutdown()
+        opened = null
+    }
+
     /** The live subscriptions of the database: observed queries and subscriptions, for probes of how many a screen opens. */
     fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
+
+    /** What the entity observers did: facts told, deliveries skipped as not newer than the row, reads that failed. A failed read leaves the id dirty and the core reads it again. */
+    fun entityCensus(): EntityCensus = database.entityCensus()
+
+    /** Lease calls the core refused and rows that failed to decode for an entity, for probes that tell a refused lease from a lost delivery. */
+    fun entityLeaseFailures(): Int = EntityRegistries.leaseFailures()
 
     /** What the open discarded: the reason the database file was recreated, and the models whose rows a schema change cleared. Empty when nothing was discarded. */
     fun openReport(): OpenReport = database.openReport()
@@ -46,8 +55,10 @@ object DBlayer {
         database.run(operation, variables.toString())
     }
 
-    lateinit var database: Database
-    internal val databaseOrNull: Database? get() = if (::database.isInitialized) database else null
+    /** The one database of the process. Set by `open`, empty again after `close`. */
+    var database: Database
+        get() = opened ?: throw IllegalStateException("database is not open; call DBlayer.open once at app start")
+        internal set(value) { opened = value }
 
     suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retryListener: RetryListener? = null): ServerConfig =
         fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retryListener, Reachability.start(context))
@@ -64,21 +75,16 @@ object DBlayer {
         operations: List<GraphQLOperation> = emptyList(),
         http: EncryptedHttp? = null,
     ) = opening.withLock {
-        val previousReferences = IdentityHashMap(references)
-        try {
-            val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-            val options = OpenOptions(endpoint, headers.toMap(), JsonArray(definitions).toString(), listOf(reference(credentials), reference(transport), reference(http)))
-            val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, { options.headers }, cablePath = encrypted?.endpoints?.cable) }
-            val opened = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) })
-            Reachability.start(context)
-            Reachability.connect(opened.onlineSink())
-            database = opened
-        } catch (error: Throwable) {
-            references.clear()
-            references.putAll(previousReferences)
-            throw error
-        }
+        val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
+        val options = OpenOptions(JsonArray(definitions).toString())
+        val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, { headers.toMap() }, cablePath = encrypted?.endpoints?.cable) }
+        Reachability.start(context)
+        val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) })
+        Reachability.connect(made.onlineSink())
+        database = made
     }
+
+    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, clock) }
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }

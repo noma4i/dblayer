@@ -6,7 +6,7 @@ extension BridgeProbeTests {
 struct ParentSetsTests {
   @Test
   func aLocalRecordMovesTheContainerPointerAndDiscardingItGivesThePointerBack() async throws {
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let container = try await Container.create(title: "t")
     let record = try await Record.create(containerId: container.id, authorId: "u1", text: "hi")
 

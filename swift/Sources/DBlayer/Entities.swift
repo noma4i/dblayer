@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import OSLog
+
+private let entityLog = Logger(subsystem: "DBlayer", category: "entities")
 
 /// The live value of one record. The library keeps it current while the object is alive and lets go of the record when the last holder drops it.
 @MainActor
@@ -10,10 +13,11 @@ public final class Entity<Model: DBModel> {
   /// The newest value, nil while none has arrived or when the record does not exist.
   public private(set) var value: Model?
   public private(set) var isStale: Bool
+  /// True after the database closed. A closed entity never receives a value again.
+  public private(set) var isClosed = false
   @ObservationIgnored private(set) var revision: Int64
   @ObservationIgnored private var bytes: UInt64 = 0
   @ObservationIgnored private let registry: Entities<Model>
-  @ObservationIgnored private let epoch: Int
   @ObservationIgnored private let isSingleton: Bool
 
   fileprivate init(id: String, seed: Retained<Model>?, registry: Entities<Model>) {
@@ -23,7 +27,6 @@ public final class Entity<Model: DBModel> {
     bytes = seed?.bytes ?? 0
     isStale = seed != nil
     self.registry = registry
-    epoch = registry.epoch
     isSingleton = false
   }
 
@@ -33,7 +36,6 @@ public final class Entity<Model: DBModel> {
     revision = Int64.min
     isStale = false
     self.registry = registry
-    epoch = registry.epoch
     isSingleton = true
   }
 
@@ -46,6 +48,13 @@ public final class Entity<Model: DBModel> {
     if isSingleton, id != (next?.id ?? "") { id = next?.id ?? "" }
   }
 
+  fileprivate func close() {
+    isClosed = true
+    value = nil
+    revision = Int64.min
+    isStale = false
+  }
+
   fileprivate func detach() {
     value = nil
     guard isSingleton else { return }
@@ -55,8 +64,8 @@ public final class Entity<Model: DBModel> {
   }
 
   isolated deinit {
-    guard !isSingleton else { return }
-    registry.released(id: id, value: value, revision: revision, bytes: bytes, epoch: epoch)
+    guard !isSingleton, !isClosed else { return }
+    registry.released(id: id, value: value, revision: revision, bytes: bytes)
   }
 }
 
@@ -81,13 +90,10 @@ public final class Entities<Model: DBModel> {
 
   private struct Weak { weak var entity: Entity<Model>? }
 
-  fileprivate private(set) var epoch = 0
   private var live: [String: Weak] = [:]
   private let kept: RetainedValues
   private var steps: [String: Step] = [:]
   private var flushScheduled = false
-  private var database: Database?
-  private let followsDatabase: Bool
   private let source: any EntitySource
   private let now: @Sendable () -> TimeInterval
 
@@ -102,18 +108,17 @@ public final class Entities<Model: DBModel> {
     let core = CoreEntitySource<Model>()
     self.core = core
     self.source = source ?? core
-    followsDatabase = source == nil
-    core.deliver = { [weak self] database, delivery in
-      DispatchQueue.main.async { MainActor.assumeIsolated { self?.receive(from: database, delivery: delivery) } }
+    core.deliver = { [weak self] delivery in
+      DispatchQueue.main.async { MainActor.assumeIsolated { self?.apply(delivery) } }
     }
   }
 
   /// Rows decoded from deliveries so far: 1 per changed row.
   var decodedRows: Int { core.decodedRows }
+  var leaseFailures: Int { core.leaseFailures }
 
   /// The entity of an id. Hold it for as long as the value is shown. The value is there at once when the id is live or retained.
   public func entity(_ id: String) -> Entity<Model> {
-    follow(DB.database)
     if let existing = live[id]?.entity { return existing }
     let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
     var seed = retained
@@ -127,19 +132,10 @@ public final class Entities<Model: DBModel> {
     return made
   }
 
-  /// A newly opened database starts with no entity of the old one.
-  private func follow(_ current: Database?) {
-    guard followsDatabase, database !== current else { return }
-    if database != nil || single != nil { reset() }
-    database = current
-    startSingleton()
-  }
-
   public func entities(_ ids: [String]) -> [Entity<Model>] { ids.map(entity) }
 
   /// The entity of the one row of a model that has one. It lives as long as the database handle, holds no lease and has no id until the row has loaded.
   public func singleton(_ query: Query<Model>) -> Entity<Model> {
-    follow(DB.database)
     if let single { return single }
     let made = Entity<Model>(singletonOf: self)
     single = made
@@ -158,28 +154,35 @@ public final class Entities<Model: DBModel> {
     }
   }
 
-  /// A delivery of a feed that was replaced by a reset or a newly opened database writes nothing.
+  /// A delivery of a feed that was replaced by a reset writes nothing.
   func receive(from feed: SingletonFeed<Model>, revision: Int64, row: Model?) {
     guard singleFeed === feed else { return }
     single?.accept(row, revision: revision)
   }
 
-  /// Drops every entity, lease and retained value. Called when the account ends.
+  /// The account ended. The core tells every leased entity that its row is gone and later delivers the rows of the next account.
   public func reset() {
-    epoch += 1
-    let all = Array(live.keys)
-    live.values.forEach { $0.entity?.detach() }
-    live = [:]
     kept.clear(Model.modelName)
-    for id in all { steps[id] = .release }
-    scheduleFlush()
     singleFeed?.cancel()
     singleFeed = nil
     single?.detach()
   }
 
+  /// The database closed. Every entity that is still held becomes closed and the registry starts empty.
+  fileprivate func close() {
+    live.values.forEach { $0.entity?.close() }
+    live = [:]
+    steps = [:]
+    kept.clear(Model.modelName)
+    singleFeed?.cancel()
+    singleFeed = nil
+    single?.close()
+    single = nil
+    singleQuery = nil
+    core.close()
+  }
+
   fileprivate func resume() {
-    follow(DB.database)
     if singleFeed == nil { startSingleton() }
   }
 
@@ -189,17 +192,12 @@ public final class Entities<Model: DBModel> {
 
   var liveCount: Int { live.values.filter { $0.entity != nil }.count }
 
-  fileprivate func released(id: String, value: Model?, revision: Int64, bytes: UInt64, epoch entityEpoch: Int) {
-    guard entityEpoch == epoch, live[id]?.entity == nil else { return }
+  fileprivate func released(id: String, value: Model?, revision: Int64, bytes: UInt64) {
+    guard live[id]?.entity == nil else { return }
     live[id] = nil
     steps[id] = .release
     if let value { kept.keep(id, value: Retained(value: value, revision: revision, bytes: bytes), now: UInt64(now() * 1000)) }
     scheduleFlush()
-  }
-
-  func receive(from database: Database, delivery: EntityDecoding.Decoded<Model>) {
-    guard self.database === database, DB.database === database else { return }
-    apply(delivery)
   }
 
   func apply(_ delivery: EntityDecoding.Decoded<Model>) {
@@ -230,6 +228,8 @@ enum EntityRegistries {
   private static var registries: [ObjectIdentifier: AnyObject] = [:]
   private static var resets: [() -> Void] = []
   private static var resumes: [() -> Void] = []
+  private static var closes: [() -> Void] = []
+  private static var failures: [() -> Int] = []
 
   static func registry<Model: DBModel>(for _: Model.Type) -> Entities<Model> {
     let key = ObjectIdentifier(Model.self)
@@ -238,10 +238,14 @@ enum EntityRegistries {
     registries[key] = made
     resets.append { made.reset() }
     resumes.append { made.resume() }
+    closes.append { made.close() }
+    failures.append { made.leaseFailures }
     return made
   }
 
+  static func leaseFailures() -> Int { failures.reduce(0) { $0 + $1() } }
   static func resetAll() { resets.forEach { $0() } }
+  static func closeAll() { closes.forEach { $0() } }
   static func resumeAll() { resumes.forEach { $0() } }
 }
 
@@ -275,56 +279,60 @@ enum EntityDecoding {
 final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable {
   private final class Changes: EntityListener, @unchecked Sendable {
     weak var source: CoreEntitySource?
-    weak var database: Database?
-    init(_ source: CoreEntitySource, database: Database) { self.source = source; self.database = database }
-    func changed(delivery: EntityDelivery) {
-      if let database { source?.changed(delivery: delivery, from: database) }
-    }
+    init(_ source: CoreEntitySource) { self.source = source }
+    func changed(delivery: EntityDelivery) { source?.changed(delivery: delivery) }
   }
 
   private let queue = DispatchQueue(label: "dblayer.entities", qos: .userInitiated)
   private var observer: LiveEntities?
-  private var database: Database?
-  private var leased = Set<String>()
   private let lock = NSLock()
   private var total = 0
-  var deliver: (@Sendable (Database, EntityDecoding.Decoded<Model>) -> Void)?
+  private var failures = 0
+  var deliver: (@Sendable (EntityDecoding.Decoded<Model>) -> Void)?
 
   var decodedRows: Int { lock.withLock { total } }
+  var leaseFailures: Int { lock.withLock { failures } }
+
+  private func refused(_ call: () throws -> Void) {
+    do { try call() } catch {
+      lock.withLock { failures += 1 }
+      entityLog.error("Entity lease of \(Model.modelName, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+    }
+  }
 
   func cachedRow(_ id: String) -> WireRow? {
-    try? DB.database?.peekRow(model: Model.modelName, rowId: id)
+    try? DB.database.peekRow(model: Model.modelName, rowId: id)
   }
 
   func retain(_ ids: [String]) {
-    queue.async {
-      self.leased.formUnion(ids)
-      try? self.open()?.retain(ids: ids)
-    }
+    queue.async { self.refused { try self.open().retain(ids: ids) } }
   }
 
   func release(_ ids: [String]) {
-    queue.async {
-      self.leased.subtract(ids)
-      try? self.open()?.release(ids: ids)
-    }
+    queue.async { self.refused { try self.open().release(ids: ids) } }
   }
 
-  /// The observer belongs to the database that was current when it opened. A newly opened database gets a new observer with the ids still leased.
-  private func open() -> LiveEntities? {
-    guard let current = DB.database else { return nil }
-    if observer == nil || database !== current {
-      database = current
-      observer = try? current.liveEntities(model: Model.modelName, listener: Changes(self, database: current))
-      if !leased.isEmpty { try? observer?.retain(ids: Array(leased)) }
-    }
-    return observer
+  func close() {
+    queue.async { self.observer = nil }
   }
 
-  private func changed(delivery: EntityDelivery, from database: Database) {
-    let rows = delivery.rows.compactMap { row in (try? Model.decode(row)).map { ($0, row.estimatedBytes) } }
+  private func open() throws -> LiveEntities {
+    if let observer { return observer }
+    let made = try DB.database.liveEntities(model: Model.modelName, listener: Changes(self))
+    observer = made
+    return made
+  }
+
+  private func changed(delivery: EntityDelivery) {
+    let rows = delivery.rows.compactMap { row -> (Model, UInt64)? in
+      do { return (try Model.decode(row), row.estimatedBytes) } catch {
+        lock.withLock { failures += 1 }
+        entityLog.error("Row of \(Model.modelName, privacy: .public) failed to decode for its entity: \(String(describing: error), privacy: .public)")
+        return nil
+      }
+    }
     lock.withLock { total += rows.count }
-    deliver?(database, EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed))
+    deliver?(EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed))
   }
 }
 

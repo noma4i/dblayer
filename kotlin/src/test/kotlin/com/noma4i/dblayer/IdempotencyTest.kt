@@ -15,7 +15,7 @@ class IdempotencyTest {
             val transport = MockTransport()
             transport.enqueue("RecordSend", fixture.getValue("refusal").toString())
             transport.enqueue("RecordSend", fixture.getValue("answer").toString())
-            val database = Database.open(Config(null, null, 32u), fixture.getValue("models").toString(), transport)
+            val database = openDatabase(Config(null, null, 32u), fixture.getValue("models").toString(), transport)
             database.registerOperations(fixture.getValue("operations").toString())
             val row = database.create("Record", """{"text":"hello"}""", if (explicit) """{"clientMutationId":"app-key"}""" else "{}")
             database.flush()

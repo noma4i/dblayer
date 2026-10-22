@@ -7,7 +7,7 @@ extension BridgeProbeTests {
   fileprivate static let byText = Query<Moment>().order(Order(field: "text", direction: "asc"))
 
   fileprivate static func open() async throws {
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
   }
 
   fileprivate static func watching(_ query: Query<Moment>, feed: ListFeed<Moment>) async -> LiveStream<[Moment]> {
@@ -184,7 +184,7 @@ extension BridgeProbeTests {
   func inv_observe_18_aSnapshotNamesTheReplacedIdWhenTheTemporaryRowWasNeverDelivered() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let gate = DispatchSemaphore(value: 0)
     let deliveries = OpenCounter()

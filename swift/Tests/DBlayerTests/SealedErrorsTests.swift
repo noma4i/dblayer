@@ -17,9 +17,9 @@ private final class RefusedRetry: Database, @unchecked Sendable {
 
 extension BridgeProbeTests {
   @Test @MainActor func modelRetriesPropagateErrorsToTheirCaller() async throws {
-    let previous = DB.database
-    defer { DB.database = previous }
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
+    let real = try #require(DB.database)
+    defer { DB.database = real }
     let row = try await Moment.create(text: "saved")
     DB.database = RefusedRetry(noHandle: .init())
     await #expect(throws: DbError.self) { try await row.retry() }
@@ -27,7 +27,7 @@ extension BridgeProbeTests {
   }
   @MainActor
   private func openSealedRig(_ transport: MockTransport) async throws {
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: operations)
   }
 

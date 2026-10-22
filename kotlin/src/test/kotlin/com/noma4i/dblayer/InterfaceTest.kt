@@ -61,7 +61,7 @@ class InterfaceTest {
 
     private suspend fun openRig(): MockTransport {
         val transport = MockTransport()
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, transport)
+        reopen(Config(null, null, 64u), modelsJSON, transport)
         DBlayer.database.registerOperations(JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("SampleNode")); put("document", JsonPrimitive(document)) })).toString())
         return transport
     }

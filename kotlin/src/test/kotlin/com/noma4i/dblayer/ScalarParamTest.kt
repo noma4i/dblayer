@@ -21,7 +21,7 @@ class ScalarParamTest {
     @Test
     fun aTypedScopeParamReachesTheServerAsANumber() = bounded {
         val transport = MockTransport()
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"tailSince","document":"$document"}]""")
         transport.enqueue("tailSince", """{"data":{"tailSince":{"edges":[{"cursor":"c1","node":{"id":"t1","text":"a"}}],"pageInfo":{"hasNextPage":false,"endCursor":"c1"}}}}""")
         Tail.since("c1", afterSequence = 120L, pinned = false).refresh()
@@ -32,7 +32,7 @@ class ScalarParamTest {
     fun anAggregateOperationReturnsItsFieldsAsAValue() = bounded {
         val transport = MockTransport()
         transport.enqueue("containerMedia", """{"data":{"containerMedia":{"visualCount":3,"audioCount":1,"rewardCount":0,"latestSequence":120}}}""")
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"containerMedia","document":"query containerMedia(${'$'}containerId: ID!, ${'$'}upToSequence: Int) { containerMedia(containerId: ${'$'}containerId, upToSequence: ${'$'}upToSequence) { visualCount audioCount rewardCount latestSequence } }"}]""")
         val result = withTimeout(5000) { Operations.containerMediaLoad(containerId = "c1", upToSequence = 120) }
         assertEquals(3L, result.visualCount)

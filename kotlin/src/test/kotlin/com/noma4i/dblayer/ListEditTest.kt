@@ -119,7 +119,7 @@ class ListEditTest {
 
     @Test
     fun the_list_hands_out_the_edits_of_every_delivery_the_reader_missed() = bounded {
-        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, null)
+        reopen(Config(null, null, 64u), modelsJSON, null)
         val created = (0 until 5).map { Moment.create(text = "t$it") }
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
         val list = LiveList(Query("Moment", Moment).order(Order("text", "asc")), scope)

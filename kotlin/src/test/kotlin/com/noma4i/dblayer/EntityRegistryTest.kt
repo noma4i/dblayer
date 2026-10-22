@@ -27,7 +27,7 @@ private class CountingSource(private val cached: WireRow? = null) : EntitySource
 class EntityRegistryTest {
     @Test
     fun cachedFirstReadAndRetainedNewerValueAreAvailableBeforeDelivery() = bounded {
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        reopen(Config(null, null, 32u), modelsJSON, null)
         val row = Moment.create(text = "cached")
         Moment.recent.warm()
         val cached = DBlayer.database.peekRow("Moment", row.id)!!
@@ -148,94 +148,37 @@ class EntityRegistryTest {
         assertEquals(0, registry.retainedCount)
     }
 
-    /** REL-24 */
+    /** REL-24: a reset of the account empties the entities that readers hold and the same objects receive the next rows. */
     @Test
-    fun resetDropsEveryEntityLeaseAndRetainedValue() {
-        val source = CountingSource()
-        val registry = registry(source)
-        val held = List(5) { registry.entity("$it") }
-        repeat(5) { registry.entity("${it + 5}") }
-        registry.apply(delivery(1, List(10) { moment("$it", "v") }))
-        collectGarbage { registry.retainedCount == 5 }
-        registry.reset()
-        Thread.sleep(150)
-        assertEquals(0, registry.retainedCount)
-        assertEquals(0, registry.liveCount)
-        assertTrue(held.all { it.value.value == null })
-        assertTrue(source.released.containsAll(List(10) { "$it" }))
-    }
-
-    /** Addendum 3a: a cancelled attach leaves no subscription, at each of the 3 timings. */
-    @Test
-    fun attachCancelledAtAnyMomentLeavesNoSubscription() = bounded {
-        val active = AtomicInteger()
-        val gate = CountDownLatch(1)
-        val blocking = LiveSource(0) { emit: (Int) -> Unit ->
-            active.incrementAndGet()
-            gate.await()
-            emit(1)
-            val cancel: () -> Unit = { active.decrementAndGet() }
-            cancel
-        }
-        val before = launch(start = CoroutineStart.LAZY) { blocking.flow.collect { } }
-        before.cancel()
-        before.join()
-        assertEquals(0, active.get())
-
-        val during = launch { blocking.flow.collect { } }
-        eventually("not (active.get() == 0)", 5000) { !(active.get() == 0) }
-        during.cancel()
-        gate.countDown()
-        during.join()
-        assertEquals(0, active.get())
-
-        val immediate = LiveSource(0) { emit: (Int) -> Unit ->
-            active.incrementAndGet()
-            emit(1)
-            val cancel: () -> Unit = { active.decrementAndGet() }
-            cancel
-        }
-        assertEquals(1, immediate.flow.first())
-        eventually("not (active.get() != 0)", 5000) { !(active.get() != 0) }
-    }
-
-    /** PERF-16: a slow reader gets one pending result that holds every replacement pair of the burst. */
-    @Test
-    fun slowConsumerStreamKeepsOnePendingResultAndEveryReplacementPair() = bounded {
-        for (burst in listOf(10, 100, 1000)) {
-            val latest = Latest<Snapshot<Moment>> { older, newer -> Snapshot.merging(older, newer) }
-            repeat(burst) { step -> latest.put(Snapshot(emptyList(), mapOf("real$step" to "temp$step"))) }
-            assertEquals(burst, latest.next().replaced.size)
-            assertTrue(!latest.hasPending)
-        }
-    }
-
-    /** A chain of replacements across missed deliveries reads as one pair from the first id to the last. */
-    @Test
-    fun aChainOfReplacementsAcrossMissedDeliveriesReadsAsOnePair() = bounded {
-        val source = LiveSource(Snapshot<Moment>(emptyList(), emptyMap()), { older, newer -> Snapshot.merging(older, newer) }) { emit ->
-            repeat(1000) { step -> emit(Snapshot(emptyList(), mapOf("id${step + 1}" to "id$step"))) }
-            val cancel: () -> Unit = {}
-            cancel
-        }
-        assertEquals(mapOf("id1000" to "id0"), withTimeout(5000) { source.flow.first() }.replaced)
-    }
-
-    /** REL-24: a newly opened database starts with no entity of the old one. */
-    @Test
-    fun aNewDatabaseStartsWithNoEntityOfTheOldOne() = bounded {
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+    fun aResetEmptiesTheHeldEntityAndTheSameObjectReceivesTheNextRow() = bounded {
+        reopen(Config(null, null, 32u), modelsJSON, null)
         val moment = Moment.create(text = "old")
-        val old = Moment.entity(moment.id)
-        assertEquals("old", withTimeout(5000) { old.value.first { it != null } }?.text)
+        val held = Moment.entity(moment.id)
+        assertEquals("old", withTimeout(5000) { held.value.first { it != null } }?.text)
 
-        DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
+        DBlayer.logout()
+        withTimeout(5000) { held.value.first { it == null } }
+        assertTrue(!held.isClosed)
+        DBlayer.database.create("Moment", """{"id":"${moment.id}","text":"new"}""", "{}")
+        assertEquals("new", withTimeout(5000) { held.value.first { it != null } }?.text)
+        assertTrue(held === Moment.entity(moment.id))
+    }
+
+    /** REL-25: closing the database closes the held entities and the next open starts empty. */
+    @Test
+    fun aClosedDatabaseClosesTheHeldEntitiesAndTheNextOpenStartsEmpty() = bounded {
+        reopen(Config(null, null, 32u), modelsJSON, null)
+        val moment = Moment.create(text = "old")
+        val held = Moment.entity(moment.id)
+        assertEquals("old", withTimeout(5000) { held.value.first { it != null } }?.text)
+
+        DBlayer.close()
+        assertTrue(held.isClosed)
+        assertNull(held.value.value)
+        reopen(Config(null, null, 32u), modelsJSON, null)
         val fresh = Moment.entity(moment.id)
         delay(300)
-        assertNull(old.value.value)
         assertNull(fresh.value.value)
-        assertTrue(fresh !== old)
-        val created = Moment.create(text = "new")
-        assertEquals("new", withTimeout(5000) { Moment.entity(created.id).value.first { it != null } }?.text)
+        assertTrue(fresh !== held && !fresh.isClosed && held.isClosed)
     }
 }

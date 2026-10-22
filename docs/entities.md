@@ -20,6 +20,7 @@ val name by author.value.collectAsState()
 
 Entity creation reads only memory. It never reads SQLite synchronously. A cache miss stays empty until the first delivery, even if the record exists on disk.
 Cached and retained values have `isStale` set until a fresh delivery arrives. An older cached row never replaces a newer live or retained value.
+A row that arrives after its entity reaches the entity. When the core cannot read the record for a lease, it counts the failure, keeps the id and reads it again on the next commit or the next lease of that id. `DBlayer.entityCensus()` and `DB.entityCensus()` show the facts told, the deliveries skipped as not newer, and the failed reads. `DBlayer.entityLeaseFailures()` and `DB.entityLeaseFailures()` count the lease calls that the platform registry could not hand to the core and the rows that failed to decode for an entity. Both write a line to the library log.
 Lists that already loaded their rows can create entities directly, with no extra prefetch call:
 
 ```swift
@@ -60,15 +61,15 @@ Requesting a retained id returns its value with `isStale` set and reads the reco
 
 ## Order
 
-Every delivery carries the revision of the database. An entity ignores a delivery with a lower revision than the one it shows, whatever the order in which they arrive. A record that was deleted arrives as an empty value. A reset of the model (logout, `reset`) empties every entity and preserves pending lease releases.
+Every delivery carries the revision of the database. An entity ignores a delivery with a lower revision than the one it shows, whatever the order in which they arrive. A record that was deleted arrives as an empty value. A reset of the data (logout, `reset`) tells every leased entity that its record is gone. The entities keep their leases and receive the rows of the next account.
 
 Native callbacks hold entity sources weakly. Releasing a source releases its observer without a separate cleanup call.
 
-Each entity delivery identifies the database that opened its observer. Rows and removals from a replaced database are ignored, regardless of revision.
+The process has one database. Entities, lists and subscriptions belong to it for the life of the process, and the platform code does not follow a change of database. `DB.close()` and `DBlayer.close()` end it: every held entity becomes closed (`isClosed`, empty value, no further delivery) and the next `open` starts empty.
 
 ## Ending a session
 
-`try await DB.logout()` (Swift) and suspending `DBlayer.logout()` (Kotlin) clear the data and drop every entity, lease and kept value. Wait for completion before opening another account. The account entity stays the same object and goes back to empty. Logout deletes every queued, refused and unconfirmed operation.
+`try await DB.logout()` (Swift) and suspending `DBlayer.logout()` (Kotlin) clear the data and drop the kept values. Wait for completion before signing in to another account. Every entity that a screen holds stays the same object, goes back to empty and receives the rows of the next account. Logout deletes every queued, refused and unconfirmed operation.
 
 After signing in again, call `resume()` to restart stopped singleton subscriptions:
 

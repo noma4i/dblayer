@@ -18,9 +18,9 @@ class UploadBatchTest {
     fun batchDiscardRenumbersSnapshots() = bounded {
         for (cancel in listOf(false, true)) {
             val source = Files.createTempFile("renumber", ".png").toFile().apply { writeText("file") }
-            val database = Database.open(Config(null, null, 32u), modelsJSON, MockTransport())
+            val database = openDatabase(Config(null, null, 32u), modelsJSON, MockTransport())
             try {
-                DBlayer.database = database
+                adopt(database)
                 database.setOnline(false)
                 val items = (0..3).map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("position", it); put("size", 4) }, path = source.path) }
                 val rows = Asset.uploadCreate(items, UploadBatchRequest(operation = "create_files", createBlob = "CreateBlob"))
@@ -32,7 +32,7 @@ class UploadBatchTest {
                     assertEquals(3L, snapshot.size)
                 }
             } finally {
-                database.close()
+                DBlayer.close()
                 source.delete()
             }
         }
@@ -45,8 +45,8 @@ class UploadBatchTest {
             try {
                 val source = java.io.File(directory, "image.png").apply { writeText("image") }
                 val transport = MockTransport()
-                val database = Database.open(Config(null, null, 32u), modelsJSON, transport)
-                DBlayer.database = database
+                val database = openDatabase(Config(null, null, 32u), modelsJSON, transport)
+                adopt(database)
                 database.setOnline(false)
                 database.registerOperations("""[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
                 val items = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
@@ -73,7 +73,7 @@ class UploadBatchTest {
                     assertEquals(listOf("key-0", "key-1"), sent.map { it.jsonObject.getValue("clientKey").jsonPrimitive.content })
                     assertTrue(sent.all { it.jsonObject.getValue("signedId").jsonPrimitive.content == "signed" })
                 }
-                database.close()
+                DBlayer.close()
             } finally {
                 directory.deleteRecursively()
             }
