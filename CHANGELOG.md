@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.2.0 - 2026-10-22
+
+### Added
+- A scope with parameters opens one live subscription per parameter set.
+- Generation with `--schema` checks subscription arguments against the server schema.
+
+### Fixed
+- Scope subscriptions send the read parameters as subscription variables.
+
 ## 6.1.0 - 2026-10-22
 
 ### Added
