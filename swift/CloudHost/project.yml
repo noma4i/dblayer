@@ -1,0 +1,51 @@
+name: CloudHost
+options:
+  bundleIdPrefix: com.yupi.dblayer
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: 34ZTAW54JD
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+packages:
+  DBlayer:
+    path: ..
+targets:
+  CloudHost:
+    type: application
+    platform: iOS
+    sources: [Host]
+    dependencies:
+      - package: DBlayer
+        product: DBlayer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yupi.dblayer.cloudhost
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIBackgroundModes: remote-notification
+    entitlements:
+      path: Host/CloudHost.entitlements
+      properties:
+        com.apple.developer.icloud-services: [CloudKit]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.yupi]
+        aps-environment: development
+  CloudHostTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: CloudHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yupi.dblayer.cloudhost.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  CloudHost:
+    build:
+      targets:
+        CloudHost: all
+        CloudHostTests: [test]
+    test:
+      targets: [CloudHostTests]

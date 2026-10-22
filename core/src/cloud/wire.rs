@@ -1,29 +1,45 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
-use super::CloudValue;
+use super::{CloudBlob, CloudChange, CloudError};
 
-impl CloudValue {
-    pub fn of(value: &Value) -> Self {
-        match value {
-            Value::Null => CloudValue::Null,
-            Value::Bool(value) => CloudValue::Flag { value: *value },
-            Value::Number(number) => match number.as_i64() {
-                Some(value) => CloudValue::Whole { value },
-                None => CloudValue::Fraction { value: number.as_f64().unwrap_or_default() },
-            },
-            Value::String(value) => CloudValue::Text { value: value.clone() },
-            tree => CloudValue::Tree { json: tree.to_string() },
-        }
+const FORMAT: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct Record {
+    v: u32,
+    model: String,
+    row_id: String,
+    field: String,
+    clock_ms: i64,
+    clock_count: u32,
+    replica: String,
+    value: Value,
+}
+
+impl CloudChange {
+    pub fn blob(&self) -> CloudBlob {
+        let name = [self.replica.as_str(), &self.model, &self.row_id, &self.field].join("\u{1f}");
+        let key = Sha256::digest(name.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
+        let record = Record {
+            v: FORMAT,
+            model: self.model.clone(),
+            row_id: self.row_id.clone(),
+            field: self.field.clone(),
+            clock_ms: self.clock_ms,
+            clock_count: self.clock_count,
+            replica: self.replica.clone(),
+            value: self.value.clone(),
+        };
+        CloudBlob { key, bytes: serde_json::to_vec(&record).unwrap_or_default() }
     }
 
-    pub fn value(&self) -> Option<Value> {
-        Some(match self {
-            CloudValue::Null => Value::Null,
-            CloudValue::Flag { value } => Value::Bool(*value),
-            CloudValue::Whole { value } => Value::from(*value),
-            CloudValue::Fraction { value } => serde_json::Number::from_f64(*value).map_or(Value::Null, Value::Number),
-            CloudValue::Text { value } => Value::String(value.clone()),
-            CloudValue::Tree { json } => serde_json::from_str(json).ok()?,
-        })
+    pub fn from_blob(bytes: &[u8]) -> Result<CloudChange, CloudError> {
+        let record: Record = serde_json::from_slice(bytes).map_err(|error| CloudError::Rejected { detail: format!("malformed cloud record: {error}") })?;
+        if record.v != FORMAT {
+            return Err(CloudError::Rejected { detail: format!("unknown cloud record format {}", record.v) });
+        }
+        Ok(CloudChange { model: record.model, row_id: record.row_id, field: record.field, clock_ms: record.clock_ms, clock_count: record.clock_count, replica: record.replica, value: record.value })
     }
 }

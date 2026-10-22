@@ -1,16 +1,7 @@
 use async_trait::async_trait;
+use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
-pub enum CloudValue {
-    Null,
-    Flag { value: bool },
-    Whole { value: i64 },
-    Fraction { value: f64 },
-    Text { value: String },
-    Tree { json: String },
-}
-
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CloudChange {
     pub model: String,
     pub row_id: String,
@@ -18,12 +9,18 @@ pub struct CloudChange {
     pub clock_ms: i64,
     pub clock_count: u32,
     pub replica: String,
-    pub value: CloudValue,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct CloudBlob {
+    pub key: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct CloudPage {
-    pub changes: Vec<CloudChange>,
+    pub blobs: Vec<CloudBlob>,
     pub cursor: Vec<u8>,
     pub more: bool,
 }
@@ -57,5 +54,5 @@ pub enum CloudError {
 pub trait CloudIo: Send + Sync {
     async fn account(&self) -> Result<CloudAccount, CloudError>;
     async fn pull(&self, cursor: Option<Vec<u8>>, limit: u32) -> Result<CloudPage, CloudError>;
-    async fn push(&self, changes: Vec<CloudChange>) -> Result<(), CloudError>;
+    async fn push(&self, blobs: Vec<CloudBlob>) -> Result<(), CloudError>;
 }

@@ -128,12 +128,12 @@ async fn inv_cloud_09_pages_are_idempotent_and_a_lost_push_response_repeats_clea
     fake.set_page(2);
     b.cloud.sync_now().await.unwrap();
     assert_eq!(title_of(&b, &id).as_deref(), Some("once"));
-    let page = super::CloudPage { changes: fake.log(), cursor: vec![9; 8], more: false };
+    let changes = fake.log();
     let c = device(&fake, 4_000);
     let own = c.db.cloud_replica().unwrap();
-    c.db.apply_cloud_page(&own, &page).unwrap();
+    c.db.apply_cloud_page(&own, &changes, &[9; 8]).unwrap();
     let revision = c.db.revision_seq().unwrap();
-    c.db.apply_cloud_page(&own, &page).unwrap();
+    c.db.apply_cloud_page(&own, &changes, &[9; 8]).unwrap();
     assert_eq!(c.db.cloud_cursor().unwrap(), Some(vec![9; 8]));
     assert_eq!(c.db.cloud_pending().unwrap(), 0, "remote changes are never journaled");
     assert_eq!(title_of(&c, &id).as_deref(), Some("once"));

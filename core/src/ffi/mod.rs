@@ -25,7 +25,7 @@ pub use database::{Config, Database, SubscriptionCensus, TestClock};
 pub use opening::{OpenDatabase, OpenOptions};
 pub use changes::LiveChanges;
 pub use cloud::{CloudLink, CloudStateListener};
-pub use crate::cloud::{CloudAccount, CloudChange, CloudError, CloudIo, CloudPage, CloudState, CloudValue, MergeSource};
+pub use crate::cloud::{CloudAccount, CloudBlob, CloudError, CloudIo, CloudPage, CloudState, MergeSource};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply};
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};

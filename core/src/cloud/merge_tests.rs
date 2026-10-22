@@ -6,7 +6,7 @@ use crate::db::Db;
 use crate::schema::MergeRule;
 
 use super::fixtures::*;
-use super::{outranks, CloudChange, CloudPage, CloudValue, Hlc};
+use super::{outranks, CloudChange, Hlc};
 
 struct Conflict {
     name: &'static str,
@@ -92,7 +92,7 @@ fn inv_cloud_04_the_winner_is_a_total_order_for_every_rule() {
 }
 
 fn change(row: &str, field: &str, value: Value, ms: i64, replica: &str) -> CloudChange {
-    CloudChange { model: "notes".into(), row_id: row.into(), field: field.into(), clock_ms: ms, clock_count: 0, replica: replica.into(), value: CloudValue::of(&value) }
+    CloudChange { model: "notes".into(), row_id: row.into(), field: field.into(), clock_ms: ms, clock_count: 0, replica: replica.into(), value }
 }
 
 fn issued(at: usize, change: CloudChange) -> CloudChange {
@@ -116,7 +116,7 @@ fn inv_cloud_04_any_delivery_order_and_repeats_give_the_same_rows() {
             changes.push(issued(at, change(row, field, value, (rng_seed.next() % 5) as i64 + 1, ["r1", "r2", "r3"][at % 3])));
         }
         if seed % 5 == 0 {
-            changes.push(CloudChange { field: String::new(), value: CloudValue::Null, ..issued(9, change("n2", "", json!(null), 3, "r2")) });
+            changes.push(CloudChange { field: String::new(), value: Value::Null, ..issued(9, change("n2", "", json!(null), 3, "r2")) });
         }
         let mut outcomes = Vec::new();
         for order in 0..6 {
@@ -129,7 +129,7 @@ fn inv_cloud_04_any_delivery_order_and_repeats_give_the_same_rows() {
             }
             let db = Db::open_in_memory(specs(), None).unwrap();
             for part in shuffled.chunks(3) {
-                db.apply_cloud_page(&db.cloud_replica().unwrap(), &CloudPage { changes: part.to_vec(), cursor: vec![1], more: false }).unwrap();
+                db.apply_cloud_page(&db.cloud_replica().unwrap(), part, &[1]).unwrap();
             }
             let view: Vec<_> = ["n1", "n2"]
                 .iter()

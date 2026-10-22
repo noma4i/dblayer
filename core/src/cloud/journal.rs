@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::nodes::{delete_trees, read_trees, texts, write_tree};
 
-use super::{CloudChange, CloudValue, Hlc};
+use super::{CloudChange, Hlc};
 
 const FIELD_KEYS: [&str; 3] = ["model", "row_id", "field"];
 
@@ -122,7 +122,7 @@ pub fn batch(connection: &Connection, limit: u32) -> Result<Vec<(i64, CloudChang
         .query_map(params![limit], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
-                CloudChange { model: row.get(1)?, row_id: row.get(2)?, field: row.get(3)?, clock_ms: row.get(4)?, clock_count: row.get::<_, i64>(5)? as u32, replica: row.get(6)?, value: CloudValue::Null },
+                CloudChange { model: row.get(1)?, row_id: row.get(2)?, field: row.get(3)?, clock_ms: row.get(4)?, clock_count: row.get::<_, i64>(5)? as u32, replica: row.get(6)?, value: Value::Null },
             ))
         })?
         .collect::<Result<_>>()?;
@@ -130,7 +130,7 @@ pub fn batch(connection: &Connection, limit: u32) -> Result<Vec<(i64, CloudChang
         .into_iter()
         .map(|(seq, mut change)| {
             let tree = read_trees(connection, "cloud_log_node", &["seq"], "seq = ?1", &[SqlValue::Integer(seq)])?.into_iter().next();
-            change.value = tree.map_or(CloudValue::Null, |(_, value)| CloudValue::of(&value));
+            change.value = tree.map_or(Value::Null, |(_, value)| value);
             Ok((seq, change))
         })
         .collect()

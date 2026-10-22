@@ -8,7 +8,7 @@ use crate::db::{Db, DbError};
 use crate::identity::{ModelKey, RowId};
 use crate::store::Reader;
 
-use super::{journal, outranks, CloudApplied, CloudBook, CloudPage, Hlc};
+use super::{journal, outranks, CloudApplied, CloudBook, CloudChange, Hlc};
 
 struct RowWork {
     tombstone: Option<Hlc>,
@@ -44,16 +44,16 @@ impl Db {
         Ok(())
     }
 
-    pub(crate) fn apply_cloud_page(&self, own: &str, page: &CloudPage) -> Result<(), DbError> {
+    pub(crate) fn apply_cloud_page(&self, own: &str, changes: &[CloudChange], cursor: &[u8]) -> Result<(), DbError> {
         let generation = self.generation();
         let now_ms = self.shared.store.lock().now_ms();
         self.commit_following(generation, |reader| {
             let connection = reader.connection();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Cloud, generation);
             envelope.writes_local = true;
-            let mut book = CloudBook { cursor: Some(page.cursor.clone()), ..CloudBook::default() };
+            let mut book = CloudBook { cursor: Some(cursor.to_vec()), ..CloudBook::default() };
             let mut works: BTreeMap<(String, String), RowWork> = BTreeMap::new();
-            for change in page.changes.iter().filter(|change| change.replica != own) {
+            for change in changes.iter().filter(|change| change.replica != own) {
                 let Ok(spec) = self.shared.spec(&change.model) else { continue };
                 if spec.cloud.is_empty() || (!change.field.is_empty() && !spec.cloud.contains(&change.field)) {
                     continue;
@@ -78,7 +78,7 @@ impl Db {
                 if work.tombstone.is_some() {
                     continue;
                 }
-                let Some(value) = change.value.value() else { continue };
+                let value = change.value.clone();
                 if !work.fields.contains_key(&change.field) {
                     if let Some(held) = journal::read_field(connection, &change.model, &change.row_id, &change.field)? {
                         work.fields.insert(change.field.clone(), held);

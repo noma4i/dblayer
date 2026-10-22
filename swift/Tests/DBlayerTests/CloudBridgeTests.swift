@@ -6,13 +6,13 @@ private let cloudModels = #"[{"key":"Note","fields":[{"name":"id","kind":{"type"
 
 private final class RecordingCloud: CloudIo, @unchecked Sendable {
   private let lock = NSLock()
-  private var pushed: [CloudChange] = []
+  private var pushed: [CloudBlob] = []
 
-  var changes: [CloudChange] { lock.withLock { pushed } }
+  var blobs: [CloudBlob] { lock.withLock { pushed } }
 
   func account() async throws -> CloudAccount { .available }
-  func pull(cursor: Data?, limit: UInt32) async throws -> CloudPage { CloudPage(changes: [], cursor: Data([1]), more: false) }
-  func push(changes: [CloudChange]) async throws { lock.withLock { pushed.append(contentsOf: changes) } }
+  func pull(cursor: Data?, limit: UInt32) async throws -> CloudPage { CloudPage(blobs: [], cursor: Data([1]), more: false) }
+  func push(blobs: [CloudBlob]) async throws { lock.withLock { pushed.append(contentsOf: blobs) } }
 }
 
 struct CloudBridgeTests {
@@ -23,9 +23,8 @@ struct CloudBridgeTests {
     let link = try database.connectCloud(io: cloud)
     _ = try await database.create(model: "Note", valuesJson: #"{"title":"hello"}"#, argsJson: "{}")
     try await link.syncNow()
-    let titles = cloud.changes.filter { $0.field == "title" }
-    #expect(titles.count == 1)
-    #expect(titles.first?.value == .text(value: "hello"))
+    #expect(cloud.blobs.count == 1)
+    #expect(cloud.blobs.first.map { $0.key.count == 64 && !$0.bytes.isEmpty } == true)
     #expect(link.state() == .idle)
     link.stop()
   }

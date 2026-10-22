@@ -12,11 +12,11 @@ use crate::schema::{FieldSpec, MergeRule, ModelSpec, Storage};
 use crate::transport::Connectivity;
 use crate::value::ScalarKind;
 
-use super::{Cloud, CloudAccount, CloudChange, CloudError, CloudIo, CloudPage};
+use super::{Cloud, CloudAccount, CloudBlob, CloudChange, CloudError, CloudIo, CloudPage};
 
 #[derive(Default)]
 struct Inner {
-    log: Vec<CloudChange>,
+    log: Vec<CloudBlob>,
     accounts: u32,
     pulls: u32,
     pushes: u32,
@@ -45,8 +45,12 @@ impl FakeCloud {
         locked(&self.inner).pushes
     }
 
-    pub fn log(&self) -> Vec<CloudChange> {
+    pub fn blobs(&self) -> Vec<CloudBlob> {
         locked(&self.inner).log.clone()
+    }
+
+    pub fn log(&self) -> Vec<CloudChange> {
+        self.blobs().iter().map(|blob| CloudChange::from_blob(&blob.bytes).unwrap()).collect()
     }
 
     pub fn fail_pushes(&self, errors: Vec<(CloudError, bool)>) {
@@ -80,10 +84,10 @@ impl CloudIo for FakeCloud {
         let from = cursor.and_then(|bytes| <[u8; 8]>::try_from(bytes).ok()).map_or(0, |bytes| u64::from_le_bytes(bytes) as usize);
         let size = inner.page.unwrap_or(limit as usize).min(limit as usize);
         let to = (from + size).min(inner.log.len());
-        Ok(CloudPage { changes: inner.log[from..to].to_vec(), cursor: (to as u64).to_le_bytes().to_vec(), more: to < inner.log.len() })
+        Ok(CloudPage { blobs: inner.log[from..to].to_vec(), cursor: (to as u64).to_le_bytes().to_vec(), more: to < inner.log.len() })
     }
 
-    async fn push(&self, changes: Vec<CloudChange>) -> Result<(), CloudError> {
+    async fn push(&self, blobs: Vec<CloudBlob>) -> Result<(), CloudError> {
         let hook = {
             let mut inner = locked(&self.inner);
             inner.pushes += 1;
@@ -96,12 +100,12 @@ impl CloudIo for FakeCloud {
         match inner.push_failures.pop_front() {
             Some((error, applied)) => {
                 if applied {
-                    inner.log.extend(changes);
+                    inner.log.extend(blobs);
                 }
                 Err(error)
             }
             None => {
-                inner.log.extend(changes);
+                inner.log.extend(blobs);
                 Ok(())
             }
         }

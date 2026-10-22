@@ -10,7 +10,7 @@ mod wire;
 
 pub(crate) use book::{record_local, record_stamped, write_book, LocalEdit};
 pub use book::{CloudApplied, CloudBook};
-pub use io::{CloudAccount, CloudChange, CloudError, CloudIo, CloudPage, CloudValue};
+pub use io::{CloudAccount, CloudBlob, CloudChange, CloudError, CloudIo, CloudPage};
 pub use run::Cloud;
 pub use stamp::{outranks, Hlc};
 pub use state::{CloudState, MergeSource};
@@ -23,3 +23,5 @@ mod converge_tests;
 mod merge_tests;
 #[cfg(test)]
 mod run_tests;
+#[cfg(test)]
+mod wire_tests;

@@ -7,7 +7,7 @@ use crate::db::{locked, Db, DbError};
 use crate::pacing::{Backoff, Clock};
 use crate::transport::Connectivity;
 
-use super::{CloudAccount, CloudError, CloudIo, CloudState, MergeSource, Hlc};
+use super::{CloudAccount, CloudChange, CloudError, CloudIo, CloudPage, CloudState, MergeSource, Hlc};
 
 const BATCH: u32 = 100;
 const RETRY: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(300)).limited(40);
@@ -31,6 +31,10 @@ struct Inner {
 enum Next {
     Retry(Duration, bool),
     Stop(CloudState),
+}
+
+fn decode(page: &CloudPage) -> Result<Vec<CloudChange>, CloudError> {
+    page.blobs.iter().map(|blob| CloudChange::from_blob(&blob.bytes)).collect()
 }
 
 impl From<DbError> for CloudError {
@@ -62,7 +66,7 @@ impl Cloud {
             let mut cursor = None;
             loop {
                 let page = self.inner.io.pull(cursor, BATCH).await?;
-                for change in &page.changes {
+                for change in &decode(&page)? {
                     self.inner.db.cloud_observe(&Hlc::new(change.clock_ms, change.clock_count, &change.replica))?;
                 }
                 if !page.more {
@@ -183,13 +187,13 @@ impl Inner {
                     break;
                 }
                 let (seqs, changes): (Vec<i64>, Vec<_>) = batch.into_iter().unzip();
-                self.io.push(changes).await?;
+                self.io.push(changes.iter().map(CloudChange::blob).collect()).await?;
                 self.db.cloud_ack(&seqs)?;
             }
             if pull || self.db.cloud_cursor()?.is_none() {
                 loop {
                     let page = self.io.pull(self.db.cloud_cursor()?, BATCH).await?;
-                    self.db.apply_cloud_page(&own, &page)?;
+                    self.db.apply_cloud_page(&own, &decode(&page)?, &page.cursor)?;
                     if !page.more {
                         break;
                     }
