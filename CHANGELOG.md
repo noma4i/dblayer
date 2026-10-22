@@ -1,5 +1,25 @@
 # Changelog
 
+## 6.3.0 - 2026-10-22
+
+### Added
+- Local models and `local: true` attributes sync across devices of one account.
+- `cloud` in a model lists the attributes that sync.
+- `connectCloudKit(container:)` syncs through the CloudKit private database on iOS.
+- `connectDrive(activity)` syncs through Google Drive app data on Android.
+- `CloudKitLink.receive` passes a CloudKit push to the library.
+- The open report names the changed models and the reset models.
+
+### Changed
+- Android requires API 33 or newer.
+- A changed spec of any server model clears the whole server cache.
+- Local models and `local: true` values survive a server cache reset.
+- Associations and storage join the model fingerprint, which rebuilds the cache once.
+
+### Fixed
+- Cancelling one caller of a shared load no longer fails the other callers.
+- A cancelled load no longer leaves its relation in the loading state.
+
 ## 6.2.0 - 2026-10-22
 
 ### Added
