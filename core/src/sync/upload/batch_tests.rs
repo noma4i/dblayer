@@ -183,7 +183,7 @@ async fn batch_sends_ordered_items_once_and_replaces_by_key() {
     }
 }
 
-fn spec() -> ModelSpec {
+pub(super) fn spec() -> ModelSpec {
     let mut model = ModelSpec::new("Asset", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("clientKey", ScalarKind::Str), FieldSpec::scalar("size", ScalarKind::Int)]);
     let mut single = ActionDeclaration::new("create_file", RootShape::Upsert);
     single.upload = true;

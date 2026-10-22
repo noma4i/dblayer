@@ -7,6 +7,9 @@ mod steps;
 #[cfg(test)]
 mod batch_tests;
 
+#[cfg(test)]
+mod settle_tests;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
