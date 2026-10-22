@@ -1,4 +1,6 @@
-use crate::commit::{CommitEnvelope, CommitResult, WriteOrigin};
+use std::collections::{HashMap, HashSet};
+
+use crate::commit::{CommitEnvelope, CommitResult, EntityOp, OperationTransition, ScopeOp, WriteOrigin};
 use crate::identity::Generation;
 use crate::store::{PlanCommitError, Reader};
 
@@ -23,10 +25,38 @@ impl Db {
         let mut followed = Followed::default();
         let result = self.shared.store.commit_with(generation, |reader| {
             let Some(mut envelope) = plan(reader)? else { return Ok(None) };
+            if envelope.origin == WriteOrigin::Optimistic {
+                for op in &mut envelope.entity_ops {
+                    if let EntityOp::Upsert { model, id, row } = op {
+                        row.insert("id".into(), serde_json::Value::String(id.to_string()));
+                        if let Some(admitted) = self.admitted(reader, envelope.origin, None, None, model.as_str(), row, &mut 0)? { *row = admitted; }
+                    }
+                }
+            }
             if matches!(envelope.origin, WriteOrigin::Event | WriteOrigin::Snapshot) {
                 self.follow_correlations(reader, &mut envelope)?;
             }
             followed = self.follow_parent_pointers(reader, &mut envelope)?;
+            let changed_uploads: HashSet<i64> = envelope.operation_transitions.iter().filter_map(|transition| match transition {
+                OperationTransition::RemoveUploadItem { seq, .. } => Some(*seq),
+                _ => None,
+            }).collect();
+            for transition in &mut envelope.operation_transitions {
+                let record = match transition {
+                    OperationTransition::Begin(record) | OperationTransition::BeginUploadBatch { record, .. } if record.seq.is_none_or(|seq| changed_uploads.contains(&seq)) => record,
+                    _ => continue,
+                };
+                record.rollback = record.rollback.take().map(|prior| super::prior::Prior::with_edits(prior, reader, &followed.edits)).transpose().map_err(DbError::from)?;
+            }
+            let mut taken: HashMap<_, HashSet<String>> = HashMap::new();
+            for op in &mut envelope.scope_ops {
+                if let ScopeOp::Append { scope, row, order_key } = op {
+                    if self.shared.spec(scope.model.as_str())?.stable_order(&scope.key).is_some() { continue; }
+                    let claimed = taken.entry(scope.clone()).or_default();
+                    *order_key = reader.free_order_key(scope.model.as_str(), scope.key.as_str(), row.as_str(), order_key, claimed).map_err(DbError::from)?;
+                    claimed.insert(order_key.clone());
+                }
+            }
             Ok(Some(envelope))
         })?;
         Ok((result, followed))

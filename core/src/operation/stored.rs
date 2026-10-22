@@ -101,10 +101,19 @@ pub fn upload_at(row: &Row<'_>, first: usize) -> Result<Option<UploadState>> {
 }
 
 pub fn read_upload_items(connection: &Connection) -> Result<HashMap<(i64, i64), UploadState>> {
-    let mut parts = read_all_parts(connection)?;
-    let mut statement = connection.prepare(&format!("SELECT seq, position, {UPLOAD_COLUMNS} FROM op_item ORDER BY seq, position"))?;
+    upload_items(connection, None)
+}
+
+pub(crate) fn read_operation_uploads(connection: &Connection, seq: i64) -> Result<HashMap<(i64, i64), UploadState>> {
+    upload_items(connection, Some(seq))
+}
+
+fn upload_items(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i64, i64), UploadState>> {
+    let mut parts = read_parts(connection, seq)?;
+    let filter = if seq.is_some() { "WHERE seq = ?1" } else { "" };
+    let mut statement = connection.prepare(&format!("SELECT seq, position, {UPLOAD_COLUMNS} FROM op_item {filter} ORDER BY seq, position"))?;
     let mut found = HashMap::new();
-    for item in statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, upload_at(row, 2)?)))? {
+    for item in statement.query_map(rusqlite::params_from_iter(seq), |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, upload_at(row, 2)?)))? {
         let (seq, position, state) = item?;
         if let Some(mut state) = state {
             let mut headers = connection.prepare_cached("SELECT name, value FROM op_item_header WHERE seq = ?1 AND position = ?2 ORDER BY name")?;
@@ -240,24 +249,21 @@ pub fn read_all_rows(connection: &Connection) -> Result<HashMap<i64, Vec<RowId>>
     Ok(found)
 }
 
-pub fn read_all_parts(connection: &Connection) -> Result<HashMap<(i64, i64), Vec<UploadPart>>> {
-    let mut statement = connection.prepare_cached("SELECT seq, item_position, number, etag, confirmed_bytes FROM op_part ORDER BY seq, item_position, number")?;
+fn read_parts(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i64, i64), Vec<UploadPart>>> {
+    let filter = if seq.is_some() { "WHERE seq = ?1" } else { "" };
+    let mut statement = connection.prepare_cached(&format!("SELECT seq, item_position, number, etag, confirmed_bytes FROM op_part {filter} ORDER BY seq, item_position, number"))?;
     let mut found: HashMap<(i64, i64), Vec<UploadPart>> = HashMap::new();
-    for item in statement.query_map([], |row| Ok(((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?), UploadPart { number: row.get::<_, i64>(2)? as u32, etag: row.get(3)?, confirmed_bytes: row.get::<_, i64>(4)? as u64 })))? {
+    for item in statement.query_map(rusqlite::params_from_iter(seq), |row| Ok(((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?), UploadPart { number: row.get::<_, i64>(2)? as u32, etag: row.get(3)?, confirmed_bytes: row.get::<_, i64>(4)? as u64 })))? {
         let (owner, part) = item?;
         found.entry(owner).or_default().push(part);
     }
     Ok(found)
 }
 
-pub fn read_all_fields(connection: &Connection) -> Result<HashMap<i64, Vec<String>>> {
-    let mut statement = connection.prepare_cached("SELECT seq, name FROM op_value WHERE item_position = -1 AND part = 'input' AND parent = 0 AND name IS NOT NULL AND name != 'id' ORDER BY seq, pos")?;
-    let mut found: HashMap<i64, Vec<String>> = HashMap::new();
-    for item in statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))? {
-        let (seq, name) = item?;
-        found.entry(seq).or_default().push(name);
-    }
-    Ok(found)
+pub(crate) fn read_fields(connection: &Connection, seq: i64) -> Result<Vec<String>> {
+    let mut statement = connection.prepare_cached("SELECT name FROM op_value WHERE seq = ?1 AND item_position = -1 AND part = 'input' AND parent = 0 AND name IS NOT NULL AND name != 'id' ORDER BY pos")?;
+    let fields = statement.query_map([seq], |row| row.get(0))?.collect();
+    fields
 }
 
 pub fn delete_operation(connection: &Connection, seq: i64) -> Result<usize> {

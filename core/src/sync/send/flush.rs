@@ -16,7 +16,7 @@ use crate::transport::{GraphQLRequest, Response, ResponseOutcome, RetryClass, Tr
 use crate::value::read_id;
 
 use super::super::error::SyncError;
-use super::super::extract::extract;
+use super::super::extract::{extract, root_value};
 use super::super::normalize::{normalize_nodes, Normalized};
 use super::super::registry::OperationDef;
 use super::super::{locked, Inner};
@@ -267,7 +267,7 @@ impl Inner {
         let spec = self.db.spec(&sending.model)?;
         let declaration = spec.actions.iter().find(|action| action.name == sending.action);
         if let Some((declaration, batch)) = declaration.and_then(|action| action.batch.as_ref().map(|batch| (action, batch))) {
-            let mut states: Vec<_> = self.upload_items()?.into_iter().filter(|(key, _)| key.0 == entry.operation.id.0).collect();
+            let mut states: Vec<_> = self.db.shared.read(&[], |reader| Ok(crate::operation::read_operation_uploads(reader.connection(), entry.operation.id.0)?))?.into_iter().collect();
             states.sort_by_key(|(key, _)| key.1);
             let mut items = Vec::new();
             for ((seq, position), state) in &states {
@@ -328,11 +328,11 @@ impl Inner {
     }
 
     pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, _serial: &tokio::sync::MutexGuard<'_, ()>, upload: Option<super::super::upload::UploadResume>, request_owner: crate::transport::RequestOwner, result: Result<Response, TransportError>) -> Result<(), SyncError> {
-        let Some(owner) = self.db.outbox()?.into_iter().find(|entry| entry.operation.id.0 == request_owner.seq) else { return Ok(()) };
+        let Some(owner) = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, request_owner.seq)?))? else { return Ok(()) };
         if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) && owner.operation.upload.as_ref().is_none_or(|state| state.stage != crate::upload::UploadStage::Abort) {
             self.db.retry_operations(vec![owner.clone()])?;
         }
-        let Some(entry) = self.db.outbox()?.into_iter().find(|entry| entry.operation.id == owner.operation.id) else { return Ok(()) };
+        let Some(entry) = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, owner.operation.id.0)?))? else { return Ok(()) };
         if entry.operation.upload.is_some() {
             if let Some(upload) = upload { self.resume_upload(upload, result).await; }
             return Ok(());
@@ -348,24 +348,26 @@ impl Inner {
             Delivery::Rejected(failure, _) | Delivery::Unreached(failure) | Delivery::Unknown(failure) => failure.clone(),
         };
         let unreached = matches!(delivery, Delivery::Unreached(_));
-        let keep = keep || matches!(&delivery, Delivery::Rejected(_, true)) || matches!(&delivery, Delivery::Rejected(OperationFailure { kind: FailureKind::Session(code), .. }, _) if code.keeps_queue());
-        let rejected = matches!(delivery, Delivery::Rejected(..));
+        let deferred = unreached && self.send_backoff(sending.entry.operation.id.0).allows(sending.entry.operation.attempts + 1);
+        let exhausted = unreached && !deferred;
+        let keep = keep || exhausted || matches!(&delivery, Delivery::Rejected(_, true)) || matches!(&delivery, Delivery::Rejected(OperationFailure { kind: FailureKind::Session(code), .. }, _) if code.keeps_queue());
+        let rejected = exhausted || matches!(delivery, Delivery::Rejected(..));
         let result = match delivery {
             Delivery::Response(response) => self.settle_response(sending, operation, response).await?,
             Delivery::Rejected(failure, _) => self.refuse(sending, failure, keep).await?,
-            Delivery::Unreached(failure) if self.send_backoff(sending.entry.operation.id.0).allows(sending.entry.operation.attempts + 1) => {
+            Delivery::Unreached(failure) if deferred => {
                 self.postpone(sending, failure)?
             }
             Delivery::Unreached(failure) => self.refuse(sending, failure, true).await?,
             Delivery::Unknown(failure) => self.fail(sending, OperationStatus::DeliveryUnknown, failure, SendResult::DeliveryUnknown)?,
         };
         if result == SendResult::Discarded {
-            return self.park_operation(sending, unsettled, unreached, rejected, keep || sending.action == "destroy");
+            return self.park_operation(sending, unsettled, deferred, rejected, keep || sending.action == "destroy");
         }
         Ok(result)
     }
 
-    fn park_operation(&self, sending: &Sending<'_>, failure: OperationFailure, unreached: bool, rejected: bool, stays_failed: bool) -> Result<SendResult, SyncError> {
+    fn park_operation(&self, sending: &Sending<'_>, failure: OperationFailure, deferred: bool, rejected: bool, stays_failed: bool) -> Result<SendResult, SyncError> {
         let seq = sending.entry.operation.id.0;
         for _ in 0..SETTLE_ATTEMPTS {
             let generation = self.db.generation();
@@ -377,17 +379,13 @@ impl Inner {
                     Err(error) => return Err(error.into()),
                 }
             }
-            let (transition, result) = match (unreached, rejected) {
-                (true, _) => (OperationTransition::Postpone { seq, failure: failure.clone() }, SendResult::Deferred),
-                (false, true) => (OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }, SendResult::Rejected(failure.clone())),
-                (false, false) => (OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() }, SendResult::DeliveryUnknown),
+            let current = Sending { generation, model: sending.model.clone(), action: sending.action.clone(), ..*sending };
+            let result = match (deferred, rejected) {
+                (true, _) => self.postpone(&current, failure.clone())?,
+                (false, true) => self.fail(&current, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure.clone()))?,
+                (false, false) => self.fail(&current, OperationStatus::DeliveryUnknown, failure.clone(), SendResult::DeliveryUnknown)?,
             };
-            let committed = self.commit(generation, |_| {
-                let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
-                envelope.operation_transitions.push(transition);
-                Ok(Some(envelope))
-            })?;
-            if committed.is_some() {
+            if result != SendResult::Discarded {
                 return Ok(result);
             }
         }
@@ -421,11 +419,11 @@ impl Inner {
         let batch = spec.actions.iter().find(|action| action.name == sending.action).and_then(|action| action.batch.as_ref());
         let mut frozen = None;
         let committed = self.commit(sending.generation, |reader| {
-            let Some(entry) = read_outbox(reader)?.into_iter().find(|entry| entry.operation.id.0 == seq) else { return Ok(None) };
+            let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
             if entry.operation.status != OperationStatus::Pending || entry.operation.transport_started || entry.operation.client_mutation_id != sending.entry.operation.client_mutation_id { return Ok(None); }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
             if let Some(batch) = batch {
-                let items = crate::operation::read_upload_items(reader.connection()).map_err(StoreError::from)?;
+                let items = crate::operation::read_operation_uploads(reader.connection(), seq).map_err(StoreError::from)?;
                 if items.iter().any(|(key, state)| key.0 == seq && (!state.is_transferred() || matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled))) { return Ok(None); }
                 if entry.operation.row_ids.len() < batch.min {
                     let single = spec.actions.iter().find(|action| action.name == batch.single).ok_or_else(|| SyncError::Malformed("single upload declaration is missing".into()))?;
@@ -496,7 +494,7 @@ impl Inner {
         for _ in 0..SETTLE_ATTEMPTS {
             let lands_rows = generation == sending.generation;
             committed = self.commit(generation, |reader| {
-                let outbox = read_outbox(reader)?;
+                let outbox = if temp.is_some() || !replacements.is_empty() { read_outbox(reader)? } else { Vec::new() };
                 let mut drops = 0;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
                 envelope.entity_ops = response_ops(&self.db, reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
@@ -516,7 +514,7 @@ impl Inner {
                 } else {
                     for op in &envelope.entity_ops {
                         let EntityOp::Upsert { model, id, row } = op else { continue };
-                        if landings.contains(&RowRef::new(model.clone(), id.clone())) && reader.point(model.as_str(), id.as_str())?.is_none() {
+                        if landings.contains(&RowRef::new(model.clone(), id.clone())) {
                             envelope.scope_ops.extend(self.joins_of(reader, model.as_str(), id, row)?);
                         }
                     }
@@ -568,7 +566,8 @@ impl Inner {
             .unwrap_or_default();
         let mut landings = Vec::new();
         for landing in declared.iter().flat_map(|declared| &declared.lands) {
-            let Ok(landed) = extract(data, &landing.root, &RemoteShape::Single, None).and_then(|extracted| normalize_nodes(&self.db, &landing.model, &extracted.nodes)) else { continue };
+            let shape = if root_value(data, &landing.root).is_some_and(Value::is_array) { RemoteShape::List { coverage: crate::schema::Coverage::Complete } } else { RemoteShape::Single };
+            let Ok(landed) = extract(data, &landing.root, &shape, None).and_then(|extracted| normalize_nodes(&self.db, &landing.model, &extracted.nodes)) else { continue };
             let model = ModelKey::new(&landing.model);
             landings.extend(landed.roots.iter().filter_map(|row| row.get("id").and_then(read_id)).map(|id| RowRef::new(model.clone(), id)));
             normalized.related.extend(landed.roots.into_iter().map(|row| (model.clone(), row)));
@@ -587,11 +586,11 @@ impl Inner {
 
     fn fail(&self, sending: &Sending<'_>, status: OperationStatus, failure: OperationFailure, result: SendResult) -> Result<SendResult, SyncError> {
         let seq = sending.entry.operation.id.0;
-        let committed = self.commit(sending.generation, |reader| {
+        let committed = self.commit(sending.generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
             if status == OperationStatus::Failed && sending.action == "destroy" {
                 if let Some(prior) = Prior::of(sending.entry) {
-                    (envelope.entity_ops, envelope.scope_ops) = prior.reappearing(reader)?;
+                    (envelope.entity_ops, envelope.scope_ops) = prior.reappearing();
                 }
             }
             envelope.operation_transitions.push(OperationTransition::Fail { seq, status, failure });

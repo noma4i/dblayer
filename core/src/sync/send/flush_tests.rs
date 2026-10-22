@@ -531,11 +531,14 @@ async fn lands_joins_only_loaded_matching_threads_and_keeps_existing_places() {
             row["chatId"] = json!(chat);
             rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"message": row}})));
         }
+        let mut known_joined = false;
         for (id, _) in answers {
             rig.db.act("moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
             assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
             rig.db.settle();
-            assert_eq!(shown(&log), ["a", "new", "z"], "stable={stable}, id={id}");
+            known_joined |= id == "stored";
+            let expected = if known_joined { vec!["a", "new", "stored", "z"] } else { vec!["a", "new", "z"] };
+            assert_eq!(shown(&log), expected, "stable={stable}, id={id}");
         }
         assert_eq!(member_ids(&rig, "messages", "thread", &params(json!({"chatId":"c2"}))), ["other"]);
         assert_eq!(member_ids(&rig, "messages", "thread", &params(json!({"chatId":"c3"}))), Vec::<String>::new());
@@ -554,7 +557,7 @@ async fn lands_joins_only_loaded_matching_threads_and_keeps_existing_places() {
         assert_eq!(rig.sync.inner.settle_response(&sending, &operation, response).await.unwrap(), SendResult::Committed);
         assert_eq!(rig.db.revision_seq().unwrap(), before + 1, "the response writes its row and membership in one commit");
         rig.db.settle();
-        assert_eq!(shown(&log), ["a", "new", "atomic", "z"]);
+        assert_eq!(shown(&log), ["a", "new", "stored", "atomic", "z"]);
     }
 }
 

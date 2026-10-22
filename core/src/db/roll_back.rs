@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
@@ -8,7 +8,7 @@ use crate::identity::{Generation, ModelKey, RowId};
 use crate::store::{Reader, StoreError};
 
 use super::error::DbError;
-use super::local_write::{plan_fault, read_outbox, OutboxOperation};
+use super::local_write::{plan_fault, OutboxOperation};
 use super::open::Db;
 use super::prior::{Prior, PriorRow};
 
@@ -108,7 +108,6 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
     let own = entry.operation.id.0;
     let mut chain = Chain::new(outbox, own);
     let revision = reader.revision_seq()? + 1;
-    let mut taken = HashSet::new();
     for row in &prior.rows {
         let Ok(row_id) = RowId::new(row.id()) else { continue };
         match row {
@@ -122,7 +121,7 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
             }
             PriorRow::Destroyed { .. } if entry.operation.status == OperationStatus::Failed => {}
             PriorRow::Destroyed { .. } => {
-                let (entity_ops, scope_ops) = row.reappearing(reader, &mut taken)?;
+                let (entity_ops, scope_ops) = row.reappearing();
                 plan.entity_ops.extend(entity_ops);
                 plan.scope_ops.extend(scope_ops);
             }
@@ -177,22 +176,22 @@ impl Db {
         let spec = self.spec(model)?;
         let mut removed = false;
         self.commit_following(generation, |reader| {
-            let outbox = read_outbox(reader)?;
-            let Some(entry) = outbox.iter().find(|entry| entry.operation.id.0 == seq) else { return Ok(None) };
+            let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
             if entry.operation.transport_started { return Err(DbError::InFlight { model: model.into(), id: id.to_string() }); }
             let position = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get(0))?;
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-            let mut prior = Prior::of(entry).unwrap_or_default();
+            let mut prior = Prior::of(&entry).unwrap_or_default();
             if remove_row {
                 let mut selected = entry.clone();
                 selected.rollback = Some(Prior { rows: prior.rows.iter().filter(|row| row.id() == id.as_str()).cloned().collect() }.to_value());
-                let plan = restore(reader, &outbox, &selected)?;
+                let plan = restore(reader, &Prior::related_operations(reader, &selected)?, &selected)?;
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;
                 envelope.operation_transitions = plan.transitions;
             }
             prior.rows.retain(|row| row.id() != id.as_str());
             let rows: Vec<_> = entry.operation.row_ids.iter().filter(|row| *row != id).cloned().collect();
+            let mut inputs = Vec::new();
             if let Some(batch) = spec.actions.iter().find(|action| entry.operation.action_key == crate::operation::Operation::action_key(model, &action.name)).and_then(|action| action.batch.as_ref()).filter(|batch| rows.len() >= batch.min) {
                 if let Some(fields) = &batch.renumber {
                     let position = spec.integer_path(&fields.position).ok_or_else(|| DbError::InvalidUpload(fields.position.clone()))?;
@@ -202,13 +201,20 @@ impl Db {
                             let mut row = stored.row;
                             write_number(&mut row, &position, index + fields.position_from);
                             write_number(&mut row, &size, rows.len());
+                            let item_position: i64 = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, row_id.as_str()], |row| row.get(0))?;
+                            let value = crate::operation::read_item_value(reader.connection(), seq, item_position, "input")?.ok_or_else(|| DbError::InvalidUpload("upload input is missing".into()))?;
+                            let mut input: crate::upload::UploadInput = serde_json::from_value(value).map_err(|error| DbError::InvalidUpload(error.to_string()))?;
+                            for (target, source) in &batch.input {
+                                input.variables.insert(target.clone(), row.get(source).cloned().unwrap_or(Value::Null));
+                            }
+                            inputs.push((item_position, input));
                             envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: row_id.clone(), row });
                         }
                     }
                 }
             }
             envelope.operation_transitions.push(entry.rewritten(rows, entry.input.clone(), Some(prior.to_value())));
-            envelope.operation_transitions.push(OperationTransition::RemoveUploadItem { seq, position });
+            envelope.operation_transitions.push(OperationTransition::RemoveUploadItem { seq, position, inputs });
             removed = true;
             Ok(Some(envelope))
         }).map_err(plan_fault)?;
@@ -222,9 +228,8 @@ impl Db {
     pub(crate) fn roll_back_at(&self, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
         let result = self.commit_following(generation, |reader| {
-                let outbox = read_outbox(reader)?;
-                let entry = outbox.iter().find(|entry| entry.operation.id.0 == seq).ok_or(DbError::UnknownOperation(seq))?;
-                let plan = restore(reader, &outbox, entry)?;
+                let entry = OutboxOperation::read(reader, seq)?.ok_or(DbError::UnknownOperation(seq))?;
+                let plan = restore(reader, &Prior::related_operations(reader, &entry)?, &entry)?;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;

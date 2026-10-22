@@ -733,9 +733,13 @@ fn apply_transitions(
                 result.operations.insert(seq);
                 wrote = true;
             }
-            OperationTransition::RemoveUploadItem { seq, position } => {
+            OperationTransition::RemoveUploadItem { seq, position, inputs } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 super::upload::remove_item(connection, *seq, *position)?;
+                for (item_position, input) in inputs {
+                    let value = serde_json::to_value(input).map_err(|error| StoreError::Constraint(error.to_string()))?;
+                    crate::operation::write_item_value(connection, *seq, *item_position, "input", Some(&value))?;
+                }
                 let rows = read_rows(connection, *seq)?;
                 if rows.is_empty() {
                     delete_operation(connection, *seq)?;

@@ -6,7 +6,6 @@ use crate::db::Db;
 use crate::identity::{ModelKey, RowId};
 use crate::read::EDGE_KEY;
 use crate::schema::AssociationKind;
-use crate::store::Reader;
 use crate::value::read_id;
 
 use super::error::SyncError;
@@ -149,9 +148,4 @@ pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, re
     let mut patch = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?.patch(&input);
     db.shared.store.decode_values(model, &mut patch, crate::schema::read_path)?;
     Ok(patch.get("id").and_then(read_id).is_some().then_some(patch))
-}
-
-pub(crate) fn merge_stored(db: &Db, reader: &Reader<'_>, model: &str, patch: &Map<String, Value>) -> Result<Option<Map<String, Value>>, SyncError> {
-    let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
-    Ok(db.merged(model, reader.point(model, id.as_str())?.as_ref(), patch)?)
 }

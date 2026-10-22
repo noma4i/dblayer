@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::commit::{OperationRecord, OperationStatus};
 use crate::identity::RowId;
-use crate::operation::{delete_operation, read_item_value, read_value, read_upload_items, write_item_value, write_upload};
+use crate::operation::{delete_operation, read_item_value, read_value, read_operation_uploads, write_item_value, write_upload};
 use crate::upload::UploadInput;
 
 use super::StoreError;
@@ -17,14 +17,16 @@ fn erase_item(connection: &Connection, seq: i64, position: i64) -> Result<(), St
     for table in ["op_value", "op_part"] {
         connection.execute(&format!("DELETE FROM {table} WHERE seq = ?1 AND item_position = ?2"), params![seq, position])?;
     }
-    connection.execute("DELETE FROM op_item WHERE seq = ?1 AND position = ?2", params![seq, position])?;
+    for table in ["op_item_header", "op_item_retry", "op_item"] {
+        connection.execute(&format!("DELETE FROM {table} WHERE seq = ?1 AND position = ?2"), params![seq, position])?;
+    }
     Ok(())
 }
 
 pub(super) fn separate_items(connection: &Connection, seq: i64, action: &str, mutation: &str, now: i64) -> Result<(), StoreError> {
     let common = read_value(connection, seq, "input")?.unwrap_or(Value::Null);
     let prior = read_value(connection, seq, "prior")?.unwrap_or(Value::Null);
-    let states = read_upload_items(connection)?;
+    let states = read_operation_uploads(connection, seq)?;
     let mut statement = connection.prepare("SELECT position, row_id, client_key, file_id, source_error FROM op_item WHERE seq = ?1 ORDER BY position")?;
     let items = statement.query_map([seq], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     for (position, row, key, file, error) in items {

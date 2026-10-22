@@ -4,11 +4,11 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, EdgeValue, EdgeWrite, EntityOp, EnvelopeFault, ScopeOp, ScopeRef, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
-use crate::db::{Db, Prior, ReplaceRequest};
+use crate::db::{Db, ReplaceRequest};
 use crate::schema::{Coverage, FieldKind, FieldSpec};
 use crate::value::ScalarKind;
 use crate::read::{incoming_ids, plan_landing, StoredMember, StoredScope};
-use crate::store::{admit_upsert, PageInfo, PlanCommitError, Reader, StoreError, UpsertAdmission};
+use crate::store::{PageInfo, PlanCommitError, Reader, StoreError};
 use crate::transport::FetchAttempt;
 use crate::value::{fractional_between, read_id};
 
@@ -72,32 +72,15 @@ pub(crate) struct Admitted {
 
 pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64>, model: &str, rows: &[Map<String, Value>], drops: &mut usize) -> Result<Admitted, SyncError> {
     db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
-    let unconfirmed = Prior::unconfirmed_fields(reader, closing)?;
     let mut admitted = Admitted { rows: Vec::with_capacity(rows.len()), invalid: 0 };
     for row in rows {
-        let Some(id) = row.get("id").and_then(read_id) else { continue };
-        let stored = reader.stored_row(model, id.as_str())?;
-        let tombstone = reader.tombstone_seq(model, id.as_str())?;
-        match admit_upsert(Some(base), stored.as_ref(), tombstone, row.clone()) {
-            UpsertAdmission::Row { mut row, dropped_fields } => {
-                let mut dropped = !dropped_fields.is_empty();
-                for field in unconfirmed.get(&(model.to_string(), id.to_string())).into_iter().flatten() {
-                    dropped |= row.contains_key(field);
-                    match stored.as_ref().and_then(|stored| stored.row.get(field)) {
-                        Some(value) => row.insert(field.clone(), value.clone()),
-                        None => row.remove(field),
-                    };
-                }
-                *drops += usize::from(dropped);
-                match db.merged(model, stored.as_ref().map(|stored| &stored.row), &row)? {
-                    Some(merged) => admitted.rows.push(merged),
-                    None => admitted.invalid += 1,
-                }
-            }
-            UpsertAdmission::DropExistence => {
-                *drops += 1;
-                admitted.rows.extend(stored.map(|stored| stored.row));
-            }
+        if row.get("id").and_then(read_id).is_none() { continue; }
+        let origin = if closing.is_some() { WriteOrigin::Response } else { WriteOrigin::Snapshot };
+        let before = *drops;
+        match db.admitted(reader, origin, Some(base), closing, model, row, drops)? {
+            Some(row) => admitted.rows.push(row),
+            None if *drops == before => admitted.invalid += 1,
+            None => {}
         }
     }
     Ok(admitted)

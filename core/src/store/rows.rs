@@ -122,6 +122,7 @@ pub struct ScopeRowsResult {
 pub struct Reader<'a> {
     connection: &'a Connection,
     models: &'a BTreeMap<String, ModelInfo>,
+    pub(crate) pending_fields: std::cell::OnceCell<BTreeMap<(String, String), BTreeMap<String, HashSet<i64>>>>,
 }
 
 #[derive(Debug, Default)]
@@ -133,7 +134,7 @@ pub struct EdgeRead {
 
 impl<'a> Reader<'a> {
     pub(crate) fn new(connection: &'a Connection, models: &'a BTreeMap<String, ModelInfo>) -> Self {
-        Self { connection, models }
+        Self { connection, models, pending_fields: std::cell::OnceCell::new() }
     }
 
     pub(crate) fn connection(&self) -> &'a Connection {

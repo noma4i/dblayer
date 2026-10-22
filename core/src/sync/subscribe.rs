@@ -19,7 +19,7 @@ use crate::value::read_id;
 
 use super::error::SyncError;
 use super::extract::root_value;
-use super::normalize::{merge_stored, normalize_nodes};
+use super::normalize::normalize_nodes;
 use super::{locked, Inner, Sync};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,13 +195,13 @@ impl Feed {
     }
 
     fn parse(&self, response: &Response) -> Option<Pending> {
-        let node = root_value(response.data.as_ref()?, &self.root_path)?.as_object()?;
-        let id = match node.get(self.def.id.as_deref().unwrap_or("id")) {
+        let node = root_value(response.data.as_ref()?, &self.root_path)?;
+        let id = match root_value(node, self.def.id.as_deref().unwrap_or("id")) {
             None | Some(Value::Null) if self.inner.db.spec(&self.def.model).is_ok_and(|spec| spec.is_memory()) => RowId::new(&uuid::Uuid::new_v4().to_string()).ok()?,
             Some(value) => read_id(value)?,
             None => return None,
         };
-        let mut node = node.clone();
+        let mut node = node.as_object()?.clone();
         node.insert("id".to_string(), Value::String(id.to_string()));
         Some(Pending { bucket: self.def.event.bucket_key(id.as_str()), id, node, generation: self.inner.db.generation() })
     }
@@ -226,7 +226,7 @@ impl Feed {
         let db = &self.inner.db;
         let spec = db.spec(model)?;
         let items = items.into_iter().map(|item| {
-            let deleted = self.def.deleted_by.as_ref().and_then(|field| item.node.get(field)).is_some_and(is_truthy);
+            let deleted = self.def.deleted_by.as_ref().and_then(|field| root_value(&Value::Object(item.node.clone()), field).cloned()).as_ref().is_some_and(is_truthy);
             let normalized = if deleted || effect == EventEffect::Destroy {
                 None
             } else {
@@ -253,18 +253,16 @@ impl Feed {
                         continue;
                     }
                     let Some(patch) = normalized.roots.first() else { continue };
-                    let Some(row) = db.merged(model, stored.as_ref(), patch)? else { continue };
+                    let Some(row) = db.admitted(reader, WriteOrigin::Event, None, None, model, patch, &mut 0)? else { continue };
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
                     let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();
                     touches.extend(db.touch_ops(reader, spec, &seen, &own)?);
                     for (related_model, patch) in normalized.related {
-                        let Some(row) = merge_stored(db, reader, related_model.as_str(), &patch)? else { continue };
+                        let Some(row) = db.admitted(reader, WriteOrigin::Event, None, None, related_model.as_str(), &patch, &mut 0)? else { continue };
                         let Some(id) = row.get("id").and_then(read_id) else { continue };
                         operations.insert((related_model.to_string(), id.to_string()), EntityOp::Upsert { model: related_model, id, row });
                     }
-                    if stored.is_none() {
-                        joins.extend(self.inner.joins_of(reader, model, &item.id, &row)?);
-                    }
+                    joins.extend(self.inner.joins_of(reader, model, &item.id, &row)?);
                     operations.insert(key, EntityOp::Upsert { model: ModelKey::new(model), id: item.id, row });
                 } else {
                     let own = RowRef::new(ModelKey::new(model), item.id);

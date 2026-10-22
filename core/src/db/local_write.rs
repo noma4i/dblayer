@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
@@ -14,7 +14,7 @@ use crate::operation::Operation;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec};
 use crate::store::{PlanCommitError, Reader, StoreError};
-use crate::syncstate::{operation_keys, read_sync};
+use crate::syncstate::read_sync;
 use crate::upload::UploadState;
 use crate::value::read_id;
 use crate::write::{cascade_destroys, cascade_envelope, WritePlan};
@@ -38,6 +38,22 @@ pub struct OutboxOperation {
 }
 
 impl OutboxOperation {
+    pub(crate) fn for_rows(reader: &Reader<'_>, keys: &BTreeSet<(String, String)>) -> Result<Vec<Self>, StoreError> {
+        crate::operation::row_operation_sequences(reader.connection(), keys)?.into_iter().filter_map(|seq| Self::read(reader, seq).transpose()).collect()
+    }
+
+    pub(crate) fn read(reader: &Reader<'_>, seq: i64) -> Result<Option<Self>, StoreError> {
+        let Some(mut operation) = crate::operation::read_operation(reader.connection(), seq)? else { return Ok(None) };
+        operation.upload = crate::operation::read_operation_uploads(reader.connection(), seq)?.into_iter().min_by_key(|(key, _)| *key).map(|(_, state)| state);
+        Self::from_operation(reader, operation).map(Some)
+    }
+
+    fn from_operation(reader: &Reader<'_>, operation: Operation) -> Result<Self, StoreError> {
+        let input = crate::operation::read_value(reader.connection(), operation.id.0, "input")?.unwrap_or(Value::Null);
+        let rollback = crate::operation::read_value(reader.connection(), operation.id.0, "prior")?;
+        Ok(Self { operation, input, rollback })
+    }
+
     pub(crate) fn rewritten(&self, row_ids: Vec<RowId>, input: Value, rollback: Option<Value>) -> OperationTransition {
         let operation = &self.operation;
         OperationTransition::Begin(OperationRecord {
@@ -61,9 +77,7 @@ pub(crate) fn read_outbox(reader: &Reader<'_>) -> Result<Vec<OutboxOperation>, S
     let operations = crate::operation::open_operations(reader.connection())?;
     let mut entries = Vec::with_capacity(operations.len());
     for operation in operations {
-        let input = crate::operation::read_value(reader.connection(), operation.id.0, "input")?.unwrap_or(Value::Null);
-        let rollback = crate::operation::read_value(reader.connection(), operation.id.0, "prior")?;
-        entries.push(OutboxOperation { operation, input, rollback });
+        entries.push(OutboxOperation::from_operation(reader, operation)?);
     }
     Ok(entries)
 }
@@ -117,11 +131,8 @@ fn unsent_operations(reader: &Reader<'_>, id: &RowId, destroyed: &[RowRef]) -> R
     if !id.is_temp() {
         return Ok(None);
     }
-    let doomed: HashSet<(String, String)> = destroyed.iter().map(|target| (target.model.to_string(), target.id.to_string())).collect();
-    let touching: Vec<OutboxOperation> = read_outbox(reader)?
-        .into_iter()
-        .filter(|entry| operation_keys(&entry.operation.action_key, &entry.operation.row_ids, entry.operation.temp_id.as_ref()).iter().any(|key| doomed.contains(key)))
-        .collect();
+    let doomed = destroyed.iter().map(|target| (target.model.to_string(), target.id.to_string())).collect();
+    let touching = OutboxOperation::for_rows(reader, &doomed)?;
     let unsent = |entry: &OutboxOperation| entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started;
     Ok((!touching.is_empty() && touching.iter().all(unsent)).then_some(touching))
 }
@@ -323,13 +334,12 @@ impl Db {
                     rows.extend(PriorRow::destroyed(reader, target.model.as_str(), target.id.as_str())?);
                 }
                 let mut envelope = cascade_envelope(&destroyed, DestroyReason::Local, WriteOrigin::Optimistic, generation);
-                let followed = self.follow_parent_pointers(reader, &mut envelope)?;
                 let queued = Queued {
                     action: Action::Destroy,
                     row_id: id.clone(),
                     temp_id: None,
                     input: json!({"id": id.as_str()}),
-                    rollback: Some(Prior::with_edits(Prior { rows }.to_value(), reader, &followed.edits)?),
+                    rollback: Some(Prior { rows }.to_value()),
                     scope_ops: Vec::new(),
                     upload: None,
                 };
@@ -366,8 +376,6 @@ impl Db {
                 let mut envelope: CommitEnvelope = plan.envelope(WriteOrigin::Optimistic, generation);
                 envelope.entity_ops.extend(touches);
                 envelope.scope_ops.extend(std::mem::take(&mut queued.scope_ops));
-                let followed = self.follow_parent_pointers(reader, &mut envelope)?;
-                queued.rollback = queued.rollback.take().map(|rollback| Prior::with_edits(rollback, reader, &followed.edits)).transpose()?;
                 if !spec.is_local() {
                     envelope.operation_transitions.push(self.begin(reader, spec, queued, created_at)?);
                 }

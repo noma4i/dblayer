@@ -332,6 +332,7 @@ Each request has one retry owner. Core `RetryPolicy` defines the common delay ca
 Encrypted HTTP retries network errors, timeouts, HTTP 408, 429 and 5xx.
 The temporary GraphQL codes are `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR`.
 Queued mutations retain optimistic edits for these codes on both transports.
+Resetting an unrelated model preserves the attempt budget and its final Failed result.
 An owned encrypted mutation returns each temporary failure to its durable owner without starting another HTTP retry loop.
 An unconfirmed encrypted HTTP failure retains Pending, allowing the owner to repeat the same request safely.
 Plain mutations without a confirmed answer retain `deliveryUnknown` for interrupted transfers, unreadable responses and HTTP 5xx.
@@ -515,7 +516,7 @@ What a refresh does, in one commit:
 
 The encrypted event carries identifiers. `changed_by` selects the HTTP reread, and its response updates the database in the usual way.
 Events of the plain transport with a full row save that row directly. `joins: :events` adds such a row to loaded selections without server filters.
-`joins: :events` also accepts new rows from operation responses with `lands`, using the same matching and ordering rules in the row transaction.
+`joins: :events` accepts rows from operation responses with `lands`, including cached rows absent from matching loaded windows. Existing members keep their places.
 A relation with `text:` parameters stores the server response as it was and does not accept event rows.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
 
@@ -554,7 +555,7 @@ end
 
 `response :ignore` skips reading the response, for a mutation whose answer is not the model's row; add `refetch :profile` (or a `refetch` line in an action) to reload the relation instead.
 
-`wrap :input` sends `{ input: { ...variables } }`. `root` is the path of the row inside the response, by default the first field of the operation. `lands Model, root: "a.b"` writes the row at another path of the response into that model, once per line, so a payload that carries several rows lands all of them. The model must exist, and a path that the response lacks lands nothing. `refetch_of Model, relation: :name` marks a relation of another model stale after the action succeeds and reloads it when someone reads it, for counters that live on another row.
+`wrap :input` sends `{ input: { ...variables } }`. `root` is the path of the row inside the response, by default the first field of the operation. `lands Model, root: "a.b"` writes an object or every object in an array at that path into the declared model. The model must exist, and a path that the response lacks lands nothing. `refetch_of Model, relation: :name` marks a relation of another model stale after the action succeeds and reloads it when someone reads it, for counters that live on another row.
 
 `create`, `update` and `destroy` call the named mutation. The `input` line maps row fields to variables (same names by default). The `args` line in a model operation declares values that are sent but not stored (see [writing data](writing-data.md)). Its kinds are the kinds of an operation without a model: a scalar kind or the name of a schema enum or input object (see [models](models.md#check-against-the-server-schema)). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
 
@@ -728,11 +729,11 @@ scope :feed do
 end
 ```
 
-- `root: "a.b"` is the path of the row inside the event payload (default: the first field), `id: "messageId"` is the key that holds its id (default: `id`). Use them when the server wraps the row or sends only an id for a delete.
-- Events are normalized like responses. `deleted_by:` names the field that marks a deleted row.
+- `root: "a.b"` selects the row inside the event payload. Its default is the first field. `id:` selects the identifier and defaults to `id`.
+- Events are normalized like responses. `id:` and `deleted_by:` accept dotted paths. `deleted_by:` selects the value that marks a deleted row.
 - An event changes only the fields it carries. Fields it does not select keep their stored values. The read of the stored row and the write happen in one transaction, so a local edit made at the same moment is never overwritten by an older copy.
 - A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.
-- An event that creates a row the library did not have makes the relations of that model stale, like a successful `create`, and refetches the ones someone is reading.
+- Events preserve fields owned by unconfirmed local edits. Loaded windows with `joins: :events` accept matching rows.
 - If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
 - The subscription starts when the first reader connects, is shared by all readers and closes some time after the last reader leaves (30 seconds by default).
 - After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once.
@@ -762,7 +763,7 @@ DBlayer.unlisten()
 
 | Event | Result |
 | ----- | ------ |
-| Successful `create` or `destroy` of a model, or a subscription event that creates a row | relations rooted in that model become stale and are refetched at once if someone is reading them |
+| Successful `create` or `destroy` of a model | relations rooted in that model become stale and are refetched at once if someone is reading them |
 | Successful mutation with `refetch` | the listed relations become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit |
 | `fresh_for` expired | refetched when next read or when the app resumes |
 | App resumes | the app calls `DB.resume()` (Swift) or `DBlayer.resume()` (Kotlin), stale relations with readers are refetched in small groups |

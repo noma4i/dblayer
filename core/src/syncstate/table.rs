@@ -5,7 +5,7 @@ use rusqlite::{params, params_from_iter, Connection, Row};
 
 use crate::commit::OperationStatus;
 use crate::identity::RowId;
-use crate::operation::{failure_at, failure_cells, info_at, info_cells, read_all_fields, read_upload_items, read_all_rows, Operation, INFO_COLUMNS};
+use crate::operation::{failure_at, failure_cells, info_at, info_cells, read_operation, read_operation_uploads, read_fields, row_operation_sequences, Operation, INFO_COLUMNS, OPEN_STATUSES};
 
 use super::derive::{fold_entries, SyncEntry};
 use super::info::{SyncInfo, SyncState};
@@ -26,37 +26,36 @@ pub fn operation_keys(action_key: &str, row_ids: &[RowId], temp_id: Option<&RowI
     ids.into_iter().map(|id| (model.clone(), id.to_string())).collect()
 }
 
-fn open_entries(connection: &Connection) -> rusqlite::Result<HashMap<SyncKey, Vec<SyncEntry>>> {
-    let mut rows_of = read_all_rows(connection)?;
-    let uploads = read_upload_items(connection)?;
-    let mut statement = connection.prepare_cached("SELECT seq, row_id, position FROM op_item WHERE row_id IS NOT NULL")?;
-    let positions = statement.query_map([], |row| Ok(((row.get::<_, i64>(0)?, row.get::<_, String>(1)?), row.get::<_, i64>(2)?)))?.collect::<rusqlite::Result<HashMap<_, _>>>()?;
-    let mut fields_of = read_all_fields(connection)?;
-    let sql = "SELECT seq, action_key, status, temp_id, transport_started, attempts, error_kind, error_message, error_extensions, since FROM op WHERE status IN ('pending', 'failed', 'delivery_unknown') ORDER BY seq";
-    let mut statement = connection.prepare_cached(&sql)?;
-    let mut rows = statement.query([])?;
+fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>) -> rusqlite::Result<HashMap<SyncKey, Vec<SyncEntry>>> {
+    let sequences = match keys {
+        Some(keys) => row_operation_sequences(connection, keys)?,
+        None => {
+            let mut statement = connection.prepare_cached(&format!("SELECT seq FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq"))?;
+            let rows = statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<BTreeSet<_>>>()?;
+            rows
+        }
+    };
     let mut grouped: HashMap<SyncKey, Vec<SyncEntry>> = HashMap::new();
-    while let Some(row) = rows.next()? {
-        let seq: i64 = row.get(0)?;
-        let action_key: String = row.get(1)?;
-        let Some(status) = OperationStatus::from_sql(&row.get::<_, String>(2)?) else { continue };
-        let row_ids = rows_of.remove(&seq).unwrap_or_default();
-        let temp_id: Option<RowId> = row.get::<_, Option<String>>(3)?.and_then(|text| RowId::new(&text).ok());
-        let Some((_, action)) = Operation::split_action_key(&action_key) else { continue };
-        let fields = if action == "update" { fields_of.remove(&seq).unwrap_or_default() } else { Vec::new() };
+    for seq in sequences {
+        let Some(operation) = read_operation(connection, seq)? else { continue };
+        let uploads = read_operation_uploads(connection, seq)?;
+        let mut statement = connection.prepare_cached("SELECT row_id, position FROM op_item WHERE seq = ?1 AND row_id IS NOT NULL")?;
+        let positions = statement.query_map([seq], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<HashMap<_, _>>>()?;
+        let Some((_, action)) = Operation::split_action_key(&operation.action_key) else { continue };
+        let fields = if action == "update" { read_fields(connection, seq)? } else { Vec::new() };
         let entry = SyncEntry {
             action,
-            status,
-            transport_started: row.get::<_, i64>(4)? != 0,
-            attempts: row.get::<_, u32>(5)?,
-            error: failure_at(row, 6)?,
-            since: row.get(9)?,
+            status: operation.status,
+            transport_started: operation.transport_started,
+            attempts: operation.attempts,
+            error: operation.error.clone(),
+            since: operation.since,
             fields,
             upload: None,
         };
-        for key in operation_keys(&action_key, &row_ids, temp_id.as_ref()) {
+        for key in operation_keys(&operation.action_key, &operation.row_ids, operation.temp_id.as_ref()).into_iter().filter(|key| keys.is_none_or(|keys| keys.contains(key))) {
             let mut item = entry.clone();
-            let position = positions.get(&(seq, key.1.clone())).copied().unwrap_or(0);
+            let position = positions.get(&key.1).copied().unwrap_or(0);
             item.upload = uploads.get(&(seq, position)).cloned();
             if item.status == OperationStatus::Pending && item.upload.as_ref().is_some_and(|state| state.phase == crate::upload::UploadStatus::Failed) {
                 item.status = OperationStatus::Failed;
@@ -149,7 +148,7 @@ pub fn recompute_sync(connection: &Connection, keys: &BTreeSet<SyncKey>) -> rusq
     if keys.is_empty() {
         return Ok(changed);
     }
-    let entries = open_entries(connection)?;
+    let entries = open_entries(connection, Some(keys))?;
     for key in keys {
         let next = entries.get(key).and_then(|entries| fold_entries(entries));
         let current = stored(connection, key)?;
@@ -166,7 +165,7 @@ pub fn recompute_sync(connection: &Connection, keys: &BTreeSet<SyncKey>) -> rusq
 }
 
 pub fn rebuild_sync(connection: &Connection) -> rusqlite::Result<usize> {
-    let mut keys: BTreeSet<SyncKey> = open_entries(connection)?.into_keys().collect();
+    let mut keys: BTreeSet<SyncKey> = open_entries(connection, None)?.into_keys().collect();
     let mut statement = connection.prepare("SELECT model, row_id FROM row_sync")?;
     for key in statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
         keys.insert(key?);

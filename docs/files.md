@@ -102,6 +102,7 @@ Retrying a failed file preserves completed transfers.
 Discarding a record removes it from the operation and recalculates the remaining count.
 Below the declared minimum, the remaining records use the declared single-record mutation.
 An optional `renumber` declaration rewrites the remaining records' position and size in that same commit after `discard()` or `cancelUpload()`.
+The same commit updates saved mutation variables declared by `input`, including values used after reopening the cache.
 Positions follow the original item order, starting at the required `position_from: 0` or `position_from: 1`.
 Below the declared minimum, these fields stay unchanged and the application decides how to represent a single record.
 Without `renumber`, the library preserves these fields.

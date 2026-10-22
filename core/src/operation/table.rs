@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde_json::{Map, Value};
 
 use super::fsck::FsckAction;
@@ -9,7 +9,8 @@ use super::quarantine::{quarantine_add, QuarantineReason};
 use super::status::{Operation, OperationId, OperationStatus};
 use crate::identity::RowId;
 
-const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
+pub(crate) const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
+const OPERATION_COLUMNS: &str = "seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_extensions, since, client_mutation_id";
 
 #[cfg(test)]
 pub fn append_operation(connection: &Connection, operation: &mut Operation, input: &Value) -> rusqlite::Result<i64> {
@@ -43,47 +44,48 @@ pub fn operation_input(connection: &Connection, sequence: i64) -> rusqlite::Resu
 }
 
 pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operation>> {
-    let sql = format!(
-        "SELECT seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_extensions, since, client_mutation_id \
-         FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq"
-    );
+    let sql = format!("SELECT {OPERATION_COLUMNS} FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq");
     let mut rows_of = read_all_rows(connection)?;
     let mut uploads = read_uploads(connection)?;
     let mut statement = connection.prepare(&sql)?;
-    let rows = statement.query_map([], |row| {
-        let status: String = row.get(2)?;
-        let temp_id: Option<String> = row.get(3)?;
-        let seq: i64 = row.get(0)?;
-        Ok((
-            Operation {
-                id: OperationId(seq),
-                action_key: row.get(1)?,
-                status: OperationStatus::from_sql(&status).unwrap_or(OperationStatus::Failed),
-                row_ids: Vec::new(),
-                temp_id: temp_id.as_deref().and_then(|text| RowId::new(text).ok()),
-                transport_started: row.get::<_, i64>(4)? != 0,
-                base_revision: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
-                created_at: row.get(6)?,
-                dedupe_key: row.get(7)?,
-                attempts: row.get(8)?,
-                error: failure_at(row, 9)?,
-                since: row.get(12)?,
-                upload: None,
-                client_mutation_id: row.get(13)?,
-            },
-            OperationStatus::from_sql(&status).is_some(),
-        ))
-    })?;
+    let rows = statement.query_map([], operation_at)?;
     let mut operations = Vec::new();
     for item in rows {
-        let (mut operation, valid) = item?;
-        if valid {
+        if let Some(mut operation) = item? {
             operation.row_ids = rows_of.remove(&operation.id.0).unwrap_or_default();
             operation.upload = uploads.remove(&operation.id.0);
             operations.push(operation);
         }
     }
     Ok(operations)
+}
+
+fn operation_at(row: &Row<'_>) -> rusqlite::Result<Option<Operation>> {
+    let Some(status) = OperationStatus::from_sql(&row.get::<_, String>(2)?) else { return Ok(None) };
+    Ok(Some(Operation {
+        id: OperationId(row.get(0)?), action_key: row.get(1)?, status, row_ids: Vec::new(),
+        temp_id: row.get::<_, Option<String>>(3)?.as_deref().and_then(|text| RowId::new(text).ok()),
+        transport_started: row.get::<_, i64>(4)? != 0,
+        base_revision: row.get::<_, Option<i64>>(5)?.unwrap_or(0), created_at: row.get(6)?, dedupe_key: row.get(7)?,
+        attempts: row.get(8)?, error: failure_at(row, 9)?, since: row.get(12)?, upload: None, client_mutation_id: row.get(13)?,
+    }))
+}
+
+pub(crate) fn read_operation(connection: &Connection, seq: i64) -> rusqlite::Result<Option<Operation>> {
+    let sql = format!("SELECT {OPERATION_COLUMNS} FROM op WHERE seq = ?1 AND status IN {OPEN_STATUSES}");
+    let Some(mut operation) = connection.query_row(&sql, [seq], operation_at).optional()?.flatten() else { return Ok(None) };
+    operation.row_ids = read_rows(connection, seq)?;
+    Ok(Some(operation))
+}
+
+pub(crate) fn row_operation_sequences(connection: &Connection, keys: &BTreeSet<(String, String)>) -> rusqlite::Result<BTreeSet<i64>> {
+    let sql = format!("SELECT seq FROM op WHERE seq IN (SELECT seq FROM op_row WHERE row_id = ?2 UNION SELECT seq FROM op WHERE temp_id = ?2) AND substr(action_key, 1, instr(action_key, ':') - 1) = ?1 AND status IN {OPEN_STATUSES}");
+    let mut statement = connection.prepare_cached(&sql)?;
+    let mut sequences = BTreeSet::new();
+    for (model, id) in keys {
+        sequences.extend(statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?);
+    }
+    Ok(sequences)
 }
 
 pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], orphans: &Orphans) -> rusqlite::Result<usize> {

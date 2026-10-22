@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use crate::store::{Reader, StoreError};
 use crate::value::read_id;
 use crate::write::restore_patch;
 
-use super::local_write::{read_outbox, OutboxOperation};
+use super::local_write::OutboxOperation;
 use super::parent_pointer::PointerEdit;
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -53,17 +53,14 @@ impl PriorRow {
         }
     }
 
-    pub fn reappearing(&self, reader: &Reader<'_>, taken: &mut HashSet<(String, String, String)>) -> Result<(Option<EntityOp>, Vec<ScopeOp>), StoreError> {
-        let PriorRow::Destroyed { model, id, before, members, .. } = self else { return Ok((None, Vec::new())) };
-        let (Ok(row_id), key) = (RowId::new(id), ModelKey::new(model)) else { return Ok((None, Vec::new())) };
+    pub fn reappearing(&self) -> (Option<EntityOp>, Vec<ScopeOp>) {
+        let PriorRow::Destroyed { model, id, before, members, .. } = self else { return (None, Vec::new()) };
+        let (Ok(row_id), key) = (RowId::new(id), ModelKey::new(model)) else { return (None, Vec::new()) };
         let mut scopes = Vec::new();
         for member in members {
-            let claimed: HashSet<String> = taken.iter().filter(|(owner, scope, _)| owner == model && scope == &member.scope_key).map(|(_, _, key)| key.clone()).collect();
-            let order_key = reader.free_order_key(model, &member.scope_key, id, &member.order_key, &claimed)?;
-            taken.insert((model.clone(), member.scope_key.clone(), order_key.clone()));
-            scopes.push(ScopeOp::Append { scope: ScopeRef::new(key.clone(), ScopeKey::from_raw(&member.scope_key)), row: row_id.clone(), order_key });
+            scopes.push(ScopeOp::Append { scope: ScopeRef::new(key.clone(), ScopeKey::from_raw(&member.scope_key)), row: row_id.clone(), order_key: member.order_key.clone() });
         }
-        Ok((Some(EntityOp::Upsert { model: key, id: row_id, row: before.clone() }), scopes))
+        (Some(EntityOp::Upsert { model: key, id: row_id, row: before.clone() }), scopes)
     }
 
     pub fn destroyed(reader: &Reader<'_>, model: &str, id: &str) -> Result<Option<PriorRow>, StoreError> {
@@ -85,26 +82,60 @@ impl PriorRow {
 }
 
 impl Prior {
+    pub(crate) fn related_operations(reader: &Reader<'_>, entry: &OutboxOperation) -> Result<Vec<OutboxOperation>, StoreError> {
+        let keys: BTreeSet<_> = Self::of(entry).into_iter().flat_map(|prior| prior.rows).map(|row| match row {
+            PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } => (model, id),
+        }).collect();
+        let mut sequences = crate::operation::row_operation_sequences(reader.connection(), &keys)?;
+        let mut statement = reader.connection().prepare_cached("SELECT ids.seq FROM op_value AS ids JOIN op_value AS models ON models.seq = ids.seq AND models.item_position = -1 AND models.part = 'prior' AND models.parent = ids.parent AND models.name = 'model' AND models.text = ?1 WHERE ids.item_position = -1 AND ids.part = 'prior' AND ids.name = 'id' AND ids.text = ?2")?;
+        for (model, id) in keys {
+            sequences.extend(statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?);
+        }
+        sequences.into_iter().filter(|seq| *seq != entry.operation.id.0).filter_map(|seq| OutboxOperation::read(reader, seq).transpose()).collect()
+    }
+
     pub fn of(entry: &OutboxOperation) -> Option<Prior> {
         serde_json::from_value(entry.rollback.clone()?).ok()
     }
 
-    pub fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>) -> Result<HashMap<(String, String), HashSet<String>>, StoreError> {
-        let mut owned: HashMap<(String, String), HashSet<String>> = HashMap::new();
-        for entry in read_outbox(reader)?.iter().filter(|entry| Some(entry.operation.id.0) != closing) {
-            for row in Prior::of(entry).into_iter().flat_map(|prior| prior.rows) {
-                if let PriorRow::Edited { model, id, owned: fields, .. } = row {
-                    owned.entry((model, id)).or_default().extend(fields.into_keys());
+    pub fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, model: &str, id: &str) -> Result<HashSet<String>, StoreError> {
+        if reader.pending_fields.get().is_none() {
+            let mut owned: BTreeMap<(String, String), BTreeMap<String, HashSet<i64>>> = BTreeMap::new();
+            let mut statement = reader.connection().prepare_cached(&format!("SELECT seq FROM op WHERE status IN {}", crate::operation::OPEN_STATUSES))?;
+            let sequences = statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
+            for seq in sequences {
+                let prior = crate::operation::read_value(reader.connection(), seq, "prior")?.and_then(|value| serde_json::from_value::<Prior>(value).ok());
+                for row in prior.into_iter().flat_map(|prior| prior.rows) {
+                    if let PriorRow::Edited { model, id, owned: fields, .. } = row {
+                        let owner = owned.entry((model, id)).or_default();
+                        for field in fields.into_keys() { owner.entry(field).or_default().insert(seq); }
+                    }
                 }
             }
+            let _ = reader.pending_fields.set(owned);
         }
-        Ok(owned)
+        Ok(reader.pending_fields.get().and_then(|owned| owned.get(&(model.to_string(), id.to_string()))).into_iter().flatten()
+            .filter(|(_, owners)| owners.iter().any(|seq| Some(*seq) != closing)).map(|(field, _)| field.clone()).collect())
     }
 
     pub(crate) fn with_edits(rollback: Value, reader: &Reader<'_>, edits: &[PointerEdit]) -> Result<Value, StoreError> {
         let Ok(mut prior) = serde_json::from_value::<Prior>(rollback.clone()) else { return Ok(rollback) };
         for edit in edits {
-            prior.rows.push(PriorRow::edited(reader, edit.parent.model.as_str(), edit.parent.id.as_str(), &edit.before, &edit.after)?);
+            let model = edit.parent.model.as_str();
+            let id = edit.parent.id.as_str();
+            match prior.rows.iter_mut().find(|row| matches!(row, PriorRow::Edited { model: owner, id: row_id, .. } if owner == model && row_id == id)) {
+                Some(PriorRow::Edited { before, owned, .. }) => {
+                    let stored = reader.stored_row(model, id)?;
+                    let revision = reader.revision_seq()? + 1;
+                    for field in edit.after.keys().filter(|field| edit.before.get(*field) != edit.after.get(*field)) {
+                        if !owned.contains_key(field) || stored.as_ref().and_then(|row| row.field_rev.get(field)) != owned.get(field) {
+                            before.insert(field.clone(), edit.before.get(field).cloned().unwrap_or(Value::Null));
+                        }
+                        owned.insert(field.clone(), revision);
+                    }
+                }
+                _ => prior.rows.push(PriorRow::edited(reader, model, id, &edit.before, &edit.after)?),
+            }
         }
         Ok(prior.to_value())
     }
@@ -113,14 +144,14 @@ impl Prior {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
 
-    pub fn reappearing(&self, reader: &Reader<'_>) -> Result<(Vec<EntityOp>, Vec<ScopeOp>), StoreError> {
-        let (mut entity_ops, mut scope_ops, mut taken) = (Vec::new(), Vec::new(), HashSet::new());
+    pub fn reappearing(&self) -> (Vec<EntityOp>, Vec<ScopeOp>) {
+        let (mut entity_ops, mut scope_ops) = (Vec::new(), Vec::new());
         for row in &self.rows {
-            let (entity, scopes) = row.reappearing(reader, &mut taken)?;
+            let (entity, scopes) = row.reappearing();
             entity_ops.extend(entity);
             scope_ops.extend(scopes);
         }
-        Ok((entity_ops, scope_ops))
+        (entity_ops, scope_ops)
     }
 
     pub fn hiding(&self) -> Vec<EntityOp> {

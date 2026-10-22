@@ -226,3 +226,5 @@ mod subscribe_tests;
 mod variables_tests;
 #[cfg(test)]
 mod response_paths_tests;
+#[cfg(test)]
+mod write_consistency_tests;

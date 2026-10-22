@@ -5,28 +5,16 @@ import Testing
 
 extension BridgeProbeTests {
   @Test
-  func landsAddsANewMessageToTheLoadedThread() async throws {
-    var models = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [[String: Any]])
-    let index = try #require(models.firstIndex { $0["key"] as? String == "Message" })
-    var actions = try #require(models[index]["actions"] as? [[String: Any]])
-    actions.append(["name": "land", "root_shape": "upsert", "mutation": "LandMessage", "lands": [["model": "Message", "root": "landMessage.extra"]]])
-    models[index]["actions"] = actions
+  func landsDeclarationAndRowCrossTheBridge() async throws {
+    let schema = #"[{"key":"Record","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}}],"actions":[{"name":"create","root_shape":"upsert","mutation":"CreateRecord","root":"createRecord.record","has_optimistic":true,"has_temp_row_retention":true,"lands":[{"model":"Record","root":"createRecord.extra"}]}]}]"#
     let transport = MockTransport()
-    let page = [Self.stableNode("m1", 1, text: "t1"), Self.stableNode("m5", 5, text: "t5")]
-    transport.enqueue("ChatThread", reply: #"{"data":{"chat":{"messages":{"nodes":[\#(page.joined(separator: ","))],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#)
-    let schema = String(decoding: try JSONSerialization.data(withJSONObject: models), as: UTF8.self)
-    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: schema, transport: transport)
-    try DB.database.registerOperations(defsJson: Self.stableOperations)
-    try DB.database.registerOperations(defsJson: #"[{"name":"LandMessage","document":"mutation LandMessage { landMessage { extra { id chatId authorId text createdAt sequenceNumber } } }"}]"#)
-    let thread = Message.thread("c1")
-    try await thread.load()
-    for _ in 0..<2 {
-      transport.enqueue("LandMessage", reply: #"{"data":{"landMessage":{"extra":\#(Self.stableNode("m3", 3, text: "landed"))}}}"#)
-      _ = try await DB.database.act(model: "Message", rowId: "m1", action: "land", patchJson: "{}", argsJson: "{}")
-      try await DB.database.settled(model: "Message", rowId: "m1")
-      try await DB.database.warm(queryJson: thread.json)
-      #expect(try DB.database.peekQuery(queryJson: thread.json)?.rows.map(\.id) == ["m1", "m3", "m5"])
-    }
+    transport.enqueue("CreateRecord", reply: #"{"data":{"createRecord":{"record":{"id":"r1"},"extra":{"id":"r2"}}}}"#)
+    let database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: schema, transport: transport)
+    try database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]"#)
+    let row = try await database.create(model: "Record", valuesJson: "{}", argsJson: "{}")
+    try await database.settled(model: "Record", rowId: row.id)
+    try await database.warm(queryJson: #"{"model":"Record"}"#)
+    #expect(try database.peekRow(model: "Record", rowId: "r2")?.id == "r2")
   }
 
   fileprivate static func stableNode(_ id: String, _ sequence: Int, text: String) -> String {

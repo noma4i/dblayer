@@ -160,7 +160,7 @@ pub struct OperationRecord {
 pub enum OperationTransition {
     Begin(OperationRecord),
     BeginUploadBatch { record: OperationRecord, items: Vec<(RowId, String, crate::upload::UploadInput)> },
-    RemoveUploadItem { seq: i64, position: i64 },
+    RemoveUploadItem { seq: i64, position: i64, inputs: Vec<(i64, crate::upload::UploadInput)> },
     SeparateUploads { seq: i64, single_action: String, single_mutation: String },
     Close { seq: i64, status: OperationStatus, once: bool },
     Start { seq: i64 },
