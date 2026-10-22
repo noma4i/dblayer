@@ -4,15 +4,16 @@ Start with the [model syntax and decode rules](models.md#nested-objects-and-list
 
 | Declaration | Result |
 | ----------- | ------ |
-| `field :settings, type: :object do ... end` in `Note` | generated `NoteSettings` |
-| `field :items, type: [RewardItem] do ... end` | `[RewardItem]` in Swift, `List<RewardItem>` in Kotlin |
-| `field :reward, type: RewardItem` without a block | reuse a type declared anywhere in the same generator invocation |
-| `type: :object`, `type: :array` without a block | unrestricted JSON values |
-| `field :value, type: :raw` | any JSON value, including mixed objects and arrays |
-| `field :name, type: :string, from: "full_name"` inside a block | property `name`, server response path and canonical key `full_name` |
-| `field :owners, type: [:id]` inside a block | string IDs, including numeric input |
-| `field :attachment, type: NoteAttachment do on RewardAttachment do ... end ... end` | a union, see [unions](#unions) |
-| `field :elements, type: [SampleElement] do shared do ... end on Button do ... end end` | a list of interface values, see [interfaces and lists](#interfaces-and-lists-of-unions) |
+| `attribute :settings, NoteSettings do ... end` in `Note` | generated `NoteSettings` |
+| `attribute :items, [RewardItem] do ... end` | `[RewardItem]` in Swift, `List<RewardItem>` in Kotlin |
+| `attribute :reward, RewardItem` without a block | reuse a type declared anywhere in the same generator invocation |
+| `attribute :value, :json` | any JSON value, including mixed objects and arrays |
+| `attribute :name, :string, from: "full_name"` inside a block | property `name`, server response path and canonical key `full_name` |
+| `attribute :owners, [:id]` inside a block | string IDs, including numeric input |
+| `attribute :attachment, NoteAttachment do on RewardAttachment do ... end ... end` | a union, see [unions](#unions) |
+| `attribute :elements, [SampleElement] do shared do ... end on Button do ... end end` | a list of interface values, see [interfaces and lists](#interfaces-and-lists-of-unions) |
+
+An object always has a name. Use `:json` for a value without a fixed shape.
 
 ## Defaults
 
@@ -21,22 +22,22 @@ Defaults accept scalar values, non-empty lists, JSON values and typed objects. A
 Inside a model:
 
 ```ruby
-field :settings, type: :object do
-  field :labels, type: [:string], default: ["new"]
-  field :theme, type: :string, null: true, default: "system"
-  field :extras, type: :raw, default: { flags: [true, false] }
-  field :offset, type: :object, default: { x: 0, y: 0 } do
-    field :x, type: :num
-    field :y, type: :num
+attribute :settings, NoteSettings do
+  attribute :labels, [:string], default: ["new"]
+  attribute :theme, :string, null: true, default: "system"
+  attribute :extras, :json, default: { flags: [true, false] }
+  attribute :offset, NoteSettingsOffset, default: { x: 0, y: 0 } do
+    attribute :x, :num
+    attribute :y, :num
   end
 end
 ```
 
 The generated constructors and decoders use these values. A nullable field reads its default when absent and remains null when explicitly null. A required field with a default uses it for absent or null input. A value with the wrong type gives a decoding error.
 
-## JSON text in raw fields
+## JSON text in `:json` attributes
 
-Declare `field :payload, type: :raw, parse: :json, null: true` when the response sends JSON inside a string.
+Declare `attribute :payload, :json, parse: :json, null: true` when the response sends JSON inside a string.
 Core parses the string once and stores its JSON tree, including nested objects and arrays.
 Invalid JSON text and non-string input fail value decoding, nullable null remains null.
 Defaults must be objects or null, string defaults are rejected and never parsed.
@@ -60,9 +61,9 @@ val items = sample.payload?.jsonObject?.get("items")
 Recursive values can use arrays:
 
 ```ruby
-field :tree, type: Tree do
-  field :name, type: :string
-  field :children, type: [Tree], default: []
+attribute :tree, Tree do
+  attribute :name, :string
+  attribute :children, [Tree], default: []
 end
 ```
 
@@ -82,28 +83,28 @@ A GraphQL union is a field with one `on` block per variant. Each block declares 
 
 ```ruby
 model Note do
-  field :attachment, type: NoteAttachment, null: true do
+  attribute :attachment, NoteAttachment, null: true do
     on RewardAttachment do
-      field :id, type: :id
-      field :tier, type: :string, from: "rewardTier"
-      field :status, type: :string, null: true
+      attribute :id, :id
+      attribute :tier, :string, from: "rewardTier"
+      attribute :status, :string, null: true
     end
     on MomentAttachment do
-      field :momentId, type: :id
+      attribute :momentId, :id
     end
     on ReactionAttachment do
-      field :body, type: :string
+      attribute :body, :string
     end
   end
 end
 
 model MomentWidget do
-  field :props, type: MomentWidgetItemProps, null: true do
+  attribute :props, MomentWidgetItemProps, null: true do
     on MomentEmojiProps do
-      field :emoji, type: :string
+      attribute :emoji, :string
     end
     on MomentLabelProps do
-      field :text, type: :string
+      attribute :text, :string
     end
   end
 end
@@ -154,21 +155,21 @@ A GraphQL interface is a union with a `shared` block. The `shared` block declare
 
 ```ruby
 model InterfaceRecord do
-  field :slug, type: :string
-  field :spec, type: SampleSpec, null: true do
-    field :root, type: :id
-    field :elements, type: [SampleElement] do
+  attribute :slug, :string
+  attribute :spec, SampleSpec, null: true do
+    attribute :root, :id
+    attribute :elements, [SampleElement] do
       shared do
-        field :id, type: :id
-        field :children, type: [:id]
-        field :press, type: SampleAction, null: true
-        field :visible, type: SampleVisibility, null: true
+        attribute :id, :id
+        attribute :children, [:id]
+        attribute :press, SampleAction, null: true
+        attribute :visible, SampleVisibility, null: true
       end
       on SampleButton do
-        field :label, type: SampleTextValue, null: true
+        attribute :label, SampleTextValue, null: true
       end
       on SampleHeading do
-        field :text, type: SampleTextValue, null: true
+        attribute :text, SampleTextValue, null: true
       end
       on SamplePressable do
       end
@@ -209,7 +210,7 @@ for (element in elements) {
 | ---- | -------- |
 | Shared fields | `shared` is allowed once in a union field. A shared field and a variant field cannot have the same name. `kind` is reserved when a union has shared fields |
 | Empty variant | `on Type do end` is allowed when the union has shared fields: the variant holds only them |
-| Reuse | `type: [SampleElement]` or `type: SampleElement` without a block names an interface declared anywhere in the same generator invocation. A union or interface field may be nullable |
+| Reuse | `[SampleElement]` or `SampleElement` as the type without a block names an interface declared anywhere in the same generator invocation. A union or interface field may be nullable |
 | Tree | a field such as `children` holds keys (`[:id]`), not nested values. The tree is not stored recursively: a screen reads children by key from the same list |
 | Order | the list keeps the order the server sent. An answer replaces the whole list, and an element that changes variant loses the columns and child rows of the old variant |
 | Unknown variant | an item with an unknown `__typename` becomes `.unknown(typename:)` / `Unknown`. It keeps the type name only, so its shared fields are empty. An item without a text `__typename` is dropped |
@@ -224,12 +225,12 @@ An interface list is stored in one child table with one row per item: one text c
 Count 4 storage columns, 1 discriminator, shared columns once, and the sum of every variant's columns.
 A scalar costs 1 column, a four-case scalar value costs 5, and a list costs 1 presence column plus its child table.
 The generator rejects tables above 2000 columns.
-Use a single element type with a string `type` and nullable `raw` props when the property catalogue changes independently.
-In `fixtures/screen.dbl`, 14 common fields plus 1 raw props field and 4 storage columns make 19 columns per element.
+Use a single element type with a string `type` and nullable `:json` props when the property catalogue changes independently.
+In `fixtures/screen.dbl`, 14 common fields plus 1 `:json` props attribute and 4 storage columns make 19 columns per element.
 Adding catalogue types or props keeps that width constant.
-Props, visibility, action lists and state values use `raw, parse: :json`, so the application receives decoded JSON values.
+Props, visibility, action lists and state values use `:json, parse: :json`, so the application receives decoded JSON values.
 Applications interpret props and conditions after core parses their JSON text.
-The state entry table has 4 storage columns, 1 path and 1 raw value, totaling 6 columns instead of 9.
+The state entry table has 4 storage columns, 1 path and 1 JSON value, totaling 6 columns instead of 9.
 Action lists and conditions no longer declare separate variant tables or generated types.
 
 The groups below define a fixed-shape catalogue example, with 20 base entries in group 0 and 20 component groups.

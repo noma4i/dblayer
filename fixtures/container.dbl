@@ -1,0 +1,37 @@
+model Container do
+  attribute :title, :string
+  attribute :lastRecordAt, :date, null: true
+  attribute :lastRecordId, :id, null: true
+  attribute :shareUrl, :string, null: true
+  attribute :isPublic, :bool, null: true
+  attribute :shelves, [:enum], values: ["PRIMARY", "SECONDARY"], as: ContainerShelf, null: true
+  has_many :records, dependent: :destroy
+  belongs_to :lastRecord, class_name: Record
+  scope :node, node: :one do
+    parameter :id, :id
+    query "ContainerNode"
+    variables id: :id
+  end
+  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+  changed_by "CONTAINER", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
+  scope :nodes, node: :many do
+    query "ContainersByIds"
+    response shape: :list
+  end
+  scope :recent do
+    order lastRecordAt: :desc
+  end
+  operation :create do
+    mutation "CreateContainer"
+  end
+  operation :create_photo, upload: true do
+    mutation "ContainerGroupCreateFile"
+    optimistic false
+    response from: "groupContainerCreate.container"
+  end
+  operation :update_photo, upload: true do
+    mutation "ContainerGroupUpdateFile"
+    optimistic false
+    response from: "groupContainerUpdate.container"
+  end
+end

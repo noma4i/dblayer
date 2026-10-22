@@ -7,7 +7,7 @@ fn local_server_declarations_are_rejected_from_the_shared_cases() {
     for case in cases {
         let storage = case["models"][0]["storage"].as_str().unwrap();
         let member = case["declaration"].as_str().unwrap();
-        let source = format!("model StorageRow, storage: :{storage} do\n\nfield :record, type: :string\n\n{member}\nend");
+        let source = format!("model StorageRow, storage: :{storage} do\n\nattribute :record, :string\n\n{member}\nend");
         let result = parse_models(&source);
         if case["error"] == true {
             let errors = result.expect_err(member);

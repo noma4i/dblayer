@@ -1,7 +1,6 @@
 model Vibe do
-  field :momentId, type: :id
-  field :userId, type: :id
-  field :kind, type: :enum, values: [:like, :love, :laugh]
+  attribute :momentId, :id
+  attribute :userId, :id
+  attribute :kind, :enum, values: ["like", "love", "laugh"]
   index :userId
-
 end

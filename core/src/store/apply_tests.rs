@@ -375,20 +375,18 @@ fn begin_with_existing_seq_replaces_the_row() {
 }
 
 #[test]
-fn closing_an_operation_follows_status_and_once_flag() {
+fn closing_an_operation_follows_its_status() {
     let cases = [
-        ("committed with once", OperationStatus::Committed, true, "SELECT COUNT(*) FROM op", 0, 1),
-        ("committed without once", OperationStatus::Committed, false, "SELECT COUNT(*) FROM op", 0, 0),
-        ("failed", OperationStatus::Failed, false, "SELECT COUNT(*) FROM op WHERE status = 'failed' AND dedupe_key IS NULL", 1, 0),
-        ("delivery unknown", OperationStatus::DeliveryUnknown, false, "SELECT COUNT(*) FROM op WHERE status = 'delivery_unknown' AND dedupe_key = 'k'", 1, 0),
+        ("committed", OperationStatus::Committed, "SELECT COUNT(*) FROM op", 0),
+        ("failed", OperationStatus::Failed, "SELECT COUNT(*) FROM op WHERE status = 'failed' AND dedupe_key IS NULL", 1),
+        ("delivery unknown", OperationStatus::DeliveryUnknown, "SELECT COUNT(*) FROM op WHERE status = 'delivery_unknown' AND dedupe_key = 'k'", 1),
     ];
-    for (case, status, once, operations_sql, operations, once_keys) in cases {
+    for (case, status, operations_sql, operations) in cases {
         let (store, _) = booted_store();
         let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
         let seq = *started.operations.iter().next().unwrap();
-        transitions(&store, vec![OperationTransition::Close { seq, status, once }]);
+        transitions(&store, vec![OperationTransition::Close { seq, status }]);
         assert_eq!(count(&store, operations_sql), operations, "{case}: operations");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM op_once WHERE namespace = 'messages:send' AND dedupe_key = 'k'"), once_keys, "{case}: once keys");
     }
 }
 
@@ -396,7 +394,7 @@ fn closing_an_operation_follows_status_and_once_flag() {
 fn closing_unknown_operation_counts_ack_and_still_applies_the_envelope() {
     let (store, _) = booted_store();
     let mut mixed = envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
-    mixed.operation_transitions = vec![OperationTransition::Close { seq: 99, status: OperationStatus::Committed, once: false }];
+    mixed.operation_transitions = vec![OperationTransition::Close { seq: 99, status: OperationStatus::Committed }];
     let result = store.commit(mixed).unwrap();
     assert_eq!(result.unknown_operation_acks, 1);
     assert_eq!(store.counters().unknown_operation_acks, 1);
@@ -423,7 +421,7 @@ fn open_dedupe_key_is_unique_and_failed_frees_it() {
     duplicate.operation_transitions = vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))];
     assert!(matches!(store.commit(duplicate), Err(StoreError::Constraint(_))));
     let seq = *first.operations.iter().next().unwrap();
-    transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Failed, once: false }]);
+    transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Failed }]);
     transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 2);
 }
@@ -560,7 +558,7 @@ fn closing_the_operation_removes_row_sync_and_reports_the_row() {
     let (store, _) = booted_store();
     let begun = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))]);
     let seq = *begun.operations.iter().next().unwrap();
-    let closed = transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed, once: false }]);
+    let closed = transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
     assert_eq!(sync_row(&store, "temp-1"), None);
     assert_eq!(synced_rows(&closed), [("temp-1".to_string(), RowChangeKind::Synced)]);
 }

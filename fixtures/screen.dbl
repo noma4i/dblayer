@@ -1,34 +1,37 @@
 model CustomScreen do
-  field :slug, type: :string
-  field :version, type: :int
-  field :requires, type: ScreenRequires do
-    field :ios, type: :int, null: true
-    field :android, type: :int, null: true
+  attribute :slug, :string
+  attribute :version, :int
+  attribute :requires, ScreenRequires do
+    attribute :ios, :int, null: true
+    attribute :android, :int, null: true
   end
-  field :spec, type: ScreenSpec, null: true do
-    field :root, type: :id
-    field :state, type: [ScreenStateEntry] do
-      field :path, type: :string
-      field :value, type: :raw, parse: :json
+  attribute :spec, ScreenSpec, null: true do
+    attribute :root, :id
+    attribute :state, [ScreenStateEntry] do
+      attribute :path, :string
+      attribute :value, :json, parse: :json
     end
-    field :elements, type: [ScreenElement] do
-      field :id, type: :id
-      field :type, type: :string
-      field :slot, type: :string, null: true
-      field :children, type: [:id]
-      field :props, type: :raw, parse: :json, null: true
-      field :visible, type: :raw, parse: :json, null: true
-      field :press, type: :raw, parse: :json, null: true
-      field :change, type: :raw, parse: :json, null: true
-      field :padding, type: :string, null: true
-      field :margin, type: :string, null: true
-      field :background, type: :string, null: true
-      field :radius, type: :string, null: true
-      field :expand, type: :bool, null: true
-      field :align, type: :string, null: true
-      field :accessibilityLabel, type: :string, null: true
+    attribute :elements, [ScreenElement] do
+      attribute :id, :id
+      attribute :type, :string
+      attribute :slot, :string, null: true
+      attribute :children, [:id]
+      attribute :props, :json, parse: :json, null: true
+      attribute :visible, :json, parse: :json, null: true
+      attribute :press, :json, parse: :json, null: true
+      attribute :change, :json, parse: :json, null: true
+      attribute :padding, :string, null: true
+      attribute :margin, :string, null: true
+      attribute :background, :string, null: true
+      attribute :radius, :string, null: true
+      attribute :expand, :bool, null: true
+      attribute :align, :string, null: true
+      attribute :accessibilityLabel, :string, null: true
     end
   end
-
-  node ScreenNode
+  scope :node, node: :one do
+    parameter :id, :id
+    query "ScreenNode"
+    variables id: :id
+  end
 end

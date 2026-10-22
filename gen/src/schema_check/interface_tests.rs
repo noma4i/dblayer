@@ -17,16 +17,16 @@ union Pick = Box | Text
 
 const SELECTION: &str = "{ id spec { root elements { __typename id children note ... on Box { gap } ... on Text { body } } } }";
 
-const SHARED: &str = "      shared do\n        field :id, type: :id\n        field :children, type: [:id]\n        field :note, type: :string, null: true\n      end\n";
+const SHARED: &str = "      shared do\n        attribute :id, :id\n        attribute :children, [:id]\n        attribute :note, :string, null: true\n      end\n";
 
-const VARIANTS: &str = "      on Box do\n        field :gap, type: :int, null: true\n      end\n      on Text do\n        field :body, type: :string\n      end\n";
+const VARIANTS: &str = "      on Box do\n        attribute :gap, :int, null: true\n      end\n      on Text do\n        attribute :body, :string\n      end\n";
 
 fn model(spec: &str) -> String {
-    format!("model Screen do\n  field :spec, type: Spec, null: true do\n    field :root, type: :id\n{spec}  end\n  scope :all do\n    fetch \"screens\"\n    paginate 20\n  end\nend\n")
+    format!("model Screen do\n  attribute :spec, Spec, null: true do\n    attribute :root, :id\n{spec}  end\n  scope :all do\n    query \"screens\"\n    paginate size: 20, direction: :forward\n  end\nend\n")
 }
 
 fn elements(body: &str) -> String {
-    model(&format!("    field :elements, type: [Element] do\n{body}    end\n"))
+    model(&format!("    attribute :elements, [Element] do\n{body}    end\n"))
 }
 
 fn run(source: &str, schema: &str, selection: &str) -> Result<(), Vec<String>> {
@@ -48,13 +48,13 @@ fn interface_declarations_are_checked_against_the_schema_interface_and_its_imple
     let cases: [(&str, String, &str, &str, Option<&str>); 9] = [
         ("every implementation fits", elements(&format!("{SHARED}{VARIANTS}")), SCHEMA, SELECTION, None),
         ("implementation without a variant", elements(&format!("{SHARED}{without_text}")), SCHEMA, SELECTION, Some("implementation `Text` of interface `Element` is not declared")),
-        ("variant that is not an implementation", elements(&format!("{SHARED}{VARIANTS}      on Screen do\n        field :id, type: :id\n      end\n")), SCHEMA, SELECTION, Some("variant `Screen` is not an implementation of interface `Element`")),
-        ("shared field the interface lacks", elements(&format!("{}{VARIANTS}", SHARED.replace("field :note, type: :string, null: true", "field :ghost, type: :string"))), SCHEMA, SELECTION, Some("type `Element` has no field `ghost`")),
+        ("variant that is not an implementation", elements(&format!("{SHARED}{VARIANTS}      on Screen do\n        attribute :id, :id\n      end\n")), SCHEMA, SELECTION, Some("variant `Screen` is not an implementation of interface `Element`")),
+        ("shared field the interface lacks", elements(&format!("{}{VARIANTS}", SHARED.replace("attribute :note, :string, null: true", "attribute :ghost, :string"))), SCHEMA, SELECTION, Some("type `Element` has no field `ghost`")),
         ("shared field an implementation lacks", elements(&format!("{SHARED}{VARIANTS}")), &lacking, SELECTION, Some("implementation `Text` of interface `Element` has no field `children`")),
         ("shared nullable field declared required", elements(&format!("{}{VARIANTS}", SHARED.replace(", null: true", ""))), SCHEMA, SELECTION, Some("declare `null: true`")),
         ("selection without __typename", elements(&format!("{SHARED}{VARIANTS}")), SCHEMA, &SELECTION.replace("__typename ", ""), Some("must select `__typename`")),
         ("spread of an undeclared implementation", elements(&format!("{SHARED}{VARIANTS}")), SCHEMA, &SELECTION.replace("... on Box { gap }", "... on Screen { id }"), Some("`... on Screen` is not a declared variant of interface `Element`")),
-        ("shared block over a plain union", format!("model Screen do\n  field :first, type: Pick, null: true do\n{SHARED}{VARIANTS}  end\n  scope :all do\n    fetch \"screens\"\n    paginate 20\n  end\nend\n"), SCHEMA, "{ id first { __typename } }", Some("`shared` needs an interface: `Pick` is a union")),
+        ("shared block over a plain union", format!("model Screen do\n  attribute :first, Pick, null: true do\n{SHARED}{VARIANTS}  end\n  scope :all do\n    query \"screens\"\n    paginate size: 20, direction: :forward\n  end\nend\n"), SCHEMA, "{ id first { __typename } }", Some("`shared` needs an interface: `Pick` is a union")),
     ];
     for (name, source, schema, selection, expected) in cases {
         match (run(&source, schema, selection), expected) {
@@ -68,6 +68,6 @@ fn interface_declarations_are_checked_against_the_schema_interface_and_its_imple
 
 #[test]
 fn an_interface_list_takes_its_field_types_from_the_schema() {
-    let inferred = "model Screen do\n  field :spec do\n    field :root\n    field :elements do\n      shared do\n        field :id\n        field :children\n        field :note\n      end\n      on Box do\n        field :gap\n      end\n      on Text do\n        field :body\n      end\n    end\n  end\n  scope :all do\n    fetch \"screens\"\n    paginate 20\n  end\nend\n";
+    let inferred = "model Screen do\n  attribute :spec do\n    attribute :root\n    attribute :elements do\n      shared do\n        attribute :id\n        attribute :children\n        attribute :note\n      end\n      on Box do\n        attribute :gap\n      end\n      on Text do\n        attribute :body\n      end\n    end\n  end\n  scope :all do\n    query \"screens\"\n    paginate size: 20, direction: :forward\n  end\nend\n";
     assert_eq!(run(inferred, SCHEMA, SELECTION), Ok(()));
 }

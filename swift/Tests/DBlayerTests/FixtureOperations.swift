@@ -72,7 +72,7 @@ public struct Inbox: DBModel {
     public static let title = Column<Inbox, String>("title")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func shelf(list: ChatShelfKind) -> Query<Self> {
+    public static func shelf(list: ContainerShelfKind) -> Query<Self> {
         let built = Query<Self>(relation: "shelf", params: ["list": JSONValue.encode(list)])
         return built
     }
@@ -115,8 +115,8 @@ public struct Roster: DBModel {
     public static let title = Column<Roster, String>("title")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func chatMembers(_ chatId: String, order: ChatMemberOrder = .joined) -> Query<Self> {
-        let built = Query<Self>(relation: "chat_members", params: ["chatId": JSONValue.encode(chatId), "order": JSONValue.encode(order)])
+    public static func containerMembers(_ containerId: String, order: ContainerMemberOrder = .joined) -> Query<Self> {
+        let built = Query<Self>(relation: "container_members", params: ["containerId": JSONValue.encode(containerId), "order": JSONValue.encode(order)])
         return built
     }
     public static func create(title: String) async throws -> Self {
@@ -131,7 +131,7 @@ public struct Roster: DBModel {
     }
 }
 
-public enum ChatShelfKind: Codable, Sendable, Hashable {
+public enum ContainerShelfKind: Codable, Sendable, Hashable {
     case primary
     case secondary
     case unknown(String)
@@ -162,7 +162,7 @@ public enum ChatShelfKind: Codable, Sendable, Hashable {
     }
 }
 
-public enum ChatMemberOrder: Codable, Sendable, Hashable {
+public enum ContainerMemberOrder: Codable, Sendable, Hashable {
     case joined
     case ownerFirst
     case unknown(String)
@@ -507,20 +507,20 @@ public struct StickerSendResult: Codable, Sendable, Equatable {
 }
 
 public struct PricingLoadResult: Codable, Sendable, Equatable {
-    public let gifts: [PricingLoadResultGifts]?
+    public let rewards: [PricingLoadResultRewards]?
     public let videoIntro: PricingLoadResultVideoIntro?
     public let tags: [String]?
     public let spec: JSONValue?
 
-    public init(gifts: [PricingLoadResultGifts]? = nil, videoIntro: PricingLoadResultVideoIntro? = nil, tags: [String]? = nil, spec: JSONValue? = nil) {
-        self.gifts = gifts
+    public init(rewards: [PricingLoadResultRewards]? = nil, videoIntro: PricingLoadResultVideoIntro? = nil, tags: [String]? = nil, spec: JSONValue? = nil) {
+        self.rewards = rewards
         self.videoIntro = videoIntro
         self.tags = tags
         self.spec = spec
     }
 
     private enum CodingKeys: String, CodingKey {
-        case gifts = "gifts"
+        case rewards = "rewards"
         case videoIntro = "videoIntro"
         case tags = "tags"
         case spec = "spec"
@@ -528,14 +528,14 @@ public struct PricingLoadResult: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        gifts = try container.decodeIfPresent([PricingLoadResultGifts].self, forKey: .gifts)
+        rewards = try container.decodeIfPresent([PricingLoadResultRewards].self, forKey: .rewards)
         videoIntro = try container.decodeIfPresent(PricingLoadResultVideoIntro.self, forKey: .videoIntro)
         tags = try container.decodeIfPresent([String].self, forKey: .tags)
         spec = try container.decodeIfPresent(JSONValue.self, forKey: .spec)
     }
 }
 
-public struct PricingLoadResultGifts: Codable, Sendable, Equatable {
+public struct PricingLoadResultRewards: Codable, Sendable, Equatable {
     public let id: String?
     public let name: String?
     public let price: Int?
@@ -653,23 +653,23 @@ public struct WidgetsSendResult: Codable, Sendable, Equatable {
     }
 }
 
-public struct ChatMediaLoadResult: Codable, Sendable, Equatable {
+public struct ContainerMediaLoadResult: Codable, Sendable, Equatable {
     public let visualCount: Int?
     public let audioCount: Int?
-    public let giftCount: Int?
+    public let rewardCount: Int?
     public let latestSequence: Int?
 
-    public init(visualCount: Int? = nil, audioCount: Int? = nil, giftCount: Int? = nil, latestSequence: Int? = nil) {
+    public init(visualCount: Int? = nil, audioCount: Int? = nil, rewardCount: Int? = nil, latestSequence: Int? = nil) {
         self.visualCount = visualCount
         self.audioCount = audioCount
-        self.giftCount = giftCount
+        self.rewardCount = rewardCount
         self.latestSequence = latestSequence
     }
 
     private enum CodingKeys: String, CodingKey {
         case visualCount = "visualCount"
         case audioCount = "audioCount"
-        case giftCount = "giftCount"
+        case rewardCount = "rewardCount"
         case latestSequence = "latestSequence"
     }
 
@@ -677,7 +677,7 @@ public struct ChatMediaLoadResult: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         visualCount = try container.decodeIfPresent(Int.self, forKey: .visualCount)
         audioCount = try container.decodeIfPresent(Int.self, forKey: .audioCount)
-        giftCount = try container.decodeIfPresent(Int.self, forKey: .giftCount)
+        rewardCount = try container.decodeIfPresent(Int.self, forKey: .rewardCount)
         latestSequence = try container.decodeIfPresent(Int.self, forKey: .latestSequence)
     }
 }
@@ -718,10 +718,10 @@ public enum Operations {
         if let value = widgets { variables["widgets"] = JSONValue.encode(value) }
         return try await DB.run("WidgetsSend", variables: variables, as: WidgetsSendResult.self)
     }
-    public static func chatMediaLoad(chatId: String, upToSequence: Int? = nil) async throws -> ChatMediaLoadResult {
+    public static func containerMediaLoad(containerId: String, upToSequence: Int? = nil) async throws -> ContainerMediaLoadResult {
         var variables: [String: JSONValue] = [:]
-        variables["chatId"] = JSONValue.encode(chatId)
+        variables["containerId"] = JSONValue.encode(containerId)
         if let value = upToSequence { variables["upToSequence"] = JSONValue.encode(value) }
-        return try await DB.run("chatMedia", variables: variables, as: ChatMediaLoadResult.self)
+        return try await DB.run("containerMedia", variables: variables, as: ContainerMediaLoadResult.self)
     }
 }

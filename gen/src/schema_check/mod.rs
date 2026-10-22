@@ -2,8 +2,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::parser::{Call, ModelNode, Node, OperationNode, Pair, Value};
+use crate::decl::{AssociationKind, AttributeBlock, AttributeDecl, CallDecl, CallKind, ListElement, ModelDecl, OperationDecl, ParamBase, ParameterDecl, Pos, ScopeDecl, TypeRef, VariantDecl, VariableValue};
 use crate::scalars::{self, Scalars};
+use dblayer::schema::NodeRead;
+use dblayer::value::ScalarKind;
 use crate::{FileError, ParseError};
 
 mod graphql;
@@ -19,14 +21,20 @@ pub(crate) use inputs::load_schema_types;
 use graphql::{Operations, Select};
 pub(crate) use graphql::{Schema, TypeKind};
 
-type Declared<'a> = HashMap<&'a str, (usize, &'a [Call])>;
+#[derive(Clone, Copy)]
+enum Body<'a> {
+    Fields(&'a [AttributeDecl]),
+    Union(Option<&'a [AttributeDecl]>, &'a [VariantDecl]),
+}
+
+type Declared<'a> = HashMap<&'a str, (usize, Body<'a>)>;
 
 pub struct Outcome {
     pub notes: Vec<String>,
     pub idempotent_inputs: HashSet<(String, String)>,
 }
 
-pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], files: &[String], nodes: &[ModelNode], standalone: &[OperationNode]) -> Result<Outcome, Vec<FileError>> {
+pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], files: &[String], nodes: &[ModelDecl], standalone: &[CallDecl]) -> Result<Outcome, Vec<FileError>> {
     let failed = |file: &Path, message: String| vec![FileError { file: file.display().to_string(), error: ParseError::new(0, 0, message) }];
     let mut documents = Operations::default();
     for path in operation_files(operations) {
@@ -37,12 +45,10 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     }
     let mut declared = Declared::new();
     for node in nodes {
-        for schema_block in node.body.iter().filter(|call| call.word == "schema") {
-            collect_declared(schema_block.block.as_deref().unwrap_or_default(), node.file, &mut declared);
-        }
+        collect_declared(&node.attributes, node.file, &mut declared);
     }
     let mut run = Run { schema, scalars, operations: &documents, files, declared, found: Vec::new(), notes: Vec::new(), edge: None };
-    for node in nodes.iter().filter(|node| !is_local(node)) {
+    for node in nodes.iter().filter(|node| node.storage != dblayer::schema::Storage::Local) {
         run.check_model(node);
     }
     for node in standalone { run.check_standalone(node); }
@@ -73,37 +79,51 @@ fn operation_files(paths: &[PathBuf]) -> Vec<PathBuf> {
     found
 }
 
-fn collect_declared<'a>(calls: &'a [Call], file: usize, declared: &mut Declared<'a>) {
-    for call in calls {
-        let declared_name = if call.word == "variant" { Some(name_of(call)) } else { option_text(call, "as") };
-        if let (Some(block), Some(name)) = (&call.block, declared_name) {
-            declared.entry(name).or_insert((file, block.as_slice()));
+fn collect_declared<'a>(attributes: &'a [AttributeDecl], file: usize, declared: &mut Declared<'a>) {
+    for attribute in attributes {
+        let (TypeRef::Named(name) | TypeRef::NamedList(name)) = &attribute.ty else { continue };
+        match &attribute.block {
+            AttributeBlock::None => {}
+            AttributeBlock::Fields(inner) => {
+                declared.entry(name).or_insert((file, Body::Fields(inner)));
+                collect_declared(inner, file, declared);
+            }
+            AttributeBlock::Union { shared, variants } => {
+                declared.entry(name).or_insert((file, Body::Union(shared.as_ref().map(|shared| shared.item.as_slice()), variants)));
+                if let Some(shared) = shared {
+                    collect_declared(&shared.item, file, declared);
+                }
+                for variant in variants {
+                    if let Some(fields) = &variant.fields {
+                        declared.entry(&variant.type_name).or_insert((file, Body::Fields(fields)));
+                        collect_declared(fields, file, declared);
+                    }
+                }
+            }
         }
-        collect_declared(call.block.as_deref().unwrap_or_default(), file, declared);
     }
 }
 
-fn is_local(node: &ModelNode) -> bool {
-    node.options.iter().any(|pair| pair.key == "storage" && matches!(&pair.value.item, Value::Symbol(name) if name == "local"))
-}
-
-fn text(value: &Value) -> Option<&str> {
-    match value {
-        Value::Symbol(text) | Value::Str(text) | Value::Const(text) => Some(text),
-        _ => None,
+fn fit_word(attribute: &AttributeDecl) -> (&'static str, Option<&'static str>) {
+    let scalar = |kind: ScalarKind| match kind {
+        ScalarKind::Str => "string",
+        ScalarKind::Num => "num",
+        ScalarKind::Int => "int",
+        ScalarKind::Bool => "bool",
+        ScalarKind::Date => "date",
+        ScalarKind::Id => "id",
+    };
+    match &attribute.ty {
+        TypeRef::Scalar(kind) => (scalar(*kind), None),
+        TypeRef::Enum => ("enum", None),
+        TypeRef::Json => ("raw", None),
+        TypeRef::File => ("file", None),
+        TypeRef::Named(_) if attribute.is_union() => ("union", None),
+        TypeRef::Named(_) => ("object", None),
+        TypeRef::NamedList(_) => ("array", None),
+        TypeRef::List(ListElement::Scalar(kind)) => ("list", Some(scalar(*kind))),
+        TypeRef::List(ListElement::Enum) => ("list", Some("enum")),
     }
-}
-
-fn option<'a>(call: &'a Call, key: &str) -> Option<&'a Pair> {
-    call.options.iter().find(|pair| pair.key == key)
-}
-
-fn option_text<'a>(call: &'a Call, key: &str) -> Option<&'a str> {
-    option(call, key).and_then(|pair| text(&pair.value.item))
-}
-
-fn flag(call: &Call, key: &str) -> bool {
-    option(call, key).is_some_and(|pair| pair.value.item == Value::Bool(true))
 }
 
 fn exact_word(named: &str) -> Option<&'static str> {
@@ -113,10 +133,6 @@ fn exact_word(named: &str) -> Option<&'static str> {
         "Boolean" => Some("bool"),
         _ => None,
     }
-}
-
-fn name_of(call: &Call) -> &str {
-    call.args.first().and_then(|arg| text(&arg.item)).unwrap_or_default()
 }
 
 struct Run<'a> {
@@ -152,17 +168,25 @@ impl<'a> Scope<'a> {
     }
 }
 
+fn query_of(scope: &ScopeDecl) -> &str {
+    scope.query.as_ref().map(|query| query.operation.as_str()).unwrap_or_default()
+}
+
+fn root_path(scope: &ScopeDecl) -> Option<&str> {
+    scope.response.as_ref().and_then(|read| read.from.as_ref()).map(|found| found.item.as_str())
+}
+
 impl<'a> Run<'a> {
-    fn fail(&mut self, file: usize, line: usize, column: usize, message: String) {
-        self.found.push(FileError { file: self.files[file].clone(), error: ParseError::new(line, column, message) });
+    fn fail(&mut self, file: usize, pos: Pos, message: String) {
+        self.found.push(FileError { file: self.files[file].clone(), error: ParseError::new(pos.line, pos.column, message) });
     }
 
-    fn check_model(&mut self, node: &'a ModelNode) {
+    fn check_model(&mut self, node: &'a ModelDecl) {
         let mut seen = HashSet::new();
-        for remote in node.body.iter().filter(|call| call.word == "remote") {
+        for remote in node.scopes.iter().filter(|scope| scope.is_remote()) {
             self.check_text_types(node, remote);
         }
-        for remote in node.body.iter().filter(|call| call.word == "remote") {
+        for remote in node.scopes.iter().filter(|scope| scope.is_remote()) {
             self.edge = None;
             let Some(element) = self.resolve(node, remote) else { continue };
             if let Some(edge) = self.edge.take() {
@@ -171,10 +195,10 @@ impl<'a> Run<'a> {
             if !seen.insert(element.clone()) {
                 continue;
             }
-            let keys = node.body.iter().filter(|call| matches!(call.word.as_str(), "belongs_to" | "has_one" | "has_many" | "references")).map(|call| crate::build::association_key(call, &node.name)).collect();
-            let fields: Vec<&Call> = node.body.iter().filter(|call| call.word == "schema").flat_map(|call| call.block.iter().flatten()).collect();
+            let keys = node.associations.iter().map(|association| crate::build::association_key(association, &node.name)).collect();
+            let fields: Vec<&AttributeDecl> = node.attributes.iter().collect();
             let mut covered = BTreeSet::new();
-            let selects: Vec<&'a Select> = node.body.iter().filter(|call| call.word == "remote").filter_map(|call| self.element_select(call)).collect();
+            let selects: Vec<&'a Select> = node.scopes.iter().filter(|scope| scope.is_remote()).filter_map(|scope| self.element_select(scope)).collect();
             self.check_fields(node, &fields, &element, &Scope { keys, top: true, ..Scope::inside(node.file, selects.clone()) }, &mut covered, &mut Vec::new());
             self.check_associations(node, &element, selects);
             self.list_unmodeled(node, remote, &element, &covered);
@@ -183,142 +207,110 @@ impl<'a> Run<'a> {
         self.check_response_paths(node);
     }
 
-    fn check_edge_fields(&mut self, node: &'a ModelNode, remote: &'a Call, edge: &str) {
+    fn check_edge_fields(&mut self, node: &'a ModelDecl, remote: &'a ScopeDecl, edge: &str) {
         let select = self.edge_select(remote);
         let documented = self.root_select(remote).is_some();
-        for field in remote.block.iter().flatten().filter(|call| call.word == "edge").flat_map(|call| call.block.iter().flatten()) {
-            let name = name_of(field);
+        for field in &remote.edges {
+            let name = field.name.as_str();
             if documented && select.is_none() {
-                self.fail(node.file, field.line, field.column, format!("field `{name}`: the document does not select `edges`"));
+                self.fail(node.file, field.pos, format!("attribute `{name}`: the document does not select `edges`"));
                 continue;
             }
-            let key = option_text(field, "from").unwrap_or(name);
+            let key = field.from.as_ref().map_or(name, |found| found.item.as_str());
             let segments: Vec<&str> = key.split('.').collect();
             let selected = select.map(|select| self.operations.fields_in(select, segments[0], &[]));
             let real = selected.as_ref().and_then(|found| found.first().map(|field| field.name.clone())).unwrap_or_else(|| segments[0].to_string());
             if let Err(message) = self.schema.field(edge, &real) {
-                self.fail(node.file, field.line, field.column, format!("field `{name}`: {message}"));
+                self.fail(node.file, field.pos, format!("attribute `{name}`: {message}"));
                 continue;
             }
             if selected.is_some_and(|found| found.is_empty()) {
-                self.fail(node.file, field.line, field.column, format!("field `{name}`: the document does not select `{}` on the edges", segments[0]));
+                self.fail(node.file, field.pos, format!("attribute `{name}`: the document does not select `{}` on the edges", segments[0]));
                 continue;
             }
             let selects: Vec<&'a Select> = select.into_iter().collect();
-            let Some(reached) = self.walk(node.file, field, edge, &segments, &Scope::inside(node.file, selects), name) else { continue };
-            if let Some(expected) = exact_word(reached.ty.name()).filter(|expected| *expected != field.word && !reached.ty.is_list()) {
-                self.fail(node.file, field.line, field.column, format!("field `{name}` is declared `{}` but the edge field is `{}`, declare `{expected}`", field.word, reached.ty.describe()));
+            let Some(reached) = self.walk(node.file, field.pos, edge, &segments, &Scope::inside(node.file, selects), name) else { continue };
+            let word = fit_word(field).0;
+            if let Some(expected) = exact_word(reached.ty.name()).filter(|expected| *expected != word && !reached.ty.is_list()) {
+                self.fail(node.file, field.pos, format!("attribute `{name}` is declared `{word}` but the edge field is `{}`, declare `{expected}`", reached.ty.describe()));
                 continue;
             }
-            self.check_kind(node, field, name, &reached.ty, reached.nullable_hop, node.file);
+            self.check_kind(field, name, &reached.ty, reached.nullable_hop, node.file);
         }
     }
 
-    fn edge_select(&self, remote: &Call) -> Option<&'a Select> {
+    fn edge_select(&self, remote: &ScopeDecl) -> Option<&'a Select> {
         let select = self.root_select(remote)?;
         Some(&select.fields.iter().find(|field| field.name == "edges")?.select)
     }
 
-    fn check_text_defaults(&mut self, node: &ModelNode, remote: &Call, items: &[Node<Value>]) {
-        let Some(Pair { value: Node { item: Value::Hash(defaults), .. }, .. }) = option(remote, "defaults") else { return };
-        let typed: Vec<&Pair> = items.iter().filter_map(|item| match &item.item { Value::Hash(pairs) => Some(pairs.iter()), _ => None }).flatten().collect();
-        for default in defaults {
-            let (line, column) = (default.value.line, default.value.column);
-            let scope = name_of(remote);
-            let declared = items.iter().any(|item| matches!(&item.item, Value::Symbol(name) | Value::Str(name) if *name == default.key));
-            let Some(param) = typed.iter().find(|pair| pair.key == default.key) else {
-                let message = if declared { format!("scope `{scope}` default for `{}` needs an enum param", default.key) } else { format!("scope `{scope}` default for `{}` names no param", default.key) };
-                self.fail(node.file, line, column, message);
-                continue;
-            };
-            let (Some(TypeKind::Enum(values)), Some(value)) = (text(&param.value.item).and_then(|kind| self.schema.types.get(kind)), text(&default.value.item)) else { continue };
+    fn check_text_defaults(&mut self, node: &ModelDecl, remote: &ScopeDecl) {
+        for parameter in remote.parameters.iter().filter(|parameter| parameter.default.is_some()) {
+            let Some(default) = &parameter.default else { continue };
+            let scope = &remote.name;
+            let ParamBase::Named(kind) = &parameter.ty.base else { continue };
+            let (Some(TypeKind::Enum(values)), Some(value)) = (self.schema.types.get(kind), default.item.as_str()) else { continue };
             if !values.iter().any(|candidate| candidate == value) {
-                let kind = text(&param.value.item).unwrap_or_default();
-                self.fail(node.file, line, column, format!("scope `{scope}` default `{value}` is not a value of `{kind}`"));
+                self.fail(node.file, default.pos, format!("scope `{scope}` default `{value}` is not a value of `{kind}`"));
             }
         }
     }
 
-    fn check_text_types(&mut self, node: &ModelNode, remote: &Call) {
-        let items: &[Node<Value>] = match option(remote, "text") {
-            Some(Pair { value: Node { item: Value::Array(items), .. }, .. }) => items,
-            _ => &[],
-        };
-        self.check_text_defaults(node, remote, items);
-        let lines = remote.block.as_deref().unwrap_or_default();
-        let document = lines.iter().find(|call| call.word == "query").and_then(|call| call.args.first()).and_then(|arg| text(&arg.item));
+    fn check_text_types(&mut self, node: &ModelDecl, remote: &ScopeDecl) {
+        self.check_text_defaults(node, remote);
+        let document = query_of(remote);
+        let linked: Vec<&str> = remote.where_.iter().flat_map(|clause| clause.pairs.iter().map(|(_, parameter)| parameter.item.as_str())).collect();
         let mapped = |param: &str| {
-            let renamed = lines.iter().filter(|call| call.word == "variables").flat_map(|call| &call.options).find(|pair| matches!(&pair.value.item, Value::Symbol(source) if source == param));
-            renamed.map_or(param.to_string(), |pair| pair.key.clone())
+            let renamed = remote.variables.iter().flatten().find(|binding| matches!(&binding.value, VariableValue::Parameter(source) if source == param));
+            renamed.map_or(param.to_string(), |binding| binding.name.clone())
         };
-        let typed: &[Node<Value>] = match option(remote, "typed") {
-            Some(Pair { value: Node { item: Value::Array(items), .. }, .. }) => items,
-            _ => &[],
-        };
-        for pair in typed.iter().filter_map(|item| match &item.item { Value::Hash(pairs) => Some(pairs), _ => None }).flatten() {
-            let kind = if text(&pair.value.item) == Some("bool") { "Boolean" } else { "Int" };
-            let variable = mapped(&pair.key);
-            let Some(operation) = document.and_then(|name| self.operations.named.get(name)) else { continue };
+        let Some(operation) = self.operations.named.get(document) else { return };
+        for parameter in remote.parameters.iter().filter(|parameter| !linked.contains(&parameter.name.as_str()) && !parameter.ty.list) {
+            let kind = match &parameter.ty.base {
+                ParamBase::Bool => "Boolean".to_string(),
+                ParamBase::Int => "Int".to_string(),
+                ParamBase::Named(kind) => {
+                    if !matches!(self.schema.types.get(kind), Some(TypeKind::Enum(_))) {
+                        self.fail(node.file, parameter.pos, format!("scope `{}` param `{}` names `{kind}`, which is not an enum of the schema", remote.name, parameter.name));
+                        continue;
+                    }
+                    kind.clone()
+                }
+                _ => continue,
+            };
+            let variable = mapped(&parameter.name);
             match operation.variables.get(&variable) {
-                None => self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` is `{kind}` but operation `{}` has no variable `${variable}`", name_of(remote), pair.key, document.unwrap_or_default())),
-                Some(declared) if declared.is_list() || declared.name() != kind => self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` is `{kind}` but the variable `${variable}` of `{}` is `{}`", name_of(remote), pair.key, document.unwrap_or_default(), declared.describe())),
+                None => self.fail(node.file, parameter.pos, format!("scope `{}` param `{}` is `{kind}` but operation `{document}` has no variable `${variable}`", remote.name, parameter.name)),
+                Some(declared) if declared.is_list() || declared.name() != kind => self.fail(node.file, parameter.pos, format!("scope `{}` param `{}` is `{kind}` but the variable `${variable}` of `{document}` is `{}`", remote.name, parameter.name, declared.describe())),
                 Some(_) => {}
             }
         }
-        for item in items {
-            let Value::Hash(pairs) = &item.item else { continue };
-            for pair in pairs {
-                let Some(kind) = text(&pair.value.item) else { continue };
-                if !matches!(self.schema.types.get(kind), Some(TypeKind::Enum(_))) {
-                    self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` names `{kind}`, which is not an enum of the schema", name_of(remote), pair.key));
-                    continue;
-                }
-                let variable = mapped(&pair.key);
-                let Some(operation) = document.and_then(|name| self.operations.named.get(name)) else { continue };
-                match operation.variables.get(&variable) {
-                    None => self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` is `{kind}` but operation `{}` has no variable `${variable}`", name_of(remote), pair.key, document.unwrap_or_default())),
-                    Some(declared) if declared.is_list() || declared.name() != kind => self.fail(node.file, pair.value.line, pair.value.column, format!("scope `{}` param `{}` is `{kind}` but the variable `${variable}` of `{}` is `{}`", name_of(remote), pair.key, document.unwrap_or_default(), declared.describe())),
-                    Some(_) => {}
-                }
+    }
+
+    fn check_mutation_args(&mut self, node: &'a ModelDecl) {
+        for operation in &node.operations {
+            let Some(name) = operation.mutation.as_ref().map(|found| found.item.as_str()) else { continue };
+            let input: Vec<(String, String)> = match (&operation.variables, operation.upload.is_some()) {
+                (Some(variables), _) => variables.iter().filter_map(|binding| match &binding.value {
+                    VariableValue::Parameter(source) => Some((binding.name.clone(), source.clone())),
+                    VariableValue::Constant(_) => None,
+                }).collect(),
+                (None, true) => operation.parameters.iter().map(|parameter| (parameter.name.clone(), parameter.name.clone())).collect(),
+                (None, false) => Vec::new(),
+            };
+            self.check_args_of(node.file, operation.pos, name, operation.wrap.as_deref(), &operation.parameters, &input);
+            if let Some(batch) = &operation.batch {
+                self.check_upload_batch(node, operation, batch, name);
             }
         }
     }
 
-    fn check_mutation_args(&mut self, node: &'a ModelNode) {
-        for call in &node.body {
-            match call.word.as_str() {
-                "create" | "update" => {
-                    let pairs = |key: &str| match option(call, key) {
-                        Some(Pair { value: Node { item: Value::Hash(pairs), .. }, .. }) => pairs.as_slice(),
-                        _ => &[],
-                    };
-                    self.check_args_of(node.file, call, option_text(call, "with"), option_text(call, "wrap"), pairs("args"), pairs("input"));
-                }
-                "action" => {
-                    let lines = call.block.as_deref().unwrap_or_default();
-                    let line = |word: &str| lines.iter().find(|candidate| candidate.word == word);
-                    let name = line("mutation").or_else(|| line("upload")).map(name_of).or_else(|| option_text(call, "mutation"));
-                    let wrap = line("wrap").map(name_of);
-                    let pairs = |word: &str| line(word).map_or(&[][..], |found| found.options.as_slice());
-                    let same_names: Vec<Pair> = pairs("args").iter().map(|arg| Pair { value: Node { item: Value::Symbol(arg.key.clone()), ..arg.value.clone() }, ..arg.clone() }).collect();
-                    let input = if line("upload").is_some() && pairs("input").is_empty() { same_names.as_slice() } else { pairs("input") };
-                    self.check_args_of(node.file, call, name, wrap, pairs("args"), input);
-                    if let Some(batch) = line("batch") {
-                        self.check_upload_batch(node, call, batch, name, wrap, pairs("item"));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn check_args_of(&mut self, file: usize, call: &Call, mutation: Option<&str>, wrap: Option<&str>, args: &[Pair], input: &[Pair]) {
-        let Some(mutation) = mutation.filter(|_| !args.is_empty()) else { return };
-        if self.operations.named.is_empty() {
+    fn check_args_of(&mut self, file: usize, pos: Pos, mutation: &str, wrap: Option<&str>, args: &[ParameterDecl], input: &[(String, String)]) {
+        if args.is_empty() || self.operations.named.is_empty() {
             return;
         }
         let Some(operation) = self.operations.named.get(mutation).filter(|operation| operation.kind == "mutation") else {
-            self.fail(file, call.line, call.column, format!("operation `{mutation}` is not in the operation documents"));
+            self.fail(file, pos, format!("operation `{mutation}` is not in the operation documents"));
             return;
         };
         let variables = &operation.variables;
@@ -326,35 +318,36 @@ impl<'a> Run<'a> {
             None => (format!("operation `{mutation}`"), variables.clone()),
             Some(key) => {
                 let Some(wrapper) = variables.get(key) else {
-                    self.fail(file, call.line, call.column, format!("operation `{mutation}` has no variable `${key}`"));
+                    self.fail(file, pos, format!("operation `{mutation}` has no variable `${key}`"));
                     return;
                 };
                 let Some(fields) = self.schema.input_fields(wrapper.name()) else {
-                    self.fail(file, call.line, call.column, format!("variable `${key}` of `{mutation}` is `{}`, not an input type", wrapper.describe()));
+                    self.fail(file, pos, format!("variable `${key}` of `{mutation}` is `{}`, not an input type", wrapper.describe()));
                     return;
                 };
-                (format!("`{}`", wrapper.name().to_string()), fields)
+                (format!("`{}`", wrapper.name()), fields)
             }
         };
         for arg in args {
-            let Some(kind) = &crate::operation::arg_kind_text(&arg.value.item) else { continue };
-            let Some(variable) = input.iter().find(|pair| matches!(&pair.value.item, Value::Symbol(source) if *source == arg.key)).map(|pair| pair.key.as_str()) else { continue };
+            let kind = arg.ty.kind_text(arg.null);
+            let Some(variable) = input.iter().find(|(_, source)| *source == arg.name).map(|(name, _)| name.as_str()) else { continue };
             let Some(declared) = accepted.get(variable) else {
-                self.fail(file, call.line, call.column, format!("`{variable}` is not an input of {owner}"));
+                self.fail(file, pos, format!("`{variable}` is not an input of {owner}"));
                 continue;
             };
             let base = kind.trim_end_matches('?');
             if !self.arg_fits(base, declared) {
-                self.fail(file, call.line, call.column, format!("arg `{}` of kind `{}` does not fit `{variable}: {}`{}", arg.key, crate::operation::display_kind(kind), declared.describe(), self.unmapped_hint(declared.name())));
+                self.fail(file, pos, format!("parameter `{}` of kind `{}` does not fit `{variable}: {}`{}", arg.name, crate::operation::display_kind(&kind), declared.describe(), self.unmapped_hint(declared.name())));
             } else if kind.ends_with('?') && !declared.optional() {
-                self.fail(file, call.line, call.column, format!("arg `{}` may be nil but `{variable}: {}` is required", arg.key, declared.describe()));
+                self.fail(file, pos, format!("parameter `{}` may be nil but `{variable}: {}` is required", arg.name, declared.describe()));
             }
         }
     }
 
-    fn check_upload_batch(&mut self, node: &ModelNode, call: &Call, batch: &Call, mutation: Option<&str>, wrap: Option<&str>, mappings: &[Pair]) {
-        let fail = |run: &mut Self, message| run.fail(node.file, call.line, call.column, message);
-        let Some(operation) = mutation.and_then(|name| self.operations.named.get(name)) else {
+    fn check_upload_batch(&mut self, node: &ModelDecl, call: &OperationDecl, batch: &crate::decl::BatchDecl, mutation: &str) {
+        let wrap = call.wrap.as_deref();
+        let fail = |run: &mut Self, message| run.fail(node.file, call.pos, message);
+        let Some(operation) = self.operations.named.get(mutation) else {
             fail(self, "upload batch mutation is missing from the operation documents".into());
             return;
         };
@@ -362,7 +355,7 @@ impl<'a> Run<'a> {
             Some(wrap) => operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())).unwrap_or_default(),
             None => operation.variables.clone(),
         };
-        let items = option_text(batch, "items").unwrap_or_default();
+        let items = batch.items.as_str();
         let Some(ty) = accepted.get(items).filter(|ty| ty.is_list()) else {
             fail(self, format!("upload batch `{items}` must be a list of input objects"));
             return;
@@ -374,25 +367,23 @@ impl<'a> Run<'a> {
         if fields.get("signedId").is_none_or(|ty| !self.arg_fits("string", ty)) {
             fail(self, "upload batch items require a string signedId".into());
         }
-        for mapping in mappings {
-            let source = text(&mapping.value.item).unwrap_or_default();
-            let kind = node.body.iter().filter(|call| call.word == "schema").flat_map(|call| call.block.iter().flatten()).find(|field| name_of(field) == source).map(|field| field.word.as_str());
-            if fields.get(&mapping.key).is_none_or(|ty| kind.is_none_or(|kind| !self.arg_fits(kind, ty))) {
-                fail(self, format!("upload item `{}` does not accept field `{source}`", mapping.key));
+        for (target, source) in &batch.input {
+            let kind = node.attributes.iter().find(|field| &field.name == source).map(|field| fit_word(field).0);
+            if fields.get(target).is_none_or(|ty| kind.is_none_or(|kind| !self.arg_fits(kind, ty))) {
+                fail(self, format!("upload item `{target}` does not accept attribute `{source}`"));
             }
         }
-        let single = option_text(batch, "single").unwrap_or_default();
-        let lines = node.body.iter().find(|call| call.word == "action" && name_of(call) == single).and_then(|call| call.block.as_deref()).unwrap_or_default();
-        let name = lines.iter().find(|call| call.word == "upload").map(name_of);
+        let single_operation = node.operations.iter().find(|candidate| candidate.name == batch.single);
+        let name = single_operation.and_then(|single| single.mutation.as_ref()).map(|found| found.item.as_str());
         let Some(operation) = name.and_then(|name| self.operations.named.get(name)) else {
             fail(self, "single upload mutation is missing from the operation documents".into());
             return;
         };
-        let single_fields = match lines.iter().find(|call| call.word == "wrap").map(name_of) {
+        let single_fields = match single_operation.and_then(|single| single.wrap.as_deref()) {
             Some(wrap) => operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())).unwrap_or_default(),
             None => operation.variables.clone(),
         };
-        for key in std::iter::once("signedId").chain(mappings.iter().map(|mapping| mapping.key.as_str())) {
+        for key in std::iter::once("signedId").chain(batch.input.iter().map(|(target, _)| target.as_str())) {
             if single_fields.get(key).is_none_or(|ty| fields.get(key).is_none_or(|item| item != ty)) {
                 fail(self, format!("single upload variable `{key}` must match the batch item field"));
             }
@@ -427,71 +418,70 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn resolve(&mut self, node: &ModelNode, remote: &Call) -> Option<String> {
-        let lines = remote.block.as_deref().unwrap_or_default();
-        let query = lines.iter().find(|call| call.word == "query")?;
-        let name = query.args.first().and_then(|arg| text(&arg.item))?.to_string();
+    fn resolve(&mut self, node: &ModelDecl, remote: &ScopeDecl) -> Option<String> {
+        let query = remote.query.as_ref()?;
+        let name = query.operation.clone();
         let root = if self.operations.named.is_empty() {
             graphql::Root { key: name.clone(), field: name.clone() }
         } else if let Some(root) = self.operations.named.get(&name).filter(|operation| operation.kind == "query").and_then(|operation| operation.root.as_ref()) {
             root.clone()
         } else {
-            self.fail(node.file, query.line, query.column, format!("operation `{name}` is not in the operation documents"));
+            self.fail(node.file, query.pos, format!("operation `{name}` is not in the operation documents"));
             return None;
         };
-        let path = option_text(query, "root").unwrap_or(&root.key).to_string();
-        let (reached, miss) = self.follow_schema_path(node.file, query, "root", &name, &root, &path)?;
+        let path = root_path(remote).unwrap_or(&root.key).to_string();
+        let (reached, miss) = self.follow_schema_path(node.file, query.pos, "response from", &name, &root, &path)?;
         if let Some(miss) = miss {
-            let at = option(query, "root").map_or((query.line, query.column), |pair| (pair.value.line, pair.value.column));
-            self.report_miss(node.file, at, "root", &name, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
+            let at = remote.response.as_ref().and_then(|read| read.from.as_ref()).map_or(query.pos, |found| found.pos);
+            self.report_miss(node.file, at, "response from", &name, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
             return None;
         }
-        let paginates = lines.iter().any(|call| call.word == "paginate");
-        let lists = lines.iter().any(|call| call.word == "list");
-        let line = lines.iter().find(|call| matches!(call.word.as_str(), "paginate" | "list")).unwrap_or(query);
+        let paginates = remote.paginate.is_some();
+        let lists = remote.node == Some(NodeRead::Many) || remote.response.as_ref().is_some_and(|read| read.shape == Some(crate::decl::ResponseShape::List));
+        let pos = remote.paginate.as_ref().map(|paginate| paginate.pos).or_else(|| remote.response.as_ref().map(|read| read.pos)).unwrap_or(query.pos);
         if paginates {
-            let element = self.connection_node(node, line, &reached, remote)?;
-            self.check_total(node, lines, &name, &root)?;
+            let element = self.connection_node(node, pos, &reached, remote)?;
+            self.check_total(node, remote, &name, &root)?;
             return Some(element);
         }
         if lists != reached.is_list() {
             let expected = if lists { "a list" } else { "one object" };
-            self.fail(node.file, line.line, line.column, format!("scope `{}` expects {expected} but `{path}` returns `{}`", name_of(remote), reached.describe()));
+            self.fail(node.file, pos, format!("scope `{}` expects {expected} but `{path}` returns `{}`", remote.name, reached.describe()));
             return None;
         }
         Some(reached.name().to_string())
     }
 
-    fn check_total(&mut self, node: &ModelNode, lines: &[Call], operation: &str, root: &graphql::Root) -> Option<()> {
-        let Some(total) = lines.iter().find(|call| call.word == "total") else { return Some(()) };
-        let path = option_text(total, "from")?.to_string();
-        let (reached, miss) = self.follow_schema_path(node.file, total, "total", operation, root, &path)?;
+    fn check_total(&mut self, node: &ModelDecl, remote: &ScopeDecl, operation: &str, root: &graphql::Root) -> Option<()> {
+        let Some(total) = &remote.total else { return Some(()) };
+        let path = total.item.clone();
+        let (reached, miss) = self.follow_schema_path(node.file, total.pos, "total", operation, root, &path)?;
         if reached.name() != "Int" || reached.is_list() || !path.contains('.') {
-            self.fail(node.file, total.line, total.column, format!("total `{path}` must be an `Int` but is `{}`", reached.describe()));
+            self.fail(node.file, total.pos, format!("total `{path}` must be an `Int` but is `{}`", reached.describe()));
             return None;
         }
         if let Some(miss) = miss {
-            self.report_miss(node.file, (total.line, total.column), "total", operation, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
+            self.report_miss(node.file, total.pos, "total", operation, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
             return None;
         }
         Some(())
     }
 
-    fn follow_schema_path(&mut self, file: usize, call: &Call, label: &str, operation: &str, root: &graphql::Root, path: &str) -> Option<(Ty, Option<graphql::Miss>)> {
+    fn follow_schema_path(&mut self, file: usize, pos: Pos, label: &str, operation: &str, root: &graphql::Root, path: &str) -> Option<(Ty, Option<graphql::Miss>)> {
         let keys: Vec<&str> = path.split('.').collect();
         if keys[0] != root.key {
-            self.fail(file, call.line, call.column, format!("{label} `{path}` must start with the first field `{}` of operation `{operation}`", root.key));
+            self.fail(file, pos, format!("{label} `{path}` must start with the first field `{}` of operation `{operation}`", root.key));
             return None;
         }
         let mut reached = match self.schema.field(&self.schema.query, &root.field) {
             Ok(reached) => reached,
             Err(message) => {
-                self.fail(file, call.line, call.column, message);
+                self.fail(file, pos, message);
                 return None;
             }
         };
         if self.schema.is_interface(reached.name()) {
-            reached = self.enter_implementation(file, call, operation, &root.key, reached)?;
+            reached = self.enter_implementation(file, pos, operation, &root.key, reached)?;
         }
         let followed = paths::segments_of(path).and_then(|_| self.follow_quiet(operation, None, &keys));
         let names: Vec<&str> = match &followed {
@@ -502,11 +492,11 @@ impl<'a> Run<'a> {
             reached = match self.schema.field(reached.name(), segment) {
                 Ok(next) if !reached.is_list() => next,
                 Ok(_) => {
-                    self.fail(file, call.line, call.column, format!("{label} `{path}` crosses the list `{}`", reached.describe()));
+                    self.fail(file, pos, format!("{label} `{path}` crosses the list `{}`", reached.describe()));
                     return None;
                 }
                 Err(message) => {
-                    self.fail(file, call.line, call.column, message);
+                    self.fail(file, pos, message);
                     return None;
                 }
             };
@@ -514,10 +504,10 @@ impl<'a> Run<'a> {
         Some((reached, followed.and_then(Result::err)))
     }
 
-    fn enter_implementation(&mut self, file: usize, query: &Call, operation: &str, key: &str, reached: Ty) -> Option<Ty> {
+    fn enter_implementation(&mut self, file: usize, pos: Pos, operation: &str, key: &str, reached: Ty) -> Option<Ty> {
         let interface = reached.name().to_string();
         let Some(select) = self.operations.named.get(operation).and_then(|found| found.select.fields.iter().find(|field| field.key == key)).map(|field| &field.select) else {
-            self.fail(file, query.line, query.column, format!("`{interface}` root needs the operation documents of `{operation}`"));
+            self.fail(file, pos, format!("`{interface}` root needs the operation documents of `{operation}`"));
             return None;
         };
         let mut types: Vec<&str> = Vec::new();
@@ -530,26 +520,26 @@ impl<'a> Run<'a> {
         let implementation = match types.as_slice() {
             [one] if self.schema.implementers.get(&interface).is_some_and(|all| all.iter().any(|name| name == one)) => Some(one.to_string()),
             [one] => {
-                self.fail(file, query.line, query.column, format!("`... on {one}` is not an implementation of `{interface}`"));
+                self.fail(file, pos, format!("`... on {one}` is not an implementation of `{interface}`"));
                 None
             }
             [] => {
-                self.fail(file, query.line, query.column, format!("`{key}` of `{operation}` is `{interface}`: select its fields under `... on <Type>`"));
+                self.fail(file, pos, format!("`{key}` of `{operation}` is `{interface}`: select its fields under `... on <Type>`"));
                 None
             }
             _ => {
-                self.fail(file, query.line, query.column, format!("`{key}` of `{operation}` selects more than one `... on` type: {}", types.join(", ")));
+                self.fail(file, pos, format!("`{key}` of `{operation}` selects more than one `... on` type: {}", types.join(", ")));
                 None
             }
         };
         for problem in problems {
-            self.fail(file, query.line, query.column, problem);
+            self.fail(file, pos, problem);
         }
         let named = |name: String| Ty { kind: TyKind::Named(name), nullable: true, has_default: false };
         implementation.map(|name| Ty { nullable: reached.nullable, ..if reached.is_list() { named(name).into_list() } else { named(name) } })
     }
 
-    fn connection_node(&mut self, node: &ModelNode, line: &Call, connection: &Ty, remote: &Call) -> Option<String> {
+    fn connection_node(&mut self, node: &ModelDecl, pos: Pos, connection: &Ty, remote: &ScopeDecl) -> Option<String> {
         let nodes = self.schema.field(connection.name(), "nodes").ok().filter(Ty::is_list);
         let edges = self.schema.field(connection.name(), "edges").ok();
         self.edge = edges.as_ref().map(|edges| edges.name().to_string());
@@ -560,50 +550,62 @@ impl<'a> Run<'a> {
             _ => None,
         };
         if found.is_none() {
-            self.fail(node.file, line.line, line.column, format!("`paginate` needs `nodes` or `edges {{ node }}` on `{}`", connection.name().to_string()));
+            self.fail(node.file, pos, format!("`paginate` needs `nodes` or `edges {{ node }}` on `{}`", connection.name()));
         }
         found
     }
 
-    fn check_fields(&mut self, node: &'a ModelNode, calls: &[&'a Call], owner: &str, scope: &Scope<'a>, covered: &mut BTreeSet<String>, stack: &mut Vec<(String, String)>) {
-        for call in calls {
-            let name = name_of(call);
-            if matches!(call.word.as_str(), "index" | "ephemeral" | "file") || flag(call, "local") || name.is_empty() {
-                continue;
-            }
-            let Some(path) = self.path_of(node, call, name) else { continue };
-            let segments: Vec<&str> = path.iter().map(String::as_str).collect();
-            let Some(reached) = self.walk(scope.file, call, owner, &segments, scope, name) else { continue };
-            covered.insert(reached.first.clone());
-            self.check_kind(node, call, name, &reached.ty, reached.nullable_hop, scope.file);
-            let block: Option<(usize, &'a [Call])> = match (&call.block, option_text(call, "as")) {
-                (Some(block), _) => Some((scope.file, block.as_slice())),
-                (None, Some(declared)) => self.declared.get(declared).copied(),
+    fn body_of(&self, attribute: &'a AttributeDecl, file: usize) -> Option<(usize, Body<'a>)> {
+        match &attribute.block {
+            AttributeBlock::Fields(inner) => Some((file, Body::Fields(inner))),
+            AttributeBlock::Union { shared, variants } => Some((file, Body::Union(shared.as_ref().map(|shared| shared.item.as_slice()), variants))),
+            AttributeBlock::None => match &attribute.ty {
+                TypeRef::Named(name) | TypeRef::NamedList(name) => self.declared.get(name.as_str()).copied(),
                 _ => None,
-            };
-            let Some((file, children)) = block else { continue };
-            if children.iter().any(|child| child.word == "variant") {
-                for select in &reached.selects {
-                    self.check_union_selection(scope.file, call, reached.ty.name(), children, select);
-                }
-                self.check_union(node, call, reached.ty.name(), children, file, &reached.selects, stack);
-                continue;
-            }
-            let marker = (option_text(call, "as").unwrap_or(name).to_string(), reached.ty.name().to_string());
-            if !matches!(self.schema.types.get(reached.ty.name()), Some(TypeKind::Fields(_))) || stack.contains(&marker) {
-                continue;
-            }
-            stack.push(marker);
-            let inner: Vec<&Call> = children.iter().collect();
-            self.check_fields(node, &inner, reached.ty.name(), &Scope::inside(file, reached.selects), &mut BTreeSet::new(), stack);
-            stack.pop();
+            },
         }
     }
 
-    fn element_select(&self, remote: &Call) -> Option<&'a Select> {
-        let lines = remote.block.as_deref().unwrap_or_default();
+    fn check_fields(&mut self, node: &'a ModelDecl, attributes: &[&'a AttributeDecl], owner: &str, scope: &Scope<'a>, covered: &mut BTreeSet<String>, stack: &mut Vec<(String, String)>) {
+        for attribute in attributes {
+            let name = attribute.name.as_str();
+            if attribute.ty == TypeRef::File || attribute.local || name.is_empty() {
+                continue;
+            }
+            let Some(path) = self.path_of(node, attribute, name) else { continue };
+            let segments: Vec<&str> = path.iter().map(String::as_str).collect();
+            let Some(reached) = self.walk(scope.file, attribute.pos, owner, &segments, scope, name) else { continue };
+            covered.insert(reached.first.clone());
+            self.check_kind(attribute, name, &reached.ty, reached.nullable_hop, scope.file);
+            let Some((file, body)) = self.body_of(attribute, scope.file) else { continue };
+            match body {
+                Body::Union(shared, variants) => {
+                    for select in &reached.selects {
+                        self.check_union_selection(scope.file, attribute, reached.ty.name(), variants, select);
+                    }
+                    self.check_union(node, attribute, reached.ty.name(), shared, variants, file, &reached.selects, stack);
+                }
+                Body::Fields(children) => {
+                    let type_name = match &attribute.ty {
+                        TypeRef::Named(type_name) | TypeRef::NamedList(type_name) => type_name.as_str(),
+                        _ => name,
+                    };
+                    let marker = (type_name.to_string(), reached.ty.name().to_string());
+                    if !matches!(self.schema.types.get(reached.ty.name()), Some(TypeKind::Fields(_))) || stack.contains(&marker) {
+                        continue;
+                    }
+                    stack.push(marker);
+                    let inner: Vec<&AttributeDecl> = children.iter().collect();
+                    self.check_fields(node, &inner, reached.ty.name(), &Scope::inside(file, reached.selects), &mut BTreeSet::new(), stack);
+                    stack.pop();
+                }
+            }
+        }
+    }
+
+    fn element_select(&self, remote: &ScopeDecl) -> Option<&'a Select> {
         let mut select = self.root_select(remote)?;
-        if lines.iter().any(|call| call.word == "paginate") {
+        if remote.paginate.is_some() {
             select = match select.fields.iter().find(|field| field.name == "nodes") {
                 Some(nodes) => &nodes.select,
                 None => &select.fields.iter().find(|field| field.name == "edges")?.select.fields.iter().find(|field| field.name == "node")?.select,
@@ -612,102 +614,100 @@ impl<'a> Run<'a> {
         Some(select)
     }
 
-    fn selects_nodes(&self, remote: &Call) -> bool {
+    fn selects_nodes(&self, remote: &ScopeDecl) -> bool {
         self.root_select(remote).is_some_and(|select| select.fields.iter().any(|field| field.name == "nodes"))
     }
 
-    fn root_select(&self, remote: &Call) -> Option<&'a Select> {
+    fn root_select(&self, remote: &ScopeDecl) -> Option<&'a Select> {
         let operations: &'a Operations = self.operations;
-        let lines = remote.block.as_deref().unwrap_or_default();
-        let query = lines.iter().find(|call| call.word == "query")?;
-        let operation = operations.named.get(name_of(query))?;
+        let operation = operations.named.get(query_of(remote))?;
         let root = operation.root.as_ref()?;
-        let path = option_text(query, "root").unwrap_or(&root.key);
+        let path = root_path(remote).unwrap_or(&root.key);
         let keys: Vec<&str> = path.split('.').collect();
         operations.follow(&[&operation.select], &keys).ok()?.selects.first().copied()
     }
 
-    fn check_union_selection(&mut self, file: usize, call: &Call, union: &str, children: &[Call], select: &Select) {
+    fn check_union_selection(&mut self, file: usize, attribute: &AttributeDecl, union: &str, variants: &[VariantDecl], select: &Select) {
         let noun = if self.schema.is_interface(union) { "interface" } else { "union" };
         let mut found: (bool, Vec<&str>) = (false, Vec::new());
         self.operations.each_select(select, None, &mut |inner, on| {
             found.0 |= inner.typename;
             found.1.extend(on.filter(|on| *on != union));
         }, &mut Vec::new());
+        let name = attribute.name.as_str();
         if !found.0 {
-            self.fail(file, call.line, call.column, format!("field `{}`: the selection of `{}` must select `__typename`", name_of(call), option_text(call, "from").unwrap_or(name_of(call))));
+            self.fail(file, attribute.pos, format!("attribute `{name}`: the selection of `{}` must select `__typename`", attribute.from.as_ref().map_or(name, |found| found.item.as_str())));
         }
-        for on in found.1.iter().filter(|on| !children.iter().any(|variant| variant.word == "variant" && name_of(variant) == **on)) {
-            self.fail(file, call.line, call.column, format!("field `{}`: `... on {on}` is not a declared variant of {noun} `{union}`", name_of(call)));
+        for on in found.1.iter().filter(|on| !variants.iter().any(|variant| variant.type_name == **on)) {
+            self.fail(file, attribute.pos, format!("attribute `{name}`: `... on {on}` is not a declared variant of {noun} `{union}`"));
         }
     }
 
-    fn check_union(&mut self, node: &'a ModelNode, call: &Call, union: &str, children: &'a [Call], file: usize, selects: &[&'a Select], stack: &mut Vec<(String, String)>) {
+    fn check_union(&mut self, node: &'a ModelDecl, attribute: &'a AttributeDecl, union: &str, shared: Option<&'a [AttributeDecl]>, variants: &'a [VariantDecl], file: usize, selects: &[&'a Select], stack: &mut Vec<(String, String)>) {
         let interface = self.schema.is_interface(union);
         let members: Vec<String> = match self.schema.types.get(union) {
             Some(TypeKind::Union(members)) => members.clone(),
             Some(TypeKind::Fields(_)) if interface => self.schema.implementers.get(union).cloned().unwrap_or_default(),
             _ => return,
         };
-        let variants: Vec<&Call> = children.iter().filter(|child| child.word == "variant").collect();
-        let declared: Vec<&str> = variants.iter().map(|variant| name_of(variant)).collect();
-        for variant in &variants {
-            if !members.iter().any(|member| member == name_of(variant)) {
-                let message = if interface { format!("variant `{}` is not an implementation of interface `{union}`", name_of(variant)) } else { format!("variant `{}` is not a member of union `{union}`", name_of(variant)) };
-                self.fail(file, variant.line, variant.column, message);
+        let declared: Vec<&str> = variants.iter().map(|variant| variant.type_name.as_str()).collect();
+        for variant in variants {
+            if !members.iter().any(|member| *member == variant.type_name) {
+                let message = if interface { format!("variant `{}` is not an implementation of interface `{union}`", variant.type_name) } else { format!("variant `{}` is not a member of union `{union}`", variant.type_name) };
+                self.fail(file, variant.pos, message);
             }
         }
         for member in members.iter().filter(|member| !declared.contains(&member.as_str())) {
-            let at = variants.first().copied().unwrap_or(call);
+            let pos = variants.first().map_or(attribute.pos, |variant| variant.pos);
             let message = if interface { format!("implementation `{member}` of interface `{union}` is not declared") } else { format!("variant `{member}` of union `{union}` is not declared") };
-            self.fail(file, at.line, at.column, message);
+            self.fail(file, pos, message);
         }
-        if let Some(shared) = children.iter().find(|child| child.word == "shared") {
-            self.check_shared(node, shared, union, &members, interface, file, selects, stack);
+        if let Some(shared) = shared {
+            self.check_shared(node, shared, attribute.pos, union, &members, interface, file, selects, stack);
         }
-        for variant in variants.iter().filter(|variant| members.iter().any(|member| member == name_of(variant))) {
-            let Some(block) = &variant.block else { continue };
-            let marker = (name_of(variant).to_string(), union.to_string());
+        for variant in variants.iter().filter(|variant| members.iter().any(|member| *member == variant.type_name)) {
+            let Some(block) = &variant.fields else { continue };
+            let marker = (variant.type_name.clone(), union.to_string());
             if stack.contains(&marker) {
                 continue;
             }
             stack.push(marker);
-            let inner: Vec<&Call> = block.iter().collect();
-            let apart = declared.iter().filter(|other| **other != name_of(variant)).map(|other| other.to_string()).collect();
-            self.check_fields(node, &inner, name_of(variant), &Scope { apart, ..Scope::inside(file, selects.to_vec()) }, &mut BTreeSet::new(), stack);
+            let inner: Vec<&AttributeDecl> = block.iter().collect();
+            let apart = declared.iter().filter(|other| **other != variant.type_name).map(|other| other.to_string()).collect();
+            self.check_fields(node, &inner, &variant.type_name, &Scope { apart, ..Scope::inside(file, selects.to_vec()) }, &mut BTreeSet::new(), stack);
             stack.pop();
         }
     }
 
-    fn check_shared(&mut self, node: &'a ModelNode, shared: &'a Call, union: &str, members: &[String], interface: bool, file: usize, selects: &[&'a Select], stack: &mut Vec<(String, String)>) {
+    fn check_shared(&mut self, node: &'a ModelDecl, shared: &'a [AttributeDecl], pos: Pos, union: &str, members: &[String], interface: bool, file: usize, selects: &[&'a Select], stack: &mut Vec<(String, String)>) {
         if !interface {
-            self.fail(file, shared.line, shared.column, format!("`shared` needs an interface: `{union}` is a union"));
+            self.fail(file, pos, format!("`shared` needs an interface: `{union}` is a union"));
             return;
         }
-        let fields: Vec<&Call> = shared.block.iter().flatten().collect();
+        let fields: Vec<&AttributeDecl> = shared.iter().collect();
         self.check_fields(node, &fields, union, &Scope::inside(file, selects.to_vec()), &mut BTreeSet::new(), stack);
         for field in &fields {
-            let key = option_text(field, "from").unwrap_or(name_of(field)).split('.').next().unwrap_or_default();
+            let key = field.from.as_ref().map_or(field.name.as_str(), |found| found.item.as_str()).split('.').next().unwrap_or_default();
             for member in members {
                 let apart: Vec<String> = members.iter().filter(|other| *other != member).cloned().collect();
                 let name = selects.iter().find_map(|select| self.operations.fields_in(select, key, &apart).first().map(|found| found.name.as_str())).unwrap_or(key);
                 if self.schema.field(member, name).is_err() {
-                    self.fail(file, field.line, field.column, format!("implementation `{member}` of interface `{union}` has no field `{name}`"));
+                    self.fail(file, field.pos, format!("implementation `{member}` of interface `{union}` has no field `{name}`"));
                 }
             }
         }
     }
 
-    fn path_of(&mut self, node: &ModelNode, call: &Call, name: &str) -> Option<Vec<String>> {
-        if let Some(parent) = option_text(call, "id_from") {
-            let association = node.body.iter().find(|candidate| matches!(candidate.word.as_str(), "belongs_to" | "has_one") && name_of(candidate) == parent);
-            let base = association.and_then(|association| option_text(association, "from")).unwrap_or(parent);
+    fn path_of(&mut self, node: &ModelDecl, attribute: &AttributeDecl, name: &str) -> Option<Vec<String>> {
+        if let Some(parent) = &attribute.id_from {
+            let association = node.associations.iter().find(|candidate| matches!(candidate.kind, AssociationKind::BelongsTo | AssociationKind::HasOne) && candidate.name == *parent);
+            let base = association.and_then(|association| association.from.as_deref()).unwrap_or(parent);
             return Some(base.split('.').map(str::to_string).chain(["id".to_string()]).collect());
         }
-        Some(option_text(call, "from").unwrap_or(name).split('.').map(str::to_string).collect())
+        Some(attribute.from.as_ref().map_or(name, |found| found.item.as_str()).split('.').map(str::to_string).collect())
     }
 
-    fn walk(&mut self, file: usize, call: &Call, owner: &str, segments: &[&str], scope: &Scope<'a>, name: &str) -> Option<Walked<'a>> {
+    fn walk(&mut self, file: usize, pos: Pos, owner: &str, segments: &[&str], scope: &Scope<'a>, name: &str) -> Option<Walked<'a>> {
         let operations: &'a Operations = self.operations;
         let mut selects = scope.selects.clone();
         let mut first = String::new();
@@ -725,7 +725,7 @@ impl<'a> Run<'a> {
                 Ok(reached) => reached,
                 Err(_) if scope.top && scope.keys.contains(name) => return None,
                 Err(message) => {
-                    self.fail(file, call.line, call.column, format!("field `{name}`: {message}"));
+                    self.fail(file, pos, format!("attribute `{name}`: {message}"));
                     return None;
                 }
             };
@@ -733,7 +733,7 @@ impl<'a> Run<'a> {
                 return Some(Walked { ty: if crossed && !reached.is_list() { reached.into_list() } else { reached }, nullable_hop, first, selects });
             }
             if reached.is_list() && !scope.lists {
-                self.fail(file, call.line, call.column, format!("field `{name}`: path `{}` crosses the list `{segment}`", segments.join(".")));
+                self.fail(file, pos, format!("attribute `{name}`: path `{}` crosses the list `{segment}`", segments.join(".")));
                 return None;
             }
             crossed |= reached.is_list();
@@ -743,41 +743,39 @@ impl<'a> Run<'a> {
         None
     }
 
-    fn check_kind(&mut self, _node: &ModelNode, call: &Call, name: &str, reached: &Ty, nullable_hop: bool, file: usize) {
-        let word = call.word.as_str();
+    fn check_kind(&mut self, attribute: &AttributeDecl, name: &str, reached: &Ty, nullable_hop: bool, file: usize) {
+        let (word, _) = fit_word(attribute);
         if word == "raw" {
             return;
         }
         let mut problems = Vec::new();
-        if name != "id" && (reached.nullable || nullable_hop) && !(flag(call, "null") || flag(call, "optional") || option(call, "default").is_some()) {
+        if name != "id" && (reached.nullable || nullable_hop) && !(attribute.null || attribute.optional || attribute.default.is_some()) {
             problems.push(format!("is nullable in the schema (`{}`), declare `null: true`", reached.describe()));
         }
         let wants_list = matches!(word, "list" | "array");
         if wants_list != reached.is_list() {
             let schema_shape = if reached.is_list() { "a list" } else { "not a list" };
             problems.push(format!("`{word}` does not fit `{}`, which is {schema_shape}", reached.describe()));
-        } else if !self.named_fits(call, reached.name()) {
+        } else if !self.named_fits(attribute, reached.name()) {
             problems.push(format!("`{word}` does not fit the schema type `{}`{}", reached.describe(), self.unmapped_hint(reached.name())));
         }
-        if word == "enum" || (word == "list" && option_text(call, "of") == Some("enum")) {
-            problems.extend(self.enum_problems(call, reached.name()));
+        if matches!(attribute.ty, TypeRef::Enum | TypeRef::List(ListElement::Enum)) {
+            problems.extend(self.enum_problems(attribute, reached.name()));
         }
-        if crate::unions::is_union_call(call) && !matches!(self.schema.types.get(reached.name()), Some(TypeKind::Union(_))) && !self.schema.is_interface(reached.name()) {
+        if attribute.is_union() && !matches!(self.schema.types.get(reached.name()), Some(TypeKind::Union(_))) && !self.schema.is_interface(reached.name()) {
             problems.push(format!("is not a union: schema type `{}` is not one", reached.name()));
         }
         for problem in problems {
-            self.fail(file, call.line, call.column, format!("field `{name}` {problem}"));
+            self.fail(file, attribute.pos, format!("attribute `{name}` {problem}"));
         }
     }
 
-    fn named_fits(&self, call: &Call, named: &str) -> bool {
+    fn named_fits(&self, attribute: &AttributeDecl, named: &str) -> bool {
         let kind = self.schema.types.get(named);
         let builtin = Schema::is_builtin_scalar(named);
         let structured = matches!(kind, Some(TypeKind::Fields(_) | TypeKind::Union(_))) || self.custom_fits(named, "object");
-        let word = match call.word.as_str() {
-            "list" => option_text(call, "of").unwrap_or("string"),
-            other => other,
-        };
+        let (word, of) = fit_word(attribute);
+        let word = if word == "list" { of.unwrap_or("string") } else { word };
         match word {
             "string" => matches!(named, "String" | "ID") || self.custom_fits(named, "string"),
             "id" => matches!(named, "ID" | "String" | "Int") || self.custom_fits(named, "id"),
@@ -793,32 +791,31 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn enum_problems(&self, call: &Call, named: &str) -> Vec<String> {
+    fn enum_problems(&self, attribute: &AttributeDecl, named: &str) -> Vec<String> {
         let Some(TypeKind::Enum(known)) = self.schema.types.get(named) else { return Vec::new() };
-        let Some(Pair { value, .. }) = option(call, "values") else { return Vec::new() };
-        let Value::Array(items) = &value.item else { return Vec::new() };
-        let missing: Vec<&str> = items.iter().filter_map(|item| text(&item.item)).filter(|value| !known.iter().any(|candidate| candidate == value)).collect();
+        let Some(values) = &attribute.values else { return Vec::new() };
+        let missing: Vec<&str> = values.iter().map(String::as_str).filter(|value| !known.iter().any(|candidate| candidate == value)).collect();
         if missing.is_empty() { Vec::new() } else { vec![format!("lists values {} that enum `{named}` does not have", missing.join(", "))] }
     }
 
-    fn check_associations(&mut self, node: &ModelNode, element: &str, selects: Vec<&'a Select>) {
-        for call in node.body.iter().filter(|call| matches!(call.word.as_str(), "belongs_to" | "has_one" | "has_many" | "references")) {
-            let Some(path) = option_text(call, "from") else { continue };
+    fn check_associations(&mut self, node: &ModelDecl, element: &str, selects: Vec<&'a Select>) {
+        for association in &node.associations {
+            let Some(path) = &association.from else { continue };
             let segments: Vec<&str> = path.split('.').collect();
-            let Some(Walked { ty: reached, .. }) = self.walk(node.file, call, element, &segments, &Scope { lists: true, ..Scope::inside(node.file, selects.clone()) }, name_of(call)) else { continue };
-            let one = matches!(call.word.as_str(), "belongs_to" | "has_one");
+            let Some(Walked { ty: reached, .. }) = self.walk(node.file, association.pos, element, &segments, &Scope { lists: true, ..Scope::inside(node.file, selects.clone()) }, &association.name) else { continue };
+            let one = matches!(association.kind, AssociationKind::BelongsTo | AssociationKind::HasOne);
             if one == reached.is_list() {
                 let expected = if one { "one object" } else { "a list" };
-                self.fail(node.file, call.line, call.column, format!("`{}` `{}` expects {expected} but `{path}` is `{}`", call.word, name_of(call), reached.describe()));
+                self.fail(node.file, association.pos, format!("`{}` `{}` expects {expected} but `{path}` is `{}`", association.kind.word(), association.name, reached.describe()));
             }
         }
     }
 
-    fn list_unmodeled(&mut self, node: &ModelNode, remote: &Call, element: &str, covered: &BTreeSet<String>) {
+    fn list_unmodeled(&mut self, node: &ModelDecl, remote: &ScopeDecl, element: &str, covered: &BTreeSet<String>) {
         let Some(fields) = self.schema.fields(element) else { return };
         let missing: BTreeSet<&str> = fields.keys().map(String::as_str).filter(|name| !covered.contains(*name) && !name.starts_with("__")).collect();
         if !missing.is_empty() {
-            self.notes.push(format!("{}: model `{}` scope `{}` does not use {} fields of `{element}`: {}", self.files[node.file], node.name, name_of(remote), missing.len(), missing.into_iter().collect::<Vec<_>>().join(", ")));
+            self.notes.push(format!("{}: model `{}` scope `{}` does not use {} fields of `{element}`: {}", self.files[node.file], node.name, remote.name, missing.len(), missing.into_iter().collect::<Vec<_>>().join(", ")));
         }
     }
 }

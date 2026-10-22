@@ -1,5 +1,6 @@
 use super::graphql::{Followed, Miss, Select};
 use super::*;
+use crate::decl::{OperationDecl, SubscribeDecl};
 
 pub(super) fn segments_of(path: &str) -> Option<Vec<&str>> {
     let segments: Vec<&str> = path.split('.').collect();
@@ -20,14 +21,14 @@ impl<'a> Run<'a> {
         Some(documents.follow(starts, segments))
     }
 
-    pub(super) fn report_miss(&mut self, file: usize, at: (usize, usize), label: &str, operation: &str, path: &str, prefix: &[&str], segments: &[&str], miss: Miss) {
+    pub(super) fn report_miss(&mut self, file: usize, at: Pos, label: &str, operation: &str, path: &str, prefix: &[&str], segments: &[&str], miss: Miss) {
         let before: Vec<&str> = prefix.iter().copied().chain(segments[..miss.at].iter().copied()).collect();
         let place = if before.is_empty() { "at the top level".to_string() } else { format!("under `{}`", before.join(".")) };
         let keys = if miss.keys.is_empty() { "no fields".to_string() } else { miss.keys.into_iter().collect::<Vec<_>>().join(", ") };
-        self.fail(file, at.0, at.1, format!("{label} `{path}`: operation `{operation}` has no `{}` {place}, it has: {keys}", segments[miss.at]));
+        self.fail(file, at, format!("{label} `{path}`: operation `{operation}` has no `{}` {place}, it has: {keys}", segments[miss.at]));
     }
 
-    pub(super) fn follow_operation(&mut self, file: usize, at: (usize, usize), label: &str, operation: &str, path: &str) -> Option<Followed<'a>> {
+    pub(super) fn follow_operation(&mut self, file: usize, at: Pos, label: &str, operation: &str, path: &str) -> Option<Followed<'a>> {
         let segments = segments_of(path)?;
         match self.follow_quiet(operation, None, &segments)? {
             Ok(found) => Some(found),
@@ -38,7 +39,7 @@ impl<'a> Run<'a> {
         }
     }
 
-    pub(super) fn follow_inside(&mut self, file: usize, at: (usize, usize), label: &str, operation: &str, prefix: &[&str], starts: &[&'a Select], path: &str) -> Option<Followed<'a>> {
+    pub(super) fn follow_inside(&mut self, file: usize, at: Pos, label: &str, operation: &str, prefix: &[&str], starts: &[&'a Select], path: &str) -> Option<Followed<'a>> {
         let segments = segments_of(path)?;
         match self.follow_quiet(operation, Some(starts), &segments)? {
             Ok(found) => Some(found),
@@ -49,99 +50,81 @@ impl<'a> Run<'a> {
         }
     }
 
-    pub(super) fn check_response_paths(&mut self, node: &'a ModelNode) {
-        for call in &node.body {
-            match call.word.as_str() {
-                "create" | "update" | "destroy" => {
-                    let (Some(operation), Some(root)) = (option_text(call, "with"), option(call, "root")) else { continue };
-                    if let Some(path) = text(&root.value.item) {
-                        self.follow_operation(node.file, (root.value.line, root.value.column), "root", operation, path);
-                    }
-                }
-                "action" => self.check_action_paths(node, call),
-                "listen" => self.check_subscription_paths(node, call, "listen"),
-                "remote" | "scope" => {
-                    for updates in call.block.iter().flatten().filter(|line| line.word == "updates") {
-                        self.check_subscription_paths(node, updates, "updates");
-                    }
-                    if call.word == "remote" { self.check_cursor(node, call); }
-                }
-                _ => {}
+    pub(super) fn check_response_paths(&mut self, node: &'a ModelDecl) {
+        for operation in &node.operations {
+            self.check_operation_paths(node, operation);
+        }
+        for subscription in node.subscriptions.iter() {
+            self.check_subscription_paths(node, subscription, "subscribe");
+        }
+        for scope in &node.scopes {
+            for subscription in &scope.subscriptions {
+                self.check_subscription_paths(node, subscription, "subscribe");
+            }
+            if scope.is_remote() {
+                self.check_cursor(node, scope);
             }
         }
     }
 
-    fn check_action_paths(&mut self, node: &'a ModelNode, action: &'a Call) {
-        let lines = action.block.as_deref().unwrap_or_default();
-        let line = |word: &str| lines.iter().find(|candidate| candidate.word == word);
-        let Some(operation) = line("mutation").or_else(|| line("upload")).map(name_of).or_else(|| option_text(action, "mutation")) else { return };
+    fn check_operation_paths(&mut self, node: &'a ModelDecl, action: &'a OperationDecl) {
+        let Some(operation) = action.mutation.as_ref().map(|found| found.item.as_str()) else { return };
         let Some(declared) = self.operations.named.get(operation) else { return };
-        let root = line("root").map(|call| (name_of(call), (call.line, call.column)));
-        if let Some((path, at)) = root {
-            self.follow_operation(node.file, at, "root", operation, path);
+        let root = match &action.response {
+            Some(crate::decl::ResponseDecl::Read(read)) => read.from.as_ref(),
+            _ => None,
+        };
+        if let Some(found) = root {
+            self.follow_operation(node.file, found.pos, "response from", operation, &found.item);
         }
-        for landing in lines.iter().filter(|call| call.word == "lands") {
-            if let Some(path) = option_text(landing, "root") {
-                let at = option(landing, "root").map_or((landing.line, landing.column), |pair| (pair.value.line, pair.value.column));
-                self.follow_operation(node.file, at, "lands", operation, path);
-            }
+        for landing in &action.upserts {
+            self.follow_operation(node.file, landing.from.pos, "upsert", operation, &landing.from.item);
         }
-        let Some(result) = line("result") else { return };
-        let payload = root.map(|(path, _)| path.split('.').next().unwrap_or_default()).or_else(|| declared.root.as_ref().map(|found| found.key.as_str()));
+        let Some(result) = &action.returns else { return };
+        let payload = root.map(|found| found.item.split('.').next().unwrap_or_default()).or_else(|| declared.root.as_ref().map(|found| found.key.as_str()));
         let Some(payload) = payload else { return };
         let Some(Ok(reached)) = self.follow_quiet(operation, None, &[payload]) else { return };
-        self.check_result(node.file, operation, &[payload], &reached.selects, &result.options);
+        self.check_result(node.file, operation, &[payload], &reached.selects, result);
     }
 
-    pub(super) fn check_standalone_result(&mut self, file: usize, operation: &str, result: &Call) {
+    pub(super) fn check_standalone_result(&mut self, file: usize, operation: &str, result: &[AttributeDecl]) {
         let Some(payload) = self.operations.named.get(operation).and_then(|declared| declared.root.as_ref()).map(|root| root.key.as_str()) else { return };
         let Some(Ok(reached)) = self.follow_quiet(operation, None, &[payload]) else { return };
-        self.check_result(file, operation, &[payload], &reached.selects, &result.options);
+        self.check_result(file, operation, &[payload], &reached.selects, result);
     }
 
-    fn check_result(&mut self, file: usize, operation: &str, prefix: &[&str], starts: &[&'a Select], pairs: &[Pair]) {
-        for pair in pairs {
-            let Some(found) = self.follow_inside(file, (pair.line, pair.column), "result", operation, prefix, starts, &pair.key) else { continue };
-            let nested = match &pair.value.item {
-                Value::Hash(inner) => Some(inner),
-                Value::Array(items) => items.first().and_then(|item| match &item.item {
-                    Value::Hash(inner) => Some(inner),
-                    _ => None,
-                }),
-                _ => None,
-            };
-            if let Some(inner) = nested {
-                let deeper: Vec<&str> = prefix.iter().copied().chain([pair.key.as_str()]).collect();
+    fn check_result(&mut self, file: usize, operation: &str, prefix: &[&str], starts: &[&'a Select], attributes: &[AttributeDecl]) {
+        for attribute in attributes {
+            let Some(found) = self.follow_inside(file, attribute.pos, "returns", operation, prefix, starts, &attribute.name) else { continue };
+            if let AttributeBlock::Fields(inner) = &attribute.block {
+                let deeper: Vec<&str> = prefix.iter().copied().chain([attribute.name.as_str()]).collect();
                 self.check_result(file, operation, &deeper, &found.selects, inner);
             }
         }
     }
 
-    fn check_subscription_paths(&mut self, node: &'a ModelNode, call: &'a Call, label: &str) {
-        let operation = name_of(call);
+    fn check_subscription_paths(&mut self, node: &'a ModelDecl, subscription: &'a SubscribeDecl, label: &str) {
+        let operation = subscription.name.as_str();
         let Some(declared) = self.operations.named.get(operation) else { return };
         let Some(first) = declared.root.as_ref().map(|root| root.key.as_str()) else { return };
-        let root = option(call, "root").and_then(|pair| text(&pair.value.item).map(|path| (path, (pair.value.line, pair.value.column))));
-        let path = root.map_or(first, |(path, _)| path);
+        let root = subscription.from.as_ref();
+        let path = root.map_or(first, |found| found.item.as_str());
         let followed = match root {
-            Some((path, at)) => self.follow_operation(node.file, at, &format!("{label} root"), operation, path),
+            Some(found) => self.follow_operation(node.file, found.pos, &format!("{label} from"), operation, &found.item),
             None => self.follow_quiet(operation, None, &[first]).and_then(Result::ok),
         };
-        let (Some(reached), Some(id)) = (followed, option(call, "id")) else { return };
-        let Some(key) = text(&id.value.item) else { return };
+        let (Some(reached), Some(id)) = (followed, subscription.id.as_ref()) else { return };
         let prefix: Vec<&str> = path.split('.').collect();
-        self.follow_inside(node.file, (id.value.line, id.value.column), &format!("{label} id"), operation, &prefix, &reached.selects, key);
+        self.follow_inside(node.file, id.pos, &format!("{label} id"), operation, &prefix, &reached.selects, &id.item);
     }
 
-    fn check_cursor(&mut self, node: &'a ModelNode, remote: &'a Call) {
-        let lines = remote.block.as_deref().unwrap_or_default();
-        let Some(from) = lines.iter().find(|call| call.word == "paginate").and_then(|paginate| option(paginate, "from")) else { return };
-        let (Some(query), Some(path)) = (lines.iter().find(|call| call.word == "query"), text(&from.value.item)) else { return };
-        let operation = name_of(query);
+    fn check_cursor(&mut self, node: &'a ModelDecl, remote: &'a ScopeDecl) {
+        let Some(from) = remote.paginate.as_ref().and_then(|paginate| paginate.cursor.as_ref()).map(|cursor| &cursor.from) else { return };
+        let operation = query_of(remote);
         let Some(declared) = self.operations.named.get(operation) else { return };
         let Some(connection) = self.root_select(remote) else { return };
-        let root = option_text(query, "root").or_else(|| declared.root.as_ref().map(|found| found.key.as_str())).unwrap_or_default();
+        let root = root_path(remote).or_else(|| declared.root.as_ref().map(|found| found.key.as_str())).unwrap_or_default();
         let prefix: Vec<&str> = root.split('.').collect();
-        self.follow_inside(node.file, (from.value.line, from.value.column), "paginate from", operation, &prefix, &[connection], path);
+        self.follow_inside(node.file, from.pos, "cursor from", operation, &prefix, &[connection], &from.item);
     }
 }

@@ -1,8 +1,10 @@
 model Roster do
-  field :title, type: :string
-
-  scope :chat_members, text: [:chatId, order: :ChatMemberOrder], defaults: { order: :JOINED } do
-    fetch "chatMembers", root: "chatMembers"
-    paginate 30
+  attribute :title, :string
+  scope :container_members do
+    parameter :containerId, :string
+    parameter :order, ContainerMemberOrder, default: "JOINED"
+    query "containerMembers"
+    response from: "containerMembers"
+    paginate size: 30, direction: :forward
   end
 end

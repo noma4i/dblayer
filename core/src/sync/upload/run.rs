@@ -375,7 +375,7 @@ impl Runner {
             return;
         }
         let _ = self.commit(|envelope| {
-            envelope.operation_transitions.push(OperationTransition::Close { seq: self.seq, status: OperationStatus::RolledBack, once: false })
+            envelope.operation_transitions.push(OperationTransition::Close { seq: self.seq, status: OperationStatus::RolledBack })
         });
     }
 }

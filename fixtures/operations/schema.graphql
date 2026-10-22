@@ -1,11 +1,11 @@
-type Query { ping: Int, inbox(list: ChatShelfKind, first: Int, after: String): InboxConnection!, chatMembers(chatId: ID!, order: ChatMemberOrder = JOINED, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]!, chatMedia(chatId: ID!, upToSequence: Int): ChatMedia }
+type Query { ping: Int, inbox(list: ContainerShelfKind, first: Int, after: String): InboxConnection!, containerMembers(containerId: ID!, order: ContainerMemberOrder = JOINED, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]!, containerMedia(containerId: ID!, upToSequence: Int): ContainerMedia }
 type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker, momentCreate(input: MomentInput!): MomentCreated, widgetsSend(widgets: [StickerWidgetInput!]): Sticker, clipCreate(signedId: String!, widgets: [StickerWidgetInput!]): ClipCreated }
 type ClipCreated { clip: Clip }
 type Clip { id: ID!, title: String }
 type MomentCreated { moment: Moment }
 type Moment { id: ID! }
-type Pricing { gifts: [Gift!]!, videoIntro: VideoIntro, tags: [String!], spec: JSON }
-type Gift { id: ID!, name: String!, price: Int! }
+type Pricing { rewards: [Reward!]!, videoIntro: VideoIntro, tags: [String!], spec: JSON }
+type Reward { id: ID!, name: String!, price: Int! }
 type VideoIntro { enabled: Boolean! }
 type Giphy { id: ID!, url: String!, isSticker: Boolean! }
 type QrCode { url: String }
@@ -25,10 +25,10 @@ input StickerTextInput { body: String!, sizes: [Int!] }
 input StickerEmojiInput { code: String!, kind: WidgetKind }
 input StickerPropsInput @oneOf { text: StickerTextInput, emoji: StickerEmojiInput, tags: [String!] }
 input StickerWidgetInput { kind: WidgetKind!, props: StickerPropsInput!, extras: [StickerPropsInput!] }
-enum ChatShelfKind { PRIMARY SECONDARY }
+enum ContainerShelfKind { PRIMARY SECONDARY }
 type Inbox { id: ID!, title: String! }
 type InboxConnection { edges: [InboxEdge!]!, pageInfo: InboxPageInfo! }
 type InboxEdge { cursor: String!, node: Inbox! }
 type InboxPageInfo { hasNextPage: Boolean!, endCursor: String }
-enum ChatMemberOrder { JOINED OWNER_FIRST }
-type ChatMedia { visualCount: Int!, audioCount: Int!, giftCount: Int!, latestSequence: Int }
+enum ContainerMemberOrder { JOINED OWNER_FIRST }
+type ContainerMedia { visualCount: Int!, audioCount: Int!, rewardCount: Int!, latestSequence: Int }

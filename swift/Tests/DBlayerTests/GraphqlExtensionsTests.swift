@@ -13,8 +13,8 @@ extension BridgeProbeTests {
   ])
   func graphqlExtensionsReachDirectAndQueuedCalls(_ code: String, _ text: String?, _ disposition: TransactionDisposition?) async throws {
     let transport = MockTransport()
-    let operation = code == "DUPLICATE_CLIENT_KEY" ? "MessageAlbumSend" : "PurchaseCreate"
-    let root = code == "DUPLICATE_CLIENT_KEY" ? "messageAlbumSend" : "purchaseCreate"
+    let operation = code == "DUPLICATE_CLIENT_KEY" ? "RecordAlbumSend" : "PurchaseCreate"
+    let root = code == "DUPLICATE_CLIENT_KEY" ? "recordAlbumSend" : "purchaseCreate"
     let database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON.replacingOccurrences(of: "CreateMoment", with: operation), transport: transport)
     try database.registerOperations(defsJson: #"[{"name":"\#(operation)","document":"mutation \#(operation) { \#(root) { id } }"}]"#)
     let extra = text.map { #", "transactionDisposition":"\#($0)""# } ?? ""

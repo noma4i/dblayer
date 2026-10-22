@@ -477,18 +477,10 @@ fn forbidden_members_and_once_key_are_checked() {
         members: vec![member.to_string()],
         ..action("save", RootShape::Upsert)
     };
-    let once = |dedupe_key: Option<&str>| ActionDeclaration {
-        has_once: true,
-        dedupe_key: dedupe_key.map(String::from),
-        ..action("save", RootShape::Upsert)
-    };
 
     assert_eq!(with_actions(vec![with_member("after")]).validate(&[]), Err(DeclarationError::ForbiddenMember("after".into())));
     assert_eq!(with_actions(vec![with_member("resume")]).validate(&[]), Err(DeclarationError::ForbiddenMember("resume".into())));
     assert_eq!(with_actions(vec![with_member("commit")]).validate(&[]), Ok(()));
-    assert_eq!(with_actions(vec![once(None)]).validate(&[]), Err(DeclarationError::OnceKeyRequired("save".into())));
-    assert_eq!(with_actions(vec![once(Some(""))]).validate(&[]), Err(DeclarationError::OnceKeyRequired("save".into())));
-    assert_eq!(with_actions(vec![once(Some("key"))]).validate(&[]), Ok(()));
 }
 
 #[test]

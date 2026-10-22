@@ -1,6 +1,6 @@
 use crate::{emit_kotlin, emit_swift, parse_models, SchemaTypes};
 
-const SOURCE: &str = "model Moment do\n  field :text, type: :string, null: true\n  scope :feed do\n    fetch MomentsFeed\n    paginate 20\n    edge :impressionUuid, type: :string, null: true\n    edge :impressionScore, type: :int, null: true\n  end\n  scope :vibe_feed, text: [:vibeId] do\n    fetch MomentsFeed\n    paginate 20\n    edge :impressionUuid, type: :string, null: true\n  end\n  scope :recent do\n    order text: :desc\n  end\nend\n";
+const SOURCE: &str = "model Moment do\n  attribute :text, :string, null: true\n  scope :feed do\n    query \"MomentsFeed\"\n    paginate size: 20, direction: :forward\n    edge do\n      attribute :impressionUuid, :string, null: true\n      attribute :impressionScore, :int, null: true\n    end\n  end\n  scope :vibe_feed do\n    parameter :vibeId, :string\n    query \"MomentsFeed\"\n    paginate size: 20, direction: :forward\n    edge do\n      attribute :impressionUuid, :string, null: true\n    end\n  end\n  scope :recent do\n    order text: :desc\n  end\nend\n";
 
 #[test]
 fn edge_values_are_a_typed_read_per_scope_and_not_a_property_of_the_row() {

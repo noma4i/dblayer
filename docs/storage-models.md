@@ -13,12 +13,12 @@ Local and synced models can share a database. A local model needs no separate da
 Swift and Kotlin store list membership and order once in `scope_member`. Page metadata stores cursors and freshness without copying member ids.
 Saving a page touches its changed rows and metadata. Tail and membership reads use indexes, and page limits count current members when needed.
 
-`storage: :local` rejects `fetch`, `listen`, and model `operation` blocks.
+`storage: :local` rejects `query`, `subscribe`, and model `operation` blocks.
 Declare fields, nested values, scopes and associations as usual. Generated create, update and destroy calls still work.
 
 ```ruby
 model Session, storage: :local do
-  field :token, type: :string
+  attribute :token, :string
 end
 ```
 
@@ -36,7 +36,7 @@ val cached = Session.find(edited.id).current()
 edited.destroy()
 ```
 
-A database with only local models needs no server. Open it without a transport. Online tracking, `listen`, `flush` and `retry` then do nothing, and calls that need the server fail with `DbError.Invalid`. `resume()` restarts singleton subscriptions stopped by logout, even without a transport.
+A database with only local models needs no server. Open it without a transport. Online tracking, `listen()`, `flush` and `retry` then do nothing, and calls that need the server fail with `DbError.Invalid`. `resume()` restarts singleton subscriptions stopped by logout, even without a transport.
 
 ```swift
 try await DB.open(transport: nil, modelsJSON: modelsJSON, path: path)

@@ -1,5 +1,5 @@
 mod build;
-mod declarations;
+mod decl;
 mod check;
 mod lexer;
 mod operation;
@@ -75,17 +75,19 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     let locate = |found: Vec<(usize, ParseError)>| {
         found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect::<Vec<_>>()
     };
-    let mut parsed = parse_tree(&sources).map_err(&locate)?;
+    let parsed = parse_tree(&sources).map_err(&locate)?;
     let scalars = scalars::build(&parsed.scalars).map_err(&locate)?;
     let loaded = schema.map(schema_check::Schema::load).transpose().map_err(|message| vec![FileError {
         file: schema.unwrap().display().to_string(), error: ParseError::new(0, 0, message),
     }])?;
-    if let Some(schema) = &loaded {
-        declarations::infer(&mut parsed.models, schema).map_err(&locate)?;
+    let models = decl::lower_models(&parsed.models, loaded.as_ref()).map_err(&locate)?;
+    let mut call_errors = Vec::new();
+    let calls = decl::lower_calls(&parsed.operations, &mut call_errors);
+    if !call_errors.is_empty() {
+        return Err(locate(call_errors));
     }
-    declarations::prepare(&mut parsed.models).map_err(&locate)?;
-    let checked = loaded.as_ref().map(|schema| schema_check::check_schema(schema, &scalars, operations, &names, &parsed.models, &parsed.operations)).transpose()?;
-    let mut declared = build_declarations(parsed).map_err(locate)?;
+    let checked = loaded.as_ref().map(|schema| schema_check::check_schema(schema, &scalars, operations, &names, &models, &calls)).transpose()?;
+    let mut declared = build_declarations(&models, &calls).map_err(locate)?;
     if let Some(checked) = &checked {
         for action in declared.models.iter_mut().flat_map(|model| &mut model.actions) {
             action.client_mutation_id = action.mutation.as_ref().is_some_and(|name| checked.idempotent_inputs.contains(&(name.clone(), action.wrap.clone().unwrap_or_else(|| "input".into()))));
@@ -136,10 +138,15 @@ fn parse_sources(sources: &[&str]) -> Result<Vec<ModelSpec>, Vec<(usize, ParseEr
 }
 
 fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>> {
-    let mut parsed = parse_tree(sources)?;
-    declarations::prepare(&mut parsed.models)?;
+    let parsed = parse_tree(sources)?;
     let scalars = scalars::build(&parsed.scalars)?;
-    let mut declared = build_declarations(parsed)?;
+    let models = decl::lower_models(&parsed.models, None)?;
+    let mut call_errors = Vec::new();
+    let calls = decl::lower_calls(&parsed.operations, &mut call_errors);
+    if !call_errors.is_empty() {
+        return Err(call_errors);
+    }
+    let mut declared = build_declarations(&models, &calls)?;
     declared.scalars = scalars;
     Ok(declared)
 }
@@ -165,10 +172,10 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
     Ok(parser::Parsed { models: nodes, operations: operation_nodes, scalars: scalar_nodes })
 }
 
-fn build_declarations(parsed: parser::Parsed) -> Result<Declarations, Vec<(usize, ParseError)>> {
+fn build_declarations(models: &[decl::ModelDecl], calls: &[decl::CallDecl]) -> Result<Declarations, Vec<(usize, ParseError)>> {
     let mut errors = Vec::new();
-    let operations = operation::build(&parsed.operations, &mut errors);
-    let models = match check::check(&parsed.models) {
+    let operations = operation::build(calls, &mut errors);
+    let models = match check::check(models) {
         Ok(models) => models,
         Err(found) => {
             errors.extend(found);

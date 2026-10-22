@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::{compile_files, emit_kotlin, emit_swift, parse_models, Declarations};
 
-const NESTED: &str = "model Chat do\n  field :title, type: :string\n  field :meta, type: ChatMeta, null: true do\n    field :tags, type: [:enum], values: [:a, :b], as: MetaTag, default: [:a]\n  end\n  field :cards, type: ChatCard do\n    on CardText do\n      field :tones, type: [:enum], values: [:calm, :loud], as: CardTone\n    end\n    shared do\n      field :marks, type: [:enum], values: [:one], as: CardMark, null: true\n    end\n  end\n  field :ghosts, type: [ChatGhost] do\n    field :states, type: [:enum], values: [:s1, :s2], as: GhostState\n  end\n  ephemeral do\n    field :picked, type: [:enum], values: [:a, :b], default: [:a], reset_after: 5.seconds\n  end\nend\n";
+const NESTED: &str = "model Chat do\n  attribute :title, :string\n  attribute :meta, ChatMeta, null: true do\n    attribute :tags, [:enum], values: [\"a\", \"b\"], as: MetaTag, default: [:a]\n  end\n  attribute :cards, ChatCard do\n    on CardText do\n      attribute :tones, [:enum], values: [\"calm\", \"loud\"], as: CardTone\n    end\n    shared do\n      attribute :marks, [:enum], values: [\"one\"], as: CardMark, null: true\n    end\n  end\n  attribute :ghosts, [ChatGhost] do\n    attribute :states, [:enum], values: [\"s1\", \"s2\"], as: GhostState\n  end\n  ephemeral do\n    attribute :picked, [:enum], values: [\"a\", \"b\"], default: [:a], reset_after: 5.seconds\n  end\nend\n";
 
 #[test]
 fn a_list_of_enum_values_is_typed_inside_nested_objects_union_variants_arrays_and_ephemeral_fields() {
@@ -40,9 +40,9 @@ fn a_list_of_enum_values_is_typed_inside_nested_objects_union_variants_arrays_an
 #[test]
 fn an_enum_default_outside_its_values_is_an_error_with_a_line_at_every_position() {
     for (case, source) in [
-        ("model enum", "model Chat do\n  field :kind, type: :enum, values: [:A, :B], as: ChatKind, default: :BAD\nend\n".to_string()),
-        ("model enum list", "model Chat do\n  field :lists, type: [:enum], values: [:A, :B], as: ChatList, default: [:A, :BAD]\nend\n".to_string()),
-        ("nested enum list", NESTED.replace("default: [:a]\n  end\n  field :cards", "default: [:zzz]\n  end\n  field :cards")),
+        ("model enum", "model Chat do\n  attribute :kind, :enum, values: [\"A\", \"B\"], as: ChatKind, default: :BAD\nend\n".to_string()),
+        ("model enum list", "model Chat do\n  attribute :lists, [:enum], values: [\"A\", \"B\"], as: ChatList, default: [:A, :BAD]\nend\n".to_string()),
+        ("nested enum list", NESTED.replace("default: [:a]\n  end\n  attribute :cards", "default: [:zzz]\n  end\n  attribute :cards")),
     ] {
         let errors = parse_models(&source).expect_err(case);
         assert!(errors.iter().any(|found| found.line > 0 && found.message.contains("default must match its type")), "{case}: {errors:?}");
@@ -51,7 +51,7 @@ fn an_enum_default_outside_its_values_is_an_error_with_a_line_at_every_position(
 
 const SCHEMA: &str = "type Query { a: Int }\ntype Mutation { widgetsSend(input: EmojiInput!): Reply }\nenum WidgetKind { EMOJI GIF }\ninput EmojiInput { code: String!, kinds: [WidgetKind!] }\ntype Reply { kinds: [WidgetKind!]!, nested: Inner }\ntype Inner { many: [WidgetKind!] }\n";
 const OPERATION: &str = "mutation WidgetsSend($input: EmojiInput!) { widgetsSend(input: $input) { kinds nested { many } } }\n";
-const CALL: &str = "operation :widgets_send do\n  mutation WidgetsSend\n  args input: :EmojiInput\n  result kinds: [:WidgetKind], nested: { many: [:WidgetKind] }\nend\n";
+const CALL: &str = "operation :widgets_send do\n  mutation \"WidgetsSend\"\n  parameter :input, EmojiInput\n  returns do\n    attribute :kinds, [WidgetKind]\n    attribute :nested, WidgetsSendResultNested do\n      attribute :many, [WidgetKind]\n    end\n  end\nend\n";
 
 fn compile(source: &str, schema: Option<&str>) -> Result<Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
@@ -87,6 +87,6 @@ fn an_operation_takes_a_list_of_schema_enums_in_its_input_object_and_its_result(
     }
     let without = compile(CALL, None).unwrap_err();
     assert!(without.iter().any(|text| text.contains("--schema")), "{without:?}");
-    let wrong = compile(&CALL.replace("kinds: [:WidgetKind]", "kinds: [:EmojiInput]"), Some(SCHEMA)).unwrap_err();
+    let wrong = compile(&CALL.replace("attribute :kinds, [WidgetKind]", "attribute :kinds, [EmojiInput]"), Some(SCHEMA)).unwrap_err();
     assert!(wrong.iter().any(|text| text.contains("`EmojiInput`") && text.contains("not an enum")), "{wrong:?}");
 }

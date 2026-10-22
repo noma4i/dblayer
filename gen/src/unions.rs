@@ -1,5 +1,5 @@
 use crate::enums::EnumDecl;
-use crate::parser::{Call, Node, Pair, Value};
+use crate::decl::VariantDecl;
 
 fn words(name: &str) -> Vec<String> {
     let characters: Vec<char> = name.chars().collect();
@@ -45,26 +45,7 @@ pub(crate) fn check_cases(union: &str, cases: &[String]) -> Result<(), String> {
     EnumDecl::new(union, cases).check_as("union", "variant")
 }
 
-pub(crate) fn is_union_call(call: &Call) -> bool {
-    call.word == "union" || (call.word == "array" && call.block.as_ref().is_some_and(|block| block.iter().any(|child| child.word == "variant")))
-}
-
-fn typename_of(variant: &Call) -> Option<&str> {
-    match variant.args.first().map(|node| &node.item) {
-        Some(Value::Const(name)) => Some(name),
-        _ => None,
-    }
-}
-
-pub(crate) fn cases_of(variants: &[Call]) -> Vec<String> {
-    let named: Vec<&Call> = variants.iter().filter(|variant| typename_of(variant).is_some()).collect();
-    let derived = case_names(&named.iter().filter_map(|variant| typename_of(variant)).collect::<Vec<_>>());
-    named
-        .iter()
-        .zip(derived)
-        .map(|(variant, case)| match variant.options.iter().find(|pair| pair.key == "case") {
-            Some(Pair { value: Node { item: Value::Symbol(over), .. }, .. }) => over.clone(),
-            _ => case,
-        })
-        .collect()
+pub(crate) fn cases_of(variants: &[VariantDecl]) -> Vec<String> {
+    let derived = case_names(&variants.iter().map(|variant| variant.type_name.as_str()).collect::<Vec<_>>());
+    variants.iter().zip(derived).map(|(variant, case)| variant.case.clone().unwrap_or(case)).collect()
 }

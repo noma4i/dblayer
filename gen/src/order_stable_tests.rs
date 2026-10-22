@@ -2,7 +2,7 @@ use std::fs;
 
 use crate::{compile_files, emit_kotlin, emit_swift, Declarations};
 
-const MODEL: &str = "model Message do\n  field :chatId, type: :id\n  index :chatId\n  field :sequenceNumber, type: :int, null: true\n  field :createdAt, type: :date\n\n  scope :thread, joins: :events, order_stable: true do\n    order sequenceNumber: :asc_nulls_last, createdAt: :asc\n    where :chatId\n    fetch \"messages\", root: \"chat.messages\"\n    paginate 30\n  end\nend\n";
+const MODEL: &str = "model Message do\n  attribute :chatId, :id\n  index :chatId\n  attribute :sequenceNumber, :int, null: true\n  attribute :createdAt, :date\n  scope :thread, insert_on: [:event, :response], stable_order: true do\n    parameter :chatId, :id\n    where chatId: :chatId\n    order sequenceNumber: :asc_nulls_last, createdAt: :asc\n    query \"messages\"\n    response from: \"chat.messages\"\n    paginate size: 30, direction: :forward\n  end\nend\n";
 
 fn compile(source: &str) -> Result<Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
@@ -18,7 +18,7 @@ fn a_stable_scope_reaches_the_spec_on_both_platforms() {
     for emitted in [emit_swift(&declared.models, &declared.operations, &declared.inputs), emit_kotlin(&declared.models, &declared.operations, &declared.inputs)] {
         assert!(emitted.contains(r#""order_stable":true"#), "the model specification carries the option");
     }
-    let plain = compile(&MODEL.replace(", order_stable: true", "")).unwrap();
+    let plain = compile(&MODEL.replace(", stable_order: true", "")).unwrap();
     assert!(!emit_swift(&plain.models, &plain.operations, &plain.inputs).contains("order_stable"));
 }
 
@@ -27,10 +27,10 @@ fn a_stable_scope_needs_an_order_a_where_and_no_text_params() {
     let without = |line: &str| MODEL.replace(line, "");
     for (name, source) in [
         ("order", without("    order sequenceNumber: :asc_nulls_last, createdAt: :asc\n")),
-        ("where", without("    where :chatId\n")),
-        ("text", MODEL.replace("order_stable: true", "order_stable: true, text: [:chatId]")),
+        ("where", without("    where chatId: :chatId\n")),
+        ("text", MODEL.replace("    order sequenceNumber", "    parameter :q, :string\n    order sequenceNumber")),
     ] {
         let errors = compile(&source).unwrap_err();
-        assert!(errors.iter().any(|text| text.contains("order_stable: true")), "{name}: {errors:?}");
+        assert!(errors.iter().any(|text| text.contains("stable_order: true")), "{name}: {errors:?}");
     }
 }

@@ -26,7 +26,7 @@ fn case_names_follow_each_language_and_bad_values_are_rejected() {
     }
 }
 
-const VIBE: &str = "model Vibe do\n\n  field :kind, type: :enum, values: [:like, :love]\n  field :mood, type: :enum, values: [:calm], null: true, as: Mood\n  field :meta, type: Meta, null: true do\n    field :state, type: :enum, values: [:ready, :done], default: :ready\n  end\nend\n";
+const VIBE: &str = "model Vibe do\n  attribute :kind, :enum, values: [\"like\", \"love\"]\n  attribute :mood, :enum, values: [\"calm\"], null: true, as: Mood\n  attribute :meta, Meta, null: true do\n    attribute :state, :enum, values: [\"ready\", \"done\"], default: :ready\n  end\nend\n";
 
 #[test]
 fn model_and_nested_enums_are_typed_enums_with_an_unknown_case_on_both_platforms() {
@@ -70,9 +70,9 @@ fn model_and_nested_enums_are_typed_enums_with_an_unknown_case_on_both_platforms
 #[test]
 fn one_enum_name_with_different_values_and_bad_values_fail_at_their_line() {
     for (fields, error) in [
-        ("field :a, type: :enum, values: [:x], as: Same\nfield :b, type: :enum, values: [:y], as: Same", "different values"),
-        ("field :a, type: :enum, values: [:a_b, :aB]", "both become"),
-        ("field :a, type: :enum, values: [:x], as: Sample", "name of a model"),
+        ("attribute :a, :enum, values: [\"x\"], as: Same\nattribute :b, :enum, values: [\"y\"], as: Same", "different values"),
+        ("attribute :a, :enum, values: [\"a_b\", \"aB\"]", "both become"),
+        ("attribute :a, :enum, values: [\"x\"], as: Sample", "name of a model"),
     ] {
         let source = format!("model Sample do\n\n{fields}\n\nend");
         let errors = parse_models(&source).expect_err(&source);
@@ -83,7 +83,7 @@ fn one_enum_name_with_different_values_and_bad_values_fail_at_their_line() {
 pub(crate) const SCHEMA: &str = "type Query { a: Int }\nscalar Cursor\nscalar Wide\nscalar Mystery\nenum WidgetKind { EMOJI GIF }\ninput WidgetInput { kind: WidgetKind!, after: Cursor, size: Wide! }\ntype Mutation { widgetSend(input: WidgetInput!, kind: WidgetKind!): WidgetSent }\ntype WidgetSent { kind: WidgetKind! size: Wide! }\n";
 const OPERATIONS: &str = "mutation WidgetSend($input: WidgetInput!, $kind: WidgetKind!) { widgetSend(input: $input, kind: $kind) { kind size } }\n";
 pub(crate) const SCALARS: &str = "scalar :Cursor, as: :string\nscalar :Wide, as: :long\n";
-pub(crate) const SEND: &str = "operation :widget_send do\n  mutation WidgetSend\n  args input: :WidgetInput, kind: :WidgetKind\n  result kind: :WidgetKind, size: :int\nend\n";
+pub(crate) const SEND: &str = "operation :widget_send do\n  mutation \"WidgetSend\"\n  parameter :input, WidgetInput\n  parameter :kind, WidgetKind\n  returns do\n    attribute :kind, WidgetKind\n    attribute :size, :int\n  end\nend\n";
 
 pub(crate) fn compile(files: &[&str], schema: &str) -> Result<crate::Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
@@ -131,7 +131,7 @@ fn schema_enums_become_typed_enums_in_inputs_args_and_results_and_scalars_follow
 fn an_unmapped_custom_scalar_a_string_arg_over_an_enum_and_a_result_enum_without_schema_fail_with_a_reason() {
     let unmapped = compile(&[SEND], SCHEMA).unwrap_err();
     assert!(unmapped.iter().any(|message| message.contains("custom scalar `Cursor` has no mapping: add `scalar :Cursor, as: :string`")), "{unmapped:?}");
-    let string_arg = compile(&[SCALARS, &SEND.replace("kind: :WidgetKind\n", "kind: :string\n")], SCHEMA).unwrap_err();
+    let string_arg = compile(&[SCALARS, &SEND.replace("parameter :kind, WidgetKind", "parameter :kind, :string")], SCHEMA).unwrap_err();
     assert!(string_arg.iter().any(|message| message.contains("does not fit `WidgetKind!`")), "{string_arg:?}");
     let errors = parse_all(&["scalar :Cursor, as: :bogus\n"]).err().unwrap();
     assert!(errors[0].1.message.contains("scalar kind must be one of"), "{errors:?}");

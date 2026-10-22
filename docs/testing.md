@@ -30,7 +30,7 @@ Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlay
 ```swift
 let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
 try await Moment.feed.load()
-clock.advance(by: 5 * 60 + 1)   // 1 second past fresh_for
+clock.advance(by: 5 * 60 + 1)   // 1 second past freshness
 try await Moment.feed.load()    // requests again
 ```
 

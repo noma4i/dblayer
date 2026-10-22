@@ -1,70 +1,73 @@
 model Moment do
-  field :uuid, type: :string
-  field :userId, type: :id, null: true
-  field :text, type: :string, null: true
-  field :likedByMe, type: :bool, default: false
-  field :media, type: :object, default: {}
-  field :tone, type: :string, optional: true, local: true
-  field :createdAt, type: :date
-
-
+  attribute :uuid, :string
+  attribute :userId, :id, null: true
+  attribute :text, :string, null: true
+  attribute :likedByMe, :bool, default: false
+  attribute :media, :json, default: {}
+  attribute :tone, :string, optional: true, local: true
+  attribute :createdAt, :date
   index :uuid
   search :text
   index :userId, :createdAt
-
-  belongs_to :author, model: User, key: :userId, touch: true
-  has_many   :vibes, dependent: :destroy
-
-  node MomentTranscodeStatus, as: :transcode_status, variable: :momentId
-
+  belongs_to :author, class_name: User, foreign_key: :userId, touch: true
+  has_many :vibes, dependent: :destroy
+  scope :transcode_status, node: :one do
+    parameter :id, :id
+    query "MomentTranscodeStatus"
+    variables momentId: :id
+  end
   scope :recent do
     order createdAt: :desc
   end
   scope :by_user do
-    where :userId
+    parameter :userId, :id
+    where userId: :userId
     order createdAt: :desc
   end
-
   scope :feed do
-    fetch MomentsFeed
-    paginate 20
-    fresh_for 5.minutes
-    updates MomentEvents, deleted_by: :destroyed
-    edge :impressionUuid, type: :string, null: true
-    edge :impressionScore, type: :int, null: true
+    query "MomentsFeed"
+    paginate size: 20, direction: :forward
+    freshness expires_in: 5.minutes
+    edge do
+      attribute :impressionUuid, :string, null: true
+      attribute :impressionScore, :int, null: true
+    end
+    subscribe "MomentEvents", apply: { effect: :upsert, delete_if: "destroyed" }
   end
-
-  scope :vibe_feed, text: [:vibeId] do
-    fetch MomentsFeed
-    paginate 20
-    edge :impressionUuid, type: :string, null: true
-    edge :score, type: :int, null: true, from: "impressionScore"
-    edge :rank, type: :enum, values: [:top, :normal], as: FeedRank, null: true
+  scope :vibe_feed do
+    parameter :vibeId, :string
+    query "MomentsFeed"
+    paginate size: 20, direction: :forward
+    edge do
+      attribute :impressionUuid, :string, null: true
+      attribute :score, :int, null: true, from: "impressionScore"
+      attribute :rank, :enum, values: ["top", "normal"], as: FeedRank, null: true
+    end
   end
-
   operation :create do
-    mutation CreateMoment
-    input text: :text, media: :media
+    mutation "CreateMoment"
+    variables text: :text, media: :media
   end
   operation :update do
-    mutation UpdateMoment
+    mutation "UpdateMoment"
   end
   operation :destroy do
-    mutation DeleteMoment
+    mutation "DeleteMoment"
   end
-
   operation :like do
-    mutation   LikeMoment
-    input      momentId: :id
+    mutation "LikeMoment"
+    variables momentId: :id
     optimistic likedByMe: true
-    refetch    :feed
+    refetch :feed
   end
-
   operation :share do
-    mutation ShareMoment
-    local_effect :none, reason: "the server answers with the share counters"
-    input    momentId: :id
-    root     "shareMoment.moment"
-    result   successMessage: :string, copies: :int
+    mutation "ShareMoment"
+    optimistic false
+    variables momentId: :id
+    returns do
+      attribute :successMessage, :string
+      attribute :copies, :int
+    end
+    response from: "shareMoment.moment"
   end
 end

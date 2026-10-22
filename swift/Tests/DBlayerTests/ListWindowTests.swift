@@ -65,23 +65,23 @@ extension BridgeProbeTests {
   }
 
   fileprivate static func threadNode(_ number: Int, text: String? = nil) -> String {
-    #"{"__typename":"Message","id":"m\#(number)","chatId":"c1","authorId":"a","text":"\#(text ?? "t\(number)")","createdAt":"2026-10-0\#(number)T00:00:00.000Z","sequenceNumber":\#(number)}"#
+    #"{"__typename":"Record","id":"m\#(number)","containerId":"c1","authorId":"a","text":"\#(text ?? "t\(number)")","createdAt":"2026-10-0\#(number)T00:00:00.000Z","sequenceNumber":\#(number)}"#
   }
 
   fileprivate static func threadReply(_ nodes: [String]) -> String {
-    #"{"data":{"chat":{"messages":{"nodes":[\#(nodes.joined(separator: ","))],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#
+    #"{"data":{"container":{"records":{"nodes":[\#(nodes.joined(separator: ","))],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#
   }
 
   @Test
   func aWindowOverTheThreadShapeDecodesOnlyItsRows() async throws {
     let transport = MockTransport()
-    transport.enqueue("ChatThread", reply: Self.threadReply((1 ... 7).map { Self.threadNode($0) }))
+    transport.enqueue("ContainerThread", reply: Self.threadReply((1 ... 7).map { Self.threadNode($0) }))
     DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"ChatThread","document":"query ChatThread($chatId: ID!, $first: Int, $after: String) { chat(id: $chatId) { messages(first: $first, after: $after) { nodes { id chatId authorId text createdAt sequenceNumber } pageInfo { hasNextPage endCursor } } } }"},{"name":"CreateMessage","document":"mutation CreateMessage($chatId: ID!, $text: String, $signedId: String, $attachedUserId: ID) { createMessage(chatId: $chatId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id chatId authorId text createdAt sequenceNumber } }"}]"#)
-    let thread = Message.thread("c1")
+    try DB.database.registerOperations(defsJson: #"[{"name":"ContainerThread","document":"query ContainerThread($containerId: ID!, $first: Int, $after: String) { container(id: $containerId) { records(first: $first, after: $after) { nodes { id containerId authorId text createdAt sequenceNumber } pageInfo { hasNextPage endCursor } } } }"},{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt sequenceNumber } }"}]"#)
+    let thread = Record.thread("c1")
     try await thread.load()
-    let feed = ListFeed<Message>()
-    let source = LiveSource<[Message]>(initial: []) { emit in
+    let feed = ListFeed<Record>()
+    let source = LiveSource<[Record]>(initial: []) { emit in
       let subscription = try DB.database.liveWindow(queryJson: thread.json, tail: 3, listener: ChangeListener { emit(feed.apply($0).rows) })
       return { subscription.cancel() }
     }
@@ -89,13 +89,13 @@ extension BridgeProbeTests {
     #expect(await changes.first("the last 3 rows") { $0.map(\.text) == ["t5", "t6", "t7"] } != nil)
     let atStart = feed.decodedRows
 
-    transport.enqueue("ChatThread", reply: Self.threadReply((1 ... 7).map { Self.threadNode($0, text: $0 == 1 || $0 == 6 ? "t\($0)x" : nil) }))
+    transport.enqueue("ContainerThread", reply: Self.threadReply((1 ... 7).map { Self.threadNode($0, text: $0 == 1 || $0 == 6 ? "t\($0)x" : nil) }))
     try await thread.refresh()
     #expect(await changes.first("the edited row inside") { $0.map(\.text) == ["t5", "t6x", "t7"] } != nil)
     let afterEdits = feed.decodedRows
 
-    transport.enqueue("CreateMessage", reply: #"{"data":{"createMessage":{"__typename":"Message","id":"m8","chatId":"c1","authorId":"a","text":"t8","createdAt":"2026-10-08T00:00:00.000Z","sequenceNumber":null}}}"#)
-    _ = try await Message.create(chatId: "c1", authorId: "a", text: "t8")
+    transport.enqueue("CreateRecord", reply: #"{"data":{"createRecord":{"__typename":"Record","id":"m8","containerId":"c1","authorId":"a","text":"t8","createdAt":"2026-10-08T00:00:00.000Z","sequenceNumber":null}}}"#)
+    _ = try await Record.create(containerId: "c1", authorId: "a", text: "t8")
     #expect(await changes.first("the new last row") { $0.map(\.text) == ["t6x", "t7", "t8"] } != nil)
     #expect(atStart == 3 && afterEdits - atStart == 1, "rows decoded for the window, then for an edit inside plus an edit before it")
     #expect(feed.decodedRows - afterEdits <= 2, "rows decoded for the new last row")

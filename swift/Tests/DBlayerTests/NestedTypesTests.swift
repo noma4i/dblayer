@@ -33,7 +33,7 @@ struct NestedTypesTests {
         #expect(withoutNullKeys(encoded) == withoutNullKeys(fields["output"]!), Comment(rawValue: label))
       }
     }
-    let reply = try JSONDecoder().decode(MessageReplyNode.self, from: Data(#"{"userId":23,"user":{"id":"u1","fullName":"Ada"},"media":{}}"#.utf8))
+    let reply = try JSONDecoder().decode(RecordReplyNode.self, from: Data(#"{"userId":23,"user":{"id":"u1","fullName":"Ada"},"media":{}}"#.utf8))
     #expect(reply.userId == "23" && reply.user?.fullName == "Ada" && reply.media?.id == "")
     let tree = try JSONDecoder().decode(NestedTree.self, from: Data(#"{"name":"root","children":[{"name":"leaf"}]}"#.utf8))
     #expect(tree.children.first?.name == "leaf" && tree.children.first?.children == [])

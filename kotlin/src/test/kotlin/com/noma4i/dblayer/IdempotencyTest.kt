@@ -13,14 +13,14 @@ class IdempotencyTest {
         val fixture = parseJson(File("../fixtures/idempotency.json").readText()).jsonObject
         for (explicit in listOf(false, true)) {
             val transport = MockTransport()
-            transport.enqueue("MessageSend", fixture.getValue("refusal").toString())
-            transport.enqueue("MessageSend", fixture.getValue("answer").toString())
+            transport.enqueue("RecordSend", fixture.getValue("refusal").toString())
+            transport.enqueue("RecordSend", fixture.getValue("answer").toString())
             val database = Database.open(Config(null, null, 32u), fixture.getValue("models").toString(), transport)
             database.registerOperations(fixture.getValue("operations").toString())
-            val row = database.create("Message", """{"text":"hello"}""", if (explicit) """{"clientMutationId":"app-key"}""" else "{}")
+            val row = database.create("Record", """{"text":"hello"}""", if (explicit) """{"clientMutationId":"app-key"}""" else "{}")
             database.flush()
-            database.retry("Message", row.id)
-            val calls = transport.calls.filter { it.operationName == "MessageSend" }
+            database.retry("Record", row.id)
+            val calls = transport.calls.filter { it.operationName == "RecordSend" }
             assertEquals(2, calls.size)
             val key = parseJson(calls[0].variablesJson).jsonObject.getValue("input").jsonObject["clientMutationId"]?.jsonPrimitive?.content
             assertNotNull(key)

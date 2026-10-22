@@ -1,5 +1,5 @@
-query Pricing { pricing { gifts { id name price } videoIntro { enabled } tags spec } }
+query Pricing { pricing { rewards { id name price } videoIntro { enabled } tags spec } }
 query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { id url isSticker } }
-query inbox($list: ChatShelfKind, $first: Int, $after: String) { inbox(list: $list, first: $first, after: $after) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }
-query chatMembers($chatId: ID!, $order: ChatMemberOrder = JOINED, $first: Int, $after: String) { chatMembers(chatId: $chatId, order: $order, first: $first, after: $after) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }
-query chatMedia($chatId: ID!, $upToSequence: Int) { chatMedia(chatId: $chatId, upToSequence: $upToSequence) { visualCount audioCount giftCount latestSequence } }
+query inbox($list: ContainerShelfKind, $first: Int, $after: String) { inbox(list: $list, first: $first, after: $after) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }
+query containerMembers($containerId: ID!, $order: ContainerMemberOrder = JOINED, $first: Int, $after: String) { containerMembers(containerId: $containerId, order: $order, first: $first, after: $after) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }
+query containerMedia($containerId: ID!, $upToSequence: Int) { containerMedia(containerId: $containerId, upToSequence: $upToSequence) { visualCount audioCount rewardCount latestSequence } }

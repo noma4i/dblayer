@@ -1,28 +1,40 @@
 model Notebook do
-  changes RecordEvents, root: "recordEvents.entries", area: :topic, kind: :action, id: :recordId
-  field :title, type: :string
-  node NotebookNode
-  changed_by :notebook, via: :node, removes_on: [:deleted, :access_revoked]
+  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+  attribute :title, :string
+  scope :node, node: :one do
+    parameter :id, :id
+    query "NotebookNode"
+    variables id: :id
+  end
+  changed_by "NOTEBOOK", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
 end
 
 model Entry do
-  field :text, type: :string
-  node EntryNode
-  changed_by :entry, via: :node, removes_on: [:deleted, :access_revoked]
-  changed_by :reaction, via: :node
+  attribute :text, :string
+  scope :node, node: :one do
+    parameter :id, :id
+    query "EntryNode"
+    variables id: :id
+  end
+  changed_by "ENTRY", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
+  changed_by "REACTION", via: :node
 end
 
 model Article do
-  field :text, type: :string
-  node ArticleNode
-  changed_by :article, via: :node, removes_on: [:deleted, :access_revoked]
-  changed_by :reaction, via: :node
+  attribute :text, :string
+  scope :node, node: :one do
+    parameter :id, :id
+    query "ArticleNode"
+    variables id: :id
+  end
+  changed_by "ARTICLE", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
+  changed_by "REACTION", via: :node
 end
 
 model Totals do
-  field :unread, type: :int
+  attribute :unread, :int
   scope :current do
-    fetch CurrentTotals
+    query "CurrentTotals"
   end
-  changed_by :counters, via: :current
+  changed_by "COUNTERS", via: :current
 end

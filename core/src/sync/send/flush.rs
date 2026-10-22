@@ -519,7 +519,7 @@ impl Inner {
                         }
                     }
                 }
-                envelope.operation_transitions.push(OperationTransition::Close { seq: entry.operation.id.0, status: OperationStatus::Committed, once: false });
+                envelope.operation_transitions.push(OperationTransition::Close { seq: entry.operation.id.0, status: OperationStatus::Committed });
                 Ok(Some(envelope))
             })?;
             if committed.is_some() {

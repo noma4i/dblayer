@@ -5,7 +5,7 @@ use crate::{compile_files, emit_kotlin, emit_swift};
 
 const SCHEMA: &str = "type Query { a: Int }\nenum ConnectionAction { ACCEPT DECLINE }\nenum ConnectionStatus { CONNECTED NEVER_MET }\ninput NoteInput { text: String! }\ninput ConnectionInput { userId: ID!, action: ConnectionAction!, note: NoteInput }\ntype Mutation { connectionUpdate(input: ConnectionInput!): Int }\n";
 const OPERATIONS: &str = "mutation ConnectionUpdate($input: ConnectionInput!) { connectionUpdate(input: $input) }\n";
-const MODEL: &str = "model Sample do\n\n  field :name, type: :string\n  field :connectionStatus, type: :enum, values: [:CONNECTED, :NEVER_MET], as: ConnectionStatus, null: true\n\n  operation :answer_connection do\n    mutation   ConnectionUpdate\n    args       decision: :ConnectionAction, status: :ConnectionStatus, note: :NoteInput?\n    input      sampleId: :id, action: :decision, note: :note\n    optimistic connectionStatus: :status\n    wrap       :input\n  end\nend\n";
+const MODEL: &str = "model Sample do\n  attribute :name, :string\n  attribute :connectionStatus, :enum, values: [\"CONNECTED\", \"NEVER_MET\"], as: ConnectionStatus, null: true\n  operation :answer_connection do\n    mutation \"ConnectionUpdate\"\n    parameter :decision, ConnectionAction\n    parameter :status, ConnectionStatus\n    parameter :note, NoteInput, null: true\n    variables sampleId: :id, action: :decision, note: :note\n    optimistic connectionStatus: :status\n    wrap \"input\"\n  end\nend\n";
 
 fn compile(source: &str, schema: Option<&str>) -> Result<crate::Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
@@ -48,8 +48,8 @@ fn a_model_operation_takes_schema_enums_and_input_objects_as_typed_args() {
 fn a_model_operation_names_the_schema_type_it_needs_and_checks_its_kind() {
     let without = compile(MODEL, None).unwrap_err();
     assert!(without.iter().any(|message| message.contains("`ConnectionAction`") && message.contains("--schema")), "{without:?}");
-    let wrong = compile(&MODEL.replace("decision: :ConnectionAction", "decision: :string"), Some(SCHEMA)).unwrap_err();
+    let wrong = compile(&MODEL.replace("parameter :decision, ConnectionAction", "parameter :decision, :string"), Some(SCHEMA)).unwrap_err();
     assert!(wrong.iter().any(|message| message.contains("does not fit `action: ConnectionAction!`")), "{wrong:?}");
-    let missing = compile(&MODEL.replace(":ConnectionAction", ":Ghost"), Some(SCHEMA)).unwrap_err();
-    assert!(missing.iter().any(|message| message.contains("`:Ghost`")), "{missing:?}");
+    let missing = compile(&MODEL.replace("parameter :decision, ConnectionAction", "parameter :decision, Ghost"), Some(SCHEMA)).unwrap_err();
+    assert!(missing.iter().any(|message| message.contains("`Ghost`")), "{missing:?}");
 }

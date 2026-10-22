@@ -764,24 +764,14 @@ fn apply_transitions(
                 result.operations.insert(seq);
                 wrote = true;
             }
-            OperationTransition::Close { seq, status, once } => {
-                let found: Option<(String, Option<String>)> = connection
-                    .query_row("SELECT action_key, dedupe_key FROM op WHERE seq = ?1", params![seq], |row| {
-                        Ok((row.get(0)?, row.get(1)?))
-                    })
-                    .optional()?;
-                let Some((action_key, dedupe_key)) = found else {
+            OperationTransition::Close { seq, status } => {
+                let found: Option<i64> = connection.query_row("SELECT seq FROM op WHERE seq = ?1", params![seq], |row| row.get(0)).optional()?;
+                if found.is_none() {
                     result.unknown_operation_acks += 1;
                     continue;
-                };
+                }
                 synced.extend(op_keys_of(connection, *seq)?);
                 if status.is_terminal() {
-                    if let (true, OperationStatus::Committed, Some(key)) = (*once, status, dedupe_key) {
-                        connection.execute(
-                            "INSERT OR IGNORE INTO op_once (namespace, dedupe_key) VALUES (?1, ?2)",
-                            params![action_key, key],
-                        )?;
-                    }
                     delete_operation(connection, *seq)?;
                 } else {
                     set_open_status(connection, *seq, *status, None, now_ms)?;

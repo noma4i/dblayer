@@ -6,7 +6,7 @@ use crate::ddl::RecreateReason;
 fn in_memory_store_has_empty_manifest_and_core_tables() {
     let store = Store::open_in_memory().unwrap();
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest"), 0);
-    for table in ["scope_member", "tombstone", "query_window", "op", "op_once", "quarantine"] {
+    for table in ["scope_member", "tombstone", "query_window", "op", "quarantine"] {
         assert!(store.table_exists(table).unwrap(), "{table}");
     }
     assert_ne!(store.journal_mode().unwrap().to_lowercase(), "delete");

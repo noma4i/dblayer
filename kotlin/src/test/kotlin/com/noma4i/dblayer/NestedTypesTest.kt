@@ -1,6 +1,6 @@
 package com.noma4i.dblayer
 
-import com.noma4i.dblayer.models.MessageReplyNode
+import com.noma4i.dblayer.models.RecordReplyNode
 import com.noma4i.dblayer.models.NestedSample
 import com.noma4i.dblayer.models.NestedValue
 import com.noma4i.dblayer.models.modelsJSON
@@ -38,7 +38,7 @@ class NestedTypesTest {
                 assertEquals(label, comparableJson(fields.getValue("output")), comparableJson(jsonValue(decoded)))
             }
         }
-        val reply = dbJson.decodeFromString(MessageReplyNode.serializer(), """{"userId":23,"user":{"id":"u1","fullName":"Ada"},"media":{}}""")
+        val reply = dbJson.decodeFromString(RecordReplyNode.serializer(), """{"userId":23,"user":{"id":"u1","fullName":"Ada"},"media":{}}""")
         assertEquals("23", reply.userId)
         assertEquals("Ada", reply.user?.fullName)
         assertEquals("", reply.media?.id)

@@ -15,7 +15,7 @@ type PageInfo { hasNextPage: Boolean! endCursor: Cursor }
 
 const OPERATIONS: &str = "query chats($list: ChatList, $first: Int, $after: Cursor) { chats(list: $list, first: $first, after: $after) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }\nquery byOwner($ownerId: ID!, $list: ChatList!) { byOwner(ownerId: $ownerId, list: $list) { id title } }\n";
 
-const MODEL: &str = "model Chat do\n  field :title, type: :string\n\n  scope :list, text: [list: :ChatList] do\n    fetch \"chats\", root: \"chats\"\n    paginate 25\n  end\nend\n";
+const MODEL: &str = "model Chat do\n  attribute :title, :string\n  scope :list do\n    parameter :list, ChatList\n    query \"chats\"\n    response from: \"chats\"\n    paginate size: 25, direction: :forward\n  end\nend\n";
 
 fn compile(source: &str, operations: &str, schema: Option<&str>) -> Result<Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
@@ -56,7 +56,7 @@ fn a_scope_param_of_a_schema_enum_is_a_typed_argument_on_both_platforms() {
 
 #[test]
 fn string_and_enum_text_params_mix_in_declared_order() {
-    let source = "model Chat do\n  field :title, type: :string\n\n  scope :owned, text: [:ownerId, list: :ChatList] do\n    fetch \"byOwner\", root: \"byOwner\"\n    list\n  end\nend\n";
+    let source = "model Chat do\n  attribute :title, :string\n  scope :owned do\n    parameter :ownerId, :string\n    parameter :list, ChatList\n    query \"byOwner\"\n    response from: \"byOwner\", shape: :list\n  end\nend\n";
     let declared = compile(source, OPERATIONS, Some(SCHEMA)).unwrap();
     assert_eq!(declared.models[0].relations[0].text_params, ["ownerId", "list"]);
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
@@ -70,8 +70,8 @@ fn a_scope_enum_param_names_its_schema_type_and_is_checked_against_the_document(
     let without = compile(MODEL, OPERATIONS, None).unwrap_err();
     assert!(without.iter().any(|text| text.contains("`ChatList`") && text.contains("--schema")), "{without:?}");
     for (case, model, operations, error) in [
-        ("missing type", MODEL.replace(":ChatList", ":Ghost"), OPERATIONS.to_string(), "`Ghost`"),
-        ("input object", MODEL.replace(":ChatList", ":ChatFilter"), OPERATIONS.to_string(), "names `ChatFilter`, which is not an enum"),
+        ("missing type", MODEL.replace("parameter :list, ChatList", "parameter :list, Ghost"), OPERATIONS.to_string(), "`Ghost`"),
+        ("input object", MODEL.replace("parameter :list, ChatList", "parameter :list, ChatFilter"), OPERATIONS.to_string(), "names `ChatFilter`, which is not an enum"),
         ("variable of another type", MODEL.to_string(), OPERATIONS.replace("query chats($list: ChatList,", "query chats($list: String,").replace("chats(list: $list", "chats(list: $list"), "param `list` is `ChatList` but the variable `$list` of `chats` is `String`"),
         ("variable missing", MODEL.to_string(), OPERATIONS.replace("$list: ChatList, $first", "$first").replace("chats(list: $list, first", "chats(first"), "has no variable `$list`"),
         ("nullable param over a required variable is fine only the other way", MODEL.to_string(), OPERATIONS.replace("$list: ChatList, $first", "$list: ChatList!, $first"), ""),
@@ -88,7 +88,7 @@ fn a_scope_enum_param_names_its_schema_type_and_is_checked_against_the_document(
 
 #[test]
 fn the_variables_line_names_the_document_variable_of_an_enum_param() {
-    let model = MODEL.replace("    paginate 25", "    variables filter: :list\n    paginate 25");
+    let model = MODEL.replace("    paginate size: 25, direction: :forward", "    variables filter: :list\n    paginate size: 25, direction: :forward");
     let operations = OPERATIONS.replace("query chats($list: ChatList,", "query chats($filter: ChatList,").replace("chats(list: $list", "chats(list: $filter");
     compile(&model, &operations, Some(SCHEMA)).unwrap();
     let wrong = operations.replace("$filter: ChatList", "$filter: Int");
@@ -98,10 +98,10 @@ fn the_variables_line_names_the_document_variable_of_an_enum_param() {
 
 #[test]
 fn joins_events_needs_columns_to_join_by() {
-    let model = MODEL.replace("scope :list, text: [list: :ChatList] do", "scope :list, text: [list: :ChatList], joins: :events do");
+    let model = MODEL.replace("scope :list do", "scope :list, insert_on: [:event, :response] do");
     let errors = compile(&model, OPERATIONS, Some(SCHEMA)).unwrap_err();
-    assert!(errors.iter().any(|text| text.contains("joins: :events") && text.contains("`where`")), "{errors:?}");
-    let strings = "model Chat do\n  field :title, type: :string\n\n  scope :search, text: [:query], joins: :events do\n    fetch \"chats\", root: \"chats\"\n    paginate 25\n  end\nend\n";
+    assert!(errors.iter().any(|text| text.contains("insert_on: [:event, :response]") && text.contains("`where`")), "{errors:?}");
+    let strings = "model Chat do\n  attribute :title, :string\n  scope :search, insert_on: [:event, :response] do\n    parameter :query, :string\n    query \"chats\"\n    response from: \"chats\"\n    paginate size: 25, direction: :forward\n  end\nend\n";
     let errors = compile(strings, OPERATIONS, None).unwrap_err();
-    assert!(errors.iter().any(|text| text.contains("joins: :events") && text.contains("`where`")), "{errors:?}");
+    assert!(errors.iter().any(|text| text.contains("insert_on: [:event, :response]") && text.contains("`where`")), "{errors:?}");
 }

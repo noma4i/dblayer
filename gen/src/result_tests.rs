@@ -1,7 +1,7 @@
 use crate::SchemaTypes;
 use crate::{emit_kotlin, emit_swift, parse_all};
 
-const PRICING: &str = "operation :pricing_load do\n  query Pricing\n  result gifts: [{ id: :id, name: :string, price: :int }], videoIntro: { enabled: :bool, price: :int }, tags: [:string], spec: :json, wallet: { balance: :int }\nend\n";
+const PRICING: &str = "operation :pricing_load do\n  query \"Pricing\"\n  returns do\n    attribute :gifts, [PricingLoadResultGifts] do\n      attribute :id, :id\n      attribute :name, :string\n      attribute :price, :int\n    end\n    attribute :videoIntro, PricingLoadResultVideoIntro do\n      attribute :enabled, :bool\n      attribute :price, :int\n    end\n    attribute :tags, [:string]\n    attribute :spec, :json\n    attribute :wallet, PricingLoadResultWallet do\n      attribute :balance, :int\n    end\n  end\nend\n";
 
 #[test]
 fn a_result_with_objects_lists_and_raw_json_becomes_nested_types_on_both_platforms() {
@@ -36,18 +36,21 @@ fn a_result_with_objects_lists_and_raw_json_becomes_nested_types_on_both_platfor
 }
 
 #[test]
-fn a_wrong_result_declaration_is_named_with_its_line() {
+fn a_wrong_returns_declaration_is_named_with_its_line() {
     let cases = [
-        ("result x: :uuid", "type must be"),
-        ("result x: :string?", "type must be"),
-        ("result x: [:string, :int]", "a list holds one type"),
-        ("result x: []", "a list holds one type"),
-        ("result x: {}", "an object needs at least one field"),
-        ("result x: { a: :sticker }", "type must be"),
-        ("result x: { a: :int, a: :string }", "declared twice"),
+        ("attribute :x, :uuid", "an attribute type is"),
+        ("attribute :x, :date", "a returned attribute is"),
+        ("attribute :x, :string, null: true", "every returned attribute is nullable"),
+        ("attribute :x, [:string, :int]", "an attribute type is"),
+        ("attribute :x, Thing do\n    end", "block needs at least 1 attribute"),
+        ("attribute :x, Thing do\n      attribute :a, :sticker\n    end", "an attribute type is"),
+        ("attribute :x, Thing do\n      attribute :a, :int\n      attribute :a, :string\n    end", "declared twice"),
+        ("attribute :x, :int\n    attribute :x, :string", "declared twice"),
+        ("attribute :x, :file", "a returned attribute is"),
+        ("attribute :x, :enum, values: [\"A\"]", "a returned attribute is"),
     ];
     for (line, message) in cases {
-        let source = format!("operation :a do\n  mutation A\n  {line}\nend\n");
+        let source = format!("operation :a do\n  mutation \"A\"\n  returns do\n    {line}\n  end\nend\n");
         let errors = parse_all(&[&source]).err().unwrap_or_else(|| panic!("accepted: {line}"));
         assert!(errors.iter().any(|(_, error)| error.message.contains(message)), "{line}: {errors:?}");
     }

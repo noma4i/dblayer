@@ -2,33 +2,29 @@ use dblayer_gen::{parse_models, emit_swift, emit_kotlin};
 
 #[test]
 fn platform_models_offer_typed_writes_and_live_scopes() {
-    let models = parse_models(r#"
-model Moment do
-
-    field :text, type: :string
-    field :userId, type: :id, null: true
-    field :createdAt, type: :date
-    ephemeral do
-      field :selected, type: :bool, default: false
-    end
-
+    let models = parse_models(r#"model Moment do
+  attribute :text, :string
+  attribute :userId, :id, null: true
+  attribute :createdAt, :date
+  ephemeral do
+    attribute :selected, :bool, default: false
+  end
   belongs_to :user
   scope :recent do
     order createdAt: :desc
   end
   operation :like do
-    mutation LikeMoment
+    mutation "LikeMoment"
     optimistic text: "liked"
   end
   scope :feed do
-    fetch MomentsFeed
-    list
+    query "MomentsFeed"
+    response shape: :list
   end
 end
+
 model User do
-
-    field :name, type: :string
-
+  attribute :name, :string
 end
 "#).unwrap();
     let moment = &models[0];
@@ -49,7 +45,7 @@ end
 
 #[test]
 fn object_fields_generate_the_types_they_decode_to() {
-    let models = parse_models("model Moment do\n\n    field :media, type: MomentMedia, null: true do\n      field :url, type: :string\n    end\n    field :widgets, type: [MomentWidget] do\n      field :kind, type: :string\n    end\n\nend\n").unwrap();
+    let models = parse_models("model Moment do\n  attribute :media, MomentMedia, null: true do\n    attribute :url, :string\n  end\n  attribute :widgets, [MomentWidget] do\n    attribute :kind, :string\n  end\nend\n").unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public let media: MomentMedia?"), "{swift}");
     assert!(swift.contains("public let widgets: [MomentWidget]"), "{swift}");
@@ -61,15 +57,12 @@ fn object_fields_generate_the_types_they_decode_to() {
 
 #[test]
 fn kotlin_models_json_escapes_interpolation_markers() {
-    let models = parse_models(r#"
-model Moment do
-
-    field :liked, type: :bool
-
+    let models = parse_models(r#"model Moment do
+  attribute :liked, :bool
   operation :like do
-    mutation LikeMoment
-    args liked: :bool
-    input liked: :liked
+    mutation "LikeMoment"
+    parameter :liked, :bool
+    variables liked: :liked
     optimistic liked: :liked
   end
 end
@@ -82,7 +75,7 @@ end
 
 #[test]
 fn swift_models_can_be_built_directly_with_defaults_for_sync_state() {
-    let models = parse_models("model Moment do\n\n    field :uuid, type: :string\n    field :text, type: :string, null: true\n    field :liked, type: :bool, default: false\n    field :count, type: :int, default: 3\n\nend\n").unwrap();
+    let models = parse_models("model Moment do\n  attribute :uuid, :string\n  attribute :text, :string, null: true\n  attribute :liked, :bool, default: false\n  attribute :count, :int, default: 3\nend\n").unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public init(id: String, uuid: String, text: String? = nil, liked: Bool = false, count: Int = 3, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil)"), "{swift}");
     assert!(swift.contains("self.liked = liked"), "{swift}");
@@ -90,14 +83,12 @@ fn swift_models_can_be_built_directly_with_defaults_for_sync_state() {
 
 #[test]
 fn text_param_relation_takes_a_string_and_keeps_its_name_free() {
-    let models = parse_models(r#"
-model Hit do
-
-    field :title, type: :string
-
-  scope :search, text: [:query] do
-    fetch HitsSearch
-    list
+    let models = parse_models(r#"model Hit do
+  attribute :title, :string
+  scope :search do
+    parameter :query, :string
+    query "HitsSearch"
+    response shape: :list
   end
 end
 "#).unwrap();
@@ -112,46 +103,40 @@ end
 
 #[test]
 fn action_args_become_parameters_of_the_generated_call() {
-    let models = parse_models(r#"
-model Chat do
-
-    field :muted, type: :bool, default: false
-
+    let models = parse_models(r#"model Container do
+  attribute :muted, :bool, default: false
   operation :mute do
-    mutation ChatMute
-    args       mute: :bool
-    input      chatId: :id, mute: :mute
+    mutation "ContainerMute"
+    parameter :mute, :bool
+    variables containerId: :id, mute: :mute
     optimistic muted: :mute
-    wrap       :input
-    root       "chatMute.chat"
+    wrap "input"
+    response from: "containerMute.container"
   end
 end
 "#).unwrap();
     let action = &models[0].actions[0];
     assert_eq!(action.args["mute"], "bool");
     assert_eq!(action.wrap.as_deref(), Some("input"));
-    assert_eq!(action.root.as_deref(), Some("chatMute.chat"));
+    assert_eq!(action.root.as_deref(), Some("containerMute.container"));
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public func mute(mute: Bool) async throws -> Self"));
     assert!(swift.contains("values[\"muted\"] = JSONValue.encode(mute)"));
     assert!(swift.contains("args: [\"mute\": JSONValue.encode(mute)]"));
-    assert!(kotlin.contains("suspend fun mute(mute: Boolean): Chat"));
+    assert!(kotlin.contains("suspend fun mute(mute: Boolean): Container"));
     assert!(kotlin.contains("\"muted\" to jsonValue(mute)"));
 }
 
 #[test]
 fn create_takes_only_the_fields_the_mutation_input_maps() {
-    let models = parse_models(r#"
-model Chat do
-
-    field :name, type: :string, null: true
-    field :unreadCount, type: :int
-    field :createdAt, type: :date
-
+    let models = parse_models(r#"model Container do
+  attribute :name, :string, null: true
+  attribute :unreadCount, :int
+  attribute :createdAt, :date
   operation :create do
-    mutation ChatGroupCreate
-    input name: :name
+    mutation "ContainerGroupCreate"
+    variables name: :name
     local :unreadCount
   end
 end
@@ -159,18 +144,15 @@ end
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public static func create(name: String? = nil, unreadCount: Int) async throws -> Self"));
-    assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long): Chat"));
+    assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long): Container"));
 }
 
 #[test]
 fn model_listen_lines_become_model_subscriptions() {
-    let models = parse_models(r#"
-model User do
-
-    field :online, type: :bool
-
-  listen "userUpdated", debounce: 300.milliseconds
-  listen "userBlocked", removes: true
+    let models = parse_models(r#"model User do
+  attribute :online, :bool
+  subscribe "userUpdated", debounce: 300.milliseconds
+  subscribe "userBlocked", apply: { effect: :delete }
 end
 "#).unwrap();
     let listens = &models[0].listens;
@@ -181,14 +163,12 @@ end
 
 #[test]
 fn internal_access_drops_public_and_unmutated_locals_are_constants() {
-    let models = parse_models(r#"
-model Hit do
-
-    field :title, type: :string
-
-  scope :search, text: [:query] do
-    fetch HitsSearch
-    list
+    let models = parse_models(r#"model Hit do
+  attribute :title, :string
+  scope :search do
+    parameter :query, :string
+    query "HitsSearch"
+    response shape: :list
   end
 end
 "#).unwrap();
@@ -200,9 +180,9 @@ end
 
 #[test]
 fn model_with_one_single_record_relation_gets_a_singleton_entity() {
-    let single = "model Me do\n\n    field :name, type: :string\n\n  scope :profile do\n    fetch MyProfile\n  end\nend\n";
-    let list = "model Me do\n\n    field :name, type: :string\n\n  scope :feed do\n    fetch MesFeed\n    list\n  end\nend\n";
-    let two = "model Me do\n\n    field :name, type: :string\n\n  scope :profile do\n    fetch MyProfile\n  end\n  scope :settings do\n    fetch MySettings\n  end\nend\n";
+    let single = "model Me do\n  attribute :name, :string\n  scope :profile do\n    query \"MyProfile\"\n  end\nend\n";
+    let list = "model Me do\n  attribute :name, :string\n  scope :feed do\n    query \"MesFeed\"\n    response shape: :list\n  end\nend\n";
+    let two = "model Me do\n  attribute :name, :string\n  scope :profile do\n    query \"MyProfile\"\n  end\n  scope :settings do\n    query \"MySettings\"\n  end\nend\n";
     for (source, singleton) in [(single, true), (list, false), (two, false)] {
         let models = parse_models(source).unwrap();
         let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
@@ -213,7 +193,7 @@ fn model_with_one_single_record_relation_gets_a_singleton_entity() {
 
 #[test]
 fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
-    let models = parse_models("model Moment do\n\n    field :text, type: :string\n    field :tone, type: :string, optional: true, local: true\n\nend\n").unwrap();
+    let models = parse_models("model Moment do\n  attribute :text, :string\n  attribute :tone, :string, optional: true, local: true\nend\n").unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
@@ -223,7 +203,7 @@ fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
 
 #[test]
 fn models_and_nested_types_read_positional_cells_on_both_platforms() {
-    let models = parse_models("model Moment do\n\n    field :ownerId, type: :id, null: true\n    field :count, type: :int, default: 2\n    field :tags, type: [:string], default: []\n    field :extra, type: :raw, null: true\n    field :size, type: MomentSize, null: true do\n      field :w, type: :int\n    end\n    field :boxes, type: [MomentBox], default: [] do\n      field :label, type: :string\n    end\n\nend\n").unwrap();
+    let models = parse_models("model Moment do\n  attribute :ownerId, :id, null: true\n  attribute :count, :int, default: 2\n  attribute :tags, [:string], default: []\n  attribute :extra, :json, null: true\n  attribute :size, MomentSize, null: true do\n    attribute :w, :int\n  end\n  attribute :boxes, [MomentBox], default: [] do\n    attribute :label, :string\n  end\nend\n").unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     for token in [

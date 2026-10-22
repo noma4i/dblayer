@@ -15,9 +15,9 @@ type MessageEdge { node: Message! }
 type PageInfo { hasNextPage: Boolean! endCursor: String }
 "#;
 
-const CHAT: &str = "model Chat do\n  field :title, type: :string\n  field :shareUrl, type: :string, null: true\n  node ChatNode\n  nodes ChatsByIds\nend\n";
+const CHAT: &str = "model Chat do\n  attribute :title, :string\n  attribute :shareUrl, :string, null: true\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"ChatNode\"\n    variables id: :id\n  end\n  scope :nodes, node: :many do\n    query \"ChatsByIds\"\n    response shape: :list\n  end\nend\n";
 
-const MESSAGE: &str = "model Message do\n  field :chatId, type: :id\n  field :text, type: :string\n  field :media, type: MessageMedia, null: true do\n    field :kind, type: :string\n    field :fileUrl, type: :string, null: true\n  end\n  scope :thread do\n    where :chatId\n    fetch ChatThread, root: \"node.messages\"\n    paginate 30\n  end\n  node MessageStatus, as: :status\nend\n";
+const MESSAGE: &str = "model Message do\n  attribute :chatId, :id\n  attribute :text, :string\n  attribute :media, MessageMedia, null: true do\n    attribute :kind, :string\n    attribute :fileUrl, :string, null: true\n  end\n  scope :thread do\n    parameter :chatId, :id\n    where chatId: :chatId\n    query \"ChatThread\"\n    response from: \"node.messages\"\n    paginate size: 30, direction: :forward\n  end\n  scope :status, node: :one do\n    parameter :id, :id\n    query \"MessageStatus\"\n    variables id: :id\n  end\nend\n";
 
 const OPERATIONS: &str = "query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title shareUrl } } }
 query ChatsByIds($ids: [ID!]!) { nodes(ids: $ids) { ... on Chat { id title shareUrl } } }
@@ -63,7 +63,7 @@ fn node_reads_are_checked_through_the_type_under_the_inline_fragment() {
 
 #[test]
 fn a_node_model_field_the_fragment_type_lacks_is_reported() {
-    let source = CHAT.replace("field :title, type: :string\n", "field :title, type: :string\n  field :ghost, type: :string, null: true\n");
+    let source = CHAT.replace("attribute :title, :string\n", "attribute :title, :string\n  attribute :ghost, :string, null: true\n");
     let errors = run(&[&source, MESSAGE], OPERATIONS).unwrap_err();
     assert!(errors.iter().any(|text| text.contains("type `Chat` has no field `ghost`")), "{errors:?}");
 }

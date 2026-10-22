@@ -23,9 +23,9 @@ const KINDS: [(&str, fn() -> Value); 10] = [
     ("bool", || json!(true)),
     ("date", || json!("2026-01-01T00:00:00.000Z")),
     ("id", || json!("x1")),
-    ("object", || json!({"a": 1})),
-    ("array", || json!([1, 2])),
-    ("raw", || json!("raw")),
+    ("json", || json!({"a": 1})),
+    ("json", || json!([1, 2])),
+    ("json", || json!("raw")),
     ("list", || json!([1, 2])),
 ];
 
@@ -33,13 +33,13 @@ fn random_model(dice: &mut Dice) -> (String, Map<String, Value>) {
     let mut source = String::from("model Sample do\n");
     let mut values = Map::new();
     if dice.below(2) == 0 {
-        source.push_str("  field :id, type: :id\n");
+        source.push_str("  attribute :id, :id\n");
     }
     for index in 0..1 + dice.below(5) {
         let (word, value) = KINDS[dice.below(KINDS.len())];
         let name = format!("field{index}");
         let kind = if word == "list" { "[:int]".into() } else { format!(":{word}") };
-        let mut line = format!("  field :{name}, type: {kind}");
+        let mut line = format!("  attribute :{name}, {kind}");
         for (key, chance) in [("null: true", 3), ("optional: true", 3)] {
             if dice.below(chance) == 0 {
                 line.push_str(&format!(", {key}"));
@@ -47,7 +47,7 @@ fn random_model(dice: &mut Dice) -> (String, Map<String, Value>) {
         }
         source.push_str(&line);
         source.push('\n');
-        if dice.below(4) == 0 && !matches!(word, "object" | "array" | "raw" | "list") {
+        if dice.below(4) == 0 && !matches!(word, "json" | "list") {
             source.push_str(&format!("  index :{name}\n"));
         }
         values.insert(name, value());

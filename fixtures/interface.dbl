@@ -1,97 +1,100 @@
 model InterfaceRecord do
-  field :slug, type: :string
-  field :spec, type: SampleSpec, null: true do
-    field :root, type: :id
-    field :elements, type: [SampleElement] do
+  attribute :slug, :string
+  attribute :spec, SampleSpec, null: true do
+    attribute :root, :id
+    attribute :elements, [SampleElement] do
       shared do
-        field :id, type: :id
-        field :children, type: [:id]
-        field :press, type: SampleAction, null: true do
+        attribute :id, :id
+        attribute :children, [:id]
+        attribute :press, SampleAction, null: true do
           on SampleNavigateAction do
-            field :slug, type: :string
-            field :title, type: :string, null: true
+            attribute :slug, :string
+            attribute :title, :string, null: true
           end
           on SampleOpenRecordAction do
-            field :recordId, type: :string
+            attribute :recordId, :string
           end
           on SampleOpenExternalAction do
-            field :url, type: :string
+            attribute :url, :string
           end
           on SampleOpenProfileAction do
-            field :userId, type: :string
+            attribute :userId, :string
           end
         end
-        field :visible, type: SampleVisibility, null: true do
+        attribute :visible, SampleVisibility, null: true do
           on SampleCondition do
-            field :comparison, type: :string
-            field :negated, type: :bool
-            field :operand, type: SampleOperand, null: true do
+            attribute :comparison, :string
+            attribute :negated, :bool
+            attribute :operand, SampleOperand, null: true do
               on SampleFlagLiteral do
-                field :flag, type: :bool
+                attribute :flag, :bool
               end
               on SampleNumberLiteral do
-                field :number, type: :num
+                attribute :number, :num
               end
               on SampleStateRef do
-                field :path, type: :string
+                attribute :path, :string
               end
               on SampleTextLiteral do
-                field :text, type: :string
+                attribute :text, :string
               end
             end
-            field :path, type: :string
+            attribute :path, :string
           end
           on SampleVisibleAll do
-            field :conditions, type: [SampleCondition]
+            attribute :conditions, [SampleCondition]
           end
           on SampleVisibleAny do
-            field :conditions, type: [SampleCondition]
+            attribute :conditions, [SampleCondition]
           end
           on SampleVisibleFlag do
-            field :flag, type: :bool
+            attribute :flag, :bool
           end
         end
       end
       on SampleButton do
-        field :label, type: SampleTextValue, null: true do
+        attribute :label, SampleTextValue, null: true do
           on SampleStateRef
           on SampleTextLiteral
         end
-        field :disabled, type: SampleFlagValue, null: true do
+        attribute :disabled, SampleFlagValue, null: true do
           on SampleFlagLiteral
           on SampleStateRef
         end
       end
       on SampleColumn do
-        field :gap, type: SampleNumberValue, null: true do
+        attribute :gap, SampleNumberValue, null: true do
           on SampleNumberLiteral
           on SampleStateRef
         end
-        field :alignItems, type: :string, null: true
+        attribute :alignItems, :string, null: true
       end
       on SampleHeading do
-        field :text, type: SampleTextValue, null: true
-        field :level, type: :int, null: true
+        attribute :text, SampleTextValue, null: true
+        attribute :level, :int, null: true
       end
       on SamplePressable do
       end
       on SampleSpacer do
-        field :length, type: SampleNumberValue, null: true
+        attribute :length, SampleNumberValue, null: true
       end
       on SampleSwitch do
-        field :checked, type: SampleFlagValue, null: true
-        field :label, type: SampleTextValue, null: true
+        attribute :checked, SampleFlagValue, null: true
+        attribute :label, SampleTextValue, null: true
       end
     end
-    field :state, type: [SampleStateEntry] do
-      field :path, type: :string
-      field :value, type: SampleStateValue do
+    attribute :state, [SampleStateEntry] do
+      attribute :path, :string
+      attribute :value, SampleStateValue do
         on SampleFlagLiteral
         on SampleNumberLiteral
         on SampleTextLiteral
       end
     end
   end
-
-  node SampleNode
+  scope :node, node: :one do
+    parameter :id, :id
+    query "SampleNode"
+    variables id: :id
+  end
 end

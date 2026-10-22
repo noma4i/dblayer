@@ -1,233 +1,65 @@
 use std::collections::HashSet;
 
-use dblayer::schema::{validate_models, ModelSpec};
-use dblayer::value::SortDirection;
+use dblayer::schema::{validate_models, ModelSpec, NodeRead, Storage};
+use dblayer::value::ScalarKind;
 
 use crate::build::build;
-use crate::operation::{is_arg_kind, ARG_KIND_MESSAGE};
-use crate::parser::{Call, ModelNode, Node, Pair, Value};
+use crate::decl::{
+    Effect, ModelDecl, OperationDecl, OperationKind, OptimisticDecl, OptimisticElement, OptimisticValue, ParamBase, ParameterDecl, Pos,
+    ResponseDecl, ResponseShape, ScopeDecl, SubscribeDecl, TypeRef, VariableValue,
+};
 use crate::ParseError;
 
-mod nested;
-mod enums;
+mod attributes;
 mod changes;
+mod enums;
+mod nested;
 #[cfg(test)]
 mod changes_tests;
+#[cfg(test)]
+mod attribute_tests;
+#[cfg(test)]
+mod operation_tests;
+#[cfg(test)]
+mod scope_tests;
 
 type Found = (usize, ParseError);
 
 #[cfg(test)]
 pub(crate) fn check_source(source: &str) -> Result<Vec<ModelSpec>, Vec<ParseError>> {
-    crate::parse_tree(&[source]).and_then(|parsed| check(&parsed.models)).map_err(|errors| errors.into_iter().map(|(_, error)| error).collect())
+    crate::parse_tree(&[source])
+        .map_err(|errors| errors.into_iter().map(|(_, error)| error).collect::<Vec<_>>())
+        .and_then(|parsed| crate::decl::lower_models(&parsed.models, None).map_err(|errors| errors.into_iter().map(|(_, error)| error).collect::<Vec<_>>()))
+        .and_then(|models| check(&models).map_err(|errors| errors.into_iter().map(|(_, error)| error).collect()))
 }
 
-const SCALAR_WORDS: [&str; 6] = ["string", "num", "int", "bool", "date", "id"];
-const FIELD_WORDS: [&str; 13] =
-    ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list", "file", "union"];
-const NESTED_WORDS: [&str; 12] = ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list", "union"];
-const EPHEMERAL_WORDS: [&str; 11] = ["string", "num", "int", "bool", "date", "id", "enum", "object", "array", "raw", "list"];
-const ASSOCIATION_WORDS: [&str; 4] = ["belongs_to", "has_many", "has_one", "references"];
-
-#[derive(Clone, Copy, PartialEq)]
-enum Context {
-    Model,
-    Schema,
-    Ephemeral,
-    Nested,
-    Union,
-    Remote,
-    Action,
+fn at(file: usize, pos: Pos, message: impl Into<String>) -> Found {
+    (file, ParseError::new(pos.line, pos.column, message))
 }
 
-#[derive(Clone, Copy)]
-enum Shape {
-    Name,
-    Names,
-    Const,
-    Int,
-    Duration,
-    Symbols,
-    Paths,
-    Nothing,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Want {
-    Bool,
-    Symbol,
-    Const,
-    Operation,
-    TypeName,
-    Symbols,
-    TextParams,
-    TypedParams,
-    Hash,
-    Duration,
-    Policy,
-    Merge,
-    Any,
-}
-
-struct Key {
-    name: &'static str,
-    want: Want,
-    required: bool,
-}
-
-struct Word {
-    shape: Shape,
-    keys: Vec<Key>,
-    block: bool,
-    free_keys: bool,
-}
-
-fn key(name: &'static str, want: Want, required: bool) -> Key {
-    Key { name, want, required }
-}
-
-fn field_keys(word: &str) -> Vec<Key> {
-    let mut keys = vec![
-        key("null", Want::Bool, false),
-        key("optional", Want::Bool, false),
-        key("default", Want::Any, false),
-        key("id_from", Want::Symbol, false),
-        key("from", Want::Any, false),
-        key("merge", Want::Merge, false),
-        key("local", Want::Bool, false),
-    ];
-    match word {
-        "raw" => keys.push(key("parse", Want::Symbol, false)),
-        "file" => keys.retain(|candidate| !matches!(candidate.name, "id_from" | "from" | "merge" | "local")),
-        "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
-        "list" => keys.extend([key("of", Want::Symbol, true), key("values", Want::Symbols, false), key("as", Want::TypeName, false)]),
-        "object" | "array" => keys.push(key("as", Want::TypeName, false)),
-        "union" => {
-            keys.retain(|candidate| !matches!(candidate.name, "default" | "id_from"));
-            keys.push(key("as", Want::TypeName, false));
-        }
-        _ => {}
-    }
-    if word != "file" && word != "union" {
-        keys.push(key("index", Want::Bool, false));
-    }
-    if matches!(word, "string" | "list") {
-        keys.push(key("searchable", Want::Bool, false));
-    }
-    keys
-}
-
-fn nested_keys(word: &str) -> Vec<Key> {
-    let mut keys = vec![key("null", Want::Bool, false), key("optional", Want::Bool, false), key("default", Want::Any, false), key("from", Want::Any, false)];
-    match word {
-        "raw" => keys.push(key("parse", Want::Symbol, false)),
-        "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
-        "list" => keys.extend([key("of", Want::Symbol, true), key("values", Want::Symbols, false), key("as", Want::TypeName, false)]),
-        "object" | "array" => keys.push(key("as", Want::TypeName, false)),
-        "union" => {
-            keys.retain(|candidate| candidate.name != "default");
-            keys.push(key("as", Want::TypeName, false));
-        }
-        _ => {}
-    }
-    keys
-}
-
-fn ephemeral_keys(word: &str) -> Vec<Key> {
-    let mut keys = field_keys(word);
-    keys.retain(|candidate| !matches!(candidate.name, "optional" | "id_from" | "from" | "as" | "merge" | "local" | "searchable"));
-    keys.push(key("reset_after", Want::Duration, false));
-    keys
-}
-
-fn word_for(context: Context, word: &str) -> Option<Word> {
-    let plain = |shape, keys| Some(Word { shape, keys, block: false, free_keys: false });
-    let free = || Some(Word { shape: Shape::Nothing, keys: vec![], block: false, free_keys: true });
-    match (context, word) {
-        (Context::Model, "schema") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
-        (Context::Model, "remote") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("text", Want::TextParams, false), key("typed", Want::TypedParams, false), key("defaults", Want::Hash, false), key("order", Want::Hash, false), key("joins", Want::Symbol, false), key("order_stable", Want::Bool, false), key("node", Want::Symbol, false)], block: true, free_keys: false }),
-        (Context::Model, "action") => Some(Word { shape: Shape::Name, keys: vec![key("mutation", Want::Operation, false), key("optimistic", Want::Hash, false)], block: true, free_keys: false }),
-        (Context::Model, "create" | "update") => {
-            plain(
-                Shape::Nothing,
-                vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("on_failure", Want::Policy, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false), key("response", Want::Symbol, false), key("refetch", Want::Symbols, false), key("local", Want::Symbols, false), key("correlate", Want::Symbols, false), key("args", Want::Hash, false)],
-            )
-        }
-        (Context::Model, "destroy") => {
-            plain(Shape::Nothing, vec![key("with", Want::Operation, true), key("input", Want::Hash, false), key("wrap", Want::Symbol, false), key("root", Want::Any, false)])
-        }
-        (Context::Action, "mutation" | "upload") => plain(Shape::Const, vec![]),
-        (Context::Action, "batch") => plain(Shape::Nothing, vec![key("min", Want::Any, true), key("max", Want::Any, true), key("items", Want::Symbol, true), key("single", Want::Symbol, true)]),
-        (Context::Action, "renumber") => plain(Shape::Nothing, vec![key("position", Want::Any, true), key("size", Want::Any, true), key("position_from", Want::Any, true)]),
-        (Context::Action, "item") => free(),
-        (Context::Action, "local_effect") => plain(Shape::Name, vec![key("reason", Want::Any, false)]),
-        (Context::Action, "on_failure") => plain(Shape::Name, vec![]),
-        (Context::Action, "wrap" | "response") => plain(Shape::Name, vec![]),
-        (Context::Action, "root") => plain(Shape::Const, vec![]),
-        (Context::Action, "lands") => plain(Shape::Const, vec![key("root", Want::Any, true)]),
-        (Context::Action, "input" | "optimistic" | "args" | "result") => free(),
-        (Context::Remote, "variables") => free(),
-        (Context::Action, "refetch_of") => plain(Shape::Const, vec![key("relation", Want::Symbol, true)]),
-        (Context::Action, "refetch") => plain(Shape::Symbols, vec![]),
-        (Context::Action, "correlate") => plain(Shape::Paths, vec![]),
-        (Context::Model, "listen") => {
-            plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("apply", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
-        }
-        (Context::Model, "changes") => plain(Shape::Const, vec![key("root", Want::Any, true), key("area", Want::Symbol, true), key("kind", Want::Symbol, true), key("id", Want::Symbol, true)]),
-        (Context::Model, "changed_by") => plain(Shape::Name, vec![key("via", Want::Symbol, true), key("id", Want::Symbol, false), key("removes_on", Want::Symbols, false)]),
-        (Context::Remote, "updates") => {
-            plain(Shape::Const, vec![key("root", Want::Any, false), key("id", Want::Any, false), key("deleted_by", Want::Symbol, false), key("set", Want::Hash, false), key("apply", Want::Hash, false), key("removes", Want::Bool, false), key("debounce", Want::Duration, false)])
-        }
-        (Context::Model, "scope") => Some(Word { shape: Shape::Name, keys: vec![key("params", Want::Symbols, false), key("where", Want::Hash, false), key("order", Want::Hash, false)], block: true, free_keys: false }),
-        (Context::Model, "belongs_to") => plain(
-            Shape::Name,
-            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("touch", Want::Bool, false), key("sets", Want::Hash, false), key("newer", Want::Hash, false), key("from", Want::Any, false)],
-        ),
-        (Context::Model, "has_many" | "has_one") => plain(
-            Shape::Name,
-            vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("dependent", Want::Symbol, false), key("from", Want::Any, false)],
-        ),
-        (Context::Model, "references") => {
-            plain(Shape::Name, vec![key("model", Want::Const, false), key("key", Want::Symbol, false), key("from", Want::Any, false)])
-        }
-        (Context::Schema, "index") => plain(Shape::Names, vec![]),
-        (Context::Schema, "ephemeral") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
-        (Context::Schema, field) if FIELD_WORDS.contains(&field) => plain(Shape::Name, field_keys(field)),
-        (Context::Nested, field) if NESTED_WORDS.contains(&field) => plain(Shape::Name, nested_keys(field)),
-        (Context::Ephemeral, field) if EPHEMERAL_WORDS.contains(&field) => plain(Shape::Name, ephemeral_keys(field)),
-        (Context::Union, "variant") => plain(Shape::Const, vec![key("case", Want::Symbol, false)]),
-        (Context::Union, "shared") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
-        (Context::Remote, "query") => plain(Shape::Const, vec![key("root", Want::Any, false)]),
-        (Context::Remote, "paginate") => plain(Shape::Int, vec![key("backward", Want::Bool, false), key("cursor", Want::Symbol, false), key("from", Want::Any, false), key("cursor_type", Want::Symbol, false)]),
-        (Context::Remote, "edge") => Some(Word { shape: Shape::Nothing, keys: vec![], block: true, free_keys: false }),
-        (Context::Remote, "list") => plain(Shape::Nothing, vec![]),
-        (Context::Remote, "fresh_for") => plain(Shape::Duration, vec![key("empty", Want::Duration, false)]),
-        (Context::Remote, "max_pages") => plain(Shape::Int, vec![]),
-        (Context::Remote, "total") => plain(Shape::Nothing, vec![key("from", Want::Any, true)]),
-        _ => None,
-    }
-}
-
-pub fn check(nodes: &[ModelNode]) -> Result<Vec<ModelSpec>, Vec<Found>> {
+pub fn check(nodes: &[ModelDecl]) -> Result<Vec<ModelSpec>, Vec<Found>> {
     let mut errors = Vec::new();
     let mut seen_models = HashSet::new();
     for node in nodes {
         if !seen_models.insert(node.name.as_str()) {
-            errors.push(at(node.file, node.line, node.column, format!("model `{}` is declared twice", node.name)));
+            errors.push(at(node.file, node.pos, format!("model `{}` is declared twice", node.name)));
         }
         check_model(node, nodes, &mut errors);
     }
-    check_types(nodes, &mut errors);
+    attributes::check_types(nodes, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }
-    changes::check_subscription_actions(nodes, &mut errors);
-    if !errors.is_empty() { return Err(errors); }
     let models = build(nodes);
     changes::check_changes(nodes, &models, &mut errors);
     enums::check_enums(nodes, &models, &mut errors);
-    if !errors.is_empty() { return Err(errors); }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
     nested::check_defaults(nodes, &models, &mut errors);
-    if !errors.is_empty() { return Err(errors); }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
     let mut resolved = models.clone();
     dblayer::schema::resolve_types(&mut resolved);
     let faults = validate_models(&resolved, &[]);
@@ -239,722 +71,387 @@ pub fn check(nodes: &[ModelNode]) -> Result<Vec<ModelSpec>, Vec<Found>> {
         .filter_map(|fault| {
             let node = nodes.iter().find(|node| node.name == fault.model.as_str())?;
             let hint = if matches!(fault.error, dblayer::schema::DeclarationError::TooManyColumns { .. }) { ". A union stores its variants in the columns of one table: declare fewer variants or fields, or split the model" } else { "" };
-            let message = format!("model {}: {}{hint}", node.name, fault.error);
-            Some(at(node.file, node.line, node.column, message))
+            Some(at(node.file, node.pos, format!("model {}: {}{hint}", node.name, fault.error)))
         })
         .collect();
     Err(found)
 }
 
-struct TypeUse<'a> {
-    name: String,
-    call: &'a Call,
-    file: usize,
-    declares: bool,
-}
-
-fn collect_types<'a>(calls: &'a [Call], owner: &str, file: usize, out: &mut Vec<TypeUse<'a>>) {
-    for call in calls.iter().filter(|call| matches!(call.word.as_str(), "object" | "array" | "union")) {
-        let named = call.options.iter().find(|pair| pair.key == "as").and_then(|pair| match &pair.value.item {
-            Value::Const(name) => Some(name.clone()),
-            _ => None,
-        });
-        let field = symbol_name(call.args.first()).unwrap_or_default();
-        let name = named.clone().unwrap_or_else(|| format!("{owner}{}", crate::build::camel(field)));
-        if crate::unions::is_union_call(call) {
-            out.push(TypeUse { name: name.clone(), call, file, declares: call.block.is_some() });
-            for variant in call.block.iter().flatten() {
-                if variant.word == "shared" {
-                    collect_types(variant.block.as_deref().unwrap_or_default(), &name, file, out);
-                    continue;
-                }
-                let Some(Node { item: Value::Const(typename), .. }) = variant.args.first() else { continue };
-                out.push(TypeUse { name: typename.clone(), call: variant, file, declares: variant.block.is_some() });
-                collect_types(variant.block.as_deref().unwrap_or_default(), typename, file, out);
-            }
-        } else if let Some(block) = &call.block {
-            out.push(TypeUse { name: name.clone(), call, file, declares: true });
-            collect_types(block, &name, file, out);
-        } else if named.is_some() {
-            out.push(TypeUse { name, call, file, declares: false });
-        }
-    }
-}
-
-fn check_types(nodes: &[ModelNode], errors: &mut Vec<Found>) {
-    let mut uses = Vec::new();
-    for node in nodes {
-        for schema in node.body.iter().filter(|call| call.word == "schema") {
-            collect_types(schema.block.as_deref().unwrap_or_default(), &node.name, node.file, &mut uses);
-        }
-    }
-    let mut declared = HashSet::new();
-    for item in uses.iter().filter(|item| item.declares) {
-        if !declared.insert(item.name.as_str()) {
-            errors.push(at(item.file, item.call.line, item.call.column, format!("type `{}` is declared twice", item.name)));
-        }
-        if nodes.iter().any(|node| node.name == item.name) {
-            errors.push(at(item.file, item.call.line, item.call.column, format!("type `{}` has the name of a model", item.name)));
-        }
-    }
-    for item in uses.iter().filter(|item| !item.declares && !declared.contains(item.name.as_str())) {
-        errors.push(at(item.file, item.call.line, item.call.column, format!("type `{}` is not declared by any `do ... end` block", item.name)));
-    }
-}
-
-fn at(file: usize, line: usize, column: usize, message: String) -> Found {
-    (file, ParseError::new(line, column, message))
-}
-
-fn check_model(node: &ModelNode, all: &[ModelNode], errors: &mut Vec<Found>) {
+fn check_model(node: &ModelDecl, all: &[ModelDecl], errors: &mut Vec<Found>) {
     let file = node.file;
-    let mut report = |line: usize, column: usize, message: String| errors.push(at(file, line, column, message));
-    check_model_options(node, &mut report);
-    if node.options.iter().any(|pair| pair.key == "storage" && matches!(&pair.value.item, Value::Symbol(name) if name == "local")) {
-        for call in node.body.iter().filter(|call| matches!(call.word.as_str(), "remote" | "listen" | "action" | "create" | "update" | "destroy")) {
-            report(call.line, call.column, format!("local model has no server: `{}` is not allowed with `storage: :local`", call.word));
+    let mut report = |pos: Pos, message: String| errors.push(at(file, pos, message));
+    if node.storage == Storage::Local {
+        for scope in node.scopes.iter().filter(|scope| scope.is_remote()) {
+            report(scope.pos, "local model has no server: a scope with `query` is not allowed with `storage: :local`".into());
+        }
+        for subscription in node.subscriptions.iter().chain(node.scopes.iter().flat_map(|scope| &scope.subscriptions)) {
+            report(subscription.pos, "local model has no server: `subscribe` is not allowed with `storage: :local`".into());
+        }
+        for operation in &node.operations {
+            report(operation.pos, "local model has no server: `operation` is not allowed with `storage: :local`".into());
         }
     }
-    let mut schemas = 0;
     let mut subscriptions = HashSet::new();
-    for update in node.body.iter().flat_map(|call| if call.word == "listen" { vec![call] } else { call.block.iter().flatten().filter(|line| line.word == "updates").collect() }) {
-        if let Some(Node { item: Value::Const(name) | Value::Str(name), .. }) = update.args.first() {
-            if !subscriptions.insert(name) { report(update.line, update.column, format!("duplicate subscription `{name}`")); }
+    for update in node.subscriptions.iter().chain(node.scopes.iter().flat_map(|scope| &scope.subscriptions)) {
+        if !subscriptions.insert(update.name.as_str()) {
+            report(update.pos, format!("duplicate subscription `{}`", update.name));
         }
+        check_subscription(update, &mut report);
     }
     let mut member_names = HashSet::new();
-    let mut standard_words = HashSet::new();
-    let fields: HashSet<&str> = node
-        .body
-        .iter()
-        .filter(|call| call.word == "schema")
-        .flat_map(|schema| schema.block.iter().flatten())
-        .filter_map(|call| symbol_name(call.args.first()))
-        .collect();
-    let remotes: HashSet<&str> =
-        node.body.iter().filter(|call| call.word == "remote").filter_map(|call| symbol_name(call.args.first())).collect();
-    for call in &node.body {
-        if call.word == "schema" {
-            schemas += 1;
-            if schemas > 1 {
-                report(call.line, call.column, "`schema` is declared twice".to_string());
+    let members = node.scopes.iter().map(|scope| (scope.pos, scope.name.as_str()))
+        .chain(node.associations.iter().map(|association| (association.pos, association.name.as_str())))
+        .chain(node.operations.iter().map(|operation| (operation.pos, operation.name.as_str())));
+    for (pos, name) in members {
+        if !member_names.insert(name) {
+            report(pos, format!("name `{name}` is declared twice"));
+        }
+    }
+    for association in &node.associations {
+        let target = crate::build::association_target(association);
+        if !all.iter().any(|candidate| candidate.name == target) {
+            report(association.pos, format!("association `{}` targets unknown model `{target}`", association.name));
+        }
+    }
+    if node.changes.len() > 1 {
+        report(node.changes[1].pos, "duplicate changes subscription".into());
+    }
+    for (index, index_decl) in node.indexes.iter().enumerate() {
+        if node.indexes[..index].iter().any(|earlier| earlier.columns == index_decl.columns) {
+            report(index_decl.pos, format!("index on {} is declared twice", index_decl.columns.join(", ")));
+        }
+    }
+    for scope in &node.scopes {
+        check_scope(node, scope, &mut report);
+    }
+    let attributes = attributes::AttributeCheck { node, report: &mut report };
+    attributes.run();
+    for operation in &node.operations {
+        check_operation(node, all, operation, &mut report);
+    }
+}
+
+fn check_subscription(update: &SubscribeDecl, report: &mut impl FnMut(Pos, String)) {
+    let apply = &update.apply;
+    let name = &update.name;
+    let misplaced = |key: &str, allowed: &str| format!("subscription `{name}`: `{key}` applies only to effect {allowed}");
+    match apply.effect {
+        Effect::Ephemeral if apply.fields.is_empty() => report(apply.pos, "ephemeral apply requires nonempty fields and paths".into()),
+        Effect::Reread if apply.via.is_none() => report(apply.pos, "reread apply requires via".into()),
+        _ => {}
+    }
+    if apply.effect != Effect::Ephemeral && !apply.fields.is_empty() {
+        report(apply.pos, misplaced("fields", "`:ephemeral`"));
+    }
+    if apply.effect != Effect::Reread && apply.via.is_some() {
+        report(apply.pos, misplaced("via", "`:reread`"));
+    }
+    if apply.effect != Effect::Upsert && !apply.values.is_empty() {
+        report(apply.pos, misplaced("values", "`:upsert`"));
+    }
+    if apply.effect != Effect::Upsert && apply.delete_if.is_some() {
+        report(apply.pos, misplaced("delete_if", "`:upsert`"));
+    }
+    if matches!(apply.effect, Effect::Upsert | Effect::Delete) && !apply.matches.is_empty() {
+        report(apply.pos, misplaced("matches", "`:ephemeral`, `:reread` and `:ignore`"));
+    }
+}
+
+fn check_scope(node: &ModelDecl, scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
+    let name = &scope.name;
+    let mut names = HashSet::new();
+    for parameter in &scope.parameters {
+        if !names.insert(parameter.name.as_str()) {
+            report(parameter.pos, format!("scope `{name}`: parameter `{}` is declared twice", parameter.name));
+        }
+    }
+    let linked: Vec<&str> = scope.where_.iter().flat_map(|clause| clause.pairs.iter().map(|(_, parameter)| parameter.item.as_str())).collect();
+    if let Some(clause) = &scope.where_ {
+        let mut columns = HashSet::new();
+        for (column, parameter) in &clause.pairs {
+            if !scope.parameters.iter().any(|candidate| candidate.name == parameter.item) {
+                report(parameter.pos, format!("scope `{name}`: where value `:{}` is not declared with `parameter`", parameter.item));
+            }
+            if !columns.insert(column.item.as_str()) {
+                report(column.pos, format!("scope `{name}`: where column `{}` is given twice", column.item));
             }
         }
-        if call.word == "ephemeral" {
-            report(call.line, call.column, "`ephemeral` must be inside a `schema` block".to_string());
+    }
+    for parameter in &scope.parameters {
+        let is_linked = linked.contains(&parameter.name.as_str());
+        if !scope.is_remote() && !is_linked {
+            report(parameter.pos, format!("scope `{name}`: parameter `:{}` is not used in `where`", parameter.name));
+        }
+        if is_linked && (parameter.null || parameter.default.is_some()) {
+            report(parameter.pos, format!("scope `{name}`: parameter `:{}` filters a column: `null` and `default` apply to server-only parameters", parameter.name));
+        }
+        if scope.node.is_some() {
             continue;
         }
-        if call.word != "schema" && FIELD_WORDS.contains(&call.word.as_str()) || call.word == "index" {
-            report(call.line, call.column, format!("field `{}` must be inside a `schema` block", call.word));
-            continue;
-        }
-        check_call(call, Context::Model, &mut report);
-        if let Some(name) = symbol_name(call.args.first()).filter(|_| call.word != "schema") {
-            if !member_names.insert(name.to_string()) {
-                report(call.line, call.column, format!("name `{name}` is declared twice"));
+        check_scope_parameter(scope, parameter, is_linked, node, report);
+    }
+    if let Some(order) = &scope.order {
+        let mut seen = HashSet::new();
+        for (column, _, pos) in &order.fields {
+            if !seen.insert(column.as_str()) {
+                report(*pos, format!("scope `{name}`: order column `{column}` is given twice"));
             }
         }
-        if ASSOCIATION_WORDS.contains(&call.word.as_str()) {
-            check_target(call, all, &mut report);
-        }
-        if call.word == "remote" {
-            check_remote(call, &mut report);
-        }
-        if call.word == "scope" {
-            check_scope(call, &mut report);
-            if call.block.is_some() && !node.options.iter().any(|pair| pair.key == "storage" && pair.value.item == Value::Symbol("memory".into())) {
-                report(call.line, call.column, "`scope` takes no block".into());
-            }
-            for update in call.block.iter().flatten() { check_call(update, Context::Remote, &mut report); }
-        }
-        if matches!(call.word.as_str(), "create" | "update" | "destroy") {
-            if !standard_words.insert(call.word.as_str()) {
-                report(call.line, call.column, format!("`{}` is declared twice", call.word));
-            }
-            check_standard_input(call, &fields, &mut report);
-        }
-        if call.word == "action" {
-            check_action(call, &fields, &remotes, &mut report);
-        }
     }
-    for schema in node.body.iter().filter(|call| call.word == "schema") {
-        check_schema(schema, &mut report);
-    }
-}
-
-fn check_model_options(node: &ModelNode, report: &mut impl FnMut(usize, usize, String)) {
-    for pair in &node.options {
-        match pair.key.as_str() {
-            "storage" if !matches!(&pair.value.item, Value::Symbol(name) if name == "memory" || name == "disk" || name == "local") => {
-                report(pair.value.line, pair.value.column, "`storage` must be `:memory`, `:disk` or `:local`".to_string())
-            }
-            "storage" => {}
-            "expire_after" => check_value(pair, Want::Duration, report),
-            other => report(pair.line, pair.column, format!("unknown key `{other}` for `model`")),
-        }
-    }
-}
-
-fn check_standard_input(call: &Call, fields: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
-    let hash = |key: &str| match call.options.iter().find(|pair| pair.key == key) {
-        Some(Pair { value: Node { item: Value::Hash(pairs), .. }, .. }) => Some(pairs),
-        _ => None,
-    };
-    let args = hash("args").map(Vec::as_slice).unwrap_or_default();
-    for pair in args {
-        if !is_arg_kind(&pair.value.item) {
-            report(pair.value.line, pair.value.column, ARG_KIND_MESSAGE.to_string());
-        }
-        if fields.contains(pair.key.as_str()) {
-            report(call.line, call.column, format!("arg `{}` has the name of a field", pair.key));
-        }
-    }
-    let Some(pairs) = hash("input") else { return };
-    for pair in pairs {
-        match &pair.value.item {
-            Value::Symbol(field) if field == "id" || fields.contains(field.as_str()) || args.iter().any(|arg| arg.key == *field) => {}
-            Value::Symbol(field) => report(call.line, call.column, format!("input names unknown field `{field}`")),
-            _ => report(call.line, call.column, "input value must be a field symbol".to_string()),
-        }
-    }
-    for arg in args.iter().filter(|arg| !pairs.iter().any(|pair| matches!(&pair.value.item, Value::Symbol(name) if *name == arg.key))) {
-        report(call.line, call.column, format!("arg `{}` is not named by `input`", arg.key));
-    }
-}
-
-fn check_action(action: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
-    let lines: Vec<&Call> = action.block.iter().flatten().collect();
-    let mut seen = HashSet::new();
-    for call in &lines {
-        check_call(call, Context::Action, report);
-        if !seen.insert(call.word.as_str()) && !matches!(call.word.as_str(), "lands" | "refetch_of") {
-            report(call.line, call.column, format!("`{}` is declared twice", call.word));
-        }
-        check_action_line(call, fields, remotes, report);
-    }
-    if action.block.is_some() && seen.contains("mutation") == seen.contains("upload") {
-        report(action.line, action.column, "`action` needs exactly one `mutation` or `upload` line".to_string());
-    }
-    if seen.contains("renumber") && !seen.contains("batch") {
-        report(action.line, action.column, "`renumber` requires a batch declaration".into());
-    }
-    check_local_effect(action, &seen, report);
-}
-
-fn check_local_effect(action: &Call, seen: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
-    let Some(block) = &action.block else { return };
-    let name = symbol_name(action.args.first()).unwrap_or_default();
-    if let Some(effect) = block.iter().find(|call| call.word == "local_effect") {
-        let reason = effect.options.iter().find(|pair| pair.key == "reason").map(|pair| &pair.value.item);
-        if symbol_name(effect.args.first()) != Some("none") {
-            report(effect.line, effect.column, "`local_effect` must be `:none`".to_string());
-        }
-        if !matches!(reason, Some(Value::Str(text)) if !text.trim().is_empty()) {
-            report(effect.line, effect.column, "`local_effect :none` needs a non-empty `reason:` string".to_string());
-        }
-    } else if !seen.contains("optimistic") && !action.options.iter().any(|pair| pair.key == "optimistic") {
-        report(action.line, action.column, format!("`action :{name}` must declare `optimistic` or `local_effect :none, reason: \"...\"`"));
-    }
-}
-
-fn check_action_line(call: &Call, fields: &HashSet<&str>, remotes: &HashSet<&str>, report: &mut impl FnMut(usize, usize, String)) {
-    match call.word.as_str() {
-        "renumber" => {
-            for pair in &call.options {
-                let valid = match pair.key.as_str() {
-                    "position_from" => matches!(pair.value.item, Value::Int(0 | 1)),
-                    "position" | "size" => matches!(&pair.value.item, Value::Symbol(value) | Value::Str(value) if !value.is_empty()),
-                    _ => true,
-                };
-                if !valid { report(pair.line, pair.column, "renumber requires field paths and position_from: 0 or 1".into()); }
-            }
-        }
-        "input" => {
-            for pair in call.options.iter().filter(|pair| !matches!(pair.value.item, Value::Symbol(_))) {
-                report(pair.value.line, pair.value.column, "input value must be a field symbol".to_string());
-            }
-        }
-        "optimistic" => {
-            for pair in &call.options {
-                if !fields.contains(pair.key.as_str()) {
-                    report(pair.line, pair.column, format!("`optimistic` names unknown field `{}`", pair.key));
-                }
-                match &pair.value.item {
-                    Value::Array(_) => report(pair.value.line, pair.value.column, "optimistic value must be a literal".to_string()),
-                    Value::Hash(parts) => report_keyed_optimistic(parts, pair, report),
-                    _ => {}
+    if let Some(variables) = &scope.variables {
+        for binding in variables {
+            if let VariableValue::Parameter(parameter) = &binding.value {
+                if !scope.parameters.iter().any(|candidate| &candidate.name == parameter) {
+                    report(binding.pos, format!("scope `{name}`: variable `{}` names `:{parameter}`, which is not declared with `parameter`", binding.name));
                 }
             }
         }
-        "args" => {
-            for pair in call.options.iter().filter(|pair| !is_arg_kind(&pair.value.item)) {
-                report(pair.value.line, pair.value.column, ARG_KIND_MESSAGE.to_string());
+    }
+    if !scope.is_remote() {
+        return;
+    }
+    check_remote_scope(scope, report);
+}
+
+fn check_scope_parameter(scope: &ScopeDecl, parameter: &ParameterDecl, linked: bool, node: &ModelDecl, report: &mut impl FnMut(Pos, String)) {
+    let name = &scope.name;
+    let text_like = matches!((&parameter.ty.base, parameter.ty.list), (ParamBase::String | ParamBase::Id | ParamBase::Named(_), false));
+    let typed = matches!((&parameter.ty.base, parameter.ty.list), (ParamBase::Int | ParamBase::Bool, false));
+    if linked {
+        let Some((column, _)) = scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.name) else { return };
+        let Some(attribute) = node.attributes.iter().find(|attribute| attribute.name == column.item) else { return };
+        let fits = match (&attribute.ty, &parameter.ty.base, parameter.ty.list) {
+            (TypeRef::Scalar(ScalarKind::Id | ScalarKind::Str), ParamBase::Id | ParamBase::String, false) => true,
+            (TypeRef::Scalar(ScalarKind::Int), ParamBase::Int, false) => true,
+            (TypeRef::Scalar(ScalarKind::Num), ParamBase::Num, false) => true,
+            (TypeRef::Scalar(ScalarKind::Bool), ParamBase::Bool, false) => true,
+            (TypeRef::Scalar(ScalarKind::Date), ParamBase::String, false) => true,
+            (TypeRef::Enum, ParamBase::String | ParamBase::Named(_), false) => true,
+            (TypeRef::Scalar(_), _, _) => false,
+            _ => true,
+        };
+        if !fits {
+            report(parameter.pos, format!("scope `{name}`: parameter `:{}` is {} but column `{}` is a different type", parameter.name, parameter.ty.describe(), column.item));
+        }
+        return;
+    }
+    if !(text_like || typed) {
+        report(parameter.pos, format!("scope `{name}`: a server-only parameter is :string, :id, :int, :bool or an enum name"));
+        return;
+    }
+    let Some(default) = &parameter.default else { return };
+    let fits = matches!((&parameter.ty.base, parameter.ty.list, &default.item), (ParamBase::Named(_), false, serde_json::Value::String(_)));
+    if !fits {
+        report(default.pos, format!("scope `{name}`: default of `:{}` does not match its type {}: a default belongs to an enum parameter and is one of its values", parameter.name, parameter.ty.describe()));
+    }
+}
+
+fn check_remote_scope(scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
+    let name = &scope.name;
+    let paginated = scope.paginate.is_some();
+    let listed = scope.response.as_ref().is_some_and(|read| read.shape == Some(ResponseShape::List));
+    if paginated && listed {
+        report(scope.paginate.as_ref().map_or(scope.pos, |paginate| paginate.pos), format!("scope `{name}`: `paginate` and `response shape: :list` cannot be used together"));
+    }
+    if let Some(total) = &scope.total {
+        if !paginated {
+            report(total.pos, "`total` needs `paginate`".to_string());
+        }
+    }
+    let linked = scope.where_.is_some();
+    let server_only = scope.parameters.iter().any(|parameter| !scope.where_.iter().flat_map(|clause| &clause.pairs).any(|(_, linked)| linked.item == parameter.name));
+    if let Some(insert) = &scope.insert_on {
+        let mut sorted: Vec<_> = insert.item.iter().map(|source| *source as u8).collect();
+        sorted.sort_unstable();
+        let create = crate::decl::InsertOn::Create as u8;
+        let events = [crate::decl::InsertOn::Event as u8, crate::decl::InsertOn::Response as u8];
+        if sorted != [create] && sorted != events {
+            report(insert.pos, format!("scope `{name}`: `insert_on` is `[:create]` or `[:event, :response]`"));
+        } else if sorted == events && !linked {
+            report(insert.pos, format!("scope `{name}`: `insert_on: [:event, :response]` joins rows by their `where` columns and needs `where`"));
+        } else if sorted == events && server_only {
+            report(insert.pos, format!("scope `{name}`: `insert_on: [:event, :response]` joins rows by their `where` columns and a scope with server-only parameters has none, remove `insert_on:` and the server answer decides the members"));
+        }
+    }
+    if let Some(pos) = scope.stable_order {
+        if scope.order.is_none() || scope.where_.is_none() || server_only {
+            report(pos, format!("scope `{name}`: `stable_order: true` keeps the shown order of the rows that `where` selects and needs `order` and `where`, without server-only parameters"));
+        }
+    }
+    if !paginated {
+        for edge in &scope.edges {
+            report(edge.pos, format!("edge `{}` needs `paginate` in its scope", edge.name));
+        }
+    }
+    attributes::check_edges(&scope.edges, report);
+    match scope.node {
+        Some(NodeRead::One) => check_node_one(scope, report),
+        Some(NodeRead::Many) => check_node_many(scope, report),
+        None => {}
+    }
+}
+
+fn check_node_one(scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
+    let name = &scope.name;
+    if scope.parameters.len() != 1 || scope.parameters[0].ty.base != ParamBase::Id || scope.parameters[0].ty.list || scope.parameters[0].null || scope.parameters[0].default.is_some() {
+        report(scope.pos, format!("scope `{name}`: a `node: :one` scope has exactly one parameter, declared as `parameter :id, :id`"));
+    }
+    let bound = scope.variables.as_ref().is_some_and(|variables| variables.len() == 1 && matches!(&variables[0].value, VariableValue::Parameter(parameter) if scope.parameters.first().is_some_and(|declared| &declared.name == parameter)));
+    if !bound {
+        report(scope.pos, format!("scope `{name}`: a `node: :one` scope binds its parameter with `variables id: :id`"));
+    }
+    for (present, word) in [(scope.where_.is_some(), "where"), (scope.order.is_some(), "order"), (scope.paginate.is_some(), "paginate"), (scope.total.is_some(), "total"), (!scope.edges.is_empty(), "edge"), (scope.response.is_some(), "response"), (scope.insert_on.is_some(), "insert_on")] {
+        if present {
+            report(scope.pos, format!("scope `{name}`: `{word}` does not apply to a `node: :one` scope"));
+        }
+    }
+}
+
+fn check_node_many(scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
+    let name = &scope.name;
+    for (present, word) in [(!scope.parameters.is_empty(), "parameter"), (scope.where_.is_some(), "where"), (scope.order.is_some(), "order"), (scope.paginate.is_some(), "paginate"), (scope.total.is_some(), "total"), (!scope.edges.is_empty(), "edge"), (scope.variables.is_some(), "variables"), (scope.insert_on.is_some(), "insert_on")] {
+        if present {
+            report(scope.pos, format!("scope `{name}`: `{word}` does not apply to a `node: :many` scope"));
+        }
+    }
+    if scope.response.as_ref().is_some_and(|read| read.shape == Some(ResponseShape::One)) {
+        report(scope.pos, format!("scope `{name}`: a `node: :many` scope reads a list"));
+    }
+}
+
+fn check_parameters(parameters: &[ParameterDecl], attributes: &HashSet<&str>, standard: bool, report: &mut impl FnMut(Pos, String)) {
+    let mut names = HashSet::new();
+    for parameter in parameters {
+        if !names.insert(parameter.name.as_str()) {
+            report(parameter.pos, format!("parameter `{}` is declared twice", parameter.name));
+        }
+        if standard && attributes.contains(parameter.name.as_str()) {
+            report(parameter.pos, format!("parameter `{}` has the name of an attribute", parameter.name));
+        }
+        if parameter.default.is_some() {
+            report(parameter.pos, format!("parameter `{}`: an operation parameter has no `default`", parameter.name));
+        }
+    }
+}
+
+fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, report: &mut impl FnMut(Pos, String)) {
+    let name = &operation.name;
+    let attributes: HashSet<&str> = node.attributes.iter().chain(node.ephemeral.iter().flat_map(|group| &group.attributes)).map(|attribute| attribute.name.as_str()).collect();
+    let standard = operation.kind != OperationKind::Custom;
+    if operation.mutation.is_none() {
+        report(operation.pos, format!("operation `{name}` needs a `mutation` line"));
+    }
+    check_parameters(&operation.parameters, &attributes, standard, report);
+    if let Some(variables) = &operation.variables {
+        for binding in variables {
+            let VariableValue::Parameter(source) = &binding.value else { continue };
+            let known = source == "id" || attributes.contains(source.as_str()) || operation.parameters.iter().any(|parameter| &parameter.name == source);
+            if !known {
+                report(binding.pos, format!("variable `{}` names unknown attribute or parameter `{source}`", binding.name));
             }
         }
-        "result" => {
-            for pair in call.options.iter().filter(|pair| !matches!(&pair.value.item, Value::Symbol(kind) if ["bool", "int", "num", "string", "id"].contains(&kind.as_str()))) {
-                report(pair.value.line, pair.value.column, "result type must be :bool, :int, :num, :string or :id".to_string());
+    }
+    for parameter in &operation.parameters {
+        let in_variables = operation.variables.iter().flatten().any(|binding| matches!(&binding.value, VariableValue::Parameter(source) if *source == parameter.name));
+        let in_optimistic = matches!(&operation.optimistic, Some((OptimisticDecl::Fields(fields), _)) if fields.iter().any(|(_, value, _)| match value {
+            OptimisticValue::Parameter(name) => *name == parameter.name,
+            OptimisticValue::Keyed { element, .. } => element.iter().any(|(_, part)| matches!(part, OptimisticElement::Parameter(name) if *name == parameter.name)),
+            OptimisticValue::Literal(_) => false,
+        }));
+        let implicit = operation.upload.is_some() && operation.variables.is_none();
+        if !(in_variables || in_optimistic || implicit) {
+            report(parameter.pos, format!("parameter `{}` is used by neither `variables` nor `optimistic`", parameter.name));
+        }
+    }
+    match (&operation.optimistic, operation.kind) {
+        (None, OperationKind::Custom) => report(operation.pos, format!("operation `{name}` must declare `optimistic` fields or `optimistic false`")),
+        (Some((OptimisticDecl::Fields(fields), _)), _) => {
+            for (field, value, pos) in fields {
+                if !attributes.contains(field.as_str()) {
+                    report(*pos, format!("`optimistic` names unknown attribute `{field}`"));
+                }
+                check_optimistic_value(operation, value, *pos, report);
             }
         }
-        "on_failure" => {
-            if !symbol_name(call.args.first()).is_some_and(is_policy) {
-                report(call.line, call.column, "`on_failure` must be `:keep` or `:rollback`".to_string());
+        _ => {}
+    }
+    for refetch in &operation.refetch {
+        let target = refetch.model.as_deref().map_or(Some(node), |model| all.iter().find(|candidate| candidate.name == model));
+        match target {
+            None => report(refetch.pos, format!("`refetch` names unknown model `{}`", refetch.model.as_deref().unwrap_or_default())),
+            Some(target) if !target.scopes.iter().any(|scope| scope.name == refetch.scope && scope.is_remote()) => {
+                report(refetch.pos, format!("`refetch` names `{}`, which is not a scope with `query` of `{}`", refetch.scope, target.name));
             }
+            Some(_) => {}
         }
-        "refetch" => {
-            for name in call.args.iter().filter_map(|arg| symbol_name(Some(arg))).filter(|name| !remotes.contains(name)) {
-                report(call.line, call.column, format!("`refetch` names `{name}`, which is not a `remote`"));
+    }
+    let mut refetched = HashSet::new();
+    for refetch in &operation.refetch {
+        if !refetched.insert((refetch.scope.as_str(), refetch.model.as_deref())) {
+            report(refetch.pos, format!("`refetch :{}` is declared twice", refetch.scope));
+        }
+    }
+    for upsert in &operation.upserts {
+        if !all.iter().any(|candidate| candidate.name == upsert.model) {
+            report(upsert.pos, format!("`upsert` names unknown model `{}`", upsert.model));
+        }
+    }
+    if let Some(local) = &operation.local {
+        for name in local.iter().filter(|name| !attributes.contains(name.as_str())) {
+            report(operation.pos, format!("`local` names unknown attribute `{name}`"));
+        }
+    }
+    let ignored = matches!(operation.response, Some(ResponseDecl::Ignore));
+    if ignored && (!operation.upserts.is_empty() || operation.match_by.is_some()) {
+        report(operation.pos, format!("operation `{name}` ignores its response: `upsert` and `match_by` read it"));
+    }
+    check_batch(node, operation, report);
+}
+
+fn check_optimistic_value(operation: &OperationDecl, value: &OptimisticValue, pos: Pos, report: &mut impl FnMut(Pos, String)) {
+    let declared = |name: &str| operation.parameters.iter().any(|parameter| parameter.name == name);
+    match value {
+        OptimisticValue::Parameter(name) if !declared(name) => report(pos, format!("`optimistic` value `:{name}` is not declared with `parameter`")),
+        OptimisticValue::Keyed { element, .. } => {
+            for (_, part) in element {
+                if let OptimisticElement::Parameter(name) = part {
+                    if !declared(name) {
+                        report(pos, format!("`optimistic` element value `:{name}` is not declared with `parameter`"));
+                    }
+                }
             }
         }
         _ => {}
     }
 }
 
-fn check_schema(schema: &Call, report: &mut impl FnMut(usize, usize, String)) {
-    let mut names = HashSet::new();
-    for call in schema.block.iter().flatten() {
-        check_call(call, Context::Schema, report);
-        if call.word == "index" {
-            continue;
-        }
-        if let Some(name) = symbol_name(call.args.first()) {
-            if !names.insert(name.to_string()) {
-                report(call.line, call.column, format!("field `{name}` is declared twice"));
+fn check_batch(node: &ModelDecl, operation: &OperationDecl, report: &mut impl FnMut(Pos, String)) {
+    let name = &operation.name;
+    match (&operation.batch, &operation.length) {
+        (Some(batch), Some(length)) => {
+            if operation.upload.is_none() {
+                report(batch.pos, format!("operation `{name}`: `batch` belongs to an operation with `upload: true`"));
+            }
+            if length.attribute != batch.items {
+                report(length.pos, format!("operation `{name}`: `validates :{}` must name the batch items `{}`", length.attribute, batch.items));
+            }
+            let single = node.operations.iter().find(|candidate| candidate.name == batch.single);
+            if single.is_none_or(|single| single.upload.is_none() || single.batch.is_some()) {
+                report(batch.pos, format!("operation `{name}`: batch `single:` must name an operation with `upload: true` and no batch"));
             }
         }
-        if call.word == "list" {
-            check_list_element(call, report);
-        }
-        check_local(call, report);
-        if call.block.is_some() && matches!(call.word.as_str(), "object" | "array" | "union") {
-            check_nested_block(call, report);
-        }
+        (Some(batch), None) => report(batch.pos, format!("operation `{name}`: `batch` needs `validates :{}, length: {{ minimum:, maximum: }}`", batch.items)),
+        (None, Some(length)) => report(length.pos, format!("operation `{name}`: `validates` needs a `batch`")),
+        (None, None) => {}
     }
-    for ephemeral in schema.block.iter().flatten().filter(|call| call.word == "ephemeral") {
-        check_ephemeral(ephemeral, &mut names, report);
-    }
-}
-
-fn check_nested_block(owner: &Call, report: &mut impl FnMut(usize, usize, String)) {
-    let name = symbol_name(owner.args.first()).unwrap_or_default();
-    let calls: &[Call] = owner.block.as_deref().unwrap_or_default();
-    if crate::unions::is_union_call(owner) {
-        return check_union_block(owner, name, report);
-    }
-    check_field_block(owner, name, calls, report);
-}
-
-fn check_union_block(owner: &Call, name: &str, report: &mut impl FnMut(usize, usize, String)) {
-    let calls: &[Call] = owner.block.as_deref().unwrap_or_default();
-    let mut typenames: Vec<&str> = Vec::new();
-    let mut repeated = false;
-    let shared_calls: Vec<&Call> = calls.iter().filter(|call| call.word == "shared").collect();
-    let shared_names: Vec<&str> = shared_calls.iter().flat_map(|call| call.block.iter().flatten()).filter_map(|field| symbol_name(field.args.first())).collect();
-    for call in calls {
-        check_call(call, Context::Union, report);
-        if call.word == "shared" {
-            if !std::ptr::eq(*shared_calls.first().unwrap_or(&call), call) {
-                report(call.line, call.column, "`shared` is declared twice".to_string());
-                continue;
-            }
-            let block: &[Call] = call.block.as_deref().unwrap_or_default();
-            check_field_block(call, "shared", block, report);
-            for field in block.iter().filter(|field| symbol_name(field.args.first()) == Some("kind")) {
-                report(field.line, field.column, "`kind` is reserved: a union with `shared` fields already has a `kind` property".to_string());
-            }
-            continue;
+    if let (Some(batch), Some(length)) = (&operation.batch, &operation.length) {
+        if length.minimum < 2 || length.maximum > 10 || length.minimum > length.maximum {
+            report(length.pos, format!("operation `{name}`: batch length needs 2 <= minimum <= maximum <= 10"));
         }
-        let Some(Node { item: Value::Const(typename), .. }) = call.args.first() else { continue };
-        if typenames.contains(&typename.as_str()) {
-            repeated = true;
-            report(call.line, call.column, format!("variant `{typename}` is declared twice"));
-            continue;
-        }
-        typenames.push(typename);
-        if let Some(block) = &call.block {
-            if block.is_empty() && !shared_names.is_empty() {
-                continue;
-            }
-            check_field_block(call, typename, block, report);
-            for field in block.iter().filter(|field| symbol_name(field.args.first()).is_some_and(|field| shared_names.contains(&field))) {
-                report(field.line, field.column, format!("field `{}` is declared twice: it is also a `shared` field", symbol_name(field.args.first()).unwrap_or_default()));
+        if let Some(renumber) = &batch.renumber {
+            if renumber.position.item == renumber.size.item {
+                report(renumber.position.pos, "renumber `position` and `size` name the same field".to_string());
             }
         }
-    }
-    if repeated {
-        return;
-    }
-    let union = option_const(owner, "as").unwrap_or(name);
-    if let Err(message) = crate::unions::check_cases(union, &crate::unions::cases_of(calls)) {
-        report(owner.line, owner.column, message);
-    }
-}
-
-fn option_const<'a>(call: &'a Call, key: &str) -> Option<&'a str> {
-    call.options.iter().find(|pair| pair.key == key).and_then(|pair| match &pair.value.item {
-        Value::Const(name) => Some(name.as_str()),
-        _ => None,
-    })
-}
-
-fn check_field_block(owner: &Call, name: &str, calls: &[Call], report: &mut impl FnMut(usize, usize, String)) {
-    if calls.is_empty() {
-        report(owner.line, owner.column, format!("`{name}` block needs at least 1 field"));
-    }
-    let mut names = HashSet::new();
-    for call in calls {
-        check_call(call, Context::Nested, report);
-        let field = symbol_name(call.args.first()).unwrap_or_default();
-        if !names.insert(field.to_string()) {
-            report(call.line, call.column, format!("field `{field}` is declared twice"));
-        }
-        if let Some(pair) = call.options.iter().find(|pair| pair.key == "from") {
-            if !matches!(&pair.value.item, Value::Str(key) | Value::Symbol(key) if !key.is_empty()) {
-                report(pair.value.line, pair.value.column, "nested `from:` must be a non-empty response path".to_string());
-            }
-        }
-        if call.word == "list" {
-            check_list_element(call, report);
-        }
-        if call.block.is_some() {
-            check_nested_block(call, report);
-        }
-    }
-}
-
-fn check_local(call: &Call, report: &mut impl FnMut(usize, usize, String)) {
-    let has = |key: &str| call.options.iter().any(|pair| pair.key == key);
-    if !call.options.iter().any(|pair| pair.key == "local" && pair.value.item == Value::Bool(true)) {
-        return;
-    }
-    let name = symbol_name(call.args.first()).unwrap_or_default();
-    if !has("optional") && !has("null") {
-        report(call.line, call.column, format!("local field `{name}` needs `optional: true` or `null: true`"));
-    } else if has("merge") || has("index") || has("default") || has("from") || has("id_from") {
-        report(call.line, call.column, format!("local field `{name}` cannot set `merge`, `index`, `default`, `from` or `id_from`"));
-    }
-}
-
-fn check_ephemeral(block: &Call, names: &mut HashSet<String>, report: &mut impl FnMut(usize, usize, String)) {
-    for call in block.block.iter().flatten() {
-        let name = symbol_name(call.args.first()).unwrap_or_default();
-        if call.word == "file" {
-            report(call.line, call.column, format!("ephemeral field `{name}` cannot be a file"));
-            continue;
-        }
-        check_call(call, Context::Ephemeral, report);
-        if !name.is_empty() && !names.insert(name.to_string()) {
-            report(call.line, call.column, format!("field `{name}` is declared twice"));
-        }
-        let has = |key: &str| call.options.iter().any(|pair| pair.key == key);
-        let nullable = call.options.iter().any(|pair| pair.key == "null" && pair.value.item == Value::Bool(true));
-        if has("index") {
-            report(call.line, call.column, format!("ephemeral field `{name}` cannot be indexed"));
-        } else if has("reset_after") && !has("default") {
-            report(call.line, call.column, "`reset_after` needs `default:`".to_string());
-        } else if !has("default") && !nullable && EPHEMERAL_WORDS.contains(&call.word.as_str()) {
-            report(call.line, call.column, format!("ephemeral field `{name}` needs `default:` or `null: true`"));
-        }
-        if call.word == "list" {
-            check_list_element(call, report);
-        }
-    }
-}
-
-fn check_list_element(call: &Call, report: &mut impl FnMut(usize, usize, String)) {
-    let Some(pair) = call.options.iter().find(|pair| pair.key == "of") else { return };
-    let valid = matches!(&pair.value.item, Value::Symbol(name) if SCALAR_WORDS.contains(&name.as_str()) || name == "enum");
-    if !valid {
-        let message = format!("`of` must be one of {}, enum", SCALAR_WORDS.join(", "));
-        report(pair.value.line, pair.value.column, message);
-        return;
-    }
-    let enumeration = matches!(&pair.value.item, Value::Symbol(name) if name == "enum");
-    let has = |key: &str| call.options.iter().any(|candidate| candidate.key == key);
-    if enumeration && !has("values") {
-        report(call.line, call.column, "a list of `:enum` needs `values:`".to_string());
-    }
-    if !enumeration && (has("values") || has("as")) {
-        report(call.line, call.column, "`values:` and `as:` belong to a list of `:enum`".to_string());
-    }
-}
-
-fn check_target(call: &Call, all: &[ModelNode], report: &mut impl FnMut(usize, usize, String)) {
-    let target = crate::build::association_target(call);
-    if !all.iter().any(|node| node.name == target) {
-        let name = symbol_name(call.args.first()).unwrap_or_default();
-        report(call.line, call.column, format!("association `{name}` targets unknown model `{target}`"));
-    }
-    let dependent = call.options.iter().find(|pair| pair.key == "dependent");
-    if let Some(pair) = dependent.filter(|pair| pair.value.item != Value::Symbol("destroy".to_string())) {
-        report(pair.line, pair.column, "`dependent` must be `:destroy`".to_string());
-    }
-}
-
-fn check_scope(call: &Call, report: &mut impl FnMut(usize, usize, String)) {
-    let option = |name: &str| call.options.iter().find(|pair| pair.key == name);
-    let params: Vec<&str> = match option("params").map(|pair| &pair.value.item) {
-        Some(Value::Array(items)) => items.iter().filter_map(|item| symbol_name(Some(item))).collect(),
-        _ => Vec::new(),
-    };
-    if let Some(Value::Hash(pairs)) = option("where").map(|pair| &pair.value.item) {
-        for pair in pairs {
-            match &pair.value.item {
-                Value::Symbol(name) if params.contains(&name.as_str()) => {}
-                Value::Symbol(name) => {
-                    report(call.line, call.column, format!("where value `:{name}` is not listed in `params`"))
-                }
-                _ => report(call.line, call.column, "where value must be a parameter symbol".to_string()),
-            }
-        }
-    }
-    let used: Vec<&str> = match option("where").map(|pair| &pair.value.item) {
-        Some(Value::Hash(pairs)) => pairs.iter().filter_map(|pair| symbol_name(Some(&pair.value))).collect(),
-        _ => Vec::new(),
-    };
-    for name in params.iter().filter(|name| !used.contains(name)) {
-        report(call.line, call.column, format!("param `:{name}` is not used in `where`"));
-    }
-    if let Some(Value::Hash(pairs)) = option("order").map(|pair| &pair.value.item) {
-        let valid = |pair: &Pair| matches!(&pair.value.item, Value::Symbol(name) if SortDirection::parse(name).is_some());
-        if pairs.iter().any(|pair| !valid(pair)) {
-            report(call.line, call.column, "order direction must be `:asc`, `:desc`, `:asc_nulls_last` or `:desc_nulls_first`".to_string());
-        }
-    }
-}
-
-fn check_remote(remote: &Call, report: &mut impl FnMut(usize, usize, String)) {
-    let lines: Vec<&Call> = remote.block.iter().flatten().collect();
-    for call in &lines {
-        check_call(call, Context::Remote, report);
-    }
-    let has = |word: &str| lines.iter().any(|call| call.word == word);
-    if has("paginate") && has("list") {
-        report(remote.line, remote.column, "`paginate` and `list` cannot be used together".to_string());
-    }
-    if let Some(pair) = remote.options.iter().find(|pair| pair.key == "joins" && matches!(&pair.value.item, Value::Symbol(kind) if kind == "events")).filter(|_| remote.options.iter().any(|pair| pair.key == "text")) {
-        report(pair.line, pair.column, format!("scope `{}`: `joins: :events` joins rows by their `where` columns and a scope with `text:` params has none, remove `joins:` and the server answer decides the members", symbol_name(remote.args.first()).unwrap_or_default()));
-    }
-    if let Some(pair) = remote.options.iter().find(|pair| pair.key == "order_stable" && pair.value.item == Value::Bool(true)) {
-        let declared = |key: &str| remote.options.iter().any(|option| option.key == key);
-        if !declared("order") || !declared("params") || declared("text") {
-            report(pair.line, pair.column, format!("scope `{}`: `order_stable: true` keeps the shown order of the rows that `where` selects and needs `order` and `where`, without `text:` params", symbol_name(remote.args.first()).unwrap_or_default()));
-        }
-    }
-    if let Some(call) = lines.iter().find(|call| call.word == "max_pages").filter(|_| !has("paginate")) {
-        report(call.line, call.column, "`max_pages` needs `paginate`".to_string());
-    }
-    check_edges(&lines, has("paginate"), report);
-    if let Some(call) = lines.iter().find(|call| call.word == "total").filter(|_| !has("paginate")) {
-        report(call.line, call.column, "`total` needs `paginate`".to_string());
-    }
-    let mut seen = HashSet::new();
-    for call in &lines {
-        if !matches!(call.word.as_str(), "updates" | "edge") && !seen.insert(call.word.as_str()) {
-            report(call.line, call.column, format!("`{}` is declared twice", call.word));
-        }
-    }
-}
-
-fn check_edges(lines: &[&Call], paginated: bool, report: &mut impl FnMut(usize, usize, String)) {
-    let mut names = HashSet::new();
-    for edge in lines.iter().filter(|call| call.word == "edge") {
-        let Some(field) = edge.block.iter().flatten().next() else { continue };
-        check_call(field, Context::Schema, report);
-        let name = symbol_name(field.args.first()).unwrap_or_default();
-        let has = |key: &str| field.options.iter().any(|pair| pair.key == key);
-        if !names.insert(name.to_string()) {
-            report(field.line, field.column, format!("edge `{name}` is declared twice"));
-        } else if !paginated {
-            report(field.line, field.column, format!("edge `{name}` needs `paginate` in its scope"));
-        } else if !has("null") && !has("optional") {
-            report(field.line, field.column, format!("edge `{name}` needs `null: true` or `optional: true`"));
-        } else if has("parse") {
-            report(field.line, field.column, format!("edge `{name}` cannot set `parse`"));
-        } else if ["merge", "local", "index", "default"].iter().any(|key| has(key)) {
-            report(field.line, field.column, format!("edge `{name}` cannot set `merge`, `local`, `index` or `default`"));
-        }
-    }
-}
-
-fn check_call(call: &Call, context: Context, report: &mut impl FnMut(usize, usize, String)) {
-    let Some(word) = word_for(context, &call.word) else {
-        report(call.line, call.column, format!("unknown word `{}`", call.word));
-        return;
-    };
-    check_shape(call, word.shape, report);
-    match (&call.block, word.block) {
-        (None, true) if call.word == "scope" => {}
-        (None, true) if call.word == "action" && call.options.iter().any(|pair| pair.key == "mutation") => {}
-        (None, true) => report(call.line, call.column, format!("`{}` needs a `do ... end` block", call.word)),
-        (Some(_), false) if matches!(context, Context::Schema | Context::Nested) && matches!(call.word.as_str(), "object" | "array" | "union") => {}
-        (Some(_), false) if context == Context::Union => {}
-        (Some(_), false) => report(call.line, call.column, format!("`{}` takes no block", call.word)),
-        _ => {}
-    }
-    for pair in &call.options {
-        match word.keys.iter().find(|candidate| candidate.name == pair.key) {
-            None if word.free_keys => {}
-            None => report(pair.line, pair.column, format!("unknown key `{}` for `{}`", pair.key, call.word)),
-            Some(expected) => check_value(pair, expected.want, report),
-        }
-    }
-    for expected in word.keys.iter().filter(|candidate| candidate.required) {
-        if !call.options.iter().any(|pair| pair.key == expected.name) {
-            report(call.line, call.column, format!("`{}` needs `{}:`", call.word, expected.name));
-        }
-    }
-    check_response_paths(call, context, report);
-    if let Some(pair) = call.options.iter().find(|pair| pair.key == "parse") {
-        if call.word == "raw" && pair.value.item != Value::Symbol("json".to_string()) {
-            report(pair.line, pair.column, "raw `parse:` accepts only `:json`".to_string());
-        }
-        if let Some(default) = call.options.iter().find(|pair| pair.key == "default") {
-            if !matches!(default.value.item, Value::Hash(_) | Value::Nil) {
-                report(default.line, default.column, "raw `parse: :json` default must be an object or null".to_string());
-            }
-        }
-    }
-}
-
-fn check_response_paths(call: &Call, context: Context, report: &mut impl FnMut(usize, usize, String)) {
-    let option_paths: &[(&str, &str)] = match (context, call.word.as_str()) {
-        (Context::Nested, _) => &[("from", "from")],
-        (Context::Model, "create" | "update" | "destroy") => &[("root", "root")],
-        (Context::Model, "listen") => &[("root", "listen root"), ("id", "listen id")],
-        (Context::Remote, "updates") => &[("root", "updates root"), ("id", "updates id")],
-        (Context::Remote, "query") => &[("root", "root")],
-        (Context::Remote, "total") => &[("from", "total")],
-        (Context::Remote, "paginate") => &[("from", "paginate from")],
-        (Context::Action, "lands") => &[("root", "lands")],
-        _ => &[],
-    };
-    let mut paths: Vec<(&str, &Node<Value>)> = option_paths.iter().filter_map(|(key, label)| call.options.iter().find(|pair| pair.key == *key).map(|pair| (*label, &pair.value))).collect();
-    if (context, call.word.as_str()) == (Context::Action, "root") {
-        paths.extend(call.args.first().map(|arg| ("root", arg)));
-    }
-    for (label, node) in paths {
-        if let Value::Symbol(path) | Value::Str(path) | Value::Const(path) = &node.item {
-            if path.split('.').any(str::is_empty) {
-                report(node.line, node.column, format!("{label} `{path}` has an empty segment"));
-            }
-        }
-    }
-}
-
-fn check_shape(call: &Call, shape: Shape, report: &mut impl FnMut(usize, usize, String)) {
-    let word = &call.word;
-    let args = call.args.as_slice();
-    let message = match shape {
-        Shape::Name if !matches!(args, [Node { item: Value::Symbol(_), .. }]) => format!("`{word}` needs a name like `:name`"),
-        Shape::Names if args.is_empty() || args.iter().any(|arg| !matches!(arg.item, Value::Symbol(_))) => {
-            format!("`{word}` needs field names like `:a` or `:a, :b`")
-        }
-        Shape::Const if !matches!(args, [Node { item: Value::Const(_) | Value::Str(_), .. }]) => {
-            format!("`{word}` needs an operation name like `MomentsFeed` or \"feed\"")
-        }
-        Shape::Int if !matches!(args, [Node { item: Value::Int(_), .. }]) => format!("`{word}` needs a number"),
-        Shape::Duration if !matches!(args, [Node { item: Value::Duration { .. }, .. }]) => {
-            format!("`{word}` needs a duration like `5.minutes`")
-        }
-        Shape::Symbols if args.is_empty() || args.iter().any(|arg| !matches!(arg.item, Value::Symbol(_))) => {
-            format!("`{word}` needs 1 or more names like `:a, :b`")
-        }
-        Shape::Paths if args.is_empty() || args.iter().any(|arg| !matches!(arg.item, Value::Symbol(_) | Value::Str(_))) => {
-            format!("`{word}` needs 1 or more names like `:a, \"media.blobId\"`")
-        }
-        Shape::Nothing if !args.is_empty() => format!("`{word}` takes no arguments"),
-        _ => return,
-    };
-    report(call.line, call.column, message);
-}
-
-fn check_value(pair: &Pair, want: Want, report: &mut impl FnMut(usize, usize, String)) {
-    let value = &pair.value.item;
-    let key = &pair.key;
-    let message = match want {
-        Want::Bool if !matches!(value, Value::Bool(_)) => format!("`{key}` must be true or false"),
-        Want::Symbol if !matches!(value, Value::Symbol(_)) => format!("`{key}` must be a symbol like `:name`"),
-        Want::TypeName if !matches!(value, Value::Const(_)) => format!("`{key}` must be a type name like `MomentMedia`"),
-        Want::Const if !matches!(value, Value::Const(_)) => format!("`{key}` must be a model name like `User`"),
-        Want::Operation if !matches!(value, Value::Const(_) | Value::Str(_)) => {
-            format!("`{key}` must be an operation name like `CreateMoment` or \"likeMoment\"")
-        }
-        Want::Symbols if !is_symbol_list(value) => format!("`{key}` must be a list of symbols"),
-        Want::TextParams if !is_text_params(value) => format!("`{key}` must be a list of names like `[:query]` or typed names like `[list: :ChatList]`"),
-        Want::TypedParams if !is_typed_params(value) => format!("`{key}` must be a list of typed names like `[afterSequence: :int, includeGifts: :bool]`"),
-        Want::Hash if !matches!(value, Value::Hash(_)) => format!("`{key}` must be a hash like `{{ field: :param }}`"),
-        Want::Duration if !matches!(value, Value::Duration { .. }) => format!("`{key}` must be a duration like `5.minutes`"),
-        Want::Policy if !matches!(value, Value::Symbol(name) if is_policy(name)) => format!("`{key}` must be `:keep` or `:rollback`"),
-        Want::Merge if !is_merge(value) => format!("`{key}` must be `:present`, `:non_empty`, `:positive`, `:monotonic`, a list of tiers like `[[:a, :b], [:c]]` or a hash of those per key (a key may also be `:local`)"),
-        _ => return,
-    };
-    report(pair.value.line, pair.value.column, message);
-}
-
-fn is_merge(value: &Value) -> bool {
-    match value {
-        Value::Symbol(name) => matches!(name.as_str(), "present" | "non_empty" | "positive" | "monotonic"),
-        Value::Hash(pairs) => !pairs.is_empty() && pairs.iter().all(|pair| matches!(&pair.value.item, Value::Symbol(name) if name == "local") || is_merge(&pair.value.item) && !matches!(pair.value.item, Value::Hash(_))),
-        Value::Array(tiers) => !tiers.is_empty() && tiers.iter().all(|tier| matches!(&tier.item, Value::Array(names) if !names.is_empty() && names.iter().all(|name| matches!(name.item, Value::Symbol(_) | Value::Str(_))))),
-        _ => false,
-    }
-}
-
-fn is_policy(name: &str) -> bool {
-    matches!(name, "keep" | "rollback")
-}
-
-fn is_typed_params(value: &Value) -> bool {
-    match value {
-        Value::Array(items) => !items.is_empty() && items.iter().all(|item| matches!(&item.item, Value::Hash(pairs) if pairs.iter().all(|pair| matches!(&pair.value.item, Value::Symbol(kind) if matches!(kind.as_str(), "int" | "bool"))))),
-        _ => false,
-    }
-}
-
-fn is_text_params(value: &Value) -> bool {
-    match value {
-        Value::Array(items) => items.iter().all(|item| match &item.item {
-            Value::Symbol(_) | Value::Str(_) => true,
-            Value::Hash(pairs) => matches!(pairs.as_slice(), [Pair { value: Node { item: Value::Symbol(kind), .. }, .. }] if kind.starts_with(char::is_uppercase)),
-            _ => false,
-        }),
-        _ => false,
-    }
-}
-
-fn is_symbol_list(value: &Value) -> bool {
-    match value {
-        Value::Array(items) => items.iter().all(|item| matches!(item.item, Value::Symbol(_) | Value::Str(_))),
-        _ => false,
-    }
-}
-
-fn symbol_name(node: Option<&Node<Value>>) -> Option<&str> {
-    match node.map(|node| &node.item) {
-        Some(Value::Symbol(name)) => Some(name),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod check_tests;
-#[cfg(test)]
-mod option_tests;
-#[cfg(test)]
-mod edge_tests;
-
-fn report_keyed_optimistic(parts: &[Pair], pair: &Pair, report: &mut impl FnMut(usize, usize, String)) {
-    let by = parts.iter().find(|part| part.key == "by").and_then(|part| match &part.value.item {
-        Value::Symbol(name) => Some(name.as_str()),
-        _ => None,
-    });
-    let element = parts.iter().find(|part| part.key == "element").and_then(|part| match &part.value.item {
-        Value::Hash(fields) => Some(fields),
-        _ => None,
-    });
-    let keyed = parts.len() == 2 && by.is_some_and(|by| element.is_some_and(|fields| fields.iter().any(|field| field.key == by)));
-    if !keyed {
-        report(pair.value.line, pair.value.column, "optimistic hash must be `{ by: :key, element: { key: :arg, ... } }` with the key among the element fields".to_string());
     }
 }

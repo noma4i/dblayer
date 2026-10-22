@@ -44,40 +44,35 @@ Models are described in `.dbl` files with a Rails-like syntax:
 
 ```ruby
 model Moment do
-  field :uuid, type: :string
-  field :userId, type: :id, null: true
-  field :text, type: :string, null: true
-  field :media, type: :file, null: true
-  field :createdAt, type: :date
-
+  attribute :uuid, :string
+  attribute :userId, :id, null: true
+  attribute :text, :string, null: true
+  attribute :media, :file, null: true
+  attribute :createdAt, :date
   index :uuid
   index :userId, :createdAt
-
-  belongs_to :author, model: User, key: :userId, touch: true
+  belongs_to :author, class_name: User, foreign_key: :userId, touch: true
   has_many :vibes, dependent: :destroy
-
   scope :recent do
     order createdAt: :desc
   end
-
   scope :feed do
-    fetch MomentsFeed
-    updates MomentEvents, deleted_by: :destroyed
-    fresh_for 5.minutes
+    query "MomentsFeed"
+    freshness expires_in: 5.minutes
+    subscribe "MomentEvents", apply: { effect: :upsert, delete_if: "destroyed" }
   end
-
   operation :create do
-    mutation CreateMoment
+    mutation "CreateMoment"
   end
   operation :destroy do
-    mutation DeleteMoment
+    mutation "DeleteMoment"
   end
 end
 ```
 
-The generator turns these files into typed Swift and Kotlin models and a model specification for the core. Nested `object` and `array` blocks generate their value types too, with reusable names, optional fields, defaults and JSON key aliases. Keep field declarations in `.dbl` and add app behavior in extensions. See [describing models](docs/models.md#nested-objects-and-lists).
+The generator turns these files into typed Swift and Kotlin models and a model specification for the core. Nested `attribute` blocks generate their value types too, with reusable names, optional attributes, defaults and JSON key aliases. Keep attribute declarations in `.dbl` and add app behavior in extensions. See [describing models](docs/models.md#nested-objects-and-lists).
 
-A model reads one entity with GraphQL `node(id:)` through `node`, and `Group.node(id)` returns the typed row or nil. See [node reads](docs/models.md#node-reads).
+A scope declared with `node: :one` reads one entity with GraphQL `node(id:)`, and `Group.node(id)` returns the typed row or nil. See [node reads](docs/models.md#node-reads).
 
 Use `dblayer-gen explain models/*.dbl` to inspect generated tables, indexes and SQLite query plans before building the app.
 

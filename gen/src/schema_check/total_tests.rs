@@ -13,7 +13,7 @@ type ChatMemberEdge { cursor: Cursor! node: User! }
 type PageInfo { hasNextPage: Boolean! endCursor: Cursor }
 "#;
 
-const USER: &str = "model User do\n  field :fullName, type: :string, null: true\n  scope :chat_members, text: [:chatId] do\n    fetch ChatMembers, root: \"node.members\"\n    paginate 30\n    total from: \"node.membersCount\"\n    fresh_for 5.minutes\n  end\nend\n";
+const USER: &str = "model User do\n  attribute :fullName, :string, null: true\n  scope :chat_members do\n    parameter :chatId, :string\n    query \"ChatMembers\"\n    response from: \"node.members\"\n    paginate size: 30, direction: :forward\n    freshness expires_in: 5.minutes\n    total from: \"node.membersCount\"\n  end\nend\n";
 
 const OPERATION: &str = "query ChatMembers($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { membersCount members(first: $first, after: $after) { edges { cursor node { id fullName } } pageInfo { hasNextPage endCursor } } } } }\n";
 
@@ -55,7 +55,7 @@ fn a_document_that_does_not_select_the_total_field_is_refused() {
 
 #[test]
 fn total_needs_paginate_and_a_from_path() {
-    let without_paginate = parse_models(&USER.replace("    paginate 30\n", "    list\n")).unwrap_err();
+    let without_paginate = parse_models(&USER.replace("    paginate size: 30, direction: :forward\n", "").replace("response from: \"node.members\"", "response from: \"node.members\", shape: :list")).unwrap_err();
     assert!(without_paginate.iter().any(|error| error.message.contains("`total` needs `paginate`")), "{without_paginate:?}");
     let without_from = parse_models(&USER.replace("total from: \"node.membersCount\"", "total")).unwrap_err();
     assert!(without_from.iter().any(|error| error.message.contains("from")), "{without_from:?}");

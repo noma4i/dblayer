@@ -13,7 +13,7 @@ type ChatMemberEdge { cursor: Cursor! node: User! }
 type PageInfo { hasNextPage: Boolean! endCursor: Cursor }
 "#;
 
-const USER: &str = "model User do\n  field :fullName, type: :string, null: true\n  scope :chat_members, text: [:chatId] do\n    fetch ChatMembers, root: \"node.members\"\n    paginate 30\n    fresh_for 5.minutes\n  end\nend\n";
+const USER: &str = "model User do\n  attribute :fullName, :string, null: true\n  scope :chat_members do\n    parameter :chatId, :string\n    query \"ChatMembers\"\n    response from: \"node.members\"\n    paginate size: 30, direction: :forward\n    freshness expires_in: 5.minutes\n  end\nend\n";
 
 const OPERATION: &str = "query ChatMembers($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { members(first: $first, after: $after) { edges { cursor node { id fullName } } pageInfo { hasNextPage endCursor } } } } }\n";
 

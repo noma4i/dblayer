@@ -234,7 +234,7 @@ impl Db {
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;
                 envelope.operation_transitions = plan.transitions;
-                envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::RolledBack, once: false });
+                envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::RolledBack });
                 discarded = plan.discarded_files;
                 Ok(Some(envelope))
             })

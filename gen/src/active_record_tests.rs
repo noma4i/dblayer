@@ -8,7 +8,7 @@ use crate::{emit_kotlin, emit_swift, parse_models};
 
 #[test]
 fn singular_associations_preserve_names_ending_in_s() {
-    let models = parse_models("model Entry do\n field :statusId, type: :id\n belongs_to :status\n has_one :address\nend\nmodel Status do\nend\nmodel Address do\n field :entryId, type: :id\nend\n").unwrap();
+    let models = parse_models("model Entry do\n  attribute :statusId, :id\n  belongs_to :status\n  has_one :address\nend\n\nmodel Status do\nend\n\nmodel Address do\n  attribute :entryId, :id\nend\n").unwrap();
     let associations = &models[0].associations;
     assert_eq!(associations[0].target.as_str(), "Status");
     assert_eq!(associations[1].target.as_str(), "Address");
@@ -24,21 +24,21 @@ fn standalone_operations_match_document_names_kinds_and_inputs() {
     std::fs::write(&document, "mutation Save($input: NoteInput!) { save(input: $input) }").unwrap();
     let mut accepted = Vec::new();
     for body in [
-        "mutation Missing",
-        "query Save\n args input: :NoteInput",
-        "mutation Save\n args input: :OtherInput",
-        "mutation Save\n args input: :NoteInput?",
-        "mutation Save",
-        "mutation Save\n wrap :input\n args priority: :int",
-        "mutation Save\n wrap :input\n args text: :int",
-        "mutation Save\n wrap :input\n args text: :string, extra: :string",
+        "mutation \"Missing\"",
+        "query Save\n parameter :input, NoteInput",
+        "mutation \"Save\"\n parameter :input, OtherInput",
+        "mutation \"Save\"\n parameter :input, NoteInput, null: true",
+        "mutation \"Save\"",
+        "mutation \"Save\"\n wrap \"input\"\n parameter :priority, :int",
+        "mutation \"Save\"\n wrap \"input\"\n parameter :text, :int",
+        "mutation \"Save\"\n wrap \"input\"\n parameter :text, :string\nparameter :extra, :string",
     ] {
         std::fs::write(&source, format!("operation :save do\n{body}\nend\n")).unwrap();
         if crate::compile_files(&[&source], Some(&schema), std::slice::from_ref(&document)).is_ok() { accepted.push(body); }
     }
     assert!(accepted.is_empty(), "accepted invalid operations: {accepted:?}");
-    for body in ["args input: :NoteInput", "wrap :input\n args text: :string, priority: :int?", "wrap :input\n args text: :string"] {
-        std::fs::write(&source, format!("operation :save do\n mutation Save\n{body}\nend\n")).unwrap();
+    for body in ["parameter :input, NoteInput", "wrap \"input\"\n parameter :text, :string\nparameter :priority, :int, null: true", "wrap \"input\"\n parameter :text, :string"] {
+        std::fs::write(&source, format!("operation :save do\n mutation \"Save\"\n{body}\nend\n")).unwrap();
         assert!(crate::compile_files(&[&source], Some(&schema), std::slice::from_ref(&document)).is_ok(), "{body}");
     }
 }
@@ -46,7 +46,7 @@ fn standalone_operations_match_document_names_kinds_and_inputs() {
 #[test]
 fn operation_effect_requirements_do_not_depend_on_application_model_names() {
     let accepted = ["Chat", "Group"].into_iter().filter(|model| {
-        parse_models(&format!("model {model} do\n operation :leave do\n mutation Leave\n end\nend\n")).is_ok()
+        parse_models(&format!("model {model} do\n operation :leave do\n mutation \"Leave\"\n end\nend\n")).is_ok()
     }).collect::<Vec<_>>();
     assert!(accepted.is_empty(), "models exempt from declaring their effect: {accepted:?}");
 }
@@ -62,16 +62,16 @@ fn replaced_declarations_are_not_accepted_as_another_dsl() {
         "update with: Update",
         "destroy with: Destroy",
         "scope :all, order: { name: :asc } do\n end",
-        "field :tags, type: :list, of: :string",
-        "field :meta, type: :object, as: Meta do\n field :name, type: :string\n end",
-        "action :publish do\n mutation Publish\n local_effect :none, reason: \"server result\"\n end",
+        "attribute :tags, :list, of: :string",
+        "attribute :meta, :object, as: Meta do\n attribute :name, :string\n end",
+        "action :publish do\n mutation \"Publish\"\n optimistic false\n end",
         "operation :create, with: Create do\n end",
         "operation :publish, mutation: Publish, optimistic: { name: \"ready\" } do\n end",
-        "field :rank, type: :int, index: true",
-        "field :summary, type: :string, searchable: true",
+        "attribute :rank, :int, index: true",
+        "attribute :summary, :string, searchable: true",
         "scope :named do\n where name: :name\n end",
     ] {
-        if parse_models(&format!("model Note do\n field :name, type: :string\n{body}\nend")).is_ok() { accepted.push(body); }
+        if parse_models(&format!("model Note do\n attribute :name, :string\n{body}\nend")).is_ok() { accepted.push(body); }
     }
     assert!(accepted.is_empty(), "accepted replaced declarations: {accepted:#?}");
 }
@@ -82,12 +82,18 @@ fn declarations_reject_values_that_would_be_discarded() {
     for body in [
         "scope :all do\n where \"ignored\"\n end",
         "scope :all do\n order :ignored\n end",
-        "operation :create do\n mutation Create, Extra\n end",
-        "operation :create do\n mutation Create, ignored: true\n end",
-        "operation :create do\n input name: :name do\n ignored :value\n end\n end",
+        "scope :all, insert_on: [:bogus] do\n query \"All\"\n end",
+        "scope :all do\n query \"All\"\n paginate size: 5, cursor: { parameter: \"after\" }\n end",
+        "scope :all do\n query \"All\"\n paginate size: 5, cursor: { parameter: \"after\", from: \"a.b\", type: :bogus }\n end",
+        "scope :all do\n parameter :q, :string, default: \"x\"\n query \"All\"\n end",
+        "operation :create do\n  mutation \"Create\"\n  optimistic false\nend",
+        "operation :create do\nend",
+        "operation :act do\n  mutation \"Act\"\n  optimistic false\n  item name: :name\nend",
+        "operation :act do\n  mutation \"Act\"\n  optimistic false\n  once\nend",
+        "operation :act do\n  mutation \"Act\"\n  optimistic false, reason: \"ignored\"\nend",
         "search :name, ignored: true",
     ] {
-        let source = format!("model Note do\n field :name, type: :string\n{body}\nend\n");
+        let source = format!("model Note do\n attribute :name, :string\n{body}\nend\n");
         if parse_models(&source).is_ok() { accepted.push(body); }
     }
     assert!(accepted.is_empty(), "accepted ignored syntax: {accepted:#?}");
@@ -96,7 +102,7 @@ fn declarations_reject_values_that_would_be_discarded() {
 #[test]
 fn filtered_ordered_query_uses_one_index_without_a_temporary_sort() {
     for direction in [SortDirection::Asc, SortDirection::Desc, SortDirection::AscNullsLast, SortDirection::DescNullsFirst] {
-    let models = parse_models(&format!("model Note, storage: :local do\n field :folderId, type: :id\n field :position, type: :int, null: true\n scope :in_folder do\n where :folderId\n order position: :{}\n end\nend\n", direction.name())).unwrap();
+    let models = parse_models(&format!("model Note, storage: :local do\n attribute :folderId, :id\n attribute :position, :int, null: true\n scope :in_folder do\n parameter :folderId, :id\n where folderId: :folderId\n order position: :{}\n end\nend\n", direction.name())).unwrap();
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch(&dblayer::ddl::create_table_statement(&models[0])).unwrap();
     for sql in dblayer::ddl::create_index_statements(&models[0]) { db.execute_batch(&sql).unwrap(); }
@@ -115,7 +121,7 @@ fn schema_fields_are_inferred_without_losing_local_fields() {
     let schema = directory.path().join("schema.graphql");
     let source = directory.path().join("note.dbl");
     std::fs::write(&schema, "type Query { note: Note }\ntype Note { id: ID! body: String! score: Int }").unwrap();
-    std::fs::write(&source, "model Note do\n field :body\n field :score\n field :draft, type: :string, local: true, null: true\nend\n").unwrap();
+    std::fs::write(&source, "model Note do\n  attribute :body\n  attribute :score\n  attribute :draft, :string, local: true, null: true\nend\n").unwrap();
     let checked = crate::compile_files(&[source], Some(&schema), &[]).unwrap();
     let swift = emit_swift(&checked.models, &checked.operations, &checked.inputs);
     let kotlin = emit_kotlin(&checked.models, &checked.operations, &checked.inputs);
@@ -129,21 +135,21 @@ fn explicit_fields_do_not_require_a_graphql_type_named_after_the_model() {
     let schema = directory.path().join("schema.graphql");
     let source = directory.path().join("note.dbl");
     std::fs::write(&schema, "type Query { count: Int }").unwrap();
-    std::fs::write(&source, "model Note do\n field :meta, type: Meta do\n field :title, type: :string\n end\nend\n").unwrap();
+    std::fs::write(&source, "model Note do\n  attribute :meta, Meta do\n    attribute :title, :string\n  end\nend\n").unwrap();
     assert!(crate::compile_files(&[source], Some(&schema), &[]).is_ok());
 }
 
 #[test]
 fn local_models_store_and_query_without_graphql_and_generate_both_languages() {
-    let models = parse_models(r#"
-model Note, storage: :local do
-  field :text, type: :string
-  field :folderId, type: :id
-  field :position, type: :int
+    let models = parse_models(r#"model Note, storage: :local do
+  attribute :text, :string
+  attribute :folderId, :id
+  attribute :position, :int
   search :text
   index :position
   scope :in_folder do
-    where :folderId
+    parameter :folderId, :id
+    where folderId: :folderId
     order position: :desc
   end
 end

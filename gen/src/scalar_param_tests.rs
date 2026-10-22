@@ -15,9 +15,9 @@ type PageInfo { hasNextPage: Boolean! endCursor: Cursor }
 
 const OPERATIONS: &str = "query messagesSince($chatId: ID!, $afterSequence: Int, $includeGifts: Boolean, $first: Int, $after: Cursor) { chat(id: $chatId) { messages(first: $first, after: $after, afterSequence: $afterSequence, includeGifts: $includeGifts) { edges { cursor node { id text } } pageInfo { hasNextPage endCursor } } } }\nquery chatMediaState($chatId: ID!, $upToSequence: Int) { node(id: $chatId) { ... on Chat { mediaLibrary(upToSequence: $upToSequence) { visualCount audioCount giftCount latestSequence } } } }\n";
 
-const MODEL: &str = "model Message do\n  field :text, type: :string, null: true\n\n  scope :since, text: [:chatId], typed: [afterSequence: :int, includeGifts: :bool] do\n    fetch \"messagesSince\", root: \"chat.messages\"\n    paginate 50\n  end\nend\n";
+const MODEL: &str = "model Message do\n  attribute :text, :string, null: true\n  scope :since do\n    parameter :chatId, :string\n    parameter :afterSequence, :int\n    parameter :includeGifts, :bool\n    query \"messagesSince\"\n    response from: \"chat.messages\"\n    paginate size: 50, direction: :forward\n  end\nend\n";
 
-const MEDIA_STATE: &str = "operation :chat_media_state do\n  query \"chatMediaState\"\n  args chatId: :id, upToSequence: :int?\n  result mediaLibrary: { visualCount: :int, audioCount: :int, giftCount: :int, latestSequence: :int }\nend\n";
+const MEDIA_STATE: &str = "operation :chat_media_state do\n  query \"chatMediaState\"\n  parameter :chatId, :id\n  parameter :upToSequence, :int, null: true\n  returns do\n    attribute :mediaLibrary, ChatMediaStateResultMediaLibrary do\n      attribute :visualCount, :int\n      attribute :audioCount, :int\n      attribute :giftCount, :int\n      attribute :latestSequence, :int\n    end\n  end\nend\n";
 
 fn compile(source: &str, schema: Option<&str>) -> Result<Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
@@ -55,17 +55,17 @@ fn typed_scope_params_are_int_and_bool_arguments_on_both_platforms() {
 
 #[test]
 fn typed_params_name_only_int_or_bool() {
-    let source = MODEL.replace("afterSequence: :int", "afterSequence: :string");
+    let source = MODEL.replace("parameter :afterSequence, :int", "parameter :afterSequence, :num");
     let errors = compile(&source, None).unwrap_err();
-    assert!(errors.iter().any(|message| message.contains("`typed`")), "{errors:?}");
+    assert!(errors.iter().any(|message| message.contains("a server-only parameter is")), "{errors:?}");
 }
 
 #[test]
 fn a_typed_param_must_fit_the_variable_of_the_document() {
-    let wrong = MODEL.replace("includeGifts: :bool", "includeGifts: :int");
+    let wrong = MODEL.replace("parameter :includeGifts, :bool", "parameter :includeGifts, :int");
     let errors = compile(&wrong, Some(SCHEMA)).unwrap_err();
     assert!(errors.iter().any(|message| message.contains("includeGifts") && message.contains("Boolean")), "{errors:?}");
-    let missing = MODEL.replace("afterSequence: :int", "since: :int");
+    let missing = MODEL.replace("parameter :afterSequence, :int", "parameter :since, :int");
     let errors = compile(&missing, Some(SCHEMA)).unwrap_err();
     assert!(errors.iter().any(|message| message.contains("no variable `$since`")), "{errors:?}");
 }

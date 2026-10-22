@@ -1,6 +1,6 @@
 use crate::{emit_kotlin, emit_swift, parse_models, SchemaTypes};
 
-const MODEL: &str = "model Moment do\n  field :text, type: :string, null: true\n  scope :feed do\n    fetch MomentsFeed\n    paginate 20\n    edge :score, type: :int, null: true, from: \"impressionScore\"\n    edge :uuid, type: :string, null: true\n  end\nend\n";
+const MODEL: &str = "model Moment do\n  attribute :text, :string, null: true\n  scope :feed do\n    query \"MomentsFeed\"\n    paginate size: 20, direction: :forward\n    edge do\n      attribute :score, :int, null: true, from: \"impressionScore\"\n      attribute :uuid, :string, null: true\n    end\n  end\nend\n";
 
 #[test]
 fn an_edge_value_is_read_back_under_the_name_it_was_stored_with() {

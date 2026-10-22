@@ -2,28 +2,28 @@ use crate::{emit_kotlin, emit_swift, parse_models, SchemaTypes};
 use dblayer::schema::FieldKind;
 
 const SAMPLE: &str = "model InterfaceRecord do
-  field :slug, type: :string
-  field :spec, type: SampleSpec, null: true do
-    field :root, type: :id
-    field :elements, type: [SampleElement] do
+  attribute :slug, :string
+  attribute :spec, SampleSpec, null: true do
+    attribute :root, :id
+    attribute :elements, [SampleElement] do
       shared do
-        field :id, type: :id
-        field :children, type: [:id]
-        field :press, type: SampleAction, null: true do
+        attribute :id, :id
+        attribute :children, [:id]
+        attribute :press, SampleAction, null: true do
           on SampleNavigateAction do
-            field :slug, type: :string
+            attribute :slug, :string
           end
           on SampleOpenRecordAction do
-            field :recordId, type: :string
+            attribute :recordId, :string
           end
         end
       end
       on SampleButton do
-        field :label, type: :string, null: true
-        field :size, type: :enum, values: [:small, :large], null: true
+        attribute :label, :string, null: true
+        attribute :size, :enum, values: [\"small\", \"large\"], null: true
       end
       on SampleHeading do
-        field :text, type: :string
+        attribute :text, :string
       end
       on SamplePressable do
       end
@@ -49,7 +49,7 @@ fn a_list_of_interface_values_declares_the_shared_fields_once() {
 
 #[test]
 fn a_single_interface_value_and_a_list_reference_reuse_the_declaration() {
-    let source = format!("{SAMPLE}model Preview do\n  field :first, type: SampleElement, null: true\n  field :all, type: [SampleElement]\nend\n");
+    let source = format!("{SAMPLE}model Preview do\n  attribute :first, SampleElement, null: true\n  attribute :all, [SampleElement]\nend\n");
     let models = parse_models(&source).unwrap();
     let kinds: Vec<_> = models[1].fields.iter().skip(1).map(|field| (field.kind.clone(), field.app_type.clone())).collect();
     assert_eq!(kinds, [(FieldKind::Union, Some("SampleElement".to_string())), (FieldKind::UnionArray, Some("SampleElement".to_string()))]);
@@ -57,15 +57,15 @@ fn a_single_interface_value_and_a_list_reference_reuse_the_declaration() {
 
 #[test]
 fn interface_declarations_reject_invalid_shared_blocks_at_their_line() {
-    let list = |body: &str| format!("model Sample do\n  field :v, type: [Value] do\n{body}  end\nend\n");
-    let variant = "    on OneProps do\n      field :own, type: :string\n    end\n";
+    let list = |body: &str| format!("model Sample do\n  attribute :v, [Value] do\n{body}  end\nend\n");
+    let variant = "    on OneProps do\n      attribute :own, :string\n    end\n";
     let cases = [
-        (list(&format!("    shared do\n      field :id, type: :id\n    end\n    shared do\n      field :other, type: :id\n    end\n{variant}")), "`shared` is declared twice"),
-        (list(&format!("    shared do\n      field :own, type: :id\n    end\n{variant}")), "declared twice"),
-        (list(&format!("    shared do\n      field :kind, type: :id\n    end\n{variant}")), "reserved"),
-        (list(&format!("    shared do\n    end\n{variant}")), "at least 1 field"),
-        (list("    on OneProps do\n    end\n"), "at least 1 field"),
-        ("model Sample do\n  field :v, type: :object do\n    shared do\n      field :id, type: :id\n    end\n  end\nend\n".to_string(), "only inside a union"),
+        (list(&format!("    shared do\n      attribute :id, :id\n    end\n    shared do\n      attribute :other, :id\n    end\n{variant}")), "`shared` is declared twice"),
+        (list(&format!("    shared do\n      attribute :own, :id\n    end\n{variant}")), "declared twice"),
+        (list(&format!("    shared do\n      attribute :kind, :id\n    end\n{variant}")), "reserved"),
+        (list(&format!("    shared do\n    end\n{variant}")), "at least 1 attribute"),
+        (list("    on OneProps do\n    end\n"), "at least 1 attribute"),
+        ("model Sample do\n  attribute :v, SampleV do\n    shared do\n      attribute :id, :id\n    end\n  end\nend\n".to_string(), "has no variants"),
     ];
     for (source, error) in cases {
         let errors = parse_models(&source).expect_err(&source);
@@ -116,19 +116,19 @@ fn kotlin_interfaces_are_sealed_classes_with_shared_properties_and_variant_class
 #[test]
 fn a_variant_reuses_a_type_declared_inside_the_shared_block() {
     let source = "model Sample do
-  field :items, type: [Item] do
+  attribute :items, [Item] do
     shared do
-      field :tag, type: Mark, null: true do
+      attribute :tag, Mark, null: true do
         on Gold do
-          field :weight, type: :int
+          attribute :weight, :int
         end
         on Silver do
-          field :purity, type: :num
+          attribute :purity, :num
         end
       end
     end
     on First do
-      field :extra, type: Medal, null: true do
+      attribute :extra, Medal, null: true do
         on Gold
         on Silver
       end
@@ -162,13 +162,13 @@ fn catalog_widths_fit_until_expanded_and_raw_elements_keep_a_constant_width() {
     let total = |values: &[(usize, usize, usize)]| values.iter().map(|(v,s,_)| 5*v+s).sum::<usize>();
     assert_eq!((widths.len()-20, total(&widths[20..]), total(&widths)), (102,807,928));
     let variants = |copies: usize| widths.iter().cycle().take(widths.len()*copies).enumerate().map(|(i,(v,s,l))| {
-        let values = (0..*v).map(|j| format!("field :v{j}, type: Value{i}_{j} do\non Text{i}_{j} do\nfield :v, type: :string\nend\non Number{i}_{j} do\nfield :v, type: :num\nend\non Flag{i}_{j} do\nfield :v, type: :bool\nend\non Ref{i}_{j} do\nfield :v, type: :string\nend\nend\n")).collect::<String>();
-        let scalars = (0..*s).map(|j| format!("field :s{j}, type: :string\n")).collect::<String>();
-        let lists = (0..*l).map(|j| format!("field :l{j}, type: [:string]\n")).collect::<String>();
+        let values = (0..*v).map(|j| format!("attribute :v{j}, Value{i}_{j} do\non Text{i}_{j} do\nattribute :v, :string\nend\non Number{i}_{j} do\nattribute :v, :num\nend\non Flag{i}_{j} do\nattribute :v, :bool\nend\non Ref{i}_{j} do\nattribute :v, :string\nend\nend\n")).collect::<String>();
+        let scalars = (0..*s).map(|j| format!("attribute :s{j}, :string\n")).collect::<String>();
+        let lists = (0..*l).map(|j| format!("attribute :l{j}, [:string]\n")).collect::<String>();
         format!("on Item{i} do\n{values}{scalars}{lists}end\n")
     }).collect::<String>();
-    let shared = (0..13).map(|i| format!("field :common{i}, type: :string\n")).collect::<String>();
-    let source = |copies| format!("model Sample do\nfield :items, type: [Item] do\nshared do\n{shared}end\n{}end\nend\n", variants(copies));
+    let shared = (0..13).map(|i| format!("attribute :common{i}, :string\n")).collect::<String>();
+    let source = |copies| format!("model Sample do\nattribute :items, [Item] do\nshared do\n{shared}end\n{}end\nend\n", variants(copies));
     let models = parse_models(&source(1)).unwrap();
     assert_eq!(dblayer::ddl::table_widths(&models[0]).into_iter().find(|(name,_)| name == "row_Sample__items").unwrap().1, 957);
     let errors = parse_models(&source(3)).unwrap_err();

@@ -1,9 +1,9 @@
 # Files
 
-A `file` field stores binary data such as images, audio, video and documents.
+A `:file` attribute stores binary data such as images, audio, video and documents.
 
 ```ruby
-field :media, type: :file, null: true
+attribute :media, :file, null: true
 ```
 
 ```swift
@@ -37,7 +37,7 @@ You do not decide where bytes live. Small files are kept inside the database, la
 - `attach` replaces the old file and updates the row in one commit. If the commit fails, no file remains.
 - Destroying a row removes its files. Orphans left by crashes are cleaned by maintenance.
 - A temporary row keeps its file when the row gets its server id.
-- A file field cannot be indexed.
+- A `:file` attribute cannot be indexed.
 
 ## Uploads
 
@@ -92,7 +92,7 @@ moment.confirmedId()
 ### Create several records with uploads
 
 A batch creates all temporary records and owns their source files in one commit.
-Declare its minimum and maximum size, item variable mapping, correlation field, and single-record upload operation.
+Declare its size limits with `validates :items, length:`, the item variable mapping, the `match_by` attribute, and the single-record upload operation.
 The application supplies a nonempty, unique correlation key in each record's values.
 The library preserves these keys and adds each confirmed `signedId` to the ordered mutation items.
 The response replaces temporary records by correlation key, including responses received before the mutation answer.
@@ -101,40 +101,39 @@ An individual file failure leaves other transfers running and delays the final m
 Retrying a failed file preserves completed transfers.
 Discarding a record removes it from the operation and recalculates the remaining count.
 Below the declared minimum, the remaining records use the declared single-record mutation.
-An optional `renumber` declaration rewrites the remaining records' position and size in that same commit after `discard()` or `cancelUpload()`.
-The same commit updates saved mutation variables declared by `input`, including values used after reopening the cache.
-Positions follow the original item order, starting at the required `position_from: 0` or `position_from: 1`.
+An optional `renumber:` option of `batch` rewrites the remaining records' position and size in that same commit after `discard()` or `cancelUpload()`.
+The same commit updates saved mutation variables declared by `batch input:`, including values used after reopening the cache.
+Positions follow the original item order, starting at the required `start: 0` or `start: 1`.
 Below the declared minimum, these fields stay unchanged and the application decides how to represent a single record.
-Without `renumber`, the library preserves these fields.
+Without `renumber:`, the library preserves these attributes.
 
 During the final mutation, changing membership returns `InFlight`.
 After `deliveryUnknown`, retrying any member repeats the complete saved request with the same operation key.
 Discarding any member then rolls back the entire uncertain operation.
 
 ```ruby
-operation :create_file do
-  upload CreateAsset
-  correlate :clientKey
-  root "createAsset.asset"
-  local_effect :none, reason: "created with its file"
+operation :create_file, upload: true do
+  mutation "CreateAsset"
+  match_by "clientKey"
+  optimistic false
+  response from: "createAsset.asset"
 end
-operation :create_files do
-  upload CreateAssets
-  batch min: 2, max: 10, items: :items, single: :create_file
-  renumber position: :position, size: :size, position_from: 0
-  item clientKey: :clientKey
-  correlate :clientKey
-  root "createAssets.assets"
-  local_effect :none, reason: "created with their files"
+operation :create_files, upload: true do
+  mutation "CreateAssets"
+  match_by "clientKey"
+  optimistic false
+  batch items: "items", single: :create_file, input: { clientKey: :clientKey }, renumber: { position: "position", size: "size", start: 0 }
+  validates :items, length: { minimum: 2, maximum: 10 }
+  response from: "createAssets.assets"
 end
 ```
 
-`item` maps input object fields to model fields.
-`renumber` names distinct integer fields and accepts dotted paths inside declared objects, such as `position: "object.position", size: "object.size"`.
-Nested writes preserve other object values and use canonical stored field names, including names declared with `from`.
+`batch input:` maps input object fields to model attributes.
+`renumber:` names distinct integer attributes and accepts dotted paths inside declared objects, such as `position: "object.position", size: "object.size"`.
+Nested writes preserve other object values and use canonical stored attribute names, including names declared with `from`.
 The rewrite changes local row values without queuing another mutation, and the correlated server response replaces them as usual.
 Only an unsent final mutation permits membership changes, and `deliveryUnknown` never renumbers records.
-The declared limits must fit within 2 through 10.
+The limits of `validates :items, length:` must fit within 2 through 10, and `minimum` may not exceed `maximum`. Only an upload operation declares `batch`.
 The GraphQL mutation accepts an input object list containing the correlation key and `signedId`.
 Its response includes every created record with the same correlation key, in any order.
 
@@ -161,14 +160,14 @@ Offline cancellation and restart use the same stored file and multipart state as
 
 ### Typed variables of the content mutation
 
-The library sets `signedId` itself. Other mutation variables go in `variables`. Declare schema input objects in the named operation's `args`. The generator checks mutation variables and writes a typed builder named after the operation, such as `createFileVariables`. Do not declare `signedId`.
+The library sets `signedId` itself. Other mutation variables go in `variables`. Declare schema input objects with the named operation's `parameter` lines. The generator checks mutation variables and writes a typed builder named after the operation, such as `createFileVariables`. Do not declare `signedId`.
 
 ```ruby
-operation :create_file do
-  upload       MomentCreateFile
-  local_effect :none, reason: "the row exists locally from the create with an upload"
-  args         widgets: [:MomentWidgetInput]?
-  root         "momentCreate.moment"
+operation :create_file, upload: true do
+  mutation "MomentCreateFile"
+  optimistic false
+  parameter :widgets, [MomentWidgetInput], null: true
+  response from: "momentCreate.moment"
 end
 ```
 

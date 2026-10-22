@@ -1,15 +1,18 @@
-use dblayer::schema::{FieldKind, MergeRule, Newer, CursorSpec, VariableSource, 
-    ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, Dependent, EphemeralSpec, FieldSpec, ModelSpec,
-    NodeRead, OnFailure, PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, Storage, UpdatesSpec,
+use dblayer::schema::{
+    ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, CursorSpec, Dependent, EphemeralSpec, FieldKind, FieldSpec, MergeRule, ModelSpec, Newer, NodeRead,
+    PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, SubscriptionAction, SubscriptionApply, UpdatesSpec, VariableSource, NODE_PARAM,
 };
-use dblayer::value::{ScalarKind, SortDirection};
-use serde_json::{Map, Number, Value as Json};
+use dblayer::value::ScalarKind;
+use serde_json::{json, Map, Value as Json};
 
-use crate::parser::{Call, ModelNode, Node, Pair, Value};
+use crate::decl::{
+    self, AssociationDecl, AttributeBlock, AttributeDecl, CursorType, Effect, InsertOn, ListElement, ModelDecl, OperationDecl, OperationKind, OptimisticDecl, OptimisticElement,
+    OptimisticValue, PageDirectionDecl, ParamBase, ResponseDecl, ResponseShape, ScopeDecl, SubscribeDecl, TypeRef, VariableValue,
+};
 
 const DEFAULT_FRESHNESS: &str = "5.minutes";
 
-pub fn build(nodes: &[ModelNode]) -> Vec<ModelSpec> {
+pub fn build(nodes: &[ModelDecl]) -> Vec<ModelSpec> {
     let mut models: Vec<_> = nodes.iter().map(build_model).collect();
     let indexes: Vec<_> = models.iter().flat_map(|model| model.associations.iter().filter(|association| association.kind != AssociationKind::References).map(move |association| {
         let owner = if association.kind == AssociationKind::BelongsTo { model.key.to_string() } else { association.target.to_string() };
@@ -52,162 +55,99 @@ fn retag_references(field: &mut FieldSpec, unions: &[String]) {
     field.fields.iter_mut().chain(field.shared.iter_mut()).for_each(|inner| retag_references(inner, unions));
 }
 
-fn build_model(node: &ModelNode) -> ModelSpec {
+fn build_model(node: &ModelDecl) -> ModelSpec {
     let mut model = ModelSpec::new(&node.name, vec![FieldSpec::scalar("id", ScalarKind::Id)]);
-    if let Some(Value::Symbol(storage)) = node.options.iter().find(|pair| pair.key == "storage").map(|pair| &pair.value.item) {
-        model.storage = match storage.as_str() {
-            "memory" => Storage::Memory,
-            "local" => Storage::Local,
-            _ => Storage::Disk,
-        };
+    model.storage = node.storage;
+    model.expire_after = node.expires_in.as_ref().map(|found| found.item.clone());
+    for attribute in &node.attributes {
+        let field = build_field(attribute, &node.name);
+        if field.name == "id" {
+            model.fields.retain(|candidate| candidate.name != "id");
+        }
+        model.fields.push(field);
     }
-    model.expire_after = node.options.iter().find(|pair| pair.key == "expire_after").and_then(|pair| text_of(&pair.value.item));
-    for call in &node.body {
-        match call.word.as_str() {
-            "schema" => build_schema(call, &mut model),
-            "belongs_to" => model.associations.push(build_association(call, AssociationKind::BelongsTo, &node.name)),
-            "has_many" => model.associations.push(build_association(call, AssociationKind::HasMany, &node.name)),
-            "has_one" => model.associations.push(build_association(call, AssociationKind::HasOne, &node.name)),
-            "references" => model.associations.push(build_association(call, AssociationKind::References, &node.name)),
-            "scope" => model.relations.push(build_scope(call)),
-            "remote" => model.relations.push(build_remote(call, &node.name)),
-            "listen" => model.listens.push(updates_spec(call)),
-            "changes" => model.change_feed = Some(dblayer::schema::ChangeFeed {
-                subscription: first_name(call),
-                root: option(call, "root").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
-                area: option(call, "area").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
-                kind: option(call, "kind").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
-                id: option(call, "id").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
-            }),
-            "changed_by" => model.changes.push(dblayer::schema::ChangeRead {
-                area: first_name(call).to_ascii_uppercase(),
-                relation: option(call, "via").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
-                parameter: option(call, "id").and_then(|pair| text_of(&pair.value.item)),
-                removes_on: list_of(call, "removes_on").into_iter().map(|kind| kind.to_ascii_uppercase()).collect(),
-            }),
-            "create" | "update" | "destroy" => model.actions.push(build_standard_action(call)),
-            "action" => model.actions.push(build_action(call, &node.name)),
-            _ => {}
+    for search in &node.search {
+        if let Some(field) = model.fields.iter_mut().find(|field| field.name == search.item) {
+            field.searchable = true;
         }
     }
+    model.indexes = node.indexes.iter().map(|index| index.columns.clone()).collect();
+    model.ephemeral = node.ephemeral.iter().flat_map(|group| &group.attributes).map(|attribute| EphemeralSpec { field: build_field(attribute, &node.name), reset_after: attribute.reset_after.clone() }).collect();
+    model.associations = node.associations.iter().map(|association| build_association(association, &node.name)).collect();
+    model.relations = node.scopes.iter().map(build_scope).collect();
+    model.listens = node.subscriptions.iter().map(updates_spec).collect();
+    model.change_feed = node.changes.first().map(|feed| dblayer::schema::ChangeFeed {
+        subscription: feed.subscription.clone(),
+        root: feed.from.item.clone(),
+        area: feed.area.item.clone(),
+        kind: feed.kind.item.clone(),
+        id: feed.id.item.clone(),
+    });
+    model.changes = node.changed_by.iter().map(|change| dblayer::schema::ChangeRead {
+        area: change.area.clone(),
+        relation: change.via.clone(),
+        parameter: change.parameter.clone(),
+        removes_on: change.removes_on.clone().unwrap_or_default(),
+    }).collect();
+    model.actions = node.operations.iter().map(|operation| build_operation(operation, &node.name)).collect();
     if model.field("id").is_none() {
         model.fields.push(FieldSpec::scalar("id", ScalarKind::Id));
     }
     model
 }
 
-fn build_schema(schema: &Call, model: &mut ModelSpec) {
-    for call in schema.block.iter().flatten() {
-        match call.word.as_str() {
-            "index" => model.indexes.push(call.args.iter().filter_map(|arg| text_of(&arg.item)).collect()),
-            "ephemeral" => model.ephemeral.extend(call.block.iter().flatten().map(|call| build_ephemeral(call, model.key.as_str()))),
-            _ => {
-                let field = build_field(call, model.key.as_str());
-                if field.name == "id" { model.fields.retain(|field| field.name != "id"); }
-                model.fields.push(field);
-            }
-        }
-    }
-}
-
-fn build_field(call: &Call, owner: &str) -> FieldSpec {
-    let name = first_name(call);
-    let mut field = match call.word.as_str() {
-        "string" => FieldSpec::scalar(&name, ScalarKind::Str),
-        "num" => FieldSpec::scalar(&name, ScalarKind::Num),
-        "int" => FieldSpec::scalar(&name, ScalarKind::Int),
-        "bool" => FieldSpec::scalar(&name, ScalarKind::Bool),
-        "date" => FieldSpec::scalar(&name, ScalarKind::Date),
-        "id" => FieldSpec::scalar(&name, ScalarKind::Id),
-        "object" => FieldSpec::object(&name),
-        "union" => FieldSpec::union(&name, "", Vec::new()),
-        "array" if crate::unions::is_union_call(call) => FieldSpec::union_array(&name, "", Vec::new()),
-        "array" => FieldSpec::array(&name),
-        "raw" => FieldSpec::raw(&name),
-        "file" => FieldSpec::file(&name),
-        "enum" => {
-            let values = list_of(call, "values");
-            FieldSpec::enumeration(&name, &values.iter().map(String::as_str).collect::<Vec<_>>())
-        }
-        _ => {
-            let element = symbol_of(call, "of");
-            let mut list = FieldSpec::list(&name, scalar_kind(&element));
-            if element == "enum" {
-                list.values = list_of(call, "values");
-            }
+fn build_field(attribute: &AttributeDecl, owner: &str) -> FieldSpec {
+    let name = attribute.name.as_str();
+    let union = attribute.is_union();
+    let mut field = match &attribute.ty {
+        TypeRef::Scalar(kind) => FieldSpec::scalar(name, *kind),
+        TypeRef::Enum => FieldSpec::enumeration(name, &attribute.values.iter().flatten().map(String::as_str).collect::<Vec<_>>()),
+        TypeRef::Json => FieldSpec::raw(name),
+        TypeRef::File => FieldSpec::file(name),
+        TypeRef::Named(_) if union => FieldSpec::union(name, "", Vec::new()),
+        TypeRef::Named(_) => FieldSpec::object(name),
+        TypeRef::NamedList(_) if union => FieldSpec::union_array(name, "", Vec::new()),
+        TypeRef::NamedList(_) => FieldSpec::array(name),
+        TypeRef::List(ListElement::Scalar(kind)) => FieldSpec::list(name, *kind),
+        TypeRef::List(ListElement::Enum) => {
+            let mut list = FieldSpec::list(name, ScalarKind::Str);
+            list.values = attribute.values.clone().unwrap_or_default();
             list
         }
     };
-    field.nullable = flag(call, "null");
-    field.optional = flag(call, "optional");
-    field.indexed = flag(call, "index");
-    field.searchable = flag(call, "searchable");
-    field.parse_json = option(call, "parse").is_some_and(|pair| pair.value.item == Value::Symbol("json".to_string()));
-    field.id_from_parent = option(call, "id_from").and_then(|pair| text_of(&pair.value.item));
-    field.app_type = option(call, "as").and_then(|pair| text_of(&pair.value.item));
+    field.nullable = attribute.null;
+    field.optional = attribute.optional;
+    field.parse_json = attribute.parse_json;
+    field.id_from_parent = attribute.id_from.clone();
+    field.app_type = match &attribute.ty {
+        TypeRef::Named(type_name) | TypeRef::NamedList(type_name) => Some(type_name.clone()),
+        _ => attribute.as_name.clone(),
+    };
     if (matches!(field.kind, FieldKind::Enum { .. }) || !field.values.is_empty()) && field.app_type.is_none() {
-        field.app_type = Some(format!("{owner}{}", camel(&name)));
+        field.app_type = Some(format!("{owner}{}", camel(name)));
     }
-    if let Some(block) = &call.block {
-        let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(&name)));
-        field.fields = match field.kind {
-            FieldKind::Union | FieldKind::UnionArray => block.iter().filter(|call| call.word == "variant").zip(crate::unions::cases_of(block)).map(|(variant, case)| build_variant(variant, &case)).collect(),
-            _ => block.iter().map(|child| build_field(child, &type_name)).collect(),
-        };
-        if matches!(field.kind, FieldKind::Union | FieldKind::UnionArray) {
-            field.shared = block.iter().filter(|call| call.word == "shared").flat_map(|call| call.block.iter().flatten()).map(|child| build_field(child, &type_name)).collect();
+    match &attribute.block {
+        AttributeBlock::None => {}
+        AttributeBlock::Fields(children) => {
+            let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(name)));
+            field.fields = children.iter().map(|child| build_field(child, &type_name)).collect();
         }
-        field.app_type = Some(type_name);
+        AttributeBlock::Union { shared, variants } => {
+            let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(name)));
+            field.fields = variants.iter().zip(crate::unions::cases_of(variants)).map(|(variant, case)| {
+                let fields = variant.fields.iter().flatten().map(|child| build_field(child, &variant.type_name)).collect();
+                FieldSpec::variant(&case, &variant.type_name, fields)
+            }).collect();
+            field.shared = shared.iter().flat_map(|shared| shared.item.iter()).map(|child| build_field(child, &type_name)).collect();
+        }
     }
-    field.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));
-    field.default = option(call, "default").map(|pair| json_of(&pair.value.item));
-    field.merge = option(call, "merge").and_then(|pair| merge_of(&pair.value.item));
-    if flag(call, "local") {
+    field.from = attribute.from.as_ref().map(|found| found.item.clone());
+    field.default = attribute.default.as_ref().map(|found| found.item.clone());
+    field.merge = attribute.merge.as_ref().map(|found| found.item.clone());
+    if attribute.local {
         field.merge = Some(MergeRule::Local);
     }
     field
-}
-
-fn build_variant(call: &Call, case: &str) -> FieldSpec {
-    let type_name = text_of(&call.args[0].item).unwrap_or_default();
-    let fields = call.block.iter().flatten().map(|child| build_field(child, &type_name)).collect();
-    FieldSpec::variant(case, &type_name, fields)
-}
-
-fn merge_of(value: &Value) -> Option<MergeRule> {
-    match value {
-        Value::Symbol(name) => match name.as_str() {
-            "present" => Some(MergeRule::Present),
-            "non_empty" => Some(MergeRule::NonEmpty),
-            "positive" => Some(MergeRule::Positive),
-            "monotonic" => Some(MergeRule::Monotonic),
-            "local" => Some(MergeRule::Local),
-            _ => None,
-        },
-        Value::Array(tiers) => Some(MergeRule::Ladder {
-            tiers: tiers.iter().filter_map(|tier| match &tier.item { Value::Array(names) => Some(names.iter().filter_map(|name| text_of(&name.item)).collect()), _ => None }).collect(),
-        }),
-        Value::Hash(pairs) => Some(MergeRule::Keys { keys: pairs.iter().filter_map(|pair| merge_of(&pair.value.item).map(|rule| (pair.key.clone(), rule))).collect() }),
-        _ => None,
-    }
-}
-
-fn build_ephemeral(call: &Call, owner: &str) -> EphemeralSpec {
-    EphemeralSpec {
-        field: build_field(call, owner),
-        reset_after: option(call, "reset_after").and_then(|pair| text_of(&pair.value.item)),
-    }
-}
-
-fn scalar_kind(name: &str) -> ScalarKind {
-    match name {
-        "num" => ScalarKind::Num,
-        "int" => ScalarKind::Int,
-        "bool" => ScalarKind::Bool,
-        "date" => ScalarKind::Date,
-        "id" => ScalarKind::Id,
-        _ => ScalarKind::Str,
-    }
 }
 
 pub(crate) fn camel(name: &str) -> String {
@@ -222,322 +162,209 @@ fn lower(name: &str) -> String {
     chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()
 }
 
-pub(crate) fn association_key(call: &Call, owner: &str) -> String {
-    option(call, "key").and_then(|pair| text_of(&pair.value.item)).unwrap_or_else(|| match call.word.as_str() {
-        "belongs_to" => format!("{}Id", first_name(call)),
-        "references" => first_name(call),
+pub(crate) fn association_key(association: &AssociationDecl, owner: &str) -> String {
+    association.foreign_key.clone().unwrap_or_else(|| match association.kind {
+        decl::AssociationKind::BelongsTo => format!("{}Id", association.name),
+        decl::AssociationKind::References => association.name.clone(),
         _ => format!("{}Id", lower(owner)),
     })
 }
 
-pub(crate) fn association_target(call: &Call) -> String {
-    let name = first_name(call);
-    option(call, "model").and_then(|pair| text_of(&pair.value.item)).unwrap_or_else(|| {
-        let singular = match call.word.as_str() {
-            "has_many" | "references" => name.strip_suffix('s').unwrap_or(&name),
-            _ => &name,
+pub(crate) fn association_target(association: &AssociationDecl) -> String {
+    association.class_name.clone().unwrap_or_else(|| {
+        let singular = match association.kind {
+            decl::AssociationKind::HasMany | decl::AssociationKind::References => association.name.strip_suffix('s').unwrap_or(&association.name),
+            _ => &association.name,
         };
         camel(singular)
     })
 }
 
-fn build_association(call: &Call, kind: AssociationKind, owner: &str) -> AssociationSpec {
-    let name = first_name(call);
-    let target = association_target(call);
-    let key = association_key(call, owner);
-    let mut association = AssociationSpec::new(&name, kind, &target, &key);
-    association.touches_parent = flag(call, "touch");
-    association.sets = hash_texts(call, "sets").into_iter().collect();
-    association.newer = hash_texts(call, "newer").into_iter().map(|(child, parent)| Newer { child, parent }).collect();
-    association.from = option(call, "from").and_then(|pair| text_of(&pair.value.item));
-    association.dependent = option(call, "dependent").map(|_| Dependent::Destroy);
-    association
+fn build_association(association: &AssociationDecl, owner: &str) -> AssociationSpec {
+    let kind = match association.kind {
+        decl::AssociationKind::BelongsTo => AssociationKind::BelongsTo,
+        decl::AssociationKind::HasMany => AssociationKind::HasMany,
+        decl::AssociationKind::HasOne => AssociationKind::HasOne,
+        decl::AssociationKind::References => AssociationKind::References,
+    };
+    let mut built = AssociationSpec::new(&association.name, kind, &association_target(association), &association_key(association, owner));
+    built.touches_parent = association.touch;
+    built.sets = association.sets.iter().cloned().collect();
+    built.newer = association.newer.iter().map(|(child, parent)| Newer { child: child.clone(), parent: parent.clone() }).collect();
+    built.from = association.from.clone();
+    built.dependent = association.dependent.then_some(Dependent::Destroy);
+    built
 }
 
-fn build_scope(call: &Call) -> RelationSpec {
-    let columns: Vec<String> = match option(call, "where").map(|pair| &pair.value.item) {
-        Some(Value::Hash(pairs)) => pairs.iter().map(|pair| pair.key.clone()).collect(),
-        _ => Vec::new(),
-    };
-    let mut relation = RelationSpec::new(&first_name(call), &columns.iter().map(String::as_str).collect::<Vec<_>>());
-    relation.is_global = columns.is_empty();
-    relation.updates = call.block.iter().flatten().filter(|candidate| candidate.word == "updates").map(updates_spec).collect();
-    if let Some(Value::Hash(pairs)) = option(call, "order").map(|pair| &pair.value.item) {
-        relation.sort = Sort::Fields(pairs.iter().map(sort_field).collect());
+fn build_scope(scope: &ScopeDecl) -> RelationSpec {
+    let columns: Vec<&str> = scope.where_.iter().flat_map(|clause| clause.pairs.iter().map(|(column, _)| column.item.as_str())).collect();
+    let mut relation = RelationSpec::new(&scope.name, &columns);
+    relation.updates = scope.subscriptions.iter().map(updates_spec).collect();
+    if let Some(order) = &scope.order {
+        relation.sort = Sort::Fields(order.fields.iter().map(|(column, direction, _)| SortField { column: column.clone(), direction: *direction }).collect());
     }
-    relation
-}
-
-fn sort_field(pair: &Pair) -> SortField {
-    let direction = match &pair.value.item {
-        Value::Symbol(name) => SortDirection::parse(name).unwrap_or(SortDirection::Asc),
-        _ => SortDirection::Asc,
-    };
-    SortField { column: pair.key.clone(), direction }
-}
-
-fn variables_of(call: &Call) -> std::collections::BTreeMap<String, VariableSource> {
-    call.options.iter().map(|pair| {
-        let source = match &pair.value.item {
-            Value::Symbol(name) => VariableSource::Param { name: name.clone() },
-            other => VariableSource::Constant { value: json_of(other) },
-        };
-        (pair.key.clone(), source)
-    }).collect()
-}
-
-fn cursor_of(paginate: &Call) -> Option<CursorSpec> {
-    let variable = option(paginate, "cursor").and_then(|pair| text_of(&pair.value.item))?;
-    let from = option(paginate, "from").and_then(|pair| text_of(&pair.value.item))?;
-    let numeric = option(paginate, "cursor_type").and_then(|pair| text_of(&pair.value.item)).is_some_and(|kind| kind == "int");
-    Some(CursorSpec { variable, from, numeric })
-}
-
-fn build_remote(call: &Call, owner: &str) -> RelationSpec {
-    let lines = call.block.as_deref().unwrap_or_default();
-    let line = |word: &str| lines.iter().find(|candidate| candidate.word == word);
-    let shape = match (line("paginate"), line("list")) {
-        (Some(paginate), _) => RemoteShape::Connection {
-            direction: if flag(paginate, "backward") { PageDirection::Backward } else { PageDirection::Forward },
-            coverage: Coverage::Page,
-            cursor: cursor_of(paginate),
-            max_pages: line("max_pages").and_then(|pages| pages.args.first()).and_then(|arg| match arg.item {
-                Value::Int(count) => u32::try_from(count).ok(),
-                _ => None,
-            }),
-        },
-        (None, Some(_)) => RemoteShape::List { coverage: Coverage::Complete },
-        (None, None) => RemoteShape::Single,
-    };
-    let fresh = line("fresh_for");
-    let page_size = line("paginate").and_then(|paginate| paginate.args.first()).and_then(|arg| match arg.item {
-        Value::Int(size) => u32::try_from(size).ok(),
-        _ => None,
-    });
-    let remote = RemoteSpec {
-        operation: line("query").and_then(|query| query.args.first()).and_then(|arg| text_of(&arg.item)).unwrap_or_else(|| format!("{owner}s{}", camel(&first_name(call)))),
-        selects_page_info: matches!(shape, RemoteShape::Connection { .. }),
-        shape,
-        stale_time: fresh.and_then(|fresh| fresh.args.first()).and_then(|arg| text_of(&arg.item)).unwrap_or(DEFAULT_FRESHNESS.to_string()),
-        empty_stale_time: fresh.and_then(|fresh| option(fresh, "empty")).and_then(|pair| text_of(&pair.value.item)),
-        page_size,
-        variables: line("variables").map(variables_of).unwrap_or_default(),
-        root: line("query").and_then(|query| option(query, "root")).and_then(|pair| text_of(&pair.value.item)),
-        total_from: line("total").and_then(|total| option(total, "from")).and_then(|pair| text_of(&pair.value.item)),
-    };
-    let columns: Vec<String> = match option(call, "params").map(|pair| &pair.value.item) {
-        Some(Value::Array(items)) => items.iter().filter_map(|item| text_of(&item.item)).collect(),
-        Some(single) => text_of(single).into_iter().collect(),
-        None => Vec::new(),
-    };
-    let mut relation = RelationSpec::new(&first_name(call), &columns.iter().map(String::as_str).collect::<Vec<_>>());
-    if let Some(Value::Array(items)) = option(call, "text").map(|pair| &pair.value.item) {
-        for item in items {
-            match &item.item {
-                Value::Hash(pairs) => for pair in pairs {
-                    relation.text_params.push(pair.key.clone());
-                    if let Some(kind) = text_of(&pair.value.item) { relation.text_types.insert(pair.key.clone(), kind); }
-                },
-                other => relation.text_params.extend(text_of(other)),
+    relation.node = scope.node;
+    if scope.node == Some(NodeRead::One) {
+        relation.text_params.push(NODE_PARAM.to_string());
+    } else {
+        for parameter in scope.parameters.iter().filter(|parameter| !columns.contains(&parameter.name.as_str())) {
+            relation.text_params.push(parameter.name.clone());
+            match (&parameter.ty.base, &parameter.default) {
+                (ParamBase::Int, _) => { relation.scalar_types.insert(parameter.name.clone(), ScalarKind::Int); }
+                (ParamBase::Bool, _) => { relation.scalar_types.insert(parameter.name.clone(), ScalarKind::Bool); }
+                (ParamBase::Named(kind), _) => { relation.text_types.insert(parameter.name.clone(), kind.clone()); }
+                _ => {}
             }
-        }
-    }
-    if let Some(Value::Array(items)) = option(call, "typed").map(|pair| &pair.value.item) {
-        for pair in items.iter().filter_map(|item| match &item.item { Value::Hash(pairs) => Some(pairs), _ => None }).flatten() {
-            relation.text_params.push(pair.key.clone());
-            let kind = if text_of(&pair.value.item).as_deref() == Some("bool") { ScalarKind::Bool } else { ScalarKind::Int };
-            relation.scalar_types.insert(pair.key.clone(), kind);
-        }
-    }
-    if let Some(Value::Hash(pairs)) = option(call, "defaults").map(|pair| &pair.value.item) {
-        for pair in pairs {
-            if let Some(value) = text_of(&pair.value.item) { relation.text_defaults.insert(pair.key.clone(), value); }
+            if let Some(Json::String(value)) = parameter.default.as_ref().map(|found| &found.item) {
+                relation.text_defaults.insert(parameter.name.clone(), value.clone());
+            }
         }
     }
     relation.is_global = columns.is_empty() && relation.text_params.is_empty();
-    relation.node = match option(call, "node").and_then(|pair| text_of(&pair.value.item)).as_deref() {
-        Some("one") => Some(NodeRead::One),
-        Some("many") => Some(NodeRead::Many),
-        _ => None,
-    };
-    if let Some(Value::Hash(pairs)) = option(call, "order").map(|pair| &pair.value.item) {
-        relation.sort = Sort::Fields(pairs.iter().map(sort_field).collect());
+    if let Some(insert) = &scope.insert_on {
+        relation.joins_created = insert.item.contains(&InsertOn::Create);
+        relation.joins_events = insert.item.contains(&InsertOn::Event);
     }
-    let joins = option(call, "joins").and_then(|pair| text_of(&pair.value.item));
-    relation.joins_events = joins.as_deref() == Some("events");
-    relation.joins_created = joins.as_deref() == Some("created");
-    relation.order_stable = flag(call, "order_stable");
-    relation.remote = Some(remote);
-    relation.updates = lines.iter().filter(|candidate| candidate.word == "updates").map(updates_spec).collect();
-    relation.edge_fields = lines.iter().filter(|candidate| candidate.word == "edge").flat_map(|edge| edge.block.iter().flatten()).map(|field| build_field(field, owner)).collect();
+    relation.order_stable = scope.stable_order.is_some();
+    if scope.is_remote() {
+        relation.remote = Some(build_remote(scope));
+        relation.edge_fields = scope.edges.iter().map(|edge| build_field(edge, "")).collect();
+    }
     relation
 }
 
-fn updates_spec(updates: &Call) -> UpdatesSpec {
-    UpdatesSpec {
-        subscription: first_name(updates),
-        deleted_by: option(updates, "deleted_by").and_then(|pair| text_of(&pair.value.item)),
-        set: match option(updates, "set").map(|pair| &pair.value.item) {
-            Some(Value::Hash(pairs)) => pairs.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
-            _ => Map::new(),
+fn build_remote(scope: &ScopeDecl) -> RemoteSpec {
+    let query = scope.query.as_ref().expect("a remote scope has a query");
+    let listed = scope.node == Some(NodeRead::Many) || scope.response.as_ref().is_some_and(|read| read.shape == Some(ResponseShape::List));
+    let shape = match (&scope.paginate, listed) {
+        (Some(paginate), _) => RemoteShape::Connection {
+            direction: if paginate.direction == PageDirectionDecl::Backward { PageDirection::Backward } else { PageDirection::Forward },
+            coverage: Coverage::Page,
+            cursor: paginate.cursor.as_ref().map(|cursor| CursorSpec { variable: cursor.parameter.clone(), from: cursor.from.item.clone(), numeric: cursor.ty == CursorType::Int }),
+            max_pages: paginate.max_pages.as_ref().map(|pages| pages.item),
         },
-        removes: flag(updates, "removes"),
-        debounce: option(updates, "debounce").and_then(|pair| text_of(&pair.value.item)),
-        root: option(updates, "root").and_then(|pair| text_of(&pair.value.item)),
-        id: option(updates, "id").and_then(|pair| text_of(&pair.value.item)),
-        apply: subscription_apply(updates).expect("validated subscription apply"),
-    }
-}
-
-pub(crate) fn subscription_apply(call: &Call) -> Result<Option<dblayer::schema::SubscriptionApply>, String> {
-    option(call, "apply").map(|pair| serde_json::from_value(json_of(&pair.value.item)).map_err(|error| error.to_string())).transpose()
-}
-
-fn build_standard_action(call: &Call) -> ActionDeclaration {
-    let mut action = match call.word.as_str() {
-        "create" => ActionDeclaration::new("create", RootShape::Upsert),
-        "update" => ActionDeclaration::new("update", RootShape::Upsert),
-        _ => ActionDeclaration::new("destroy", RootShape::Destroy),
+        (None, true) => RemoteShape::List { coverage: Coverage::Complete },
+        (None, false) => RemoteShape::Single,
     };
-    action.has_optimistic = call.word == "create";
-    action.has_temp_row_retention = call.word == "create";
-    action.mutation = Some(symbol_of(call, "with"));
-    action.on_failure = on_failure_of(&symbol_of(call, "on_failure"));
-    action.ignore_response = option(call, "response").and_then(|pair| text_of(&pair.value.item)).as_deref() == Some("ignore");
-    action.refetch = list_of(call, "refetch");
-    action.local = list_of(call, "local");
-    action.correlate = list_of(call, "correlate");
-    action.wrap = option(call, "wrap").and_then(|pair| text_of(&pair.value.item));
-    action.root = option(call, "root").and_then(|pair| text_of(&pair.value.item));
-    if let Some(Value::Hash(pairs)) = option(call, "input").map(|pair| &pair.value.item) {
-        action.variables = pairs.iter().filter_map(variable_binding).collect();
+    let node_parameter = scope.parameters.first().filter(|_| scope.node == Some(NodeRead::One)).map(|parameter| parameter.name.as_str());
+    let variables = scope.variables.iter().flatten().map(|binding| {
+        let source = match &binding.value {
+            VariableValue::Parameter(name) if Some(name.as_str()) == node_parameter => VariableSource::Param { name: NODE_PARAM.to_string() },
+            VariableValue::Parameter(name) => VariableSource::Param { name: name.clone() },
+            VariableValue::Constant(value) => VariableSource::Constant { value: value.clone() },
+        };
+        (binding.name.clone(), source)
+    }).collect();
+    RemoteSpec {
+        operation: query.operation.clone(),
+        selects_page_info: matches!(shape, RemoteShape::Connection { .. }),
+        shape,
+        stale_time: scope.freshness.as_ref().map_or(DEFAULT_FRESHNESS.to_string(), |fresh| fresh.expires_in.item.clone()),
+        empty_stale_time: scope.freshness.as_ref().and_then(|fresh| fresh.empty_in.as_ref()).map(|found| found.item.clone()),
+        page_size: scope.paginate.as_ref().map(|paginate| paginate.size),
+        variables,
+        root: scope.response.as_ref().and_then(|read| read.from.as_ref()).map(|found| found.item.clone()),
+        total_from: scope.total.as_ref().map(|found| found.item.clone()),
     }
-    if let Some(Value::Hash(pairs)) = option(call, "args").map(|pair| &pair.value.item) {
-        action.args = pairs.iter().filter_map(variable_binding).collect();
-    }
-    action
 }
 
-fn build_action(call: &Call, owner: &str) -> ActionDeclaration {
-    let mut action = ActionDeclaration::new(&first_name(call), RootShape::Upsert);
-    action.mutation = option(call, "mutation").and_then(|pair| text_of(&pair.value.item));
-    if let Some(Value::Hash(pairs)) = option(call, "optimistic").map(|pair| &pair.value.item) {
-        action.optimistic = pairs.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect();
+fn updates_spec(update: &SubscribeDecl) -> UpdatesSpec {
+    let apply = &update.apply;
+    let matches = apply.matches.iter().map(|(path, value, _)| (path.clone(), value.clone())).collect();
+    let action = match apply.effect {
+        Effect::Upsert | Effect::Delete => None,
+        Effect::Ephemeral => Some(SubscriptionAction::Ephemeral { fields: apply.fields.iter().map(|(name, path, _)| (name.clone(), path.clone())).collect() }),
+        Effect::Reread => Some(SubscriptionAction::Reread { via: apply.via.clone().unwrap_or_default() }),
+        Effect::Ignore => Some(SubscriptionAction::Ignore),
+    };
+    UpdatesSpec {
+        subscription: update.name.clone(),
+        deleted_by: apply.delete_if.as_ref().map(|found| found.item.clone()),
+        set: apply.values.iter().map(|(name, value, _)| (name.clone(), value.clone())).collect::<Map<_, _>>(),
+        removes: apply.effect == Effect::Delete,
+        debounce: update.debounce.clone(),
+        root: update.from.as_ref().map(|found| found.item.clone()),
+        id: update.id.as_ref().map(|found| found.item.clone()),
+        apply: action.map(|action| SubscriptionApply { action, matches }),
     }
-    for line in call.block.iter().flatten() {
-        match line.word.as_str() {
-            "mutation" => action.mutation = Some(first_name(line)),
-            "upload" => { action.mutation = Some(first_name(line)); action.upload = true; }
-            "batch" => {
-                let number = |key| option(line, key).and_then(|pair| json_of(&pair.value.item).as_u64()).unwrap_or(0) as usize;
-                action.batch = Some(dblayer::schema::UploadBatchDeclaration {
-                    min: number("min"), max: number("max"), items: symbol_of(line, "items"), single: symbol_of(line, "single"), input: Default::default(), renumber: None,
-                });
-            }
-            "input" => action.variables = line.options.iter().filter_map(variable_binding).collect(),
-            "optimistic" => action.optimistic = line.options.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect(),
-            "on_failure" => action.on_failure = on_failure_of(&first_name(line)),
-            "args" => action.args = line.options.iter().filter_map(variable_binding).collect(),
-            "result" => action.result = line.options.iter().filter_map(variable_binding).collect(),
-            "response" => action.ignore_response = first_name(line) == "ignore",
-            "wrap" => action.wrap = Some(first_name(line)),
-            "root" => action.root = Some(first_name(line)),
-            "refetch_of" => action.refetch.push(format!("{}.{}", first_name(line), option(line, "relation").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default())),
-            "lands" => action.lands.push(ActionLanding { model: first_name(line), root: option(line, "root").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default() }),
-            "refetch" => action.refetch = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
-            "correlate" => action.correlate = line.args.iter().filter_map(|arg| text_of(&arg.item)).collect(),
-            _ => {}
-        }
+}
+
+fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration {
+    let mut action = match operation.kind {
+        OperationKind::Create => ActionDeclaration::new("create", RootShape::Upsert),
+        OperationKind::Update => ActionDeclaration::new("update", RootShape::Upsert),
+        OperationKind::Destroy => ActionDeclaration::new("destroy", RootShape::Destroy),
+        OperationKind::Custom => ActionDeclaration::new(&operation.name, RootShape::Upsert),
+    };
+    if operation.kind == OperationKind::Create {
+        action.has_optimistic = true;
+        action.has_temp_row_retention = true;
     }
-    if let Some(batch) = &mut action.batch {
-        batch.input = call.block.iter().flatten().filter(|line| line.word == "item").flat_map(|line| line.options.iter().filter_map(variable_binding)).collect();
-        batch.renumber = call.block.iter().flatten().find(|line| line.word == "renumber").map(|line| dblayer::schema::UploadBatchRenumber {
-            position: option(line, "position").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
-            size: option(line, "size").and_then(|pair| text_of(&pair.value.item)).unwrap_or_default(),
-            position_from: option(line, "position_from").and_then(|pair| json_of(&pair.value.item).as_u64()).and_then(|value| usize::try_from(value).ok()).unwrap_or(usize::MAX),
+    action.mutation = operation.mutation.as_ref().map(|found| found.item.clone());
+    action.upload = operation.upload.is_some();
+    action.on_failure = operation.on_failure.as_ref().map(|found| found.item).unwrap_or_default();
+    match &operation.response {
+        Some(ResponseDecl::Ignore) => action.ignore_response = true,
+        Some(ResponseDecl::Read(read)) => action.root = read.from.as_ref().map(|found| found.item.clone()),
+        None => {}
+    }
+    action.wrap = operation.wrap.clone();
+    action.local = operation.local.clone().unwrap_or_default();
+    action.correlate = operation.match_by.iter().flatten().map(|found| found.item.clone()).collect();
+    action.variables = operation.variables.iter().flatten().filter_map(|binding| match &binding.value {
+        VariableValue::Parameter(source) => Some((binding.name.clone(), source.clone())),
+        VariableValue::Constant(_) => None,
+    }).collect();
+    action.args = operation.parameters.iter().map(|parameter| (parameter.name.clone(), parameter.ty.kind_text(parameter.null))).collect();
+    action.refetch = operation.refetch.iter().map(|refetch| match &refetch.model {
+        Some(model) if model != owner => format!("{model}.{}", refetch.scope),
+        _ => refetch.scope.clone(),
+    }).collect();
+    action.lands = operation.upserts.iter().map(|upsert| ActionLanding { model: upsert.model.clone(), root: upsert.from.item.clone() }).collect();
+    action.result = operation.returns.iter().flatten().filter_map(|attribute| match &attribute.ty {
+        TypeRef::Scalar(kind) => Some((attribute.name.clone(), scalar_word(*kind).to_string())),
+        _ => None,
+    }).collect();
+    if let (Some(batch), Some(length)) = (&operation.batch, &operation.length) {
+        action.batch = Some(dblayer::schema::UploadBatchDeclaration {
+            min: length.minimum,
+            max: length.maximum,
+            items: batch.items.clone(),
+            single: batch.single.clone(),
+            input: batch.input.iter().cloned().collect(),
+            renumber: batch.renumber.as_ref().map(|renumber| dblayer::schema::UploadBatchRenumber { position: renumber.position.item.clone(), size: renumber.size.item.clone(), position_from: renumber.start }),
         });
     }
-    for value in action.optimistic.values_mut() {
-        if let Json::String(name) = value {
-            if action.args.contains_key(name.as_str()) { *value = serde_json::json!({ "$arg": name.clone() }); }
-        } else if let Json::Object(op) = value {
-            if let Some(Json::Object(element)) = op.get_mut("element") {
-                for part in element.values_mut() {
-                    if let Json::String(name) = part {
-                        if action.args.contains_key(name.as_str()) { *part = serde_json::json!({ "$arg": name.clone() }); }
-                    }
-                }
-            }
-            *value = serde_json::json!({ "$keyed": value.clone() });
-        }
+    if let Some((OptimisticDecl::Fields(fields), _)) = &operation.optimistic {
+        action.optimistic = fields.iter().map(|(name, value, _)| (name.clone(), optimistic_json(value))).collect();
     }
-    if action.variables.is_empty() { action.variables.insert(format!("{}Id", lower(owner)), "id".into()); }
+    if operation.kind == OperationKind::Custom && action.variables.is_empty() {
+        action.variables.insert(format!("{}Id", lower(owner)), "id".into());
+    }
     action
 }
 
-fn on_failure_of(policy: &str) -> OnFailure {
-    if policy == "keep" {
-        OnFailure::Keep
-    } else {
-        OnFailure::Rollback
+fn scalar_word(kind: ScalarKind) -> &'static str {
+    match kind {
+        ScalarKind::Bool => "bool",
+        ScalarKind::Int => "int",
+        ScalarKind::Num => "num",
+        ScalarKind::Id => "id",
+        _ => "string",
     }
 }
 
-fn variable_binding(pair: &Pair) -> Option<(String, String)> {
-    let kind = match &pair.value.item {
-        Value::Array(_) | Value::OptionalArray(_) => crate::operation::arg_kind_text(&pair.value.item),
-        other => text_of(other),
-    };
-    kind.map(|field| (pair.key.clone(), field))
-}
-
-fn option<'a>(call: &'a Call, name: &str) -> Option<&'a Pair> {
-    call.options.iter().find(|pair| pair.key == name)
-}
-
-fn hash_texts(call: &Call, name: &str) -> Vec<(String, String)> {
-    match option(call, name).map(|pair| &pair.value.item) {
-        Some(Value::Hash(pairs)) => pairs.iter().filter_map(|pair| text_of(&pair.value.item).map(|text| (pair.key.clone(), text))).collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn flag(call: &Call, name: &str) -> bool {
-    option(call, name).is_some_and(|pair| pair.value.item == Value::Bool(true))
-}
-
-fn first_name(call: &Call) -> String {
-    call.args.first().and_then(|arg| text_of(&arg.item)).unwrap_or_default()
-}
-
-fn symbol_of(call: &Call, name: &str) -> String {
-    option(call, name).and_then(|pair| text_of(&pair.value.item)).unwrap_or_default()
-}
-
-fn list_of(call: &Call, name: &str) -> Vec<String> {
-    match option(call, name).map(|pair| &pair.value.item) {
-        Some(Value::Array(items)) => items.iter().filter_map(|item| text_of(&item.item)).collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn text_of(value: &Value) -> Option<String> {
+fn optimistic_json(value: &OptimisticValue) -> Json {
     match value {
-        Value::Symbol(text) | Value::Str(text) | Value::Const(text) => Some(text.clone()),
-        Value::Duration { amount, unit } => Some(format!("{amount}.{unit}")),
-        _ => None,
-    }
-}
-
-fn json_of(value: &Value) -> Json {
-    match value {
-        Value::Int(number) => Json::from(*number),
-        Value::Float(number) => Number::from_f64(*number).map_or(Json::Null, Json::Number),
-        Value::Bool(flag) => Json::Bool(*flag),
-        Value::Nil => Json::Null,
-        Value::Array(items) => Json::Array(items.iter().map(|item: &Node<Value>| json_of(&item.item)).collect()),
-        Value::Hash(pairs) => Json::Object(pairs.iter().map(|pair| (pair.key.clone(), json_of(&pair.value.item))).collect::<Map<_, _>>()),
-        other => text_of(other).map_or(Json::Null, Json::String),
+        OptimisticValue::Literal(value) => value.clone(),
+        OptimisticValue::Parameter(name) => json!({ "$arg": name }),
+        OptimisticValue::Keyed { by, element } => {
+            let element: Map<String, Json> = element.iter().map(|(key, part)| (key.clone(), match part {
+                OptimisticElement::Literal(value) => value.clone(),
+                OptimisticElement::Parameter(name) => json!({ "$arg": name }),
+            })).collect();
+            json!({ "$keyed": { "by": by, "element": element } })
+        }
     }
 }
 

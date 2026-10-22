@@ -1,13 +1,13 @@
 model UnionSample, storage: :local do
-  field :label, type: :string, null: true
-  field :attachment, type: MessageAttachment, null: true
-  field :props, type: MomentWidgetItemProps, null: true do
+  attribute :label, :string, null: true
+  attribute :attachment, RecordAttachment, null: true
+  attribute :props, MomentWidgetItemProps, null: true do
     on MomentEmojiProps do
-      field :emoji, type: :string
+      attribute :emoji, :string
     end
     on MomentLabelProps do
-      field :text, type: :string
-      field :size, type: :int, null: true
+      attribute :text, :string
+      attribute :size, :int, null: true
     end
   end
 end

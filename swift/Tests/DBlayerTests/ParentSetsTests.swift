@@ -5,19 +5,19 @@ import Testing
 extension BridgeProbeTests {
 struct ParentSetsTests {
   @Test
-  func aLocalMessageMovesTheChatPointerAndDiscardingItGivesThePointerBack() async throws {
+  func aLocalRecordMovesTheContainerPointerAndDiscardingItGivesThePointerBack() async throws {
     DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let chat = try await Chat.create(title: "t")
-    let message = try await Message.create(chatId: chat.id, authorId: "u1", text: "hi")
+    let container = try await Container.create(title: "t")
+    let record = try await Record.create(containerId: container.id, authorId: "u1", text: "hi")
 
-    let pointed = await Chat.find(chat.id).current()
-    #expect(pointed?.lastMessageId == message.id)
-    #expect(pointed?.lastMessageAt != nil)
+    let pointed = await Container.find(container.id).current()
+    #expect(pointed?.lastRecordId == record.id)
+    #expect(pointed?.lastRecordAt != nil)
 
-    try await message.discard()
-    let restored = await Chat.find(chat.id).current()
-    #expect(restored?.lastMessageId == nil)
-    #expect(restored?.lastMessageAt == nil)
+    try await record.discard()
+    let restored = await Container.find(container.id).current()
+    #expect(restored?.lastRecordId == nil)
+    #expect(restored?.lastRecordAt == nil)
   }
 }
 }

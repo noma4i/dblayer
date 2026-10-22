@@ -169,7 +169,7 @@ async fn terminal_operations_delete_retry_records() {
         match action {
             "close" => {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, rig.db.generation());
-                envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::Committed, once: false });
+                envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::Committed });
                 rig.db.land(envelope).unwrap();
             }
             "discard" => { rig.db.discard("assets", &rid("a")).unwrap(); }

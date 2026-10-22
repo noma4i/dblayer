@@ -12,7 +12,7 @@ type MessageEdge { node: Message! cursor: String! sequenceNumber: Int! impressio
 type PageInfo { hasNextPage: Boolean! endCursor: String }
 "#;
 
-const MESSAGE: &str = "model Message do\n  field :text, type: :string\n  scope :thread do\n    fetch ChatThread, root: \"chat.messages\"\n    paginate 30\n    EDGES\n  end\nend\n";
+const MESSAGE: &str = "model Message do\n  attribute :text, :string\n  scope :thread do\n    query \"ChatThread\"\n    response from: \"chat.messages\"\n    paginate size: 30, direction: :forward\n    EDGES\n  end\nend\n";
 
 const DOCUMENT: &str = "query ChatThread($first: Int, $after: String) { chat(id: \"c\") { messages(first: $first, after: $after) { edges { EDGE node { id text } } pageInfo { hasNextPage endCursor } } } }\n";
 
@@ -29,15 +29,15 @@ fn run(edges: &str, edge: &str) -> Result<(), Vec<String>> {
 
 #[test]
 fn edges_are_checked_against_the_edge_type_of_the_connection_of_their_scope() {
-    let uuid = "edge :impressionUuid, type: :string, null: true";
+    let uuid = "edge do\n      attribute :impressionUuid, :string, null: true\n    end";
     let cases: [(&str, String, &str, Option<&str>); 7] = [
-        ("string and int edge fields", format!("{uuid}\n    edge :impressionScore, type: :int, null: true"), "impressionUuid impressionScore", None),
-        ("a key the edge type does not have", "edge :ghost, type: :string, null: true".to_string(), "cursor", Some("ghost")),
+        ("string and int edge fields", "edge do\n      attribute :impressionUuid, :string, null: true\n      attribute :impressionScore, :int, null: true\n    end".to_string(), "impressionUuid impressionScore", None),
+        ("a key the edge type does not have", "edge do\n      attribute :ghost, :string, null: true\n    end".to_string(), "cursor", Some("ghost")),
         ("an edge the document does not select", uuid.to_string(), "cursor", Some("does not select `impressionUuid`")),
-        ("a string for an Int edge field", "edge :impressionScore, type: :string, null: true".to_string(), "impressionScore", Some("the edge field is `Int`")),
-        ("an Int edge field declared as num", "edge :impressionScore, type: :num, null: true".to_string(), "impressionScore", Some("the edge field is `Int`")),
-        ("a nullable edge field declared without null", "edge :impressionUuid, type: :string, optional: false".to_string(), "impressionUuid", Some("null: true")),
-        ("an aliased edge field", "edge :impressionUuid, type: :string, null: true, from: \"seen\"".to_string(), "seen: impressionUuid", None),
+        ("a string for an Int edge field", "edge do\n      attribute :impressionScore, :string, null: true\n    end".to_string(), "impressionScore", Some("the edge field is `Int`")),
+        ("an Int edge field declared as num", "edge do\n      attribute :impressionScore, :num, null: true\n    end".to_string(), "impressionScore", Some("the edge field is `Int`")),
+        ("a nullable edge field declared without null", "edge do\n      attribute :impressionUuid, :string, optional: false\n    end".to_string(), "impressionUuid", Some("null: true")),
+        ("an aliased edge field", "edge do\n      attribute :impressionUuid, :string, null: true, from: \"seen\"\n    end".to_string(), "seen: impressionUuid", None),
     ];
     for (name, edges, edge, expected) in cases {
         match (run(&edges, edge), expected) {

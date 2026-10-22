@@ -16,14 +16,14 @@ type Item { id: ID! owner: Owner attachment: Attachment note: String }
 
 const SELECTION: &str = "{ id attachment { __typename ... on Gift { id tier } ... on Moment { momentId } } }";
 
-const VARIANTS: &str = "    on Gift do\n      field :id, type: :id\n      field :tier, type: :string\n    end\n    on Moment do\n      field :momentId, type: :id\n      field :caption, type: :string, null: true\n    end\n";
+const VARIANTS: &str = "    on Gift do\n      attribute :id, :id\n      attribute :tier, :string\n    end\n    on Moment do\n      attribute :momentId, :id\n      attribute :caption, :string, null: true\n    end\n";
 
 fn model(attachment: &str) -> String {
-    format!("model Item do\n\n{attachment}\n  scope :all do\n    fetch \"items\"\n    paginate 20\n  end\nend\n")
+    format!("model Item do\n\n{attachment}\n  scope :all do\n    query \"items\"\n    paginate size: 20, direction: :forward\n  end\nend\n")
 }
 
 fn good(body: &str) -> String {
-    model(&format!("  field :attachment, type: Attachment, null: true do\n{body}  end\n"))
+    model(&format!("  attribute :attachment, Attachment, null: true do\n{body}  end\n"))
 }
 
 fn run(source: &str, document: &str) -> Result<(), Vec<String>> {
@@ -42,11 +42,11 @@ fn run(source: &str, document: &str) -> Result<(), Vec<String>> {
 fn union_declarations_are_checked_against_the_schema_union() {
     let cases: [(&str, String, Option<&str>); 6] = [
         ("every variant fits", good(VARIANTS), None),
-        ("variant outside the union", good(&format!("{VARIANTS}    on Owner do\n      field :id, type: :id\n    end\n")), Some("`Owner` is not a member of union `Attachment`")),
+        ("variant outside the union", good(&format!("{VARIANTS}    on Owner do\n      attribute :id, :id\n    end\n")), Some("`Owner` is not a member of union `Attachment`")),
         ("union member without a variant", good(&VARIANTS[..VARIANTS.find("    on Moment").unwrap()]), Some("variant `Moment` of union `Attachment` is not declared")),
-        ("variant field the schema type lacks", good(&VARIANTS.replace("field :tier, type: :string", "field :ghost, type: :string")), Some("type `Gift` has no field `ghost`")),
-        ("nullable union declared required", model(&format!("  field :attachment, type: Attachment do\n{VARIANTS}  end\n")), Some("declare `null: true`")),
-        ("union declared over an object type", model(&format!("  field :owner, type: Attachment, null: true do\n{VARIANTS}  end\n")), Some("is not a union")),
+        ("variant field the schema type lacks", good(&VARIANTS.replace("attribute :tier, :string", "attribute :ghost, :string")), Some("type `Gift` has no field `ghost`")),
+        ("nullable union declared required", model(&format!("  attribute :attachment, Attachment do\n{VARIANTS}  end\n")), Some("declare `null: true`")),
+        ("union declared over an object type", model(&format!("  attribute :owner, Attachment, null: true do\n{VARIANTS}  end\n")), Some("is not a union")),
     ];
     for (name, source, expected) in cases {
         match (run(&source, &format!("query items {{ items {{ nodes {SELECTION} }} }}\n")), expected) {

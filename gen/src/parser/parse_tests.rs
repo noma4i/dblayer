@@ -59,7 +59,7 @@ fn continuation_after_comma_and_multiline_collections() {
 
 #[test]
 fn bare_and_empty_literals() {
-    let models = parse_source("model M do\n  object :media, default: {}\n  list :tags, of: :string, default: []\n  query MomentsFeed\n  list\nend").unwrap();
+    let models = parse_source("model M do\n  object :media, default: {}\n  list :tags, of: :string, default: []\n  query MomentsFeed\n  response shape: :list\nend").unwrap();
     assert_eq!(models[0].body[0].options[0].value.item, Value::Hash(vec![]));
     assert_eq!(models[0].body[1].options[1].value.item, Value::Array(vec![]));
     assert_eq!(models[0].body[2].args[0].item, Value::Const("MomentsFeed".into()));

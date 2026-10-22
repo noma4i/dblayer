@@ -28,10 +28,10 @@ class OperationCallTest {
     fun anOperationWithoutAModelSendsItsVariablesAndReadsTheDeclaredResult() = bounded {
         val transport = rig("QrCodeCreate", "mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }", """{"data":{"qrCodeCreate":{"url":"https://q"}}}""")
 
-        val result = withTimeout(5000) { Operations.qrCodeCreate(kind = "chat", size = 3) }
+        val result = withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) }
 
         assertEquals("https://q", result.url)
-        assertEquals(parseJson("""{"input":{"kind":"chat","size":3}}"""), parseJson(transport.calls.first { it.operationName == "QrCodeCreate" }.variablesJson))
+        assertEquals(parseJson("""{"input":{"kind":"container","size":3}}"""), parseJson(transport.calls.first { it.operationName == "QrCodeCreate" }.variablesJson))
     }
 
     private fun refusal(error: DbException): String = when (error) {
@@ -48,15 +48,15 @@ class OperationCallTest {
             transport.enqueue("QrCodeCreate", failure)
             DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
             DBlayer.database.registerOperations("""[{"name":"QrCodeCreate","document":"mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }"}]""")
-            val error = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "chat", size = 3) } }.exceptionOrNull()
+            val error = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull()
             assertEquals(expected, refusal(error as DbException))
         }
     }
 
     @Test
-    fun aGraphqlErrorsAnswerArrivesWithEveryMessageThroughAnOperationCall() = bounded {
+    fun aGraphqlErrorsAnswerArrivesWithEveryRecordThroughAnOperationCall() = bounded {
         rig("QrCodeCreate", "mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }", """{"errors":[{"message":"nope"},{"message":"bad"}]}""")
-        val error = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "chat", size = 3) } }.exceptionOrNull()
+        val error = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull()
         assertEquals("Graphql nope,bad", refusal(error as DbException))
     }
 
@@ -74,12 +74,12 @@ class OperationCallTest {
 
     @Test
     fun aResultWithListsObjectsAndRawJsonIsDecodedIntoGeneratedTypes() = bounded {
-        rig("Pricing", "query Pricing { pricing { gifts { id name price } videoIntro { enabled } tags spec } }", """{"data":{"pricing":{"gifts":[{"id":7,"name":"rose","price":5},{"id":"8","name":"ring"}],"videoIntro":{"enabled":true},"tags":["a","b"],"spec":{"k":[1,2]}}}}""")
+        rig("Pricing", "query Pricing { pricing { rewards { id name price } videoIntro { enabled } tags spec } }", """{"data":{"pricing":{"rewards":[{"id":7,"name":"rose","price":5},{"id":"8","name":"ring"}],"videoIntro":{"enabled":true},"tags":["a","b"],"spec":{"k":[1,2]}}}}""")
 
         val result = withTimeout(5000) { Operations.pricingLoad() }
 
-        assertEquals(listOf("7", "8"), result.gifts?.map { it.id })
-        assertEquals(listOf(5L, null), result.gifts?.map { it.price })
+        assertEquals(listOf("7", "8"), result.rewards?.map { it.id })
+        assertEquals(listOf(5L, null), result.rewards?.map { it.price })
         assertEquals(true, result.videoIntro?.enabled)
         assertEquals(listOf("a", "b"), result.tags)
         assertEquals(parseJson("""{"k":[1,2]}"""), result.spec)

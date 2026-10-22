@@ -72,7 +72,7 @@ END",
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 27] = [
+const CORE_STATEMENTS: [&str; 26] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -210,11 +210,6 @@ const CORE_STATEMENTS: [&str; 27] = [
     "CREATE INDEX IF NOT EXISTS op_temp ON op (temp_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS op_open_dedupe ON op (action_key, dedupe_key)
   WHERE dedupe_key IS NOT NULL AND status IN ('pending', 'delivery_unknown')",
-    "CREATE TABLE IF NOT EXISTS op_once (
-  namespace TEXT NOT NULL,
-  dedupe_key TEXT NOT NULL,
-  PRIMARY KEY (namespace, dedupe_key)
-) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS quarantine (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   model TEXT,

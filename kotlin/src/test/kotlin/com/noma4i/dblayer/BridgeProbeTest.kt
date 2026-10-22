@@ -1,8 +1,8 @@
 package com.noma4i.dblayer
 
-import com.noma4i.dblayer.models.Chat
-import com.noma4i.dblayer.models.Message
-import com.noma4i.dblayer.models.MessageReactionNode
+import com.noma4i.dblayer.models.Container
+import com.noma4i.dblayer.models.Record
+import com.noma4i.dblayer.models.RecordReactionNode
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
@@ -19,24 +19,24 @@ import org.junit.Test
 
 class BridgeProbeTest {
     @Test
-    fun namedUploadsLandBothNestedChatRoots() = bounded {
+    fun namedUploadsLandBothNestedContainerRoots() = bounded {
         val transport = MockTransport()
         repeat(2) {
             transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://s3/x","signedId":"sid","blobId":"b1"}}}""")
         }
-        transport.enqueue("ChatGroupCreateFile", """{"data":{"groupChatCreate":{"chat":{"id":"c77","title":"created"}}}}""")
-        transport.enqueue("ChatGroupUpdateFile", """{"data":{"groupChatUpdate":{"chat":{"id":"c77","title":"updated"}}}}""")
+        transport.enqueue("ContainerGroupCreateFile", """{"data":{"groupContainerCreate":{"container":{"id":"c77","title":"created"}}}}""")
+        transport.enqueue("ContainerGroupUpdateFile", """{"data":{"groupContainerUpdate":{"container":{"id":"c77","title":"updated"}}}}""")
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url signedId blobId } }"},{"name":"ChatGroupCreateFile","document":"mutation ChatGroupCreateFile { groupChatCreate { chat { id title } } }"},{"name":"ChatGroupUpdateFile","document":"mutation ChatGroupUpdateFile { groupChatUpdate { chat { id title } } }"}]""")
-        val file = java.io.File.createTempFile("chat-", ".jpg")
+        DBlayer.database.registerOperations("""[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url signedId blobId } }"},{"name":"ContainerGroupCreateFile","document":"mutation ContainerGroupCreateFile { groupContainerCreate { container { id title } } }"},{"name":"ContainerGroupUpdateFile","document":"mutation ContainerGroupUpdateFile { groupContainerUpdate { container { id title } } }"}]""")
+        val file = java.io.File.createTempFile("container-", ".jpg")
         try {
             file.writeText("photo")
-            val local = uploadCreate("Chat", parseJsonObject("""{"title":"pending"}"""), UploadRequest(file.path, "ChatGroupCreateFile", createBlob = "CreateBlob"), Chat)
+            val local = uploadCreate("Container", parseJsonObject("""{"title":"pending"}"""), UploadRequest(file.path, "ContainerGroupCreateFile", createBlob = "CreateBlob"), Container)
             val id = withTimeout(5000) { local.confirmedId() }
-            val entity = Chat.entity(id)
-            val chat = withTimeout(5000) { entity.value.first { it?.title == "created" } }!!
-            assertEquals("created", chat.title)
-            chat.upload(UploadRequest(file.path, "ChatGroupUpdateFile", createBlob = "CreateBlob"))
+            val entity = Container.entity(id)
+            val container = withTimeout(5000) { entity.value.first { it?.title == "created" } }!!
+            assertEquals("created", container.title)
+            container.upload(UploadRequest(file.path, "ContainerGroupUpdateFile", createBlob = "CreateBlob"))
             assertEquals("updated", withTimeout(5000) { entity.value.first { it?.title == "updated" } }?.title)
         } finally {
             file.delete()
@@ -46,8 +46,8 @@ class BridgeProbeTest {
     @Test
     fun aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
-        val initial = Message.create(chatId = "c1", authorId = "u1", text = "hello")
-        val row = initial.update(reactions = listOf(MessageReactionNode(body = "A", userId = "u1")))
+        val initial = Record.create(containerId = "c1", authorId = "u1", text = "hello")
+        val row = initial.update(reactions = listOf(RecordReactionNode(body = "A", userId = "u1")))
         val changed = row.react(reactionBody = "C", userId = "u1")
         assertEquals(listOf("u1"), changed.reactions.map { it.userId })
         assertEquals(listOf("C"), changed.reactions.map { it.body })
@@ -69,14 +69,14 @@ class BridgeProbeTest {
         heldMoment = null
         eventuallyBlocking("the moment is collected") { registry.liveCount == 0 || run { System.gc(); false } }
         assertEquals(1, registry.retainedCount)
-        val message = Message.create(chatId = "chat", authorId = "user", text = "n".repeat(5 * 1024 * 1024))
-        val messages = EntityRegistries.of("Message", Message)
-        var heldMessage: Entity<Message>? = messages.entity(message.id)
-        withTimeout(5000) { heldMessage!!.value.first { it != null } }
-        heldMessage = null
-        eventuallyBlocking("the message is collected") { messages.liveCount == 0 || run { System.gc(); false } }
+        val record = Record.create(containerId = "container", authorId = "user", text = "n".repeat(5 * 1024 * 1024))
+        val records = EntityRegistries.of("Record", Record)
+        var heldRecord: Entity<Record>? = records.entity(record.id)
+        withTimeout(5000) { heldRecord!!.value.first { it != null } }
+        heldRecord = null
+        eventuallyBlocking("the record is collected") { records.liveCount == 0 || run { System.gc(); false } }
         assertEquals(0, registry.retainedCount)
-        assertEquals(1, messages.retainedCount)
+        assertEquals(1, records.retainedCount)
     }
 
     @Test
@@ -126,10 +126,10 @@ class BridgeProbeTest {
     @Test
     fun anEntityOfARecordThatAnotherRecordRefersToFollowsItsCreateAndDestroy() = bounded {
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, null)
-        val message = Message.create(chatId = "c", authorId = "u1", text = "hi")
-        val entity = Message.entity(message.id)
+        val record = Record.create(containerId = "c", authorId = "u1", text = "hi")
+        val entity = Record.entity(record.id)
         assertEquals("hi", withTimeout(5000) { entity.value.first { it != null } }?.text)
-        message.destroy()
+        record.destroy()
         withTimeout(5000) { entity.value.first { it == null } }
         assertNull(entity.value.value)
     }

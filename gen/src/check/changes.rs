@@ -1,46 +1,30 @@
-use super::*;
+use dblayer::schema::{ModelSpec, NodeRead};
 
-pub(super) fn check_subscription_actions(nodes: &[ModelNode], errors: &mut Vec<Found>) {
-    for node in nodes {
-        for call in node.body.iter().flat_map(|call| std::iter::once(call).chain(call.block.iter().flatten())).filter(|call| matches!(call.word.as_str(), "listen" | "updates")) {
-            let result = crate::build::subscription_apply(call).and_then(|apply| {
-                let Some(apply) = apply else { return Ok(()) };
-                if apply.matches.keys().any(|path| path.split('.').any(str::is_empty)) { return Err("apply matches requires nonempty paths".into()); }
-                match apply.action {
-                    dblayer::schema::SubscriptionAction::Ephemeral { fields } if fields.is_empty() || fields.iter().any(|(name, path)| name.is_empty() || path.split('.').any(str::is_empty)) => Err("ephemeral apply requires nonempty fields and paths".into()),
-                    dblayer::schema::SubscriptionAction::Reread { via } if via.is_empty() => Err("reread apply requires via".into()),
-                    _ => Ok(()),
-                }
-            });
-            if let Err(message) = result { errors.push(at(node.file, call.line, call.column, message)); }
-        }
-    }
-}
+use super::{at, Found};
+use crate::decl::ModelDecl;
 
-pub(super) fn check_changes(nodes: &[ModelNode], models: &[ModelSpec], errors: &mut Vec<Found>) {
-    let feeds: Vec<_> = nodes.iter().flat_map(|node| node.body.iter().filter(|call| call.word == "changes").map(move |call| (node, call))).collect();
-    for (node, call) in feeds.iter().skip(1) {
-        errors.push(at(node.file, call.line, call.column, "duplicate changes subscription".into()));
+pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &mut Vec<Found>) {
+    let feeds: Vec<_> = nodes.iter().flat_map(|node| node.changes.iter().map(move |feed| (node, feed))).collect();
+    for (node, feed) in feeds.iter().skip(1) {
+        errors.push(at(node.file, feed.pos, "duplicate changes subscription"));
     }
     let mut seen: std::collections::HashMap<&str, (bool, usize, usize, usize)> = std::collections::HashMap::new();
     for (node, model) in nodes.iter().zip(models) {
-        if let Some(feed) = &model.change_feed {
-            if [&feed.root, &feed.area, &feed.kind, &feed.id].iter().any(|path| path.split('.').any(str::is_empty)) {
-                let call = node.body.iter().find(|call| call.word == "changes").unwrap();
-                errors.push(at(node.file, call.line, call.column, "changes requires nonempty response paths".into()));
+        for (decl, change) in node.changed_by.iter().zip(&model.changes) {
+            let mut report = |message: String| errors.push(at(node.file, decl.pos, message));
+            if feeds.is_empty() {
+                report("changed_by requires a changes subscription".into());
             }
-        }
-        for (call, change) in node.body.iter().filter(|call| call.word == "changed_by").zip(&model.changes) {
-            let mut report = |message: String| errors.push(at(node.file, call.line, call.column, message));
-            if feeds.is_empty() { report("changed_by requires a changes subscription".into()); }
             let Some(relation) = model.relations.iter().find(|relation| relation.name == change.relation) else {
                 report(format!("unknown relation `{}`", change.relation));
                 continue;
             };
-            if relation.remote.is_none() { report(format!("relation `{}` has no remote read", change.relation)); }
-            let node_read = relation.node == Some(dblayer::schema::NodeRead::One);
-            if call.options.iter().any(|pair| pair.key == "removes_on") && (!node_read || change.relation != "node") {
-                report("removes_on requires via: :node".into());
+            if relation.remote.is_none() {
+                report(format!("relation `{}` has no remote read", change.relation));
+            }
+            let node_read = relation.node == Some(NodeRead::One);
+            if decl.removes_on.is_some() && !node_read {
+                report("removes_on requires a via scope declared with `node: :one`".into());
             }
             let parameters: Vec<&str> = relation.text_params.iter().chain(&relation.by_columns).map(String::as_str).collect();
             match (&change.parameter, node_read) {
@@ -54,7 +38,7 @@ pub(super) fn check_changes(nodes: &[ModelNode], models: &[ModelSpec], errors: &
                     report(format!("duplicate change area `{}`, first declaration at file {file}:{line}:{column}", change.area));
                 }
             } else {
-                seen.insert(&change.area, (node_read, node.file, call.line, call.column));
+                seen.insert(&change.area, (node_read, node.file, decl.pos.line, decl.pos.column));
             }
         }
     }

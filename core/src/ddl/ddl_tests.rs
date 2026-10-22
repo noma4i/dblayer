@@ -184,7 +184,7 @@ fn strict_row_table_rejects_wrong_column_type() {
 fn core_migration_creates_tables_and_indexes() {
     let connection = core_connection();
     let tables: BTreeSet<String> =
-        ["manifest", "scope_member", "tombstone", "query_window", "op", "op_once", "quarantine", "row_sync"].map(String::from).into();
+        ["manifest", "scope_member", "tombstone", "query_window", "op", "quarantine", "row_sync"].map(String::from).into();
     let indexes: BTreeSet<String> = [
         "scope_walk",
         "scope_order_unique",

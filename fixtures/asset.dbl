@@ -1,20 +1,19 @@
 model Asset do
-  field :clientKey, type: :string
-  field :size, type: :int
-  field :position, type: :int, default: 0
-  operation :create_file do
-    upload CreateAsset
-    correlate :clientKey
-    root "createAsset.asset"
-    local_effect :none, reason: "created with its file"
+  attribute :clientKey, :string
+  attribute :size, :int
+  attribute :position, :int, default: 0
+  operation :create_file, upload: true do
+    mutation "CreateAsset"
+    match_by "clientKey"
+    optimistic false
+    response from: "createAsset.asset"
   end
-  operation :create_files do
-    upload CreateAssets
-    batch min: 2, max: 10, items: :items, single: :create_file
-    renumber position: :position, size: :size, position_from: 0
-    item clientKey: :clientKey
-    correlate :clientKey
-    root "createAssets.assets"
-    local_effect :none, reason: "created with their files"
+  operation :create_files, upload: true do
+    mutation "CreateAssets"
+    match_by "clientKey"
+    optimistic false
+    batch items: "items", single: :create_file, input: { clientKey: :clientKey }, renumber: { position: "position", size: "size", start: 0 }
+    validates :items, length: { minimum: 2, maximum: 10 }
+    response from: "createAssets.assets"
   end
 end

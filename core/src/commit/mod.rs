@@ -162,7 +162,7 @@ pub enum OperationTransition {
     BeginUploadBatch { record: OperationRecord, items: Vec<(RowId, String, crate::upload::UploadInput)> },
     RemoveUploadItem { seq: i64, position: i64, inputs: Vec<(i64, crate::upload::UploadInput)> },
     SeparateUploads { seq: i64, single_action: String, single_mutation: String },
-    Close { seq: i64, status: OperationStatus, once: bool },
+    Close { seq: i64, status: OperationStatus },
     Start { seq: i64 },
     Fail { seq: i64, status: OperationStatus, failure: OperationFailure },
     Retry { seq: i64 },

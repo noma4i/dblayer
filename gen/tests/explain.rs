@@ -4,7 +4,7 @@ use std::process::Command;
 fn explain_runs_sqlite_plans_for_declared_scopes() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("notes.dbl");
-    std::fs::write(&source, "model Note, storage: :local do\n field :folderId, type: :id\n field :position, type: :int\n scope :in_folder do\n where :folderId\n order position: :desc\n end\nend\n").unwrap();
+    std::fs::write(&source, "model Note, storage: :local do\n  attribute :folderId, :id\n  attribute :position, :int\n  scope :in_folder do\n    parameter :folderId, :id\n    where folderId: :folderId\n    order position: :desc\n  end\nend\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_dblayer-gen")).arg("explain").arg(&source).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();

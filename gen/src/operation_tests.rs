@@ -1,7 +1,7 @@
 use crate::SchemaTypes;
 use crate::{emit_kotlin, emit_swift, parse_all};
 
-const QR: &str = "operation :qr_code_create do\n  mutation QrCodeCreate\n  wrap :input\n  args kind: :string, size: :int?\n  result url: :string\nend\n\noperation :sign_out do\n  mutation SignOut\nend\n";
+const QR: &str = "operation :qr_code_create do\n  mutation \"QrCodeCreate\"\n  wrap \"input\"\n  parameter :kind, :string\n  parameter :size, :int, null: true\n  returns do\n    attribute :url, :string\n  end\nend\n\noperation :sign_out do\n  mutation \"SignOut\"\nend\n";
 
 #[test]
 fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
@@ -35,17 +35,22 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
 #[test]
 fn a_wrong_operation_declaration_is_named_with_its_line() {
     let cases = [
-        ("operation :a do\n  mutation A\n  args first: :string\n  args second: :int\nend\n", "`args` is declared twice"),
-        ("operation :a do\n  mutation A\n  result first: :string\n  result second: :int\nend\n", "`result` is declared twice"),
-        ("operation :a do\n  mutation A\n  wrap :first\n  wrap :second\nend\n", "`wrap` is declared twice"),
-        ("operation :a do\n  mutation A\n  args x: :string, x: :int\nend\n", "arg `x` is declared twice"),
-        ("operation :a do\n  args x: :id\nend\n", "needs exactly one `mutation` or `query` line"),
-        ("operation :a do\n  mutation A\n  query B\nend\n", "needs exactly one `mutation` or `query` line"),
-        ("operation :a do\n  mutation A\n  args x: :uuid\nend\n", "or the name of a schema input object or enum like :QrCodeInput"),
-        ("operation :a do\n  mutation A\n  result x: :uuid\nend\n", "type must be :bool, :int, :num, :string, :id, :ids, :json or the name of a schema enum"),
-        ("operation :a do\n  mutation A\n  frob :x\nend\n", "unknown line `frob`"),
-        ("operation :a do\n  mutation A\nend\noperation :a do\n  mutation B\nend\n", "operation `a` is declared twice"),
+        ("operation :a do\n  mutation \"A\"\n  returns do\n    attribute :first, :string\n  end\n  returns do\n    attribute :second, :int\n  end\nend\n", "`returns` is declared twice"),
+        ("operation :a do\n  mutation \"A\"\n  wrap \"first\"\n  wrap \"second\"\nend\n", "`wrap` is declared twice"),
+        ("operation :a do\n  mutation \"A\"\n  parameter :x, :string\n  parameter :x, :int\nend\n", "parameter `x` is declared twice"),
+        ("operation :a do\n  parameter :x, :id\nend\n", "needs exactly one `mutation` or `query` line"),
+        ("operation :a do\n  mutation \"A\"\n  query \"B\"\nend\n", "needs exactly one `mutation` or `query` line"),
+        ("operation :a do\n  mutation \"A\"\n  parameter :x, :uuid\nend\n", "the name of a schema input object or enum like QrCodeInput"),
+        ("operation :a do\n  mutation \"A\"\n  returns do\n    attribute :x, :date\n  end\nend\n", "a returned attribute is :bool, :int, :num, :string, :id, :json"),
+        ("operation :a do\n  mutation \"A\"\n  frob :x\nend\n", "unknown line `frob`"),
+        ("operation :a do\n  mutation \"A\"\n  args x: :string\nend\n", "unknown line `args`"),
+        ("operation :a do\n  mutation \"A\"\n  result x: :string\nend\n", "unknown line `result`"),
+        ("operation :a do\n  mutation \"A\"\nend\n\noperation :a do\n  mutation \"B\"\nend\n", "operation `a` is declared twice"),
         ("operation :a\n", "needs a `do ... end` block"),
+        ("operation :a do\n  mutation A\nend\n", "the operation name must be a string"),
+        ("operation :a do\n  mutation \"A\", extra: 1\nend\n", "unknown key `extra` for `mutation`"),
+        ("operation :a do\n  mutation \"A\"\n  wrap :input\nend\n", "the variable path must be a string"),
+        ("operation :a do\n  mutation \"A\"\n  response from: \"x\"\nend\n", "has `response shape: :list` only"),
     ];
     for (source, message) in cases {
         let errors = parse_all(&[source]).err().unwrap_or_else(|| panic!("accepted: {source}"));
@@ -53,7 +58,7 @@ fn a_wrong_operation_declaration_is_named_with_its_line() {
     }
 }
 
-const GIPHY: &str = "operation :giphy_load do\n  query Giphy\n  list\n  args type: :string, limit: :int?\n  result id: :id, url: :string\nend\n";
+const GIPHY: &str = "operation :giphy_load do\n  query \"Giphy\"\n  response shape: :list\n  parameter :type, :string\n  parameter :limit, :int, null: true\n  returns do\n    attribute :id, :id\n    attribute :url, :string\n  end\nend\n";
 
 #[test]
 fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
@@ -77,6 +82,6 @@ fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
 
 #[test]
 fn a_list_line_without_a_result_is_named_with_its_line() {
-    let errors = parse_all(&["operation :a do\n  query A\n  list\nend\n"]).err().expect("accepted");
-    assert!(errors.iter().any(|(_, error)| error.message.contains("`list` needs a `result` line")), "{errors:?}");
+    let errors = parse_all(&["operation :a do\n  query \"A\"\n  response shape: :list\nend\n"]).err().expect("accepted");
+    assert!(errors.iter().any(|(_, error)| error.message.contains("`response shape: :list` needs a `returns` block")), "{errors:?}");
 }

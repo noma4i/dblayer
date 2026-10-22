@@ -56,7 +56,7 @@ extension BridgeProbeTests {
 
     transport.enqueue("QrCodeCreate", failure: failure)
     do {
-      _ = try await Operations.qrCodeCreate(kind: "chat", size: 3)
+      _ = try await Operations.qrCodeCreate(kind: "container", size: 3)
       Issue.record("\(code): the operation call did not throw")
     } catch {
       #expect(sealedCode(error, "call \(code)") == code)

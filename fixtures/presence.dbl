@@ -1,17 +1,15 @@
-model Presence, storage: :memory, expire_after: 1.minute do
-  field :userId, type: :id
-  field :room, type: :string
-
+model Presence, storage: :memory, expires_in: 1.minute do
+  attribute :userId, :id
+  attribute :room, :string
   belongs_to :user
-
   scope :for_user do
-    where :userId
+    parameter :userId, :id
+    where userId: :userId
   end
-
   scope :online do
-    fetch PresenceOnline
-    list
-    fresh_for 30.seconds
-    updates PresenceChanged, deleted_by: :left
+    query "PresenceOnline"
+    response shape: :list
+    freshness expires_in: 30.seconds
+    subscribe "PresenceChanged", apply: { effect: :upsert, delete_if: "left" }
   end
 end

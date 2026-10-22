@@ -36,7 +36,6 @@ fn user_tables(store: &Store) {
     exec(
         store,
         "INSERT INTO op (action_key, status, created_at, since) VALUES ('messages:send', 'pending', 1, 1);\
-         INSERT INTO op_once (namespace, dedupe_key) VALUES ('messages:send', 'd1');\
          INSERT INTO quarantine (model, reason) VALUES ('messages', 'test');",
     );
 }
@@ -72,7 +71,6 @@ fn incompatible_clears_all_cache_tables_and_the_outbox_and_keeps_the_other_user_
     store.reset_incompatible().unwrap();
     assert_eq!(cache_counts(&store), vec![0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op_once"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);
 }

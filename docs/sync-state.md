@@ -127,12 +127,12 @@ You choose per action, in the model file:
 
 ```ruby
 operation :create do
-  mutation CreateNote
+  mutation "CreateNote"
   on_failure :keep
 end
-
 operation :like do
-  mutation LikeMoment
+  mutation "LikeMoment"
+  optimistic likedByMe: true
   on_failure :keep
 end
 ```

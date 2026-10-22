@@ -1,7 +1,9 @@
-use super::*;
-use dblayer::schema::{FieldKind, FieldSpec};
+use dblayer::schema::{FieldKind, FieldSpec, ModelSpec};
 use dblayer::value::ScalarKind;
 use serde_json::Value as Json;
+
+use super::{at, Found};
+use crate::decl::{AttributeBlock, AttributeDecl, ModelDecl};
 
 fn fits(field: &FieldSpec, value: &Json, types: &[&FieldSpec]) -> bool {
     if value.is_null() { return field.nullable || field.optional; }
@@ -36,41 +38,47 @@ fn object_cycle(name: &str, types: &[&FieldSpec], seen: &mut Vec<String>) -> boo
     cycle
 }
 
-fn walk(calls: &[Call], fields: &[FieldSpec], file: usize, types: &[&FieldSpec], errors: &mut Vec<Found>, in_type: bool) {
-    for call in calls {
-        if let (true, Some(Node { item: Value::Const(typename), .. }), Some(block)) = (call.word == "variant", call.args.first(), &call.block) {
-            if let Some(variant) = fields.iter().find(|field| field.app_type.as_deref() == Some(typename.as_str())) {
-                walk(block, &variant.fields, file, types, errors, true);
-            }
-            continue;
-        }
-        let Some(name) = symbol_name(call.args.first()) else { continue };
-        let Some(field) = fields.iter().find(|field| field.name == name) else { continue };
+fn walk(attributes: &[AttributeDecl], fields: &[FieldSpec], file: usize, types: &[&FieldSpec], errors: &mut Vec<Found>, in_type: bool) {
+    for attribute in attributes {
+        let Some(field) = fields.iter().find(|field| field.name == attribute.name) else { continue };
         let enumerated = matches!(field.kind, FieldKind::Enum { .. }) || !field.values.is_empty();
-        if let Some(pair) = call.options.iter().find(|pair| pair.key == "default").filter(|_| in_type || enumerated) {
+        if let Some(default) = attribute.default.as_ref().filter(|_| in_type || enumerated) {
             if field.default.as_ref().is_some_and(|value| !fits(field, value, types)) {
-                let owner = if in_type { "nested field" } else { "field" };
-                errors.push(at(file, pair.value.line, pair.value.column, format!("{owner} `{name}` default must match its type and required fields")));
+                let owner = if in_type { "nested attribute" } else { "attribute" };
+                errors.push(at(file, default.pos, format!("{owner} `{}` default must match its type and required fields", attribute.name)));
             }
         }
-        if let Some(block) = &call.block {
-            if object_cycle(field.app_type.as_deref().unwrap_or_default(), types, &mut Vec::new()) {
-                errors.push(at(file, call.line, call.column, "recursive objects need an array between repeated types".to_string()));
+        let recursive = || object_cycle(field.app_type.as_deref().unwrap_or_default(), types, &mut Vec::new());
+        match &attribute.block {
+            AttributeBlock::None => {}
+            AttributeBlock::Fields(inner) => {
+                if recursive() {
+                    errors.push(at(file, attribute.pos, "recursive objects need an array between repeated types"));
+                }
+                walk(inner, &field.fields, file, types, errors, true);
             }
-            walk(block, &field.fields, file, types, errors, true);
-            for shared in block.iter().filter(|child| child.word == "shared") {
-                walk(shared.block.as_deref().unwrap_or_default(), &field.shared, file, types, errors, true);
+            AttributeBlock::Union { shared, variants } => {
+                if recursive() {
+                    errors.push(at(file, attribute.pos, "recursive objects need an array between repeated types"));
+                }
+                for variant in variants {
+                    let Some(inner) = &variant.fields else { continue };
+                    if let Some(spec) = field.fields.iter().find(|candidate| candidate.app_type.as_deref() == Some(variant.type_name.as_str())) {
+                        walk(inner, &spec.fields, file, types, errors, true);
+                    }
+                }
+                if let Some(shared) = shared {
+                    walk(&shared.item, &field.shared, file, types, errors, true);
+                }
             }
         }
     }
 }
 
-pub(super) fn check_defaults(nodes: &[ModelNode], models: &[ModelSpec], errors: &mut Vec<Found>) {
+pub(super) fn check_defaults(nodes: &[ModelDecl], models: &[ModelSpec], errors: &mut Vec<Found>) {
     let types = crate::emit::declared_types(models);
     for node in nodes {
         let Some(model) = models.iter().find(|model| model.key.as_str() == node.name) else { continue };
-        for schema in node.body.iter().filter(|call| call.word == "schema") {
-            walk(schema.block.as_deref().unwrap_or_default(), &model.fields, node.file, &types, errors, false);
-        }
+        walk(&node.attributes, &model.fields, node.file, &types, errors, false);
     }
 }

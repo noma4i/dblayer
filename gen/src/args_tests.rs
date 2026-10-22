@@ -2,7 +2,7 @@ use crate::SchemaTypes;
 use crate::{emit_kotlin, emit_swift, parse_models};
 
 fn model(body: &str) -> String {
-    format!("model Sample do\n\n    field :name, type: :string\n    field :ownerId, type: :id\n\n\n{body}\nend\n")
+    format!("model Sample do\n\n    attribute :name, :string\n    attribute :ownerId, :id\n\n\n{body}\nend\n")
 }
 
 fn failure(body: &str) -> (usize, String) {
@@ -11,38 +11,38 @@ fn failure(body: &str) -> (usize, String) {
     (errors[0].line, errors[0].message.clone())
 }
 
+const PAIR: &str = "operation :create do\n  mutation \"CreateSample\"\n  parameter :signedId, :string\n  parameter :momentId, :id, null: true\n  variables name: :name, signedId: :signedId, momentId: :momentId\nend\n\noperation :update do\n  mutation \"UpdateSample\"\n  parameter :signedId, :string, null: true\n  variables sampleId: :id, signedId: :signedId\nend";
+
 #[test]
-fn standard_action_args_are_typed_values_that_input_may_name() {
-    let source = model("  operation :create do\n    mutation CreateSample\n    input name: :name, signedId: :signedId, momentId: :momentId\n    args signedId: :string, momentId: :id?\n  end\n  operation :update do\n    mutation UpdateSample\n    input sampleId: :id, signedId: :signedId\n    args signedId: :string?\n  end");
-    let models = parse_models(&source).unwrap();
+fn standard_operation_parameters_are_typed_values_that_variables_may_name() {
+    let models = parse_models(&model(PAIR)).unwrap();
     let args: Vec<_> = models[0].actions.iter().map(|action| action.args.iter().map(|(name, kind)| format!("{name}={kind}")).collect::<Vec<_>>()).collect();
     assert_eq!(args, [vec!["momentId=id?", "signedId=string"], vec!["signedId=string?"]]);
 }
 
 #[test]
-fn standard_action_args_reject_what_cannot_be_sent() {
+fn standard_operation_parameters_reject_what_cannot_be_sent() {
     for (case, body, message) in [
-        ("kind", "  operation :create do\n    mutation A\n    args x: :date\n  end", crate::operation::ARG_KIND_MESSAGE),
-        ("positional value", "  operation :create do\n    mutation A\n    args 1\n  end", "`args` needs named values"),
-        ("field name", "  operation :create do\n    mutation A\n    args name: :string\n  end", "arg `name` has the name of a field"),
-        ("unused", "  operation :create do\n    mutation A\n    input name: :name\n    args x: :string\n  end", "arg `x` is not named by `input`"),
-        ("destroy", "  operation :destroy do\n    mutation A\n    args x: :string\n  end", "unknown key `args` for `destroy`"),
-        ("unknown input", "  operation :create do\n    mutation A\n    input v: :ghost, w: :y\n    args y: :string\n  end", "input names unknown field `ghost`"),
+        ("kind", "operation :create do\n  mutation \"A\"\n  parameter :x, :date\n  variables x: :x\nend", crate::decl::PARAM_TYPES),
+        ("attribute name", "operation :create do\n  mutation \"A\"\n  parameter :name, :string\n  variables name: :name\nend", "parameter `name` has the name of an attribute"),
+        ("unused", "operation :create do\n  mutation \"A\"\n  parameter :x, :string\nend", "parameter `x` is used by neither `variables` nor `optimistic`"),
+        ("destroy takes no parameter", "operation :destroy do\n  mutation \"A\"\n  parameter :x, :string\nend", "`parameter` does not apply to operation `destroy`"),
+        ("unknown variable source", "operation :create do\n  mutation \"A\"\n  parameter :y, :string\n  variables y: :y, ghost: :ghost\nend", "variable `ghost` names unknown attribute or parameter `ghost`"),
     ] {
-        assert_eq!(failure(body).1, message, "{case}");
+        let found = failure(body).1;
+        assert!(found.contains(message), "{case}: {found}");
     }
 }
 
 #[test]
-fn action_args_accept_a_nullable_kind() {
-    let source = model("  operation :forward do\n    mutation Forward\n    local_effect :none, reason: \"test\"\n    args momentId: :id?, note: :string\n    input sampleId: :id, momentId: :momentId, note: :note\n  end");
+fn a_named_operation_accepts_a_nullable_kind() {
+    let source = model("operation :forward do\n  mutation \"Forward\"\n  optimistic false\n  parameter :momentId, :id, null: true\n  parameter :note, :string\n  variables momentId: :momentId, note: :note\nend");
     assert_eq!(parse_models(&source).unwrap()[0].actions[0].args["momentId"], "id?");
 }
 
 #[test]
 fn the_generated_calls_take_the_args_after_the_fields() {
-    let source = model("  operation :create do\n    mutation CreateSample\n    input name: :name, signedId: :signedId, momentId: :momentId\n    args signedId: :string, momentId: :id?\n  end\n  operation :update do\n    mutation UpdateSample\n    input sampleId: :id, signedId: :signedId\n    args signedId: :string?\n  end");
-    let models = parse_models(&source).unwrap();
+    let models = parse_models(&model(PAIR)).unwrap();
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     for expected in [
         "create(name: String, momentId: String? = nil, signedId: String) async throws -> Self",
@@ -62,7 +62,7 @@ fn the_generated_calls_take_the_args_after_the_fields() {
 
 #[test]
 fn a_model_without_args_emits_no_args_variable() {
-    let models = parse_models(&model("  operation :create do\n    mutation CreateSample\n    input name: :name\n  end\n  operation :update do\n    mutation UpdateSample\n  end")).unwrap();
+    let models = parse_models(&model("operation :create do\n  mutation \"CreateSample\"\nend\n\noperation :update do\n  mutation \"UpdateSample\"\nend")).unwrap();
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     assert!(!swift.contains("var args") && !swift.contains("args: args"), "swift keeps an unused args variable");
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());

@@ -1,6 +1,5 @@
-use dblayer::schema::{MergeRule, Newer, CursorSpec, VariableSource, 
-    AssociationKind, Coverage, Dependent, FieldKind, ModelSpec, OnFailure, PageDirection, RemoteShape, RootShape, Sort,
-    Storage, UpdatesSpec,
+use dblayer::schema::{
+    AssociationKind, Coverage, CursorSpec, Dependent, FieldKind, MergeRule, ModelSpec, Newer, OnFailure, PageDirection, RemoteShape, RootShape, Sort, Storage, UpdatesSpec, VariableSource,
 };
 use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::json;
@@ -8,62 +7,73 @@ use serde_json::json;
 use crate::check::check_source;
 
 fn build_one(body: &str) -> ModelSpec {
-    let source = format!("model Sample do\n  schema do\n    id :ownerId, index: true\n    date :createdAt, index: true\n  end\n{body}\nend\n");
+    let source = format!("model Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  index :ownerId, :createdAt\n{body}\nend\n");
     let mut models = check_source(&source).unwrap();
     assert_eq!(models.len(), 1);
     models.remove(0)
 }
 
 fn fields_of(lines: &str) -> Vec<dblayer::schema::FieldSpec> {
-    let mut fields = check_source(&format!("model Sample do\n  schema do\n{lines}\n  end\nend\n")).unwrap().remove(0).fields;
+    let mut fields = check_source(&format!("model Sample do\n{lines}\nend\n")).unwrap().remove(0).fields;
     fields.retain(|field| field.name != "id");
     fields
 }
 
 #[test]
-fn scalar_words_map_to_scalar_kinds() {
-    let fields = fields_of("string :a\nnum :b\nint :c\nbool :d\ndate :e\nid :f");
-    let kinds: Vec<ScalarKind> = fields
-        .iter()
-        .map(|field| match field.kind {
-            FieldKind::Scalar { kind } => kind,
-            _ => panic!("not scalar"),
-        })
-        .collect();
-    assert_eq!(kinds, vec![ScalarKind::Str, ScalarKind::Num, ScalarKind::Int, ScalarKind::Bool, ScalarKind::Date, ScalarKind::Id]);
+fn type_words_map_to_field_kinds() {
+    let fields = fields_of("attribute :a, :string\nattribute :b, :num\nattribute :c, :int\nattribute :d, :bool\nattribute :e, :date\nattribute :f, :id\nattribute :r, :json\nattribute :file, :file\nattribute :k, :enum, values: [\"x\", \"y\"]\nattribute :t, [:int]");
+    let kinds: Vec<FieldKind> = fields.iter().map(|field| field.kind.clone()).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            FieldKind::Scalar { kind: ScalarKind::Str },
+            FieldKind::Scalar { kind: ScalarKind::Num },
+            FieldKind::Scalar { kind: ScalarKind::Int },
+            FieldKind::Scalar { kind: ScalarKind::Bool },
+            FieldKind::Scalar { kind: ScalarKind::Date },
+            FieldKind::Scalar { kind: ScalarKind::Id },
+            FieldKind::Raw,
+            FieldKind::File,
+            FieldKind::Enum { values: vec!["x".into(), "y".into()] },
+            FieldKind::List { element: ScalarKind::Int },
+        ]
+    );
 }
 
 #[test]
-fn structured_words_map_to_kinds() {
-    let fields = fields_of("object :o\narray :a\nraw :r\nfile :f\nenum :k, values: [:x, \"y\"]\nlist :t, of: :int");
-    assert_eq!(fields[0].kind, FieldKind::Object);
-    assert_eq!(fields[1].kind, FieldKind::Array);
-    assert_eq!(fields[2].kind, FieldKind::Raw);
-    assert_eq!(fields[3].kind, FieldKind::File);
-    assert_eq!(fields[4].kind, FieldKind::Enum { values: vec!["x".into(), "y".into()] });
-    assert_eq!(fields[5].kind, FieldKind::List { element: ScalarKind::Int });
+fn a_named_type_with_a_block_is_an_object_and_a_list_of_it_is_an_array() {
+    let fields = fields_of("attribute :o, Inner do\n  attribute :x, :int\nend\nattribute :a, [Cell] do\n  attribute :y, :int\nend");
+    assert_eq!((fields[0].kind.clone(), fields[0].app_type.as_deref()), (FieldKind::Object, Some("Inner")));
+    assert_eq!((fields[1].kind.clone(), fields[1].app_type.as_deref()), (FieldKind::Array, Some("Cell")));
 }
 
 #[test]
-fn field_keys_set_flags() {
-    let fields = fields_of("string :a, null: true, optional: true, index: true, default: \"x\"\nid :b, id_from: :parent\nfile :c, null: true");
-    assert!(fields[0].nullable && fields[0].optional && fields[0].indexed);
+fn attribute_options_set_flags() {
+    let fields = fields_of("attribute :a, :string, null: true, optional: true, default: \"x\"\nattribute :b, :id, id_from: :parent\nattribute :c, :string, null: true, from: \"c.label\"");
+    assert!(fields[0].nullable && fields[0].optional && !fields[0].indexed);
     assert_eq!(fields[0].default, Some(json!("x")));
     assert_eq!(fields[1].id_from_parent.as_deref(), Some("parent"));
-    assert!(fields[2].nullable && !fields[2].indexed);
+    assert_eq!(fields[2].from.as_deref(), Some("c.label"));
 }
 
 #[test]
 fn defaults_convert_to_json() {
-    let fields = fields_of("object :a, default: {}\nint :b, default: 3\nnum :c, default: 1.5\nbool :d, default: false\nstring :e, default: nil\narray :f, default: [1, :two]");
+    let fields = fields_of("attribute :b, :int, default: 3\nattribute :c, :num, default: 1.5\nattribute :d, :bool, default: false\nattribute :e, :string, null: true, default: nil\nattribute :f, [:string], default: [\"one\", :two]");
     let defaults: Vec<_> = fields.iter().map(|field| field.default.clone()).collect();
-    assert_eq!(defaults, vec![Some(json!({})), Some(json!(3)), Some(json!(1.5)), Some(json!(false)), Some(json!(null)), Some(json!([1, "two"]))]);
+    assert_eq!(defaults, vec![Some(json!(3)), Some(json!(1.5)), Some(json!(false)), Some(json!(null)), Some(json!(["one", "two"]))]);
+}
+
+#[test]
+fn a_search_line_marks_the_attribute_and_an_index_line_keeps_its_columns() {
+    let model = build_one("  attribute :title, :string\n  search :title");
+    assert!(model.field("title").unwrap().searchable);
+    assert_eq!(model.indexes, vec![vec!["ownerId".to_string(), "createdAt".to_string()]]);
 }
 
 #[test]
 fn associations_and_composite_index() {
     let model = check_source(
-        "model Owner do\n  schema do\n    string :n\n  end\nend\nmodel Sample do\n  schema do\n    id :ownerId, index: true\n    date :createdAt, index: true\n    list :peers, of: :id\n    index :ownerId, :createdAt\n  end\n  belongs_to :owner, model: Owner, key: :ownerId, touch: true\n  has_one :first, model: Sample, key: :ownerId, dependent: :destroy\n  references :peers, model: Owner\nend\n",
+        "model Owner do\nend\n\nmodel Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  attribute :peers, [:id], default: []\n  index :ownerId, :createdAt\n  belongs_to :owner, class_name: Owner, foreign_key: :ownerId, touch: true\n  has_one :first, class_name: Sample, foreign_key: :ownerId, dependent: :destroy\n  references :peers, class_name: Owner\nend\n",
     )
     .unwrap()
     .remove(1);
@@ -78,7 +88,7 @@ fn associations_and_composite_index() {
 #[test]
 fn a_belongs_to_that_sets_parent_fields_keeps_them_and_the_newer_guard() {
     let model = check_source(
-        "model Owner do\n  schema do\n    id :lastId, null: true\n    date :lastAt, null: true\n    int :lastSeq, null: true\n  end\nend\nmodel Sample do\n  schema do\n    id :ownerId, index: true\n    date :createdAt\n    int :seq, null: true\n  end\n  belongs_to :owner, model: Owner, key: :ownerId, sets: { lastId: :id, lastAt: :createdAt, lastSeq: :seq }, newer: { seq: :lastSeq, createdAt: :lastAt }\nend\n",
+        "model Owner do\n  attribute :lastId, :id, null: true\n  attribute :lastAt, :date, null: true\n  attribute :lastSeq, :int, null: true\nend\n\nmodel Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  attribute :seq, :int\n  index :ownerId\n  belongs_to :owner, class_name: Owner, foreign_key: :ownerId, sets: { lastId: :id, lastAt: :createdAt, lastSeq: :seq }, newer: { seq: :lastSeq, createdAt: :lastAt }\nend\n",
     )
     .unwrap()
     .remove(1);
@@ -89,13 +99,13 @@ fn a_belongs_to_that_sets_parent_fields_keeps_them_and_the_newer_guard() {
 
 #[test]
 fn references_to_the_same_model_keep_their_list_key_unindexed() {
-    let models = check_source("model Node do\n  schema do\n    list :nearIds, of: :id\n  end\n  references :near, model: Node, key: :nearIds\nend\n").unwrap();
+    let models = check_source("model Node do\n  references :near, class_name: Node, foreign_key: :nearIds\n  attribute :nearIds, [:id], default: []\nend\n").unwrap();
     assert!(!models[0].fields.iter().find(|field| field.name == "nearIds").unwrap().indexed);
 }
 
 #[test]
-fn scope_without_where_is_global_with_sort() {
-    let model = build_one("  scope :recent, order: { createdAt: :desc }");
+fn a_local_scope_without_where_is_global_with_its_sort() {
+    let model = build_one("  scope :recent do\n    order createdAt: :desc\n  end");
     let relation = &model.relations[0];
     assert!(relation.is_global && relation.remote.is_none() && relation.by_columns.is_empty());
     let Sort::Fields(fields) = &relation.sort else { panic!("sort") };
@@ -103,22 +113,22 @@ fn scope_without_where_is_global_with_sort() {
 }
 
 #[test]
-fn scope_with_where_groups_by_columns() {
-    let model = build_one("  scope :by_owner, params: [:ownerId], where: { ownerId: :ownerId }, order: { createdAt: :asc }");
+fn a_local_scope_with_where_groups_by_columns() {
+    let model = build_one("  scope :by_owner do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    order createdAt: :asc\n  end");
     let relation = &model.relations[0];
     assert!(!relation.is_global);
     assert_eq!(relation.by_columns, vec!["ownerId".to_string()]);
 }
 
 #[test]
-fn plain_scope_has_server_order() {
-    let model = build_one("  scope :all_of_them");
+fn a_scope_without_order_keeps_the_server_order() {
+    let model = build_one("  scope :all_of_them do\n  end");
     assert_eq!(model.relations[0].sort, Sort::ServerOrder);
 }
 
 #[test]
-fn remote_with_only_query_is_single_with_default_freshness() {
-    let model = build_one("  remote :profile do\n    query Profile\n  end");
+fn a_query_alone_is_a_single_read_with_default_freshness() {
+    let model = build_one("  scope :profile do\n    query \"Profile\"\n  end");
     let relation = &model.relations[0];
     assert!(relation.is_global);
     let remote = relation.remote.as_ref().unwrap();
@@ -131,39 +141,55 @@ fn remote_with_only_query_is_single_with_default_freshness() {
 }
 
 #[test]
-fn remote_list_is_complete_list() {
-    let model = build_one("  remote :all do\n    query All\n    list\n    fresh_for 2.hours\n  end");
+fn a_list_response_is_a_complete_list() {
+    let model = build_one("  scope :all do\n    query \"All\"\n    response shape: :list\n    freshness expires_in: 2.hours\n  end");
     let remote = model.relations[0].remote.as_ref().unwrap();
     assert_eq!(remote.shape, RemoteShape::List { coverage: Coverage::Complete });
     assert_eq!(remote.stale_time, "2.hours");
 }
 
 #[test]
-fn remote_paginate_is_forward_page_connection() {
-    let model = build_one("  remote :feed do\n    query Feed\n    paginate 20\n    fresh_for 5.minutes, empty: 30.seconds\n    max_pages 5\n  end");
+fn paginate_is_a_forward_page_connection_with_its_cap_and_freshness() {
+    let model = build_one("  scope :feed do\n    query \"Feed\"\n    paginate size: 20, direction: :forward, max_pages: 5\n    freshness expires_in: 5.minutes, empty_in: 30.seconds\n  end");
     let remote = model.relations[0].remote.as_ref().unwrap();
     assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(5), cursor: None });
+    assert_eq!(remote.page_size, Some(20));
     assert!(remote.selects_page_info);
     assert_eq!(remote.empty_stale_time.as_deref(), Some("30.seconds"));
 }
 
 #[test]
-fn remote_paginate_backward_without_cap() {
-    let model = build_one("  remote :feed do\n    query Feed\n    paginate 20, backward: true\n  end");
+fn paginate_backward_without_a_cap() {
+    let model = build_one("  scope :feed do\n    query \"Feed\"\n    paginate size: 20, direction: :backward\n  end");
     let remote = model.relations[0].remote.as_ref().unwrap();
     assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Backward, coverage: Coverage::Page, max_pages: None, cursor: None });
 }
 
 #[test]
-fn scopes_and_remotes_keep_written_order() {
-    let model = build_one("  remote :b do\n    query B\n  end\n  scope :a\n  remote :c do\n    query C\n  end");
+fn paginate_with_its_own_cursor_names_variable_source_and_type() {
+    let model = build_one("  scope :feed do\n    query \"Feed\"\n    paginate size: 20, direction: :forward, cursor: { parameter: \"afterSequence\", from: \"lastSequenceNumber\", type: :int }\n  end");
+    let remote = model.relations[0].remote.as_ref().unwrap();
+    let cursor = CursorSpec { variable: "afterSequence".to_string(), from: "lastSequenceNumber".to_string(), numeric: true };
+    assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: Some(cursor) });
+}
+
+#[test]
+fn a_string_cursor_is_not_numeric() {
+    let model = build_one("  scope :feed do\n    query \"Feed\"\n    paginate size: 20, direction: :forward, cursor: { parameter: \"after\", from: \"last\", type: :string }\n  end");
+    let RemoteShape::Connection { cursor: Some(cursor), .. } = &model.relations[0].remote.as_ref().unwrap().shape else { panic!("cursor") };
+    assert!(!cursor.numeric);
+}
+
+#[test]
+fn scopes_keep_written_order() {
+    let model = build_one("  scope :b do\n    query \"B\"\n  end\n  scope :a do\n  end\n  scope :c do\n    query \"C\"\n  end");
     let names: Vec<_> = model.relations.iter().map(|relation| relation.name.as_str()).collect();
     assert_eq!(names, vec!["b", "a", "c"]);
 }
 
 #[test]
-fn standard_actions_bind_mutations_and_input() {
-    let model = build_one("  create with: CreateSample, input: { text: :createdAt, ownerId: :ownerId }\n  update with: UpdateSample\n  destroy with: DeleteSample");
+fn standard_operations_bind_mutations_and_variables() {
+    let model = build_one("  operation :create do\n    mutation \"CreateSample\"\n    variables text: :createdAt, ownerId: :ownerId\n  end\n  operation :update do\n    mutation \"UpdateSample\"\n  end\n  operation :destroy do\n    mutation \"DeleteSample\"\n  end");
     let names: Vec<_> = model.actions.iter().map(|action| action.name.as_str()).collect();
     assert_eq!(names, vec!["create", "update", "destroy"]);
     let create = &model.actions[0];
@@ -176,8 +202,8 @@ fn standard_actions_bind_mutations_and_input() {
 }
 
 #[test]
-fn action_block_collects_mutation_input_optimistic_and_refetch() {
-    let model = build_one("  remote :feed do\n    query Feed\n  end\n  action :like do\n    mutation LikeSample\n    input sampleId: :id\n    optimistic createdAt: \"liked\", ownerId: nil\n    refetch :feed\n  end");
+fn a_named_operation_collects_mutation_variables_optimistic_and_refetch() {
+    let model = build_one("  scope :feed do\n    query \"Feed\"\n  end\n  operation :like do\n    mutation \"LikeSample\"\n    variables sampleId: :id\n    optimistic ownerId: nil, createdAt: \"liked\"\n    refetch :feed\n  end");
     let action = &model.actions[0];
     assert_eq!(action.name, "like");
     assert_eq!((action.root_shape, action.has_optimistic), (RootShape::Upsert, false));
@@ -189,37 +215,50 @@ fn action_block_collects_mutation_input_optimistic_and_refetch() {
 }
 
 #[test]
-fn remote_joins_events_marks_the_relation() {
-    let model = build_one("  remote :mine, params: [:ownerId], joins: :events do\n    query Mine\n  end\n  remote :other, params: [:ownerId] do\n    query Other\n  end");
+fn refetch_names_a_scope_of_another_model_with_its_model() {
+    let models = check_source("model Other do\n  scope :list do\n    query \"Others\"\n    response shape: :list\n  end\nend\n\nmodel Sample do\n  operation :poke do\n    mutation \"Poke\"\n    optimistic false\n    refetch :list, model: Other\n    refetch :list, model: Sample\n  end\n  scope :list do\n    query \"Samples\"\n    response shape: :list\n  end\nend\n").unwrap();
+    assert_eq!(models[1].actions[0].refetch, vec!["Other.list".to_string(), "list".to_string()]);
+}
+
+#[test]
+fn insert_on_event_and_response_joins_events() {
+    let model = build_one("  scope :mine, insert_on: [:event, :response] do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"Mine\"\n  end\n  scope :other do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"Other\"\n  end");
     let flags: Vec<bool> = model.relations.iter().map(|relation| relation.joins_events).collect();
     assert_eq!(flags, [true, false]);
 }
 
 #[test]
-fn remote_joins_created_marks_only_the_relation_that_names_it() {
-    let model = build_one("  remote :mine, joins: :created do\n    query Mine\n  end\n  remote :other do\n    query Other\n  end");
+fn insert_on_create_marks_only_the_relation_that_names_it() {
+    let model = build_one("  scope :mine, insert_on: [:create] do\n    query \"Mine\"\n  end\n  scope :other do\n    query \"Other\"\n  end");
     let flags: Vec<(bool, bool)> = model.relations.iter().map(|relation| (relation.joins_created, relation.joins_events)).collect();
     assert_eq!(flags, [(true, false), (false, false)]);
 }
 
 #[test]
-fn keyed_optimistic_builds_an_op_that_names_its_args() {
-    let model = build_one("  action :tag do\n    mutation TagSample\n    args label: :string\n    optimistic ownerId: { by: :ownerId, element: { ownerId: :label, createdAt: nil } }\n  end");
+fn keyed_optimistic_builds_an_op_that_names_its_parameters() {
+    let model = build_one("  operation :tag do\n    mutation \"TagSample\"\n    parameter :label, :string\n    optimistic ownerId: { by: :ownerId, element: { ownerId: :label, createdAt: nil } }\n  end");
     assert_eq!(model.actions[0].optimistic.get("ownerId"), Some(&json!({"$keyed": {"by": "ownerId", "element": {"ownerId": {"$arg": "label"}, "createdAt": null}}})));
 }
 
 #[test]
-fn remote_updates_line_builds_updates_spec() {
-    let model = build_one("  remote :feed do\n    query Feed\n    updates SampleEvents, deleted_by: :destroyed\n  end\n  remote :plain do\n    query Plain\n    updates PlainEvents\n  end");
-    let updates = |index: usize| model.relations[index].updates.clone();
-    assert_eq!(updates(0), vec![UpdatesSpec { apply: None, subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), set: Default::default(), removes: false, debounce: None, root: None, id: None }]);
-    assert_eq!(updates(1), vec![UpdatesSpec { apply: None, subscription: "PlainEvents".into(), deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }]);
+fn a_parameter_symbol_in_optimistic_becomes_an_arg_reference() {
+    let model = build_one("  operation :mute do\n    mutation \"Mute\"\n    parameter :mute, :bool\n    optimistic createdAt: :mute\n  end");
+    assert_eq!(model.actions[0].optimistic.get("createdAt"), Some(&json!({"$arg": "mute"})));
+    assert_eq!(model.actions[0].args.get("mute").map(String::as_str), Some("bool"));
 }
 
 #[test]
-fn on_failure_defaults_to_rollback_and_reads_keep_from_standard_and_block_actions() {
+fn subscribe_in_a_scope_builds_updates_specs() {
+    let model = build_one("  scope :feed do\n    query \"Feed\"\n    subscribe \"SampleEvents\", apply: { effect: :upsert, delete_if: \"destroyed\" }\n    subscribe \"PlainEvents\"\n  end");
+    let updates = &model.relations[0].updates;
+    assert_eq!(updates[0], UpdatesSpec { apply: None, subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), set: Default::default(), removes: false, debounce: None, root: None, id: None });
+    assert_eq!(updates[1], UpdatesSpec { apply: None, subscription: "PlainEvents".into(), deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None });
+}
+
+#[test]
+fn on_failure_defaults_to_rollback_and_reads_keep_from_every_operation() {
     let model = build_one(
-        "  create with: CreateSample, on_failure: :keep\n  update with: UpdateSample\n  destroy with: DeleteSample\n  action :like do\n    mutation LikeSample\n    local_effect :none, reason: \"test\"\n    on_failure :keep\n  end\n  action :poke do\n    mutation PokeSample\n    local_effect :none, reason: \"test\"\n  end",
+        "  operation :create do\n    mutation \"CreateSample\"\n    on_failure :keep\n  end\n  operation :update do\n    mutation \"UpdateSample\"\n  end\n  operation :destroy do\n    mutation \"DeleteSample\"\n  end\n  operation :like do\n    mutation \"LikeSample\"\n    optimistic false\n    on_failure :keep\n  end\n  operation :poke do\n    mutation \"PokeSample\"\n    optimistic false\n  end",
     );
     let policies: Vec<(&str, OnFailure)> = model.actions.iter().map(|action| (action.name.as_str(), action.on_failure)).collect();
     assert_eq!(
@@ -229,12 +268,8 @@ fn on_failure_defaults_to_rollback_and_reads_keep_from_standard_and_block_action
 }
 
 #[test]
-fn ephemeral_block_builds_ephemeral_specs_beside_stored_fields() {
-    let model = check_source(
-        "model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false, reset_after: 5.seconds\n      string :mood, null: true\n    end\n  end\nend\n",
-    )
-    .unwrap()
-    .remove(0);
+fn ephemeral_block_builds_ephemeral_specs_beside_stored_attributes() {
+    let model = check_source("model Sample do\n  attribute :name, :string\n  ephemeral do\n    attribute :typing, :bool, default: false, reset_after: 5.seconds\n    attribute :mood, :string, null: true\n  end\nend\n").unwrap().remove(0);
     assert_eq!(model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(), vec!["id", "name"]);
     let typing = model.ephemeral_field("typing").unwrap();
     assert_eq!((typing.field.default.clone(), typing.reset_after.clone()), (Some(json!(false)), Some("5.seconds".to_string())));
@@ -244,16 +279,16 @@ fn ephemeral_block_builds_ephemeral_specs_beside_stored_fields() {
 
 #[test]
 fn model_line_options_build_storage_and_expiry() {
-    let memory = check_source("model Presence, storage: :memory, expire_after: 30.seconds do\n  schema do\n    string :room\n  end\nend\n").unwrap().remove(0);
+    let memory = check_source("model Presence, storage: :memory, expires_in: 30.seconds do\n  attribute :room, :string\nend\n").unwrap().remove(0);
     assert_eq!((memory.storage, memory.expire_after.as_deref()), (Storage::Memory, Some("30.seconds")));
-    let plain = check_source("model Presence do\n  schema do\n    string :room\n  end\nend\n").unwrap().remove(0);
+    let plain = check_source("model Presence do\n  attribute :room, :string\nend\n").unwrap().remove(0);
     assert_eq!((plain.storage, plain.expire_after), (Storage::Disk, None));
 }
 
 #[test]
-fn updates_set_builds_ephemeral_values() {
+fn apply_values_build_the_ephemeral_values_of_an_event() {
     let model = check_source(
-        "model Sample do\n  schema do\n    string :name\n    ephemeral do\n      bool :typing, default: false, reset_after: 5.seconds\n    end\n  end\n  remote :one do\n    query One\n    updates Typing, set: { typing: true }\n  end\nend\n",
+        "model Sample do\n  attribute :name, :string\n  ephemeral do\n    attribute :typing, :bool, default: false, reset_after: 5.seconds\n  end\n  scope :one do\n    query \"One\"\n    subscribe \"Typing\", apply: { effect: :upsert, values: { typing: true } }\n  end\nend\n",
     )
     .unwrap()
     .remove(0);
@@ -262,23 +297,16 @@ fn updates_set_builds_ephemeral_values() {
 }
 
 #[test]
-fn paginate_with_its_own_cursor_names_variable_and_source() {
-    let model = build_one("  remote :feed do\n    query Feed\n    paginate 20, cursor: :afterSequence, from: \"lastSequenceNumber\", cursor_type: :int\n  end");
-    let remote = model.relations[0].remote.as_ref().unwrap();
-    let cursor = CursorSpec { variable: "afterSequence".to_string(), from: "lastSequenceNumber".to_string(), numeric: true };
-    assert_eq!(remote.shape, RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: Some(cursor) });
+fn a_delete_effect_sets_removes() {
+    let model = build_one("  scope :feed do\n    query \"Feed\"\n    subscribe \"Gone\", apply: { effect: :delete }, debounce: 300.milliseconds\n  end");
+    let update = &model.relations[0].updates[0];
+    assert!(update.removes);
+    assert_eq!(update.debounce.as_deref(), Some("300.milliseconds"));
 }
 
 #[test]
-fn operations_can_be_named_with_a_string_when_the_graphql_name_is_lowercase() {
-    let model = build_one("  remote :feed do\n    query \"feed\"\n  end\n  action :like, mutation: \"likeMoment\"");
-    assert_eq!(model.relations[0].remote.as_ref().unwrap().operation, "feed");
-    assert_eq!(model.actions.iter().find(|action| action.name == "like").unwrap().mutation.as_deref(), Some("likeMoment"));
-}
-
-#[test]
-fn variables_line_renames_params_and_fixes_constants() {
-    let model = build_one("  remote :list do\n    query \"chats\"\n    variables statusFilter: :status, includeGifts: false, mediaKinds: [\"image\", \"video\"]\n  end");
+fn variables_rename_parameters_and_fix_constants() {
+    let model = build_one("  scope :list do\n    parameter :status, :string\n    query \"items\"\n    variables statusFilter: :status, includeGifts: false, mediaKinds: [\"image\", \"video\"]\n  end");
     let variables = &model.relations[0].remote.as_ref().unwrap().variables;
     assert_eq!(variables["statusFilter"], VariableSource::Param { name: "status".to_string() });
     assert_eq!(variables["includeGifts"], VariableSource::Constant { value: json!(false) });
@@ -286,39 +314,68 @@ fn variables_line_renames_params_and_fixes_constants() {
 }
 
 #[test]
-fn a_relation_can_follow_several_subscriptions() {
-    let model = build_one("  remote :list do\n    query \"chats\"\n    updates \"chatCreated\"\n    updates \"chatUpdated\", debounce: 300.milliseconds\n    updates \"chatDeleted\", removes: true\n  end");
+fn a_scope_can_follow_several_subscriptions() {
+    let model = build_one("  scope :list do\n    query \"items\"\n    subscribe \"itemCreated\"\n    subscribe \"itemUpdated\", debounce: 300.milliseconds\n    subscribe \"itemDeleted\", apply: { effect: :delete }\n  end");
     let updates = &model.relations[0].updates;
-    assert_eq!(updates.iter().map(|update| update.subscription.as_str()).collect::<Vec<_>>(), ["chatCreated", "chatUpdated", "chatDeleted"]);
+    assert_eq!(updates.iter().map(|update| update.subscription.as_str()).collect::<Vec<_>>(), ["itemCreated", "itemUpdated", "itemDeleted"]);
     assert_eq!(updates[1].debounce.as_deref(), Some("300.milliseconds"));
     assert!(updates[2].removes && !updates[0].removes);
 }
 
 #[test]
-fn a_remote_relation_can_take_params_that_name_columns() {
-    let model = build_one("  remote :by_owner, params: [:ownerId] do\n    query \"owned\"\n    paginate 10\n  end");
+fn a_remote_scope_can_take_parameters_that_name_columns() {
+    let model = build_one("  scope :by_owner do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"owned\"\n    paginate size: 10, direction: :forward\n  end");
     let relation = &model.relations[0];
     assert_eq!(relation.by_columns, vec!["ownerId".to_string()]);
     assert!(!relation.is_global && relation.remote.is_some());
 }
 
 #[test]
-fn a_relation_can_take_the_id_as_its_param() {
-    let model = build_one("  remote :details, params: [:id] do\n    query \"sample\"\n  end");
+fn a_scope_can_take_the_id_as_its_column() {
+    let model = build_one("  scope :details do\n    parameter :id, :id\n    where id: :id\n    query \"sample\"\n  end");
     assert_eq!(model.relations[0].by_columns, vec!["id".to_string()]);
     assert!(!model.field("id").unwrap().indexed);
     assert!(dblayer::schema::validate_models(&[model], &[]).is_empty());
 }
 
 #[test]
-fn a_remote_relation_can_order_its_rows_locally() {
-    let model = build_one("  remote :recent, order: { createdAt: :desc } do\n    query \"recent\"\n  end");
+fn a_remote_scope_can_order_its_rows_locally() {
+    let model = build_one("  scope :recent do\n    order createdAt: :desc\n    query \"recent\"\n  end");
     assert_eq!(model.relations[0].sort, Sort::Fields(vec![dblayer::schema::SortField { column: "createdAt".to_string(), direction: SortDirection::Desc }]));
 }
 
 #[test]
-fn a_field_merge_rule_keeps_its_words_tiers_and_keys() {
-    let models = check_source("model Sample do\n  schema do\n    object :media, null: true, merge: { fileUrl: :non_empty, width: :positive, status: [[:PENDING, :PROGRESSING], [:COMPLETED]], progress: :monotonic }\n    string :url, null: true, merge: :non_empty\n  end\nend\n").unwrap();
+fn server_only_parameters_keep_their_types_and_enum_defaults() {
+    let model = build_one("  scope :found do\n    parameter :query, :string\n    parameter :limit, :int\n    parameter :includeOld, :bool\n    parameter :list, ListKind, default: \"PRIMARY\"\n    query \"found\"\n    response shape: :list\n  end");
+    let relation = &model.relations[0];
+    assert_eq!(relation.text_params, vec!["query".to_string(), "limit".to_string(), "includeOld".to_string(), "list".to_string()]);
+    assert_eq!(relation.scalar_types.get("limit"), Some(&ScalarKind::Int));
+    assert_eq!(relation.scalar_types.get("includeOld"), Some(&ScalarKind::Bool));
+    assert_eq!(relation.text_types.get("list").map(String::as_str), Some("ListKind"));
+    assert_eq!(relation.text_defaults.get("list").map(String::as_str), Some("PRIMARY"));
+}
+
+#[test]
+fn stable_order_marks_the_relation() {
+    let model = build_one("  scope :thread, stable_order: true do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    order createdAt: :asc\n    query \"Thread\"\n  end");
+    assert!(model.relations[0].order_stable);
+}
+
+#[test]
+fn a_node_scope_reads_one_object_by_the_node_parameter() {
+    let model = build_one("  scope :node, node: :one do\n    parameter :id, :id\n    query \"SampleNode\"\n    variables sampleId: :id\n    freshness expires_in: 1.minute\n  end\n  scope :nodes, node: :many do\n    query \"SampleNodes\"\n  end");
+    let one = &model.relations[0];
+    assert_eq!(one.node, Some(dblayer::schema::NodeRead::One));
+    assert_eq!(one.text_params, vec![dblayer::schema::NODE_PARAM.to_string()]);
+    assert_eq!(one.remote.as_ref().unwrap().variables["sampleId"], VariableSource::Param { name: dblayer::schema::NODE_PARAM.to_string() });
+    assert_eq!(one.remote.as_ref().unwrap().stale_time, "1.minute");
+    let many = &model.relations[1];
+    assert_eq!((many.node, many.remote.as_ref().unwrap().shape.clone()), (Some(dblayer::schema::NodeRead::Many), RemoteShape::List { coverage: Coverage::Complete }));
+}
+
+#[test]
+fn an_attribute_merge_rule_keeps_its_words_tiers_and_keys() {
+    let models = check_source("model Sample do\n  attribute :media, Media, null: true, merge: { fileUrl: :non_empty, width: :positive, status: [[:PENDING, :PROGRESSING], [:COMPLETED]], progress: :monotonic } do\n    attribute :fileUrl, :string, null: true\n  end\n  attribute :url, :string, null: true, merge: :non_empty\nend\n").unwrap();
     let fields = &models[0].fields;
     let tiers = vec![vec!["PENDING".to_string(), "PROGRESSING".to_string()], vec!["COMPLETED".to_string()]];
     let keys = [("fileUrl", MergeRule::NonEmpty), ("width", MergeRule::Positive), ("status", MergeRule::Ladder { tiers }), ("progress", MergeRule::Monotonic)].map(|(key, rule)| (key.to_string(), rule)).into();
@@ -327,8 +384,8 @@ fn a_field_merge_rule_keeps_its_words_tiers_and_keys() {
 }
 
 #[test]
-fn a_local_field_and_a_local_key_become_the_local_merge_rule() {
-    let models = check_source("model Sample do\n  schema do\n    string :tone, optional: true, local: true\n    object :media, optional: true, merge: { tone: :local, width: :positive }\n  end\nend\n").unwrap();
+fn a_local_attribute_and_a_local_key_become_the_local_merge_rule() {
+    let models = check_source("model Sample do\n  attribute :tone, :string, optional: true, local: true\n  attribute :media, Media, optional: true, merge: { tone: :local, width: :positive } do\n    attribute :width, :int, null: true\n  end\nend\n").unwrap();
     let fields = &models[0].fields;
     assert_eq!(fields.iter().find(|field| field.name == "tone").unwrap().merge, Some(MergeRule::Local));
     let keys = [("tone", MergeRule::Local), ("width", MergeRule::Positive)].map(|(key, rule)| (key.to_string(), rule)).into();
@@ -336,19 +393,30 @@ fn a_local_field_and_a_local_key_become_the_local_merge_rule() {
 }
 
 #[test]
-fn a_create_and_an_action_keep_their_correlation_paths() {
-    let models = check_source("model Sample do\n  schema do\n    string :body\n    object :media, null: true\n  end\n  create with: CreateSample, correlate: [:body, \"media.blobId\"]\n  action :upload do\n    mutation Upload\n    local_effect :none, reason: \"test\"\n    correlate :body\n  end\nend\n").unwrap();
+fn match_by_keeps_the_correlation_paths_of_a_standard_and_a_named_operation() {
+    let models = check_source("model Sample do\n  attribute :body, :string\n  attribute :media, Media, null: true do\n    attribute :blobId, :string, null: true\n  end\n  operation :create do\n    mutation \"CreateSample\"\n    match_by \"body\", \"media.blobId\"\n  end\n  operation :upload, upload: true do\n    mutation \"Upload\"\n    optimistic false\n    match_by \"body\"\n  end\nend\n").unwrap();
     let actions = &models[0].actions;
     assert_eq!(actions.iter().find(|action| action.name == "create").unwrap().correlate, ["body", "media.blobId"]);
-    assert_eq!(actions.iter().find(|action| action.name == "upload").unwrap().correlate, ["body"]);
+    let upload = actions.iter().find(|action| action.name == "upload").unwrap();
+    assert_eq!((upload.correlate.clone(), upload.upload), (vec!["body".to_string()], true));
 }
 
 #[test]
 fn a_scope_order_keeps_the_null_placement_of_each_key() {
-    let models = check_source("model Sample do\n  schema do\n    int :seq, null: true, index: true\n    date :createdAt, index: true\n  end\n  scope :thread, order: { seq: :asc_nulls_last, createdAt: :desc }\nend\n").unwrap();
+    let models = check_source("model Sample do\n  attribute :seq, :int, null: true\n  attribute :createdAt, :date\n  scope :thread do\n    order seq: :asc_nulls_last, createdAt: :desc\n  end\nend\n").unwrap();
     let sort = &models[0].relations.iter().find(|relation| relation.name == "thread").unwrap().sort;
     assert_eq!(*sort, dblayer::schema::Sort::Fields(vec![
         dblayer::schema::SortField { column: "seq".to_string(), direction: SortDirection::AscNullsLast },
         dblayer::schema::SortField { column: "createdAt".to_string(), direction: SortDirection::Desc },
     ]));
+}
+
+#[test]
+fn a_batch_with_validates_builds_the_upload_batch() {
+    let models = check_source("model Sample do\n  attribute :clientKey, :string\n  attribute :group, Group, null: true do\n    attribute :position, :int\n    attribute :size, :int\n  end\n  operation :one, upload: true do\n    mutation \"One\"\n    optimistic false\n    match_by \"clientKey\"\n  end\n  operation :many, upload: true do\n    mutation \"Many\"\n    optimistic false\n    match_by \"clientKey\"\n    batch items: \"items\", single: :one, input: { clientKey: :clientKey }, renumber: { position: \"group.position\", size: \"group.size\", start: 1 }\n    validates :items, length: { minimum: 2, maximum: 10 }\n  end\nend\n").unwrap();
+    let batch = models[0].actions[1].batch.clone().unwrap();
+    assert_eq!((batch.min, batch.max, batch.items.as_str(), batch.single.as_str()), (2, 10, "items", "one"));
+    assert_eq!(batch.input.get("clientKey").map(String::as_str), Some("clientKey"));
+    let renumber = batch.renumber.unwrap();
+    assert_eq!((renumber.position.as_str(), renumber.size.as_str(), renumber.position_from), ("group.position", "group.size", 1));
 }

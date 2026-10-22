@@ -84,7 +84,7 @@ data class Inbox(
         fun where(condition: Condition) = Query("Inbox", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Inbox", this, ids)
         fun entity(id: String) = entityOf("Inbox", this, id)
-        fun shelf(list: ChatShelfKind): Query<Inbox> {
+        fun shelf(list: ContainerShelfKind): Query<Inbox> {
             var built = Query("Inbox", this, relation = "shelf", params = buildJsonObject { put("list", jsonValue(list)) })
             return built
         }
@@ -129,8 +129,8 @@ data class Roster(
         fun where(condition: Condition) = Query("Roster", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Roster", this, ids)
         fun entity(id: String) = entityOf("Roster", this, id)
-        fun chatMembers(chatId: String, order: ChatMemberOrder = ChatMemberOrder.Joined): Query<Roster> {
-            var built = Query("Roster", this, relation = "chat_members", params = buildJsonObject { put("chatId", jsonValue(chatId)); put("order", jsonValue(order)) })
+        fun containerMembers(containerId: String, order: ContainerMemberOrder = ContainerMemberOrder.Joined): Query<Roster> {
+            var built = Query("Roster", this, relation = "container_members", params = buildJsonObject { put("containerId", jsonValue(containerId)); put("order", jsonValue(order)) })
             return built
         }
         suspend fun create(title: String): Roster {
@@ -149,15 +149,15 @@ data class Roster(
 }
 
 @Immutable
-@Serializable(with = ChatShelfKindSerializer::class)
-sealed class ChatShelfKind(override val raw: String) : RawEnum {
-    data object Primary : ChatShelfKind("PRIMARY")
-    data object Secondary : ChatShelfKind("SECONDARY")
+@Serializable(with = ContainerShelfKindSerializer::class)
+sealed class ContainerShelfKind(override val raw: String) : RawEnum {
+    data object Primary : ContainerShelfKind("PRIMARY")
+    data object Secondary : ContainerShelfKind("SECONDARY")
     @Immutable
-    data class Unknown(val value: String) : ChatShelfKind(value)
+    data class Unknown(val value: String) : ContainerShelfKind(value)
 
     companion object {
-        fun of(raw: String): ChatShelfKind = when (raw) {
+        fun of(raw: String): ContainerShelfKind = when (raw) {
             "PRIMARY" -> Primary
             "SECONDARY" -> Secondary
             else -> Unknown(raw)
@@ -165,18 +165,18 @@ sealed class ChatShelfKind(override val raw: String) : RawEnum {
     }
 }
 
-object ChatShelfKindSerializer : RawEnumSerializer<ChatShelfKind>("ChatShelfKind", { ChatShelfKind.of(it) })
+object ContainerShelfKindSerializer : RawEnumSerializer<ContainerShelfKind>("ContainerShelfKind", { ContainerShelfKind.of(it) })
 
 @Immutable
-@Serializable(with = ChatMemberOrderSerializer::class)
-sealed class ChatMemberOrder(override val raw: String) : RawEnum {
-    data object Joined : ChatMemberOrder("JOINED")
-    data object OwnerFirst : ChatMemberOrder("OWNER_FIRST")
+@Serializable(with = ContainerMemberOrderSerializer::class)
+sealed class ContainerMemberOrder(override val raw: String) : RawEnum {
+    data object Joined : ContainerMemberOrder("JOINED")
+    data object OwnerFirst : ContainerMemberOrder("OWNER_FIRST")
     @Immutable
-    data class Unknown(val value: String) : ChatMemberOrder(value)
+    data class Unknown(val value: String) : ContainerMemberOrder(value)
 
     companion object {
-        fun of(raw: String): ChatMemberOrder = when (raw) {
+        fun of(raw: String): ContainerMemberOrder = when (raw) {
             "JOINED" -> Joined
             "OWNER_FIRST" -> OwnerFirst
             else -> Unknown(raw)
@@ -184,7 +184,7 @@ sealed class ChatMemberOrder(override val raw: String) : RawEnum {
     }
 }
 
-object ChatMemberOrderSerializer : RawEnumSerializer<ChatMemberOrder>("ChatMemberOrder", { ChatMemberOrder.of(it) })
+object ContainerMemberOrderSerializer : RawEnumSerializer<ContainerMemberOrder>("ContainerMemberOrder", { ContainerMemberOrder.of(it) })
 
 @Immutable
 @Serializable(with = WidgetKindSerializer::class)
@@ -305,7 +305,7 @@ data class StickerSendResult(
 @Immutable
 @Serializable
 data class PricingLoadResult(
-    val gifts: List<PricingLoadResultGifts>? = null,
+    val rewards: List<PricingLoadResultRewards>? = null,
     val videoIntro: PricingLoadResultVideoIntro? = null,
     val tags: List<String>? = null,
     val spec: JsonElement? = null,
@@ -313,7 +313,7 @@ data class PricingLoadResult(
 
 @Immutable
 @Serializable
-data class PricingLoadResultGifts(
+data class PricingLoadResultRewards(
     @Serializable(with = IDText::class) val id: String? = null,
     val name: String? = null,
     val price: Long? = null,
@@ -353,10 +353,10 @@ data class WidgetsSendResult(
 
 @Immutable
 @Serializable
-data class ChatMediaLoadResult(
+data class ContainerMediaLoadResult(
     val visualCount: Long? = null,
     val audioCount: Long? = null,
-    val giftCount: Long? = null,
+    val rewardCount: Long? = null,
     val latestSequence: Long? = null,
 )
 
@@ -396,10 +396,10 @@ object Operations {
         if (widgets != null) variables["widgets"] = jsonValue(widgets)
         return DBlayer.run("WidgetsSend", JsonObject(variables), WidgetsSendResult.serializer())
     }
-    suspend fun chatMediaLoad(chatId: String, upToSequence: Int? = null): ChatMediaLoadResult {
+    suspend fun containerMediaLoad(containerId: String, upToSequence: Int? = null): ContainerMediaLoadResult {
         val variables = mutableMapOf<String, JsonElement>()
-        variables["chatId"] = jsonValue(chatId)
+        variables["containerId"] = jsonValue(containerId)
         if (upToSequence != null) variables["upToSequence"] = jsonValue(upToSequence)
-        return DBlayer.run("chatMedia", JsonObject(variables), ChatMediaLoadResult.serializer())
+        return DBlayer.run("containerMedia", JsonObject(variables), ContainerMediaLoadResult.serializer())
     }
 }

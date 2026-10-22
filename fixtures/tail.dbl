@@ -1,8 +1,11 @@
 model Tail do
-  field :text, type: :string
-
-  scope :since, text: [:chatId], typed: [afterSequence: :int, pinned: :bool] do
-    fetch "tailSince", root: "tailSince"
-    paginate 50
+  attribute :text, :string
+  scope :since do
+    parameter :containerId, :string
+    parameter :afterSequence, :int
+    parameter :pinned, :bool
+    query "tailSince"
+    response from: "tailSince"
+    paginate size: 50, direction: :forward
   end
 end

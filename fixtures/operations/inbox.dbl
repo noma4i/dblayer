@@ -1,8 +1,9 @@
 model Inbox do
-  field :title, type: :string
-
-  scope :shelf, text: [list: :ChatShelfKind] do
-    fetch "inbox", root: "inbox"
-    paginate 25
+  attribute :title, :string
+  scope :shelf do
+    parameter :list, ContainerShelfKind
+    query "inbox"
+    response from: "inbox"
+    paginate size: 25, direction: :forward
   end
 end

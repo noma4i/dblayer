@@ -8,11 +8,11 @@ const SCHEMA: &str = "type Query { a: Int }\ntype Mutation { widgetsSend(widgets
 const UPLOAD_MUTATION: &str = "mutation MomentCreateFile($signedId: String!, $widgets: [WidgetInput!]) { momentCreate(input: { signedId: $signedId, widgets: $widgets }) { moment { id } } }\n";
 
 fn operation(arg: &str) -> String {
-    format!("operation :widgets_send do\n  mutation WidgetsSend\n  args widgets: {arg}\n  result id: :string\nend\n")
+    format!("operation :widgets_send do\n  mutation \"WidgetsSend\"\n  {}\n  returns do\n    attribute :id, :string\n  end\nend\n", crate::decl::parameter_line("widgets", arg))
 }
 
 fn upload(arg: &str) -> String {
-    format!("model Moment do\n  field :text, type: :string, null: true\n  operation :create_file do\n    upload MomentCreateFile\n    local_effect :none, reason: \"the row exists from the create with an upload\"\n    args widgets: {arg}\n    root \"momentCreate.moment\"\n  end\nend\n")
+    format!("model Moment do\n  attribute :text, :string, null: true\n  operation :create_file, upload: true do\n    mutation \"MomentCreateFile\"\n    optimistic false\n    {}\n    response from: \"momentCreate.moment\"\n  end\nend\n", crate::decl::parameter_line("widgets", arg))
 }
 
 fn compile(source: &str, mutation: &str, schema: &str) -> Result<Declarations, Vec<String>> {
@@ -101,7 +101,7 @@ fn the_upload_args_of_a_model_become_a_typed_variables_builder_and_not_an_action
 
 #[test]
 fn an_upload_without_args_needs_neither_the_signed_id_nor_a_builder() {
-    let source = "model Moment do\n  field :text, type: :string, null: true\n  operation :create_file do\n    upload MomentCreateFile\n    local_effect :none, reason: \"the row exists from the create with an upload\"\n    root \"momentCreate.moment\"\n  end\nend\n";
+    let source = "model Moment do\n  attribute :text, :string, null: true\n  operation :create_file, upload: true do\n    mutation \"MomentCreateFile\"\n    optimistic false\n    response from: \"momentCreate.moment\"\n  end\nend\n";
     let declared = compile(source, UPLOAD_MUTATION, SCHEMA).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     assert!(!swift.contains("createFileVariables") && !swift.contains("act(\"upload\""), "{swift}");
@@ -112,10 +112,10 @@ fn a_list_arg_is_checked_against_the_variable_of_the_mutation() {
     let cases = [
         ("[:WidgetInput]", None),
         ("[:WidgetInput]?", None),
-        ("[:WidgetInput?]", Some("arg `widgets` of kind `[:WidgetInput?]` does not fit `widgets: [WidgetInput!]`")),
-        ("[:WidgetInput?]?", Some("arg `widgets` of kind `[:WidgetInput?]` does not fit `widgets: [WidgetInput!]`")),
-        (":WidgetInput", Some("arg `widgets` of kind `:WidgetInput` does not fit `widgets: [WidgetInput!]`")),
-        ("[:SettingsInput]?", Some("arg `widgets` of kind `[:SettingsInput]` does not fit `widgets: [WidgetInput!]`")),
+        ("[:WidgetInput?]", Some("parameter `widgets` of kind `[WidgetInput?]` does not fit `widgets: [WidgetInput!]`")),
+        ("[:WidgetInput?]?", Some("parameter `widgets` of kind `[WidgetInput?]` does not fit `widgets: [WidgetInput!]`")),
+        (":WidgetInput", Some("parameter `widgets` of kind `WidgetInput` does not fit `widgets: [WidgetInput!]`")),
+        ("[:SettingsInput]?", Some("parameter `widgets` of kind `[SettingsInput]` does not fit `widgets: [WidgetInput!]`")),
     ];
     for (arg, expected) in cases {
         let result = compile(&upload(arg), UPLOAD_MUTATION, SCHEMA);
@@ -129,24 +129,24 @@ fn a_list_arg_is_checked_against_the_variable_of_the_mutation() {
 
 #[test]
 fn an_upload_arg_the_mutation_does_not_declare_is_named() {
-    let errors = compile(&upload("[:WidgetInput]?").replace("widgets:", "pictures:"), UPLOAD_MUTATION, SCHEMA).unwrap_err();
+    let errors = compile(&upload("[:WidgetInput]?").replace("parameter :widgets", "parameter :pictures"), UPLOAD_MUTATION, SCHEMA).unwrap_err();
     assert!(errors.iter().any(|error| error.contains("`pictures` is not an input of operation `MomentCreateFile`")), "{errors:?}");
 }
 
 #[test]
 fn a_list_of_scalars_is_not_an_arg_kind() {
     let errors = compile(&operation("[:string]"), SEND_MUTATION, SCHEMA).unwrap_err();
-    assert!(errors.iter().any(|error| error.contains("a list of schema input objects or enums like [:WidgetInput]")), "{errors:?}");
+    assert!(errors.iter().any(|error| error.contains(crate::decl::PARAM_TYPES)), "{errors:?}");
 }
 
 #[test]
 fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
-    let source = "model Moment do\n  field :text, type: :string, null: true\n  operation :create do\n    mutation WidgetsSend\n    args widgets: [:WidgetInput]?\n  end\n  operation :decorate do\n    mutation WidgetsSend\n    local_effect :none, reason: \"no row changes\"\n    args widgets: [:WidgetInput?], extra: [:WidgetKind]?\n  end\nend\n";
+    let source = "model Moment do\n  attribute :text, :string, null: true\n  operation :create do\n    mutation \"WidgetsSend\"\n    parameter :widgets, [WidgetInput], null: true\n    variables widgets: :widgets\n  end\n  operation :decorate do\n    mutation \"WidgetsSend\"\n    optimistic false\n    parameter :widgets, [WidgetInput]\n    variables widgets: :widgets\n  end\nend\n";
     let declared = compile(source, SEND_MUTATION, SCHEMA).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: [WidgetInput]? = nil",
-        "public func decorate(extra: [WidgetKind]? = nil, widgets: [WidgetInput?]) async throws -> Self {",
+        "public func decorate(widgets: [WidgetInput]) async throws -> Self {",
         "\"widgets\": JSONValue.encode(widgets)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
@@ -154,7 +154,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: List<WidgetInput>? = null",
-        "suspend fun decorate(extra: List<WidgetKind>? = null, widgets: List<WidgetInput?>): Moment = act(\"decorate\"",
+        "suspend fun decorate(widgets: List<WidgetInput>): Moment = act(\"decorate\"",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

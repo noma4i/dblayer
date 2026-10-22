@@ -177,7 +177,7 @@ members.load()
 members.loadMore()
 ```
 
-**Replaced ids.** A record created offline is shown under a temporary id until the server answers (or a row that matches it lands first, see `correlate` in [writing data](writing-data.md)). The delivery that swaps the ids tells it: `query.snapshots` yields the rows with `replaced`, a map from the real id to the temporary id that it replaced, and `LiveList` keeps the map of its last delivery. A list that animates insertions uses it to move the existing row instead of removing one and inserting another.
+**Replaced ids.** A record created offline is shown under a temporary id until the server answers (or a row that matches it lands first, see `match_byate` in [writing data](writing-data.md)). The delivery that swaps the ids tells it: `query.snapshots` yields the rows with `replaced`, a map from the real id to the temporary id that it replaced, and `LiveList` keeps the map of its last delivery. A list that animates insertions uses it to move the existing row instead of removing one and inserting another.
 
 ```swift
 let thread = LiveList(Note.thread(groupId))   // thread.rows, thread.replaced, thread.ids
@@ -243,7 +243,7 @@ val thread = LiveList(Note.thread(groupId), viewModelScope, refreshOnConnect = t
 thread.waitForInitialLoad()
 ```
 
-**Windows.** A group shows its last rows, not its whole history. `query.window(tail: n)` keeps the last `n` rows of an ordered query in memory (the query has no limit, include or search). A relation that lists by a param column, such as `scope :thread, joins: :events` with `where :groupId` and an `order`, is a valid query: its members are the rows the relation loaded or received. A relation without an `order` has no local sort and is refused with `NotWindowable`. A relation declared with `order_stable: true` (see [models](models.md#scopes)) lists its rows in the order they were shown: a confirmed message, an event that changes a `sequenceNumber` and a reloaded page do not move a row that is on screen. A row outside the window is not decoded and not held, and a change outside the window delivers nothing. `LiveWindow` is to `Window` what `LiveList` is to `Query`: it keeps the rows, `hasBefore`, `hasAfter` and `total`, and it has `takeEdits()` with the steps of [Edits](#in-your-ui) in window positions. `hasBefore` and `hasAfter` tell whether the database holds rows beyond each edge, and `total` is the number of rows of the query. The window follows the tail: a new last row enters and the oldest row of the window leaves. `expand(before:)` adds up to that many older rows from the database, `expand(after:)` adds newer rows, and neither adds a row that does not exist. The window ends with its owner. The library keeps the ids and sort keys of the whole query, not its rows. Windows over the same query share one set of sort keys when they open, so the second window reads no keys from the database. The window reads the local database only: it loads no page from the server yet.
+**Windows.** A group shows its last rows, not its whole history. `query.window(tail: n)` keeps the last `n` rows of an ordered query in memory (the query has no limit, include or search). A relation that lists by a param column, such as `scope :thread, insert_on: [:event, :response]` with `where groupId: :groupId` and an `order`, is a valid query: its members are the rows the relation loaded or received. A relation without an `order` has no local sort and is refused with `NotWindowable`. A scope declared with `stable_order: true` (see [models](models.md#scopes)) lists its rows in the order they were shown: a confirmed message, an event that changes a `sequenceNumber` and a reloaded page do not move a row that is on screen. A row outside the window is not decoded and not held, and a change outside the window delivers nothing. `LiveWindow` is to `Window` what `LiveList` is to `Query`: it keeps the rows, `hasBefore`, `hasAfter` and `total`, and it has `takeEdits()` with the steps of [Edits](#in-your-ui) in window positions. `hasBefore` and `hasAfter` tell whether the database holds rows beyond each edge, and `total` is the number of rows of the query. The window follows the tail: a new last row enters and the oldest row of the window leaves. `expand(before:)` adds up to that many older rows from the database, `expand(after:)` adds newer rows, and neither adds a row that does not exist. The window ends with its owner. The library keeps the ids and sort keys of the whole query, not its rows. Windows over the same query share one set of sort keys when they open, so the second window reads no keys from the database. The window reads the local database only: it loads no page from the server yet.
 
 ```swift
 let thread = LiveWindow(Note.thread(groupId).window(tail: 50))   // rows keep their place when the server confirms a message
@@ -364,7 +364,7 @@ val uuid = Moment.feedEdge(id)?.impressionUuid
 
 ## Remote relations are live too
 
-Connecting to a relation that has a `fetch` declaration loads it when its data is stale, keeps it fresh through its `updates` subscription while someone reads it, and lets go a while after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.
+Connecting to a scope that has a `query` declaration loads it when its data is stale, keeps it fresh through its `subscribe` subscription while someone reads it, and lets go a while after the last reader leaves. User gestures stay explicit: `refresh()` and `loadMore()`.
 
 Three calls read a remote relation, each for one need:
 
@@ -376,7 +376,7 @@ Three calls read a remote relation, each for one need:
 
 `load()` makes the same decision as connecting a live read: no request when the window is fresh and not invalidated, exactly 1 request when it is stale or never loaded. N parallel loads of one relation make 1 request, shared with a live connect and with `refresh()`. A failed load throws like `refresh()`. Cancelling the caller stops only its own wait: the load goes on for the other readers.
 
-To test the 24 h or 5 minute windows, open the database with the test clock and `advance` it past `fresh_for`: the next `load()` requests again, and 1 second before the limit it does not. See [testing](testing.md).
+To test the 24 h or 5 minute windows, open the database with the test clock and `advance` it past `freshness expires_in`: the next `load()` requests again, and 1 second before the limit it does not. See [testing](testing.md).
 
 ```swift
 try await Moment.byUser(userId: 5).load()

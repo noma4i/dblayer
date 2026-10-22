@@ -5,16 +5,17 @@ use super::*;
 #[test]
 fn keyed_reactions_use_the_declared_field_with_a_nested_source() {
     let source = r#"model Message do
-  field :reactions, type: [MessageReactionNode], default: [] do
-    field :body, type: :string, null: true
-    field :userId, type: :id, null: true, from: "user.id"
-    field :user, type: MessageUserRef, null: true do
-      field :id, type: :id, null: true
+  attribute :reactions, [MessageReactionNode], default: [] do
+    attribute :body, :string, null: true
+    attribute :userId, :id, null: true, from: "user.id"
+    attribute :user, MessageUserRef, null: true do
+      attribute :id, :id, null: true
     end
   end
   operation :react do
-    mutation MessageReact
-    args reactionBody: :string, userId: :id
+    mutation "MessageReact"
+    parameter :reactionBody, :string
+    parameter :userId, :id
     optimistic reactions: { by: :userId, element: { userId: :userId, body: :reactionBody } }
   end
 end"#;
@@ -48,22 +49,22 @@ fn nested_types_keep_optional_fields_and_work_in_local_models() {
 #[test]
 fn nested_declarations_reject_invalid_fields_names_references_and_defaults_at_their_line() {
     for (fields, error) in [
-        ("field :v, type: Missing", "not declared"),
-        ("field :v, type: :object do\nend", "at least 1 field"),
-        ("field :v, type: :object do\nfield :a, type: :string\nfield :a, type: :string\nend", "declared twice"),
-        ("field :v, type: Sample do\nfield :a, type: :string\nend", "name of a model"),
-        ("field :v, type: :object do\nfield :a, type: :string, default: 3\nend", "default must"),
-        ("field :v, type: :object do\nfield :a, type: :num, from: \"\"\nend", "non-empty"),
-        ("field :v, type: :object do\nfield :a, type: :num, from: \"user..id\"\nend", "empty segment"),
-        ("field :v, type: :object do\nfield :a, type: :enum, values: [:yes], default: :no\nend", "default must"),
-        ("field :v, type: :object do\nfield :a, type: [:bool], default: [1]\nend", "default must"),
-        ("field :v, type: :object do\nfield :child, type: :object, default: {} do\nfield :required, type: :string\nend\nend", "default must"),
-        ("field :v, type: Recursive do\nfield :child, type: Recursive, null: true\nend", "recursive objects"),
-        ("field :v, type: :object do\nfield :a, type: :file\nend", "unknown word"),
-        ("field :v, type: :object do\nfield :a, type: :string, index: true\nend", "declare indexes"),
-        ("field :v, type: [\"[Value]\"]", "type name"),
-        ("field :v, type: :raw, as: Value", "declare named objects and lists"),
-        ("field :v, type: Value do\nfield :a, type: :string\nend\nfield :w, type: Value do\nfield :a, type: :string\nend", "declared twice"),
+        ("attribute :v, Missing", "not declared"),
+        ("attribute :v, Value do\nend", "at least 1 attribute"),
+        ("attribute :v, Value do\nattribute :a, :string\nattribute :a, :string\nend", "declared twice"),
+        ("attribute :v, Sample do\nattribute :a, :string\nend", "name of a model"),
+        ("attribute :v, Value do\nattribute :a, :string, default: 3\nend", "default must"),
+        ("attribute :v, Value do\nattribute :a, :num, from: \"\"\nend", "empty segment"),
+        ("attribute :v, Value do\nattribute :a, :num, from: \"user..id\"\nend", "empty segment"),
+        ("attribute :v, Value do\nattribute :a, :enum, values: [\"yes\"], default: \"no\"\nend", "default must"),
+        ("attribute :v, Value do\nattribute :a, [:bool], default: [1]\nend", "default must"),
+        ("attribute :v, Value do\nattribute :child, Child, default: {} do\nattribute :required, :string\nend\nend", "default must"),
+        ("attribute :v, Recursive do\nattribute :child, Recursive, null: true\nend", "recursive objects"),
+        ("attribute :v, Value do\nattribute :a, :file\nend", "cannot be a file"),
+        ("attribute :v, Value do\nattribute :a, :string, index: true\nend", "unknown key `index`"),
+        ("attribute :v, [\"[Value]\"]", "an attribute type is"),
+        ("attribute :v, :json, as: Value", "`as:` names the generated enum"),
+        ("attribute :v, Value do\nattribute :a, :string\nend\nattribute :w, Value do\nattribute :a, :string\nend", "declared twice"),
     ] {
         let source = format!("model Sample do\n\n{fields}\n\nend");
         let errors = parse_models(&source).expect_err(&source);

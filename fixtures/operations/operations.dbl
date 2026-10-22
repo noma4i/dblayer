@@ -1,48 +1,81 @@
 scalar :DateTime, as: :date
 
 operation :qr_code_create do
-  mutation QrCodeCreate
-  wrap :input
-  args kind: :string, size: :int?
-  result url: :string
+  mutation "QrCodeCreate"
+  wrap "input"
+  parameter :kind, :string
+  parameter :size, :int, null: true
+  returns do
+    attribute :url, :string
+  end
 end
 
 operation :sign_out do
-  mutation SignOut
+  mutation "SignOut"
 end
 
 operation :sticker_send do
-  mutation StickerSend
-  args input: :StickerInput
-  result id: :string
+  mutation "StickerSend"
+  parameter :input, StickerInput
+  returns do
+    attribute :id, :string
+  end
 end
 
 operation :pricing_load do
-  query Pricing
-  result gifts: [{ id: :id, name: :string, price: :int }], videoIntro: { enabled: :bool }, tags: [:string], spec: :json
+  query "Pricing"
+  returns do
+    attribute :rewards, [PricingLoadResultRewards] do
+      attribute :id, :id
+      attribute :name, :string
+      attribute :price, :int
+    end
+    attribute :videoIntro, PricingLoadResultVideoIntro do
+      attribute :enabled, :bool
+    end
+    attribute :tags, [:string]
+    attribute :spec, :json
+  end
 end
 
 operation :moment_create do
-  mutation MomentCreate
-  args input: :MomentInput
-  result moment: { id: :id }
+  mutation "MomentCreate"
+  parameter :input, MomentInput
+  returns do
+    attribute :moment, MomentCreateResultMoment do
+      attribute :id, :id
+    end
+  end
 end
 
 operation :giphy_load do
-  query Giphy
-  list
-  args type: :string, limit: :int?
-  result id: :id, url: :string, isSticker: :bool
+  query "Giphy"
+  response shape: :list
+  parameter :type, :string
+  parameter :limit, :int, null: true
+  returns do
+    attribute :id, :id
+    attribute :url, :string
+    attribute :isSticker, :bool
+  end
 end
 
 operation :widgets_send do
-  mutation WidgetsSend
-  args widgets: [:StickerWidgetInput]?
-  result id: :string
+  mutation "WidgetsSend"
+  parameter :widgets, [StickerWidgetInput], null: true
+  returns do
+    attribute :id, :string
+  end
 end
 
-operation :chat_media_load do
-  query "chatMedia"
-  args chatId: :id, upToSequence: :int?
-  result visualCount: :int, audioCount: :int, giftCount: :int, latestSequence: :int
+operation :container_media_load do
+  query "containerMedia"
+  parameter :containerId, :id
+  parameter :upToSequence, :int, null: true
+  returns do
+    attribute :visualCount, :int
+    attribute :audioCount, :int
+    attribute :rewardCount, :int
+    attribute :latestSequence, :int
+  end
 end

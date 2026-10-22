@@ -1,6 +1,6 @@
 package com.noma4i.dblayer
 
-import com.noma4i.dblayer.models.Message
+import com.noma4i.dblayer.models.Record
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -11,14 +11,14 @@ class CreateArgsTest {
     @Test
     fun aCreateSendsItsArgsAndTheRowNeverStoresThem() = bounded {
         val transport = MockTransport()
-        transport.enqueue("CreateMessage", """{"data":{"createMessage":{"__typename":"Message","id":"x1","chatId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        transport.enqueue("CreateRecord", """{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         DBlayer.database = Database.open(Config(null, null, 32u), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"CreateMessage","document":"mutation CreateMessage(${'$'}chatId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createMessage(chatId: ${'$'}chatId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id chatId authorId text createdAt } }"}]""")
+        DBlayer.database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt } }"}]""")
 
-        val local = Message.create(chatId = "c", authorId = "u1", text = "hi", attachedUserId = "42", signedId = "blob-1")
+        val local = Record.create(containerId = "c", authorId = "u1", text = "hi", attachedUserId = "42", signedId = "blob-1")
         withTimeout(5000) { local.settled() }
-        val sent = transport.calls.first { it.operationName == "CreateMessage" }.variablesJson
+        val sent = transport.calls.first { it.operationName == "CreateRecord" }.variablesJson
         assertTrue("variables sent: $sent", sent.contains("\"signedId\":\"blob-1\"") && sent.contains("\"attachedUserId\":42"))
-        assertEquals("hi", Message.find(withTimeout(5000) { local.confirmedId() }).current()?.text)
+        assertEquals("hi", Record.find(withTimeout(5000) { local.confirmedId() }).current()?.text)
     }
 }

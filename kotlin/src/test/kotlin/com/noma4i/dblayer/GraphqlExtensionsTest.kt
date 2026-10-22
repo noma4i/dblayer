@@ -25,8 +25,8 @@ class GraphqlExtensionsTest(private val queued: Boolean) {
             Triple("FUTURE_CODE", "LATER", TransactionDisposition.Unknown("LATER")),
         )) {
             val transport = MockTransport()
-            val operation = if (code == "DUPLICATE_CLIENT_KEY") "MessageAlbumSend" else "PurchaseCreate"
-            val root = if (code == "DUPLICATE_CLIENT_KEY") "messageAlbumSend" else "purchaseCreate"
+            val operation = if (code == "DUPLICATE_CLIENT_KEY") "RecordAlbumSend" else "PurchaseCreate"
+            val root = if (code == "DUPLICATE_CLIENT_KEY") "recordAlbumSend" else "purchaseCreate"
             val database = Database.open(Config(null, null, 32u), modelsJSON.replace("CreateMoment", operation), transport)
             database.registerOperations("""[{"name":"$operation","document":"mutation $operation { $root { id } }"}]""")
             val extra = text?.let { """, "transactionDisposition":"$it"""" }.orEmpty()

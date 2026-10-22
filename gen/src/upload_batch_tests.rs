@@ -2,19 +2,19 @@ use crate::compile_files;
 
 #[test]
 fn batch_renumber_requires_known_integer_fields_and_an_explicit_base() {
-    let source = include_str!("../../fixtures/asset.dbl").replace("    renumber position: :position, size: :size, position_from: 0\n", "");
+    let source = include_str!("../../fixtures/asset.dbl");
+    let renumber = |declaration: &str| source.replace("renumber: { position: \"position\", size: \"size\", start: 0 }", declaration);
     for (declaration, accepted) in [
-        ("renumber position: :position, size: :size, position_from: 0", true),
-        ("renumber position: :position, size: :size, position_from: 1", true),
-        ("renumber position: :missing, size: :size, position_from: 0", false),
-        ("renumber position: :position, size: :missing, position_from: 0", false),
-        ("renumber position: :clientKey, size: :size, position_from: 0", false),
-        ("renumber position: :position, size: :size", false),
-        ("renumber position: :position, size: :size, position_from: 2", false),
-        ("renumber position: :position, size: :size, position_from: 0.5", false),
+        ("renumber: { position: \"position\", size: \"size\", start: 0 }", true),
+        ("renumber: { position: \"position\", size: \"size\", start: 1 }", true),
+        ("renumber: { position: \"missing\", size: \"size\", start: 0 }", false),
+        ("renumber: { position: \"position\", size: \"missing\", start: 0 }", false),
+        ("renumber: { position: \"clientKey\", size: \"size\", start: 0 }", false),
+        ("renumber: { position: \"position\", size: \"size\" }", false),
+        ("renumber: { position: \"position\", size: \"size\", start: 2 }", false),
+        ("renumber: { position: \"position\", size: \"size\", start: 0.5 }", false),
     ] {
-        let text = source.replace("    item clientKey:", &format!("    {declaration}\n    item clientKey:"));
-        let result = crate::parse_models(&text);
+        let result = crate::parse_models(&renumber(declaration));
         assert_eq!(result.is_ok(), accepted, "{declaration}: {result:?}");
         if declaration.contains("missing") {
             assert!(result.as_ref().unwrap_err().iter().any(|error| error.message.contains("missing")), "{result:?}");
@@ -23,16 +23,16 @@ fn batch_renumber_requires_known_integer_fields_and_an_explicit_base() {
             let batch = serde_json::to_value(models[0].actions[1].batch.as_ref().unwrap()).unwrap();
             assert_eq!(batch["renumber"]["position"], "position");
             assert_eq!(batch["renumber"]["size"], "size");
-            assert_eq!(batch["renumber"]["position_from"], if declaration.ends_with('1') { 1 } else { 0 });
+            assert_eq!(batch["renumber"]["position_from"], if declaration.contains("start: 1") { 1 } else { 0 });
         }
     }
-    let nested = source.replace("field :position, type: :int, default: 0", "field :object, type: AssetOrder do\n    field :position, type: :int\n    field :size, type: :int\n  end");
+    let nested = source.replace("attribute :position, :int, default: 0", "attribute :object, AssetOrder do\n    attribute :position, :int\n    attribute :size, :int\n  end");
     for (position, size, accepted) in [("object.position", "object.size", true), ("object.missing", "object.size", false), ("object.position", "size", true)] {
-        let declaration = format!("renumber position: \"{position}\", size: \"{size}\", position_from: 1");
-        let result = crate::parse_models(&nested.replace("    item clientKey:", &format!("    {declaration}\n    item clientKey:")));
+        let declaration = format!("renumber: {{ position: \"{position}\", size: \"{size}\", start: 1 }}");
+        let result = crate::parse_models(&nested.replace("renumber: { position: \"position\", size: \"size\", start: 0 }", &declaration));
         assert_eq!(result.is_ok(), accepted, "{result:?}");
     }
-    let unbatched = source.replace("    batch min: 2, max: 10, items: :items, single: :create_file", "    renumber position: :position, size: :size, position_from: 0");
+    let unbatched = source.replace("    batch items: \"items\", single: :create_file, input: { clientKey: :clientKey }, renumber: { position: \"position\", size: \"size\", start: 0 }\n", "    renumber position: \"position\", size: \"size\", start: 0\n");
     assert!(crate::parse_models(&unbatched).is_err());
 }
 
@@ -63,22 +63,21 @@ fn batch_items_require_an_input_list_with_the_key_and_signed_id() {
 fn upload_batch_declaration_reaches_the_core_spec() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("asset.dbl");
-    std::fs::write(&path, r#"
-model Asset do
-  field :clientKey, type: :string
-  operation :create_file do
-    upload CreateAsset
-    correlate :clientKey
-    root "createAsset.asset"
-    local_effect :none, reason: "created with its file"
+    std::fs::write(&path, r#"model Asset do
+  attribute :clientKey, :string
+  operation :create_file, upload: true do
+    mutation "CreateAsset"
+    match_by "clientKey"
+    optimistic false
+    response from: "createAsset.asset"
   end
-  operation :create_files do
-    upload CreateAssets
-    batch min: 2, max: 10, items: :items, single: :create_file
-    item clientKey: :clientKey
-    correlate :clientKey
-    root "createAssets.assets"
-    local_effect :none, reason: "created with their files"
+  operation :create_files, upload: true do
+    mutation "CreateAssets"
+    match_by "clientKey"
+    optimistic false
+    batch items: "items", single: :create_file, input: { clientKey: :clientKey }
+    validates :items, length: { minimum: 2, maximum: 10 }
+    response from: "createAssets.assets"
   end
 end
 "#).unwrap();

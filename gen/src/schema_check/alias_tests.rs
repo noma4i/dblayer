@@ -22,16 +22,16 @@ type Detail { label: String! }
 type Item implements Node { id: ID! title: String owner: Owner attachment: Attachment parts: [Part!]! name: Text details: [Detail!]! }
 "#;
 
-const ATTACHMENT: &str = "  field :attachment, type: Attachment, null: true do\n    on Gift do\n      field :id, type: :id\n      field :kind, type: :string, from: \"giftTier\"\n    end\n    on Moment do\n      field :momentId, type: :id\n      field :kind, type: :string, from: \"momentKind\"\n    end\n  end\n";
+const ATTACHMENT: &str = "  attribute :attachment, Attachment, null: true do\n    on Gift do\n      attribute :id, :id\n      attribute :kind, :string, from: \"giftTier\"\n    end\n    on Moment do\n      attribute :momentId, :id\n      attribute :kind, :string, from: \"momentKind\"\n    end\n  end\n";
 
-const PARTS: &str = "  field :parts, type: [Part] do\n    shared do\n      field :id, type: :id\n      field :category, type: :string, from: \"partKind\"\n    end\n    on Wing do\n      field :span, type: :int, null: true\n    end\n    on Rotor do\n    end\n  end\n";
+const PARTS: &str = "  attribute :parts, [Part] do\n    shared do\n      attribute :id, :id\n      attribute :category, :string, from: \"partKind\"\n    end\n    on Wing do\n      attribute :span, :int, null: true\n    end\n    on Rotor do\n    end\n  end\n";
 
-const NAME: &str = "  field :name, type: Text, null: true do\n    on Literal do\n      field :text, type: :string\n    end\n    on Reference do\n      field :path, type: :string\n    end\n  end\n";
+const NAME: &str = "  attribute :name, Text, null: true do\n    on Literal do\n      attribute :text, :string\n    end\n    on Reference do\n      attribute :path, :string\n    end\n  end\n";
 
 const TEXT_PIECE: &str = "fragment TextPiece on Text { __typename ... on Literal { text } ... on Reference { path } }";
 
 fn model(body: &str) -> String {
-    format!("model Item do\n\n{body}  scope :all do\n    fetch \"items\"\n    paginate 20\n  end\nend\n")
+    format!("model Item do\n\n{body}  scope :all do\n    query \"items\"\n    paginate size: 20, direction: :forward\n  end\nend\n")
 }
 
 fn run(source: &str, selection: &str, fragments: &str) -> Result<(), Vec<String>> {
@@ -66,17 +66,17 @@ fn expect(cases: Vec<(&str, String, &str, &str, Option<&str>)>) {
 #[test]
 fn from_names_the_response_key_of_the_operation() {
     let variants = "{ id attachment { __typename ... on Gift { id giftTier: kind } ... on Moment { momentId momentKind: kind } } }";
-    let association = "model Item do\n\n  field :title, type: :string, null: true\n  field :ownerId, type: :id, null: true\n\n  belongs_to :owner, model: Item, from: \"ownerRef\"\n  scope :all do\n    fetch \"items\"\n    paginate 20\n  end\nend\n";
+    let association = "model Item do\n  attribute :title, :string, null: true\n  attribute :ownerId, :id, null: true\n  belongs_to :owner, class_name: Item, from: \"ownerRef\"\n  scope :all do\n    query \"items\"\n    paginate size: 20, direction: :forward\n  end\nend\n";
     expect(vec![
-        ("top level field", model("  field :caption, type: :string, null: true, from: \"heading\"\n"), "{ id heading: title }", "", None),
-        ("nested object", model("  field :owner, type: ItemOwner, null: true do\n    field :ownerName, type: :string, from: \"label\"\n  end\n"), "{ id owner { label: name } }", "", None),
-        ("nested list", model("  field :details, type: [ItemDetail] do\n    field :text, type: :string, from: \"caption\"\n  end\n"), "{ id details { caption: label } }", "", None),
+        ("top level field", model("  attribute :caption, :string, null: true, from: \"heading\"\n"), "{ id heading: title }", "", None),
+        ("nested object", model("  attribute :owner, ItemOwner, null: true do\n    attribute :ownerName, :string, from: \"label\"\n  end\n"), "{ id owner { label: name } }", "", None),
+        ("nested list", model("  attribute :details, [ItemDetail] do\n    attribute :text, :string, from: \"caption\"\n  end\n"), "{ id details { caption: label } }", "", None),
         ("union variants", model(ATTACHMENT), variants, "", None),
         ("shared block of an interface", model(PARTS), "{ id parts { __typename id partKind: kind ... on Wing { span } } }", "", None),
         ("association root", association.to_string(), "{ id ownerRef: owner { id } }", "", None),
         ("alias named in no document", model(ATTACHMENT), "{ id attachment { __typename ... on Gift { id kind } ... on Moment { momentId kind } } }", "", Some("type `Gift` has no field `giftTier`")),
         ("alias of another variant", model(ATTACHMENT), "{ id attachment { __typename ... on Gift { id kind } ... on Moment { momentId momentKind: kind giftTier: kind } } }", "", Some("type `Gift` has no field `giftTier`")),
-        ("operation of another scope that leaves the field out", model(&format!("  node ItemBrief\n{ATTACHMENT}")), variants, "query ItemBrief($id: ID!) { node(id: $id) { ... on Item { id title } } }", None),
+        ("operation of another scope that leaves the field out", model(&format!("  scope :node, node: :one do\n    parameter :id, :id\n    query \"ItemBrief\"\n    variables id: :id\n  end\n{ATTACHMENT}")), variants, "query ItemBrief($id: ID!) { node(id: $id) { ... on Item { id title } } }", None),
         ("alias through a named fragment", model(ATTACHMENT), "{ id attachment { __typename ...Pieces } }", "fragment Pieces on Attachment { ... on Gift { id giftTier: kind } ... on Moment { momentId momentKind: kind } }", None),
     ]);
 }

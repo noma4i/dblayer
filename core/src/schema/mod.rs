@@ -122,8 +122,6 @@ pub enum DeclarationError {
     OptimisticDestroyWithCascade(String),
     #[error("action declares forbidden member {0}")]
     ForbiddenMember(String),
-    #[error("once action {0} needs a dedupe key")]
-    OnceKeyRequired(String),
     #[error("action {action} refetches {relation}, which is not a remote relation")]
     UnknownRefetch { action: String, relation: String },
     #[error("action {action} patches unknown field {field}")]
@@ -806,10 +804,6 @@ pub struct ActionDeclaration {
     #[serde(default)]
     pub has_cascade_dependents: bool,
     #[serde(default)]
-    pub has_once: bool,
-    #[serde(default)]
-    pub dedupe_key: Option<String>,
-    #[serde(default)]
     pub members: Vec<String>,
     #[serde(default)]
     pub mutation: Option<String>,
@@ -874,8 +868,6 @@ impl ActionDeclaration {
             has_optimistic: false,
             has_temp_row_retention: false,
             has_cascade_dependents: false,
-            has_once: false,
-            dedupe_key: None,
             members: Vec::new(),
             mutation: None,
             upload: false,
@@ -932,9 +924,6 @@ impl ActionDeclaration {
         }
         if self.root_shape == RootShape::Destroy && self.on_failure == OnFailure::Keep {
             return Err(DeclarationError::KeepOnDestroy(name()));
-        }
-        if self.has_once && self.dedupe_key.as_deref().is_none_or(str::is_empty) {
-            return Err(DeclarationError::OnceKeyRequired(name()));
         }
         if let Some(relation) = self.refetch.iter().find(|relation| !relation.contains('.') && !model.has_remote(relation)) {
             return Err(DeclarationError::UnknownRefetch { action: name(), relation: relation.clone() });

@@ -92,14 +92,14 @@ The code-shape check is shared by error codes and closing reasons, so new server
 
 `recordEvents` does not replace row fields. A matching `removes_on` kind removes the cached row without HTTP or a mutation.
 Other kinds use the HTTP reread through the encrypted client and the normal SQLite column write.
-Memory model notices get a UUID when the server sends no id. Their rows live in memory only and `expire_after` deletes them.
-A local scope with `updates` opens the subscription at the first reader. It releases the subscription after the last reader leaves, honoring `live_linger`.
+Memory model notices get a UUID when the server sends no id. Their rows live in memory only and `expires_in` deletes them.
+A local scope with `subscribe` opens the subscription at the first reader. It releases the subscription after the last reader leaves, honoring `live_linger`.
 Events are lost while no reader exists. The server does not replay them.
 Undeclared areas increase `SubscriptionStatus.rejected`.
 A repeated `Ready` rereads only expired observed selections of models with `changed_by`. Reopening a subscription uses the same freshness check.
-The check uses each read's `fresh_for`, including its shorter `empty` duration. Missing answers and invalidated selections need a reread.
+The check uses each read's `freshness`, including its shorter `empty_in` duration. Missing answers and invalidated selections need a reread.
 Node reads and remote relations default to `5.minutes`. A zero duration always expires. The first `Ready` starts no extra reread.
-The server does not replay missed events. A fresh selection can keep old values until a read after `fresh_for` expires.
+The server does not replay missed events. A fresh selection can keep old values until a read after `freshness` expires.
 Expiration alone starts no request. Received events still trigger their normal immediate reread.
 The REACTION area may point to several node reads. Then 1 HTTP request runs for each declared model.
 

@@ -46,7 +46,7 @@ class SealedErrorsTest {
             assertEquals(code, codeOf(runCatching { withTimeout(5000) { Moment.feed.load() } }.exceptionOrNull(), "load $code"))
 
             transport.enqueue("QrCodeCreate", failure)
-            assertEquals(code, codeOf(runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "chat", size = 3) } }.exceptionOrNull(), "call $code"))
+            assertEquals(code, codeOf(runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull(), "call $code"))
 
             transport.enqueue("CreateMoment", failure)
             val local = Moment.create(text = "hello", media = null)

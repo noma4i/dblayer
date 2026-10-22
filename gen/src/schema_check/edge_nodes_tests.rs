@@ -12,7 +12,7 @@ type MessageEdge { node: Message! cursor: String! impressionUuid: String }
 type PageInfo { hasNextPage: Boolean! endCursor: String }
 "#;
 
-const MESSAGE: &str = "model Message do\n  field :text, type: :string\n  scope :thread do\n    fetch ChatThread, root: \"chat.messages\"\n    paginate 30\n    EDGES\n  end\nend\n";
+const MESSAGE: &str = "model Message do\n  attribute :text, :string\n  scope :thread do\n    query \"ChatThread\"\n    response from: \"chat.messages\"\n    paginate size: 30, direction: :forward\n    EDGES\n  end\nend\n";
 
 const DOCUMENT: &str = "query ChatThread($first: Int, $after: String) { chat(id: \"c\") { messages(first: $first, after: $after) { edges { EDGE node { id text } } pageInfo { hasNextPage endCursor } } } }\n";
 
@@ -35,16 +35,16 @@ fn run_document(edges: &str, document: &str) -> Result<(), Vec<String>> {
 
 #[test]
 fn a_connection_with_nodes_and_edges_in_its_schema_checks_the_edges_the_document_selects() {
-    run("edge :impressionUuid, type: :string, null: true", "impressionUuid").unwrap();
-    let errors = run("edge :typo, type: :string, null: true", "cursor").unwrap_err();
+    run("edge do\n      attribute :impressionUuid, :string, null: true\n    end", "impressionUuid").unwrap();
+    let errors = run("edge do\n      attribute :typo, :string, null: true\n    end", "cursor").unwrap_err();
     assert!(errors.iter().any(|text| text.contains("typo")), "{errors:?}");
-    let errors = run("edge :impressionUuid, type: :int, null: true", "impressionUuid").unwrap_err();
+    let errors = run("edge do\n      attribute :impressionUuid, :int, null: true\n    end", "impressionUuid").unwrap_err();
     assert!(errors.iter().any(|text| text.contains("does not fit the schema type `String`")), "{errors:?}");
 }
 
 #[test]
 fn an_edge_needs_a_document_that_selects_the_edges_even_when_the_schema_has_nodes() {
     run_document("", NODES_DOCUMENT).unwrap();
-    let errors = run_document("edge :impressionUuid, type: :string, null: true", NODES_DOCUMENT).unwrap_err();
+    let errors = run_document("edge do\n      attribute :impressionUuid, :string, null: true\n    end", NODES_DOCUMENT).unwrap_err();
     assert!(errors.iter().any(|text| text.contains("does not select `edges`")), "{errors:?}");
 }

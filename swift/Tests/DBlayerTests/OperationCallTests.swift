@@ -18,11 +18,11 @@ extension BridgeProbeTests {
   func anOperationWithoutAModelSendsItsVariablesAndReadsTheDeclaredResult() async throws {
     let transport = try await Self.openOperationRig("QrCodeCreate", document: "mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }", reply: #"{"data":{"qrCodeCreate":{"url":"https://q"}}}"#)
 
-    let result = try await Operations.qrCodeCreate(kind: "chat", size: 3)
+    let result = try await Operations.qrCodeCreate(kind: "container", size: 3)
 
     #expect(result.url == "https://q")
     let sent = transport.calls.first { $0.operationName == "QrCodeCreate" }?.variablesJson ?? ""
-    #expect(JSONValue.parse(sent) == JSONValue.parse(#"{"input":{"kind":"chat","size":3}}"#), "variables sent: \(sent)")
+    #expect(JSONValue.parse(sent) == JSONValue.parse(#"{"input":{"kind":"container","size":3}}"#), "variables sent: \(sent)")
   }
 
   @MainActor
@@ -37,7 +37,7 @@ extension BridgeProbeTests {
     try DB.database.registerOperations(defsJson: #"[{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#)
 
     do {
-      _ = try await Operations.qrCodeCreate(kind: "chat", size: 3)
+      _ = try await Operations.qrCodeCreate(kind: "container", size: 3)
       Issue.record("\(name): the refused call did not throw")
     } catch let error as DbError {
       #expect(TransportFailureTests.shape(error) == expected, "\(name): \(error)")
@@ -48,11 +48,11 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func aGraphqlErrorsAnswerArrivesWithEveryMessageThroughAnOperationCall() async throws {
+  func aGraphqlErrorsAnswerArrivesWithEveryRecordThroughAnOperationCall() async throws {
     _ = try await Self.openOperationRig("QrCodeCreate", document: "mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }", reply: #"{"errors":[{"message":"nope"},{"message":"bad"}]}"#)
 
     do {
-      _ = try await Operations.qrCodeCreate(kind: "chat", size: 3)
+      _ = try await Operations.qrCodeCreate(kind: "container", size: 3)
       Issue.record("the answer with errors did not throw")
     } catch let error as DbError {
       #expect(TransportFailureTests.shape(error) == "Graphql nope,bad", "\(error)")
@@ -78,13 +78,13 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aResultWithListsObjectsAndRawJsonIsDecodedIntoGeneratedTypes() async throws {
-    _ = try await Self.openOperationRig("Pricing", document: "query Pricing { pricing { gifts { id name price } videoIntro { enabled } tags spec } }", reply: #"{"data":{"pricing":{"gifts":[{"id":7,"name":"rose","price":5},{"id":"8","name":"ring"}],"videoIntro":{"enabled":true},"tags":["a","b"],"spec":{"k":[1,2]}}}}"#)
+    _ = try await Self.openOperationRig("Pricing", document: "query Pricing { pricing { rewards { id name price } videoIntro { enabled } tags spec } }", reply: #"{"data":{"pricing":{"rewards":[{"id":7,"name":"rose","price":5},{"id":"8","name":"ring"}],"videoIntro":{"enabled":true},"tags":["a","b"],"spec":{"k":[1,2]}}}}"#)
 
     let result = try await Operations.pricingLoad()
 
-    #expect(result.gifts?.compactMap(\.id) == ["7", "8"])
-    #expect(result.gifts?.first?.price == 5)
-    #expect(result.gifts?.last?.price == nil)
+    #expect(result.rewards?.compactMap(\.id) == ["7", "8"])
+    #expect(result.rewards?.first?.price == 5)
+    #expect(result.rewards?.last?.price == nil)
     #expect(result.videoIntro?.enabled == true)
     #expect(result.tags == ["a", "b"])
     #expect(result.spec == JSONValue.parse(#"{"k":[1,2]}"#))

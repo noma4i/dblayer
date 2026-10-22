@@ -1,56 +1,56 @@
 model NestedSample, storage: :local do
-  field :phase, type: :enum, values: [:draft, :live], null: true
-  field :value, type: NestedValue, null: true do
-    field :title, type: :string
-    field :note, type: :string, optional: true
-    field :nullableDefault, type: :string, optional: true, default: "default"
-    field :ownerId, type: :id, null: true, from: "owner_id"
-    field :count, type: :int, default: 2
-    field :ratio, type: :num, default: 1.5
-    field :enabled, type: :bool, default: false
-    field :createdAt, type: :date, null: true
-    field :state, type: :enum, values: [:ready, :done], default: :ready
-    field :labels, type: [:string], default: []
-    field :counts, type: [:int], default: []
-    field :ratios, type: [:num], default: []
-    field :flags, type: [:bool], default: []
-    field :dates, type: [:date], default: []
-    field :owners, type: [:id], default: []
-    field :payload, type: :raw, null: true
-    field :rawValue, type: :raw, default: { free: [1, true, nil] }
-    field :preferences, type: :object, default: { label: "base" } do
-      field :label, type: :string
-      field :active, type: :bool, default: true
+  attribute :phase, :enum, values: ["draft", "live"], null: true
+  attribute :value, NestedValue, null: true do
+    attribute :title, :string
+    attribute :note, :string, optional: true
+    attribute :nullableDefault, :string, optional: true, default: "default"
+    attribute :ownerId, :id, null: true, from: "owner_id"
+    attribute :count, :int, default: 2
+    attribute :ratio, :num, default: 1.5
+    attribute :enabled, :bool, default: false
+    attribute :createdAt, :date, null: true
+    attribute :state, :enum, values: ["ready", "done"], default: :ready
+    attribute :labels, [:string], default: []
+    attribute :counts, [:int], default: []
+    attribute :ratios, [:num], default: []
+    attribute :flags, [:bool], default: []
+    attribute :dates, [:date], default: []
+    attribute :owners, [:id], default: []
+    attribute :payload, :json, null: true
+    attribute :rawValue, :json, default: { free: [1, true, nil] }
+    attribute :preferences, NestedValuePreferences, default: { label: "base" } do
+      attribute :label, :string
+      attribute :active, :bool, default: true
     end
-    field :presets, type: [NestedValuePreferences], default: [{ label: "first" }]
-    field :metadata, type: :object, null: true
-    field :values, type: :array, null: true
-    field :child, type: :object, null: true do
-      field :body, type: :string, null: true
-      field :horizontal, type: :num, from: "x", default: 0
+    attribute :presets, [NestedValuePreferences], default: [{ label: "first" }]
+    attribute :metadata, :json, null: true
+    attribute :values, :json, null: true
+    attribute :child, NestedValueChild, null: true do
+      attribute :body, :string, null: true
+      attribute :horizontal, :num, from: "x", default: 0
     end
-    field :children, type: [NestedValueChild], default: []
+    attribute :children, [NestedValueChild], default: []
   end
-  field :values, type: [NestedValue], default: []
-  field :tree, type: NestedTree, null: true do
-    field :name, type: :string
-    field :children, type: [NestedTree], default: []
+  attribute :values, [NestedValue], default: []
+  attribute :tree, NestedTree, null: true do
+    attribute :name, :string
+    attribute :children, [NestedTree], default: []
   end
-  field :replyTo, type: MessageReplyNode, null: true do
-    field :id, type: :id, null: true
-    field :body, type: :string, null: true
-    field :kind, type: :string, null: true
-    field :userId, type: :id, null: true
-    field :user, type: MessageUserRef, null: true do
-      field :id, type: :id, null: true
-      field :fullName, type: :string, null: true
-      field :name, type: :string, null: true
-      field :username, type: :string, null: true
-      field :avatarUrl, type: :string, null: true
+  attribute :replyTo, RecordReplyNode, null: true do
+    attribute :id, :id, null: true
+    attribute :body, :string, null: true
+    attribute :kind, :string, null: true
+    attribute :userId, :id, null: true
+    attribute :user, RecordUserRef, null: true do
+      attribute :id, :id, null: true
+      attribute :fullName, :string, null: true
+      attribute :name, :string, null: true
+      attribute :username, :string, null: true
+      attribute :avatarUrl, :string, null: true
     end
-    field :media, type: NestedMedia, null: true do
-      field :id, type: :id, default: ""
-      field :fileUrl, type: :string, null: true
+    attribute :media, NestedMedia, null: true do
+      attribute :id, :id, default: ""
+      attribute :fileUrl, :string, null: true
     end
   end
 end

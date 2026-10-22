@@ -123,7 +123,7 @@ fn row_sync_keeps_actions_and_dirty_fields_in_child_tables() {
 fn closing_an_operation_removes_its_child_rows() {
     let (store, seq) = begun();
     send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: upload() }]);
-    send(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed, once: false }]);
+    send(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
     for table in ["op", "op_row", "op_value", "op_item", "op_part", "row_sync", "sync_action", "sync_field"] {
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
     }

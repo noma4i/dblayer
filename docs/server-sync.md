@@ -52,7 +52,7 @@ Direct `Database.open` calls with `encrypted` also require HTTP and transport ar
 Encrypted sessions require JWE requests.
 
 An operation type declares `Data` (Swift) or a `dataSerializer` (Kotlin) when its generated call returns a decoded response.
-Operations used by models and actions need neither. Swift defaults `Data` to `Never`.
+Operations used by models need neither. Swift defaults `Data` to `Never`.
 The library normalizes model responses into rows. Do not copy model fields into a response type.
 
 ```swift
@@ -489,12 +489,12 @@ Moment.feed.loadMore()           // next page
 Moment.feed.refresh()            // pull to refresh, replaces in one commit
 ```
 
-- Fresh data is not requested again. `fresh_for` sets how long data counts as fresh.
+- Fresh data is not requested again. `freshness expires_in:` sets how long data counts as fresh.
 - Identical parallel loads become one request.
 - Loads and mutations use the [retry policy](#retries). Terminal refusals return immediately.
 - A response older than the data already stored never overwrites it.
 - A row that another response stored while this one was in flight keeps its stored data and still joins the list this response names.
-- `max_pages` limits how many pages `loadMore()` fetches from the network for one list. The count is stored with the cursor and starts again at 1 when the first page is fetched again.
+- `paginate max_pages:` limits how many pages `loadMore()` fetches from the network for one list. The count is stored with the cursor and starts again at 1 when the first page is fetched again.
 
 ## Refresh merges, it does not replace
 
@@ -515,13 +515,12 @@ What a refresh does, in one commit:
 - Rows from the response are merged field by field. Rows that did not change keep their revision and are not reported as updated.
 - Records that the server has not confirmed yet (a message being sent, a failed one waiting for retry) stay in the list where they are.
 - For a paged list the response is the first page. The last row of the response is looked up in the old list. If it is found, the new first page is followed by the old rows that came after it, so a long list that the user scrolled does not jump. If it is not found, the old tail is dropped and `loadMore()` loads the next pages again.
-- Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`deleted_by`, a null node, a delete event).
+- Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`delete_if:`, a null node, a delete event).
 - A failed request changes nothing.
 
 The encrypted event carries identifiers. `changed_by` selects the HTTP reread, and its response updates the database in the usual way.
-Events of the plain transport with a full row save that row directly. `joins: :events` adds such a row to loaded selections without server filters.
-`joins: :events` accepts rows from operation responses with `lands`, including cached rows absent from matching loaded windows. Existing members keep their places.
-A relation with `text:` parameters stores the server response as it was and does not accept event rows.
+Events of the plain transport with a full row save that row directly. `insert_on: [:event, :response]` adds such a row to loaded selections that match its `where` columns, and does the same for rows from operation responses (`upsert`), including cached rows absent from matching loaded windows. Existing members keep their places.
+A scope with a parameter that has no `where` stores the server response as it was and does not accept event rows.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
 
 `refresh(replace: true)` replaces the whole list with the response (unconfirmed records still stay). It is meant for small lists where the server is the only authority.
@@ -530,49 +529,52 @@ After a reconnect, Cable rereads the observed selections of models with `changed
 
 ```ruby
 operation :create do
-  mutation CreateMoment
-  input text: :text
+  mutation "CreateMoment"
+  variables text: :text
 end
 ```
 
 Fields of the kind `id` that hold a whole number are sent as JSON numbers. A GraphQL `ID` accepts a number and so does an `Int`, while a string only fits an `ID`.
 
-Servers that take one input object and answer with a payload use `wrap` and `root`:
+Servers that take one input object and answer with a payload use `wrap` and `response from:`:
 
 ```ruby
 operation :update do
-  mutation UpdateGroup
-  wrap :input
-  root "groupUpdate.group"
+  mutation "UpdateGroup"
+  wrap "input"
+  response from: "groupUpdate.group"
 end
 operation :send_reward do
-  mutation RewardSend
-  args rewardId: :string
-  local_effect :none, reason: "Apply the server response"
-  wrap     :input
-  root     "rewardSend.user"
-  lands    Note, root: "rewardSend.message"
-  refetch_of CurrentUser, relation: :current
-  input    userId: :id, rewardId: :rewardId
+  mutation "RewardSend"
+  parameter :rewardId, :string
+  optimistic false
+  wrap "input"
+  upsert Note, from: "rewardSend.message"
+  variables userId: :id, rewardId: :rewardId
+  response from: "rewardSend.user"
+  refetch :current, model: CurrentUser
 end
 ```
 
-`response :ignore` skips reading the response, for a mutation whose answer is not the model's row; add `refetch :profile` (or a `refetch` line in an action) to reload the relation instead.
+`response :ignore` skips reading the response, for a mutation whose answer is not the model's row; add `refetch :profile` to reload the scope instead.
 
-`wrap :input` sends `{ input: { ...variables } }`. `root` is the path of the row inside the response, by default the first field of the operation. `lands Model, root: "a.b"` writes an object or every object in an array at that path into the declared model. The model must exist, and a path that the response lacks lands nothing. `refetch_of Model, relation: :name` marks a relation of another model stale after the action succeeds and reloads it when someone reads it, for counters that live on another row.
+`wrap "input"` sends `{ input: { ...variables } }`. `response from:` is the path of the row inside the response, by default the first field of the operation. `upsert Model, from: "a.b"` writes an object or every object in an array at that path into the declared model. The model must exist, and a path that the response lacks writes nothing. `refetch :scope, model: Model` marks a scope of another model stale after the operation succeeds and reloads it when someone reads it, for counters that live on another row. `refetch` is a set: write the line again for each scope.
 
-`create`, `update` and `destroy` call the named mutation. The `input` line maps row fields to variables (same names by default). The `args` line in a model operation declares values that are sent but not stored (see [writing data](writing-data.md)). Its kinds are the kinds of an operation without a model: a scalar kind or the name of a schema enum or input object (see [models](models.md#check-against-the-server-schema)). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
+`create`, `update` and `destroy` call the named mutation. The `variables` line maps row attributes to variables (same names by default). A `parameter` line in a model operation declares a value that is sent but not stored (see [writing data](writing-data.md)). Its types are the types of an operation without a model: a scalar type or the name of a schema enum or input object (see [models](models.md#check-against-the-server-schema)). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
 
 ## Operations without a model
 
-Sign-in, sign-out, a QR code or a price list belong to no row. Declare each one with an `operation` block. The generator writes a typed call for Swift and Kotlin, and the call sends the operation and reads the fields you name in `result`:
+Sign-in, sign-out, a QR code or a price list belong to no row. Declare each one with an `operation` block. The generator writes a typed call for Swift and Kotlin, and the call sends the operation and reads the attributes you name in `returns`:
 
 ```ruby
 operation :qr_code_create do
-  mutation QrCodeCreate
-  wrap     :input
-  args     kind: :string, size: :int?
-  result   url: :string
+  mutation "QrCodeCreate"
+  wrap "input"
+  parameter :kind, :string
+  parameter :size, :int, null: true
+  returns do
+    attribute :url, :string
+  end
 end
 ```
 
@@ -586,13 +588,13 @@ val code = Operations.qrCodeCreate(kind = "group", size = 3)
 println(code.url)
 ```
 
-- `mutation` or `query` names the operation. Pass the operation type to `DB.open` (Swift) or `DBlayer.open` (Kotlin) like any other operation.
-- `args` are the variables, with the same kinds as the args of `create`. A trailing `?` makes one optional and an omitted one is not sent. `wrap :input` sends them as `{ input: { ... } }`.
-- `result` lists the fields to read from the root field of the answer, all optional. Without `result` the call returns nothing. A field is a scalar (`:bool`, `:int`, `:num`, `:string`, `:id`), a schema enum name (`:WidgetKind`), `:ids` or `[:string]` for a list of scalars, `:json` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), `{ a: :int }` for an object, or `[{ a: :int }]` for a list of objects. Each object becomes its own type named after the call and the field (`PricingLoadResultRewards`). An `:id` field accepts a number or a string and arrives as a string.
-- `args input: :StickerInput` names a schema input object. The generator reads it and nested inputs from `--schema`.
+- `mutation "Name"` or `query "Name"` names the operation. Pass the operation type to `DB.open` (Swift) or `DBlayer.open` (Kotlin) like any other operation.
+- `parameter` lines are the variables, with the same types as the parameters of `create`. `null: true` makes one optional and an omitted one is not sent. `wrap "input"` sends them as `{ input: { ... } }`.
+- `returns do ... end` lists the attributes to read from the root field of the answer. Without `returns` the call returns nothing. An attribute is a scalar (`:bool`, `:int`, `:num`, `:string`, `:id`), a schema enum name (`WidgetKind`), `[:id]` or `[:string]` for a list of scalars, `:json` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), a named type with a block for an object (`attribute :videoIntro, PricingLoadResultVideoIntro do ... end`), or `[Name]` with a block for a list of objects. Each object type has the name you give it. An `:id` attribute accepts a number or a string and arrives as a string. A `returns` attribute takes no `null`, `optional`, `default`, `from` or `local`.
+- `parameter :input, StickerInput` names a schema input object. The generator reads it and nested inputs from `--schema`.
 - Required inputs remain required. Nullable fields use `GraphQLNullable`: omitted by default, explicit null, or a supplied value. Lists preserve every dimension and element nullability.
-- A required field with a schema default can be omitted. Nullable fields with defaults still distinguish omission from explicit null.
-- `args kind: :WidgetKind` and `result kind: :WidgetKind` name a schema enum. It becomes a typed enum with an `unknown` case, in inputs too (see [models](models.md#enums)). A custom scalar needs a `scalar` line (see [models](models.md#custom-scalars)). The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.
+- A required input field with a schema default can be omitted. Nullable fields with defaults still distinguish omission from explicit null.
+- `parameter :kind, WidgetKind` and `attribute :kind, WidgetKind` name a schema enum. It becomes a typed enum with an `unknown` case, in inputs too (see [models](models.md#enums)). A custom scalar needs a `scalar` line (see [models](models.md#custom-scalars)). The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.
 - The call does not enter the outbox and returns Offline when started offline.
 - Encrypted calls follow the [retry policy](#retries). A numbered mutation stores Pending before HTTP, including for a standalone operation.
 - Cancelling a standalone encrypted mutation preserves Pending for `sessionResume()` and leaves its result unconfirmed.
@@ -620,12 +622,23 @@ try {
 ```
 - Do not use it for a row of a model. The row is written by `create`, `update` or a model `operation`, which keep the queue, the retries and the rollback.
 
-An operation that reads lists, objects and raw JSON from the answer:
+An operation that reads lists, objects and JSON from the answer:
 
 ```ruby
 operation :pricing_load do
-  query  Pricing
-  result rewards: [{ id: :id, name: :string, price: :int }], videoIntro: { enabled: :bool }, tags: [:string], spec: :json
+  query "Pricing"
+  returns do
+    attribute :rewards, [PricingLoadResultRewards] do
+      attribute :id, :id
+      attribute :name, :string
+      attribute :price, :int
+    end
+    attribute :videoIntro, PricingLoadResultVideoIntro do
+      attribute :enabled, :bool
+    end
+    attribute :tags, [:string]
+    attribute :spec, :json
+  end
 end
 ```
 
@@ -639,14 +652,19 @@ val pricing = Operations.pricingLoad()
 val names = pricing.rewards?.mapNotNull { it.name }.orEmpty()
 ```
 
-An operation whose root field is a list, such as a search that returns the matching items, declares `list`. `result` then describes one element and the call returns a list of it:
+An operation whose root field is a list, such as a search that returns the matching items, declares `response shape: :list`. `returns` then describes one element and the call returns a list of it:
 
 ```ruby
 operation :giphy_load do
-  query  Giphy
-  list
-  args   type: :string, limit: :int?
-  result id: :id, url: :string, isSticker: :bool
+  query "Giphy"
+  response shape: :list
+  parameter :type, :string
+  parameter :limit, :int, null: true
+  returns do
+    attribute :id, :id
+    attribute :url, :string
+    attribute :isSticker, :bool
+  end
 end
 ```
 
@@ -660,15 +678,23 @@ val found = Operations.giphyLoad(type = "gif", limit = 20)
 val urls = found.mapNotNull { it.url }
 ```
 
-`list` needs a `result` line.
+`response shape: :list` needs a `returns` block.
 
-An aggregate that is not a row of a model, such as the counters of a group library, is an operation without a model. The call returns the fields as a value and writes no row. When the answer nests the aggregate under `node(id:)`, declare the nested field in `result`:
+An aggregate that is not a row of a model, such as the counters of a group library, is an operation without a model. The call returns the fields as a value and writes no row. When the answer nests the aggregate under `node(id:)`, declare the nested attribute in `returns`:
 
 ```ruby
 operation :group_media_state do
   query "groupMediaState"
-  args groupId: :id, upToSequence: :int?
-  result mediaLibrary: { visualCount: :int, audioCount: :int, rewardCount: :int, latestSequence: :int }
+  parameter :groupId, :id
+  parameter :upToSequence, :int, null: true
+  returns do
+    attribute :mediaLibrary, GroupMediaStateResultMediaLibrary do
+      attribute :visualCount, :int
+      attribute :audioCount, :int
+      attribute :rewardCount, :int
+      attribute :latestSequence, :int
+    end
+  end
 end
 ```
 
@@ -686,9 +712,11 @@ An operation that takes a schema input object:
 
 ```ruby
 operation :sticker_send do
-  mutation StickerSend
-  args     input: :StickerInput
-  result   id: :string
+  mutation "StickerSend"
+  parameter :input, StickerInput
+  returns do
+    attribute :id, :string
+  end
 end
 ```
 
@@ -702,13 +730,15 @@ val sent = Operations.stickerSend(StickerInput(name = "wave", tags = listOf("a")
 println(sent.id)
 ```
 
-A list of schema input objects or enums takes the name in brackets. `[:WidgetInput]` is a list that holds no nil, `[:WidgetInput?]` may hold nil items, a `?` after the bracket (`[:WidgetInput]?`) makes the whole list optional and an omitted one is not sent. The check compares the list with the variable of the mutation: an arg that may hold nil items does not fit `[WidgetInput!]`.
+A list of schema input objects or enums takes the name in brackets. `[WidgetInput]` is a list that holds no nil, `null_items: true` allows nil items, `null: true` makes the whole list optional and an omitted one is not sent. The check compares the list with the variable of the mutation: a parameter that may hold nil items does not fit `[WidgetInput!]`.
 
 ```ruby
 operation :widgets_send do
-  mutation WidgetsSend
-  args     widgets: [:StickerWidgetInput]?
-  result   id: :string
+  mutation "WidgetsSend"
+  parameter :widgets, [StickerWidgetInput], null: true
+  returns do
+    attribute :id, :string
+  end
 end
 ```
 
@@ -728,16 +758,16 @@ println(answer.id)
 
 ```ruby
 scope :feed do
-  fetch MomentsFeed
-  updates MomentEvents, deleted_by: :destroyed
+  query "MomentsFeed"
+  subscribe "MomentEvents", apply: { effect: :upsert, delete_if: "destroyed" }
 end
 ```
 
-- `root: "a.b"` selects the row inside the event payload. Its default is the first field. `id:` selects the identifier and defaults to `id`.
-- Events are normalized like responses. `id:` and `deleted_by:` accept dotted paths. `deleted_by:` selects the value that marks a deleted row.
-- An event changes only the fields it carries. Fields it does not select keep their stored values. The read of the stored row and the write happen in one transaction, so a local edit made at the same moment is never overwritten by an older copy.
+- `from: "a.b"` selects the row inside the event payload. Its default is the first field. `id:` selects the identifier and defaults to `id`.
+- Events are normalized like responses. `id:` and `delete_if:` accept dotted paths. `delete_if:` selects the value that marks a deleted row.
+- An event changes only the attributes it carries. Attributes it does not select keep their stored values. The read of the stored row and the write happen in one transaction, so a local edit made at the same moment is never overwritten by an older copy.
 - A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.
-- Events preserve fields owned by unconfirmed local edits. Loaded windows with `joins: :events` accept matching rows.
+- Events preserve fields owned by unconfirmed local edits. Loaded windows of scopes with `insert_on: [:event]` accept matching rows.
 - If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
 - The subscription starts when the first reader connects, is shared by all readers and closes some time after the last reader leaves (30 seconds by default).
 - After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once.
@@ -745,11 +775,11 @@ end
 
 ### Model-level subscriptions
 
-`updates` lives while a screen reads the relation. For events that should reach the database for the whole session (presence, counters), declare `listen` on the model. It takes the same options as `updates`:
+A `subscribe` inside a scope lives while a screen reads the scope. For events that should reach the database for the whole session (presence, counters), declare `subscribe` on the model. It takes the same options:
 
 ```ruby
 model User do
-  listen "userUpdated", debounce: 300.milliseconds
+  subscribe "userUpdated", debounce: 300.milliseconds
 end
 ```
 
@@ -767,9 +797,9 @@ DBlayer.unlisten()
 
 | Event | Result |
 | ----- | ------ |
-| Successful `create` or `destroy` of a model | relations rooted in that model become stale and are refetched at once if someone is reading them. After a `create`, a relation with `joins: :events` is not refetched: the answer of the mutation already placed the row |
-| Successful mutation with `refetch` | the listed relations become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit |
-| `fresh_for` expired | refetched when next read or when the app resumes |
+| Successful `create` or `destroy` of a model | scopes of that model become stale and are refetched at once if someone is reading them. After a `create`, a scope with `insert_on: [:event, :response]` is not refetched: the answer of the mutation already placed the row |
+| Successful mutation with `refetch` | the listed scopes become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit |
+| `freshness` expired | refetched when next read or when the app resumes |
 | App resumes | the app calls `DB.resume()` (Swift) or `DBlayer.resume()` (Kotlin), stale relations with readers are refetched in small groups |
 | Explicit resume after logout | stopped singleton subscriptions restart, existing singleton entities receive values again |
 | Network is back | the queue is sent and stale relations are refetched |

@@ -19,12 +19,12 @@ struct BridgeProbeTests {
     await eventually("the moment is delivered") { heldMoment?.value != nil }
     heldMoment = nil
     #expect(Entities<Moment>.shared.retainedCount == 1)
-    let message = try await Message.create(chatId: "chat", authorId: "user", text: String(repeating: "n", count: 5 * 1024 * 1024))
-    var heldMessage: Entity<Message>? = Message.entity(message.id)
-    await eventually("the message is delivered") { heldMessage?.value != nil }
-    heldMessage = nil
+    let record = try await Record.create(containerId: "container", authorId: "user", text: String(repeating: "n", count: 5 * 1024 * 1024))
+    var heldRecord: Entity<Record>? = Record.entity(record.id)
+    await eventually("the record is delivered") { heldRecord?.value != nil }
+    heldRecord = nil
     #expect(Entities<Moment>.shared.retainedCount == 0)
-    #expect(Entities<Message>.shared.retainedCount == 1)
+    #expect(Entities<Record>.shared.retainedCount == 1)
   }
 
   /// Waits for the event that the relation failed, not for a time.
@@ -294,15 +294,15 @@ struct BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aCreateSendsItsArgsAndTheRowNeverStoresThem() async throws {
     let transport = MockTransport()
-    transport.enqueue("CreateMessage", reply: #"{"data":{"createMessage":{"__typename":"Message","id":"x1","chatId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    transport.enqueue("CreateRecord", reply: #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMessage","document":"mutation CreateMessage($chatId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createMessage(chatId: $chatId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id chatId authorId text createdAt } }"}]"#)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt } }"}]"#)
 
-    let local = try await Message.create(chatId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1")
+    let local = try await Record.create(containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1")
     try await local.settled()
-    let sent = transport.calls.first { $0.operationName == "CreateMessage" }?.variablesJson ?? ""
+    let sent = transport.calls.first { $0.operationName == "CreateRecord" }?.variablesJson ?? ""
     #expect(sent.contains(#""signedId":"blob-1""#) && sent.contains(#""attachedUserId":42"#), "variables sent: \(sent)")
-    #expect(try await Message.find(local.confirmedId()).current()?.text == "hi")
+    #expect(try await Record.find(local.confirmedId()).current()?.text == "hi")
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -324,11 +324,11 @@ struct BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func anEntityOfARecordThatAnotherRecordRefersToFollowsItsCreateAndDestroy() async throws {
     DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let message = try await Message.create(chatId: "c", authorId: "u1", text: "hi")
-    let entity = Message.entity(message.id)
+    let record = try await Record.create(containerId: "c", authorId: "u1", text: "hi")
+    let entity = Record.entity(record.id)
     await eventually(#"not (entity.value == nil)"#) { !(entity.value == nil) }
     #expect(entity.value?.text == "hi")
-    try await message.destroy()
+    try await record.destroy()
     await eventually(#"not (entity.value != nil)"#) { !(entity.value != nil) }
     #expect(entity.value == nil)
   }
@@ -382,32 +382,32 @@ struct BridgeProbeTests {
   @Test
   func aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() async throws {
     DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let initial = try await Message.create(chatId: "c1", authorId: "u1", text: "hello")
-    let row = try await initial.update(reactions: [MessageReactionNode(body: "A", userId: "u1")])
+    let initial = try await Record.create(containerId: "c1", authorId: "u1", text: "hello")
+    let row = try await initial.update(reactions: [RecordReactionNode(body: "A", userId: "u1")])
     let changed = try await row.react(reactionBody: "C", userId: "u1")
     #expect(changed.reactions.map(\.userId) == ["u1"])
     #expect(changed.reactions.map(\.body) == ["C"])
   }
 
   @Test
-  func namedUploadsLandBothNestedChatRoots() async throws {
+  func namedUploadsLandBothNestedContainerRoots() async throws {
     let transport = MockTransport()
     for _ in 0..<2 {
       transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://s3/x","signedId":"sid","blobId":"b1"}}}"#)
     }
-    transport.enqueue("ChatGroupCreateFile", reply: #"{"data":{"groupChatCreate":{"chat":{"id":"c77","title":"created"}}}}"#)
-    transport.enqueue("ChatGroupUpdateFile", reply: #"{"data":{"groupChatUpdate":{"chat":{"id":"c77","title":"updated"}}}}"#)
+    transport.enqueue("ContainerGroupCreateFile", reply: #"{"data":{"groupContainerCreate":{"container":{"id":"c77","title":"created"}}}}"#)
+    transport.enqueue("ContainerGroupUpdateFile", reply: #"{"data":{"groupContainerUpdate":{"container":{"id":"c77","title":"updated"}}}}"#)
     DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url signedId blobId } }"},{"name":"ChatGroupCreateFile","document":"mutation ChatGroupCreateFile { groupChatCreate { chat { id title } } }"},{"name":"ChatGroupUpdateFile","document":"mutation ChatGroupUpdateFile { groupChatUpdate { chat { id title } } }"}]"#)
-    let file = FileManager.default.temporaryDirectory.appending(path: "chat-\(UUID().uuidString).jpg")
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url signedId blobId } }"},{"name":"ContainerGroupCreateFile","document":"mutation ContainerGroupCreateFile { groupContainerCreate { container { id title } } }"},{"name":"ContainerGroupUpdateFile","document":"mutation ContainerGroupUpdateFile { groupContainerUpdate { container { id title } } }"}]"#)
+    let file = FileManager.default.temporaryDirectory.appending(path: "container-\(UUID().uuidString).jpg")
     try Data("photo".utf8).write(to: file)
     defer { try? FileManager.default.removeItem(at: file) }
-    let local = try await Chat.create(values: ["title": .string("pending")], uploading: UploadRequest(path: file.path, mutation: "ChatGroupCreateFile", createBlob: "CreateBlob"))
-    let chat = try #require(await Chat.find(try await local.confirmedId()).current())
-    #expect(chat.title == "created")
-    try await chat.upload(UploadRequest(path: file.path, mutation: "ChatGroupUpdateFile", createBlob: "CreateBlob"))
-    await eventually("the update upload changes the chat") { await Chat.find("c77").current()?.title == "updated" }
-    #expect(await Chat.find("c77").current()?.title == "updated")
+    let local = try await Container.create(values: ["title": .string("pending")], uploading: UploadRequest(path: file.path, mutation: "ContainerGroupCreateFile", createBlob: "CreateBlob"))
+    let container = try #require(await Container.find(try await local.confirmedId()).current())
+    #expect(container.title == "created")
+    try await container.upload(UploadRequest(path: file.path, mutation: "ContainerGroupUpdateFile", createBlob: "CreateBlob"))
+    await eventually("the update upload changes the container") { await Container.find("c77").current()?.title == "updated" }
+    #expect(await Container.find("c77").current()?.title == "updated")
   }
 
   @MainActor

@@ -1,18 +1,18 @@
-model Notice, storage: :memory, expire_after: 1.minute do
-  field :body, type: :string
-  field :occurredAt, type: :date
+model Notice, storage: :memory, expires_in: 1.minute do
+  attribute :body, :string
+  attribute :occurredAt, :date
   scope :recent do
     order occurredAt: :desc
-    updates BulletinAdded
+    subscribe "BulletinAdded"
   end
 end
 
-model InteractionNotice, storage: :memory, expire_after: 1.minute do
-  field :messageId, type: :id
-  field :actorUserId, type: :id
-  field :occurredAt, type: :date
+model InteractionNotice, storage: :memory, expires_in: 1.minute do
+  attribute :recordId, :id
+  attribute :actorUserId, :id
+  attribute :occurredAt, :date
   scope :recent do
     order occurredAt: :desc
-    updates RecordSignal
+    subscribe "RecordSignal"
   end
 end

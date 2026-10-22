@@ -2,7 +2,7 @@ use std::fs;
 
 use crate::{compile_files, emit_kotlin, emit_swift, parse_models};
 
-const CHAT: &str = "model Chat do\n\n  field :title, type: :string\n  field :lists, type: [:enum], values: [:PRIMARY, :SECONDARY], as: ChatList\n  field :extras, type: [:enum], values: [:a_b, :c], as: ChatExtra, null: true\nend\n";
+const CHAT: &str = "model Chat do\n  attribute :title, :string\n  attribute :lists, [:enum], values: [\"PRIMARY\", \"SECONDARY\"], as: ChatList\n  attribute :extras, [:enum], values: [\"a_b\", \"c\"], as: ChatExtra, null: true\nend\n";
 
 #[test]
 fn a_list_of_enum_values_is_a_typed_list_on_both_platforms() {
@@ -48,10 +48,10 @@ fn a_list_of_enum_values_keeps_the_storage_of_a_list_of_strings() {
 #[test]
 fn a_list_of_enum_values_stops_the_run_on_a_bad_declaration() {
     for (case, source, error) in [
-        ("collision", CHAT.replace("[:PRIMARY, :SECONDARY]", "[:a_b, :aB]"), "both become the Swift case `aB`"),
-        ("no values", CHAT.replace("values: [:PRIMARY, :SECONDARY], ", ""), "a list of `:enum` needs `values:`"),
-        ("two shapes", format!("{CHAT}\nmodel Mail do\n  field :lists, type: [:enum], values: [:X], as: ChatList\nend\n"), "declared with different values"),
-        ("string list with values", CHAT.replace("type: [:enum], values: [:a_b, :c], as: ChatExtra", "type: [:string], values: [:a_b]"), "belong to a list of `:enum`"),
+        ("collision", CHAT.replace("[\"PRIMARY\", \"SECONDARY\"]", "[\"a_b\", \"aB\"]"), "both become the Swift case `aB`"),
+        ("no values", CHAT.replace("values: [\"PRIMARY\", \"SECONDARY\"], ", ""), "enum attribute `lists` needs `values:`"),
+        ("two shapes", format!("{CHAT}\nmodel Mail do\n  attribute :lists, [:enum], values: [\"X\"], as: ChatList\nend\n"), "declared with different values"),
+        ("string list with values", CHAT.replace("[:enum], values: [\"a_b\", \"c\"], as: ChatExtra", "[:string], values: [\"a_b\"]"), "`values:` belongs to `:enum` and `[:enum]`"),
     ] {
         let errors = parse_models(&source).expect_err(case);
         assert!(errors.iter().any(|found| found.message.contains(error)), "{case}: {errors:?}");
@@ -60,7 +60,7 @@ fn a_list_of_enum_values_stops_the_run_on_a_bad_declaration() {
 
 const SCHEMA: &str = "type Query { chat: Chat }\nenum ChatList { PRIMARY SECONDARY }\ntype Chat { id: ID! title: String! lists: [ChatList!]! maybe: [ChatList!] }\n";
 const OPERATION: &str = "query chat { chat { id title lists maybe } }\n";
-const SCOPE: &str = "  scope :all do\n    fetch \"chat\", root: \"chat\"\n  end\n";
+const SCOPE: &str = "  scope :all do\n    query \"chat\"\n    response from: \"chat\"\n  end\n";
 
 fn check(fields: &str) -> Result<(), Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
@@ -69,17 +69,17 @@ fn check(fields: &str) -> Result<(), Vec<String>> {
     fs::create_dir(directory.path().join("queries")).unwrap();
     fs::write(directory.path().join("queries/chat.graphql"), OPERATION).unwrap();
     let model = directory.path().join("chat.dbl");
-    fs::write(&model, format!("model Chat do\n  field :title, type: :string\n{fields}{SCOPE}end\n")).unwrap();
+    fs::write(&model, format!("model Chat do\n  attribute :title, :string\n{fields}{SCOPE}end\n")).unwrap();
     compile_files(&[model], Some(&schema), &[directory.path().join("queries")]).map(|_| ()).map_err(|errors| errors.into_iter().map(|error| error.error.message).collect())
 }
 
 #[test]
 fn a_list_of_enum_values_is_checked_against_the_schema_enum_list() {
-    let good = "  field :lists, type: [:enum], values: [:PRIMARY, :SECONDARY], as: ChatList\n  field :maybe, type: [:enum], values: [:PRIMARY, :SECONDARY], as: ChatList, null: true\n";
+    let good = "  attribute :lists, [:enum], values: [\"PRIMARY\", \"SECONDARY\"], as: ChatList\n  attribute :maybe, [:enum], values: [\"PRIMARY\", \"SECONDARY\"], as: ChatList, null: true\n";
     check(good).unwrap();
     for (case, fields, error) in [
-        ("value the schema lacks", good.replace("[:PRIMARY, :SECONDARY]", "[:PRIMARY, :TERTIARY]"), "lists values TERTIARY that enum `ChatList` does not have"),
-        ("not a list in the declaration", good.replace("type: [:enum], values: [:PRIMARY, :SECONDARY]", "type: :enum, values: [:PRIMARY, :SECONDARY]"), "does not fit"),
+        ("value the schema lacks", good.replace("[\"PRIMARY\", \"SECONDARY\"]", "[\"PRIMARY\", \"TERTIARY\"]"), "lists values TERTIARY that enum `ChatList` does not have"),
+        ("not a list in the declaration", good.replace("[:enum], values: [\"PRIMARY\", \"SECONDARY\"]", ":enum, values: [\"PRIMARY\", \"SECONDARY\"]"), "does not fit"),
         ("nullable list without null", good.replace(", null: true", ""), "is nullable in the schema"),
     ] {
         let errors = check(&fields).expect_err(case);
