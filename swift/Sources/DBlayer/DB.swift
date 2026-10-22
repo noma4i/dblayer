@@ -3,17 +3,7 @@ import Foundation
 public enum DB {
   static let reachability = Reachability.shared
   public nonisolated(unsafe) static var database: Database!
-  @MainActor private static var opening: (OpenArguments, Task<Void, Error>)?
-
-  private struct OpenArguments: Equatable {
-    let endpoint: URL?
-    let headers: [String: String]
-    let encrypted: EncryptedConfig?
-    let references: [AnyHashable?]
-    let models: String
-    let path: String?
-    let operations: [String]
-  }
+  private static let opener = OpenDatabase()
 
   /// Ends the session: clears the stored data and drops every entity, lease and retained value.
   @MainActor public static func logout() async throws {
@@ -49,29 +39,14 @@ public enum DB {
     try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retryListener: retryListener, connectivity: reachability.start())
   }
 
-  private static func reference(_ object: AnyObject) -> AnyHashable {
-    (object as? AnyHashable) ?? AnyHashable(ObjectIdentifier(object))
-  }
-
   @MainActor public static func open(endpoint: URL? = nil, headers: [String: String] = [:], encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
-    let arguments = OpenArguments(endpoint: endpoint, headers: headers, encrypted: encrypted, references: [credentials.map(reference), transport.map(reference), http.map(reference)], models: modelsJSON, path: path, operations: operations.flatMap { [$0.operationName, $0.document] })
-    if let (previous, task) = opening {
-      guard previous == arguments else { throw DbError.Invalid(detail: "The database is already opening or open with different parameters") }
-      return try await task.value
-    }
-    let task = Task { @MainActor in
-      do {
-        let origin = encrypted.flatMap { URL(string: $0.origin) }
-        let transport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers, cablePath: encrypted?.endpoints.cable) }
-        let database = try await Database.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) })
-        try install(database, transport: transport, operations: operations)
-      } catch {
-        opening = nil
-        throw error
-      }
-    }
-    opening = (arguments, task)
-    try await task.value
+    let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
+    let references: [UInt64] = [credentials.map { UInt64(UInt(bitPattern: ObjectIdentifier($0))) } ?? 0, transport.map { UInt64(UInt(bitPattern: ObjectIdentifier($0))) } ?? 0, http.map { UInt64(UInt(bitPattern: ObjectIdentifier($0))) } ?? 0]
+    let origin = encrypted.flatMap { URL(string: $0.origin) }
+    let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers, cablePath: encrypted?.endpoints.cable) }
+    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(endpoint: endpoint?.absoluteString, headers: headers, operations: JSONValue.array(definitions).text, references: references), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) })
+    reachability.start(try opened.onlineSink())
+    database = opened
   }
 
   @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) throws {

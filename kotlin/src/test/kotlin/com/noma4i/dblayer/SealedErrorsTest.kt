@@ -9,6 +9,18 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SealedErrorsTest {
+    private class RefusedRetry : Database(NoHandle) {
+        override suspend fun retry(model: String, rowId: String): ULong = throw DbException.Invalid("retry refused")
+        override suspend fun retryAll(): ULong = throw DbException.Invalid("retry refused")
+    }
+
+    @Test fun modelRetriesPropagateErrorsToTheirCaller() = bounded {
+        DBlayer.database = Database.open(Config(null, null, 8u), modelsJSON, null)
+        val row = Moment.create(text = "saved")
+        DBlayer.database = RefusedRetry()
+        org.junit.Assert.assertTrue(runCatching { row.retry() }.exceptionOrNull() is DbException.Invalid)
+        org.junit.Assert.assertTrue(runCatching { retryAll() }.exceptionOrNull() is DbException.Invalid)
+    }
     private val codes = listOf(
         SessionCode.SEQUENCE_CONFLICT, SessionCode.REPLAYED_REQUEST, SessionCode.RATE_LIMITED, SessionCode.ACCOUNT_UNAVAILABLE,
         SessionCode.UNAUTHENTICATED, SessionCode.SESSION_ENDED, SessionCode.INVALID_CODE, SessionCode.INVALID_PHONE,
@@ -54,7 +66,8 @@ class SealedErrorsTest {
             assertEquals("hello", Moment.find(local.id).current()?.text)
 
             transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-            withTimeout(5000) { DBlayer.database.retry("Moment", local.id) }
+            val retried = withTimeout(5000) { if (code == SessionCode.UNAUTHENTICATED) local.retry() else retryAll() }
+            assertEquals(1uL, retried)
             withTimeout(5000) { local.settled() }
 
             assertEquals(2, transport.calls.count { it.operationName == "CreateMoment" })

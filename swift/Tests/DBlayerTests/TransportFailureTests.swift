@@ -38,10 +38,13 @@ struct TransportFailureTests {
   }
 
   static let cases: [Case] = [
-    Case(name: "graphQL errors", error: GraphQLTransportError.graphQL(messages: ["too large"], extensions: nil), kind: .mutation, expected: "Graphql too large"),
-    Case(name: "unauthenticated", error: GraphQLTransportError.unauthenticated, kind: .mutation, expected: "Http 401"),
-    Case(name: "server 503", error: GraphQLTransportError.server(status: 503), kind: .mutation, expected: "Http 503"),
-    Case(name: "server 503", error: GraphQLTransportError.server(status: 503), kind: .query, expected: "Http 503"),
+    Case(name: "task cancelled", error: CancellationError(), kind: .query, expected: "Interrupted"),
+    Case(name: "native failure", error: CocoaError(.fileNoSuchFile), kind: .query, expected: "Network"),
+    Case(name: "native failure", error: CocoaError(.fileNoSuchFile), kind: .mutation, expected: "Interrupted"),
+    Case(name: "graphQL errors", error: DbError.Graphql(messages: ["too large"], extensions: nil), kind: .mutation, expected: "Graphql too large"),
+    Case(name: "unauthenticated", error: DbError.Http(status: 401, detail: "refused"), kind: .mutation, expected: "Http 401"),
+    Case(name: "server 503", error: DbError.Http(status: 503, detail: "busy"), kind: .mutation, expected: "Http 503"),
+    Case(name: "server 503", error: DbError.Http(status: 503, detail: "busy"), kind: .query, expected: "Http 503"),
     Case(name: "not connected", error: URLError(.notConnectedToInternet), kind: .mutation, expected: "Network"),
     Case(name: "cannot connect", error: URLError(.cannotConnectToHost), kind: .mutation, expected: "Network"),
     Case(name: "timeout", error: URLError(.timedOut), kind: .mutation, expected: "Interrupted"),
@@ -64,13 +67,6 @@ struct TransportFailureTests {
   @Test(arguments: cases)
   func aFailureReachesTheCoreAsTheClassThatTellsIfTheServerAnswered(_ failure: Case) {
     #expect(Self.shape(TransportFailure.classify(failure.error, kind: failure.kind)) == failure.expected)
-  }
-
-  @Test
-  func aSubscriptionEndsAsNetworkUnlessTheServerRejectedIt() {
-    #expect(Self.shape(TransportFailure.classifySubscription(CableClientError.rejected)) == "Graphql \(CableClientError.rejected)")
-    #expect(Self.shape(TransportFailure.classifySubscription(URLError(.networkConnectionLost))) == "Network")
-    #expect(Self.shape(TransportFailure.subscriptionCompleted) == "Network")
   }
 
   @Test

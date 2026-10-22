@@ -14,7 +14,7 @@ private final class AgentSink: SubscriptionSink, @unchecked Sendable {
 }
 
 struct UserAgentTests {
-  @Test(arguments: ["encrypted", "graphql", "signed", "put", "encryptedSocket", "graphqlSocket", "legacySocket"], [nil, "Example/3"] as [String?])
+  @Test(arguments: ["encrypted", "graphql", "put", "encryptedSocket", "graphqlSocket"], [nil, "Example/3"] as [String?])
   func everyRequestIdentifiesTheLibrary(path: String, application: String?) async throws {
     let server = try BootstrapListener(responseStatus: "400 Bad Request")
     defer { server.listener.cancel() }
@@ -29,8 +29,6 @@ struct UserAgentTests {
       _ = try await UrlSessionEncryptedHttp(origin: origin, session: session).post(path: "/api/session", body: "jwe")
     case "graphql":
       _ = try? await transport.query(request: operation)
-    case "signed":
-      _ = try await GraphQLHTTPTransport(url: origin, session: session, signer: RequestSigner(secret: "secret"), clock: ServerClock(), appVersion: "1", appBuild: "1", deviceUUID: "device", tokenSupplier: { "token" }).send(operationName: "Probe", documentHash: "hash", document: nil, variablesJSON: Data("{}".utf8))
     case "put":
       _ = try await transport.put(url: origin.absoluteString, headers: headers, bytes: Data([1, 2]), progress: AgentProgress(noHandle: .init()))
     case "encryptedSocket":
@@ -39,10 +37,7 @@ struct UserAgentTests {
       let token = try? await transport.subscribe(request: operation, sink: AgentSink(noHandle: .init()))
       await eventually("GraphQL handshake received") { !server.requests.isEmpty }
       if let token { transport.unsubscribe(token: token) }
-    default:
-      let socket = URLSessionCableSocket(url: origin, token: "token")
-      _ = try? await socket.open()
-      socket.close()
+    default: break
     }
     let request = try #require(server.requests.first)
     let agents = request.components(separatedBy: "\r\n").dropFirst().prefix(while: { !$0.isEmpty }).filter { $0.lowercased().hasPrefix("user-agent:") }.map { $0.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)[1].trimmingCharacters(in: .whitespaces) }
@@ -50,9 +45,5 @@ struct UserAgentTests {
     #expect(agents == [userAgent(application: supportsHeaders ? application : nil)])
   }
 
-  @Test(arguments: [nil, "Example/3"] as [String?])
-  func explicitGraphQLHeadersPreserveApplicationProducts(application: String?) throws {
-    let request = GraphQLURLRequest.make(url: URL(string: "https://example.com")!, body: Data(), headers: application.map { ["uSeR-aGeNt": $0] } ?? [:])
-    #expect(request.value(forHTTPHeaderField: "User-Agent") == userAgent(application: application))
-  }
+
 }

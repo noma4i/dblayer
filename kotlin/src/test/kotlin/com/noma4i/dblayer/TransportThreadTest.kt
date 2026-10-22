@@ -51,17 +51,6 @@ class TransportThreadTest {
     }
 
     @Test
-    fun theGraphQLTransportReadsTheResponseBodyOffTheCallerThread() = bounded {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"7"}}"""))
-        val transport = GraphQLHttpTransport(server.url("/graphql").toString(), client, RequestSigner("secret"), ServerClock(), "1.0", "1", "device-1") { "token" }
-
-        val reply = withContext(caller) { transport.send("Probe", "hash", null, "{}".toByteArray()) }
-
-        assertEquals(200, reply.status)
-        assertBodyReadOffTheCaller()
-    }
-
-    @Test
     fun theHttpTransportReadsTheResponseBodyOffTheCallerThread() = bounded {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"7"}}"""))
         val transport = OkHttpTransport(server.url("/graphql").toString(), client = client)

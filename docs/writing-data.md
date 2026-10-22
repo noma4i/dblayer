@@ -36,19 +36,19 @@ A mutation may need a value that is not a field of the model, such as a signed u
 
 ```ruby
 operation :create do
-  mutation SendMessage
+  mutation SendNote
   wrap :input
-  input chatId: :chatId, body: :body, file: :file, attachedUserId: :attachedUserId
+  input groupId: :groupId, body: :body, file: :file, attachedUserId: :attachedUserId
   args file: :string?, attachedUserId: :id?
 end
 ```
 
 ```swift
-let message = try await Message.create(chatId: chat.id, body: "hi", attachedUserId: "42", file: signedId)
+let message = try await Note.create(groupId: group.id, body: "hi", attachedUserId: "42", file: signedId)
 ```
 
 ```kotlin
-val message = Message.create(chatId = chat.id, body = "hi", attachedUserId = "42", file = signedId)
+val message = Note.create(groupId = group.id, body = "hi", attachedUserId = "42", file = signedId)
 ```
 
 An arg has a kind (`:bool`, `:int`, `:num`, `:string`, `:id` or `:ids`). A trailing `?` makes it optional: the call may leave it out and the variable is then not sent. The generated call takes the args after the fields, in alphabetical order. The args of `update` are always optional.
@@ -93,16 +93,16 @@ A refusal is kept until `settled()` or `confirmedId()` reads it, even when the s
 To wait for the server id, for example to open the screen of the record you just created, call `confirmedId()`. It returns the real id once the queued `create` is answered and throws if the server refuses it or the device is offline:
 
 ```swift
-let chat = try await Chat.create(name: "Trip", userIds: ids)
-let chatId = try await chat.confirmedId()
+let group = try await Group.create(name: "Trip", userIds: ids)
+let groupId = try await group.confirmedId()
 ```
 
 ```kotlin
-val chat = Chat.create(name = "Trip", userIds = ids)
-val chatId = chat.confirmedId()
+val group = Group.create(name = "Trip", userIds = ids)
+val groupId = group.confirmedId()
 ```
 
-A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `correlate: [:chatId, :userId, :kind, :body]` to the `create` line, or a `correlate :chatId, :body` line to a custom action, to name the fields that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The swap is the same as for the answer: observers get a `replaced` entry, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
+A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `correlate: [:groupId, :userId, :kind, :body]` to the `create` line, or a `correlate :groupId, :body` line to a custom action, to name the fields that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The swap is the same as for the answer: observers get a `replaced` entry, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
 
 ## Rolling back
 
@@ -167,12 +167,12 @@ An action can take arguments. `args` declares them (`:bool`, `:int`, `:num`, `:s
 
 ```ruby
 operation :mute do
-  mutation   ChatMute
+  mutation   GroupMute
   args       mute: :bool
-  input      chatId: :id, mute: :mute
+  input      groupId: :id, mute: :mute
   optimistic muted: :mute
   wrap       :input
-  root       "chatMute.chat"
+  root       "groupMute.group"
 end
 ```
 
@@ -180,7 +180,7 @@ An array field holds records such as reactions. `optimistic` changes one element
 
 ```ruby
 operation :react do
-  mutation   MessageReact
+  mutation   NoteReact
   args       userId: :id, reactionBody: :string
   input      messageId: :id, reactionBody: :reactionBody
   optimistic reactions: { by: :userId, element: { userId: :userId, body: :reactionBody } }
@@ -192,11 +192,11 @@ The element replaces the stored element with the same `by` value, or is appended
 `by` and `element` name declared fields. A field such as `userId` with `from: "user.id"` reads that nested response path and keeps the same key for optimistic replacement and removal.
 
 ```swift
-try await chat.mute(mute: true)
+try await group.mute(mute: true)
 ```
 
 ```kotlin
-chat.mute(mute = true)
+group.mute(mute = true)
 ```
 
 ## What the server answered
@@ -204,24 +204,24 @@ chat.mute(mute = true)
 `result` declares the scalar fields of the mutation payload that the app needs, for example the text a server shows after a send (`:string`, `:int`, `:num`, `:bool` or `:id`). The payload is the object the mutation field returns, the first part of `root`. An action with `result` returns an answer handle instead of the model: `model` is the optimistic record, `answer()` waits for the server and returns a generated type with one optional property per declared field.
 
 ```ruby
-operation :send_gift do
-  mutation GiftSend
-  args     giftId: :string
-  input    userId: :id, giftId: :giftId
+operation :send_reward do
+  mutation RewardSend
+  args     rewardId: :string
+  input    userId: :id, rewardId: :rewardId
   wrap     :input
-  root     "giftSend.user"
-  result   successMessage: :string
+  root     "rewardSend.user"
+  result   successNote: :string
 end
 ```
 
 ```swift
-let sent = try await user.sendGift(giftId: "g1")
-let text = try await sent.answer().successMessage
+let sent = try await user.sendReward(rewardId: "g1")
+let text = try await sent.answer().successNote
 ```
 
 ```kotlin
-val sent = user.sendGift(giftId = "g1")
-val text = sent.answer().successMessage
+val sent = user.sendReward(rewardId = "g1")
+val text = sent.answer().successNote
 ```
 
 `answer()` throws when the server refuses, even if the refusal came before the call, and when the device is offline. A field the server left out, or typed differently, is `nil` (`null` in Kotlin). The answer is read once and lives in memory like a kept refusal, so after a restart only the stored record remains.

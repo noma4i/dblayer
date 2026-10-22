@@ -10,7 +10,21 @@ private let sessionCodes: [SessionCode] = [
 
 private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#
 
+private final class RefusedRetry: Database, @unchecked Sendable {
+  override func retry(model: String, rowId: String) async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
+  override func retryAll() async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
+}
+
 extension BridgeProbeTests {
+  @Test @MainActor func modelRetriesPropagateErrorsToTheirCaller() async throws {
+    let previous = DB.database
+    defer { DB.database = previous }
+    DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
+    let row = try await Moment.create(text: "saved")
+    DB.database = RefusedRetry(noHandle: .init())
+    await #expect(throws: DbError.self) { try await row.retry() }
+    await #expect(throws: DbError.self) { try await Moment.retryAll() }
+  }
   @MainActor
   private func openSealedRig(_ transport: MockTransport) async throws {
     DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
@@ -69,7 +83,8 @@ extension BridgeProbeTests {
     #expect(await Moment.find(local.id).current()?.text == "hello")
 
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await DB.database.retry(model: Moment.modelName, rowId: local.id)
+    let retried = try await (code == .unauthenticated ? local.retry() : Moment.retryAll())
+    #expect(retried == 1)
     try await local.settled()
 
     #expect(transport.calls.filter { $0.operationName == "CreateMoment" }.count == 2)

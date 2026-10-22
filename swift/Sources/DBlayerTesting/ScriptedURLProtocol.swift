@@ -57,7 +57,7 @@ public final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
 
     let wireBody = Self.body(of: request)
     var recordedRequest = request
-    recordedRequest.httpBody = Self.recordedBody(of: request, wireBody: wireBody)
+    recordedRequest.httpBody = wireBody
     Self.lock.lock()
     Self.storedRecordedRequests[scriptId, default: []].append(recordedRequest)
     Self.storedWireBodies[scriptId, default: []].append(wireBody)
@@ -112,16 +112,4 @@ public final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
     return body
   }
 
-  private static func recordedBody(of request: URLRequest, wireBody: Data) -> Data {
-    guard request.value(forHTTPHeaderField: "X-Payload-Encryption") == "1" else {
-      return wireBody
-    }
-    guard let envelope = try? JSONDecoder().decode(PayloadEnvelope.self, from: wireBody) else {
-      return wireBody
-    }
-    guard let body = try? PayloadCipher(secret: "secret").open(envelope) else {
-      return wireBody
-    }
-    return body
-  }
 }

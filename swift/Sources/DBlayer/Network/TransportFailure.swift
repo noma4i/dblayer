@@ -1,7 +1,7 @@
 import Foundation
 
 enum TransportFailure {
-  static let subscriptionUnavailable = DbError.Network(detail: "the subscription socket is not open")
+  static func classifySubscription(_ error: Error) -> DbError { classify(error, kind: .query) }
 
   static func classifySocket(_ error: Error) -> DbError {
     if let error = error as? DbError { return error }
@@ -28,7 +28,6 @@ enum TransportFailure {
     if let error = error as? DbError { return error }
     let detail = String(describing: error)
     switch error {
-    case let failure as GraphQLTransportError: return answered(failure, detail: detail)
     case is CancellationError: return .Interrupted(detail: detail)
     case let failure as URLError:
       if failure.code == .cancelled { return .Interrupted(detail: failure.localizedDescription) }
@@ -37,22 +36,4 @@ enum TransportFailure {
     }
   }
 
-  static func classifySubscription(_ error: Error) -> DbError {
-    if error as? CableClientError == .rejected { return .Graphql(messages: [String(describing: error)], extensions: nil) }
-    return classify(error, kind: .query)
-  }
-
-  static let subscriptionCompleted = classify(SubscriptionCompleted(), kind: .query)
-
-  private struct SubscriptionCompleted: Error, CustomStringConvertible {
-    var description: String { "subscription completed" }
-  }
-
-  private static func answered(_ failure: GraphQLTransportError, detail: String) -> DbError {
-    switch failure {
-    case .unauthenticated: .Http(status: 401, detail: detail)
-    case let .payloadTransport(_, status), let .server(status): .Http(status: UInt16(clamping: status >= 400 ? status : 500), detail: detail)
-    case let .graphQL(messages, extensions): .Graphql(messages: messages, extensions: extensions)
-    }
-  }
 }

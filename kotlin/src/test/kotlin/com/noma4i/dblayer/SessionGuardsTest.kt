@@ -49,12 +49,6 @@ private class CountedCredential(initial: String? = null) : CredentialStore {
     }
 }
 
-private class ClosingSocket : CableSocket {
-    override suspend fun open() {}
-    override fun close() {}
-    override suspend fun send(text: String) {}
-    override suspend fun receive(): String = throw CableSocketException(CableSocketException.Reason.Closed)
-}
 
 private suspend fun cancelOnRetry(database: Database, operation: String, body: String) = coroutineScope {
     val nextAttempt = CompletableDeferred<ULong>()
@@ -78,7 +72,7 @@ private suspend inline fun <reified Failure : Throwable> rejects(block: () -> Un
 }
 
 private suspend fun open(http: ScriptedHttp, credentials: CountedCredential, path: String? = null, pin: String = PIN) =
-    Database.open(config = Config(path, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", KEY, pin, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
+    Database.open(config = Config(path, null, 32u), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", KEY, pin, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
 
 private inline fun withDirectory(block: (File) -> Unit) {
     val directory = Files.createTempDirectory("dblayer-session").toFile()
@@ -171,18 +165,4 @@ class SessionGuardsTest {
         assertEquals(43 to (1 to 0), credentials.current?.length to (credentials.sets to credentials.clears))
     }
 
-    @Test
-    fun aClosedCableLeavesTheCredentialInTheAppStore() = bounded {
-        val http = ScriptedHttp()
-        val credentials = CountedCredential()
-        DBlayer.database = open(http, credentials)
-        rejects<DbException.Http> { DBlayer.database.sessionCall("otp", OTP) }
-        val issued = credentials.current
-        val connection = CableConnection("/test", "token", { _, _ -> ClosingSocket() }, ManualTimers().timers)
-
-        connection.open()
-        eventually("the closed cable") { connection.state == CableConnectionState.Closed }
-
-        assertEquals(issued to (1 to 0), credentials.current to (credentials.sets to credentials.clears))
-    }
 }

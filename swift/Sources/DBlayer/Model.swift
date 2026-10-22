@@ -44,9 +44,9 @@ extension DBModel {
   /// The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline.
   public func confirmedId() async throws -> String { try await DB.database.confirmed(model: Self.modelName, rowId: id) }
 
-  public func retry() { Task { try? await DB.database.retry(model: Self.modelName, rowId: id) } }
+  @discardableResult public func retry() async throws -> UInt64 { try await DB.database.retry(model: Self.modelName, rowId: id) }
   public func discard() async throws { try await DB.database.discard(model: Self.modelName, rowId: id) }
-  public static func retryAll() { Task { try? await DB.database.retryAll() } }
+  @discardableResult public static func retryAll() async throws -> UInt64 { try await DB.database.retryAll() }
 
   public func related<Target: DBModel>(_ name: String, as _: Target.Type) -> LiveSource<[Target]> {
     let model = Self.modelName, rowId = id

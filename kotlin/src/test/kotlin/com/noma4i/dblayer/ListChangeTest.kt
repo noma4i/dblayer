@@ -11,6 +11,34 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ListChangeTest {
+    @Test fun aSlowConsumerReceivesABoundedReplacementWithEveryCurrentRow() = bounded {
+        DBlayer.database = Database.open(Config(null, null, 64u), modelsJSON, null)
+        val query = Query("Moment", Moment).order(Moment.createdAt.desc)
+        val attached = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val completed = kotlinx.coroutines.CompletableDeferred<Pair<Boolean, List<Moment>>>()
+        val collection = launch {
+            val rows = mutableListOf<Moment>()
+            var sawReplacement = false
+            query.changes.collect { change ->
+                if (!attached.isCompleted) { attached.complete(Unit); release.await() }
+                if (change.kind == ListChangeKind.Replaced) {
+                    rows.clear()
+                    rows.addAll(change.inserted.map { it.row })
+                    sawReplacement = sawReplacement || change.inserted.size >= 64
+                }
+                else change.inserted.forEach { rows.add(it.index, it.row) }
+                if (change.size == 192) completed.complete(sawReplacement to rows.toList())
+            }
+        }
+        attached.await()
+        repeat(192) { Moment.create(text = "row$it") }
+        release.complete(Unit)
+        val (sawReplacement, rows) = completed.await()
+        collection.cancelAndJoin()
+        assertTrue("overflow never delivered a replacement snapshot", sawReplacement)
+        assertEquals(query.live.flow.first(), rows)
+    }
     @Test fun changesWork() {
         var decoded = 0
         val decoder = object : ModelDecoder<Moment> by Moment {

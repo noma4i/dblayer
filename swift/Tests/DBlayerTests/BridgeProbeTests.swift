@@ -273,7 +273,7 @@ struct BridgeProbeTests {
 
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    try await DB.database.retry(model: "Moment", rowId: local.id)
+    _ = try await DB.database.retry(model: "Moment", rowId: local.id)
     #expect(try await local.confirmedId() == "m77")
   }
 

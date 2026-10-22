@@ -49,7 +49,7 @@ class EncryptedSessionTest {
     @Test
     fun oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() = bounded {
         val http = RecordedHttp(400u)
-        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = HeldCredential(), http = http)
+        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = HeldCredential(), http = http)
         try {
             database.sessionCall("otp", """{"phone":"${"x".repeat(260_000)}"}""")
             throw AssertionError("expected a local size refusal")
@@ -97,19 +97,10 @@ class EncryptedSessionTest {
     }
 
     @Test
-    fun aTransportWithoutAnOperationRunRefusesQueriesAndMutations() = bounded {
-        val transport = DatabaseTransport(cable = { null })
-        val request = TransportRequest("query Q { q }", "Q", "{}")
-
-        failsWith<DbException.Invalid> { transport.query(request) }
-        failsWith<DbException.Invalid> { transport.mutate(request) }
-    }
-
-    @Test
     fun theCoreSendsSealedRequestsThroughTheAppHooksAndKeepsTheCredentialInTheAppStore() = bounded {
         val http = RecordedHttp(400u)
         val credentials = HeldCredential()
-        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = DatabaseTransport(cable = { null }), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
+        val database = Database.open(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
 
         failsWith<DbException.Http> { database.sessionCall("ticket", "{}") }
         assertNull(credentials.current)

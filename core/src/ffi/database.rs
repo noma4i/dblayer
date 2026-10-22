@@ -61,7 +61,7 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, DbError> +
     executor()?.spawn_blocking(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }
 
-#[derive(uniffi::Record)]
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Config { pub path: Option<String>, pub data_version: Option<String>, pub cache_rows: u32 }
 
 #[derive(uniffi::Record)]
@@ -347,16 +347,24 @@ impl Database {
         on_executor(async move { sync.flush().await }).await?;
         Ok(())
     }
-    pub async fn retry(&self, model: String, row_id: String) -> Result<(), DbError> {
-        let Some(sync) = self.sync.clone() else { return Ok(()) };
+    pub async fn retry(&self, model: String, row_id: String) -> Result<u64, DbError> {
+        let Some(sync) = self.sync.clone() else { return Ok(0) };
         let row = id(&row_id)?;
-        on_executor(async move { sync.retry(&model, &row).await }).await?;
-        Ok(())
+        let db = self.db.clone();
+        on_executor(async move {
+            let count = db.retry(&model, &row)?;
+            sync.flush().await?;
+            Ok(count as u64)
+        }).await
     }
-    pub async fn retry_all(&self) -> Result<(), DbError> {
-        let Some(sync) = self.sync.clone() else { return Ok(()) };
-        on_executor(async move { sync.retry_all().await }).await?;
-        Ok(())
+    pub async fn retry_all(&self) -> Result<u64, DbError> {
+        let Some(sync) = self.sync.clone() else { return Ok(0) };
+        let db = self.db.clone();
+        on_executor(async move {
+            let count = db.retry_all()?;
+            sync.flush().await?;
+            Ok(count as u64)
+        }).await
     }
     pub async fn discard(&self, model: String, row_id: String) -> Result<(), DbError> {
         if let Some(sync) = self.sync.clone() {

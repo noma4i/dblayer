@@ -118,4 +118,4 @@ Checks while the run goes and at the end:
 
 A failing run prints the findings, the command to repeat it and, for one thread, the smallest `--ops` that still fails. With several threads the same seed repeats the choices, not the interleaving, so a race may need several runs.
 
-Example models for tests are in `fixtures/` (`User`, `Moment`, `Vibe`, `Chat`, `Message`).
+Example models for tests are in `fixtures/` (`User`, `Moment`, `Vibe`, `Group`, `Note`).

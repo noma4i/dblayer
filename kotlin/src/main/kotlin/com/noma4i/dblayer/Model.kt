@@ -1,8 +1,5 @@
 package com.noma4i.dblayer
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -71,11 +68,9 @@ val DBModel.needsAttention: Boolean get() = sync.state == SyncState.Failed || sy
 val DBModel.canRetry: Boolean get() = needsAttention
 val DBModel.errorMessage: String? get() = sync.error?.message
 
-private val background = CoroutineScope(Dispatchers.Default)
-
-fun DBModel.retry() { background.launch { runCatching { DBlayer.database.retry(modelName, id) } } }
+suspend fun DBModel.retry(): ULong = DBlayer.database.retry(modelName, id)
 suspend fun DBModel.discard() { DBlayer.database.discard(modelName, id) }
-fun retryAll() { background.launch { runCatching { DBlayer.database.retryAll() } } }
+suspend fun retryAll(): ULong = DBlayer.database.retryAll()
 
 suspend fun DBModel.destroy() { DBlayer.database.destroy(modelName, id) }
 

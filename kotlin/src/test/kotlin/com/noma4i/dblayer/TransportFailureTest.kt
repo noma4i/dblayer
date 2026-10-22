@@ -39,10 +39,10 @@ class TransportFailureTest {
     }
 
     private val cases: List<Triple<String, Pair<Exception, GraphQLOperationKind>, String>> = listOf(
-        Triple("mutation graphQL errors", GraphQLTransportError.GraphQL(listOf("too large"), null) to GraphQLOperationKind.Mutation, "Graphql too large"),
-        Triple("mutation unauthenticated", GraphQLTransportError.Unauthenticated to GraphQLOperationKind.Mutation, "Http 401"),
-        Triple("mutation server 503", GraphQLTransportError.Server(503) to GraphQLOperationKind.Mutation, "Http 503"),
-        Triple("query server 503", GraphQLTransportError.Server(503) to GraphQLOperationKind.Query, "Http 503"),
+        Triple("mutation graphQL errors", DbException.Graphql(listOf("too large"), null) to GraphQLOperationKind.Mutation, "Graphql too large"),
+        Triple("mutation unauthenticated", DbException.Http(401u, "refused") to GraphQLOperationKind.Mutation, "Http 401"),
+        Triple("mutation server 503", DbException.Http(503u, "busy") to GraphQLOperationKind.Mutation, "Http 503"),
+        Triple("query server 503", DbException.Http(503u, "busy") to GraphQLOperationKind.Query, "Http 503"),
         Triple("mutation unknown host", UnknownHostException("host") to GraphQLOperationKind.Mutation, "Network"),
         Triple("mutation cannot connect", ConnectException("refused") to GraphQLOperationKind.Mutation, "Network"),
         Triple("mutation timeout", SocketTimeoutException("timeout") to GraphQLOperationKind.Mutation, "Interrupted"),

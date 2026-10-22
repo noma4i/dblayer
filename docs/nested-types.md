@@ -4,14 +4,14 @@ Start with the [model syntax and decode rules](models.md#nested-objects-and-list
 
 | Declaration | Result |
 | ----------- | ------ |
-| `field :settings, type: :object do ... end` in `Message` | generated `MessageSettings` |
-| `field :items, type: [GiftItem] do ... end` | `[GiftItem]` in Swift, `List<GiftItem>` in Kotlin |
-| `field :gift, type: GiftItem` without a block | reuse a type declared anywhere in the same generator invocation |
+| `field :settings, type: :object do ... end` in `Note` | generated `NoteSettings` |
+| `field :items, type: [RewardItem] do ... end` | `[RewardItem]` in Swift, `List<RewardItem>` in Kotlin |
+| `field :reward, type: RewardItem` without a block | reuse a type declared anywhere in the same generator invocation |
 | `type: :object`, `type: :array` without a block | unrestricted JSON values |
 | `field :value, type: :raw` | any JSON value, including mixed objects and arrays |
 | `field :name, type: :string, from: "full_name"` inside a block | property `name`, server response path and canonical key `full_name` |
 | `field :owners, type: [:id]` inside a block | string IDs, including numeric input |
-| `field :attachment, type: MessageAttachment do on GiftAttachment do ... end ... end` | a union, see [unions](#unions) |
+| `field :attachment, type: NoteAttachment do on RewardAttachment do ... end ... end` | a union, see [unions](#unions) |
 | `field :elements, type: [SampleElement] do shared do ... end on Button do ... end end` | a list of interface values, see [interfaces and lists](#interfaces-and-lists-of-unions) |
 
 ## Defaults
@@ -81,11 +81,11 @@ A list, a typed object and an array of a typed value are stored in SQLite column
 A GraphQL union is a field with one `on` block per variant. Each block declares an ordinary nested type, named like the GraphQL type, and the field holds the variant the server sent.
 
 ```ruby
-model Message do
-  field :attachment, type: MessageAttachment, null: true do
-    on GiftAttachment do
+model Note do
+  field :attachment, type: NoteAttachment, null: true do
+    on RewardAttachment do
       field :id, type: :id
-      field :tier, type: :string, from: "giftTier"
+      field :tier, type: :string, from: "rewardTier"
       field :status, type: :string, null: true
     end
     on MomentAttachment do
@@ -113,40 +113,40 @@ The generator reads `__typename` of every server value. Swift gets an `enum` and
 
 ```swift
 switch message.attachment {
-case .gift(let gift): show(gift.tier)
+case .reward(let reward): show(reward.tier)
 case .moment(let moment): open(moment.momentId)
 case .reaction(let reaction): show(reaction.body)
 case .unknown(let typename): log(typename)
 case nil: break
 }
-let gifts = Message.where(Message.attachment == .gift)
+let rewards = Note.where(Note.attachment == .reward)
 ```
 
 ```kotlin
 when (val attachment = message.attachment) {
-    is MessageAttachment.Gift -> show(attachment.value.tier)
-    is MessageAttachment.Moment -> open(attachment.value.momentId)
-    is MessageAttachment.Reaction -> show(attachment.value.body)
-    is MessageAttachment.Unknown -> log(attachment.typename)
+    is NoteAttachment.Reward -> show(attachment.value.tier)
+    is NoteAttachment.Moment -> open(attachment.value.momentId)
+    is NoteAttachment.Reaction -> show(attachment.value.body)
+    is NoteAttachment.Unknown -> log(attachment.typename)
     null -> Unit
 }
-val gifts = Message.where(Message.attachment eq MessageAttachmentKind.Gift)
+val rewards = Note.where(Note.attachment eq NoteAttachmentKind.Reward)
 ```
 
 | Rule | Behavior |
 | ---- | -------- |
-| Case names | the variant type name without the words that every variant starts or ends with: `GiftAttachment` becomes `gift`, `MomentEmojiProps` becomes `emoji`. `on Type, case: :name` sets it |
-| Reuse | `type: MessageAttachment` without a block names a union declared anywhere in the same generator invocation. A variant type can belong to several unions |
+| Case names | the variant type name without the words that every variant starts or ends with: `RewardAttachment` becomes `reward`, `MomentEmojiProps` becomes `emoji`. `on Type, case: :name` sets it |
+| Reuse | `type: NoteAttachment` without a block names a union declared anywhere in the same generator invocation. A variant type can belong to several unions |
 | `null` | a nullable union field is `nil` / `null` when the server sends no value. An absent value is not an unknown variant |
 | Unknown variant | a `__typename` that no `on` block names becomes `.unknown(typename:)` / `Unknown`. It keeps only the type name: its fields are not stored and are not written back |
 | Partial selections | an operation may select some fields of a variant. Declare the others with `null: true` or `optional: true` |
 | Answers | an answer replaces the whole value, like any nested value. A new variant clears the columns of the old one |
 | Merge | `merge: :present` keeps the stored value when the server sends null, and `local: true` keeps the field app-owned. Key-by-key merge is not available for a union |
-| Queries | `Message.attachment` compares the variant kind: `==`, `in`, `isNull`, ordering. Variant fields are not queryable |
+| Queries | `Note.attachment` compares the variant kind: `==`, `in`, `isNull`, ordering. Variant fields are not queryable |
 | Lists | `type: [Name]` with `on` blocks holds a list of variants, see [interfaces and lists](#interfaces-and-lists-of-unions) |
 | Schema | with `--schema`, every `on` type must be a member of the GraphQL union and every member needs an `on` block. An operation document that selects the field must select `__typename` and may name only declared variants in `... on` |
 
-A union is stored in the columns of its row: one text column holds the `__typename`, and each variant has its own columns, prefixed with the field and variant names. Only the active variant has values. A SQLite table has at most 2000 columns, so the generator rejects a model whose union widens a table past that limit: `table row_Message would have 2405 columns, above the SQLite limit of 2000`.
+A union is stored in the columns of its row: one text column holds the `__typename`, and each variant has its own columns, prefixed with the field and variant names. Only the active variant has values. A SQLite table has at most 2000 columns, so the generator rejects a model whose union widens a table past that limit: `table row_Note would have 2405 columns, above the SQLite limit of 2000`.
 
 ## Interfaces and lists of unions
 

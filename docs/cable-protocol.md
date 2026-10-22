@@ -48,7 +48,7 @@ try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: mo
 ```
 
 ```kotlin
-DBlayer.open(encrypted = encrypted, credentials = credentials, modelsJson = modelsJson)
+DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJson = modelsJson)
 ```
 
 ## Subscriptions
@@ -132,7 +132,7 @@ Terminal refusals also reject later subscriptions without opening sockets or tri
 After sign-in, call `listen` or `resume` to clear the refusal and restart stopped subscriptions.
 Each watched query receives one `LiveChange.error` with the typed session failure until that explicit restart.
 `SubscriptionStatus.failure` retains the typed subscription error. User-initiated configuration requests and queries remain available.
-`SubscriptionFailure.close` keeps the close code. GraphQL errors keep their messages and `GraphqlExtensions` in the shared error type.
+`DbError` keeps socket close codes and GraphQL extensions. Kotlin exposes the same data through `DbException`.
 Swift `LiveChange.error`, `SubscriptionSink.failed` and `GraphQLSubscriptionEvent.errors` take `DbError`. Kotlin uses `DbException`.
 
 The fixtures `fixtures/change-events/subscriptions.json` hold the requests and responses of all 4 subscriptions.

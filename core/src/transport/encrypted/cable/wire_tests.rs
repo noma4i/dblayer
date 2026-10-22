@@ -85,16 +85,16 @@ async fn server_pongs_keep_pending_receive_alive_for_120_seconds() {
     server.abort();
 }
 
-struct Peer {
-    incoming: mpsc::UnboundedSender<SocketEvent>,
-    outgoing: mpsc::UnboundedReceiver<String>,
-    send_key: [u8; 32],
-    receive_key: [u8; 32],
-    sequence: u64,
+pub(super) struct Peer {
+    pub(super) incoming: mpsc::UnboundedSender<SocketEvent>,
+    pub(super) outgoing: mpsc::UnboundedReceiver<String>,
+    pub(super) send_key: [u8; 32],
+    pub(super) receive_key: [u8; 32],
+    pub(super) sequence: u64,
 }
 
 impl Peer {
-    async fn handshake(&mut self, kat: &Value, config: &EncryptedConfig, challenge: Value) {
+    pub(super) async fn handshake(&mut self, kat: &Value, config: &EncryptedConfig, challenge: Value) {
         self.incoming.send(SocketEvent::Text(challenge.to_string())).unwrap();
         let subscribe: Value = serde_json::from_str(&self.outgoing.recv().await.unwrap()).unwrap();
         assert_eq!(subscribe["command"], "subscribe");
@@ -121,14 +121,14 @@ impl Peer {
         self.emit(json!({"t":"ready", "connectionId":"00000000-0000-4000-8000-000000000001", "challengeDigest":digest}));
     }
 
-    fn emit(&mut self, mut body: Value) {
+    pub(super) fn emit(&mut self, mut body: Value) {
         body["n"] = json!(self.sequence);
         self.sequence += 1;
         let token = frame::encrypt(&self.send_key, &serde_json::to_vec(&body).unwrap(), &[self.sequence as u8; 12]).unwrap();
         self.incoming.send(SocketEvent::Text(json!({"message":{"frame":token}}).to_string())).unwrap();
     }
 
-    async fn next(&mut self) -> Value {
+    pub(super) async fn next(&mut self) -> Value {
         let text = tokio::time::timeout(std::time::Duration::from_secs(1), self.outgoing.recv()).await.unwrap().unwrap();
         let command: Value = serde_json::from_str(&text).unwrap();
         let data: Value = serde_json::from_str(command["data"].as_str().unwrap()).unwrap();
@@ -136,10 +136,10 @@ impl Peer {
     }
 }
 
-struct FakeSocket {
-    incoming: tokio::sync::Mutex<mpsc::UnboundedReceiver<SocketEvent>>,
-    outgoing: mpsc::UnboundedSender<String>,
-    closes: AtomicUsize,
+pub(super) struct FakeSocket {
+    pub(super) incoming: tokio::sync::Mutex<mpsc::UnboundedReceiver<SocketEvent>>,
+    pub(super) outgoing: mpsc::UnboundedSender<String>,
+    pub(super) closes: AtomicUsize,
 }
 
 #[async_trait]
@@ -151,9 +151,9 @@ impl CableSocket for FakeSocket {
     async fn close(&self) { self.closes.fetch_add(1, Ordering::SeqCst); }
 }
 
-struct FakeConnect {
-    socket: Arc<FakeSocket>,
-    opens: AtomicUsize,
+pub(super) struct FakeConnect {
+    pub(super) socket: Arc<FakeSocket>,
+    pub(super) opens: AtomicUsize,
 }
 
 #[tokio::test(start_paused = true)]

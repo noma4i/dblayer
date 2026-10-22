@@ -204,7 +204,7 @@ struct EntityRegistryTests {
     let iterator = Cursor(stream)
     let merged = await iterator.next()
     #expect(merged?.replaced.count == burst)
-    #expect(!stream.latest.hasPending)
+    #expect(!stream.hasPending)
   }
 
   /// A chain of replacements across missed deliveries reads as one pair from the first id to the last.

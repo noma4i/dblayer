@@ -16,7 +16,7 @@ struct IdempotencyTests {
       try database.registerOperations(defsJson: fixture["operations"]!.text)
       let row = try await database.create(model: "Message", valuesJson: #"{"text":"hello"}"#, argsJson: explicit ? #"{"clientMutationId":"app-key"}"# : "{}")
       try await database.flush()
-      try await database.retry(model: "Message", rowId: row.id)
+      _ = try await database.retry(model: "Message", rowId: row.id)
       let calls = transport.calls.filter { $0.operationName == "MessageSend" }
       #expect(calls.count == 2)
       let first = JSONValue.parse(calls[0].variablesJson).objectValue["input"]!.objectValue

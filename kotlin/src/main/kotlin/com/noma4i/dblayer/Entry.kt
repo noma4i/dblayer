@@ -1,6 +1,7 @@
 package com.noma4i.dblayer
 
 import android.content.Context
+import java.util.IdentityHashMap
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -10,11 +11,12 @@ import kotlinx.coroutines.sync.withLock
 
 object DBlayer {
     private val opening = Mutex()
-    private var opened: OpenArguments? = null
+    private val opener = OpenDatabase()
+    private val references = IdentityHashMap<Any, ULong>()
+    private var nextReference = 1uL
 
-    private data class OpenArguments(val values: List<Any?>, val transport: Transport?, val credentials: CredentialStore?, val http: EncryptedHttp?) {
-        fun matches(other: OpenArguments) = values == other.values && transport == other.transport && credentials == other.credentials && http == other.http
-    }
+    private fun reference(value: Any?): ULong = value?.let { references.getOrPut(it) { nextReference++ } } ?: 0uL
+
     /** Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`. */
     fun listen() = database.listen()
     fun unlisten() = database.unlisten()
@@ -51,6 +53,7 @@ object DBlayer {
         fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retryListener, Reachability.start(context))
 
     suspend fun open(
+        context: Context,
         endpoint: String? = null,
         headers: Map<String, String> = emptyMap(),
         encrypted: EncryptedConfig? = null,
@@ -61,16 +64,20 @@ object DBlayer {
         operations: List<GraphQLOperation> = emptyList(),
         http: EncryptedHttp? = null,
     ) = opening.withLock {
-        val encryption = encrypted?.copy(endpoints = encrypted.endpoints.copy(sessionOperations = encrypted.endpoints.sessionOperations.mapValues { it.value.copy() }))
-        val selectedHeaders = headers.toMap()
-        val arguments = OpenArguments(listOf(endpoint, selectedHeaders, encryption, modelsJson, path, operations.map { it.operationName to it.document }), transport, credentials, http)
-        opened?.let {
-            if (!it.matches(arguments)) throw DbException.Invalid("The database is already open with different parameters")
-            return@withLock
+        val previousReferences = IdentityHashMap(references)
+        try {
+            val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
+            val options = OpenOptions(endpoint, headers.toMap(), JsonArray(definitions).toString(), listOf(reference(credentials), reference(transport), reference(http)))
+            val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, { options.headers }, cablePath = encrypted?.endpoints?.cable) }
+            val opened = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) })
+            Reachability.start(context)
+            Reachability.connect(opened.onlineSink())
+            database = opened
+        } catch (error: Throwable) {
+            references.clear()
+            references.putAll(previousReferences)
+            throw error
         }
-        val selectedTransport = transport ?: (endpoint ?: encryption?.origin)?.let { OkHttpTransport(it, { selectedHeaders }, cablePath = encryption?.endpoints?.cable) }
-        install(Database.open(Config(path, null, 2000u), modelsJson, selectedTransport, encryption, credentials, http ?: encryption?.let { OkHttpEncryptedHttp(it.origin) }), selectedTransport, operations)
-        opened = arguments
     }
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {

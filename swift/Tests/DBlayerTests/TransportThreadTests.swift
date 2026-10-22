@@ -5,28 +5,6 @@ import Testing
 @Suite(.serialized)
 struct TransportThreadTests {
   @Test @MainActor
-  func graphQLTransportLoadsOffTheCallerThread() async throws {
-    let url = try #require(URL(string: "https://example.test/"))
-    let session = ThreadProbeProtocol.session()
-    defer { session.invalidateAndCancel() }
-    ThreadProbeProtocol.reset()
-    let transport = GraphQLHTTPTransport(
-      url: url,
-      session: session,
-      signer: RequestSigner(secret: "secret"),
-      clock: ServerClock(),
-      appVersion: "1.0",
-      appBuild: "1",
-      deviceUUID: "device-1",
-      tokenSupplier: { "tok" }
-    )
-
-    _ = try await transport.send(operationName: "Ping", documentHash: "abc123", document: nil, variablesJSON: Data("{}".utf8))
-
-    #expect(ThreadProbeProtocol.loadedOnMain == [false])
-  }
-
-  @Test @MainActor
   func urlSessionTransportLoadsOffTheCallerThread() async throws {
     let url = try #require(URL(string: "https://example.test/"))
     let session = ThreadProbeProtocol.session()

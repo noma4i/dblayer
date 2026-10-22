@@ -21,7 +21,7 @@ class UserAgentTest {
     @Test
     fun everyRequestIdentifiesTheLibrary() = bounded {
         val failures = mutableListOf<String>()
-        for (path in listOf("encrypted", "graphql", "signed", "put", "encryptedSocket", "graphqlSocket", "legacySocket")) {
+        for (path in listOf("encrypted", "graphql", "put", "encryptedSocket", "graphqlSocket")) {
             for (application in listOf(null, "Example/3")) {
                 MockWebServer().use { server ->
                     server.enqueue(MockResponse().setResponseCode(400).setBody("busy"))
@@ -34,7 +34,6 @@ class UserAgentTest {
                     when (path) {
                         "encrypted" -> OkHttpEncryptedHttp(origin, client).post("/api/session", "jwe")
                         "graphql" -> runCatching { transport.query(operation) }
-                        "signed" -> GraphQLHttpTransport(origin, client, RequestSigner("secret"), ServerClock(), "1", "1", "device") { "token" }.send("Probe", "hash", null, "{}".toByteArray())
                         "put" -> transport.put(origin, headers, byteArrayOf(1, 2), Progress())
                         "encryptedSocket" -> runCatching { transport.openCable() }
                         "graphqlSocket" -> {
@@ -42,11 +41,7 @@ class UserAgentTest {
                             eventually("GraphQL handshake received") { server.requestCount == 1 }
                             transport.unsubscribe(token)
                         }
-                        else -> {
-                            val socket = OkHttpCableSocket(origin, "token", client)
-                            runCatching { socket.open() }
-                            socket.close()
-                        }
+                        else -> error("unexpected request kind")
                     }
                     val request = server.takeRequest()
                     val supportsHeaders = path in listOf("graphql", "put", "graphqlSocket", "encryptedSocket")

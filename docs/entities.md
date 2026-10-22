@@ -1,6 +1,6 @@
 # Entities
 
-An entity is the live value of one record, read by id. Use it for records that a screen refers to but does not list: the author of a moment, the people in a chat, the last message of a chat, the current user.
+An entity is the live value of one record, read by id. Use it for records that a screen refers to but does not list: the author of a moment, the people in a group, the last message of a group, the current user.
 
 There is one entity per id. Every reader of an id reads the same object, so two places never show two different states of one record. A change of a record invalidates only the readers of that id. A screen that shows 50 moments of 10 authors redraws 5 views when one author changes, not 50.
 

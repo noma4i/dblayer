@@ -58,7 +58,7 @@ Only `errors[0].extensions` supplies these fields. Missing, null and non-string 
 `fields` contains every other entry as JSON text: `[String: String]` in Swift and `Map<String, String>` in Kotlin.
 Strings keep their JSON quotes, numbers keep their JSON representation, and objects, arrays, booleans and null retain their values.
 An error containing only these entries still has `extensions`. Stored operation errors retain the same entries after reopening the database.
-Messages remain available separately. Transaction disposition describes the server decision, and does not change queue retry or rollback rules.
+Notes remain available separately. Transaction disposition describes the server decision, and does not change queue retry or rollback rules.
 
 ```swift
 do {
@@ -92,7 +92,7 @@ try {
 
 ### Enums
 
-Every `type: :enum` field becomes an enum named after its owner and field (`VibeKind` for `Vibe.kind`, `MessageReplyNodeKind` for a nested `kind`). `as: Kind` sets the name. A schema enum used by an input object, an operation arg or an operation result keeps the schema name (`WidgetKind`). Each name is declared once, and the same name with different values stops the run, wherever the two declarations sit: a field, a nested type, a union variant, a shared field or an `edge`. The message names the enum and points at both declarations.
+Every `type: :enum` field becomes an enum named after its owner and field (`VibeKind` for `Vibe.kind`, `NoteReplyNodeKind` for a nested `kind`). `as: Kind` sets the name. A schema enum used by an input object, an operation arg or an operation result keeps the schema name (`WidgetKind`). Each name is declared once, and the same name with different values stops the run, wherever the two declarations sit: a field, a nested type, a union variant, a shared field or an `edge`. The message names the enum and points at both declarations.
 
 Case names come from the values: lowerCamel in Swift (`like`, `fooBar`, `` `default` `` for a keyword) and PascalCase in Kotlin (`Like`, `FooBar`). `HAPPY` and `FOO_BAR` read as words. A value that starts with a digit, becomes an empty name, becomes `unknown` (Swift) or `Unknown` and `Companion` (Kotlin), or gives the same name as another value stops the run with the value in the message.
 
@@ -118,22 +118,22 @@ when (val kind = vibe.kind) {
 
 The check against the server schema compares the declared values with the schema enum. A field declared `:string` over a schema enum does not fit: declare `:enum`.
 
-A list of enum values is `type: [:enum]` with the same `values:` and `as:`. It is stored as a list of strings and reads back as a list of the enum, each value outside the declaration as `unknown`. The schema check needs a list type (`[ChatList!]!`), and `null: true` for a nullable one. A `default:` lists values from `values`. The block form of a nested type takes the same line.
+A list of enum values is `type: [:enum]` with the same `values:` and `as:`. It is stored as a list of strings and reads back as a list of the enum, each value outside the declaration as `unknown`. The schema check needs a list type (`[GroupList!]!`), and `null: true` for a nullable one. A `default:` lists values from `values`. The block form of a nested type takes the same line.
 
 ```ruby
-model Chat do
-  field :lists, type: [:enum], values: [:PRIMARY, :SECONDARY], as: ChatList
+model Group do
+  field :lists, type: [:enum], values: [:PRIMARY, :SECONDARY], as: GroupList
 end
 ```
 
 ```swift
-let chat = try await Chat.create(lists: [.primary, .secondary])
-let secondary = chat.lists.contains(.secondary)
+let group = try await Group.create(lists: [.primary, .secondary])
+let secondary = group.lists.contains(.secondary)
 ```
 
 ```kotlin
-val chat = Chat.create(lists = listOf(ChatList.Primary, ChatList.Secondary))
-val secondary = ChatList.Secondary in chat.lists
+val group = Group.create(lists = listOf(GroupList.Primary, GroupList.Secondary))
+val secondary = GroupList.Secondary in group.lists
 ```
 
 A default outside the values stops the run with the line of the field.
@@ -158,14 +158,14 @@ An object generates a Swift `Codable`, `Sendable`, `Equatable` struct and a Kotl
 Models decode from row cells. Both platforms use the same type and property names. Use generated values when creating or updating a model. Their serializers read and write canonical nested JSON. Server response paths are resolved in the core before storing rows. Do not write another struct, data class or decoder with the same fields.
 
 ```swift
-let reply = MessageReplyNode(body: "Hello", userId: "u1", user: MessageUserRef(id: "u1", fullName: "Ada"))
-let message = try await Message.create(replyTo: reply, replies: [reply])
+let reply = NoteReplyNode(body: "Hello", userId: "u1", user: NoteUserRef(id: "u1", fullName: "Ada"))
+let message = try await Note.create(replyTo: reply, replies: [reply])
 let name = message.replyTo?.user?.fullName
 ```
 
 ```kotlin
-val reply = MessageReplyNode(body = "Hello", userId = "u1", user = MessageUserRef(id = "u1", fullName = "Ada"))
-val message = Message.create(replyTo = reply, replies = listOf(reply))
+val reply = NoteReplyNode(body = "Hello", userId = "u1", user = NoteUserRef(id = "u1", fullName = "Ada"))
+val message = Note.create(replyTo = reply, replies = listOf(reply))
 val name = message.replyTo?.user?.fullName
 ```
 
@@ -189,7 +189,7 @@ For reusable names, recursive lists, unrestricted JSON, typed defaults, GraphQL 
 
 An enum default must be one of its declared values. `from` reads a server response path at every nesting level. A path such as `user.id` traverses the `user` object, never a literal server key containing a dot. The core reads the path once and stores its value under the canonical key `user.id`. Swift `Codable` and Kotlin serializers use that canonical key for local values. SQLite, row cells and optimistic changes keep that representation and never interpret it as a server path again.
 
-Declare each named type once. Pass all files that declare or use it to `dblayer-gen`. `type` accepts a named value such as `GiftItem` or a list such as `[GiftItem]`. A missing declaration, duplicate type or invalid default reports its input file and line. Use `type: :raw` for unrestricted values.
+Declare each named type once. Pass all files that declare or use it to `dblayer-gen`. `type` accepts a named value such as `RewardItem` or a list such as `[RewardItem]`. A missing declaration, duplicate type or invalid default reports its input file and line. Use `type: :raw` for unrestricted values.
 
 Nested values belong to their containing row. They have no independent table, index, relation, file attachment or sync operation. Put those features on a model. The same declarations work in local, memory and synchronized models.
 
@@ -386,22 +386,22 @@ Singular associations capitalize their name, preserving a final `s`. Plural asso
 - `has_one` and `has_many` write no key on the parent, so a null changes nothing.
 
 ```swift
-// chat { id opponent { id } }       -> Chat.opponent is the user
-// chat { id opponent { id } }       -> opponent: null, Chat.opponent is nil, the user row stays
-// chat { id title }                 -> opponent not selected, Chat.opponent keeps its last user
-let opponent = Chat.find(chatId)?.opponent
+// group { id opponent { id } }       -> Group.opponent is the user
+// group { id opponent { id } }       -> opponent: null, Group.opponent is nil, the user row stays
+// group { id title }                 -> opponent not selected, Group.opponent keeps its last user
+let opponent = Group.find(groupId)?.opponent
 ```
 
 ```kotlin
-// chat { id opponent { id } }       -> Chat.opponent is the user
-// chat { id opponent { id } }       -> opponent: null, Chat.opponent is null, the user row stays
-// chat { id title }                 -> opponent not selected, Chat.opponent keeps its last user
-val opponent = Chat.find(chatId)?.opponent
+// group { id opponent { id } }       -> Group.opponent is the user
+// group { id opponent { id } }       -> opponent: null, Group.opponent is null, the user row stays
+// group { id title }                 -> opponent not selected, Group.opponent keeps its last user
+val opponent = Group.find(groupId)?.opponent
 ```
 
 - `dependent: :destroy` removes children in the same commit as the parent.
 - `touch: true` bumps the parent's revision when a child changes, so observers of the parent refresh. See [partial child updates](parent-fields.md) for `sets` field presence.
-- `sets: { lastMessageId: :id, lastMessageAt: :createdAt }` on a `belongs_to` writes the child fields to the parent fields in the same commit as every write of the child: a local `create`, an event, a page landing, the answer of a mutation, a replace, `land`. Destroying the child that the parent points at (the first parent field set from the child `id`), locally or from the server, moves the parent fields to the newest remaining child by the `newer` child fields, or to null when none remains. `newer: { sequenceNumber: :lastSequenceNumber, createdAt: :lastMessageAt }` writes only when the child is newer than what the parent holds. The pairs are a tuple in the order written: the first pair where both sides have a value and differ decides, a child with the id the parent already points at always refreshes, a temporary id outranks a confirmed one (client and server clocks never order them), and an empty parent value counts as older. The same tuple guards the parent row itself: a row of the parent that arrives from a list, an event or a mutation answer never moves these parent fields backward. An event for a child whose parent is not stored (a chat outside the loaded pages) reloads the watched lists of the parent model. A discard or a refusal gives the parent values back, the swap of a temporary child id moves a parent field that points at it. Both options name fields that exist on their side, otherwise the model is rejected.
+- `sets: { lastNoteId: :id, lastNoteAt: :createdAt }` on a `belongs_to` writes the child fields to the parent fields in the same commit as every write of the child: a local `create`, an event, a page landing, the answer of a mutation, a replace, `land`. Destroying the child that the parent points at (the first parent field set from the child `id`), locally or from the server, moves the parent fields to the newest remaining child by the `newer` child fields, or to null when none remains. `newer: { sequenceNumber: :lastSequenceNumber, createdAt: :lastNoteAt }` writes only when the child is newer than what the parent holds. The pairs are a tuple in the order written: the first pair where both sides have a value and differ decides, a child with the id the parent already points at always refreshes, a temporary id outranks a confirmed one (client and server clocks never order them), and an empty parent value counts as older. The same tuple guards the parent row itself: a row of the parent that arrives from a list, an event or a mutation answer never moves these parent fields backward. An event for a child whose parent is not stored (a group outside the loaded pages) reloads the watched lists of the parent model. A discard or a refusal gives the parent values back, the swap of a temporary child id moves a parent field that points at it. Both options name fields that exist on their side, otherwise the model is rejected.
 - Foreign-key indexes are inferred from associations. Declare the foreign-key field, without adding its index again.
 - There are no counter caches. Count with a query: `moment.vibes.count`.
 
@@ -411,60 +411,60 @@ val opponent = Chat.find(chatId)?.opponent
 
 When a response row has no value for a column the relation groups by, the param fills it. A response without an id becomes a row keyed by the param.
 
-A `fetch Operation` line connects a scope to the server. A relation that depends on columns names them: `where :userId` loads and lists the rows whose `userId` equals the param. `order createdAt: :desc` sorts the rows locally, otherwise the server order is kept. A row whose param column changes (a message moving to another `chatId`) leaves the list of the old value and joins the head of the list of the new value in the same commit, for relations that list every row of their params. `joins: :created` on a relation without params makes the list take the rows this device creates, at its head; `joins: :events` makes it take rows from its subscription events.
+A `fetch Operation` line connects a scope to the server. A relation that depends on columns names them: `where :userId` loads and lists the rows whose `userId` equals the param. `order createdAt: :desc` sorts the rows locally, otherwise the server order is kept. A row whose param column changes (a message moving to another `groupId`) leaves the list of the old value and joins the head of the list of the new value in the same commit, for relations that list every row of their params. `joins: :created` on a relation without params makes the list take the rows this device creates, at its head; `joins: :events` makes it take rows from its subscription events.
 
 `joins: :events` accepts rows from operation responses with `lands` into loaded windows matching its `where` columns, including cached rows absent from those windows.
 
 `where` accepts scalar and enum columns. A param passed as `nil` is a value of its own: `Moment.by_user(nil)` is the unfiltered list and has its own window. A param column gives the row one owner list: a row that belongs to several lists at once (a moment in the default feed and in a vibe feed) needs one relation per list, and the vibe id goes in `text: [:vibeId]`, not in a column param. `text: [:query]` declares params that are not columns, such as a search string. They are sent as variables, always strings, and each value gets its own window: `scope :search, text: [:query] do ... end` generates `Model.search("cats")`.
 
-`typed: [afterSequence: :int, includeGifts: :bool]` declares params that are sent as a JSON integer or boolean, not as text. The call takes `Int` and `Bool` (`Long` and `Boolean` in Kotlin), and the core refuses a text value. Each value has its own window and its own members. The document variable of the same name (or the name on the left of `variables name: :param`) must be `Int` or `Boolean`. A scope that pages in ascending order and one that pages in descending order are two scopes: a window key holds the scope, its params and the direction, so their cursors never meet.
+`typed: [afterSequence: :int, includeRewards: :bool]` declares params that are sent as a JSON integer or boolean, not as text. The call takes `Int` and `Bool` (`Long` and `Boolean` in Kotlin), and the core refuses a text value. Each value has its own window and its own members. The document variable of the same name (or the name on the left of `variables name: :param`) must be `Int` or `Boolean`. A scope that pages in ascending order and one that pages in descending order are two scopes: a window key holds the scope, its params and the direction, so their cursors never meet.
 
 ```ruby
-scope :since, text: [:chatId], typed: [afterSequence: :int] do
-  fetch MessagesSince, root: "chat.messages"
+scope :since, text: [:groupId], typed: [afterSequence: :int] do
+  fetch NotesSince, root: "group.messages"
   paginate 50
 end
 ```
 
 ```swift
-Message.since("c1", afterSequence: 120)
+Note.since("c1", afterSequence: 120)
 ```
 
 ```kotlin
-Message.since("c1", afterSequence = 120L)
+Note.since("c1", afterSequence = 120L)
 ```
 
-A text param takes the name of a schema enum as its type: `text: [list: :ChatList]`, mixed with plain ones as `text: [:chatId, list: :ChatList]`. The call takes the generated enum and sends its text, and each value has its own window and its own members, the rows of the server answer. The schema check needs the enum in the schema and a document variable with the same name (or the name on the left of `variables name: :param`) typed with that enum, nullable or not. An enum param is a labeled argument in Swift (`list: .primary`) and a named one in Kotlin.
+A text param takes the name of a schema enum as its type: `text: [list: :GroupList]`, mixed with plain ones as `text: [:groupId, list: :GroupList]`. The call takes the generated enum and sends its text, and each value has its own window and its own members, the rows of the server answer. The schema check needs the enum in the schema and a document variable with the same name (or the name on the left of `variables name: :param`) typed with that enum, nullable or not. An enum param is a labeled argument in Swift (`list: .primary`) and a named one in Kotlin.
 
-`defaults: { list: :PRIMARY }` on the scope gives an enum param a default value in the call: `Chat.list()` sends `PRIMARY`. The value must be one of the schema enum and the key a typed param, or the generator stops. The param is always sent, so a call with and without the default share one window.
+`defaults: { list: :PRIMARY }` on the scope gives an enum param a default value in the call: `Group.list()` sends `PRIMARY`. The value must be one of the schema enum and the key a typed param, or the generator stops. The param is always sent, so a call with and without the default share one window.
 
 ```ruby
-model Chat do
-  scope :list, text: [list: :ChatList] do
-    fetch "chats", root: "viewer.chats"
+model Group do
+  scope :list, text: [list: :GroupList] do
+    fetch "groups", root: "viewer.groups"
     paginate 25
   end
 end
 ```
 
 ```swift
-let primary = Chat.list(list: .primary)
-let secondary = Chat.list(list: .secondary)   // a premium chat is a member of both windows
+let primary = Group.list(list: .primary)
+let secondary = Group.list(list: .secondary)   // a premium group is a member of both windows
 ```
 
 ```kotlin
-val primary = Chat.list(ChatList.Primary)
-val secondary = Chat.list(ChatList.Secondary)
+val primary = Group.list(GroupList.Primary)
+val secondary = Group.list(GroupList.Secondary)
 ```
 
-**Stable order.** A chat thread must not reorder rows the user has seen. `order_stable: true` on a scope with `fetch`, `where` columns and an `order` (and no `text:` params) gives each row a place in the list when it joins, and later changes of the `order` values never move it. A message that the server confirms with a lower `sequenceNumber`, the answer that replaces its temporary id, an event that edits the number and a reloaded first page leave the rows where the user saw them. A row from the server (a page, an event) that is not in the list takes the place its `order` values give it among the rows already listed, so a page of older messages lands before the rows shown. A row this device creates goes after the last row. The places live in the cache: they survive a restart, and a reset or `logout()` drops them, so the pages that load afterwards come in the order of the server. Finding the place of a row costs work that does not grow with the size of the list.
+**Stable order.** A group thread must not reorder rows the user has seen. `order_stable: true` on a scope with `fetch`, `where` columns and an `order` (and no `text:` params) gives each row a place in the list when it joins, and later changes of the `order` values never move it. A message that the server confirms with a lower `sequenceNumber`, the answer that replaces its temporary id, an event that edits the number and a reloaded first page leave the rows where the user saw them. A row from the server (a page, an event) that is not in the list takes the place its `order` values give it among the rows already listed, so a page of older messages lands before the rows shown. A row this device creates goes after the last row. The places live in the cache: they survive a restart, and a reset or `logout()` drops them, so the pages that load afterwards come in the order of the server. Finding the place of a row costs work that does not grow with the size of the list.
 
 ```ruby
-model Message do
+model Note do
   scope :thread, joins: :events, order_stable: true do
     order sequenceNumber: :asc_nulls_last, createdAt: :asc
-    where :chatId
-    fetch ChatThread, root: "chat.messages"
+    where :groupId
+    fetch GroupThread, root: "group.messages"
     paginate 30
   end
 end
@@ -485,7 +485,7 @@ end
 | `fresh_for 5.minutes, empty: 30.seconds` | shorter freshness for an empty response | same |
 | `max_pages 5` | page limit per load | none |
 | `order_stable: true` (on the `scope` line) | the list keeps the order the rows were shown in, see [stable order](#scopes) | sorted by the `order` values on every read |
-| `variables statusFilter: :status, includeGifts: false` | name the GraphQL variables: a symbol takes the value of a relation param, any other value is sent as written | every param under its own name |
+| `variables statusFilter: :status, includeRewards: false` | name the GraphQL variables: a symbol takes the value of a relation param, any other value is sent as written | every param under its own name |
 | `edge :impressionUuid, type: :string, null: true` | a value of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |
 | `updates Subscription, deleted_by: :field` | keep the relation current with a subscription. Write the line again for each subscription. `removes: true` makes every event delete its row, `debounce: 300.milliseconds` merges bursts | none |
 
@@ -590,7 +590,7 @@ try DB.listen()
 ```
 
 ```kotlin
-DBlayer.open(endpoint = endpoint, modelsJson = modelsJSON, operations = listOf(RecordEvents))
+DBlayer.open(context, endpoint = endpoint, modelsJson = modelsJSON, operations = listOf(RecordEvents))
 DBlayer.listen()
 ```
 
@@ -619,41 +619,41 @@ The full exchange is described in [Cable protocol](cable-protocol.md).
 GraphQL `node(id:)` reads one entity of any type that implements `Node`. A model reads it with `node`, a related list reads it through `root:`.
 
 ```ruby
-model Chat do
+model Group do
   field :title, type: :string
   field :shareUrl, type: :string, null: true
-  node ChatNode
-  nodes ChatsByIds
+  node GroupNode
+  nodes GroupsByIds
 end
 
-model Message do
-  field :chatId, type: :id
-  field :media, type: MessageMedia, null: true do
+model Note do
+  field :groupId, type: :id
+  field :media, type: NoteMedia, null: true do
     field :kind, type: :string, null: true
     field :fileUrl, type: :string, null: true
   end
-  node MessageTranscodeStatus, as: :transcode_status
-  scope :chat_media do
-    where :chatId
-    fetch ChatMedia, root: "node.messages"
+  node NoteTranscodeStatus, as: :transcode_status
+  scope :group_media do
+    where :groupId
+    fetch GroupMedia, root: "node.messages"
     paginate 30
   end
 end
 ```
 
 ```graphql
-query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title shareUrl } } }
-query MessageTranscodeStatus($id: ID!) { node(id: $id) { ... on Message { id chatId media { kind fileUrl } } } }
-query ChatMedia($chatId: ID!, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { messages(first: $first, after: $after) { edges { node { ...MessageFragment } } pageInfo { hasNextPage endCursor } } } } }
-query ChatsByIds($ids: [ID!]!) { nodes(ids: $ids) { ... on Chat { id title shareUrl } } }
+query GroupNode($id: ID!) { node(id: $id) { ... on Group { id title shareUrl } } }
+query NoteTranscodeStatus($id: ID!) { node(id: $id) { ... on Note { id groupId media { kind fileUrl } } } }
+query GroupMedia($groupId: ID!, $first: Int, $after: Cursor) { node(id: $groupId) { ... on Group { messages(first: $first, after: $after) { edges { node { ...NoteFragment } } pageInfo { hasNextPage endCursor } } } } }
+query GroupsByIds($ids: [ID!]!) { nodes(ids: $ids) { ... on Group { id title shareUrl } } }
 ```
 
-A paged list of the entities under a node, such as the members of a chat, is a scope of the listed model with a text parameter. It has no local `order`: the rows keep the order of the server across pages, a restart and a refresh of a row by another list. When the server orders the list by a param, such as `order: ChatMemberOrder` (`JOINED` or `OWNER_FIRST`), the param is an enum text param: each pair of chat and order has its own window, its own members, its own cursor and its own total, and a cursor is never sent with another order.
+A paged list of the entities under a node, such as the members of a group, is a scope of the listed model with a text parameter. It has no local `order`: the rows keep the order of the server across pages, a restart and a refresh of a row by another list. When the server orders the list by a param, such as `order: GroupMemberOrder` (`JOINED` or `OWNER_FIRST`), the param is an enum text param: each pair of group and order has its own window, its own members, its own cursor and its own total, and a cursor is never sent with another order.
 
 ```ruby
 model User do
-  scope :chat_members, text: [:chatId, order: :ChatMemberOrder], defaults: { order: :JOINED } do
-    fetch ChatMembers, root: "node.members"
+  scope :group_members, text: [:groupId, order: :GroupMemberOrder], defaults: { order: :JOINED } do
+    fetch GroupMembers, root: "node.members"
     paginate 30
     total from: "node.membersCount"
     fresh_for 5.minutes
@@ -662,31 +662,31 @@ end
 ```
 
 ```graphql
-query ChatMembers($chatId: ID!, $order: ChatMemberOrder = JOINED, $first: Int, $after: Cursor) { node(id: $chatId) { ... on Chat { membersCount members(first: $first, after: $after, order: $order) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }
+query GroupMembers($groupId: ID!, $order: GroupMemberOrder = JOINED, $first: Int, $after: Cursor) { node(id: $groupId) { ... on Group { membersCount members(first: $first, after: $after, order: $order) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }
 ```
 
 ```swift
-let members = LiveList(User.chatMembers(chatId))                      // JOINED, members.rows, members.state.hasMore
-let owners = LiveList(User.chatMembers(chatId, order: .ownerFirst))   // its own window and cursor
-try await User.chatMembers(chatId).loadMore()                         // true while another page exists
+let members = LiveList(User.groupMembers(groupId))                      // JOINED, members.rows, members.state.hasMore
+let owners = LiveList(User.groupMembers(groupId, order: .ownerFirst))   // its own window and cursor
+try await User.groupMembers(groupId).loadMore()                         // true while another page exists
 ```
 
 ```kotlin
-val members = User.chatMembers(chatId)                                  // JOINED
-val owners = User.chatMembers(chatId, order = ChatMemberOrder.OwnerFirst)  // its own window and cursor
+val members = User.groupMembers(groupId)                                  // JOINED
+val owners = User.groupMembers(groupId, order = GroupMemberOrder.OwnerFirst)  // its own window and cursor
 members.loadMore()                                 // true while another page exists
 ```
 
 `total` is set only when the connection selects `totalCount`. Without it `total` stays nil and `hasMore` comes from `pageInfo`.
 
-`total from: "node.membersCount"` takes `total` from a field beside the connection: the path starts at the first field of the operation, like `root:`. The group size `Chat.membersCount` counts every member, `totalCount` of the connection counts only the members the viewer can see. The document must select the field and the schema check refuses a path that is not an `Int`. Each page that carries the field sets `total`, a page without it keeps the last value, and the value survives a restart. The line needs `paginate`.
+`total from: "node.membersCount"` takes `total` from a field beside the connection: the path starts at the first field of the operation, like `root:`. The group size `Group.membersCount` counts every member, `totalCount` of the connection counts only the members the viewer can see. The document must select the field and the schema check refuses a path that is not an `Int`. Each page that carries the field sets `total`, a page without it keeps the last value, and the value survives a restart. The line needs `paginate`.
 
 ```swift
-let state = await User.chatMembers(chatId).state.stream()   // state.total is Chat.membersCount, 53 for a group of 53
+let state = await User.groupMembers(groupId).state.stream()   // state.total is Group.membersCount, 53 for a group of 53
 ```
 
 ```kotlin
-val total = User.chatMembers(chatId).state.flow.first { it.total != null }.total   // Chat.membersCount
+val total = User.groupMembers(groupId).state.flow.first { it.total != null }.total   // Group.membersCount
 ```
 
 | Line | Meaning |
@@ -699,17 +699,17 @@ val total = User.chatMembers(chatId).state.flow.first { it.total != null }.total
 | `fetch Operation, root: "node.messages"` | a related list under the node: the path starts at `node` and continues inside the `... on` type |
 
 ```swift
-let chat = try await Chat.node(chatId)                      // nil when the server has no such chat or the viewer cannot see it
-let fresh = try await Chat.node(chatId, force: true)        // an event named this chat: read it again now
-let status = try await Message.transcodeStatus(messageId)
-let chats = try await Chat.nodes(ids)
+let group = try await Group.node(groupId)                      // nil when the server has no such group or the viewer cannot see it
+let fresh = try await Group.node(groupId, force: true)        // an event named this group: read it again now
+let status = try await Note.transcodeStatus(messageId)
+let groups = try await Group.nodes(ids)
 ```
 
 ```kotlin
-val chat = Chat.node(chatId)                                // null when the server has no such chat or the viewer cannot see it
-val fresh = Chat.node(chatId, force = true)                 // an event named this chat: read it again now
-val status = Message.transcodeStatus(messageId)
-val chats = Chat.nodes(ids)
+val group = Group.node(groupId)                                // null when the server has no such group or the viewer cannot see it
+val fresh = Group.node(groupId, force = true)                 // an event named this group: read it again now
+val status = Note.transcodeStatus(messageId)
+val groups = Group.nodes(ids)
 ```
 
 - The answer lands as a normal server row of the model. Only the fields the operation selects change, so a small read leaves the other fields, the merge rules and local fields as they were. A local edit that is not confirmed yet is kept.
@@ -734,7 +734,7 @@ val chats = Chat.nodes(ids)
 
 For each scope with `fetch`, the check finds the named operation, takes its first field (the alias when there is one) and follows `root:` from there, through connections (`nodes` or `edges { node }`) to the type that holds the rows. Operations and fragments are read from the `queries`, `mutations`, `subscriptions` and `fragments` directories next to the schema file, or from every `--operations <file or directory>` you pass. A spread of a fragment that no document declares is an error.
 
-`from:` names the key of the response, which is the alias when the operation gives one (`giftTier: kind` is read with `from: "giftTier"`). The check follows each key through the selection of the operation, into inline fragments and named fragments, and tests the schema field behind it. The key of a field that the operation does not select is taken as the schema field name. A union or interface field must select `__typename` somewhere in its own selection, also inside a fragment. Without operation documents the operation name is read as the schema field.
+`from:` names the key of the response, which is the alias when the operation gives one (`rewardTier: kind` is read with `from: "rewardTier"`). The check follows each key through the selection of the operation, into inline fragments and named fragments, and tests the schema field behind it. The key of a field that the operation does not select is taken as the schema field name. A union or interface field must select `__typename` somewhere in its own selection, also inside a fragment. Without operation documents the operation name is read as the schema field.
 
 ### Paths into the response
 
@@ -752,7 +752,7 @@ A path that a declaration writes names keys of the response, so the check follow
 A path the document does not select is an error with the file and line of the declaration. The message names the declaration, the path, the segment where the path ends and the keys the document has at that place:
 
 ```
-chat.dbl:125: root `chatGroupLeave.chat`: operation `ChatGroupLeave` has no `chat` under `chatGroupLeave`, it has: removedChatId
+group.dbl:125: root `groupGroupLeave.group`: operation `GroupGroupLeave` has no `group` under `groupGroupLeave`, it has: removedGroupId
 ```
 
 A path may not be empty and may not have an empty segment, with or without `--schema`. Operation documents come only with `--schema`. Without them the check stops at the shape of the path. A default `root` (the first field of the operation) is not followed, because the declaration did not write it. `refetch_of`, `response`, `optimistic` and `correlate` name relations, models and row fields and are not paths into the response.

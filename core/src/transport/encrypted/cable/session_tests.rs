@@ -3,6 +3,35 @@ use crate::transport::{GraphQLRequest, SubscriptionEvent};
 use serde_json::json;
 
 #[tokio::test(start_paused = true)]
+async fn inv_wait_05_frames_postpone_the_single_deadline_without_timer_wakes() {
+    use std::sync::{Arc, atomic::AtomicUsize};
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+    use super::wire_tests::{FakeSocket, FakeConnect, Peer};
+    let (incoming, receiver) = mpsc::unbounded_channel();
+    let (outgoing, sent) = mpsc::unbounded_channel();
+    let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
+    let connect = Arc::new(FakeConnect { socket, opens: AtomicUsize::new(0) });
+    let (kat, config, challenge, credential) = super::link_tests::inputs();
+    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect, crate::transport::Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
+    let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { sample { id } }", "Sample", json!({}))).await.unwrap();
+    let mut peer = Peer { incoming, outgoing: sent, send_key: [0; 32], receive_key: [0; 32], sequence: 0 };
+    peer.handshake(&kat, &config, challenge).await;
+    let subscribed = peer.next().await;
+    peer.emit(json!({"t":"subscribed", "id":subscribed["id"]}));
+    assert!(matches!(subscription.next().await, Some(SubscriptionEvent::Ready)));
+    for number in 0..10 {
+        tokio::time::advance(Duration::from_secs(3)).await;
+        peer.emit(json!({"t":"next", "id":subscribed["id"], "result":{"data":{"sample":{"id":number}}}}));
+        assert!(matches!(subscription.next().await, Some(SubscriptionEvent::Next(_))));
+        assert_eq!(cable.wake_count(), 0, "traffic caused a timer wake at frame {number}");
+    }
+    tokio::time::advance(Duration::from_secs(25)).await;
+    assert_eq!(peer.next().await["t"], "ping");
+    assert_eq!(cable.wake_count(), 1, "silence must fire exactly one timer");
+}
+
+#[tokio::test(start_paused = true)]
 async fn invalid_frames_preserve_failure_history() {
     let mut failures = Vec::new();
     for body in [

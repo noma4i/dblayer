@@ -93,13 +93,3 @@ fn inv_wait_04_no_test_of_the_wrappers_waits_without_a_bound() {
         assert!(output.status.success(), "{script}: {}", String::from_utf8_lossy(&output.stderr));
     }
 }
-
-#[test]
-fn inv_wait_05_the_cable_stale_check_is_armed_by_frames_and_not_polled() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    for (file, poll) in [("swift/Sources/DBlayer/Network/CableConnection.swift", "func watch("), ("kotlin/src/main/kotlin/com/noma4i/dblayer/Cable.kt", "fun watch(")] {
-        let source = std::fs::read_to_string(root.join(file)).unwrap();
-        assert!(source.contains("armWatchdog()"), "{file} does not arm the stale check");
-        assert!(!source.contains(poll), "{file} polls the stale check");
-    }
-}

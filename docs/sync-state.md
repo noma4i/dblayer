@@ -39,7 +39,7 @@ struct MomentRow: View {
       Text(moment.text)
       if moment.isLocal { ProgressView() }
       if moment.sync.state == .failed || moment.sync.state == .deliveryUnknown {
-        Button("Retry") { Task { await moment.retry() } }
+        Button("Retry") { Task { try await moment.retry() } }
       }
     }
   }
@@ -79,18 +79,20 @@ Moment.failed          // records waiting for a decision
 
 Use them for an "unsent" banner, a retry-all button or a badge with the number of pending changes. `sync` is a reserved name: a model cannot have a field called `sync`.
 
+`retry()` and `retryAll()` suspend, return the number of reset operations or upload items, and throw errors to the caller.
+
 ## How a mutation is sent
 
 The network decides what happens to a mutation that did not get an answer:
 
-- Unreachable before the transfer starts (no connection, connection refused, offline): the request never left, so sending it again is safe. The record stays `pending`, `sync.attempts` counts the tries, and the next try comes after a growing pause with random spread. After 40 tries the change stays `failed` for retry or discard. To send every such record again, call `retryAll()` on the sync object:
+- Unreachable before the transfer starts (no connection, connection refused, offline): the request never left, so sending it again is safe. The record stays `pending`, `sync.attempts` counts the tries, and the next try comes after a growing pause with random spread. After 40 tries the change stays `failed` for retry or discard. To send every such record again, call `retryAll()` on a model in Swift or the package function in Kotlin:
 
 ```swift
-try await sync.retryAll()
+try await Moment.retryAll()
 ```
 
 ```kotlin
-sync.retryAll()
+retryAll()
 ```
 
 Later changes to the same record wait behind it.
@@ -125,7 +127,7 @@ You choose per action, in the model file:
 
 ```ruby
 operation :create do
-  mutation CreateMessage
+  mutation CreateNote
   on_failure :keep
 end
 
@@ -140,7 +142,7 @@ end
 A record in `failed` or `deliveryUnknown` has two gestures:
 
 ```swift
-await message.retry()     // back to pending, attempts reset, sent again
+try await message.retry()     // back to pending, attempts reset, sent again
 try await message.discard()   // roll back the local change and drop it from the queue
 ```
 
@@ -153,15 +155,16 @@ Later changes to the same record wait behind a `failed` or `deliveryUnknown` cha
 
 ## Online and offline
 
-The platform reports the network with one call. Mutations, uploads and loads read the same flag.
+Opening starts network monitoring on both platforms. Kotlin requires an Android `Context` as the first argument.
+Mutations, uploads and loads read the same core flag. The online sink remains available for controlled tests.
 
 ```swift
-sync.setOnline(false)   // changes wait, loads fail with an offline error, uploads wait
+try DB.database.onlineSink().setOnline(online: false)   // changes wait, loads fail with an offline error, uploads wait
 sync.setOnline(true)    // waiting changes and uploads are sent by themselves
 ```
 
 ```kotlin
-sync.setOnline(false)   // changes wait, loads fail with an offline error, uploads wait
+DBlayer.database.onlineSink().setOnline(false)   // changes wait, loads fail with an offline error, uploads wait
 sync.setOnline(true)    // waiting changes and uploads are sent by themselves
 ```
 

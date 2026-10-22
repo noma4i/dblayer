@@ -15,7 +15,6 @@ import org.junit.Test
 class EncryptedSocketTest {
     @Test
     fun exchangesTextOnTheConfiguredPathWithoutLegacyAuthentication() = bounded {
-        for (databaseTransport in listOf(false, true)) {
             MockWebServer().use { server ->
                 val received = CompletableDeferred<String>()
                 server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
@@ -27,8 +26,7 @@ class EncryptedSocketTest {
                     }
                 }))
                 val endpoint = server.url("/api/graphql").toString()
-                val transport: Transport = if (databaseTransport) DatabaseTransport(cable = { null }, origin = endpoint, cablePath = "/api/cable")
-                    else OkHttpTransport(endpoint, cablePath = "/api/cable")
+                val transport: Transport = OkHttpTransport(endpoint, cablePath = "/api/cable")
                 val token = transport.openCable()
                 try {
                     assertEquals(EncryptedSocketEvent.Text("server challenge"), transport.cableNext(token))
@@ -42,7 +40,6 @@ class EncryptedSocketTest {
                     transport.cableClose(token)
                 }
             }
-        }
     }
 
     @Test
@@ -128,7 +125,6 @@ class EncryptedSocketTest {
             transport.cableSend(first, "after close")
             fail("expected closed socket refusal")
         } catch (_: DbException.Network) {
-            Unit
         }
         transport.cableSend(second, "still open")
         assertEquals(listOf(second to "hello", second to "still open"), transport.cableFrames)

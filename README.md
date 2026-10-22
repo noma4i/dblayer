@@ -10,7 +10,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - **Refresh on entry.** `LiveList` can force its initial request while keeping cached rows visible. Await that request without starting another one.
 - **Local first.** Data lives in SQLite. Reads never wait for the network, and writes are applied locally at once.
 - **Partial child updates.** Parent fields copied through `sets` keep their values when the child omits those fields. Explicit null clears them.
-- **Sync state on every record.** Each record knows if the server has seen it: `synced`, `pending`, `sending` or `failed`, plus `isLocal` for records that still have a temporary id. Build spinners, retry buttons and unsent banners on it, and query by it.
+- **Sync state on every record.** Each record knows if the server has seen it: `synced`, `pending`, `sending`, `failed` or `deliveryUnknown`, plus `isLocal` for records that still have a temporary id. Build spinners, retry buttons and unsent banners on it, and query by it.
 - **Offline writes.** Create, update and destroy are applied optimistically and queued. The queue survives restarts, is sent in order, rolled back on a final failure and replaces temporary ids with server ids.
 - **GraphQL without glue code.** Register your operations and point models at them. Responses of queries, mutations and subscription events are normalized into rows by one set of rules. Refetching after mutations, reconnects and app resume is automatic.
 - **No flicker.** One change is one commit. Observers see cascades, replacements and id swaps as a single transition, in order. Pull-to-refresh replaces data in one commit with no empty state in between.
@@ -77,7 +77,7 @@ end
 
 The generator turns these files into typed Swift and Kotlin models and a model specification for the core. Nested `object` and `array` blocks generate their value types too, with reusable names, optional fields, defaults and JSON key aliases. Keep field declarations in `.dbl` and add app behavior in extensions. See [describing models](docs/models.md#nested-objects-and-lists).
 
-A model reads one entity with GraphQL `node(id:)` through `node`, and `Chat.node(id)` returns the typed row or nil. See [node reads](docs/models.md#node-reads).
+A model reads one entity with GraphQL `node(id:)` through `node`, and `Group.node(id)` returns the typed row or nil. See [node reads](docs/models.md#node-reads).
 
 Use `dblayer-gen explain models/*.dbl` to inspect generated tables, indexes and SQLite query plans before building the app.
 
@@ -138,6 +138,7 @@ _ = try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+6
 
 ```kotlin
 DBlayer.open(
+  context,
   encrypted = EncryptedConfig("https://api.example.com", serverKey, serverPin, endpoints, protocolLabel, cablePurpose, cableChannel),
   credentials = KeystoreCredentials(), modelsJson = modelsJSON, path = path,
 )
@@ -147,7 +148,7 @@ DBlayer.database.sessionCall("otp", """{"phone":"+61400000000"}""")
 Await `DB.open` in Swift or call suspend `DBlayer.open` from a Kotlin coroutine.
 Opening files, WAL and migrations runs on the library's worker pool.
 Identical repeated calls reuse the opened database. Different parameters throw an error. Failed opens allow retry.
-Credentials, transport and HTTP values use `equals` in Kotlin and `Hashable` equality in Swift, otherwise object identity.
+Keep one instance of each credential store, transport and HTTP callback for the process. The core compares their identities.
 
 Omit `encrypted` and `credentials` for ordinary GraphQL through `endpoint` or a custom `transport`.
 Omit the endpoint and transport too for a local database. See [server sync](docs/server-sync.md) for arguments and errors.

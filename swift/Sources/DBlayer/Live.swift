@@ -14,20 +14,16 @@ final class Latest<Value: Sendable>: @unchecked Sendable {
   private var pending: Value?
   private var waiter: CheckedContinuation<Value?, Never>?
   private var closed = false
-  private let buffered: Bool
-  private var queue: [Value] = []
-  private var head = 0
   private let merge: (@Sendable (Value, Value) -> Value)?
 
-  init(merge: (@Sendable (Value, Value) -> Value)?, buffered: Bool = false) { self.merge = merge; self.buffered = buffered }
+  init(merge: (@Sendable (Value, Value) -> Value)?) { self.merge = merge }
 
-  var hasPending: Bool { lock.withLock { pending != nil || head < queue.count } }
+  var hasPending: Bool { lock.withLock { pending != nil } }
 
   func put(_ value: Value) {
     let waiting: CheckedContinuation<Value?, Never>? = lock.withLock {
       guard !closed else { return nil }
       if let waiter { self.waiter = nil; return waiter }
-      if buffered { queue.append(value); return nil }
       pending = pending.flatMap { older in merge.map { $0(older, value) } } ?? value
       return nil
     }
@@ -37,13 +33,6 @@ final class Latest<Value: Sendable>: @unchecked Sendable {
   func next() async -> Value? {
     await withCheckedContinuation { (continuation: CheckedContinuation<Value?, Never>) in
       let ready: Value?? = lock.withLock {
-        if head < queue.count {
-          let value = queue[head]
-          head += 1
-          if head == queue.count { queue.removeAll(keepingCapacity: true); head = 0 }
-          else if head >= 64 && head * 2 >= queue.count { queue.removeFirst(head); head = 0 }
-          return .some(value)
-        }
         if let value = pending { pending = nil; return .some(value) }
         if closed { return .some(nil) }
         waiter = continuation
@@ -57,8 +46,6 @@ final class Latest<Value: Sendable>: @unchecked Sendable {
     let waiting = lock.withLock { () -> CheckedContinuation<Value?, Never>? in
       closed = true
       pending = nil
-      queue.removeAll()
-      head = 0
       defer { waiter = nil }
       return waiter
     }
@@ -78,34 +65,48 @@ final class Attachment: @unchecked Sendable {
 /// The values of a live source in order. The subscription ends when the stream and its iterators are dropped or the reading task is cancelled.
 public struct LiveStream<Value: Sendable>: AsyncSequence, Sendable {
   public typealias Element = Value
-  let latest: Latest<Value>
+  let receive: @Sendable () async -> Value?
+  let cancel: @Sendable () -> Void
   let attachment: Attachment?
+  let pending: @Sendable () -> Bool
+  var hasPending: Bool { pending() }
 
-  static var ended: LiveStream {
-    let latest = Latest<Value>(merge: nil)
-    latest.close()
-    return LiveStream(latest: latest, attachment: nil)
+  init(latest: Latest<Value>, attachment: Attachment?) {
+    receive = { await latest.next() }
+    cancel = { latest.close(); attachment?.cancel() }
+    pending = { latest.hasPending }
+    self.attachment = attachment
   }
 
+  init(receive: @escaping @Sendable () async -> Value?, cancel: @escaping @Sendable () -> Void) {
+    self.receive = receive
+    pending = { false }
+    let attachment = Attachment(cancel)
+    self.attachment = attachment
+    self.cancel = { attachment.cancel() }
+  }
+
+  static var ended: LiveStream { LiveStream(receive: { nil }, cancel: {}) }
+
   public struct AsyncIterator: AsyncIteratorProtocol {
-    let latest: Latest<Value>
-    let attachment: Attachment?
+    let stream: LiveStream
     public mutating func next() async -> Value? {
-      await withTaskCancellationHandler { await latest.next() } onCancel: { latest.close(); attachment?.cancel() }
+      let stream = stream
+      return await withTaskCancellationHandler { await stream.receive() } onCancel: { stream.cancel() }
     }
   }
 
-  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(latest: latest, attachment: attachment) }
+  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(stream: self) }
+
 }
 
 public struct LiveSource<Value: Sendable>: Sendable {
   public let initial: Value
   let subscribe: @Sendable (@escaping @Sendable (Value) -> Void) throws -> @Sendable () -> Void
   let merge: (@Sendable (Value, Value) -> Value)?
-  let buffered: Bool
 
-  init(initial: Value, merge: (@Sendable (Value, Value) -> Value)? = nil, buffered: Bool = false, subscribe: @escaping @Sendable (@escaping @Sendable (Value) -> Void) throws -> @Sendable () -> Void) {
-    self.initial = initial; self.merge = merge; self.buffered = buffered; self.subscribe = subscribe
+  init(initial: Value, merge: (@Sendable (Value, Value) -> Value)? = nil, subscribe: @escaping @Sendable (@escaping @Sendable (Value) -> Void) throws -> @Sendable () -> Void) {
+    self.initial = initial; self.merge = merge; self.subscribe = subscribe
   }
 
   init(initial: Value, merge: (@Sendable (Value, Value) -> Value)? = nil, attach: @escaping @Sendable (QueryListener) throws -> LiveSubscription, map: @escaping @Sendable (LiveChange) -> Value) {
@@ -118,7 +119,7 @@ public struct LiveSource<Value: Sendable>: Sendable {
   /// The one way to read a live value. The subscription and its first read run off the caller's thread. Cancelling the caller before, during or after the attach leaves no subscription. A slow reader gets the newest value, merged with the ones it missed.
   public func stream() async -> LiveStream<Value> {
     guard !Task.isCancelled else { return .ended }
-    let latest = Latest<Value>(merge: merge, buffered: buffered)
+    let latest = Latest<Value>(merge: merge)
     let attached = await Task.detached(priority: .userInitiated) { [subscribe] in try? subscribe { latest.put($0) } }.value
     guard let attached else { return .ended }
     let attachment = Attachment(attached)

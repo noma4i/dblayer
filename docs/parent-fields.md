@@ -8,11 +8,11 @@ If no child remains, all copied fields become null.
 Read the parent entity after declaring `sets` in the child model:
 
 ```swift
-let chat = Chat.entity(chatId)
-let lastMessageAt = chat.value?.lastMessageAt
+let group = Group.entity(groupId)
+let lastNoteAt = group.value?.lastNoteAt
 ```
 
 ```kotlin
-val chat = Chat.entity(chatId)
-val lastMessageAt = chat.value.value?.lastMessageAt
+val group = Group.entity(groupId)
+val lastNoteAt = group.value.value?.lastNoteAt
 ```

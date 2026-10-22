@@ -5,7 +5,10 @@ public struct IndexedRow<Model: DBModel>: Sendable {
   public let row: Model
 }
 
+public enum ListChangeKind: Sendable { case delta, replaced }
+
 public struct ListChange<Model: DBModel>: Sendable {
+  public let kind: ListChangeKind
   public let inserted: [IndexedRow<Model>]
   public let updated: [IndexedRow<Model>]
   public let removed: [String]
@@ -16,6 +19,7 @@ public struct ListChange<Model: DBModel>: Sendable {
   public let failure: String?
 
   init(_ change: LiveChange) {
+    kind = change.full ? .replaced : .delta
     var failure = change.error.map(String.init(describing:))
     let rows: [IndexedRow<Model>?] = change.rows.enumerated().map { position, wire in
       do { return IndexedRow(index: change.full ? position : Int(change.rowIndexes[position]), row: try Model.decode(wire)) }
@@ -32,11 +36,18 @@ public struct ListChange<Model: DBModel>: Sendable {
   }
 }
 
-extension Query {
-  public var changes: LiveSource<ListChange<Model>> {
-    LiveSource(initial: ListChange(LiveChange(revision: 0, full: true, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: nil)), buffered: true) { emit in
-      let subscription = try DB.database.liveQuery(queryJson: json, listener: ChangeListener { emit(ListChange($0)) })
-      return { subscription.cancel() }
-    }
+public struct QueryChanges<Model: DBModel>: Sendable {
+  let json: String
+
+  public func stream() async -> LiveStream<ListChange<Model>> {
+    guard !Task.isCancelled else { return .ended }
+    let queue = await Task.detached { try? DB.database.changes(queryJson: json) }.value
+    guard let queue else { return .ended }
+    guard !Task.isCancelled else { queue.cancel(); return .ended }
+    return LiveStream(receive: { await queue.next().map { ListChange($0) } }, cancel: { queue.cancel() })
   }
+}
+
+extension Query {
+  public var changes: QueryChanges<Model> { QueryChanges(json: json) }
 }

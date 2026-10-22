@@ -56,7 +56,7 @@ struct UploadItemTests {
     database = try await Database.open(config: config, modelsJson: modelsJSON, transport: transport)
     try database!.registerOperations(defsJson: definitions)
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await database!.retry(model: "Moment", rowId: local.id)
+    _ = try await database!.retry(model: "Moment", rowId: local.id)
     #expect(try await database!.confirmed(model: "Moment", rowId: local.id) == "m77")
     #expect(transport.calls.filter { $0.operationName == "CreateBlob" }.count == 1)
     let final = transport.calls.filter { $0.operationName == "CreateMoment" }

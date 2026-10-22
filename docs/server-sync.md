@@ -15,17 +15,17 @@ HTTP subscription errors follow query retry classification: 5xx errors retry, wh
 Use `DB.open` (Swift) or `DBlayer.open` (Kotlin) for every database.
 Without `encrypted`, requests use ordinary GraphQL HTTP and the transport's existing subscriptions, without credentials, sequence numbers or APQ.
 
-Opening is asynchronous: use `try await DB.open(...)` in Swift and suspend `DBlayer.open(...)` in Kotlin.
+Opening is asynchronous: use `try await DB.open(...)` in Swift and suspend `DBlayer.open(context, ...)` in Kotlin.
 The library opens files and runs migrations on its worker pool.
 Repeated calls with identical parameters reuse the database. Different parameters fail. An opening error permits retry.
-Credentials, transport and HTTP values use `equals` in Kotlin and `Hashable` equality in Swift, otherwise object identity.
+Keep one instance of each credential store, transport and HTTP callback for the process. The core compares their identities.
 
 ```swift
 try await DB.open(endpoint: endpoint, headers: headers, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
 ```
 
 ```kotlin
-DBlayer.open(endpoint = endpoint, headers = headers, modelsJson = modelsJson, operations = GraphQLOperations.all)
+DBlayer.open(context, endpoint = endpoint, headers = headers, modelsJson = modelsJson, operations = GraphQLOperations.all)
 ```
 
 `endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
@@ -51,20 +51,22 @@ The core rejects `encrypted` without credentials, credentials without `encrypted
 Direct `Database.open` calls with `encrypted` also require HTTP and transport arguments.
 Encrypted sessions require JWE requests.
 
-An operation type declares `Data` (Swift) or a `dataSerializer` (Kotlin) only when your code reads the response itself through the typed transport calls. An operation that models and actions run needs neither: leave `Data` out and it is `Never`, and the library still normalizes the response into rows. Do not write a response type that copies a model.
+An operation type declares `Data` (Swift) or a `dataSerializer` (Kotlin) when its generated call returns a decoded response.
+Operations used by models and actions need neither. Swift defaults `Data` to `Never`.
+The library normalizes model responses into rows. Do not copy model fields into a response type.
 
 ```swift
-enum ArchiveChatMutation: GraphQLMutation {
+enum ArchiveGroupMutation: GraphQLMutation {
   struct Variables: Encodable, Sendable { let id: String }
-  static let operationName = "ArchiveChat"
-  static let document = "mutation ArchiveChat($id: ID!) { archiveChat(id: $id) { id archived } }"
+  static let operationName = "ArchiveGroup"
+  static let document = "mutation ArchiveGroup($id: ID!) { archiveGroup(id: $id) { id archived } }"
 }
 ```
 
 ```kotlin
-object ArchiveChatMutation : GraphQLOperation {
-    override val operationName = "ArchiveChat"
-    override val document = "mutation ArchiveChat(\$id: ID!) { archiveChat(id: \$id) { id archived } }"
+object ArchiveGroupMutation : GraphQLOperation {
+    override val operationName = "ArchiveGroup"
+    override val document = "mutation ArchiveGroup(\$id: ID!) { archiveGroup(id: \$id) { id archived } }"
 }
 ```
 
@@ -90,7 +92,7 @@ let origin = URL(string: "https://api.example.com")!
 let database = try await Database.open(
   config: Config(path: path, dataVersion: nil, cacheRows: 4096),
   modelsJson: modelsJSON,
-  transport: DatabaseTransport(cable: { await cable.current }),
+  transport: UrlSessionTransport(endpoint: origin, cablePath: endpoints.cable),
   encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
   credentials: KeychainCredentials(),
   http: UrlSessionEncryptedHttp(origin: origin)
@@ -104,7 +106,7 @@ val origin = "https://api.example.com"
 val database = Database.open(
     config = Config(path, null, 4096u),
     modelsJson = modelsJSON,
-    transport = DatabaseTransport(cable = { cable.current }),
+    transport = OkHttpTransport(origin, cablePath = endpoints.cable),
     encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel),
     credentials = KeystoreCredentials(),
     http = OkHttpEncryptedHttp(origin),
@@ -258,6 +260,8 @@ try {
 ```
 
 Fetch the encrypted config before opening a database. `DB.serverConfig` and `DBlayer.serverConfig` call the same Rust function without credentials or SQLite.
+The first bootstrap call or opening starts one process network monitor. Offline bootstrap waits without HTTP attempts.
+Android requires Context first and retains applicationContext. The same monitor feeds the database after opening.
 
 ```swift
 let encrypted = EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel)
@@ -391,7 +395,7 @@ try await DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledS
 ```
 
 ```kotlin
-DBlayer.open(encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel), credentials = KeystoreCredentials(), modelsJson = modelsJson)
+DBlayer.open(context, encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel), credentials = KeystoreCredentials(), modelsJson = modelsJson)
 ```
 
 Tests can pass their own transport and HTTP replies. A test that opens cable must also implement the 4 WebSocket calls.
@@ -401,7 +405,7 @@ try await DB.open(encrypted: encrypted, credentials: credentials, transport: tes
 ```
 
 ```kotlin
-DBlayer.open(encrypted = encrypted, credentials = credentials, transport = testTransport, modelsJson = modelsJson, http = testHttp)
+DBlayer.open(context, encrypted = encrypted, credentials = credentials, transport = testTransport, modelsJson = modelsJson, http = testHttp)
 ```
 
 Rules of the session:
@@ -537,19 +541,19 @@ Servers that take one input object and answer with a payload use `wrap` and `roo
 
 ```ruby
 operation :update do
-  mutation UpdateChat
+  mutation UpdateGroup
   wrap :input
-  root "chatUpdate.chat"
+  root "groupUpdate.group"
 end
-operation :send_gift do
-  mutation GiftSend
-  args giftId: :string
+operation :send_reward do
+  mutation RewardSend
+  args rewardId: :string
   local_effect :none, reason: "Apply the server response"
   wrap     :input
-  root     "giftSend.user"
-  lands    Message, root: "giftSend.message"
+  root     "rewardSend.user"
+  lands    Note, root: "rewardSend.message"
   refetch_of CurrentUser, relation: :current
-  input    userId: :id, giftId: :giftId
+  input    userId: :id, rewardId: :rewardId
 end
 ```
 
@@ -573,18 +577,18 @@ end
 ```
 
 ```swift
-let code = try await Operations.qrCodeCreate(kind: "chat", size: 3)
+let code = try await Operations.qrCodeCreate(kind: "group", size: 3)
 print(code.url)
 ```
 
 ```kotlin
-val code = Operations.qrCodeCreate(kind = "chat", size = 3)
+val code = Operations.qrCodeCreate(kind = "group", size = 3)
 println(code.url)
 ```
 
 - `mutation` or `query` names the operation. Pass the operation type to `DB.open` (Swift) or `DBlayer.open` (Kotlin) like any other operation.
 - `args` are the variables, with the same kinds as the args of `create`. A trailing `?` makes one optional and an omitted one is not sent. `wrap :input` sends them as `{ input: { ... } }`.
-- `result` lists the fields to read from the root field of the answer, all optional. Without `result` the call returns nothing. A field is a scalar (`:bool`, `:int`, `:num`, `:string`, `:id`), a schema enum name (`:WidgetKind`), `:ids` or `[:string]` for a list of scalars, `:json` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), `{ a: :int }` for an object, or `[{ a: :int }]` for a list of objects. Each object becomes its own type named after the call and the field (`PricingLoadResultGifts`). An `:id` field accepts a number or a string and arrives as a string.
+- `result` lists the fields to read from the root field of the answer, all optional. Without `result` the call returns nothing. A field is a scalar (`:bool`, `:int`, `:num`, `:string`, `:id`), a schema enum name (`:WidgetKind`), `:ids` or `[:string]` for a list of scalars, `:json` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), `{ a: :int }` for an object, or `[{ a: :int }]` for a list of objects. Each object becomes its own type named after the call and the field (`PricingLoadResultRewards`). An `:id` field accepts a number or a string and arrives as a string.
 - `args input: :StickerInput` names a schema input object. The generator reads it and nested inputs from `--schema`.
 - Required inputs remain required. Nullable fields use `GraphQLNullable`: omitted by default, explicit null, or a supplied value. Lists preserve every dimension and element nullability.
 - A required field with a schema default can be omitted. Nullable fields with defaults still distinguish omission from explicit null.
@@ -621,18 +625,18 @@ An operation that reads lists, objects and raw JSON from the answer:
 ```ruby
 operation :pricing_load do
   query  Pricing
-  result gifts: [{ id: :id, name: :string, price: :int }], videoIntro: { enabled: :bool }, tags: [:string], spec: :json
+  result rewards: [{ id: :id, name: :string, price: :int }], videoIntro: { enabled: :bool }, tags: [:string], spec: :json
 end
 ```
 
 ```swift
 let pricing = try await Operations.pricingLoad()
-let names = pricing.gifts?.compactMap(\.name) ?? []
+let names = pricing.rewards?.compactMap(\.name) ?? []
 ```
 
 ```kotlin
 val pricing = Operations.pricingLoad()
-val names = pricing.gifts?.mapNotNull { it.name }.orEmpty()
+val names = pricing.rewards?.mapNotNull { it.name }.orEmpty()
 ```
 
 An operation whose root field is a list, such as a search that returns the matching items, declares `list`. `result` then describes one element and the call returns a list of it:
@@ -658,23 +662,23 @@ val urls = found.mapNotNull { it.url }
 
 `list` needs a `result` line.
 
-An aggregate that is not a row of a model, such as the counters of a chat library, is an operation without a model. The call returns the fields as a value and writes no row. When the answer nests the aggregate under `node(id:)`, declare the nested field in `result`:
+An aggregate that is not a row of a model, such as the counters of a group library, is an operation without a model. The call returns the fields as a value and writes no row. When the answer nests the aggregate under `node(id:)`, declare the nested field in `result`:
 
 ```ruby
-operation :chat_media_state do
-  query "chatMediaState"
-  args chatId: :id, upToSequence: :int?
-  result mediaLibrary: { visualCount: :int, audioCount: :int, giftCount: :int, latestSequence: :int }
+operation :group_media_state do
+  query "groupMediaState"
+  args groupId: :id, upToSequence: :int?
+  result mediaLibrary: { visualCount: :int, audioCount: :int, rewardCount: :int, latestSequence: :int }
 end
 ```
 
 ```swift
-let state = try await Operations.chatMediaState(chatId: "c1", upToSequence: 120)
+let state = try await Operations.groupMediaState(groupId: "c1", upToSequence: 120)
 let visual = state.mediaLibrary?.visualCount
 ```
 
 ```kotlin
-val state = Operations.chatMediaState(chatId = "c1", upToSequence = 120)
+val state = Operations.groupMediaState(groupId = "c1", upToSequence = 120)
 val visual = state.mediaLibrary?.visualCount
 ```
 
@@ -820,10 +824,10 @@ val encrypted = EncryptedConfig(
     protocolLabel, cablePurpose, cableChannel
 )
 val config = DBlayer.serverConfig(context, encrypted, AppPlatform.ANDROID, appVersion)
-DBlayer.open(encrypted = encrypted, credentials = credentials, modelsJson = modelsJson)
+DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJson = modelsJson)
 ```
 
-Kotlin `serverConfig` requires Context to start process reachability before opening the database.
+`DBlayer.open` and `DBlayer.serverConfig` require Android Context first. Swift calls keep their argument lists.
 Their required encrypted configuration has changed. Applications must supply every protocol value before opening or fetching config.
-Direct `UrlSessionTransport`, `OkHttpTransport`, and `DatabaseTransport` construction requires `cablePath` to open encrypted sockets.
+Direct `UrlSessionTransport` and `OkHttpTransport` construction requires `cablePath` to open encrypted sockets.
 Omitting it disables encrypted socket opening. HTTP-only construction remains available.

@@ -1,16 +1,14 @@
 package com.noma4i.dblayer
 
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.buffer
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flow
 
 data class IndexedRow<Model : DBModel>(val index: Int, val row: Model)
 
+enum class ListChangeKind { Delta, Replaced }
+
 data class ListChange<Model : DBModel>(
+    val kind: ListChangeKind,
     val inserted: List<IndexedRow<Model>>,
     val updated: List<IndexedRow<Model>>,
     val removed: List<String>,
@@ -27,14 +25,21 @@ data class ListChange<Model : DBModel>(
                 runCatching { IndexedRow(if (change.full) position else change.rowIndexes[position].toInt(), decoder.read(wire)) }
                     .onFailure { failure = it.toString() }.getOrNull()
             }
-            return ListChange(change.inserted.mapNotNull { rows[it.toInt()] }, change.updated.mapNotNull { rows[it.toInt()] },
+            return ListChange(if (change.full) ListChangeKind.Replaced else ListChangeKind.Delta, change.inserted.mapNotNull { rows[it.toInt()] }, change.updated.mapNotNull { rows[it.toInt()] },
                 change.removed, change.moved, change.renamed, change.revision, change.size.toInt(), failure)
         }
     }
 }
 
 val <Model : DBModel> Query<Model>.changes: Flow<ListChange<Model>>
-    get() = callbackFlow {
-        val subscription = DBlayer.database.liveQuery(json, ChangeListener { trySend(ListChange.decode(it, decoder)) })
-        awaitClose { subscription.cancel() }
-    }.buffer(Channel.UNLIMITED).flowOn(Dispatchers.Default)
+    get() = flow {
+        val queue = DBlayer.database.changes(json)
+        try {
+            while (true) {
+                val change = queue.next() ?: break
+                emit(ListChange.decode(change, decoder))
+            }
+        } finally {
+            queue.cancel()
+        }
+    }

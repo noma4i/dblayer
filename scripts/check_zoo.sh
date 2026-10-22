@@ -89,6 +89,24 @@ for path in files:
             continue
         findings.append(f"Z11 a phone library never panics on the environment, return an error or a degraded answer: {relative}:{number}: {line.strip()}")
 
+for directory, suffix, generated in [("swift/Sources/DBlayer", "*.swift", "dblayer.swift"), ("kotlin/src/main/kotlin/com/noma4i/dblayer", "*.kt", "dblayer.kt")]:
+    for path in (root / directory).rglob(suffix):
+        if path.name in (generated, "MockTransport.kt"):
+            continue
+        relative = str(path.relative_to(root))
+        text = path.read_text()
+        rules = [
+            ("Z12 platform retries belong in core", r"\b(?:pow|sleep|delay)\s*\(|\b(?:TransportRetryPolicy|CableReconnect|SubscriptionRetry)\b"),
+            ("Z13 removed platform transport", r"\b(?:CableClient|CableConnection|OperationRun|NetworkTransport|DatabaseTransport|GraphQLTransport|GraphQLTransportError|SubscriptionFailureKind|SubscriptionFailure|SubscriptionHandle|GraphQLError|PayloadCipher|PayloadEnvelope|RequestSigner|CanonicalJson|CanonicalJSON|EnvelopeWire|PublicOperations|UnauthorizedDecision)\b"),
+            ("Z14 opening arguments are compared in core", r"\b(?:OpenArguments|AnyHashable)\b|(?:previous|opened|arguments)\s*==\s*arguments|\.matches\(arguments\)"),
+            ("Z15 application names do not belong in the library", r'"(?:myProfile|AuthSignIn|AuthConsumeLoginLink|Yupi|V3|Message|chat|gift)"'),
+            ("Z16 change streams use the bounded core queue", r"buffer\(Channel\.UNLIMITED\)|buffered:\s*true"),
+        ]
+        for label, expression in rules:
+            for match in re.finditer(expression, text):
+                number = text.count("\n", 0, match.start()) + 1
+                findings.append(f"{label}: {relative}:{number}: {match.group()}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

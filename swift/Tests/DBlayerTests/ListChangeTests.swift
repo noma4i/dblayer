@@ -5,16 +5,25 @@ import DBlayerTesting
 
 extension BridgeProbeTests {
   @Suite struct ListChangeTests {
-    @Test func changesKeepPendingDeliveries() async {
-      let source = LiveSource<Int>(initial: 0, buffered: true) { emit in
-        emit(1)
-        emit(2)
-        return {}
+    @Test func aSlowConsumerReceivesABoundedReplacementWithEveryCurrentRow() async throws {
+      DB.database = try await Database.open(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
+      let query = Query<Moment>().order(Moment.createdAt.desc)
+      let cursor = Cursor(await query.changes.stream())
+      for number in 0..<192 { _ = try await Moment.create(text: "row\(number)") }
+      var rows: [Moment] = []
+      var sawReplacement = false
+      for _ in 0...192 {
+        guard let change = await cursor.next("the queued changes") else { break }
+        if change.kind == .replaced {
+          rows = change.inserted.map(\.row)
+          sawReplacement = sawReplacement || change.inserted.count >= 64
+        }
+        else { for row in change.inserted { rows.insert(row.row, at: row.index) } }
+        if change.size == 192 { break }
       }
-      let cursor = Cursor(await source.stream())
-      #expect(await cursor.next("the first queued delivery") == 1)
+      #expect(sawReplacement, "overflow never delivered a replacement snapshot")
+      #expect(rows == (await query.live.current()))
     }
-
     final class Decodes: @unchecked Sendable {
       let lock = NSLock()
       var value = 0
