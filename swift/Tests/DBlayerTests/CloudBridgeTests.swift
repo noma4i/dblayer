@@ -21,11 +21,11 @@ struct CloudBridgeTests {
     let database = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: cloudModels, transport: nil)
     let cloud = RecordingCloud()
     let link = try database.connectCloud(io: cloud)
+    link.stop()
     _ = try await database.create(model: "Note", valuesJson: #"{"title":"hello"}"#, argsJson: "{}")
     try await link.syncNow()
     #expect(cloud.blobs.count == 1)
     #expect(cloud.blobs.first.map { $0.key.count == 64 && !$0.bytes.isEmpty } == true)
     #expect(link.state() == .idle)
-    link.stop()
   }
 }
