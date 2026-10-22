@@ -28,7 +28,7 @@ fn inv_fresh_04_resets_close_only_the_selected_models_operations() {
 }
 
 #[test]
-fn inv_dsl_07_a_schema_change_quarantines_the_operations_of_the_changed_model_and_keeps_the_others() {
+fn inv_dsl_07_a_schema_change_quarantines_the_operations_of_every_server_model() {
     use crate::db::Db;
     use crate::operation::{quarantine_counts, QuarantineReason};
     use crate::schema::FieldSpec;
@@ -45,7 +45,7 @@ fn inv_dsl_07_a_schema_change_quarantines_the_operations_of_the_changed_model_an
     changed.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().fields.push(FieldSpec::scalar("extra", ScalarKind::Str).optional());
     let reopened = Db::open(&path, changed, None).unwrap();
     let left: Vec<String> = reopened.outbox().unwrap().into_iter().map(|entry| entry.operation.action_key).collect();
-    assert_eq!(left, ["users:update"]);
+    assert!(left.is_empty());
     let quarantined = quarantine_counts(&reopened.shared.store.lock().connection).unwrap();
-    assert_eq!(quarantined.get(QuarantineReason::SchemaChanged.as_str()), Some(&1));
+    assert_eq!(quarantined.get(QuarantineReason::SchemaChanged.as_str()), Some(&2));
 }

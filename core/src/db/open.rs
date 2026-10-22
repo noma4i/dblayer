@@ -83,6 +83,7 @@ impl Shared {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenReport {
     pub recreated: Option<RecreateReason>,
+    pub changed_models: Vec<String>,
     pub reset_models: Vec<String>,
 }
 
@@ -118,12 +119,12 @@ impl Db {
             None => Store::open_in_memory()?,
         };
         let boot = store.boot(&models, data_version)?;
-        let reset_models = match boot.verdict {
-            ManifestVerdict::CacheOnly { models } => models,
-            ManifestVerdict::Incompatible => models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect(),
-            ManifestVerdict::Fresh | ManifestVerdict::Compatible => Vec::new(),
+        let changed_models = match &boot.verdict {
+            ManifestVerdict::CacheOnly { models } => models.clone(),
+            _ => Vec::new(),
         };
-        let opened = OpenReport { recreated: store.recreated(), reset_models };
+        let reset_models = boot.reset_models;
+        let opened = OpenReport { recreated: store.recreated(), changed_models, reset_models };
         recover_operations(&store, &models)?;
         store.mark_ready();
         let ephemeral = Ephemerals::new(&models);

@@ -1,14 +1,19 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::Value;
 
-use crate::ddl::{fingerprint, fts_tables, manifest_read, manifest_stamp, manifest_write, REVISION_SEQ_KEY};
+use crate::ddl::{fingerprint, fts_tables, manifest_read, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ScopeKey;
+use crate::nodes::read_trees;
 use crate::operation::{delete_operation, quarantine_add, read_value, Operation, QuarantineReason};
+use crate::schema::MergeRule;
 use crate::syncstate::clear_sync;
 
-use super::{Inner, Store, StoreError, StoreEvent};
+use super::rows::fetch_stored;
+use super::shape::leaf_value;
+use super::{save_pending, Inner, ModelInfo, Store, StoreError, StoreEvent};
 
 fn like_pattern(prefix: &str) -> String {
     let mut pattern = String::new();
@@ -111,6 +116,93 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
     clear_sync(connection, None)?;
     clear_all(connection)?;
     Ok(())
+}
+
+pub(crate) fn models_to_reset(models: &BTreeMap<String, ModelInfo>, changed: &[String]) -> Vec<String> {
+    let mut reset: BTreeSet<String> = changed.iter().cloned().collect();
+    if changed.iter().any(|model| models.get(model).is_none_or(|info| !info.spec.is_local())) {
+        reset.extend(models.iter().filter(|(_, info)| !info.spec.is_memory() && !info.spec.is_local()).map(|(key, _)| key.clone()));
+    }
+    reset.into_iter().collect()
+}
+
+pub(crate) struct PendingValue {
+    model: String,
+    row_id: String,
+    path: String,
+    value: Value,
+}
+
+fn local_paths(info: &ModelInfo) -> Vec<String> {
+    let mut paths = Vec::new();
+    for field in &info.spec.fields {
+        match &field.merge {
+            Some(MergeRule::Local) => paths.push(field.name.clone()),
+            Some(rule) => paths.extend(rule.local_keys().map(|key| format!("{}.{key}", field.name))),
+            None => {}
+        }
+    }
+    paths
+}
+
+pub(crate) fn stash_local_values(connection: &Connection, models: &BTreeMap<String, ModelInfo>, reset: &[String], changed: &[String]) -> Result<Vec<PendingValue>, StoreError> {
+    let tables = row_tables(connection)?;
+    let mut stash = Vec::new();
+    for model in reset {
+        let Some(info) = models.get(model).filter(|info| !info.spec.is_local()) else { continue };
+        for (owner, value) in read_trees(connection, "local_pending", &["model", "row_id", "path"], "model = ?1", &[rusqlite::types::Value::Text(model.clone())])? {
+            if let [_, rusqlite::types::Value::Text(row_id), rusqlite::types::Value::Text(path)] = owner.as_slice() {
+                stash.push(PendingValue { model: model.clone(), row_id: row_id.clone(), path: path.clone(), value });
+            }
+        }
+        let paths = local_paths(info);
+        if paths.is_empty() || !tables.contains(&info.table) {
+            continue;
+        }
+        if changed.contains(model) {
+            stash_surviving_columns(connection, info, model, &paths, &mut stash)?;
+            continue;
+        }
+        let ids: Vec<String> = connection.prepare(&format!("SELECT id FROM {}", info.table))?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+        for (id, stored) in fetch_stored(connection, info, &ids, false)? {
+            for path in &paths {
+                let found = match path.split_once('.') {
+                    None => stored.row.get(path),
+                    Some((name, key)) => stored.row.get(name).and_then(|object| object.get(key)),
+                };
+                if let Some(value) = found.filter(|value| !value.is_null()) {
+                    stash.push(PendingValue { model: model.clone(), row_id: id.clone(), path: path.clone(), value: value.clone() });
+                }
+            }
+        }
+    }
+    Ok(stash)
+}
+
+fn stash_surviving_columns(connection: &Connection, info: &ModelInfo, model: &str, paths: &[String], stash: &mut Vec<PendingValue>) -> Result<(), StoreError> {
+    let columns: BTreeMap<String, String> = connection
+        .prepare(&format!("SELECT name, type FROM pragma_table_info('{}')", info.table))?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    for plan in &info.layout.fields {
+        let FieldPlan::Leaf { field, leaf } = plan else { continue };
+        if !paths.contains(field) || columns.get(&leaf.column).is_none_or(|declared| !declared.eq_ignore_ascii_case(leaf.ty.as_sql())) {
+            continue;
+        }
+        let mut statement = connection.prepare(&format!("SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL", column = leaf.column, table = info.table))?;
+        let cells = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, rusqlite::types::Value>(1)?)))?;
+        for cell in cells {
+            let (row_id, cell) = cell?;
+            if let Some(value) = leaf_value(leaf, Some(&cell)) {
+                stash.push(PendingValue { model: model.to_string(), row_id, path: field.clone(), value });
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn restore_local_values(connection: &Connection, stash: &[PendingValue]) -> Result<(), StoreError> {
+    stash.iter().try_for_each(|item| save_pending(connection, &item.model, &item.row_id, &item.path, &item.value))
 }
 
 pub(crate) fn current_fingerprints(inner: &Inner) -> BTreeMap<String, String> {

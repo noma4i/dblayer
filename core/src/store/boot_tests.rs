@@ -69,7 +69,7 @@ fn committed_work_survives_dropping_the_store_without_checkpoint() {
 }
 
 #[test]
-fn fingerprint_change_clears_only_that_model_and_quarantines_its_operations() {
+fn fingerprint_change_clears_every_server_model_and_quarantines_its_operations() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
@@ -89,9 +89,8 @@ fn fingerprint_change_clears_only_that_model_and_quarantines_its_operations() {
     let (store, report) = reopen(&path, &[changed, items_spec()], None);
     assert_eq!(report.verdict, ManifestVerdict::CacheOnly { models: vec!["messages".into()] });
     assert_eq!(store.row_count("messages").unwrap(), 0);
-    assert_eq!(store.row_count("items").unwrap(), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member WHERE model = 'messages'"), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member WHERE model = 'items'"), 1);
+    assert_eq!(store.row_count("items").unwrap(), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine WHERE reason = 'schema-changed' AND model = 'messages'"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);
@@ -99,7 +98,7 @@ fn fingerprint_change_clears_only_that_model_and_quarantines_its_operations() {
 }
 
 #[test]
-fn renaming_a_relation_resets_only_its_model() {
+fn renaming_a_relation_resets_every_server_model() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     let mut first = messages_spec();
@@ -112,7 +111,7 @@ fn renaming_a_relation_resets_only_its_model() {
     }
     let (store, report) = reopen(&path, &[renamed, items_spec()], None);
     assert_eq!(report.verdict, ManifestVerdict::CacheOnly { models: vec!["messages".into()] });
-    assert_eq!(store.row_count("items").unwrap(), 1);
+    assert_eq!(store.row_count("items").unwrap(), 0);
 }
 
 #[test]
@@ -130,7 +129,7 @@ fn added_model_clears_nothing() {
 }
 
 #[test]
-fn removed_model_loses_its_cache_and_fingerprint() {
+fn removed_model_clears_every_server_model_and_its_fingerprint() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
@@ -141,8 +140,8 @@ fn removed_model_loses_its_cache_and_fingerprint() {
     assert_eq!(report.verdict, ManifestVerdict::CacheOnly { models: vec!["items".into()] });
     assert!(!store.table_exists("row_items").unwrap());
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key = 'fingerprint:items'"), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member WHERE model = 'items'"), 0);
-    assert_eq!(store.row_count("messages").unwrap(), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0);
+    assert_eq!(store.row_count("messages").unwrap(), 0);
 }
 
 #[test]

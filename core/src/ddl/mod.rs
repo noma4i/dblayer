@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::schema::{FieldKind, FieldSpec, ModelSpec, Sort};
+use crate::schema::{AssociationSpec, FieldKind, FieldSpec, ModelSpec, Sort, Storage};
 
 mod layout;
 pub use layout::*;
@@ -582,6 +582,8 @@ struct RelationFingerprint<'a> {
 struct ModelFingerprint<'a> {
     fields: Vec<&'a FieldSpec>,
     relations: Vec<RelationFingerprint<'a>>,
+    associations: Vec<&'a AssociationSpec>,
+    storage: Storage,
     indexes: Vec<&'a Vec<String>>,
     ddl: Vec<String>,
 }
@@ -601,6 +603,8 @@ pub fn fingerprint(model: &ModelSpec) -> String {
         })
         .collect();
     relations.sort_by(|left, right| left.name.cmp(right.name));
+    let mut associations: Vec<&AssociationSpec> = model.associations.iter().collect();
+    associations.sort_by(|left, right| left.name.cmp(&right.name));
     let mut indexes: Vec<&Vec<String>> = model.indexes.iter().collect();
     indexes.sort();
     let mut canonical = model.clone();
@@ -609,7 +613,7 @@ pub fn fingerprint(model: &ModelSpec) -> String {
     ddl.extend(layout(&canonical).table_statements(canonical.is_memory()));
     ddl.extend(create_index_statements(&canonical));
     ddl.sort();
-    let text = serde_json::to_string(&ModelFingerprint { fields, relations, indexes, ddl }).expect("fingerprint serializes");
+    let text = serde_json::to_string(&ModelFingerprint { fields, relations, associations, storage: model.storage, indexes, ddl }).expect("fingerprint serializes");
     Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

@@ -139,12 +139,12 @@ fn inv_open_03_the_open_report_names_what_the_open_discarded() {
     let path = directory.path().join("db.sqlite");
     std::fs::write(&path, "this is not a database ".repeat(400)).unwrap();
     let report = Db::open(&path, all_specs(), None).unwrap().open_report().clone();
-    assert_eq!(report, OpenReport { recreated: Some(RecreateReason::UnreadableFile), reset_models: vec![] });
+    assert_eq!(report, OpenReport { recreated: Some(RecreateReason::UnreadableFile), changed_models: vec![], reset_models: vec![] });
 
-    assert_eq!(Db::open(&path, all_specs(), None).unwrap().open_report(), &OpenReport { recreated: None, reset_models: vec![] });
+    assert_eq!(Db::open(&path, all_specs(), None).unwrap().open_report(), &OpenReport { recreated: None, changed_models: vec![], reset_models: vec![] });
 
     let mut changed = all_specs();
     changed[1].fields.push(crate::schema::FieldSpec::scalar("extra", crate::value::ScalarKind::Str).optional());
     let report = Db::open(&path, changed, None).unwrap().open_report().clone();
-    assert_eq!(report, OpenReport { recreated: None, reset_models: vec!["moments".to_string()] });
+    assert_eq!(report, OpenReport { recreated: None, changed_models: vec!["moments".to_string()], reset_models: ["chats", "messages", "moments", "users", "vibes"].map(String::from).to_vec() });
 }

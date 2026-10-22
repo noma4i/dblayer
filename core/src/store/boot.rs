@@ -7,7 +7,8 @@ use crate::operation::QuarantineReason;
 use crate::schema::ModelSpec;
 
 use super::reset::{
-    clear_intent, current_fingerprints, finish_interrupted_reset, retire_operations, wipe_all_cache, wipe_model_cache, write_intent,
+    clear_intent, current_fingerprints, finish_interrupted_reset, models_to_reset, restore_local_values, retire_operations, stash_local_values, wipe_all_cache,
+    wipe_model_cache, write_intent,
 };
 use super::tombstones::{prune_tombstones, TombstoneRetention};
 use super::{ModelInfo, Store, StoreError};
@@ -17,6 +18,7 @@ pub struct BootReport {
     pub verdict: ManifestVerdict,
     pub finished_interrupted_reset: bool,
     pub tombstone_drops: usize,
+    pub reset_models: Vec<String>,
 }
 
 impl Store {
@@ -33,6 +35,7 @@ impl Store {
         let verdict = manifest_verify(&inner.connection, data_version, &fingerprints)?;
         let now = inner.now_ms();
 
+        let mut reset_models: Vec<String> = Vec::new();
         match &verdict {
             ManifestVerdict::Fresh | ManifestVerdict::Compatible => {
                 create_model_tables(&inner.connection, models)?;
@@ -40,27 +43,30 @@ impl Store {
                 manifest_stamp(&transaction, data_version, &fingerprints)?;
                 transaction.commit()?;
             }
-            ManifestVerdict::CacheOnly { models: mismatched } => {
-                write_intent(&inner.connection, "cache_only", mismatched, now)?;
+            ManifestVerdict::CacheOnly { models: changed } => {
+                let reset = models_to_reset(&inner.models, changed);
                 let transaction = inner.connection.unchecked_transaction()?;
-                for model in mismatched {
+                let stash = stash_local_values(&transaction, &inner.models, &reset, changed)?;
+                for model in &reset {
                     wipe_model_cache(&transaction, model, &table_name(model), true)?;
                     if !fingerprints.contains_key(model) {
                         transaction.execute("DELETE FROM manifest WHERE key = ?1", params![fingerprint_key(model)])?;
                     }
                 }
-                retire_operations(&transaction, Some(mismatched), Some(QuarantineReason::SchemaChanged))?;
+                restore_local_values(&transaction, &stash)?;
+                retire_operations(&transaction, Some(&reset), Some(QuarantineReason::SchemaChanged))?;
                 transaction.commit()?;
                 create_model_tables(&inner.connection, models)?;
                 let transaction = inner.connection.unchecked_transaction()?;
                 manifest_stamp(&transaction, data_version, &fingerprints)?;
-                clear_intent(&transaction)?;
                 transaction.commit()?;
+                reset_models = reset;
             }
             ManifestVerdict::Incompatible => {
                 write_intent(&inner.connection, "incompatible", &[], now)?;
                 let transaction = inner.connection.unchecked_transaction()?;
                 wipe_all_cache(&transaction, true)?;
+                reset_models = models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect();
                 rebuild_cache_tables(&transaction)?;
                 retire_operations(&transaction, None, Some(QuarantineReason::SchemaChanged))?;
                 transaction.execute("DELETE FROM manifest WHERE key LIKE 'fingerprint:%'", [])?;
@@ -84,6 +90,6 @@ impl Store {
         }
 
         let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT)?;
-        Ok(BootReport { verdict, finished_interrupted_reset, tombstone_drops })
+        Ok(BootReport { verdict, finished_interrupted_reset, tombstone_drops, reset_models })
     }
 }

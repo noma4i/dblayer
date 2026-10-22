@@ -308,7 +308,7 @@ fn memory_models_get_temp_tables_with_their_indexes() {
 }
 
 #[test]
-fn ephemeral_fields_and_storage_do_not_change_the_fingerprint() {
+fn ephemeral_fields_do_not_change_the_fingerprint() {
     let plain = fingerprint(&messages());
     let with_ephemeral = ModelSpec {
         ephemeral: vec![crate::schema::EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false)))],
@@ -316,6 +316,18 @@ fn ephemeral_fields_and_storage_do_not_change_the_fingerprint() {
     };
 
     assert_eq!(fingerprint(&with_ephemeral), plain);
+}
+
+#[test]
+fn associations_and_storage_change_the_fingerprint() {
+    let plain = fingerprint(&messages());
+    let mut with_association = messages();
+    with_association.associations.push(crate::schema::AssociationSpec::new("author", crate::schema::AssociationKind::BelongsTo, "users", "authorId"));
+    let mut local = messages();
+    local.storage = crate::schema::Storage::Local;
+
+    assert_ne!(fingerprint(&with_association), plain);
+    assert_ne!(fingerprint(&local), plain);
 }
 
 #[test]
