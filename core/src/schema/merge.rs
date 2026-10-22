@@ -41,6 +41,15 @@ fn order(left: &Value, right: &Value) -> Option<Ordering> {
     }
 }
 
+fn monotonic_class(value: &Value) -> u8 {
+    match value {
+        Value::Null => 0,
+        Value::Number(_) => 1,
+        Value::String(_) => 2,
+        _ => 3,
+    }
+}
+
 fn tier(tiers: &[Vec<String>], value: &Value) -> Option<usize> {
     let text = value.as_str()?;
     tiers.iter().position(|tier| tier.iter().any(|name| name == text))
@@ -67,6 +76,18 @@ impl MergeRule {
             _ => None,
         };
         keys.into_iter().flatten().filter(|(_, rule)| **rule == MergeRule::Local).map(|(key, _)| key.as_str())
+    }
+
+    pub fn rank(&self, left: &Value, right: &Value) -> Ordering {
+        match self {
+            MergeRule::Present => (!left.is_null()).cmp(&!right.is_null()),
+            MergeRule::NonEmpty => (!is_empty(left)).cmp(&!is_empty(right)),
+            MergeRule::Positive => is_positive(left).cmp(&is_positive(right)),
+            MergeRule::Monotonic => monotonic_class(left).cmp(&monotonic_class(right)).then_with(|| order(left, right).unwrap_or(Ordering::Equal)),
+            MergeRule::Ladder { tiers } if !left.is_null() && !right.is_null() => tier(tiers, left).cmp(&tier(tiers, right)),
+            MergeRule::Ladder { .. } => (!left.is_null()).cmp(&!right.is_null()),
+            MergeRule::Local | MergeRule::Keys { .. } => Ordering::Equal,
+        }
     }
 
     pub fn apply(&self, stored: Option<&Value>, incoming: Value) -> Value {

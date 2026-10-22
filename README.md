@@ -15,6 +15,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - **GraphQL without glue code.** Register your operations and point models at them. Responses of queries, mutations and subscription events are normalized into rows by one set of rules. Refetching after mutations, reconnects and app resume is automatic.
 - **No flicker.** One change is one commit. Observers see cascades, replacements and id swaps as a single transition, in order. Pull-to-refresh replaces data in one commit with no empty state in between.
 - **Encrypted sessions.** The core builds and opens encrypted requests, numbers mutations and stores a pending mutation before it is sent, so a lost answer is repeated unchanged after a restart. Session recovery delivers the answer to its queued mutation or upload step in Swift and Kotlin. The app supplies only the HTTP post and the credential storage. See [server sync](docs/server-sync.md).
+- **Cloud sync of local data.** Local models and `local: true` attributes follow the user across devices through CloudKit on iOS and Google Drive on Android. The core journals, merges per attribute and retries, the app supplies a 3-call adapter. See [cloud sync](docs/cloud.md).
 - **Encrypted cable primitives.** Rust `CableLink` authenticates the server pin, creates the encrypted hello and encrypts subscription frames with directional keys. See [cable protocol](docs/cable-protocol.md).
 - **Files built in.** A `file` field stores binary data. You never choose where bytes live: SQLite or disk.
 - **Background delivery.** Observers receive updates from library threads. Disk reads use a bounded WAL connection pool beside the writer. Releasing synchronization stops its background work. See [threading](docs/threading.md).
@@ -35,6 +36,7 @@ One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings an
 - [Sync state of a record](docs/sync-state.md)
 - [Server sync](docs/server-sync.md)
 - [Files](docs/files.md)
+- [Cloud sync of local data](docs/cloud.md)
 - [Threading and performance](docs/threading.md)
 - [Testing](docs/testing.md)
 - [Architecture](docs/architecture.md)

@@ -81,7 +81,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) online: Arc<core::Connectivity>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -101,9 +101,9 @@ impl Database {
         let db = Db::open_with(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), DbConfig { cache_rows: config.cache_rows as usize })?;
         db.set_clock(clock.clone());
         let (transport, session) = wire(&db, &clock)?;
-        let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock, SyncConfig::default()));
+        let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig::default()));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { db, sync, session, wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { db, sync, session, clock, online: core::Connectivity::new(true), wires: Arc::new(wires) }))
     }
 
     fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {
@@ -383,7 +383,7 @@ impl Database {
         Ok(())
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
-    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone() })) }
+    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone(), cloud: self.online.clone() })) }
     pub async fn upload(&self, model: String, row_id: String, input_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;

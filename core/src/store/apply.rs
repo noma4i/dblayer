@@ -7,6 +7,8 @@ use crate::commit::{
     CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition,
     EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
+use crate::cloud::{record_local, write_book, LocalEdit};
+use crate::commit::WriteOrigin;
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
 use crate::operation::{delete_operation, failure_cells, read_rows, read_value, write_rows, write_value};
@@ -271,6 +273,18 @@ fn apply_upsert(
     if let Some(old) = old_row {
         moves.extend(membership_moves(connection, info, model, &id, old, row)?);
     }
+    if !info.spec.cloud.is_empty() {
+        let fields: BTreeMap<String, Value> = info
+            .spec
+            .cloud
+            .iter()
+            .filter(|name| kind == RowChangeKind::Inserted || changed.contains(*name))
+            .map(|name| (name.clone(), row.get(name).cloned().unwrap_or(Value::Null)))
+            .collect();
+        if !fields.is_empty() {
+            result.edits.push(LocalEdit { model: model.to_string(), row_id: id.clone(), fields });
+        }
+    }
     result.push(model, &id, kind, changed);
     Ok(())
 }
@@ -397,6 +411,7 @@ fn membership_moves(
 #[derive(Default)]
 struct RowChanges {
     changes: Vec<RowChange>,
+    edits: Vec<LocalEdit>,
 }
 
 impl RowChanges {
@@ -427,6 +442,7 @@ pub(crate) fn apply_envelope(
     let mut changes = RowChanges::default();
     let mut moves: Vec<ScopeOp> = Vec::new();
     let mut destroyed: Vec<Destroyed> = Vec::new();
+    let mut cloud_deletes: Vec<(String, String)> = Vec::new();
     let mut replaced: Vec<(RowRef, crate::identity::RowId)> = Vec::new();
     let mut result = CommitResult::noop(envelope.tx_id);
     let lands_rows = envelope.entity_ops.iter().any(|operation| matches!(operation, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
@@ -455,6 +471,9 @@ pub(crate) fn apply_envelope(
                     tombstoned = true;
                 }
                 if removed > 0 {
+                    if info.spec.is_local() && !info.spec.cloud.is_empty() && *reason == DestroyReason::Local {
+                        cloud_deletes.push((model.to_string(), id.as_str().to_string()));
+                    }
                     changes.push(model, id.as_str(), RowChangeKind::Destroyed, BTreeSet::new());
                     if let DestroyReason::Replaced { by } = reason {
                         replaced.push((RowRef::new(model.clone(), id.clone()), by.clone()));
@@ -466,6 +485,14 @@ pub(crate) fn apply_envelope(
         }
     }
 
+    if envelope.origin == WriteOrigin::Optimistic && (!changes.edits.is_empty() || !cloud_deletes.is_empty()) {
+        result.cloud_logged = record_local(connection, &changes.edits, &cloud_deletes, now_ms)?;
+        wrote |= result.cloud_logged;
+    }
+    if let Some(book) = &envelope.cloud {
+        write_book(connection, book)?;
+        wrote = true;
+    }
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
     wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;

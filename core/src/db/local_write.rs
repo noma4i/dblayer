@@ -120,7 +120,7 @@ fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId, row: &Map<
     Ok(operations)
 }
 
-pub(super) fn plan_fault(error: PlanCommitError<DbError>) -> DbError {
+pub(crate) fn plan_fault(error: PlanCommitError<DbError>) -> DbError {
     match error {
         PlanCommitError::Plan(error) => error,
         PlanCommitError::Store(error) => error.into(),

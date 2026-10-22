@@ -132,6 +132,32 @@ impl ModelSpec {
         }
     }
 
+    pub(super) fn check_cloud(&self) -> Result<(), DeclarationError> {
+        if self.cloud.is_empty() {
+            return Ok(());
+        }
+        if self.is_memory() {
+            return Err(DeclarationError::CloudMemory);
+        }
+        let names: Vec<&str> = self.cloud.iter().map(String::as_str).collect();
+        if let Some(name) = duplicates(&names).first() {
+            return Err(DeclarationError::CloudDuplicateAttribute(name.to_string()));
+        }
+        for name in &self.cloud {
+            if name == "id" || self.ephemeral_field(name).is_some() {
+                return Err(DeclarationError::CloudReserved(name.clone()));
+            }
+            let field = self.field(name).ok_or_else(|| DeclarationError::CloudUnknownAttribute(name.clone()))?;
+            if field.kind == FieldKind::File {
+                return Err(DeclarationError::CloudFile(name.clone()));
+            }
+            if !self.is_local() && !field.is_local() {
+                return Err(DeclarationError::CloudNotLocal(name.clone()));
+            }
+        }
+        Ok(())
+    }
+
     fn check_local_has_no_server(&self) -> Result<(), DeclarationError> {
         let server = self.actions.first().map(|action| action.name.as_str())
             .or_else(|| self.listens.first().map(|_| "listen"))

@@ -41,7 +41,7 @@ pub use open::{Db, DbConfig, OpenReport};
 pub use replace::{OnAbsent, ReplaceRequest};
 pub use row::{Record, Row};
 pub use warm::Peeked;
-pub(crate) use local_write::read_outbox;
+pub(crate) use local_write::{plan_fault, read_outbox};
 pub(crate) use open::locked;
 pub(crate) use prior::Prior;
 pub use watch::{Change, CountChange, Related};

@@ -72,7 +72,7 @@ END",
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 26] = [
+const CORE_STATEMENTS: [&str; 34] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -282,6 +282,69 @@ const CORE_STATEMENTS: [&str; 26] = [
   text TEXT,
   PRIMARY KEY (model, row_id, path, node)
 ) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS cloud_replica (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  replica TEXT NOT NULL,
+  clock_ms INTEGER NOT NULL,
+  clock_count INTEGER NOT NULL
+) STRICT",
+    "CREATE TABLE IF NOT EXISTS cloud_field (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  clock_ms INTEGER NOT NULL,
+  clock_count INTEGER NOT NULL,
+  replica TEXT NOT NULL,
+  PRIMARY KEY (model, row_id, field)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS cloud_field_node (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  node INTEGER NOT NULL,
+  parent INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT,
+  kind INTEGER NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (model, row_id, field, node)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS cloud_row (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  clock_ms INTEGER NOT NULL,
+  clock_count INTEGER NOT NULL,
+  replica TEXT NOT NULL,
+  PRIMARY KEY (model, row_id)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS cloud_log (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  clock_ms INTEGER NOT NULL,
+  clock_count INTEGER NOT NULL,
+  replica TEXT NOT NULL
+) STRICT",
+    "CREATE INDEX IF NOT EXISTS cloud_log_key ON cloud_log (model, row_id, field)",
+    "CREATE TABLE IF NOT EXISTS cloud_log_node (
+  seq INTEGER NOT NULL,
+  node INTEGER NOT NULL,
+  parent INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT,
+  kind INTEGER NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (seq, node)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS cloud_cursor (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  token TEXT NOT NULL
+) STRICT",
 ];
 
 #[derive(Debug, thiserror::Error)]

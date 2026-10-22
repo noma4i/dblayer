@@ -40,6 +40,18 @@ pub enum DeclarationError {
     InvalidUploadBatch(String),
     #[error("model key is empty")]
     EmptyModelKey,
+    #[error("cloud attribute {0} is not declared")]
+    CloudUnknownAttribute(String),
+    #[error("cloud attribute {0} is listed twice")]
+    CloudDuplicateAttribute(String),
+    #[error("cloud attribute {0} is a file, files sync in 6.4.0")]
+    CloudFile(String),
+    #[error("cloud attribute {0} must be local: true on a model that is not storage: :local")]
+    CloudNotLocal(String),
+    #[error("a memory model cannot sync to the cloud")]
+    CloudMemory,
+    #[error("cloud attribute {0} cannot be id or ephemeral")]
+    CloudReserved(String),
     #[error("model key {0} is declared twice")]
     DuplicateModelKey(String),
     #[error("model has no fields")]
@@ -1141,6 +1153,7 @@ impl ModelSpec {
         self.check_fields()?;
         self.check_ephemeral()?;
         self.check_storage()?;
+        self.check_cloud()?;
         self.check_indexes()?;
         let indexed: HashSet<&str> = self.fields.iter().filter(|field| field.indexed).map(|field| field.name.as_str()).collect();
         let declared: HashSet<&str> = self.fields.iter().map(|field| field.name.as_str()).collect();
@@ -1281,6 +1294,8 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
     faults
 }
 
+#[cfg(test)]
+mod cloud_tests;
 #[cfg(test)]
 mod ephemeral_tests;
 #[cfg(test)]

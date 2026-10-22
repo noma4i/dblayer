@@ -21,6 +21,7 @@ pub enum WriteOrigin {
     Patch,
     Replace,
     Optimistic,
+    Cloud,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,6 +206,7 @@ pub struct CommitEnvelope {
     pub origin: WriteOrigin,
     pub generation: Generation,
     pub writes_local: bool,
+    pub cloud: Option<crate::cloud::CloudBook>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -235,11 +237,12 @@ impl CommitEnvelope {
             origin,
             generation,
             writes_local: false,
+            cloud: None,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none()
+        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.cloud.is_none()
     }
 
     pub fn validate(&self, current: Generation) -> Result<(), EnvelopeFault> {
@@ -312,6 +315,7 @@ pub struct CommitResult {
     pub operations: BTreeSet<i64>,
     pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
+    pub cloud_logged: bool,
 }
 
 impl CommitResult {
@@ -325,6 +329,7 @@ impl CommitResult {
             operations: BTreeSet::new(),
             replaced: Vec::new(),
             unknown_operation_acks: 0,
+            cloud_logged: false,
         }
     }
 
