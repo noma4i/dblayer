@@ -959,6 +959,8 @@ pub struct ModelSpec {
     pub changes: Vec<ChangeRead>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub change_feed: Option<ChangeFeed>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cloud: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -998,6 +1000,7 @@ impl ModelSpec {
             listens: Vec::new(),
             changes: Vec::new(),
             change_feed: None,
+            cloud: Vec::new(),
         }
     }
 
