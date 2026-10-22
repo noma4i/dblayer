@@ -46,6 +46,7 @@ pub(crate) struct Shared {
     pub dispatch: Arc<Dispatch>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub cloud_changes: Arc<tokio::sync::watch::Sender<u64>>,
+    pub connectivity: Arc<crate::transport::Connectivity>,
     pub reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>,
     pub ephemeral: Arc<Ephemerals>,
     pub executor: Arc<Executor>,
@@ -150,6 +151,7 @@ impl Db {
             dispatch: dispatch.clone(),
             outbox_changes,
             cloud_changes,
+            connectivity: crate::transport::Connectivity::new(true),
             reset_listeners,
             ephemeral: ephemeral.clone(),
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
@@ -159,6 +161,10 @@ impl Db {
         Dispatch::start(dispatch, Arc::downgrade(&shared))?;
         Ephemerals::start(ephemeral, Arc::downgrade(&shared))?;
         Ok(Db { shared })
+    }
+
+    pub fn connectivity(&self) -> Arc<crate::transport::Connectivity> {
+        self.shared.connectivity.clone()
     }
 
     pub fn open_report(&self) -> &OpenReport {

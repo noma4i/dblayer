@@ -167,8 +167,8 @@ pub struct Device {
 pub fn device_with(db: Db, fake: &Arc<FakeCloud>, start_ms: u64) -> Device {
     let clock = ManualClock::new(Duration::from_millis(start_ms));
     db.set_clock(Arc::new(clock.clone()));
-    let online = Connectivity::new(true);
-    let cloud = Cloud::attach(&db, fake.clone(), Arc::new(clock.clone()), online.clone());
+    let online = db.connectivity();
+    let cloud = Cloud::attach(&db, fake.clone(), Arc::new(clock.clone()));
     Device { db, cloud, clock, online }
 }
 

@@ -85,7 +85,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) online: Arc<core::Connectivity>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -107,7 +107,7 @@ impl Database {
         let (transport, session) = wire(&db, &clock)?;
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig::default()));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, online: core::Connectivity::new(true), wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, wires: Arc::new(wires) }))
     }
 
     pub async fn open(
@@ -391,7 +391,7 @@ impl Database {
         Ok(())
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
-    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone(), cloud: self.online.clone() })) }
+    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone(), online: self.db.connectivity() })) }
     pub async fn upload(&self, model: String, row_id: String, input_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;

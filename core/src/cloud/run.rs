@@ -44,7 +44,13 @@ impl From<DbError> for CloudError {
 }
 
 impl Cloud {
-    pub fn attach(db: &Db, io: Arc<dyn CloudIo>, clock: Arc<dyn Clock>, online: Arc<Connectivity>) -> Cloud {
+    #[cfg(test)]
+    pub(crate) fn connectivity(&self) -> Arc<Connectivity> {
+        self.inner.online.clone()
+    }
+
+    pub fn attach(db: &Db, io: Arc<dyn CloudIo>, clock: Arc<dyn Clock>) -> Cloud {
+        let online = db.connectivity();
         let state = watch::channel(CloudState::Idle).0;
         Cloud { inner: Arc::new(Inner { db: db.clone(), io, clock, online, wake: Notify::new(), state, pass: tokio::sync::Mutex::new(()), task: Mutex::new(None) }) }
     }

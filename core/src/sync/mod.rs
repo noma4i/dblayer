@@ -164,6 +164,7 @@ impl Sync {
             }
         }));
         let lifetime = Lifetime { _stop: stop, owner: owner.clone() };
+        let connectivity = db.connectivity();
         let inner = Inner {
             stopped,
             db,
@@ -182,7 +183,7 @@ impl Sync {
             owner,
             outbox_gate: tokio::sync::Mutex::new(()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
-            connectivity: Connectivity::new(true),
+            connectivity,
             wake: Mutex::new(None),
             replaced: Mutex::new(HashMap::new()),
             outcomes: Mutex::new(send::Outcomes::default()),

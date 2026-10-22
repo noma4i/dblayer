@@ -93,16 +93,18 @@ impl ByteProgress {
 pub struct PutReply { pub status: u16, pub etag: Option<String> }
 
 #[derive(uniffi::Object)]
-pub struct OnlineSink { pub(crate) sync: Option<crate::sync::Sync>, pub(crate) cloud: Arc<core::Connectivity> }
+pub struct OnlineSink { pub(crate) sync: Option<crate::sync::Sync>, pub(crate) online: Arc<core::Connectivity> }
 
 #[uniffi::export]
 impl OnlineSink {
     pub fn set_online(&self, online: bool) {
-        if let (Some(sync), Ok(executor)) = (&self.sync, super::database::executor()) {
-            let _entered = executor.enter();
-            sync.set_online(online);
+        match (&self.sync, super::database::executor()) {
+            (Some(sync), Ok(executor)) => {
+                let _entered = executor.enter();
+                sync.set_online(online);
+            }
+            _ => self.online.set_online(online),
         }
-        self.cloud.set_online(online);
     }
 }
 

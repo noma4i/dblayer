@@ -12,14 +12,14 @@ pub trait CloudStateListener: Send + Sync {
 
 #[derive(uniffi::Object)]
 pub struct CloudLink {
-    cloud: Cloud,
+    pub(super) cloud: Cloud,
 }
 
 #[uniffi::export]
 impl Database {
     pub fn connect_cloud(&self, io: Arc<dyn CloudIo>) -> Result<Arc<CloudLink>, DbError> {
         let _entered = executor()?.enter();
-        let cloud = Cloud::attach(&self.db, io, self.clock.clone(), self.online.clone());
+        let cloud = Cloud::attach(&self.db, io, self.clock.clone());
         cloud.start();
         Ok(Arc::new(CloudLink { cloud }))
     }

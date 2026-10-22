@@ -77,7 +77,7 @@ pub struct EncryptedClient {
     credentials: Arc<dyn CredentialSlot>,
     db: Db,
     pub(super) clock: Arc<dyn Clock>,
-    pub(super) online: Arc<crate::transport::Connectivity>,
+    pub(crate) online: Arc<crate::transport::Connectivity>,
     credential: Mutex<Option<String>>,
     mutations: Gate<()>,
     retry_events: RetryEvents,
@@ -152,7 +152,8 @@ impl EncryptedClient {
             return Err(TransportError::Decode(format!("the origin must be https, or http on a development host, without a path: {}", config.origin)));
         }
         let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Decode(error.to_string()))?;
-        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, online: crate::transport::Connectivity::new(true), credential: Mutex::new(None), mutations: Gate::new(()), retry_events: RetryEvents::default() })
+        let online = db.connectivity();
+        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: Mutex::new(None), mutations: Gate::new(()), retry_events: RetryEvents::default() })
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {

@@ -6,7 +6,7 @@ use rsa::{RsaPrivateKey, Oaep, pkcs1::DecodeRsaPrivateKey, pkcs8::EncodePublicKe
 use serde_json::{json, Value};
 use sha1::Sha1;
 use super::*;
-use super::bootstrap::{fetch_with, request_plain, request_text, request_digest, accept};
+use super::bootstrap::{fetch, request_plain, request_text, request_digest, accept};
 use crate::pacing::ManualClock;
 
 fn kat() -> Value { serde_json::from_str(include_str!("../../../../fixtures/bootstrap-config/bootstrap_kat.json")).unwrap() }
@@ -207,4 +207,8 @@ async fn fetch_needs_no_database_validates_before_http_and_distinguishes_service
         let http = Arc::new(Http { calls: AtomicUsize::new(0), status });
         assert!(matches!(fetch_with(&configuration(), AppPlatform::Ios, "1.2.3", None, http, &clock).await, Err(TransportError::Http { status: actual, .. }) if status == actual));
     }
+}
+
+async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn crate::pacing::Clock) -> Result<ServerConfig, TransportError> {
+    fetch(config, platform, version, build, http, clock, &crate::transport::retry::RetryEvents::default(), &crate::transport::Connectivity::new(true)).await
 }

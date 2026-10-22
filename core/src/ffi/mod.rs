@@ -94,6 +94,8 @@ pub(super) mod encrypted_tests;
 #[cfg(test)]
 mod lost_session_recovery_tests;
 #[cfg(test)]
+mod online_tests;
+#[cfg(test)]
 mod queued_detail_tests;
 #[cfg(test)]
 mod sealed_errors_tests;
