@@ -5,6 +5,12 @@ mod invalidate;
 mod land;
 mod live;
 mod load;
+#[allow(dead_code)]
+mod load_machine;
+#[cfg(test)]
+mod load_machine_tests;
+#[cfg(test)]
+mod load_machine_oracle_tests;
 mod node;
 mod normalize;
 mod online;
