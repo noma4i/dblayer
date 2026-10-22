@@ -233,3 +233,39 @@ async fn a_debounced_listen_subscribes_and_lands_its_frame_after_the_interval() 
     settle().await;
     assert_eq!(text_of(&rig, "moments", "m7"), Some("later".to_string()));
 }
+
+fn vibe_sub_variables(rig: &Rig) -> Vec<serde_json::Value> {
+    rig.transport.calls().into_iter().filter(|call| call.operation_name == "VibeEvents").map(|call| call.variables).collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn readers_with_different_params_open_separate_subscriptions_with_those_variables() {
+    let rig = rig();
+    let a = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
+    let b = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "b"}))).unwrap();
+    let a_again = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
+    settle().await;
+    let mut variables = vibe_sub_variables(&rig);
+    variables.sort_by_key(|value| value.to_string());
+    assert_eq!(variables, [json!({"vibeId": "a"}), json!({"vibeId": "b"})]);
+    drop((a, b, a_again));
+}
+
+#[tokio::test(start_paused = true)]
+async fn last_reader_of_a_param_set_closes_only_its_subscription_and_the_event_lands() {
+    let rig = rig();
+    let a = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
+    let a_again = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
+    let b = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "b"}))).unwrap();
+    settle().await;
+    drop(a);
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert_eq!(rig.transport.cancellations("VibeEvents"), 0);
+    drop(a_again);
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert_eq!(rig.transport.cancellations("VibeEvents"), 1);
+    rig.transport.emit("VibeEvents", SubscriptionEvent::Next(Response::data(json!({"momentEvent": moment("m9", "from b")}))));
+    settle().await;
+    assert_eq!(rig.db.query(&crate::query::Query::new("moments")).unwrap().iter().filter(|row| row.text("text") == Some("from b")).count(), 1);
+    drop(b);
+}

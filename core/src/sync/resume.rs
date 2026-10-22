@@ -56,7 +56,7 @@ impl Sync {
             Some(id)
         } else { None };
         let failures = self.inner.subscription_failures.subscribe();
-        let live = self.inner.acquire_live(model, relation);
+        let live = self.inner.acquire_live(model, relation, params);
         Ok(Watch { inner: self.inner.clone(), id, live, failures: Some(failures) })
     }
 

@@ -1,0 +1,11 @@
+model Document do
+  attribute :slug, :string
+  scope :bySlug do
+    parameter :slug, :string
+    parameter :source, :string
+    where slug: :slug
+    query "documentBySlug"
+    response from: "documentBySlug", shape: :list
+    subscribe "documentUpdated"
+  end
+end

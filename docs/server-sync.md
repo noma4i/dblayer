@@ -773,6 +773,38 @@ end
 - After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once.
 - Bursts of events are merged into one commit.
 
+### Subscriptions with arguments
+
+A scope with parameters sends the values of the read relation as the variables of its subscription. They are the same variables the load request sends for that read, without the page arguments:
+
+```ruby
+model Document do
+  attribute :slug, :string
+  scope :bySlug do
+    parameter :slug, :string
+    parameter :source, DocumentSource, default: "WEB"
+    where slug: :slug
+    query "documentBySlug"
+    response from: "documentBySlug", shape: :list
+    subscribe "documentUpdated"
+  end
+end
+```
+
+```swift
+let query = Document.bySlug("intro", source: .web)   // a screen that reads it opens documentUpdated(slug: "intro", source: WEB)
+```
+
+```kotlin
+val query = Document.bySlug("intro", DocumentSource.Web)   // a screen that reads it opens documentUpdated(slug: "intro", source: WEB)
+```
+
+- Each set of values has its own subscription. Readers with the same canonical values (the key of the scope window) share one. A reader with other values opens another.
+- The subscription closes some time after the last reader of its set leaves. The other sets stay open.
+- The application only reads the relation. It never opens or closes the subscription.
+- With `--schema`, the generator compares the arguments of the subscription document with the scope parameters by name and type. A required argument without a scope parameter, or an argument of another type, stops the generator with the file and line of `subscribe`. A scope parameter without an argument is allowed. Without `--schema` the arguments are not checked.
+- `subscribe` on a model (`listen`) takes no arguments.
+
 ### Model-level subscriptions
 
 A `subscribe` inside a scope lives while a screen reads the scope. For events that should reach the database for the whole session (presence, counters), declare `subscribe` on the model. It takes the same options:

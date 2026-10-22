@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use serde_json::{json, Map, Value};
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 
@@ -8,6 +9,7 @@ use crate::schema::UpdatesSpec;
 use crate::transport::EventSpec;
 
 use super::subscribe::{EventEffect, EventSubscription, SubscriptionDef};
+use super::variables::mapped_variables;
 use super::{locked, Inner};
 
 #[derive(Default)]
@@ -50,10 +52,11 @@ impl Inner {
         }
     }
 
-    pub(crate) fn acquire_live(self: &std::sync::Arc<Self>, model: &str, relation: &str) -> Vec<String> {
+    pub(crate) fn acquire_live(self: &std::sync::Arc<Self>, model: &str, relation: &str, params: &Map<String, Value>) -> Vec<String> {
         let Ok(spec) = self.db.spec(model) else { return Vec::new() };
         let updates = spec.relations.iter().find(|candidate| candidate.name == relation).map(|relation| relation.updates.clone()).unwrap_or_default();
-        let mut keys: Vec<_> = updates.into_iter().map(|updates| self.acquire_one(model, updates)).collect();
+        let scoped = self.subscription_scope(model, relation, params);
+        let mut keys: Vec<_> = updates.into_iter().map(|updates| self.acquire_one(model, updates, scoped.clone())).collect();
         if !spec.changes.is_empty() {
             if let Some(key) = self.acquire_changes() { keys.push(key); }
         }
@@ -65,7 +68,7 @@ impl Inner {
         self.acquire_changes();
         for spec in self.db.shared.specs.values() {
             for updates in &spec.listens {
-                self.acquire_one(spec.key.as_str(), updates.clone());
+                self.acquire_one(spec.key.as_str(), updates.clone(), None);
             }
         }
     }
@@ -84,11 +87,21 @@ impl Inner {
 
     fn acquire_changes(self: &std::sync::Arc<Self>) -> Option<String> {
         let (model, feed) = self.change_feed()?;
-        Some(self.acquire_one(&model, UpdatesSpec { apply: None, subscription: feed.subscription, deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }))
+        Some(self.acquire_one(&model, UpdatesSpec { apply: None, subscription: feed.subscription, deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }, None))
     }
 
-    fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec) -> String {
-        let key = format!("{model}|{}", updates.subscription);
+    fn subscription_scope(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Option<(String, Value)> {
+        if params.is_empty() { return None; }
+        let resolved = self.resolve(model, relation, params).ok()?;
+        let variables = mapped_variables(&resolved.params, &resolved.remote.variables);
+        Some((resolved.scope.key.to_string(), Value::Object(variables)))
+    }
+
+    fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec, scoped: Option<(String, Value)>) -> String {
+        let (key, variables) = match scoped {
+            Some((scope, variables)) => (format!("{model}|{}|{scope}", updates.subscription), variables),
+            None => (format!("{model}|{}", updates.subscription), json!({})),
+        };
         let mut lives = locked(&self.lives);
         let live = lives.entry(key.clone()).or_default();
         live.readers += 1;
@@ -109,6 +122,7 @@ impl Inner {
             }
             let effect = if updates.removes { EventEffect::Destroy } else { EventEffect::Upsert };
             let mut def = SubscriptionDef::new(event, &updates.subscription, &model, effect);
+            def.variables = variables;
             def.deleted_by = updates.deleted_by;
             def.set = updates.set;
             def.root = updates.root;

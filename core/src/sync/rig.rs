@@ -54,6 +54,7 @@ pub fn moments_spec() -> ModelSpec {
     vibe_feed.text_params = vec!["vibeId".to_string()];
     vibe_feed.remote = Some(remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes"));
     vibe_feed.edge_fields = edge_fields();
+    vibe_feed.updates = vec![UpdatesSpec { apply: None, subscription: "VibeEvents".to_string(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None }];
     let mut since = RelationSpec::new("since", &[]);
     since.text_params = vec!["afterSequence".to_string(), "pinned".to_string()];
     since.scalar_types = BTreeMap::from([("afterSequence".to_string(), ScalarKind::Int), ("pinned".to_string(), ScalarKind::Bool)]);
@@ -184,6 +185,7 @@ pub fn register_operations(sync: &Sync) {
         ("CurrentUser", "me"),
         ("MomentEvents", "momentEvent"),
         ("MomentRemoved", "momentRemoved"),
+        ("VibeEvents", "momentEvent"),
         ("CreateMoment", "createMoment"),
         ("UpdateMoment", "updateMoment"),
         ("DeleteMoment", "deleteMoment"),

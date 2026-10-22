@@ -203,8 +203,40 @@ impl<'a> Run<'a> {
             self.check_associations(node, &element, selects);
             self.list_unmodeled(node, remote, &element, &covered);
         }
+        for scope in node.scopes.iter().filter(|scope| scope.is_remote()) {
+            self.check_subscription_args(node, scope);
+        }
         self.check_mutation_args(node);
         self.check_response_paths(node);
+    }
+
+    fn check_subscription_args(&mut self, node: &ModelDecl, scope: &ScopeDecl) {
+        for subscription in &scope.subscriptions {
+            let Some(operation) = self.operations.named.get(&subscription.name) else { continue };
+            let name = &subscription.name;
+            for (variable, declared) in &operation.variables {
+                let parameter = scope.parameters.iter().find(|parameter| {
+                    let renamed = scope.variables.iter().flatten().find(|binding| matches!(&binding.value, VariableValue::Parameter(source) if *source == parameter.name));
+                    renamed.map_or(parameter.name.as_str(), |binding| binding.name.as_str()) == variable
+                });
+                let Some(parameter) = parameter else {
+                    if !declared.optional() {
+                        self.fail(node.file, subscription.pos, format!("scope `{}` subscription `{name}`: argument `${variable}` has no scope parameter, declare `parameter :{variable}` or make the argument optional", scope.name));
+                    }
+                    continue;
+                };
+                let accepted: &[&str] = match &parameter.ty.base {
+                    ParamBase::Bool => &["Boolean"],
+                    ParamBase::Int => &["Int"],
+                    ParamBase::String | ParamBase::Id => &["String", "ID"],
+                    ParamBase::Named(kind) => &[kind.as_str()],
+                    _ => continue,
+                };
+                if declared.is_list() != parameter.ty.list || !accepted.contains(&declared.name()) {
+                    self.fail(node.file, subscription.pos, format!("scope `{}` subscription `{name}`: argument `${variable}` is `{}` but scope parameter `{}` is {}", scope.name, declared.describe(), parameter.name, accepted.join(" or ")));
+                }
+            }
+        }
     }
 
     fn check_edge_fields(&mut self, node: &'a ModelDecl, remote: &'a ScopeDecl, edge: &str) {

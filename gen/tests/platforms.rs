@@ -180,9 +180,9 @@ end
 
 #[test]
 fn model_with_one_single_record_relation_gets_a_singleton_entity() {
-    let single = "model Me do\n  attribute :name, :string\n  scope :profile do\n    query \"MyProfile\"\n  end\nend\n";
+    let single = "model Me do\n  attribute :name, :string\n  scope :profile do\n    query \"AccountProfile\"\n  end\nend\n";
     let list = "model Me do\n  attribute :name, :string\n  scope :feed do\n    query \"MesFeed\"\n    response shape: :list\n  end\nend\n";
-    let two = "model Me do\n  attribute :name, :string\n  scope :profile do\n    query \"MyProfile\"\n  end\n  scope :settings do\n    query \"MySettings\"\n  end\nend\n";
+    let two = "model Me do\n  attribute :name, :string\n  scope :profile do\n    query \"AccountProfile\"\n  end\n  scope :settings do\n    query \"AccountSettings\"\n  end\nend\n";
     for (source, singleton) in [(single, true), (list, false), (two, false)] {
         let models = parse_models(source).unwrap();
         let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
