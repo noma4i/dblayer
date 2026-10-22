@@ -4,7 +4,7 @@ use serde_json::Map;
 
 use super::super::load::{LoadOptions, LoadStatus};
 use super::super::rig::*;
-use super::super::state::LoadPhase;
+use super::super::load_machine::LoadPhase;
 
 fn slow_feed(rig: &Rig) {
     rig.transport.respond_with(|_| Some(feed_reply(&["m1"], false, "c1").after(Duration::from_secs(60))));
@@ -42,7 +42,7 @@ async fn inv_conc_05_a_cancelled_flight_owner_leaves_no_loading_state() {
     owner.abort();
     let _ = owner.await;
     let settled = state.borrow().clone();
-    assert_eq!((settled.phase, settled.initial, settled.refreshing, settled.fetching_more, settled.error), (LoadPhase::Idle, false, false, false, None));
+    assert_eq!((settled.phase, settled.initial, settled.refreshing, settled.fetching_more, settled.error), (LoadPhase::NotLoaded, false, false, false, None));
 }
 
 #[tokio::test(start_paused = true)]

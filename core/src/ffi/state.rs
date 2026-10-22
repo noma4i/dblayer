@@ -18,7 +18,7 @@ pub struct RelationStateChange {
 impl RelationStateChange {
     pub(super) fn of(state: &RelationState) -> Self {
         let phase = match state.phase {
-            LoadPhase::Idle => "idle",
+            LoadPhase::NotLoaded | LoadPhase::Loaded | LoadPhase::Empty | LoadPhase::Closed => "idle",
             LoadPhase::Loading => "loading",
             LoadPhase::Failed => "failed",
         };

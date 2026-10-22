@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use tokio::runtime::Handle;
 
+use super::load_machine::{Event, LoadKind};
+use super::load_owner::Target;
 use super::{locked, Inner, Sync};
 
 impl Sync {
@@ -12,9 +14,13 @@ impl Sync {
         self.inner.transport.set_online(online);
         if !online {
             if let Some(wake) = locked(&self.inner.wake).take() { wake.abort(); }
+            self.inner.owner.submit(Event::Offline);
         }
         if online && !was_online {
             self.inner.spawn_flush(Duration::ZERO);
+            for (target, kind) in self.inner.owner.online() {
+                self.inner.spawn_retry(target, kind);
+            }
         }
     }
 }
@@ -41,5 +47,20 @@ impl Inner {
             }
         }));
         Some(task.abort_handle())
+    }
+}
+
+impl Inner {
+    fn spawn_retry(self: &Arc<Self>, target: Target, kind: LoadKind) {
+        let Ok(runtime) = Handle::try_current() else { return };
+        let inner = Arc::downgrade(self);
+        runtime.spawn(self.until_closed(async move {
+            let Some(inner) = inner.upgrade() else { return };
+            let Ok(resolved) = inner.resolve(&target.model, &target.relation, &target.params) else { return };
+            let _ = match kind {
+                LoadKind::More => inner.load_more(&resolved).await,
+                _ => inner.fetch(&resolved, None, true).await,
+            };
+        }));
     }
 }

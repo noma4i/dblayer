@@ -162,6 +162,8 @@ Moment.feed.state.flow.collect { state -> if (state.isLoading) showSpinner() }
 
 While a load runs the state also tells which load it is: `isInitialLoading` (the first load of a list without rows, for a skeleton), `isRefreshing` (a reload of a list with rows) and `isFetchingMore` (the next page, for a footer spinner). Concurrent loads of the same list do not mix, each flag follows its own loads.
 
+A load that ends with an error reports `failed` when the list has no rows. A list with rows reports `idle` and keeps the error in the state, so the rows stay on screen. A load started while the device is offline ends at once with a `network` error. When the device goes online again, each list that is observed and failed by network is loaded once more. A cache reset clears `loadedAt` and the error.
+
 **Pages of a related list.** A list that lives under a node, such as the members of a group, pages with `loadMore()` and shows `hasMore` and `total` in its state (each order of the list, `order: .ownerFirst`, has its own window) (`total` is nil when the connection has no `totalCount` and the scope has no `total from:`). See [node reads](models.md#node-reads).
 
 ```swift

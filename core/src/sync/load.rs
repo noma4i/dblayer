@@ -21,7 +21,8 @@ use super::land::{Landed, Landing};
 use super::normalize::normalize_nodes;
 use super::registry::OperationDef;
 use super::variables::load_variables;
-use super::state::LoadKind;
+use super::load_machine::LoadError;
+use super::load_owner::FlightTicket;
 use super::{locked, FlightEnd, FlightResult, Inner, Sync};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,6 +63,7 @@ impl LoadOutcome {
 
 pub(crate) struct Resolved<'a> {
     pub model: String,
+    pub relation: String,
     pub remote: &'a RemoteSpec,
     pub operation: Arc<OperationDef>,
     pub scope: ScopeRef,
@@ -81,18 +83,20 @@ impl Resolved<'_> {
     }
 }
 
+enum Executed {
+    Landed(LoadOutcome),
+    Kept(SyncError),
+    Failed(SyncError),
+}
+
 struct FlightGuard<'a> {
     inner: &'a Inner,
     key: String,
     sender: Option<watch::Sender<Option<FlightEnd>>>,
-    loading: Option<(String, LoadKind)>,
 }
 
 impl FlightGuard<'_> {
     fn settle(&mut self, result: FlightResult) {
-        if let Some((window_key, kind)) = self.loading.take() {
-            self.inner.end_load(&window_key, kind, &result);
-        }
         self.release(FlightEnd::Settled(result));
     }
 
@@ -107,9 +111,6 @@ impl FlightGuard<'_> {
 
 impl Drop for FlightGuard<'_> {
     fn drop(&mut self) {
-        if let Some((window_key, kind)) = self.loading.take() {
-            self.inner.abandon_load(&window_key, kind);
-        }
         self.release(FlightEnd::Abandoned);
     }
 }
@@ -165,7 +166,7 @@ impl Inner {
         };
         let window_key = window_key(scope_key.as_str(), direction);
         let scope = ScopeRef::new(ModelKey::new(model), scope_key);
-        Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
+        Ok(Resolved { model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
     }
 
     pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
@@ -176,8 +177,9 @@ impl Inner {
 
     fn next_issued(&self) -> i64 {
         let now = self.now_ms();
-        let update = |previous: i64| Some(previous.max(now - 1) + 1);
-        self.issued.try_update(Ordering::SeqCst, Ordering::SeqCst, update).unwrap_or(now)
+        let next = |previous: i64| previous.max(now - 1) + 1;
+        let previous = self.issued.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |previous| Some(next(previous))).unwrap_or_else(|previous| previous);
+        next(previous)
     }
 
     fn window_is_fresh(&self, resolved: &Resolved<'_>) -> Result<bool, SyncError> {
@@ -211,7 +213,10 @@ impl Inner {
         };
         let forced = force || cursor.is_some();
         loop {
-            if !self.connectivity.is_online() { return Err(SyncError::Offline); }
+            if !self.connectivity.is_online() {
+                FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), self.stored(resolved)).failed(LoadError::of(&SyncError::Offline));
+                return Err(SyncError::Offline);
+            }
             let verdict = {
                 let mut flights = locked(&self.flights);
                 let verdict = flights.coalescing.request(&flight_key, forced, || self.window_is_fresh(resolved).unwrap_or(false));
@@ -230,11 +235,25 @@ impl Inner {
             };
             match verdict {
                 Ok(sender) => {
-                    let mut guard = FlightGuard { inner: self, key: flight_key, sender, loading: None };
-                    let kind = self.load_kind(&resolved.scope, cursor.as_deref());
-                    self.begin_load(&resolved.window_key, kind);
-                    guard.loading = Some((resolved.window_key.clone(), kind));
-                    let result = self.execute(resolved, cursor, force).await;
+                    let mut guard = FlightGuard { inner: self, key: flight_key, sender };
+                    let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), self.stored(resolved));
+                    let result = match self.execute(resolved, cursor, force).await {
+                        Executed::Landed(outcome) => {
+                            match outcome.status {
+                                LoadStatus::Discarded(_) => ticket.discarded(),
+                                _ => ticket.landed(self.stored(resolved)),
+                            }
+                            Ok(outcome)
+                        }
+                        Executed::Kept(error) => {
+                            ticket.failed(LoadError::of(&error));
+                            Ok(LoadOutcome::of(LoadStatus::KeptStale))
+                        }
+                        Executed::Failed(error) => {
+                            ticket.failed(LoadError::of(&error));
+                            Err(error)
+                        }
+                    };
                     guard.settle(result.clone());
                     return result;
                 }
@@ -247,7 +266,14 @@ impl Inner {
         }
     }
 
-    async fn execute(&self, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool) -> FlightResult {
+    async fn execute(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> Executed {
+        match self.run(resolved, cursor, force).await {
+            Ok(executed) => executed,
+            Err(error) => Executed::Failed(error),
+        }
+    }
+
+    async fn run(&self, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool) -> Result<Executed, SyncError> {
         let attempt = self.begin_attempt(&resolved.window_key)?;
         let has_window = self.db.shared.store.window(&resolved.window_key)?.is_some();
         let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &resolved.remote.variables);
@@ -269,7 +295,7 @@ impl Inner {
         });
         let (extracted, attempts) = match fetched {
             Ok(fetched) => fetched,
-            Err(error) => return Self::failed(error, force, has_window),
+            Err(error) => return Ok(Self::failed(error, force, has_window)),
         };
         let stamped = stamp_scope_values(extracted.nodes, &resolved.scope_values);
         let normalized = normalize_nodes(&self.db, &resolved.model, &stamped)?;
@@ -292,17 +318,17 @@ impl Inner {
             keeps_total: resolved.remote.total_from.is_some(),
             attempt,
         };
-        Ok(match self.land(landing)? {
+        Ok(Executed::Landed(match self.land(landing)? {
             Landed::Applied { rows, invalid } => LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts },
             Landed::Discarded(reason) => LoadOutcome { attempts, ..LoadOutcome::of(LoadStatus::Discarded(reason)) },
-        })
+        }))
     }
 
-    fn failed(error: SyncError, force: bool, has_window: bool) -> FlightResult {
-        if error == SyncError::Offline { return Err(error); }
+    fn failed(error: SyncError, force: bool, has_window: bool) -> Executed {
+        if error == SyncError::Offline { return Executed::Failed(error); }
         match FetchReport::of(force, has_window, Some(&error.to_string())) {
-            FetchReport::KeptStale => Ok(LoadOutcome::of(LoadStatus::KeptStale)),
-            _ => Err(error),
+            FetchReport::KeptStale => Executed::Kept(error),
+            _ => Executed::Failed(error),
         }
     }
 

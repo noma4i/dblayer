@@ -46,6 +46,7 @@ pub(crate) struct Shared {
     pub dispatch: Arc<Dispatch>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub cloud_changes: Arc<tokio::sync::watch::Sender<u64>>,
+    pub reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>,
     pub ephemeral: Arc<Ephemerals>,
     pub executor: Arc<Executor>,
     pub files: FileDirectories,
@@ -134,7 +135,8 @@ impl Db {
         let dispatch = Arc::new(Dispatch::new());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let cloud_changes = Arc::new(tokio::sync::watch::channel(0).0);
-        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone(), cloud_changes.clone()));
+        let reset_listeners = Arc::new(Mutex::new(Vec::new()));
+        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone(), cloud_changes.clone(), reset_listeners.clone()));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -148,6 +150,7 @@ impl Db {
             dispatch: dispatch.clone(),
             outbox_changes,
             cloud_changes,
+            reset_listeners,
             ephemeral: ephemeral.clone(),
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
             files_gate: Mutex::new(()),
@@ -199,7 +202,7 @@ impl Db {
     }
 }
 
-fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>, outbox_changes: Arc<tokio::sync::watch::Sender<u64>>, cloud_changes: Arc<tokio::sync::watch::Sender<u64>>) -> crate::store::StoreHook {
+fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>, outbox_changes: Arc<tokio::sync::watch::Sender<u64>>, cloud_changes: Arc<tokio::sync::watch::Sender<u64>>, reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>) -> crate::store::StoreHook {
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             {
@@ -245,6 +248,9 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
             }
             ephemeral.lock().clear(models.as_deref());
             outbox_changes.send_modify(|version| *version += 1);
+            for listener in locked(&reset_listeners).iter() {
+                listener(models.as_deref());
+            }
             dispatch.push(Event::of_reset(revision, models.as_deref()));
         }
     })

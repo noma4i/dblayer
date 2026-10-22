@@ -1,6 +1,6 @@
 use super::load::LoadOptions;
 use super::rig::*;
-use super::state::{LoadPhase, RelationState};
+use super::load_machine::{LoadPhase, RelationState};
 use crate::transport::Reply;
 use serde_json::Map;
 use std::time::Duration;
@@ -13,7 +13,7 @@ fn none() -> Map<String, serde_json::Value> {
 async fn a_relation_never_loaded_is_idle_with_nothing_more() {
     let rig = rig();
     let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
-    assert_eq!(*state.borrow(), RelationState { phase: LoadPhase::Idle, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None });
+    assert_eq!(*state.borrow(), RelationState { phase: LoadPhase::NotLoaded, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None });
 }
 
 #[tokio::test(start_paused = true)]
@@ -29,7 +29,7 @@ async fn the_state_follows_a_load_from_loading_to_idle_with_the_page_flag() {
     assert_eq!(state.borrow().phase, LoadPhase::Loading);
     load.await.unwrap().unwrap();
     let done = state.borrow().clone();
-    assert_eq!((done.phase, done.has_more, done.error.is_none(), done.loaded_at.is_some()), (LoadPhase::Idle, true, true, true));
+    assert_eq!((done.phase, done.has_more, done.error.is_none(), done.loaded_at.is_some()), (LoadPhase::Loaded, true, true, true));
 }
 
 #[tokio::test(start_paused = true)]
@@ -76,7 +76,7 @@ async fn a_failed_load_reports_its_kind_and_the_next_success_clears_it() {
     assert!(failed.error.is_some());
     rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     let healed = state.borrow().clone();
-    assert_eq!((healed.phase, healed.error), (LoadPhase::Idle, None));
+    assert_eq!((healed.phase, healed.error), (LoadPhase::Loaded, None));
 }
 
 #[tokio::test(start_paused = true)]

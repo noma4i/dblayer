@@ -420,12 +420,12 @@ fn reads_during(work: impl FnOnce()) -> usize {
 }
 
 #[tokio::test(start_paused = true)]
-async fn naming_the_kind_of_a_load_reads_the_same_members_at_every_list_size() {
+async fn reading_the_stored_window_for_a_load_reads_the_same_members_at_every_list_size() {
     let mut costs = Vec::new();
     for size in [100, 10_000] {
         let (rig, params) = rig_with_user_list(size).await;
-        let scope = rig.sync.inner.resolve("moments", "by_user", &params).unwrap().scope;
-        costs.push(reads_during(|| assert_eq!(rig.sync.inner.load_kind(&scope, None), super::state::LoadKind::Refresh)));
+        let resolved = rig.sync.inner.resolve("moments", "by_user", &params).unwrap();
+        costs.push(reads_during(|| assert!(rig.sync.inner.stored(&resolved).unwrap().has_rows)));
     }
     assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");
 }

@@ -1,7 +1,15 @@
 use super::error::DbError;
 use super::open::Db;
 
+use std::sync::Arc;
+
+pub(crate) type ResetListener = Arc<dyn Fn(Option<&[String]>) + Send + Sync>;
+
 impl Db {
+    pub(crate) fn on_reset(&self, listener: ResetListener) {
+        super::open::locked(&self.shared.reset_listeners).push(listener);
+    }
+
     pub fn reset(&self, models: &[&str]) -> Result<(), DbError> {
         for model in models {
             self.shared.spec(model)?;

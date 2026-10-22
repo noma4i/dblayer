@@ -5,10 +5,12 @@ mod invalidate;
 mod land;
 mod live;
 mod load;
-#[allow(dead_code)]
 mod load_machine;
+mod load_owner;
 #[cfg(test)]
 mod load_machine_tests;
+#[cfg(test)]
+mod load_owner_tests;
 #[cfg(test)]
 mod load_machine_oracle_tests;
 mod node;
@@ -30,7 +32,7 @@ mod variables;
 pub use error::SyncError;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
-pub use state::{LoadError, LoadPhase, RelationState};
+pub use load_machine::{LoadError, LoadPhase, RelationState};
 pub use resume::{ResumeReport, Watch};
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
 pub use subscribe::{EventEffect, EventSubscription, SubscriptionDef, SubscriptionStatus};
@@ -101,7 +103,7 @@ pub(crate) struct Inner {
     pub next_watch: AtomicI64,
     pub lives: Mutex<HashMap<String, live::Live>>,
     pub subscription_failures: tokio::sync::broadcast::Sender<SubscriptionFailureNotice>,
-    pub states: Mutex<state::States>,
+    pub owner: Arc<load_owner::LoadOwner>,
     pub outbox_gate: tokio::sync::Mutex<()>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub connectivity: Arc<Connectivity>,
@@ -135,14 +137,33 @@ pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Clone)]
 pub struct Sync {
     pub(crate) inner: Arc<Inner>,
-    _lifetime: Arc<watch::Sender<()>>,
+    _lifetime: Arc<Lifetime>,
+}
+
+struct Lifetime {
+    _stop: watch::Sender<()>,
+    owner: Arc<load_owner::LoadOwner>,
+}
+
+impl Drop for Lifetime {
+    fn drop(&mut self) {
+        self.owner.submit(load_machine::Event::Close);
+    }
 }
 
 impl Sync {
     pub fn new(db: Db, transport: Arc<dyn Transport>, clock: Arc<dyn Clock>, config: SyncConfig) -> Self {
         db.set_clock(clock.clone());
         let max_files = config.upload.max_files;
-        let (lifetime, stopped) = watch::channel(());
+        let (stop, stopped) = watch::channel(());
+        let owner = Arc::new(load_owner::LoadOwner::default());
+        let resets = Arc::downgrade(&owner);
+        db.on_reset(Arc::new(move |models| {
+            if let Some(owner) = resets.upgrade() {
+                owner.reset(models);
+            }
+        }));
+        let lifetime = Lifetime { _stop: stop, owner: owner.clone() };
         let inner = Inner {
             stopped,
             db,
@@ -158,7 +179,7 @@ impl Sync {
             next_watch: AtomicI64::new(0),
             lives: Mutex::new(HashMap::new()),
             subscription_failures: tokio::sync::broadcast::channel(32).0,
-            states: Mutex::new(HashMap::new()),
+            owner,
             outbox_gate: tokio::sync::Mutex::new(()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             connectivity: Connectivity::new(true),

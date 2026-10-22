@@ -33,7 +33,6 @@ impl LoadError {
     }
 }
 
-/// What a reader of a remote relation needs for its screen: is a load running, did it fail, is there a next page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelationState {
     pub phase: LoadPhase,
