@@ -1,5 +1,18 @@
 # Changelog
 
+## 6.5.0 - 2026-10-23
+
+### Changed
+- A subscription returns at once, its first value arrives after a reader thread reads it.
+- `retain` returns without a database error, a failed read keeps the last rows.
+- An invalid relation query fails the window of that relation with `invalid`.
+- On Kotlin a second class loader in one process throws `IllegalStateException`.
+- Mock transports record unsubscribe tokens they never issued, the Kotlin mock throws.
+
+### Fixed
+- A panic while handling one observed group no longer stops other groups.
+- Sync, uploads and cloud share one network state per database.
+
 ## 6.4.0 - 2026-10-23
 
 ### Added
