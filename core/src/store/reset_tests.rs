@@ -23,6 +23,7 @@ fn seed_two_models(store: &Store) {
                 cursor: None,
                 has_next: false,
                 total: None,
+                pages: 1,
                 issued: 0,
                 applied: 0,
                 generation: 0,

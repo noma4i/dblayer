@@ -40,7 +40,7 @@ impl Sync {
         Ok(rows)
     }
 
-    fn resolve_node(&self, model: &str, relation: &str, kind: NodeRead, params: Map<String, serde_json::Value>) -> Result<Resolved, SyncError> {
+    fn resolve_node(&self, model: &str, relation: &str, kind: NodeRead, params: Map<String, serde_json::Value>) -> Result<Resolved<'_>, SyncError> {
         let spec = self.inner.db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation);
         if declared.is_some_and(|declared| declared.node != Some(kind)) {

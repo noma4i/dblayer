@@ -19,12 +19,8 @@ fn object(value: Value) -> Map<String, Value> {
     value.as_object().unwrap().clone()
 }
 
-fn member(id: &str, order_key: &str, position: usize) -> StoredMember {
-    StoredMember { id: id.into(), order_key: order_key.into(), position }
-}
-
-fn stored(last_key: &str, incoming: Vec<StoredMember>) -> StoredScope {
-    StoredScope { last_key: Some(last_key.into()), incoming }
+fn stored(last_key: &str, incoming: Vec<&str>) -> StoredScope {
+    StoredScope { last_key: Some(last_key.into()), incoming: incoming.into_iter().map(String::from).collect() }
 }
 
 fn land(name: &str, stored: &StoredScope, incoming: &[Map<String, Value>]) -> LandingPlan {
@@ -97,13 +93,13 @@ fn entity_ops_target_the_scope_model() {
 
 #[test]
 fn next_page_appends_after_the_largest_key_and_keeps_existing_keys() {
-    let current = stored("a2", vec![member("a", "a1", 0)]);
+    let current = stored("a2", vec!["a"]);
     let plan = land("append", &current, &[row("c"), row("a")]);
     let added = appended(&plan);
     assert_eq!(added.len(), 1);
     assert_eq!(added[0].0, "c");
     assert!(added[0].1.as_str() > "a2");
-    assert!(plan.scope_ops.contains(&ScopeOp::Move { scope: scope("append"), row: RowId::new("a").unwrap(), order_key: "a1".into() }));
+    assert!(!plan.scope_ops.iter().any(|operation| matches!(operation, ScopeOp::Move { .. })));
     assert!(!plan.scope_ops.iter().any(|operation| matches!(operation, ScopeOp::Detach { .. })));
 }
 
@@ -115,17 +111,8 @@ fn foreign_scope_is_rejected() {
 
 
 #[test]
-fn next_page_moves_members_whose_position_differs_from_the_page_index() {
-    let current = stored("K2", vec![member("a", "K1", 0), member("b", "K2", 1)]);
+fn a_page_of_stored_members_in_another_order_writes_no_scope_operation() {
+    let current = stored("K2", vec!["a", "b"]);
     let plan = land("reorder", &current, &[row("b"), row("a")]);
-    let moved: Vec<&RowId> = plan
-        .scope_ops
-        .iter()
-        .filter_map(|operation| match operation {
-            ScopeOp::Move { row, .. } => Some(row),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(moved.len(), 2);
-    assert!(appended(&plan).is_empty());
+    assert!(plan.scope_ops.is_empty());
 }

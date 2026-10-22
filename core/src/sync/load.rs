@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use tokio::sync::watch;
@@ -58,18 +59,18 @@ impl LoadOutcome {
     }
 }
 
-pub(crate) struct Resolved {
+pub(crate) struct Resolved<'a> {
     pub model: String,
-    pub remote: RemoteSpec,
-    pub operation: OperationDef,
+    pub remote: &'a RemoteSpec,
+    pub operation: Arc<OperationDef>,
     pub scope: ScopeRef,
     pub window_key: String,
     pub params: Map<String, Value>,
     pub(crate) scope_values: Map<String, Value>,
-    pub edge_fields: Vec<FieldSpec>,
+    pub edge_fields: &'a [FieldSpec],
 }
 
-impl Resolved {
+impl Resolved<'_> {
     pub(crate) fn page_size(&self) -> u32 {
         self.remote.page_size.unwrap_or(self.operation.page_size)
     }
@@ -102,7 +103,7 @@ impl Drop for FlightGuard<'_> {
 }
 
 impl Inner {
-    pub(crate) fn resolve(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Resolved, SyncError> {
+    pub(crate) fn resolve(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Resolved<'_>, SyncError> {
         let spec = self.db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
         let declared = spec
             .relations
@@ -111,7 +112,7 @@ impl Inner {
             .ok_or_else(|| SyncError::UnknownRelation { model: model.to_string(), relation: relation.to_string() })?;
         let remote = declared
             .remote
-            .clone()
+            .as_ref()
             .ok_or_else(|| SyncError::NotRemote { model: model.to_string(), relation: relation.to_string() })?;
         let operation = locked(&self.operations)
             .get(&remote.operation)
@@ -152,7 +153,7 @@ impl Inner {
         };
         let window_key = window_key(scope_key.as_str(), direction);
         let scope = ScopeRef::new(ModelKey::new(model), scope_key);
-        Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: declared.edge_fields.clone() })
+        Ok(Resolved { model: model.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
     }
 
     pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
@@ -167,7 +168,7 @@ impl Inner {
         self.issued.try_update(Ordering::SeqCst, Ordering::SeqCst, update).unwrap_or(now)
     }
 
-    fn window_is_fresh(&self, resolved: &Resolved) -> Result<bool, SyncError> {
+    fn window_is_fresh(&self, resolved: &Resolved<'_>) -> Result<bool, SyncError> {
         let store = &self.db.shared.store;
         let Some(freshness) = store.window_freshness(&resolved.window_key)? else { return Ok(false) };
         let is_empty = store.read(&[&resolved.model], |reader| reader.scope_last_id(&resolved.model, resolved.scope.key.as_str()))?.is_none();
@@ -176,12 +177,12 @@ impl Inner {
         Ok(freshness.is_fresh(self.now_ms(), i64::try_from(window.as_millis()).unwrap_or(i64::MAX)))
     }
 
-    fn is_loading(&self, resolved: &Resolved) -> bool {
+    fn is_loading(&self, resolved: &Resolved<'_>) -> bool {
         let prefix = format!("{}|", resolved.window_key);
         locked(&self.flights).coalescing.in_flight().iter().any(|key| key.starts_with(&prefix))
     }
 
-    pub(crate) async fn fetch_after_flights(&self, resolved: &Resolved) -> FlightResult {
+    pub(crate) async fn fetch_after_flights(&self, resolved: &Resolved<'_>) -> FlightResult {
         let paged = format!("{}|", resolved.window_key);
         loop {
             let pending = locked(&self.flights).waiting.iter().find(|(key, _)| **key == resolved.window_key || key.starts_with(&paged)).map(|(_, receiver)| receiver.clone());
@@ -191,7 +192,7 @@ impl Inner {
         self.fetch(resolved, None, true).await
     }
 
-    pub(crate) async fn fetch(&self, resolved: &Resolved, cursor: Option<String>, force: bool) -> FlightResult {
+    pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
         if !self.connectivity.is_online() { return Err(SyncError::Offline); }
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
@@ -232,7 +233,7 @@ impl Inner {
         }
     }
 
-    async fn execute(&self, resolved: &Resolved, mut cursor: Option<String>, force: bool) -> FlightResult {
+    async fn execute(&self, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool) -> FlightResult {
         let attempt = self.begin_attempt(&resolved.window_key)?;
         let has_window = self.db.shared.store.window(&resolved.window_key)?.is_some();
         let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &resolved.remote.variables);
@@ -271,7 +272,7 @@ impl Inner {
             replace_window,
             plans_as_first,
             coverage: resolved.remote.coverage(),
-            edge_fields: resolved.edge_fields.clone(),
+            edge_fields: resolved.edge_fields.to_vec(),
             requested_cursor: cursor,
             page_info: extracted.page_info,
             keeps_total: resolved.remote.total_from.is_some(),
@@ -309,7 +310,7 @@ impl Inner {
         Err(SyncError::Graphql { messages, extensions: response.extensions() })
     }
 
-    pub(crate) async fn load_more(&self, resolved: &Resolved) -> FlightResult {
+    pub(crate) async fn load_more(&self, resolved: &Resolved<'_>) -> FlightResult {
         let RemoteShape::Connection { max_pages, .. } = resolved.remote.shape else {
             return Err(SyncError::NotPaged { model: resolved.model.clone(), relation: resolved.scope.key.to_string() });
         };
@@ -319,9 +320,7 @@ impl Inner {
         let chain = PageChain {
             cursor: window.cursor.clone(),
             has_next: window.has_next,
-            loaded_pages: if max_pages.is_some() {
-                self.db.shared.store.read(&[&resolved.model], |reader| reader.count_members(&resolved.model, resolved.scope.key.as_str()))? as usize
-            } else { 0 }.div_ceil(resolved.page_size().max(1) as usize),
+            loaded_pages: usize::try_from(window.pages).unwrap_or_default(),
             is_loading: self.is_loading(resolved),
         };
         let verdict = LoadMoreVerdict::of(&chain, max_pages.map(|pages| pages as usize));

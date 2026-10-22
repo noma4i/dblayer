@@ -143,4 +143,17 @@ class ListEditTest {
         assertEquals(emptyList<ListEdit<Moment>>(), list.takeEdits())
         scope.cancel()
     }
+
+    @Test
+    fun a_full_delivery_copies_the_list_once_and_a_delta_copies_it_once_at_every_size() {
+        val copies = listOf(100, 1000).map { size ->
+            val feed = ListFeed(Moment)
+            val all = (0 until size).map { moment("m%05d".format(it)) }
+            feed.apply(change(size, full = true, rows = all))
+            val afterFull = feed.copiedRows
+            feed.apply(change(size, rows = listOf(moment("m00050", "edited")), indexes = listOf(50u)))
+            Pair(afterFull, feed.copiedRows - afterFull)
+        }
+        assertEquals(listOf(Pair(100, 100), Pair(1000, 1000)), copies)
+    }
 }

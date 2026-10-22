@@ -11,6 +11,7 @@ use super::entities::{EntityGroup, EntitySubscriber};
 use super::error::DbError;
 use super::listeners::{Listener, Subscriber};
 use super::open::{locked, Db, Shared};
+use super::window::WindowSeed;
 use super::watch::{Body, Change, CountChange, Deps, Evaluated, Loaded, Step, Subject, Version};
 
 const MAX_PROBED_ROWS: usize = 8;
@@ -318,7 +319,11 @@ impl Db {
             }
             None => {
                 locked(&self.shared.counters).observation_reads += 1;
-                let Evaluated { version, loaded } = self.shared.evaluate(&subject)?;
+                let seed = match &subject {
+                    Subject::Window(query, _, _) => observers.groups.values().find_map(|group| WindowSeed::of(query, &group.subject, &group.version)),
+                    _ => None,
+                };
+                let Evaluated { version, loaded } = self.shared.evaluate_seeded(&subject, seed.as_ref())?;
                 let version = Arc::new(version);
                 let group = Group { subject, deps, at: version.revision, epoch: version.epoch, version: version.clone(), subscribers: vec![(id, subscriber.clone())] };
                 observers.add_group(&key, group);

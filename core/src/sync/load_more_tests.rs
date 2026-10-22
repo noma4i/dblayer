@@ -121,6 +121,19 @@ async fn max_pages_stops_the_chain() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn max_pages_counts_fetched_pages_not_stored_members() {
+    let rig = rig();
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c4"));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], true, "c6"));
+    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    assert_eq!(rig.sync.load_more("moments", "feed", &none()).await.unwrap().status, LoadStatus::Loaded);
+    let capped = rig.sync.load_more("moments", "feed", &none()).await.unwrap();
+    assert_eq!(capped.status, LoadStatus::NoMorePages(LoadMoreVerdict::MaxPagesReached));
+    assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
+}
+
+#[tokio::test(start_paused = true)]
 async fn backward_pages_send_last_and_before() {
     let rig = rig();
     let page = |ids: &[&str], cursor: &str| Reply::data(json!({"history": {"nodes": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>(), "pageInfo": {"hasNextPage": true, "endCursor": cursor}}}));

@@ -30,20 +30,24 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
     }
 
     private val slots = ArrayList<Slot<Model>>()
-    private var loaded = ArrayList<Model>()
+    private var loaded: List<Model> = emptyList()
     private var missing = 0
     private val decoded = AtomicInteger()
     private val undecodable = AtomicInteger()
     private val desynced = AtomicInteger()
+    private val copied = AtomicInteger()
 
     val decodedRows: Int get() = decoded.get()
     val undecodableRows: Int get() = undecodable.get()
     val desyncs: Int get() = desynced.get()
+    val copiedRows: Int get() = copied.get()
 
     @get:Synchronized
     val rows: List<Model> get() = current()
 
-    private fun current(): List<Model> = if (missing == 0) ArrayList(loaded) else slots.mapNotNull { it.row }
+    private fun current(): List<Model> = if (missing == 0) loaded else slots.mapNotNull { it.row }
+
+    private fun materialized(): List<Model> = if (missing == 0) slots.map { it.row!! }.also { copied.addAndGet(it.size) } else emptyList()
 
     @OptIn(ExperimentalSerializationApi::class)
     @Synchronized
@@ -61,7 +65,7 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
             slots.clear()
             slots.addAll(carried.map { it.first })
             missing = slots.count { it.row == null }
-            loaded = if (missing == 0) ArrayList(slots.map { it.row!! }) else ArrayList()
+            loaded = materialized()
             return ListState(current(), true)
         }
         val reordered = change.removed.isNotEmpty() || change.placed.isNotEmpty() || change.replaced.isNotEmpty()
@@ -72,11 +76,13 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
             return ListState(current(), reordered, desynced = true)
         }
         if (!held || missing != 0 || edits.size > slots.size) {
-            loaded = if (missing == 0) ArrayList(slots.map { it.row!! }) else ArrayList()
+            loaded = materialized()
             return ListState(current(), reordered)
         }
-        loaded.replay(edits)
-        return ListState(current(), reordered, edits = edits)
+        val next = ArrayList(loaded).also { copied.addAndGet(it.size) }
+        next.replay(edits)
+        loaded = next
+        return ListState(next, reordered, edits = edits)
     }
 
     private fun applyDelta(change: LiveChange, carried: List<Pair<Slot<Model>, Int>>, edits: MutableList<ListEdit<Model>>): Boolean {

@@ -10,7 +10,7 @@ mod layout;
 pub use layout::*;
 use crate::value::ScalarKind;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub const FORMAT_VERSION_KEY: &str = "format_version";
 pub const DATA_VERSION_KEY: &str = "data_version";
@@ -63,6 +63,7 @@ END",
   cursor TEXT,
   has_next INTEGER NOT NULL,
   total INTEGER,
+  pages INTEGER NOT NULL,
   issued INTEGER NOT NULL,
   applied INTEGER NOT NULL,
   generation INTEGER NOT NULL,

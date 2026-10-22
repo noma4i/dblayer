@@ -410,3 +410,18 @@ fn windows_equal_the_tail_of_a_fresh_query_over_random_edit_sequences() {
         run_sequence(seed);
     }
 }
+
+fn open_cost(db: &Db) -> (usize, super::window::WindowHandle) {
+    let before = total();
+    let handle = db.observe_window(query(), WindowSpec::Tail { size: WINDOW }, |_| {}).unwrap();
+    db.settle();
+    (total() - before, handle)
+}
+
+#[test]
+fn a_second_window_over_the_same_query_reads_no_list_keys() {
+    let db = seeded(2000);
+    let (first, _kept) = open_cost(&db);
+    let (second, _other) = open_cost(&db);
+    assert!(second * 10 <= first, "{first} touches for the first window, {second} for the second");
+}

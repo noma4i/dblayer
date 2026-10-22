@@ -7,7 +7,7 @@ use crate::identity::{ModelKey, RowId};
 use crate::db::{Db, ReplaceRequest};
 use crate::schema::{Coverage, FieldKind, FieldSpec};
 use crate::value::ScalarKind;
-use crate::read::{incoming_ids, plan_landing, StoredMember, StoredScope};
+use crate::read::{incoming_ids, plan_landing, StoredScope};
 use crate::store::{PageInfo, PlanCommitError, Reader, StoreError};
 use crate::transport::FetchAttempt;
 use crate::value::{fractional_between, read_id};
@@ -193,11 +193,7 @@ impl Inner {
                 let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
                 let stored = StoredScope {
                     last_key: reader.scope_last_key(&model, scope.key.as_str())?,
-                    incoming: reader
-                        .scope_member_positions(&model, scope.key.as_str(), if keeps_member_order { &[] } else { &wanted })?
-                        .into_iter()
-                        .map(|(id, order_key, position)| StoredMember { id, order_key, position })
-                        .collect(),
+                    incoming: reader.scope_members_among(&model, scope.key.as_str(), if keeps_member_order { &[] } else { &wanted })?,
                 };
                 plan_landing(&scope, &model_key, &stored, &roots).map_err(|error| SyncError::Malformed(error.to_string()))?
             };
@@ -216,6 +212,7 @@ impl Inner {
                 cursor: page_info.as_ref().and_then(|info| info.end_cursor.clone()),
                 has_next: page_info.as_ref().is_some_and(|info| info.has_next_page),
                 total: page_info.as_ref().and_then(|info| info.total).or(window.as_ref().filter(|_| keeps_total).and_then(|window| window.total)),
+                pages: if is_first_page { 1 } else { window.as_ref().map_or(1, |window| window.pages + 1) },
                 tail: tail.clone(),
                 issued: attempt.issued,
                 applied,

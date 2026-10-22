@@ -212,3 +212,18 @@ fn a_server_row_moves_the_parent_pointer_only_forward() {
         assert_eq!((chat.text("lastMessageId"), chat.text("lastMessageAt")), (Some(expected.0), Some(expected.1)), "{name}");
     }
 }
+
+fn touches_to_replace_with_new_rows(size: usize) -> usize {
+    let db = booted();
+    let items: Vec<(String, String)> = (0..size).map(|index| (format!("m{index:05}"), "x".to_string())).collect();
+    let borrowed: Vec<(&str, &str)> = items.iter().map(|(id, text)| (id.as_str(), text.as_str())).collect();
+    let before = crate::identity::touches::total();
+    db.replace(&request("feed", Coverage::Complete), rows(&borrowed)).unwrap();
+    crate::identity::touches::total() - before
+}
+
+#[test]
+fn ordering_all_new_rows_scales_linearly_with_the_row_count() {
+    let (small, large) = (touches_to_replace_with_new_rows(500), touches_to_replace_with_new_rows(2000));
+    assert!(large <= small * 6, "{small} touches for 500 rows, {large} for 2000");
+}

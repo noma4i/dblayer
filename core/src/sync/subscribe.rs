@@ -448,7 +448,7 @@ impl Inner {
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
         let definition = def.clone();
         let def_root = def.root.clone();
-        let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or(operation.root_path), status: status.clone(), backoff: RetryPolicy::Subscription.backoff().randomized() };
+        let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or_else(|| operation.root_path.clone()), status: status.clone(), backoff: RetryPolicy::Subscription.backoff().randomized() };
         let task = tokio::spawn(self.until_closed(feed.run(request, first)));
         Ok(EventSubscription { abort: task.abort_handle(), status, definition })
     }

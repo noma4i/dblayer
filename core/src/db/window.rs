@@ -80,6 +80,21 @@ impl Span {
     }
 }
 
+pub(crate) struct WindowSeed {
+    pub at: (i64, u64),
+    index: Ranked,
+}
+
+impl WindowSeed {
+    pub(crate) fn of(query: &Query, subject: &Subject, version: &Version) -> Option<Self> {
+        let (Subject::Window(held, _, _), Body::Rows(body)) = (subject, &version.body) else { return None };
+        if held != query {
+            return None;
+        }
+        Some(Self { at: version.position(), index: body.window.as_ref()?.index.clone() })
+    }
+}
+
 pub(crate) struct WindowPart {
     index: Ranked,
     span: Span,
@@ -161,11 +176,14 @@ impl Shared {
         Ok(Ranked::from_sorted(items))
     }
 
-    pub(crate) fn window_body(&self, reader: &Reader<'_>, query: &Query, spec: &WindowSpec) -> Result<(Body, Loaded), DbError> {
+    pub(crate) fn window_body(&self, reader: &Reader<'_>, query: &Query, spec: &WindowSpec, seed: Option<&WindowSeed>) -> Result<(Body, Loaded), DbError> {
         if !windowable(query) {
             return Err(QueryError::NotWindowable.into());
         }
-        let index = self.window_index(reader, query)?;
+        let index = match seed {
+            Some(seed) => seed.index.clone(),
+            None => self.window_index(reader, query)?,
+        };
         let span = Span::start(spec, &index, query.model.as_str())?;
         self.windowed(reader, query, index, span, None, 0)
     }

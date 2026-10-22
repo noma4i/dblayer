@@ -6,8 +6,8 @@ use super::fixtures::*;
 use super::listeners::{Listener, Mailbox, Subscriber};
 use super::watch::{Body, Loaded, Subject, Version};
 use super::{Change, Db, Row};
-use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
-use crate::identity::ModelKey;
+use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
+use crate::identity::{ModelKey, ScopeKey};
 use crate::query::{CompareOp, Order, Query, Where};
 use crate::value::SortDirection;
 
@@ -28,13 +28,16 @@ impl Dice {
 fn query_of(variant: usize) -> Query {
     let order = |field: &str, direction| Order::new(field, direction);
     let moments = Query::new("moments");
-    match variant % 7 {
+    let roster = || ScopeKey::from_raw("roster");
+    match variant % 9 {
         0 => moments.ordered(vec![order("text", SortDirection::Asc)]),
         1 => moments.ordered(vec![order("text", SortDirection::Desc)]),
         2 => moments.ordered(vec![order("text", SortDirection::AscNullsLast)]),
         3 => moments.ordered(vec![order("text", SortDirection::DescNullsFirst), order("createdAt", SortDirection::Asc)]),
         4 => moments.ordered(vec![order("id", SortDirection::Desc)]),
         5 => moments.filtered(Where::equal("userId", json!("u1"))).ordered(vec![order("text", SortDirection::Asc)]),
+        7 => moments.in_scope(roster()),
+        8 => moments.in_scope(roster()).ordered(vec![order("text", SortDirection::Asc)]),
         _ => moments.filtered(Where::compare("createdAt", CompareOp::GreaterOrEqual, json!(DATES[2]))).ordered(vec![order("createdAt", SortDirection::Desc), order("text", SortDirection::AscNullsLast)]),
     }
 }
@@ -51,8 +54,17 @@ fn random_row(dice: &mut Dice, id: &str) -> serde_json::Map<String, serde_json::
     obj(row)
 }
 
-fn commit(db: &Db, op: EntityOp) {
+fn commit(db: &Db, dice: &mut Dice, op: EntityOp) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("roster"));
+    let row = op.row_ref().id;
+    let order_key = format!("a1{}{}", &row.as_str()[1..], 1 + dice.below(9));
+    match (&op, dice.below(4)) {
+        (EntityOp::Upsert { .. }, 0 | 1) => envelope.scope_ops.push(ScopeOp::Append { scope, row, order_key }),
+        (EntityOp::Upsert { .. }, 2) => envelope.scope_ops.push(ScopeOp::Move { scope, row, order_key }),
+        (EntityOp::Upsert { .. }, _) => envelope.scope_ops.push(ScopeOp::Detach { scope, row }),
+        _ => {}
+    }
     envelope.entity_ops.push(op);
     db.land(envelope).unwrap();
 }
@@ -61,7 +73,7 @@ fn edit(db: &Db, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize) ->
     let moments = ModelKey::new("moments");
     if !known.is_empty() && dice.below(5) == 0 {
         let id = known.swap_remove(dice.below(known.len()));
-        commit(db, EntityOp::Destroy { model: moments, id: rid(&id), reason: DestroyReason::Server });
+        commit(db, dice, EntityOp::Destroy { model: moments, id: rid(&id), reason: DestroyReason::Server });
         return id;
     }
     let id = if known.is_empty() || dice.below(3) == 0 {
@@ -72,7 +84,8 @@ fn edit(db: &Db, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize) ->
     } else {
         known[dice.below(known.len())].clone()
     };
-    commit(db, EntityOp::Upsert { model: moments, id: rid(&id), row: random_row(dice, &id) });
+    let row = random_row(dice, &id);
+    commit(db, dice, EntityOp::Upsert { model: moments, id: rid(&id), row });
     id
 }
 

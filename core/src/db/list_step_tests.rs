@@ -159,3 +159,36 @@ fn a_live_ordered_list_reads_only_the_written_rows_after_a_write() {
     assert_eq!(changes(&log).len(), 4);
     assert_eq!(ids(changes(&log).last().unwrap()), db.query(&query()).unwrap().iter().map(|row| row.id.to_string()).collect::<Vec<_>>());
 }
+
+fn scoped_query() -> Query {
+    Query::new("users").in_scope(crate::identity::ScopeKey::from_raw("roster"))
+}
+
+fn scoped_step_cost(size: usize) -> usize {
+    use crate::commit::{ScopeOp, ScopeRef};
+    let db = booted();
+    let scope = ScopeRef::new(ModelKey::new("users"), crate::identity::ScopeKey::from_raw("roster"));
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    for index in 0..size {
+        let id = format!("u{index:06}");
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row: obj(json!({"id": id.clone(), "name": name_at(index)})) });
+        envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid(&id), order_key: format!("k{index:06}") });
+    }
+    db.land(envelope).unwrap();
+    db.settle();
+    let previous = Arc::new(db.shared.evaluate(&Subject::Rows(scoped_query())).unwrap().version);
+    let id = format!("u{:06}", size / 2);
+    upsert(&db, [(id.clone(), "changed".to_string())].into_iter());
+    let touched: HashSet<String> = HashSet::from([id]);
+    let epoch = db.shared.ephemeral.lock().epoch;
+    let horizon = (db.shared.store.revision_seq().unwrap(), epoch);
+    let before = total();
+    db.shared.evaluate_step(&scoped_query(), &previous, &touched, horizon).unwrap();
+    total() - before
+}
+
+#[test]
+fn one_change_in_a_scoped_list_costs_the_same_work_at_every_list_size() {
+    let (small, large) = (scoped_step_cost(SMALL), scoped_step_cost(LARGE));
+    assert!(large <= small + small / 10, "{small} touches at {SMALL} rows, {large} at {LARGE}");
+}

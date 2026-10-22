@@ -194,7 +194,7 @@ fn detach_removes_only_that_member() {
     let thread = scope("messages", "thread");
     commit(&store, vec![], vec![append(&thread, "m1", "a"), append(&thread, "m2", "b")]);
     commit(&store, vec![], vec![ScopeOp::Detach { scope: thread.clone(), row: id("m1") }]);
-    assert_eq!(store.count_members("messages", thread.key.as_str()).unwrap(), 1);
+    assert_eq!(store.scope_members("messages", thread.key.as_str()).unwrap().len(), 1);
 }
 
 #[test]

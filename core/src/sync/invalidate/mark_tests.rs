@@ -165,3 +165,16 @@ async fn reload_after_a_commit_is_issued_after_the_load_that_was_in_flight_at_th
     assert_eq!(rig.transport.call_count("MomentsFeed"), 3);
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m9", "m1"]);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_confirmed_create_does_not_reload_a_watched_list_that_takes_events() {
+    use crate::sync::stable_order::rig::*;
+    let rig = chat_rig(true);
+    enqueue_page(&rig, vec![message("m1", Some(1), 1)], false, "c");
+    let _watch = rig.sync.watch("messages", "thread", &chat_params()).unwrap();
+    load_first_page(&rig).await;
+    rig.db.create("messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:09.000Z"}))).unwrap();
+    rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": message("m9", Some(2), 9)})));
+    rig.sync.flush().await.unwrap();
+    assert_eq!(rig.transport.call_count("MessagesThread"), 1);
+}

@@ -494,7 +494,7 @@ Moment.feed.refresh()            // pull to refresh, replaces in one commit
 - Loads and mutations use the [retry policy](#retries). Terminal refusals return immediately.
 - A response older than the data already stored never overwrites it.
 - A row that another response stored while this one was in flight keeps its stored data and still joins the list this response names.
-- `max_pages` limits how many pages one load takes.
+- `max_pages` limits how many pages `loadMore()` fetches from the network for one list. The count is stored with the cursor and starts again at 1 when the first page is fetched again.
 
 ## Refresh merges, it does not replace
 
@@ -767,7 +767,7 @@ DBlayer.unlisten()
 
 | Event | Result |
 | ----- | ------ |
-| Successful `create` or `destroy` of a model | relations rooted in that model become stale and are refetched at once if someone is reading them |
+| Successful `create` or `destroy` of a model | relations rooted in that model become stale and are refetched at once if someone is reading them. After a `create`, a relation with `joins: :events` is not refetched: the answer of the mutation already placed the row |
 | Successful mutation with `refetch` | the listed relations become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit |
 | `fresh_for` expired | refetched when next read or when the app resumes |
 | App resumes | the app calls `DB.resume()` (Swift) or `DBlayer.resume()` (Kotlin), stale relations with readers are refetched in small groups |

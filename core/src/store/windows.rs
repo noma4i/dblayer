@@ -11,6 +11,7 @@ pub struct WindowRecord {
     pub cursor: Option<String>,
     pub has_next: bool,
     pub total: Option<i64>,
+    pub pages: i64,
     pub issued: i64,
     pub applied: i64,
     pub generation: i64,
@@ -61,9 +62,9 @@ pub struct PageInfo {
 
 pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, landed_at: i64) -> Result<(), StoreError> {
     connection.execute(
-        "INSERT INTO query_window (key, cursor, has_next, total, issued, applied, generation, landed_at) \
-         VALUES (?1, ?2, ?3, ?8, ?4, ?5, ?6, ?7) \
-         ON CONFLICT (key) DO UPDATE SET cursor = excluded.cursor, has_next = excluded.has_next, total = excluded.total, \
+        "INSERT INTO query_window (key, cursor, has_next, total, pages, issued, applied, generation, landed_at) \
+         VALUES (?1, ?2, ?3, ?8, ?9, ?4, ?5, ?6, ?7) \
+         ON CONFLICT (key) DO UPDATE SET cursor = excluded.cursor, has_next = excluded.has_next, total = excluded.total, pages = excluded.pages, \
          issued = excluded.issued, applied = excluded.applied, \
          generation = excluded.generation",
         params![
@@ -75,6 +76,7 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
             record.generation,
             landed_at,
             record.total,
+            record.pages,
         ],
     )?;
     Ok(())
@@ -94,7 +96,7 @@ impl Store {
         let found = inner
             .connection
             .query_row(
-                "SELECT key, cursor, has_next, issued, applied, generation, total FROM query_window WHERE key = ?1",
+                "SELECT key, cursor, has_next, issued, applied, generation, total, pages FROM query_window WHERE key = ?1",
                 params![key],
                 |row| {
                     Ok((
@@ -105,12 +107,13 @@ impl Store {
                         row.get::<_, i64>(4)?,
                         row.get::<_, i64>(5)?,
                         row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, i64>(7)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((key, cursor, has_next, issued, applied, generation, total)) = found else { return Ok(None) };
-        Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, issued, applied, generation }))
+        let Some((key, cursor, has_next, issued, applied, generation, total, pages)) = found else { return Ok(None) };
+        Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, pages, issued, applied, generation }))
     }
 
     pub fn window_freshness(&self, key: &str) -> Result<Option<WindowFreshness>, StoreError> {

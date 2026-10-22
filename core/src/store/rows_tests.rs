@@ -60,8 +60,8 @@ fn scope_rows_follow_membership_limit_and_count() {
     let limited = store.scope_rows("messages", thread.key.as_str(), Some(1)).unwrap();
     assert_eq!(all.rows.len(), 2);
     assert_eq!(limited.rows.len(), 1);
-    assert_eq!(store.count_members("messages", thread.key.as_str()).unwrap(), 2);
-    assert_eq!(store.count_members("messages", other.key.as_str()).unwrap(), 0);
+    assert_eq!(store.scope_members("messages", thread.key.as_str()).unwrap().len(), 2);
+    assert_eq!(store.scope_members("messages", other.key.as_str()).unwrap().len(), 0);
     let members = store.scope_members("messages", thread.key.as_str()).unwrap();
     assert_eq!(members, vec![("m1".to_string(), "0001".to_string()), ("m2".to_string(), "0002".to_string())]);
 }

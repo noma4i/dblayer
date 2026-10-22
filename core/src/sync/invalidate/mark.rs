@@ -13,7 +13,8 @@ impl Inner {
             .map(|declared| declared.refetch.iter().cloned().collect())
             .unwrap_or_default();
         if matches!(action, "create" | "destroy") {
-            names.extend(spec.relations.iter().filter(|relation| relation.remote.is_some()).map(|relation| relation.name.clone()));
+            let takes_response = action == "create";
+            names.extend(spec.relations.iter().filter(|relation| relation.remote.is_some() && !(takes_response && relation.joins_events)).map(|relation| relation.name.clone()));
         }
         let foreign: Vec<String> = names.iter().filter(|name| name.contains('.')).cloned().collect();
         for name in &foreign {

@@ -72,7 +72,7 @@ A file the build does not recognise is dropped and created again when the databa
 | `row_<model>__<field>` | Items of a list or of an array of typed values, with their position; a recursive array uses one table for every level |
 | `row_<model>__value` | Values without a declared shape (`raw`, `file`, untyped `object` and `array`) as rows of a tree: parent, position, key, kind and the number or text |
 | `fts_row_<model>` | Full-text index of the fields selected by `search` |
-| `scope_member`, `tombstone`, `query_window` | List membership and order, deleted rows, page cursors and freshness |
+| `scope_member`, `tombstone`, `query_window` | List membership and order, deleted rows, page cursors, fetched page count and freshness |
 | `op`, `op_row`, `op_value`, `op_part` | The outbox: status and error columns, the rows of an operation, its input and prior values, the parts of an upload |
 | `row_sync`, `sync_action`, `sync_field` | The stored sync state of every unconfirmed record, with its actions and dirty fields |
 | `local_pending` | Values written to a local field before its row exists, as a tree of rows |

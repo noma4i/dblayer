@@ -189,7 +189,7 @@ struct SortTerm {
 }
 
 fn keeps_member_order(query: &Query) -> bool {
-    query.stable && query.scope.is_some()
+    query.scope.is_some() && (query.stable || query.order.is_empty())
 }
 
 fn sort_terms(query: &Query, model: &ModelSpec) -> Result<Vec<SortTerm>, QueryError> {
@@ -259,7 +259,7 @@ pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatemen
 }
 
 pub fn ranking(query: &Query) -> bool {
-    query.scope.is_none() && query.limit.is_none() && query.offset.is_none() && query.include.is_empty() && !query.order.is_empty() && query.r#where.iter().all(|clause| clause.searches().is_empty())
+    query.limit.is_none() && query.offset.is_none() && query.include.is_empty() && (!query.order.is_empty() || query.scope.is_some()) && query.r#where.iter().all(|clause| clause.searches().is_empty())
 }
 
 pub fn windowable(query: &Query) -> bool {

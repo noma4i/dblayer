@@ -19,7 +19,7 @@ use super::dispatch::Event;
 use super::error::DbError;
 use super::open::{locked, Shared};
 use super::row::Row;
-use super::window::{WindowEdge, WindowPart, WindowSpec};
+use super::window::{WindowEdge, WindowPart, WindowSeed, WindowSpec};
 
 const MAX_STEP_IDS: usize = 500;
 
@@ -346,6 +346,10 @@ impl Shared {
     }
 
     pub(crate) fn evaluate(&self, subject: &Subject) -> Result<Evaluated, DbError> {
+        self.evaluate_seeded(subject, None)
+    }
+
+    pub(crate) fn evaluate_seeded(&self, subject: &Subject, seed: Option<&WindowSeed>) -> Result<Evaluated, DbError> {
         let epoch = self.ephemeral.lock().epoch;
         let models = match subject {
             Subject::Rows(query) => self.query_models(query.model.as_str(), &query.include)?,
@@ -356,7 +360,7 @@ impl Shared {
             let revision = reader.revision_seq()?;
             let (body, loaded) = match subject {
                 Subject::Rows(query) if ranking(query) => self.ranked_body(reader, query)?,
-                Subject::Window(query, spec, _) => self.window_body(reader, query, spec)?,
+                Subject::Window(query, spec, _) => self.window_body(reader, query, spec, seed.filter(|seed| seed.at == (revision, epoch)))?,
                 Subject::Rows(query) => {
                     let keys = self.query_keys(reader, query)?;
                     let rows = self.rows_for_keys(reader, query.model.as_str(), &keys)?;

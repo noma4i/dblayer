@@ -80,7 +80,7 @@ pub(crate) struct Inner {
     pub transport: Arc<dyn Transport>,
     pub clock: Arc<dyn Clock>,
     pub config: SyncConfig,
-    pub operations: Mutex<HashMap<String, OperationDef>>,
+    pub operations: Mutex<HashMap<String, Arc<OperationDef>>>,
     pub flights: Mutex<Flights>,
     pub counters: Mutex<Counters>,
     pub landing: Mutex<()>,
@@ -159,7 +159,7 @@ impl Sync {
     }
 
     pub fn register(&self, def: OperationDef) {
-        locked(&self.inner.operations).insert(def.name.clone(), def);
+        locked(&self.inner.operations).insert(def.name.clone(), Arc::new(def));
     }
 
     #[cfg(test)]

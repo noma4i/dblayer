@@ -185,6 +185,7 @@ pub struct WindowSave {
     pub cursor: Option<String>,
     pub has_next: bool,
     pub total: Option<i64>,
+    pub pages: i64,
     pub tail: Option<WindowTail>,
     pub issued: i64,
     pub applied: i64,

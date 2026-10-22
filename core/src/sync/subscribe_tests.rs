@@ -166,7 +166,7 @@ async fn declared_removals_keep_created_and_updated_node_reads() {
         specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(serde_json::from_value(json!({"area":"CHAT", "relation":"node", "parameter":null, "removes_on":["DELETED", "ACCESS_REVOKED"]})).unwrap());
         specs[0].change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
-        for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register(operation.clone()); }
+        for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register((**operation).clone()); }
         rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
         put(&rig, "chats", json!({"id":"c1", "title":"before"}));
         rig.transport.enqueue("ChatNode", crate::transport::Reply::data(json!({"node":{"id":"c1", "title":"after"}})));
@@ -187,7 +187,7 @@ async fn change_ids_reread_registered_nodes_and_count_undeclared_areas() {
     specs.iter_mut().find(|spec| spec.key.as_str() == "messages").unwrap().changes.push(serde_json::from_value(json!({"area":"CHAT", "relation":"transcode_status", "parameter":null, "removes_on":["DELETED"]})).unwrap());
     specs[0].change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
-    for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register(operation.clone()); }
+    for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register((**operation).clone()); }
     rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     rig.transport.enqueue("ChatNode", crate::transport::Reply::data(json!({"node":{"id":"c1", "title":"reread"}})));
     let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "chats", EventEffect::Upsert)).await.unwrap();
@@ -252,7 +252,7 @@ async fn a_shared_change_area_reads_each_declared_node_once() {
     }
     specs[0].change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
-    for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register(operation.clone()); }
+    for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register((**operation).clone()); }
     rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     rig.transport.enqueue("ChatNode", crate::transport::Reply::data(json!({"node":null})));
     rig.transport.enqueue("MessageTranscodeStatus", crate::transport::Reply::data(json!({"node":{"id":"m1", "text":"updated"}})));

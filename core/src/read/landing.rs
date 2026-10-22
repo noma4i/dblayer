@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
@@ -14,17 +14,10 @@ pub enum LandingError {
     InvalidOrderBounds,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredMember {
-    pub id: String,
-    pub order_key: String,
-    pub position: usize,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StoredScope {
     pub last_key: Option<String>,
-    pub incoming: Vec<StoredMember>,
+    pub incoming: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,30 +35,20 @@ pub fn plan_landing(scope: &ScopeRef, model: &ModelKey, stored: &StoredScope, in
         return Err(LandingError::ScopeModelMismatch);
     }
     let rows = identified_rows(incoming);
-    let existing: BTreeMap<&str, &StoredMember> = stored.incoming.iter().map(|member| (member.id.as_str(), member)).collect();
+    let existing: BTreeSet<&str> = stored.incoming.iter().map(String::as_str).collect();
     let mut previous_key = stored.last_key.clone();
-    let mut keyed = Vec::with_capacity(rows.len());
-    let (mut inserted, mut moved) = (Vec::new(), Vec::new());
-    for (index, (id, _)) in rows.iter().enumerate() {
-        let (order_key, placed) = match existing.get(id.as_str()) {
-            Some(member) => (member.order_key.clone(), Some(member.position)),
-            None => {
-                let order_key = fractional_between(previous_key.as_deref(), None).map_err(|_| LandingError::InvalidOrderBounds)?;
-                previous_key = Some(order_key.clone());
-                (order_key, None)
-            }
-        };
-        match placed {
-            None => inserted.push((id.clone(), order_key.clone())),
-            Some(position) if position != index => moved.push((id.clone(), order_key.clone())),
-            Some(_) => {}
+    let mut inserted = Vec::new();
+    for (id, _) in &rows {
+        if existing.contains(id.as_str()) {
+            continue;
         }
-        keyed.push(order_key);
+        let order_key = fractional_between(previous_key.as_deref(), None).map_err(|_| LandingError::InvalidOrderBounds)?;
+        previous_key = Some(order_key.clone());
+        inserted.push((id.clone(), order_key));
     }
     let entity_ops = rows.into_iter().map(|(id, row)| EntityOp::Upsert { model: model.clone(), id, row }).collect();
     let appended = inserted.into_iter().map(|(row, order_key)| ScopeOp::Append { scope: scope.clone(), row, order_key });
-    let shifted = moved.into_iter().map(|(row, order_key)| ScopeOp::Move { scope: scope.clone(), row, order_key });
-    Ok(LandingPlan { entity_ops, scope_ops: appended.chain(shifted).collect() })
+    Ok(LandingPlan { entity_ops, scope_ops: appended.collect() })
 }
 
 fn identified_rows(incoming: &[Map<String, Value>]) -> Vec<(RowId, Map<String, Value>)> {

@@ -148,13 +148,22 @@ fn order_ops(scope: &ScopeRef, current: &[Member], result: &[String]) -> Result<
         .enumerate()
         .map(|(position, id)| stable_positions.contains(&position).then(|| current[rank[id.as_str()]].order_key.clone()))
         .collect();
+    let mut uppers: Vec<Option<String>> = vec![None; result.len()];
+    let mut next: Option<String> = None;
+    for position in (0..result.len()).rev() {
+        uppers[position] = next.clone();
+        if keys[position].is_some() {
+            next = keys[position].clone();
+        }
+    }
     let mut ops = Vec::new();
     for position in 0..result.len() {
         if keys[position].is_some() {
             continue;
         }
         let lower = position.checked_sub(1).and_then(|before| keys[before].clone());
-        let upper = keys[position + 1..].iter().flatten().next().cloned();
+        let upper = uppers[position].take();
+        crate::identity::touches::touch(1);
         let key = fractional_between(lower.as_deref(), upper.as_deref()).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
         let row = RowId::new(&result[position])?;
         ops.push(if rank.contains_key(result[position].as_str()) {
