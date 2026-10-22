@@ -4,6 +4,10 @@ ActiveRecord for Swift and Kotlin. Describe models once, store normalized data i
 
 One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings and a typed, Rails-like API generated from your model files.
 
+## Requirements
+
+Android 13 (API 33) or newer.
+
 ## Highlights
 
 - **Always live.** Every read of a model returns a live result: the current value plus a stream of changes. There is no separate "observe" call to remember.

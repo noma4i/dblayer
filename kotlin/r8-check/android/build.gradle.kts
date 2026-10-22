@@ -7,7 +7,7 @@ android {
     compileSdk = 37
     defaultConfig {
         applicationId = "com.noma4i.dblayer.r8check"
-        minSdk = 26
+        minSdk = 33
         targetSdk = 37
     }
     buildTypes {

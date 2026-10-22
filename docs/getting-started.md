@@ -2,6 +2,8 @@
 
 ## Requirements
 
+Android 13 (API 33) or newer.
+
 | Tool | Why |
 | ---- | --- |
 | Xcode (iOS 17+, macOS 14+) | Swift package and iOS simulator build |
