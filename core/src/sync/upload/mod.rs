@@ -10,6 +10,9 @@ mod batch_tests;
 #[cfg(test)]
 mod settle_tests;
 
+#[cfg(test)]
+mod peek_tests;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

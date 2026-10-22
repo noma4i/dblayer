@@ -10,16 +10,14 @@ extension BridgeProbeTests {
     let source = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try Data("file".utf8).write(to: source)
     defer { try? FileManager.default.removeItem(at: source) }
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 1), modelsJson: modelsJSON, transport: MockTransport())
     try DB.database.setOnline(online: false)
     let items = (0..<4).map { UploadItem(values: ["clientKey": .string("key-\($0)"), "position": .number(Double($0)), "size": .number(4)], path: source.path) }
     let rows = try await Asset.uploadCreate(items: items, request: UploadBatchRequest(operation: "create_files", createBlob: "CreateBlob"))
     if cancel { #expect(try await rows[1].cancelUpload()) }
     else { try await rows[1].discard() }
-    try await DB.database.warm(queryJson: #"{"model":"Asset"}"#)
     for (position, original) in [0, 2, 3].enumerated() {
-      let wire = try #require(try DB.database.peekRow(model: "Asset", rowId: rows[original].id))
-      let snapshot = try Asset.decode(wire)
+      let snapshot = try #require(await Asset.find(rows[original].id).current())
       #expect(snapshot.position == position)
       #expect(snapshot.size == 3)
     }
