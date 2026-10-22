@@ -26,7 +26,7 @@ pub enum Member {
     Object { key: String, present: String, at: usize, members: Vec<Member> },
     List { key: String, present: String, at: usize, table: usize },
     Array { key: String, present: String, at: usize, table: usize },
-    Raw { key: String, present: String, at: usize, table: usize, kind: FieldKind },
+    Raw { key: String, present: String, at: usize, table: usize, kind: FieldKind, parse_json: bool },
     Union { key: String, present: String, at: usize, shared: Vec<Member>, variants: Vec<Variant> },
     UnionArray { key: String, present: String, at: usize, table: usize },
 }
@@ -159,7 +159,7 @@ impl Builder {
             FieldKind::Raw | FieldKind::Object | FieldKind::Array => {
                 let table = self.tables.len();
                 self.tables.push(Table { name: format!("{}__{path}", self.row_table), shape: TableShape::Nodes });
-                Some(Member::Raw { key: key.to_string(), present, at: 0, table, kind: field.kind.clone() })
+                Some(Member::Raw { key: key.to_string(), present, at: 0, table, kind: field.kind.clone(), parse_json: field.parse_json })
             }
             _ => None,
         }

@@ -164,6 +164,7 @@ impl Db {
             let id = RowId::generate_temp(None);
             let mut values = item.values;
             values.insert("id".into(), Value::String(id.to_string()));
+            self.shared.store.decode_values(model, &mut values, |source, key| source.get(key))?;
             let data = spec.normalize_local(&values, now)?;
             let mut variables = item.variables;
             for (target, source) in &batch.input {
@@ -203,6 +204,7 @@ impl Db {
             None => RowId::generate_temp(None),
         };
         input.insert("id".to_string(), Value::String(id.to_string()));
+        self.shared.store.decode_values(model, &mut input, |source, key| source.get(key))?;
         let now_ms = self.shared.store.lock().now_ms();
         let data = spec.normalize_local(&input, now_ms)?;
         let key = ModelKey::new(model);
@@ -238,6 +240,7 @@ impl Db {
     pub fn update_with(&self, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
         let spec = self.shared.spec(model)?;
         let mut patch = spec.patch(&patch);
+        self.shared.store.decode_values(model, &mut patch, |source, key| source.get(key))?;
         patch.remove("id");
         let key = ModelKey::new(model);
         let own = RowRef::new(key.clone(), id.clone());
@@ -269,7 +272,8 @@ impl Db {
         let spec = self.shared.spec(model)?;
         let mut patch = patch;
         let keyed = crate::schema::keyed::take(&mut patch);
-        let patch = spec.patch(&patch);
+        let mut patch = spec.patch(&patch);
+        self.shared.store.decode_values(model, &mut patch, |source, key| source.get(key))?;
         let key = ModelKey::new(model);
         let own = RowRef::new(key.clone(), id.clone());
         let input_args = args.clone();

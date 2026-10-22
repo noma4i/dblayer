@@ -10,10 +10,10 @@ fn typed(mut field: FieldSpec, name: &str, children: Vec<FieldSpec>) -> FieldSpe
 pub(crate) fn action() -> FieldSpec {
     FieldSpec::union(
         "press",
-        "ScreenAction",
+        "SampleAction",
         vec![
-            FieldSpec::variant("navigate", "ScreenNavigateAction", vec![FieldSpec::scalar("slug", ScalarKind::Str), FieldSpec::scalar("title", ScalarKind::Str).nullable()]),
-            FieldSpec::variant("openChat", "ScreenOpenChatAction", vec![FieldSpec::scalar("chatId", ScalarKind::Str)]),
+            FieldSpec::variant("navigate", "SampleNavigateAction", vec![FieldSpec::scalar("slug", ScalarKind::Str), FieldSpec::scalar("title", ScalarKind::Str).nullable()]),
+            FieldSpec::variant("openRecord", "SampleOpenRecordAction", vec![FieldSpec::scalar("recordId", ScalarKind::Str)]),
         ],
     )
     .nullable()
@@ -22,10 +22,10 @@ pub(crate) fn action() -> FieldSpec {
 fn text_value(name: &str) -> FieldSpec {
     FieldSpec::union(
         name,
-        "ScreenTextValue",
+        "SampleTextValue",
         vec![
-            FieldSpec::variant("literal", "ScreenTextLiteral", vec![FieldSpec::scalar("text", ScalarKind::Str)]),
-            FieldSpec::variant("stateRef", "ScreenStateRef", vec![FieldSpec::scalar("path", ScalarKind::Str)]),
+            FieldSpec::variant("literal", "SampleTextLiteral", vec![FieldSpec::scalar("text", ScalarKind::Str)]),
+            FieldSpec::variant("stateRef", "SampleStateRef", vec![FieldSpec::scalar("path", ScalarKind::Str)]),
         ],
     )
     .nullable()
@@ -33,20 +33,20 @@ fn text_value(name: &str) -> FieldSpec {
 
 pub(crate) fn elements(variants: Vec<FieldSpec>) -> FieldSpec {
     let shared = vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::list("children", ScalarKind::Id), action()];
-    FieldSpec::union_array("elements", "ScreenElement", variants).with_shared(shared)
+    FieldSpec::union_array("elements", "SampleElement", variants).with_shared(shared)
 }
 
 pub(crate) fn screen_variants() -> Vec<FieldSpec> {
     vec![
-        FieldSpec::variant("button", "ScreenButton", vec![text_value("label"), FieldSpec::scalar("disabled", ScalarKind::Bool).nullable()]),
-        FieldSpec::variant("heading", "ScreenHeading", vec![FieldSpec::scalar("text", ScalarKind::Str), FieldSpec::list("tags", ScalarKind::Str)]),
-        FieldSpec::variant("column", "ScreenColumn", vec![FieldSpec::scalar("gap", ScalarKind::Num).nullable()]),
-        FieldSpec::variant("pressable", "ScreenPressable", vec![]),
+        FieldSpec::variant("button", "SampleButton", vec![text_value("label"), FieldSpec::scalar("disabled", ScalarKind::Bool).nullable()]),
+        FieldSpec::variant("heading", "SampleHeading", vec![FieldSpec::scalar("text", ScalarKind::Str), FieldSpec::list("tags", ScalarKind::Str)]),
+        FieldSpec::variant("column", "SampleColumn", vec![FieldSpec::scalar("gap", ScalarKind::Num).nullable()]),
+        FieldSpec::variant("pressable", "SamplePressable", vec![]),
     ]
 }
 
 pub(crate) fn screens_spec() -> ModelSpec {
-    let spec = typed(FieldSpec::object("spec"), "ScreenSpec", vec![FieldSpec::scalar("root", ScalarKind::Id), elements(screen_variants())]).nullable();
+    let spec = typed(FieldSpec::object("spec"), "SampleSpec", vec![FieldSpec::scalar("root", ScalarKind::Id), elements(screen_variants())]).nullable();
     let mut model = ModelSpec::new("screens", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("slug", ScalarKind::Str).optional(), spec]);
     resolve_types(std::slice::from_mut(&mut model));
     model

@@ -30,6 +30,7 @@ Field options:
 | `null: true` | value may be null |
 | `optional: true` | key may be absent in server responses |
 | `default: value` | default value, also stored when the server answers null for a field without `null: true` |
+| `parse: :json` | raw field input must be JSON text, core stores the parsed value, and its default must be an object or null |
 | `id_from: :parent` | take the id from a nested parent object, also when the same object is a `belongs_to` association |
 | `type: MomentMedia` or `type: [MomentMedia]` | named nested value or list, declared once by a field block |
 | `from: "location.lat"` | read the value from a nested path of the response when the field name itself is absent |

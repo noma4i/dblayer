@@ -96,6 +96,7 @@ fn field_keys(word: &str) -> Vec<Key> {
         key("local", Want::Bool, false),
     ];
     match word {
+        "raw" => keys.push(key("parse", Want::Symbol, false)),
         "file" => keys.retain(|candidate| !matches!(candidate.name, "id_from" | "from" | "merge" | "local")),
         "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
         "list" => keys.extend([key("of", Want::Symbol, true), key("values", Want::Symbols, false), key("as", Want::TypeName, false)]),
@@ -118,6 +119,7 @@ fn field_keys(word: &str) -> Vec<Key> {
 fn nested_keys(word: &str) -> Vec<Key> {
     let mut keys = vec![key("null", Want::Bool, false), key("optional", Want::Bool, false), key("default", Want::Any, false), key("from", Want::Any, false)];
     match word {
+        "raw" => keys.push(key("parse", Want::Symbol, false)),
         "enum" => keys.extend([key("values", Want::Symbols, true), key("as", Want::TypeName, false)]),
         "list" => keys.extend([key("of", Want::Symbol, true), key("values", Want::Symbols, false), key("as", Want::TypeName, false)]),
         "object" | "array" => keys.push(key("as", Want::TypeName, false)),
@@ -767,6 +769,8 @@ fn check_edges(lines: &[&Call], paginated: bool, report: &mut impl FnMut(usize, 
             report(field.line, field.column, format!("edge `{name}` needs `paginate` in its scope"));
         } else if !has("null") && !has("optional") {
             report(field.line, field.column, format!("edge `{name}` needs `null: true` or `optional: true`"));
+        } else if has("parse") {
+            report(field.line, field.column, format!("edge `{name}` cannot set `parse`"));
         } else if ["merge", "local", "index", "default"].iter().any(|key| has(key)) {
             report(field.line, field.column, format!("edge `{name}` cannot set `merge`, `local`, `index` or `default`"));
         }
@@ -801,6 +805,16 @@ fn check_call(call: &Call, context: Context, report: &mut impl FnMut(usize, usiz
         }
     }
     check_response_paths(call, context, report);
+    if let Some(pair) = call.options.iter().find(|pair| pair.key == "parse") {
+        if call.word == "raw" && pair.value.item != Value::Symbol("json".to_string()) {
+            report(pair.line, pair.column, "raw `parse:` accepts only `:json`".to_string());
+        }
+        if let Some(default) = call.options.iter().find(|pair| pair.key == "default") {
+            if !matches!(default.value.item, Value::Hash(_) | Value::Nil) {
+                report(default.line, default.column, "raw `parse: :json` default must be an object or null".to_string());
+            }
+        }
+    }
 }
 
 fn check_response_paths(call: &Call, context: Context, report: &mut impl FnMut(usize, usize, String)) {

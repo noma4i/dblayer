@@ -34,7 +34,7 @@ fn a_shared_field_cannot_repeat_a_variant_field_or_another_shared_field() {
 
 #[test]
 fn a_reference_without_a_block_takes_the_variants_and_the_shared_fields_of_the_declaration() {
-    let mut reused = FieldSpec::union_array("more", "ScreenElement", vec![]);
+    let mut reused = FieldSpec::union_array("more", "SampleElement", vec![]);
     reused.fields.clear();
     let mut model = ModelSpec::new("screens", vec![FieldSpec::scalar("id", ScalarKind::Id), elements(screen_variants()), reused]);
     resolve_types(std::slice::from_mut(&mut model));
@@ -43,9 +43,9 @@ fn a_reference_without_a_block_takes_the_variants_and_the_shared_fields_of_the_d
 
 #[test]
 fn a_variant_named_without_members_takes_them_from_its_declaration_and_an_empty_declared_variant_keeps_its_type() {
-    let reused = FieldSpec::union("alias", "OtherAction", vec![FieldSpec::variant("navigate", "ScreenNavigateAction", vec![]), FieldSpec::variant("pressable", "ScreenPressable", vec![])]);
+    let reused = FieldSpec::union("alias", "OtherAction", vec![FieldSpec::variant("navigate", "SampleNavigateAction", vec![]), FieldSpec::variant("pressable", "SamplePressable", vec![])]);
     let mut model = ModelSpec::new("screens", vec![FieldSpec::scalar("id", ScalarKind::Id), elements(screen_variants()), crate::schema::screens_fixture::action(), reused]);
     resolve_types(std::slice::from_mut(&mut model));
     let alias = &model.fields[3].fields;
-    assert_eq!((alias[0].fields.len(), alias[1].app_type.as_deref()), (2, Some("ScreenPressable")));
+    assert_eq!((alias[0].fields.len(), alias[1].app_type.as_deref()), (2, Some("SamplePressable")));
 }

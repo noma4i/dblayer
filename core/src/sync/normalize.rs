@@ -147,7 +147,7 @@ fn connection_items(value: &Value) -> Vec<&Value> {
 pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, SyncError> {
     let input = nested_input(db, model, node, related)?;
     let mut patch = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?.patch(&input);
-    db.shared.store.response_values(model, &mut patch)?;
+    db.shared.store.decode_values(model, &mut patch, crate::schema::read_path)?;
     Ok(patch.get("id").and_then(read_id).is_some().then_some(patch))
 }
 

@@ -15,7 +15,7 @@ pub(crate) type Cells = Vec<SqlValue>;
 type ReadValue = for<'a> fn(&'a Map<String, Value>, &str) -> Option<&'a Value>;
 
 impl Store {
-    pub(crate) fn response_values(&self, model: &str, row: &mut Map<String, Value>) -> Result<(), StoreError> {
+    pub(crate) fn decode_values(&self, model: &str, row: &mut Map<String, Value>, read: ReadValue) -> Result<(), StoreError> {
         #[cfg(test)]
         assert!(!self.require_unlocked_responses.load(std::sync::atomic::Ordering::SeqCst) || self.inner.try_lock().is_ok(), "response normalization acquired models while holding inner");
         let models = self.models.read().unwrap_or_else(|error| error.into_inner());
@@ -23,7 +23,7 @@ impl Store {
         for plan in &info.layout.fields {
             let FieldPlan::Typed { field, member, .. } = plan else { continue };
             let Some(value) = row.get(field).filter(|value| !value.is_null()) else { continue };
-            match normalize_with(member, &info.layout, value, crate::schema::read_path) {
+            match normalize_with(member, &info.layout, value, read, true) {
                 Some(value) => { row.insert(field.clone(), value); }
                 None => { row.remove(field); }
             }
@@ -40,12 +40,12 @@ pub(crate) fn normalize_leaf(leaf: &Leaf, value: &Value) -> Option<Value> {
     }
 }
 
-fn normalize_members(members: &[Member], layout: &Layout, source: &Map<String, Value>, read: ReadValue) -> Map<String, Value> {
-    normalize_each(members.iter(), layout, source, read)
+fn normalize_members(members: &[Member], layout: &Layout, source: &Map<String, Value>, read: ReadValue, parse_text: bool) -> Map<String, Value> {
+    normalize_each(members.iter(), layout, source, read, parse_text)
 }
 
-fn normalize_each<'a>(members: impl Iterator<Item = &'a Member>, layout: &Layout, source: &Map<String, Value>, read: ReadValue) -> Map<String, Value> {
-    members.filter_map(|member| read(source, member.key()).and_then(|value| normalize_with(member, layout, value, read)).map(|value| (member.key().to_string(), value))).collect()
+fn normalize_each<'a>(members: impl Iterator<Item = &'a Member>, layout: &Layout, source: &Map<String, Value>, read: ReadValue, parse_text: bool) -> Map<String, Value> {
+    members.filter_map(|member| read(source, member.key()).and_then(|value| normalize_with(member, layout, value, read, parse_text)).map(|value| (member.key().to_string(), value))).collect()
 }
 
 fn normalize_nested_leaf(leaf: &Leaf, value: &Value) -> Option<Value> {
@@ -76,29 +76,30 @@ fn union_of(layout: &Layout, table: usize) -> Option<&Member> {
 
 /// The value as storage returns it: known members only, scalars read by their kind, nulls and wrong types removed.
 pub(crate) fn normalize(member: &Member, layout: &Layout, value: &Value) -> Option<Value> {
-    normalize_with(member, layout, value, |source, key| source.get(key))
+    normalize_with(member, layout, value, |source, key| source.get(key), false)
 }
 
-fn normalize_with(member: &Member, layout: &Layout, value: &Value, read: ReadValue) -> Option<Value> {
+fn normalize_with(member: &Member, layout: &Layout, value: &Value, read: ReadValue, parse_text: bool) -> Option<Value> {
     match member {
         Member::Leaf(leaf) => normalize_nested_leaf(leaf, value),
+        Member::Raw { parse_json: true, .. } if parse_text => crate::value::read_json_text(value),
         Member::Raw { kind, .. } => match kind {
             FieldKind::Object => value.as_object().map(|value| Value::Object(value.clone())),
             FieldKind::Array => value.as_array().map(|value| Value::Array(value.clone())),
             _ => Some(value.clone()),
         },
-        Member::Object { members, .. } => value.as_object().map(|source| Value::Object(normalize_members(members, layout, source, read))),
+        Member::Object { members, .. } => value.as_object().map(|source| Value::Object(normalize_members(members, layout, source, read, parse_text))),
         Member::Union { shared, variants, .. } => {
             let (name, source) = (typename(value)?, value.as_object()?);
             let mut kept = Map::from_iter([(TYPENAME.to_string(), Value::String(name.to_string()))]);
             if let Some(members) = active_members(shared, variants, name) {
-                kept.extend(normalize_each(members, layout, source, read));
+                kept.extend(normalize_each(members, layout, source, read, parse_text));
             }
             Some(Value::Object(kept))
         }
         Member::UnionArray { table, .. } => {
             let union = union_of(layout, *table)?;
-            value.as_array().map(|items| Value::Array(items.iter().filter_map(|item| normalize_with(union, layout, item, read)).collect()))
+            value.as_array().map(|items| Value::Array(items.iter().filter_map(|item| normalize_with(union, layout, item, read, parse_text)).collect()))
         }
         Member::List { table, .. } => match &layout.tables[*table].shape {
             TableShape::Values(leaf) => read_array(value, |item| normalize_nested_leaf(leaf, item)).map(Value::Array),
@@ -106,7 +107,7 @@ fn normalize_with(member: &Member, layout: &Layout, value: &Value, read: ReadVal
         },
         Member::Array { table, .. } => match &layout.tables[*table].shape {
             TableShape::Elements(members) => value.as_array().map(|items| {
-                Value::Array(items.iter().filter_map(Value::as_object).map(|item| Value::Object(normalize_members(members, layout, item, read))).collect())
+                Value::Array(items.iter().filter_map(Value::as_object).map(|item| Value::Object(normalize_members(members, layout, item, read, parse_text))).collect())
             }),
             TableShape::Values(_) | TableShape::Nodes => None,
         },

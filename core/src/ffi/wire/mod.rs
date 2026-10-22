@@ -108,7 +108,7 @@ fn describe(field: &FieldSpec, out: &mut String) {
     match (&field.kind, field.app_type.is_some()) {
         (FieldKind::Scalar { kind }, _) => out.push_str(&format!("s{kind:?}")),
         (FieldKind::Enum { .. }, _) => out.push('e'),
-        (FieldKind::Raw, _) => out.push('r'),
+        (FieldKind::Raw, _) => out.push_str(if field.parse_json { "rj" } else { "r" }),
         (FieldKind::File, _) => out.push('f'),
         (FieldKind::List { element }, _) => out.push_str(&format!("l{element:?}")),
         (FieldKind::Object, true) => members_text(field, out, "o"),

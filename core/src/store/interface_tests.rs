@@ -20,10 +20,10 @@ fn read(store: &Store, id: &str) -> Value {
 
 fn elements() -> Vec<Value> {
     vec![
-        json!({"__typename": "ScreenColumn", "id": "root", "children": ["b1", "h1"], "gap": 8.5}),
-        json!({"__typename": "ScreenButton", "id": "b1", "children": [], "press": {"__typename": "ScreenNavigateAction", "slug": "home", "title": "Home"}, "label": {"__typename": "ScreenStateRef", "path": "user.name"}, "disabled": true}),
-        json!({"__typename": "ScreenHeading", "id": "h1", "children": [], "text": "Hi", "tags": ["a", "b"]}),
-        json!({"__typename": "ScreenPressable", "id": "p1", "children": ["h1"], "press": {"__typename": "ScreenOpenChatAction", "chatId": "c9"}}),
+        json!({"__typename": "SampleColumn", "id": "root", "children": ["b1", "h1"], "gap": 8.5}),
+        json!({"__typename": "SampleButton", "id": "b1", "children": [], "press": {"__typename": "SampleNavigateAction", "slug": "home", "title": "Home"}, "label": {"__typename": "SampleStateRef", "path": "user.name"}, "disabled": true}),
+        json!({"__typename": "SampleHeading", "id": "h1", "children": [], "text": "Hi", "tags": ["a", "b"]}),
+        json!({"__typename": "SamplePressable", "id": "p1", "children": ["h1"], "press": {"__typename": "SampleOpenRecordAction", "recordId": "c9"}}),
     ]
 }
 
@@ -47,14 +47,14 @@ fn interface_values_live_in_one_element_table_with_the_shared_columns_declared_o
     assert_eq!((column("u"), column("u__shared__id"), column("u__shared__press"), column("u__button__disabled"), column("u__heading__text")), (1, 1, 1, 1, 1));
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name GLOB 'u__*__id'")), 1);
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table} WHERE row_id = 's1'")), 4);
-    assert_eq!(text(&store, &format!("SELECT u FROM {table} WHERE row_id = 's1' AND pos = 1")).as_deref(), Some("ScreenButton"));
+    assert_eq!(text(&store, &format!("SELECT u FROM {table} WHERE row_id = 's1' AND pos = 1")).as_deref(), Some("SampleButton"));
 }
 
 #[test]
 fn an_element_that_changes_variant_clears_the_columns_and_child_rows_of_the_old_variant() {
     let store = store_with_screens();
     put(&store, screen(elements()));
-    let changed = vec![json!({"__typename": "ScreenColumn", "id": "b1", "children": ["x"], "gap": 1.5})];
+    let changed = vec![json!({"__typename": "SampleColumn", "id": "b1", "children": ["x"], "gap": 1.5})];
     put(&store, screen(changed.clone()));
     let table = "row_screens__spec__elements";
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table} WHERE row_id = 's1'")), 1);
@@ -66,9 +66,9 @@ fn an_element_that_changes_variant_clears_the_columns_and_child_rows_of_the_old_
 #[test]
 fn an_element_with_an_unknown_typename_keeps_only_its_name_and_a_bad_element_is_dropped() {
     let store = store_with_screens();
-    let mixed = vec![elements().remove(0), json!({"__typename": "ScreenFuture", "id": "f1", "children": ["x"], "size": 3}), json!({"id": "n1"}), json!("x")];
+    let mixed = vec![elements().remove(0), json!({"__typename": "SampleFuture", "id": "f1", "children": ["x"], "size": 3}), json!({"id": "n1"}), json!("x")];
     put(&store, screen(mixed));
-    assert_eq!(read(&store, "s1")["spec"]["elements"], json!([elements()[0].clone(), {"__typename": "ScreenFuture"}]));
+    assert_eq!(read(&store, "s1")["spec"]["elements"], json!([elements()[0].clone(), {"__typename": "SampleFuture"}]));
 }
 
 #[test]

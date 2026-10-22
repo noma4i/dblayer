@@ -12,7 +12,7 @@ Start with the [model syntax and decode rules](models.md#nested-objects-and-list
 | `field :name, type: :string, from: "full_name"` inside a block | property `name`, server response path and canonical key `full_name` |
 | `field :owners, type: [:id]` inside a block | string IDs, including numeric input |
 | `field :attachment, type: MessageAttachment do on GiftAttachment do ... end ... end` | a union, see [unions](#unions) |
-| `field :elements, type: [ScreenElement] do shared do ... end on Button do ... end end` | a list of interface values, see [interfaces and lists](#interfaces-and-lists-of-unions) |
+| `field :elements, type: [SampleElement] do shared do ... end on Button do ... end end` | a list of interface values, see [interfaces and lists](#interfaces-and-lists-of-unions) |
 
 ## Defaults
 
@@ -33,6 +33,25 @@ end
 ```
 
 The generated constructors and decoders use these values. A nullable field reads its default when absent and remains null when explicitly null. A required field with a default uses it for absent or null input. A value with the wrong type gives a decoding error.
+
+## JSON text in raw fields
+
+Declare `field :payload, type: :raw, parse: :json, null: true` when the response sends JSON inside a string.
+Core parses the string once and stores its JSON tree, including nested objects and arrays.
+Invalid JSON text and non-string input fail value decoding, nullable null remains null.
+Defaults must be objects or null, string defaults are rejected and never parsed.
+Ephemeral and local writes use the same string input rule, their stored values and defaults remain decoded JSON.
+Edge fields reject `parse`, their storage accepts only scalar values.
+Stored values survive later merges and writes without being parsed again.
+For `{"payload":"{\"items\":[1,{\"enabled\":true}]}"}`, both platforms receive the object directly.
+
+```swift
+let items = sample.payload?.objectValue["items"]
+```
+
+```kotlin
+val items = sample.payload?.jsonObject?.get("items")
+```
 
 ## Reuse and recursion
 
@@ -134,24 +153,24 @@ A union is stored in the columns of its row: one text column holds the `__typena
 A GraphQL interface is a union with a `shared` block. The `shared` block declares the interface fields once. Every `on` block declares only the fields of its implementation. A field type of `[Name]` with `on` blocks is a list of variants: each item is one variant.
 
 ```ruby
-model CustomScreen do
+model InterfaceRecord do
   field :slug, type: :string
-  field :spec, type: ScreenSpec, null: true do
+  field :spec, type: SampleSpec, null: true do
     field :root, type: :id
-    field :elements, type: [ScreenElement] do
+    field :elements, type: [SampleElement] do
       shared do
         field :id, type: :id
         field :children, type: [:id]
-        field :press, type: ScreenAction, null: true
-        field :visible, type: ScreenVisibility, null: true
+        field :press, type: SampleAction, null: true
+        field :visible, type: SampleVisibility, null: true
       end
-      on ScreenButton do
-        field :label, type: ScreenTextValue, null: true
+      on SampleButton do
+        field :label, type: SampleTextValue, null: true
       end
-      on ScreenHeading do
-        field :text, type: ScreenTextValue, null: true
+      on SampleHeading do
+        field :text, type: SampleTextValue, null: true
       end
-      on ScreenPressable do
+      on SamplePressable do
       end
     end
   end
@@ -178,9 +197,9 @@ val elements = screen.spec?.elements.orEmpty()
 for (element in elements) {
     val id = element.id ?: continue
     when (element) {
-        is ScreenElement.Button -> show(id, element.value.label)
-        is ScreenElement.Heading -> show(id, element.value.text)
-        is ScreenElement.Pressable, is ScreenElement.Unknown -> Unit
+        is SampleElement.Button -> show(id, element.value.label)
+        is SampleElement.Heading -> show(id, element.value.text)
+        is SampleElement.Pressable, is SampleElement.Unknown -> Unit
     }
     open(element.press, element.children.orEmpty())
 }
@@ -190,7 +209,7 @@ for (element in elements) {
 | ---- | -------- |
 | Shared fields | `shared` is allowed once in a union field. A shared field and a variant field cannot have the same name. `kind` is reserved when a union has shared fields |
 | Empty variant | `on Type do end` is allowed when the union has shared fields: the variant holds only them |
-| Reuse | `type: [ScreenElement]` or `type: ScreenElement` without a block names an interface declared anywhere in the same generator invocation. A union or interface field may be nullable |
+| Reuse | `type: [SampleElement]` or `type: SampleElement` without a block names an interface declared anywhere in the same generator invocation. A union or interface field may be nullable |
 | Tree | a field such as `children` holds keys (`[:id]`), not nested values. The tree is not stored recursively: a screen reads children by key from the same list |
 | Order | the list keeps the order the server sent. An answer replaces the whole list, and an element that changes variant loses the columns and child rows of the old variant |
 | Unknown variant | an item with an unknown `__typename` becomes `.unknown(typename:)` / `Unknown`. It keeps the type name only, so its shared fields are empty. An item without a text `__typename` is dropped |
@@ -198,4 +217,51 @@ for (element in elements) {
 | Queries | list items are not queryable. A single interface value compares its kind like any union |
 | Schema | with `--schema`, the `on` types must be the implementations of the interface and every implementation needs an `on` block. The `shared` fields must exist on the interface and on every implementation. The operation must select `__typename` and may name only declared variants in `... on` |
 
-An interface list is stored in one child table with one row per item: one text column holds the `__typename`, the shared fields take their columns once, and each variant adds its own columns. A model of 33 variants with 334 columns of their own and 20 shared columns takes 359 columns per item. A table has at most 2000 columns, so the generator rejects a wider declaration and names the table: `table row_Screen__spec would have 2406 columns, above the SQLite limit of 2000`. Declare fewer variants or fields, or split the model.
+An interface list is stored in one child table with one row per item: one text column holds the `__typename`, the shared fields take their columns once, and each variant adds its own columns. A model of 33 variants with 334 columns of their own and 20 shared columns takes 359 columns per item. A table has at most 2000 columns, so the generator rejects a wider declaration and names the table: `table row_Sample__spec would have 2406 columns, above the SQLite limit of 2000`. Declare fewer variants or fields, or split the model.
+
+## Wide interface lists
+
+Count 4 storage columns, 1 discriminator, shared columns once, and the sum of every variant's columns.
+A scalar costs 1 column, a four-case scalar value costs 5, and a list costs 1 presence column plus its child table.
+The generator rejects tables above 2000 columns.
+Use a single element type with a string `type` and nullable `raw` props when the property catalogue changes independently.
+In `fixtures/screen.dbl`, 14 common fields plus 1 raw props field and 4 storage columns make 19 columns per element.
+Adding catalogue types or props keeps that width constant.
+Props, visibility, action lists and state values use `raw, parse: :json`, so the application receives decoded JSON values.
+Applications interpret props and conditions after core parses their JSON text.
+The state entry table has 4 storage columns, 1 path and 1 raw value, totaling 6 columns instead of 9.
+Action lists and conditions no longer declare separate variant tables or generated types.
+
+The groups below define a fixed-shape catalogue example, with 20 base entries in group 0 and 20 component groups.
+The example has 306 listed components, including 102 composable components.
+Only composable rows declare V/S/L widths, the other rows have no typed properties to count.
+
+| Group | Listed | Composable | V | S | L | 5V + S |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 20 | 20 | 17 | 36 | 1 | 121 |
+| 1 | 47 | 7 | 9 | 2 | 0 | 47 |
+| 2 | 50 | 15 | 26 | 13 | 1 | 143 |
+| 3 | 7 | 2 | 3 | 0 | 0 | 15 |
+| 4 | 5 | 5 | 8 | 6 | 1 | 46 |
+| 5 | 10 | 1 | 0 | 3 | 0 | 3 |
+| 6 | 24 | 3 | 4 | 1 | 2 | 21 |
+| 7 | 13 | 0 | 0 | 0 | 0 | 0 |
+| 8 | 3 | 0 | 0 | 0 | 0 | 0 |
+| 9 | 7 | 2 | 3 | 0 | 0 | 15 |
+| 10 | 16 | 7 | 15 | 5 | 0 | 80 |
+| 11 | 31 | 11 | 9 | 6 | 2 | 51 |
+| 12 | 6 | 4 | 4 | 2 | 1 | 22 |
+| 13 | 16 | 8 | 14 | 5 | 1 | 75 |
+| 14 | 4 | 1 | 1 | 2 | 0 | 7 |
+| 15 | 8 | 4 | 5 | 2 | 0 | 27 |
+| 16 | 13 | 6 | 11 | 2 | 1 | 57 |
+| 17 | 3 | 0 | 0 | 0 | 0 | 0 |
+| 18 | 30 | 19 | 23 | 16 | 1 | 131 |
+| 19 | 5 | 4 | 7 | 4 | 0 | 39 |
+| 20 | 8 | 3 | 5 | 3 | 0 | 28 |
+| Components | 306 | 102 | 147 | 72 | 10 | 807 |
+| Including group 0 | 326 | 122 | 164 | 108 | 11 | 928 |
+
+The typed element table totals 4 + 1 + 13 shared + 928 variant columns + 11 list presence columns = 957.
+Both declarations fit today, a synthetic threefold expansion reaches 2835 columns and must fail.
+Raw props also preserve fields of unknown element types, while an unknown union variant preserves only its discriminator.

@@ -52,6 +52,10 @@ pub enum DeclarationError {
     SearchableNotText(String),
     #[error("field {0} is declared twice")]
     DuplicateField(String),
+    #[error("field {0} parses JSON only as raw with an object or null default")]
+    InvalidJsonParse(String),
+    #[error("edge field {0} cannot parse JSON")]
+    JsonParseEdge(String),
     #[error("indexed field {0} is not a scalar or enum")]
     IndexedFieldNotScalar(String),
     #[error("table {table} would have {count} columns, above the SQLite limit of {COLUMN_LIMIT}")]
@@ -176,6 +180,8 @@ pub enum FieldKind {
 pub struct FieldSpec {
     pub name: String,
     pub kind: FieldKind,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub parse_json: bool,
     #[serde(default)]
     pub nullable: bool,
     #[serde(default)]
@@ -207,6 +213,7 @@ impl FieldSpec {
         Self {
             name: name.to_string(),
             kind,
+            parse_json: false,
             nullable: false,
             optional: false,
             default: None,
@@ -323,6 +330,7 @@ impl FieldSpec {
         match &self.kind {
             FieldKind::Scalar { kind } => read_scalar(value, *kind),
             FieldKind::Enum { .. } => read_enum(value).map(Value::String),
+            FieldKind::Raw if self.parse_json => crate::value::read_json_text(value),
             FieldKind::Raw => read_raw(value),
             FieldKind::Object => value.is_object().then(|| value.clone()),
             FieldKind::Array | FieldKind::UnionArray => value.is_array().then(|| value.clone()),
@@ -332,6 +340,18 @@ impl FieldSpec {
                 read_array(value, |item| read_scalar(item, *element)).map(Value::Array)
             }
         }
+    }
+
+    fn decode_stored(&self, value: &Value) -> Option<Value> {
+        if self.parse_json { read_raw(value) } else { self.decode(value) }
+    }
+
+    fn check_json_parse(&self) -> Result<(), DeclarationError> {
+        if self.parse_json && (self.kind != FieldKind::Raw || self.default.as_ref().is_some_and(|value| !value.is_object() && !value.is_null())) {
+            return Err(DeclarationError::InvalidJsonParse(self.name.clone()));
+        }
+        for child in self.fields.iter().chain(&self.shared) { child.check_json_parse()?; }
+        Ok(())
     }
 }
 
@@ -689,6 +709,9 @@ impl RelationSpec {
     }
 
     fn check(&self, model: &ModelSpec) -> Result<(), DeclarationError> {
+        if let Some(field) = self.edge_fields.iter().find(|field| field.parse_json) {
+            return Err(DeclarationError::JsonParseEdge(field.name.clone()));
+        }
         if self.name.is_empty() {
             return Err(DeclarationError::EmptyRelationName);
         }
@@ -1053,11 +1076,17 @@ impl ModelSpec {
     }
 
     pub fn normalize(&self, input: &Map<String, Value>) -> Result<Map<String, Value>, SchemaError> {
+        self.normalize_values(input, FieldSpec::decode)
+    }
+
+    fn normalize_values(&self, input: &Map<String, Value>, decode: fn(&FieldSpec, &Value) -> Option<Value>) -> Result<Map<String, Value>, SchemaError> {
         let mut normalized = Map::new();
         for field in self.fields.iter().filter(|field| !field.is_local()) {
             let value = field.read(input);
-            if let Some(decoded) = value.as_ref().filter(|value| !value.is_null()).and_then(|value| field.decode(value)) {
+            if let Some(decoded) = value.as_ref().filter(|value| !value.is_null()).and_then(|value| decode(field, value)) {
                 normalized.insert(field.name.clone(), decoded);
+            } else if let Some(default) = field.default.as_ref().filter(|_| field.parse_json && value.is_none()) {
+                normalized.insert(field.name.clone(), default.clone());
             } else if field.optional && value.is_none() {
                 continue;
             } else if field.nullable {
@@ -1100,7 +1129,7 @@ impl ModelSpec {
     }
 
     pub(crate) fn merged(&self, stored: Option<&Map<String, Value>>, patch: &Map<String, Value>) -> Option<Map<String, Value>> {
-        let Some(stored) = stored else { return self.normalize(patch).ok().filter(|row| row.get("id").is_some()) };
+        let Some(stored) = stored else { return self.normalize_values(patch, FieldSpec::decode_stored).ok().filter(|row| row.get("id").is_some()) };
         let mut row = stored.clone();
         for (name, value) in patch {
             let rule = self.field(name).and_then(|field| field.merge.as_ref());
@@ -1156,6 +1185,7 @@ impl ModelSpec {
 
     fn check_fields(&self) -> Result<(), DeclarationError> {
         for field in &self.fields {
+            field.check_json_parse()?;
             if field.name.is_empty() {
                 return Err(DeclarationError::EmptyFieldName);
             }

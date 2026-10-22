@@ -73,6 +73,7 @@ impl ModelSpec {
     pub(super) fn check_ephemeral(&self) -> Result<(), DeclarationError> {
         for spec in &self.ephemeral {
             let field = &spec.field;
+            field.check_json_parse()?;
             if field.name.is_empty() {
                 return Err(DeclarationError::EmptyFieldName);
             }

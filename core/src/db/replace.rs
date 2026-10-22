@@ -46,7 +46,7 @@ impl Db {
         let spec = self.shared.spec(request.scope.model.as_str())?;
         let rows = rows.iter().map(|row| {
             let mut patch = spec.patch(row);
-            self.shared.store.response_values(request.scope.model.as_str(), &mut patch)?;
+            self.shared.store.decode_values(request.scope.model.as_str(), &mut patch, crate::schema::read_path)?;
             Ok(patch)
         }).collect::<Result<Vec<_>, DbError>>()?;
         let rows = crate::store::coalesce_rows(rows.into_iter().map(|row| (request.scope.model.clone(), row)));

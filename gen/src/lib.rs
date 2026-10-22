@@ -251,3 +251,6 @@ mod enum_schema_conflict_tests;
 
 #[cfg(test)]
 mod upload_batch_tests;
+
+#[cfg(test)]
+mod raw_json_tests;

@@ -142,6 +142,7 @@ fn build_field(call: &Call, owner: &str) -> FieldSpec {
     field.optional = flag(call, "optional");
     field.indexed = flag(call, "index");
     field.searchable = flag(call, "searchable");
+    field.parse_json = option(call, "parse").is_some_and(|pair| pair.value.item == Value::Symbol("json".to_string()));
     field.id_from_parent = option(call, "id_from").and_then(|pair| text_of(&pair.value.item));
     field.app_type = option(call, "as").and_then(|pair| text_of(&pair.value.item));
     if (matches!(field.kind, FieldKind::Enum { .. }) || !field.values.is_empty()) && field.app_type.is_none() {

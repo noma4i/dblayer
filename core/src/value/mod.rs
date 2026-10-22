@@ -169,6 +169,10 @@ pub fn read_raw(value: &Value) -> Option<Value> {
     (!value.is_null()).then(|| value.clone())
 }
 
+pub(crate) fn read_json_text(value: &Value) -> Option<Value> {
+    serde_json::from_str(value.as_str()?).ok()
+}
+
 pub fn read_array<T>(value: &Value, element: impl Fn(&Value) -> Option<T>) -> Option<Vec<T>> {
     value.as_array().map(|items| items.iter().filter_map(element).collect())
 }
