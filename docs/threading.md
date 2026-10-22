@@ -33,7 +33,7 @@ Speed never relaxes the guarantees of [live data](live-data.md): ordered deliver
 
 Observers never read SQLite on the thread that routes events, and never under the lock that holds the observer registry. A pool of 2 reader threads (`dblayer-read`) runs every read of a subscription, of a group refresh after a commit, of a window growing and of a retained entity. The result returns to the routing thread as an event: `ReadOk` with the rows, or `ReadFailed` with the error. A subscription returns its handle at once and the first value arrives after its read. `Db::settle()` waits for these reads too. A group has at most one read in flight. A commit that arrives meanwhile marks the group to read again.
 
-A read that fails is counted (`query_reads_failed`, `entity_reads_failed`), the group keeps the error and its last rows, and the next batch of events of any model reads the group again. A panic while the routing thread handles one group is counted (`owner_panics`), fails that group in the same way and does not stop the other groups of the batch. The counter `sql_under_owner` counts SQL run on the routing thread or under the registry lock. It stays 0.
+A read that fails is counted (`query_reads_failed`, `entity_reads_failed`). A failed entity read reaches the subscriber of those ids as a delivery with `failure` set and no rows. The group keeps the error and its last rows, and the next batch of events of any model reads the group again. A panic while the routing thread handles one group is counted (`owner_panics`), fails that group in the same way and does not stop the other groups of the batch. The counter `sql_under_owner` counts SQL run on the routing thread or under the registry lock. It stays 0.
 
 ## Caching
 

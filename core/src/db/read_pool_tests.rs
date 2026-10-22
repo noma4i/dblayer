@@ -121,6 +121,8 @@ fn inv_observe_23_a_panic_while_applying_one_group_fails_that_group_and_leaves_t
     db.settle();
     assert_eq!((calls(&users), calls(&moments)), (vec![0], vec![0, 1]));
     assert_eq!(db.counters().owner_panics, 1);
+    put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "two"}));
+    assert_eq!(calls(&users), [0, 1], "a batch of another model reads the failed group again");
     put(&db, "users", json!({"id": "u2", "name": "Bob"}));
-    assert_eq!(calls(&users), [0, 2]);
+    assert_eq!(calls(&users), [0, 1, 2]);
 }
