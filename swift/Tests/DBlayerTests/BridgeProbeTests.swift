@@ -155,7 +155,7 @@ struct BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aFailedLoadThrowsLikeRefresh() async throws {
     let transport = MockTransport()
-    transport.enqueue("MomentsFeed", failure: .Network(detail: "offline"))
+    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
@@ -169,7 +169,8 @@ struct BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() async throws {
     let transport = MockTransport()
-    transport.enqueue("MomentsFeed", failure: .Network(detail: "offline"))
+    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
+    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
@@ -414,6 +415,7 @@ struct BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() async throws {
     let transport = MockTransport()
+    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)

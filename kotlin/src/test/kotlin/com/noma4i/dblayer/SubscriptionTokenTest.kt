@@ -13,6 +13,7 @@ class SubscriptionTokenTest {
     @Test
     fun cancelHandsBackExactlyTheTokensTheTransportIssued() = bounded {
         val mock = MockTransport()
+        repeat(count) { mock.enqueue("documentBySlug", """{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}""") }
         val issued = CopyOnWriteArrayList<String>()
         val revoked = CopyOnWriteArrayList<String>()
         val unknown = CopyOnWriteArrayList<String>()

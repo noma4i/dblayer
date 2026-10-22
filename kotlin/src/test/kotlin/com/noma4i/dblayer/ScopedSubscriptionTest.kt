@@ -8,6 +8,7 @@ class ScopedSubscriptionTest {
     @Test
     fun readingARelationWithParamsSubscribesWithThoseVariables() = bounded {
         val mock = MockTransport()
+        repeat(4) { mock.enqueue("documentBySlug", """{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}""") }
         val database = openDatabase(Config(null, null, 8u), modelsJSON, mock)
         database.registerOperations("""[{"name":"documentBySlug","document":"query documentBySlug(${'$'}slug: String!, ${'$'}source: String!) { documentBySlug(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated(${'$'}slug: String!, ${'$'}source: String!) { documentUpdated(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentUpdated"}]""")
         val listener = object : QueryListener { override fun changed(change: LiveChange) {} }

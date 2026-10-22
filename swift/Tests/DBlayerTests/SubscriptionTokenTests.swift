@@ -44,6 +44,7 @@ private final class IgnoredChanges: QueryListener, @unchecked Sendable {
 struct SubscriptionTokenTests {
   @Test func cancellingWhileSubscribeIsInFlightCancelsTheForeignTaskAndIssuesNoToken() async throws {
     let transport = HeldSubscribe()
+    transport.mock.enqueue("documentBySlug", reply: #"{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}"#)
     var database: Database? = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport)
     try database?.registerOperations(defsJson: #"[{"name":"documentBySlug","document":"query documentBySlug($slug: String!, $source: String!) { documentBySlug(slug: $slug, source: $source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated($slug: String!, $source: String!) { documentUpdated(slug: $slug, source: $source) { id slug } }","rootPath":"documentUpdated"}]"#)
     let live = try #require(database).liveQuery(queryJson: #"{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"#, listener: IgnoredChanges())

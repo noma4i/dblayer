@@ -194,7 +194,7 @@ class BridgeProbeTest {
     @Test
     fun aFailedLoadThrowsLikeRefresh() = bounded {
         val transport = MockTransport()
-        transport.enqueue("MomentsFeed", DbException.Network("offline"))
+        transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
 
@@ -204,7 +204,8 @@ class BridgeProbeTest {
     @Test
     fun aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() = bounded {
         val transport = MockTransport()
-        transport.enqueue("MomentsFeed", DbException.Network("offline"))
+        transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
+        transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
 
@@ -333,7 +334,7 @@ class BridgeProbeTest {
     @Test
     fun resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() = bounded {
         val transport = MockTransport()
-        transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
+        repeat(2) { transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request")) }
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
         val listScope = CoroutineScope(SupervisorJob())

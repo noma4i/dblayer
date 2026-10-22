@@ -27,6 +27,7 @@ class SecondLoaderTest {
         assertTrue(cause is IllegalStateException)
         assertEquals("DBlayer is already loaded by another class loader in this process; load it once", cause.message)
         val mock = MockTransport()
+        mock.enqueue("documentBySlug", """{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}""")
         val issued = CopyOnWriteArrayList<String>()
         val revoked = CopyOnWriteArrayList<String>()
         val transport = object : Transport by mock {

@@ -6,8 +6,12 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
+/** What a call without a queued reply gets: `Strict` fails it with `Invalid` and records it in `unscripted`, `NetworkError` throws the retried network error. */
+enum class Unanswered { Strict, NetworkError }
+
 /** Answers by operation name, can delay or fail answers, and lets a test push or break a subscription. */
-class MockTransport : Transport {
+class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Transport {
+    val unscripted = CopyOnWriteArrayList<TransportRequest>()
     private val cableEvents = ConcurrentHashMap<String, Channel<EncryptedSocketEvent>>()
     private val sentFrames = CopyOnWriteArrayList<Pair<String, String>>()
     val cableFrames: List<Pair<String, String>> get() = sentFrames.toList()
@@ -67,10 +71,7 @@ class MockTransport : Transport {
     }
 
     override fun unsubscribe(token: String) {
-        if (token !in issuedTokens) {
-            unknownTokens.add(token)
-            throw IllegalStateException("unsubscribe got a token the transport never issued: $token")
-        }
+        if (token !in issuedTokens) unknownTokens.add(token)
         sinks.remove(token)
     }
 
@@ -81,10 +82,17 @@ class MockTransport : Transport {
 
     private suspend fun answer(request: TransportRequest): String {
         recorded.add(request)
-        val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() }
-            ?: throw DbException.Network("no reply queued for ${request.operationName}")
+        val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() } ?: refuse(request)
         if (reply.delayMillis > 0) delay(reply.delayMillis)
         reply.failure?.let { throw it }
         return reply.body ?: "{}"
+    }
+
+    private fun refuse(request: TransportRequest): Nothing = when (unanswered) {
+        Unanswered.NetworkError -> throw DbException.Network("no reply queued for ${request.operationName}")
+        Unanswered.Strict -> {
+            unscripted.add(request)
+            throw DbException.Invalid("MockTransport has no reply queued for ${request.operationName} variables=${request.variablesJson}")
+        }
     }
 }

@@ -20,6 +20,8 @@ DBlayer.close()
 DBlayer.open(context, transport = transport, modelsJson = modelsJSON)
 ```
 
+A call with no queued reply fails at once with `Invalid` that names the operation and its variables, and the request is listed in `transport.unscripted`. Pass `Unanswered.NetworkError` (Kotlin) or `unanswered: .networkError` (Swift) to the constructor when a test needs a missing reply to be a network error, which the core retries. `unsubscribe` with a token the mock never issued is recorded in `unknownTokens` and does not throw.
+
 `transport.calls` lists the requests it received. `emit` pushes a subscription event and `breakSubscription` drops the subscription.
 
 Keep native observer handles alive until every asynchronous assertion finishes. In Kotlin, enclose direct `liveEntities` tests in `use` and test delivery after `System.gc()`.

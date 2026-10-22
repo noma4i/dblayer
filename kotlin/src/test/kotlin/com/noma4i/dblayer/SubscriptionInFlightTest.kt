@@ -13,6 +13,7 @@ class SubscriptionInFlightTest {
     @Test
     fun closingWhileSubscribeIsInFlightCancelsTheForeignCoroutineAndIssuesNoToken() = bounded {
         val mock = MockTransport()
+        mock.enqueue("documentBySlug", """{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}""")
         val entered = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
         val finished = CompletableDeferred<Result<String>>()
