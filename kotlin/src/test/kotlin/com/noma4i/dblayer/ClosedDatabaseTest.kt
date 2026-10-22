@@ -3,9 +3,7 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.User
 import com.noma4i.dblayer.models.modelsJSON
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -38,7 +36,7 @@ class ClosedDatabaseTest {
     fun aSingletonOfAClosedDatabaseIsClosed() = bounded {
         DBlayer.close()
         val entity = User.entity()
-        withTimeout(5000) { while (!entity.isClosed) delay(20) }
+        eventually("the singleton of a closed database to close") { entity.isClosed }
         assertEquals(null, entity.value.value)
     }
 }
