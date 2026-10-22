@@ -30,6 +30,10 @@ pub struct LoadError {
 impl LoadError {
     pub(crate) const NETWORK: &'static str = "network";
 
+    pub(crate) fn invalid(message: String) -> Self {
+        Self { kind: "invalid", message }
+    }
+
     pub(crate) fn internal() -> Self {
         Self { kind: "internal", message: "load panicked".to_string() }
     }
@@ -387,11 +391,9 @@ pub(crate) enum Event {
     Offline,
     Online { observed: BTreeSet<String> },
     Close,
-    #[allow(dead_code)]
     Rejected { window: String, model: String, error: LoadError },
     #[allow(dead_code)]
     ReadOk { window: String, has_rows: bool },
-    #[allow(dead_code)]
     ReadFailed { window: String, error: LoadError },
 }
 
@@ -400,7 +402,7 @@ impl Event {
         matches!(self, Event::Landed { .. } | Event::Discarded { .. } | Event::Failed { .. } | Event::Abandoned { .. } | Event::Panicked { .. })
     }
 
-    fn window(&self) -> Option<&str> {
+    pub(crate) fn window(&self) -> Option<&str> {
         match self {
             Event::Observe { window, .. }
             | Event::Start { window, .. }

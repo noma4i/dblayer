@@ -11,9 +11,9 @@ use super::dispatch::Event;
 use super::error::DbError;
 use super::listeners::{Executor, Runnable};
 use super::open::{locked, Db, Shared};
+use super::reads::{Position, ReadJob, ReadRows, ReadTarget};
 use super::row::Row;
 
-type Position = (i64, u64);
 
 #[derive(Debug, Clone)]
 pub struct EntityChange {
@@ -174,38 +174,24 @@ pub struct EntityObserver {
 impl EntityObserver {
     pub fn retain(&self, ids: &[RowId]) -> Result<(), DbError> {
         let Some(shared) = self.shared.upgrade() else { return Ok(()) };
-        let mut observers = locked(&shared.observers);
-        let Some(group) = observers.entities.get(&self.key) else { return Ok(()) };
+        let mut observers = shared.observers();
+        let Some(group) = observers.entities.get_mut(&self.key) else { return Ok(()) };
         let model = group.model.clone();
         let fresh: BTreeSet<RowId> = ids.iter().filter(|id| !group.known.contains_key(*id) || group.dirty.contains(*id)).cloned().collect();
         if fresh.is_empty() {
             return Ok(());
         }
-        let read = shared.read_entities(&model, fresh.iter());
-        let group = observers.entities.get_mut(&self.key).expect("group checked above");
         for id in &fresh {
             group.known.entry(id.clone()).or_insert(Known { position: (i64::MIN, 0), stamp: None, told: false });
         }
-        let (changes, failure) = match read {
-            Ok((position, loaded)) => {
-                group.dirty.retain(|id| !fresh.contains(id));
-                (group.settle(position, &loaded, fresh.iter().cloned()), None)
-            }
-            Err(error) => {
-                group.dirty.extend(fresh.iter().cloned());
-                locked(&shared.counters).entity_reads_failed += 1;
-                (Vec::new(), Some(error))
-            }
-        };
-        let subscriber = group.subscriber.clone();
         observers.index_rows(&self.key, &model, fresh.iter());
-        subscriber.post(&shared.executor, changes);
-        failure.map_or(Ok(()), Err)
+        shared.read_entities_in_pool(&self.key, &model, fresh, false);
+        Ok(())
     }
 
     pub fn release(&self, ids: &[RowId]) {
         let Some(shared) = self.shared.upgrade() else { return };
-        let mut observers = locked(&shared.observers);
+        let mut observers = shared.observers();
         let Some(group) = observers.entities.get_mut(&self.key) else { return };
         let model = group.model.clone();
         let gone: Vec<RowId> = ids.iter().filter(|id| group.known.remove(*id).is_some()).cloned().collect();
@@ -222,7 +208,7 @@ impl Drop for EntityObserver {
     fn drop(&mut self) {
         self.subscriber.cancelled.store(true, Ordering::SeqCst);
         let Some(shared) = self.shared.upgrade() else { return };
-        locked(&shared.observers).remove_entities(&self.key);
+        shared.observers().remove_entities(&self.key);
     }
 }
 
@@ -238,19 +224,34 @@ impl Shared {
     }
 
     pub(crate) fn refresh_entities(&self, key: &str, model: &ModelKey, ids: BTreeSet<RowId>) {
-        locked(&self.counters).observation_reads += 1;
-        let read = self.read_entities(model, ids.iter());
+        self.read_entities_in_pool(key, model, ids, true);
+    }
+
+    fn read_entities_in_pool(&self, key: &str, model: &ModelKey, ids: BTreeSet<RowId>, counted: bool) {
+        let target = ReadTarget::Entities { key: key.to_string(), ids: ids.clone() };
+        let model = model.clone();
+        let run = move |shared: &Shared| {
+            if counted {
+                locked(&shared.counters).observation_reads += 1;
+            }
+            let (position, loaded) = shared.read_entities(&model, ids.iter())?;
+            Ok(ReadRows::Entities { position, loaded })
+        };
+        self.reads.submit(self, ReadJob { target, run: Box::new(run) });
+    }
+
+    pub(crate) fn apply_entities(&self, key: &str, ids: &BTreeSet<RowId>, read: Result<(Position, HashMap<String, Row>), DbError>) {
         if read.is_err() {
             locked(&self.counters).entity_reads_failed += 1;
         }
-        let mut observers = locked(&self.observers);
+        let mut observers = self.observers();
         let Some(group) = observers.entities.get_mut(key) else { return };
         let Ok((position, loaded)) = read else {
             group.dirty.extend(ids.iter().filter(|id| group.known.contains_key(*id)).cloned());
             return;
         };
         group.dirty.retain(|id| !ids.contains(id));
-        let changes = group.settle(position, &loaded, ids.into_iter());
+        let changes = group.settle(position, &loaded, ids.iter().cloned());
         group.subscriber.clone().post(&self.executor, changes);
     }
 }
@@ -259,7 +260,7 @@ impl Db {
     pub fn observe_entities(&self, model: &str, listener: impl Fn(&EntityChange) + Send + Sync + 'static) -> Result<EntityObserver, DbError> {
         self.shared.spec(model)?;
         let subscriber = Arc::new(EntitySubscriber { cancelled: AtomicBool::new(false), pending: Mutex::new(Pending::default()), listener: Box::new(listener), counters: self.shared.counters.clone() });
-        let key = locked(&self.shared.observers).add_entities(ModelKey::new(model), subscriber.clone());
+        let key = self.shared.observers().add_entities(ModelKey::new(model), subscriber.clone());
         Ok(EntityObserver { shared: Arc::downgrade(&self.shared), key, subscriber })
     }
 }

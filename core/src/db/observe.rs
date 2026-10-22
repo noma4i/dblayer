@@ -1,4 +1,5 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Weak};
 
 use crate::identity::{RowId, RowRef};
@@ -11,19 +12,49 @@ use super::entities::{EntityGroup, EntitySubscriber};
 use super::error::DbError;
 use super::listeners::{Listener, Subscriber};
 use super::open::{locked, Db, Shared};
+use super::reads::{ReadJob, ReadResult, ReadRows, ReadTarget};
 use super::window::WindowSeed;
 use super::watch::{Body, Change, CountChange, Deps, Evaluated, Loaded, Step, Subject, Version};
 
 const MAX_PROBED_ROWS: usize = 8;
-const MAX_GROW_ATTEMPTS: usize = 8;
+
+type Subscribers = Vec<(u64, Arc<Subscriber>)>;
+
+#[derive(Default)]
+struct GroupFacts {
+    reading: bool,
+    again: bool,
+    read_error: Option<DbError>,
+    joining: Subscribers,
+    grows: VecDeque<(usize, usize)>,
+}
 
 struct Group {
     subject: Subject,
     deps: Deps,
     at: i64,
     epoch: u64,
+    token: u64,
     version: Arc<Version>,
-    subscribers: Vec<(u64, Arc<Subscriber>)>,
+    subscribers: Subscribers,
+    facts: GroupFacts,
+}
+
+struct Opening {
+    subject: Subject,
+    deps: Deps,
+    token: u64,
+    waiting: Subscribers,
+    reading: bool,
+    missed: bool,
+    read_error: Option<DbError>,
+    grows: VecDeque<(usize, usize)>,
+}
+
+pub(crate) struct Stepping {
+    touched: HashSet<String>,
+    reached: Option<(i64, u64)>,
+    horizon: (i64, u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +67,7 @@ pub struct ObserverCensus {
 pub(crate) struct Observers {
     next_id: u64,
     groups: HashMap<String, Group>,
+    opening: HashMap<String, Opening>,
     by_row: HashMap<RowRef, BTreeSet<String>>,
     pub(crate) entities: HashMap<String, EntityGroup>,
     pub(crate) warm_ids: HashSet<u64>,
@@ -139,12 +171,20 @@ impl Observers {
         keys
     }
 
+    fn next(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
     pub(crate) fn query_count(&self) -> usize {
-        self.groups.values().filter(|group| group.subscribers.iter().any(|(id, _)| !self.warm_ids.contains(id))).count()
+        let waiting = |subscribers: &Subscribers| subscribers.iter().any(|(id, _)| !self.warm_ids.contains(id));
+        self.groups.values().filter(|group| waiting(&group.subscribers) || waiting(&group.facts.joining)).count() + self.opening.values().filter(|opening| waiting(&opening.waiting)).count()
     }
 
     pub(crate) fn subscription_count(&self) -> usize {
-        self.groups.values().flat_map(|group| &group.subscribers).filter(|(id, _)| !self.warm_ids.contains(id)).count() + self.entities.len()
+        let live = |subscribers: &Subscribers| subscribers.iter().filter(|(id, _)| !self.warm_ids.contains(id)).count();
+        self.groups.values().map(|group| live(&group.subscribers) + live(&group.facts.joining)).sum::<usize>() + self.opening.values().map(|opening| live(&opening.waiting)).sum::<usize>() + self.entities.len()
     }
 }
 
@@ -164,7 +204,13 @@ impl ObserverHandle {
 impl ObserverHandle {
     pub(crate) fn grow(&self, before: usize, after: usize) {
         if let Some(shared) = self.shared.upgrade() {
-            shared.grow_window(&self.group, before, after);
+            let mut observers = shared.observers();
+            if let Some(group) = observers.groups.get_mut(&self.group) {
+                group.facts.grows.push_back((before, after));
+                shared.pump(&mut observers, &self.group);
+            } else if let Some(opening) = observers.opening.get_mut(&self.group) {
+                opening.grows.push_back((before, after));
+            }
         }
     }
 }
@@ -173,30 +219,38 @@ impl Drop for ObserverHandle {
     fn drop(&mut self) {
         self.subscriber.cancel();
         let Some(shared) = self.shared.upgrade() else { return };
-        let mut observers = locked(&shared.observers);
+        let mut observers = shared.observers();
         observers.warm_ids.remove(&self.id);
-        let Some(group) = observers.groups.get_mut(&self.group) else { return };
-        group.subscribers.retain(|(id, _)| *id != self.id);
-        if group.subscribers.is_empty() {
-            observers.remove_group(&self.group);
+        if let Some(group) = observers.groups.get_mut(&self.group) {
+            group.subscribers.retain(|(id, _)| *id != self.id);
+            group.facts.joining.retain(|(id, _)| *id != self.id);
+            if group.subscribers.is_empty() && group.facts.joining.is_empty() {
+                observers.remove_group(&self.group);
+            }
+        } else if let Some(opening) = observers.opening.get_mut(&self.group) {
+            opening.waiting.retain(|(id, _)| *id != self.id);
+            if opening.waiting.is_empty() {
+                observers.opening.remove(&self.group);
+            }
         }
     }
 }
 
+
 struct Due {
     key: String,
-    subject: Subject,
-    version: Arc<Version>,
-    touched: Option<HashSet<String>>,
-    reached: Option<(i64, u64)>,
-    horizon: (i64, u64),
+    step: Option<Stepping>,
 }
 
 impl Shared {
     pub(crate) fn refresh_groups(&self, batch: &[Event]) {
         let (due, touched): (Vec<Due>, Vec<(String, ModelKey, BTreeSet<RowId>)>) = {
-            let observers = locked(&self.observers);
-            let keys = observers.candidates(batch);
+            let mut observers = self.observers();
+            for opening in observers.opening.values_mut() {
+                opening.missed |= batch.iter().any(|event| opening.deps.hit(event));
+            }
+            let mut keys = observers.candidates(batch);
+            keys.extend(observers.groups.iter().filter(|(_, group)| group.facts.read_error.is_some()).map(|(key, _)| key.clone()));
             let touched = observers
                 .entities
                 .iter()
@@ -207,34 +261,121 @@ impl Shared {
             let due = keys
                 .into_iter()
                 .filter_map(|key| observers.groups.get(&key).map(|group| (key, group)))
-                .filter(|(_, group)| batch.iter().any(|event| (event.revision > group.at || event.epoch > group.epoch) && group.deps.hit(event)))
+                .filter(|(_, group)| group.facts.read_error.is_some() || batch.iter().any(|event| (event.revision > group.at || event.epoch > group.epoch) && group.deps.hit(event)))
                 .map(|(key, group)| Due {
-                    touched: observers.touched_ids(&key, batch),
-                    reached: (!batch.iter().any(|event| event.epoch > group.epoch)).then(|| (batch.iter().map(|event| event.revision).max().unwrap_or(0), group.epoch)),
-                    horizon: (batch.iter().map(|event| event.revision).max().unwrap_or(0).max(group.at), batch.iter().map(|event| event.epoch).max().unwrap_or(0).max(group.epoch)),
-                    subject: group.subject.clone(),
-                    version: group.version.clone(),
+                    step: if group.facts.read_error.is_some() {
+                        None
+                    } else {
+                        observers.touched_ids(&key, batch).map(|touched| Stepping {
+                            touched,
+                            reached: (!batch.iter().any(|event| event.epoch > group.epoch)).then(|| (batch.iter().map(|event| event.revision).max().unwrap_or(0), group.epoch)),
+                            horizon: (batch.iter().map(|event| event.revision).max().unwrap_or(0).max(group.at), batch.iter().map(|event| event.epoch).max().unwrap_or(0).max(group.epoch)),
+                        })
+                    },
                     key,
                 })
                 .collect();
             (due, touched)
         };
         for (key, model, ids) in touched {
-            self.refresh_entities(&key, &model, ids);
+            self.contained(&key, || self.refresh_entities(&key, &model, ids));
         }
         for due in due {
-            self.publish_group(&due.key, &due.subject, &due.version, due.touched.as_ref().map(|touched| (touched, due.reached, due.horizon)), None);
+            self.contained(&due.key.clone(), || {
+                let mut observers = self.observers();
+                self.schedule(&mut observers, due);
+            });
+        }
+        let mut observers = self.observers();
+        let retry: Vec<String> = observers.opening.iter().filter(|(_, opening)| !opening.reading && opening.read_error.is_some()).map(|(key, _)| key.clone()).collect();
+        for key in retry {
+            self.issue_open(&mut observers, &key);
         }
     }
 
-    pub(crate) fn grow_window(&self, key: &str, before: usize, after: usize) {
-        for _ in 0..MAX_GROW_ATTEMPTS {
-            let Some((subject, previous)) = locked(&self.observers).groups.get(key).map(|group| (group.subject.clone(), group.version.clone())) else { return };
-            let nothing = HashSet::new();
-            if self.publish_group(key, &subject, &previous, Some((&nothing, None, previous.position())), Some((before, after))) {
-                return;
+    fn schedule(&self, observers: &mut Observers, due: Due) {
+        let Some(group) = observers.groups.get_mut(&due.key) else { return };
+        if group.facts.reading {
+            group.facts.again = true;
+            return;
+        }
+        self.issue_publish(observers, &due.key, due.step, None);
+    }
+
+    fn issue_publish(&self, observers: &mut Observers, key: &str, step: Option<Stepping>, grow: Option<(usize, usize)>) {
+        let Some(group) = observers.groups.get_mut(key) else { return };
+        group.facts.reading = true;
+        let (subject, previous, token) = (group.subject.clone(), group.version.clone(), group.token);
+        let target = ReadTarget::Publish { key: key.to_string(), token, previous: previous.clone(), grow };
+        self.reads.submit(self, ReadJob { target, run: Box::new(move |shared| shared.read_publish(&subject, &previous, step, grow)) });
+    }
+
+    fn issue_join(&self, observers: &mut Observers, key: &str) {
+        let Some(group) = observers.groups.get_mut(key) else { return };
+        group.facts.reading = true;
+        let (subject, version, token) = (group.subject.clone(), group.version.clone(), group.token);
+        let joiners = group.facts.joining.iter().map(|(id, _)| *id).collect();
+        let target = ReadTarget::Join { key: key.to_string(), token, joiners };
+        self.reads.submit(self, ReadJob { target, run: Box::new(move |shared| shared.load_whole(&subject, &version).map(ReadRows::Whole)) });
+    }
+
+    fn issue_open(&self, observers: &mut Observers, key: &str) {
+        let seed = match observers.opening.get(key) {
+            Some(Opening { subject: Subject::Window(query, _, _), .. }) => observers.groups.values().find_map(|group| WindowSeed::of(query, &group.subject, &group.version)),
+            _ => None,
+        };
+        let Some(opening) = observers.opening.get_mut(key) else { return };
+        opening.reading = true;
+        let subject = opening.subject.clone();
+        let target = ReadTarget::Open { key: key.to_string(), token: opening.token };
+        self.reads.submit(
+            self,
+            ReadJob {
+                target,
+                run: Box::new(move |shared| {
+                    locked(&shared.counters).observation_reads += 1;
+                    shared.evaluate_seeded(&subject, seed.as_ref()).map(ReadRows::Evaluated)
+                }),
+            },
+        );
+    }
+
+    fn pump(&self, observers: &mut Observers, key: &str) {
+        let Some(group) = observers.groups.get_mut(key) else {
+            if observers.opening.get(key).is_some_and(|opening| !opening.reading && opening.read_error.is_none()) {
+                self.issue_open(observers, key);
+            }
+            return;
+        };
+        if group.facts.reading || group.facts.read_error.is_some() {
+            return;
+        }
+        if std::mem::take(&mut group.facts.again) {
+            self.issue_publish(observers, key, None, None);
+        } else if let Some(grow) = group.facts.grows.pop_front() {
+            let step = Stepping { touched: HashSet::new(), reached: None, horizon: group.version.position() };
+            self.issue_publish(observers, key, Some(step), Some(grow));
+        } else if !group.facts.joining.is_empty() {
+            self.issue_join(observers, key);
+        }
+    }
+
+    fn read_publish(&self, subject: &Subject, previous: &Arc<Version>, step: Option<Stepping>, grow: Option<(usize, usize)>) -> Result<ReadRows, DbError> {
+        if let (Subject::Rows(query), Some(Stepping { touched, reached: Some((revision, epoch)), .. })) = (subject, &step) {
+            if self.cannot_enter(query, previous, touched).unwrap_or(false) {
+                return Ok(ReadRows::Skipped { revision: *revision, epoch: *epoch });
             }
         }
+        locked(&self.counters).observation_reads += 1;
+        let evaluated = match (subject, &step) {
+            (Subject::Rows(query), Some(step)) if query.include.is_empty() => self.evaluate_step(query, previous, &step.touched, step.horizon),
+            (Subject::Window(query, _, _), _) => {
+                let horizon = step.as_ref().map_or_else(|| previous.position(), |step| step.horizon);
+                self.window_next(query, previous, step.as_ref().map(|step| &step.touched), horizon, grow.unwrap_or((0, 0)))
+            }
+            _ => self.evaluate(subject),
+        };
+        evaluated.map(ReadRows::Evaluated)
     }
 
     fn cannot_enter(&self, query: &Query, previous: &Version, touched: &HashSet<String>) -> Result<bool, DbError> {
@@ -248,51 +389,142 @@ impl Shared {
         self.read(&[probe.model.as_str()], |reader| Ok(self.query_keys(reader, &probe)?.is_empty()))
     }
 
-    fn publish_group(&self, key: &str, subject: &Subject, previous: &Arc<Version>, step: Option<(&HashSet<String>, Option<(i64, u64)>, (i64, u64))>, grow: Option<(usize, usize)>) -> bool {
-        if let (Subject::Rows(query), Some((touched, Some((revision, epoch)), _))) = (subject, step) {
-            if self.cannot_enter(query, previous, touched).unwrap_or(false) {
-                let mut observers = locked(&self.observers);
-                if let Some(group) = observers.groups.get_mut(key).filter(|group| Arc::ptr_eq(&group.version, previous)) {
-                    group.at = group.at.max(revision);
-                    group.epoch = group.epoch.max(epoch);
+    pub(crate) fn land_read(&self, result: ReadResult) {
+        let key = result.key().to_string();
+        self.contained(&key, || self.apply(result));
+    }
+
+    fn contained(&self, key: &str, run: impl FnOnce()) {
+        if catch_unwind(AssertUnwindSafe(run)).is_ok() {
+            return;
+        }
+        locked(&self.counters).owner_panics += 1;
+        let mut observers = self.observers();
+        let error = || DbError::Internal(format!("panic while handling {key}"));
+        if let Some(group) = observers.groups.get_mut(key) {
+            group.facts.reading = false;
+            group.facts.again = false;
+            group.facts.read_error = Some(error());
+        } else if let Some(opening) = observers.opening.get_mut(key) {
+            opening.reading = false;
+            opening.read_error = Some(error());
+        }
+    }
+
+    fn apply(&self, result: ReadResult) {
+        match result {
+            ReadResult::ReadOk { target, rows } => match (target, rows) {
+                (ReadTarget::Publish { key, token, previous, grow }, rows) => self.apply_publish(&key, token, &previous, grow, rows),
+                (ReadTarget::Join { key, token, joiners }, ReadRows::Whole(loaded)) => self.apply_join(&key, token, &joiners, loaded),
+                (ReadTarget::Open { key, token }, ReadRows::Evaluated(evaluated)) => self.apply_open(&key, token, evaluated),
+                (ReadTarget::Entities { key, ids }, ReadRows::Entities { position, loaded }) => self.apply_entities(&key, &ids, Ok((position, loaded))),
+                _ => {}
+            },
+            ReadResult::ReadFailed { target, error } => {
+                match target {
+                    ReadTarget::Entities { key, ids } => return self.apply_entities(&key, &ids, Err(error)),
+                    ReadTarget::Publish { key, token, .. } | ReadTarget::Join { key, token, .. } => {
+                        locked(&self.counters).query_reads_failed += 1;
+                        let mut observers = self.observers();
+                        if let Some(group) = observers.groups.get_mut(&key).filter(|group| group.token == token) {
+                            group.facts.reading = false;
+                            group.facts.read_error = Some(error);
+                        }
+                    }
+                    ReadTarget::Open { key, token } => {
+                        locked(&self.counters).query_reads_failed += 1;
+                        let mut observers = self.observers();
+                        if let Some(opening) = observers.opening.get_mut(&key).filter(|opening| opening.token == token) {
+                            opening.reading = false;
+                            opening.read_error = Some(error);
+                        }
+                    }
                 }
-                return true;
             }
         }
-        locked(&self.counters).observation_reads += 1;
-        let evaluated = match (subject, step) {
-            (Subject::Rows(query), Some((touched, _, horizon))) if query.include.is_empty() => self.evaluate_step(query, previous, touched, horizon),
-            (Subject::Window(query, _, _), _) => {
-                let horizon = step.map_or_else(|| previous.position(), |(_, _, horizon)| horizon);
-                self.window_next(query, previous, step.map(|(touched, _, _)| touched), horizon, grow.unwrap_or((0, 0)))
+    }
+
+    fn apply_publish(&self, key: &str, token: u64, previous: &Arc<Version>, grow: Option<(usize, usize)>, rows: ReadRows) {
+        #[cfg(test)]
+        self.panic_at(key);
+        let evaluated = match rows {
+            ReadRows::Evaluated(Evaluated { version: next, loaded }) => {
+                let replaced = self.dispatch.replaced_between(previous.position().0, next.revision);
+                let position = next.position();
+                let published = next.succeeding(previous, replaced.as_slice(), loaded).map(Arc::new);
+                Some((position, published, replaced))
             }
-            _ => self.evaluate(subject),
+            ReadRows::Skipped { revision, epoch } => {
+                let mut observers = self.observers();
+                if let Some(group) = observers.groups.get_mut(key).filter(|group| group.token == token) {
+                    if Arc::ptr_eq(&group.version, previous) {
+                        group.at = group.at.max(revision);
+                        group.epoch = group.epoch.max(epoch);
+                    }
+                    group.facts.reading = false;
+                    group.facts.read_error = None;
+                    self.pump(&mut observers, key);
+                }
+                return;
+            }
+            _ => return,
         };
-        let Ok(Evaluated { version: next, loaded }) = evaluated else { return true };
-        let (revision, epoch) = next.position();
-        let replaced = self.dispatch.replaced_between(previous.position().0, revision);
-        let replaced = replaced.as_slice();
-        let published = next.succeeding(previous, replaced, loaded).map(Arc::new);
-        let mut observers = locked(&self.observers);
-        let Some(group) = observers.groups.get_mut(key) else { return true };
-        if (group.at >= revision && group.epoch >= epoch && grow.is_none()) || !Arc::ptr_eq(&group.version, previous) {
-            return false;
+        let Some(((revision, epoch), published, replaced)) = evaluated else { return };
+        let mut observers = self.observers();
+        let Some(group) = observers.groups.get_mut(key).filter(|group| group.token == token) else { return };
+        group.facts.reading = false;
+        group.facts.read_error = None;
+        let behind = group.at >= revision && group.epoch >= epoch && grow.is_none();
+        if !behind && Arc::ptr_eq(&group.version, previous) {
+            group.at = revision;
+            group.epoch = epoch;
+            if let Some(version) = published {
+                group.version = version.clone();
+                if version.announces(previous) {
+                    let supply = match &version.body {
+                        Body::Rows(body) => body.step.as_ref().map(Step::supply).unwrap_or_default(),
+                        Body::Count(_) => Loaded::default(),
+                    };
+                    for (_, subscriber) in &group.subscribers {
+                        subscriber.post(&self.executor, version.clone(), &replaced, supply.clone());
+                    }
+                }
+            }
         }
-        group.at = revision;
-        group.epoch = epoch;
-        let Some(version) = published else { return true };
-        group.version = version.clone();
-        if !version.announces(previous) {
-            return true;
+        self.pump(&mut observers, key);
+    }
+
+    fn apply_join(&self, key: &str, token: u64, joiners: &[u64], loaded: Loaded) {
+        let mut observers = self.observers();
+        let Some(group) = observers.groups.get_mut(key).filter(|group| group.token == token) else { return };
+        group.facts.reading = false;
+        group.facts.read_error = None;
+        let (joined, waiting): (Subscribers, Subscribers) = std::mem::take(&mut group.facts.joining).into_iter().partition(|(id, _)| joiners.contains(id));
+        group.facts.joining = waiting;
+        let version = group.version.clone();
+        for (id, subscriber) in joined {
+            subscriber.post(&self.executor, version.clone(), &[], loaded.clone());
+            group.subscribers.push((id, subscriber));
         }
-        let supply = match &version.body {
-            Body::Rows(body) => body.step.as_ref().map(Step::supply).unwrap_or_default(),
-            Body::Count(_) => Loaded::default(),
-        };
-        for (_, subscriber) in &group.subscribers {
-            subscriber.post(&self.executor, version.clone(), replaced, supply.clone());
+        self.pump(&mut observers, key);
+    }
+
+    fn apply_open(&self, key: &str, token: u64, evaluated: Evaluated) {
+        let mut observers = self.observers();
+        if !observers.opening.get(key).is_some_and(|opening| opening.token == token) {
+            return;
         }
-        true
+        let Some(opening) = observers.opening.remove(key) else { return };
+        let Evaluated { version, loaded } = evaluated;
+        let version = Arc::new(version);
+        let facts = GroupFacts { again: opening.missed, grows: opening.grows, ..GroupFacts::default() };
+        let token = observers.next();
+        let group = Group { subject: opening.subject, deps: opening.deps, at: version.revision, epoch: version.epoch, token, version: version.clone(), subscribers: opening.waiting.clone(), facts };
+        observers.add_group(key, group);
+        for (_, subscriber) in &opening.waiting {
+            subscriber.post(&self.executor, version.clone(), &[], loaded.clone());
+        }
+        self.pump(&mut observers, key);
     }
 }
 
@@ -300,37 +532,22 @@ impl Db {
     fn subscribe(&self, subject: Subject, listener: Listener) -> Result<ObserverHandle, DbError> {
         let key = subject.key();
         let deps = self.shared.deps(&subject)?;
+        self.shared.validate(&subject)?;
         let subscriber = Subscriber::new(listener, self.shared.counters.clone());
-        let current = locked(&self.shared.observers).groups.get(&key).map(|group| (group.at, group.version.clone()));
-        if let Some((_, previous)) = current.filter(|(at, _)| self.shared.store.revision_seq().is_ok_and(|latest| latest > *at)) {
-            self.shared.publish_group(&key, &subject, &previous, None, None);
+        let known = self.shared.observers().groups.get(&key).map(|group| group.at);
+        let behind = known.is_some_and(|at| self.shared.store.revision_seq().is_ok_and(|latest| latest > at));
+        let mut observers = self.shared.observers();
+        let id = observers.next();
+        if let Some(group) = observers.groups.get_mut(&key) {
+            group.facts.joining.push((id, subscriber.clone()));
+            group.facts.again |= behind;
+        } else if let Some(opening) = observers.opening.get_mut(&key) {
+            opening.waiting.push((id, subscriber.clone()));
+        } else {
+            let token = observers.next();
+            observers.opening.insert(key.clone(), Opening { subject, deps, token, waiting: vec![(id, subscriber.clone())], reading: false, missed: false, read_error: None, grows: VecDeque::new() });
         }
-        let mut observers = locked(&self.shared.observers);
-        let id = observers.next_id;
-        observers.next_id += 1;
-        let joined = observers.groups.get(&key).map(|group| (group.version.clone(), group.subject.clone()));
-        let (version, loaded) = match joined {
-            Some((version, group_subject)) => {
-                let loaded = self.shared.load_whole(&group_subject, &version)?;
-                if let Some(group) = observers.groups.get_mut(&key) {
-                    group.subscribers.push((id, subscriber.clone()));
-                }
-                (version, loaded)
-            }
-            None => {
-                locked(&self.shared.counters).observation_reads += 1;
-                let seed = match &subject {
-                    Subject::Window(query, _, _) => observers.groups.values().find_map(|group| WindowSeed::of(query, &group.subject, &group.version)),
-                    _ => None,
-                };
-                let Evaluated { version, loaded } = self.shared.evaluate_seeded(&subject, seed.as_ref())?;
-                let version = Arc::new(version);
-                let group = Group { subject, deps, at: version.revision, epoch: version.epoch, version: version.clone(), subscribers: vec![(id, subscriber.clone())] };
-                observers.add_group(&key, group);
-                (version, loaded)
-            }
-        };
-        subscriber.post(&self.shared.executor, version, &[], loaded);
+        self.shared.pump(&mut observers, &key);
         drop(observers);
         Ok(ObserverHandle { shared: Arc::downgrade(&self.shared), group: key, id, subscriber })
     }

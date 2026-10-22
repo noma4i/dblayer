@@ -1,4 +1,4 @@
-use super::dispatch::{Dispatch, Event, MAX_PENDING};
+use super::dispatch::{Dispatch, Event, Work, MAX_PENDING};
 use super::fixtures::*;
 use crate::commit::CommitResult;
 use crate::identity::{ModelKey, RowRef};
@@ -15,7 +15,7 @@ fn a_full_queue_merges_its_oldest_events_and_loses_no_dependency() {
     for number in 0..total {
         dispatch.push(event(number as i64 + 1, &format!("model{number}")));
     }
-    let batch = dispatch.next_batch().unwrap();
+    let Some(Work::Batch(batch)) = dispatch.next_work() else { panic!("a batch is queued") };
     assert!(batch.len() <= MAX_PENDING);
     let models: BTreeSet<ModelKey> = batch.iter().flat_map(|event| event.models.iter().cloned()).collect();
     assert_eq!(models.len(), total);

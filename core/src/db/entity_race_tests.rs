@@ -36,6 +36,7 @@ fn inv_observe_19_a_retained_row_destroyed_while_the_listener_is_busy_is_told_as
     db.update("users", &rid("a"), obj(json!({"name": "edited"}))).unwrap();
     db.update("users", &rid("b"), obj(json!({"name": "seen"}))).unwrap();
     db.destroy("users", &rid("b")).unwrap();
+    db.shared.dispatch.busy.wait_down_to(1);
     open.send(()).unwrap();
     db.settle();
     let seen = log.lock().unwrap().clone();
@@ -149,6 +150,7 @@ fn inv_observe_19_a_row_is_never_in_rows_and_removed_of_one_delivery() {
     refresh(&db, "b");
     db.destroy("users", &rid("b")).unwrap();
     refresh(&db, "b");
+    db.shared.dispatch.busy.wait_down_to(1);
     open.send(()).unwrap();
     db.settle();
     let after_destroy = log.lock().unwrap().clone();
@@ -167,6 +169,7 @@ fn inv_observe_19_an_absent_id_that_appears_while_busy_is_told_as_a_row_and_not_
     observer.retain(&[rid("late")]).unwrap();
     put_without_settle(&db, "users", json!({"id": "late", "name": "here"}));
     refresh(&db, "late");
+    db.shared.dispatch.busy.wait_down_to(1);
     open.send(()).unwrap();
     db.settle();
     let seen = log.lock().unwrap().clone();
@@ -195,9 +198,9 @@ fn inv_observe_19_a_retain_whose_read_failed_reports_it_and_keeps_the_id_dirty_u
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("users", callback).unwrap();
     db.shared.store.fail_next_entity_reads(1);
-    assert!(observer.retain(&[rid("u1")]).is_err());
+    observer.retain(&[rid("u1")]).unwrap();
     db.settle();
-    assert_eq!((log.lock().unwrap().len(), db.keyed_rows()), (0, 1), "nothing told and the id is indexed for the next read");
+    assert_eq!((log.lock().unwrap().len(), db.keyed_rows(), db.counters().entity_reads_failed), (0, 1, 1), "nothing told, the failure is counted and the id is indexed for the next read");
     observer.retain(&[rid("u1")]).unwrap();
     db.settle();
     assert_eq!(log.lock().unwrap().len(), 1, "the next retain tells the row");

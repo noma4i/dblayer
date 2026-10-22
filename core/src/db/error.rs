@@ -44,6 +44,8 @@ pub enum DbError {
     UnknownOperation(i64),
     #[error("thread {name} did not start: {detail}")]
     ThreadSpawn { name: &'static str, detail: String },
+    #[error("internal error: {0}")]
+    Internal(String),
     #[error(transparent)]
     Landing(#[from] crate::read::LandingError),
 }

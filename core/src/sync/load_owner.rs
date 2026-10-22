@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -34,6 +35,8 @@ pub(crate) struct LoadOwner {
     state: Mutex<OwnerState>,
     next_flight: AtomicU64,
     epoch: AtomicU64,
+    #[cfg(test)]
+    panic_window: Mutex<Option<String>>,
 }
 
 impl LoadOwner {
@@ -58,7 +61,21 @@ impl LoadOwner {
                 Queued::Event(event) => event,
                 Queued::Online => Event::Online { observed: state.senders.iter().filter(|(_, sender)| sender.receiver_count() > 0).map(|(window, _)| window.clone()).collect::<BTreeSet<_>>() },
             };
-            for effect in step(&mut state.machine, event) {
+            let window = event.window().map(str::to_string);
+            let stepped = catch_unwind(AssertUnwindSafe(|| {
+                #[cfg(test)]
+                if window.as_deref().is_some_and(|window| locked(&self.panic_window).as_deref() == Some(window)) {
+                    locked(&self.panic_window).take();
+                    panic!("injected panic for a window event");
+                }
+                step(&mut state.machine, event)
+            }));
+            let effects = match (stepped, window) {
+                (Ok(effects), _) => effects,
+                (Err(_), Some(window)) => step(&mut state.machine, Event::ReadFailed { window, error: LoadError::internal() }),
+                (Err(_), None) => Vec::new(),
+            };
+            for effect in effects {
                 match effect {
                     Effect::Publish { window, state: published } => {
                         if let Some(sender) = state.senders.get(&window) {
@@ -77,6 +94,11 @@ impl LoadOwner {
         let mut state = locked(&self.state);
         let view = state.machine.view(window).unwrap_or_else(RelationState::closed);
         state.senders.entry(window.to_string()).or_insert_with(|| watch::channel(view).0).subscribe()
+    }
+
+    pub(crate) fn reject(&self, window: &str, target: Target, error: LoadError) {
+        self.remember(window, &target);
+        self.submit(Event::Rejected { window: window.to_string(), model: target.model, error });
     }
 
     pub(crate) fn begin_flight(&self, window: &str, target: Target, cursor: bool, seed: Option<Stored>) -> FlightId {
@@ -100,6 +122,11 @@ impl LoadOwner {
         let mut state = locked(&self.state);
         let retries = std::mem::take(&mut state.retries);
         retries.into_iter().filter_map(|(window, kind)| state.targets.get(&window).cloned().map(|target| (target, kind))).collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_on(&self, window: &str) {
+        *locked(&self.panic_window) = Some(window.to_string());
     }
 
     #[cfg(test)]

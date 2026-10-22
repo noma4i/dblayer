@@ -119,7 +119,7 @@ fn fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_others() {
 
 #[test]
 fn inv_panic_01_open_reports_a_thread_that_cannot_start_and_leaves_no_open_handle() {
-    for refused_name in ["dblayer-dispatch", "dblayer-ephemeral"] {
+    for refused_name in ["dblayer-dispatch", "dblayer-read", "dblayer-ephemeral"] {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("db.sqlite");
         super::threads::refuse_spawn_here(refused_name);

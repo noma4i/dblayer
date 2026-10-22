@@ -20,6 +20,7 @@ mod observe;
 mod open;
 mod parent_pointer;
 mod ranked;
+mod reads;
 mod prior;
 mod replace;
 mod record_sync;
@@ -115,3 +116,5 @@ mod watch_tests;
 mod window_tests;
 #[cfg(test)]
 mod raw_json_tests;
+#[cfg(test)]
+mod read_pool_tests;

@@ -84,7 +84,7 @@ impl Db {
             sink.delivered.notify_all();
         })?;
         let _ = shelf.delivered.wait_timeout_while(locked(&shelf.peek), FIRST_DELIVERY_CEILING, |peek| !peek.ready);
-        locked(&self.shared.observers).warm_ids.insert(handle.id());
+        self.shared.observers().warm_ids.insert(handle.id());
         let dropped = locked(&self.shared.warm).insert(key, Warmed { _handle: handle, peek: shelf, used: 0 });
         drop(dropped);
         Ok(())

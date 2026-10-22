@@ -193,6 +193,7 @@ impl Database {
     pub fn live_window(&self, query_json: String, tail: u32, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
         let (query, relation) = self.parsed_query(&query_json)?;
         let _entered = executor()?.enter();
+        let remote = relation.clone();
         let mut watch = match (self.sync.as_ref(), relation) {
             (Some(sync), Some((relation, params))) => Some(sync.watch(query.model.as_str(), &relation, &params)?),
             _ => None,
@@ -201,7 +202,8 @@ impl Database {
         let post = latest.clone();
         let failures_listener = listener.clone();
         let wire = self.wire(query.model.as_str())?.clone();
-        let window = self.db.observe_window(query, WindowSpec::Tail { size: tail as usize }, move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); listener.changed(value); })?;
+        let model = query.model.to_string();
+        let window = self.db.observe_window(query, WindowSpec::Tail { size: tail as usize }, move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); listener.changed(value); }).map_err(|error| self.rejected(&model, remote.as_ref(), error))?;
         let failure = super::live::forward_failure(watch.as_mut(), &latest, failures_listener);
         let (_, initial_load) = tokio::sync::watch::channel(Some(Ok(())));
         Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None, failure })) }))
@@ -459,6 +461,12 @@ impl Database {
             sync.inner.spawn_flush(Duration::ZERO);
         }
     }
+    fn rejected(&self, model: &str, remote: Option<&(String, Map<String, Value>)>, error: crate::db::DbError) -> crate::db::DbError {
+        if let (Some(sync), Some((relation, params))) = (self.sync.as_ref(), remote) {
+            let _ = sync.reject_relation(model, relation, params, &error.to_string());
+        }
+        error
+    }
     fn parsed_query(&self, json: &str) -> Result<(Query, Option<(String, Map<String, Value>)>), DbError> {
         let description: Value = serde_json::from_str(json)?;
         let mut query: Query = serde_json::from_value(description.clone())?;
@@ -491,14 +499,16 @@ impl Database {
             let _ = self.db.warm(&query);
         }
         let wire = self.wire(query.model.as_str())?.clone();
-        let observer = if count {
+        let model = query.model.to_string();
+        let observed = if count {
             self.db.observe_count(query.clone(), move |change| {
                 let value = LiveChange::counted(change.revision, change.count);
                 post.send_replace(Some(value.clone())); callback.changed(value);
-            })?
+            })
         } else {
-            self.db.observe(query.clone(), move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); callback.changed(value); })?
+            self.db.observe(query.clone(), move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); callback.changed(value); })
         };
+        let observer = observed.map_err(|error| self.rejected(&model, remote.as_ref(), error))?;
         let (completed, initial_load) = tokio::sync::watch::channel(None);
         let (mut watch, load) = match remote {
             Some((relation, params)) => {

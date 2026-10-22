@@ -7,6 +7,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 
 use super::error::DbError;
 use super::open::{Db, Shared};
+use super::reads::ReadResult;
 
 pub(crate) const MAX_PENDING: usize = 256;
 pub(crate) const MAX_REPLACED_LOG: usize = 4096;
@@ -17,6 +18,14 @@ thread_local! {
 
 pub(crate) fn mark_core_thread() {
     CORE_THREAD.with(|flag| flag.set(true));
+}
+
+thread_local! {
+    static OWNER_THREAD: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn on_owner_thread() -> bool {
+    OWNER_THREAD.with(Cell::get)
 }
 
 fn on_core_thread() -> bool {
@@ -90,8 +99,16 @@ impl Busy {
     pub(crate) fn leave(&self, units: usize) {
         let mut count = held(&self.count);
         *count -= units;
-        if *count == 0 {
+        if *count == 0 || cfg!(test) {
             self.zero.notify_all();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_down_to(&self, units: usize) {
+        let mut count = held(&self.count);
+        while *count > units {
+            count = self.zero.wait(count).unwrap_or_else(|poisoned| poisoned.into_inner());
         }
     }
 
@@ -108,7 +125,13 @@ struct Pending {
     events: VecDeque<Event>,
     replaced: Vec<(i64, RowId, RowId)>,
     dropped_through: i64,
+    reads: VecDeque<ReadResult>,
     closed: bool,
+}
+
+pub(crate) enum Work {
+    Read(ReadResult),
+    Batch(Vec<Event>),
 }
 
 pub(crate) struct Dispatch {
@@ -140,11 +163,19 @@ impl Dispatch {
         self.wake.notify_one();
     }
 
-    pub(crate) fn next_batch(&self) -> Option<Vec<Event>> {
+    pub(crate) fn push_read(&self, result: ReadResult) {
+        held(&self.pending).reads.push_back(result);
+        self.wake.notify_one();
+    }
+
+    pub(crate) fn next_work(&self) -> Option<Work> {
         let mut pending = held(&self.pending);
         loop {
+            if let Some(result) = pending.reads.pop_front() {
+                return Some(Work::Read(result));
+            }
             if !pending.events.is_empty() {
-                return Some(pending.events.drain(..).collect());
+                return Some(Work::Batch(pending.events.drain(..).collect()));
             }
             if pending.closed {
                 return None;
@@ -174,10 +205,17 @@ impl Dispatch {
     pub(crate) fn start(dispatch: Arc<Dispatch>, shared: Weak<Shared>) -> Result<(), DbError> {
         super::threads::spawn_named("dblayer-dispatch", move || {
                 mark_core_thread();
-                while let Some(batch) = dispatch.next_batch() {
-                    let units = batch.len();
+                OWNER_THREAD.with(|flag| flag.set(true));
+                while let Some(work) = dispatch.next_work() {
+                    let units = match &work {
+                        Work::Read(_) => 1,
+                        Work::Batch(batch) => batch.len(),
+                    };
                     if let Some(shared) = shared.upgrade() {
-                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| shared.refresh_groups(&batch)));
+                        match work {
+                            Work::Read(result) => shared.land_read(result),
+                            Work::Batch(batch) => shared.refresh_groups(&batch),
+                        }
                     }
                     dispatch.busy.leave(units);
                 }

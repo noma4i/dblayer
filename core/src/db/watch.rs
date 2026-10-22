@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use crate::commit::ScopeRef;
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::identity::touches::touch;
-use crate::query::{compile_count, compile_ranked, fetch_count, fetch_ranked, ranking, Order, Query, RankedRow, Where};
+use crate::query::{compile_count, compile_keys, compile_ranked, fetch_count, fetch_ranked, ranking, Order, Query, RankedRow, Where};
 use crate::schema::{AssociationKind, AssociationSpec, ModelSpec};
 use crate::store::Reader;
 use crate::value::{read_id, SortDirection};
@@ -342,6 +342,15 @@ impl Shared {
                 }
                 Ok(deps)
             }
+        }
+    }
+
+    pub(crate) fn validate(&self, subject: &Subject) -> Result<(), DbError> {
+        match subject {
+            Subject::Row(_) => Ok(()),
+            Subject::Count(query) => compile_count(query, self.spec(query.model.as_str())?).map(drop).map_err(Into::into),
+            Subject::Rows(query) if !ranking(query) => compile_keys(query, self.spec(query.model.as_str())?).map(drop).map_err(Into::into),
+            Subject::Rows(query) | Subject::Window(query, _, _) => compile_ranked(query, self.spec(query.model.as_str())?, None).map(drop).map_err(Into::into),
         }
     }
 

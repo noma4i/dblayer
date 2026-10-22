@@ -34,7 +34,7 @@ fn a_retain_whose_read_failed_still_delivers_the_row_that_arrives_later() {
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("users", callback).unwrap();
     db.shared.store.fail_next_entity_reads(1);
-    assert!(observer.retain(&[rid("late")]).is_err());
+    observer.retain(&[rid("late")]).unwrap();
     db.settle();
     put(&db, "users", json!({"id": "late", "name": "arrived"}));
     let seen = log.lock().unwrap().clone();

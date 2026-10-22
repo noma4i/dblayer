@@ -15,11 +15,12 @@ use crate::store::{Reader, Store, StoreError, StoreEvent};
 
 use super::cache::RowCache;
 use super::warm::Warm;
-use super::dispatch::{Dispatch, Event};
+use super::dispatch::{on_owner_thread, Dispatch, Event};
 use super::ephemeral::Ephemerals;
 use super::error::DbError;
 use super::listeners::Executor;
 use super::observe::{ObserverCensus, Observers};
+use super::reads::ReadPool;
 
 const RESERVED_MEMBERS: [&str; 12] = ["id", "find", "where", "save", "count", "exists", "first", "observe", "order", "sync", "retry", "discard"];
 
@@ -50,13 +51,54 @@ pub(crate) struct Shared {
     pub reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>,
     pub ephemeral: Arc<Ephemerals>,
     pub executor: Arc<Executor>,
+    pub reads: Arc<ReadPool>,
     pub files: FileDirectories,
     pub files_gate: Mutex<()>,
     pub expiry_gate: Mutex<()>,
+    #[cfg(test)]
+    pub panic_key: Mutex<Option<String>>,
 }
 
 pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+thread_local! {
+    static OBSERVERS_HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(crate) struct ObserversGuard<'a>(MutexGuard<'a, Observers>);
+
+impl<'a> ObserversGuard<'a> {
+    fn new(mutex: &'a Mutex<Observers>) -> Self {
+        let guard = locked(mutex);
+        OBSERVERS_HELD.with(|held| held.set(held.get() + 1));
+        Self(guard)
+    }
+}
+
+impl Drop for ObserversGuard<'_> {
+    fn drop(&mut self) {
+        OBSERVERS_HELD.with(|held| held.set(held.get() - 1));
+    }
+}
+
+impl std::ops::Deref for ObserversGuard<'_> {
+    type Target = Observers;
+
+    fn deref(&self) -> &Observers {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ObserversGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Observers {
+        &mut self.0
+    }
+}
+
+fn observers_held() -> bool {
+    OBSERVERS_HELD.with(|held| held.get() > 0)
 }
 
 impl Drop for Shared {
@@ -64,6 +106,7 @@ impl Drop for Shared {
         self.dispatch.close();
         self.ephemeral.close();
         self.executor.close();
+        self.reads.close();
     }
 }
 
@@ -72,7 +115,24 @@ impl Shared {
         self.specs.get(model).ok_or_else(|| DbError::UnknownModel(model.to_string()))
     }
 
+    #[cfg(test)]
+    pub(crate) fn panic_at(&self, key: &str) {
+        let mut armed = locked(&self.panic_key);
+        if armed.as_deref() == Some(key) {
+            *armed = None;
+            drop(armed);
+            panic!("injected panic for {key}");
+        }
+    }
+
+    pub(crate) fn observers(&self) -> ObserversGuard<'_> {
+        ObserversGuard::new(&self.observers)
+    }
+
     pub(crate) fn read<T>(&self, models: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, DbError>) -> Result<T, DbError> {
+        if on_owner_thread() || observers_held() {
+            locked(&self.counters).sql_under_owner += 1;
+        }
         let mut outcome = None;
         self.store.read(models, |reader| {
             outcome = Some(run(reader));
@@ -134,6 +194,7 @@ impl Db {
         let specs = models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect();
         let cache = Arc::new(Mutex::new(RowCache::new(config.cache_rows)));
         let dispatch = Arc::new(Dispatch::new());
+        let reads = ReadPool::new(dispatch.clone());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let cloud_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let reset_listeners = Arc::new(Mutex::new(Vec::new()));
@@ -148,6 +209,7 @@ impl Db {
             warm: Mutex::new(Warm::default()),
             counters: Arc::new(Mutex::new(Counters::default())),
             executor: Executor::new(dispatch.busy.clone()),
+            reads: reads.clone(),
             dispatch: dispatch.clone(),
             outbox_changes,
             cloud_changes,
@@ -157,8 +219,11 @@ impl Db {
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
             files_gate: Mutex::new(()),
             expiry_gate: Mutex::new(()),
+            #[cfg(test)]
+            panic_key: Mutex::new(None),
         });
         Dispatch::start(dispatch, Arc::downgrade(&shared))?;
+        ReadPool::start(&reads, Arc::downgrade(&shared))?;
         Ephemerals::start(ephemeral, Arc::downgrade(&shared))?;
         Ok(Db { shared })
     }
@@ -199,11 +264,11 @@ impl Db {
 
     #[cfg(test)]
     pub(crate) fn keyed_rows(&self) -> usize {
-        locked(&self.shared.observers).keyed_rows()
+        self.shared.observers().keyed_rows()
     }
 
     pub fn observer_census(&self) -> ObserverCensus {
-        let observers = locked(&self.shared.observers);
+        let observers = self.shared.observers();
         ObserverCensus { observed_queries: observers.query_count(), subscriptions: observers.subscription_count() }
     }
 }

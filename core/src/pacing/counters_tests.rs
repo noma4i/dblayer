@@ -24,6 +24,9 @@ fn new_counters_have_zero_values() {
         settle_parks: 0,
         edge_read_steps: 0,
         edge_read_scans: 0,
+        sql_under_owner: 0,
+        query_reads_failed: 0,
+        owner_panics: 0,
     });
 }
 

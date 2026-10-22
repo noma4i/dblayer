@@ -12,6 +12,8 @@ mod load_machine_tests;
 #[cfg(test)]
 mod load_owner_tests;
 #[cfg(test)]
+mod load_owner_panic_tests;
+#[cfg(test)]
 mod load_machine_oracle_tests;
 mod node;
 mod normalize;

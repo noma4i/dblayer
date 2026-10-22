@@ -23,6 +23,9 @@ pub struct Counters {
     pub settle_parks: usize,
     pub edge_read_steps: usize,
     pub edge_read_scans: usize,
+    pub sql_under_owner: usize,
+    pub query_reads_failed: usize,
+    pub owner_panics: usize,
 }
 
 impl Counters {
@@ -65,6 +68,9 @@ impl Add for Counters {
             settle_parks: self.settle_parks + other.settle_parks,
             edge_read_steps: self.edge_read_steps + other.edge_read_steps,
             edge_read_scans: self.edge_read_scans + other.edge_read_scans,
+            sql_under_owner: self.sql_under_owner + other.sql_under_owner,
+            query_reads_failed: self.query_reads_failed + other.query_reads_failed,
+            owner_panics: self.owner_panics + other.owner_panics,
         }
     }
 }

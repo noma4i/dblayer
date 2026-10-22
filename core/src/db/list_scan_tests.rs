@@ -103,9 +103,12 @@ fn cannot_enter_cost(size: usize) -> usize {
     db.settle();
     let users = ModelKey::new("users");
     let event = super::dispatch::Event { revision: i64::MAX / 2, models: [users.clone()].into(), rows: [RowRef::new(users, rid("absent"))].into(), ..super::dispatch::Event::default() };
+    db.shared.reads.inline.store(true, std::sync::atomic::Ordering::SeqCst);
     let before = total();
     db.shared.refresh_groups(&[event]);
-    total() - before
+    let cost = total() - before;
+    db.settle();
+    cost
 }
 
 #[test]

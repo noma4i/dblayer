@@ -7,7 +7,8 @@ panic:core/src/db/dispatch.rs:pending.events.pop_front().expect("queue is not em
 panic:core/src/db/dispatch.rs:pending.events.pop_front().expect("queue holds two events")   # same check, MAX_PENDING is at least 2
 panic:core/src/db/watch.rs:expect("a placed row is known")   # the id was placed from the same row list one step earlier
 panic:core/src/db/watch.rs:serde_json::to_string(query).expect("query serializes")   # Query is a plain Serialize tree with string keys
-panic:core/src/db/entities.rs:expect("group checked above")   # the group key is looked up under the same lock a few lines above
+panic:core/src/db/open.rs:panic!("injected panic for {key}")   # compiled for tests only, armed by a test to fail one group
+panic:core/src/sync/load_owner.rs:panic!("injected panic for a window event")   # compiled for tests only, armed by a test to fail one window
 panic:core/src/db/cache.rs:expect("capacity is positive")   # capacity.max(1) is never zero
 panic:core/src/db/open.rs:outcome.expect("read ran")   # Store::read returns Ok only after it ran the closure
 panic:core/src/value/mod.rs:value.unwrap(), expected.unwrap()   # the match arm proves both options are Some

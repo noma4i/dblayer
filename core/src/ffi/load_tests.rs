@@ -10,7 +10,7 @@ use crate::identity::RowId;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
 
-struct Counting {
+pub(super) struct Counting {
     queries: AtomicUsize,
     started: Notify,
     delay: Duration,
@@ -118,7 +118,7 @@ fn relation(name: &str, stale: &str) -> RelationSpec {
     relation
 }
 
-async fn rig(delay: Duration) -> (Arc<Database>, Arc<Counting>) {
+pub(super) async fn rig(delay: Duration) -> (Arc<Database>, Arc<Counting>) {
     let (db, transport, _) = open_rig(delay, None).await;
     (db, transport)
 }

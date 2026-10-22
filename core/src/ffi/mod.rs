@@ -116,6 +116,8 @@ mod file_calls_tests;
 #[cfg(test)]
 mod load_tests;
 #[cfg(test)]
+mod reject_tests;
+#[cfg(test)]
 mod live_tests;
 #[cfg(test)]
 mod stable_order_tests;
