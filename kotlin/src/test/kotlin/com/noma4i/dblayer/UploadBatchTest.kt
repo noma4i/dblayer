@@ -13,6 +13,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+private suspend fun Database.storedRow(model: String, id: String): WireRow? {
+    val live = liveFind(model, id, object : QueryListener { override fun changed(change: LiveChange) {} })
+    try { return live.current().rows.firstOrNull() } finally { live.cancel() }
+}
+
 class UploadBatchTest {
     @Test
     fun batchDiscardRenumbersSnapshots() = bounded {
@@ -25,9 +30,8 @@ class UploadBatchTest {
                 val items = (0..3).map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("position", it); put("size", 4) }, path = source.path) }
                 val rows = Asset.uploadCreate(items, UploadBatchRequest(operation = "create_files", createBlob = "CreateBlob"))
                 if (cancel) assertTrue(rows[1].cancelUpload()) else rows[1].discard()
-                database.warm("""{"model":"Asset"}""")
                 listOf(0, 2, 3).forEachIndexed { position, original ->
-                    val snapshot = Asset.read(requireNotNull(database.peekRow("Asset", rows[original].id)))
+                    val snapshot = Asset.read(requireNotNull(database.storedRow("Asset", rows[original].id)))
                     assertEquals(position.toLong(), snapshot.position)
                     assertEquals(3L, snapshot.size)
                 }
@@ -56,12 +60,11 @@ class UploadBatchTest {
                 assertTrue(source.delete())
                 if (cancel) {
                     assertTrue(rows[0].cancelUpload())
-                    database.warm("""{"model":"Asset"}""")
-                    val first = database.peekRow("Asset", rows[0].id)
-                    val second = database.peekRow("Asset", rows[1].id)
+                    val first = database.storedRow("Asset", rows[0].id)
+                    val second = database.storedRow("Asset", rows[1].id)
                     assertTrue(first != null && first.upload == null)
                     assertTrue(second?.upload != null)
-                    assertTrue(transport.calls.isEmpty())
+                    assertEquals(emptyList<String>(), transport.calls.map { it.operationName })
                 } else {
                     repeat(2) { transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}""") }
                     transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a1","clientKey":"key-1","size":2},{"id":"a0","clientKey":"key-0","size":2}]}}}""")
