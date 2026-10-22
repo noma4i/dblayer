@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use statig::prelude::*;
+
 pub(crate) type FlightId = u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,6 +89,7 @@ enum LastEnd {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WindowFacts {
+    window: String,
     model: String,
     flights: BTreeMap<FlightId, LoadKind>,
     data: Data,
@@ -96,11 +99,32 @@ struct WindowFacts {
     retry_on_online: Option<LoadKind>,
     invalid: Option<LoadError>,
     read_error: Option<LoadError>,
+    published: Option<RelationState>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Epochs<'a> {
+    all: u64,
+    by_model: Option<&'a BTreeMap<String, u64>>,
+}
+
+impl Epochs<'_> {
+    fn of(&self, model: &str) -> u64 {
+        self.all.max(self.by_model.and_then(|epochs| epochs.get(model)).copied().unwrap_or(0))
+    }
+}
+
+struct Context<'a> {
+    epochs: Epochs<'a>,
+    effects: &'a mut Vec<Effect>,
+    orphan_ends: u32,
+    quiet: bool,
 }
 
 impl WindowFacts {
-    fn new(model: &str) -> Self {
+    fn new(window: &str, model: &str) -> Self {
         Self {
+            window: window.to_string(),
             model: model.to_string(),
             flights: BTreeMap::new(),
             data: Data::Unread,
@@ -110,33 +134,31 @@ impl WindowFacts {
             retry_on_online: None,
             invalid: None,
             read_error: None,
+            published: None,
         }
     }
 
-    fn phase(&self, closed: bool) -> LoadPhase {
-        if closed {
-            return LoadPhase::Closed;
-        }
+    fn rest(&self) -> State {
         if self.invalid.is_some() {
-            return LoadPhase::Failed;
+            return State::failed();
         }
         if !self.flights.is_empty() {
-            return LoadPhase::Loading;
+            return State::loading();
         }
         if self.read_error.is_some() {
-            return LoadPhase::Failed;
+            return State::failed();
         }
         if matches!(self.last_end, LastEnd::Failed(_)) {
-            return if self.has_rows { LoadPhase::Loaded } else { LoadPhase::Failed };
+            return if self.has_rows { State::loaded() } else { State::failed() };
         }
         match self.data {
-            Data::Unread | Data::NotLoaded => LoadPhase::NotLoaded,
-            Data::Local | Data::Landed { .. } if !self.has_rows => LoadPhase::Empty,
-            _ => LoadPhase::Loaded,
+            Data::Unread | Data::NotLoaded => State::not_loaded(),
+            Data::Local | Data::Landed { .. } if !self.has_rows => State::empty(),
+            _ => State::loaded(),
         }
     }
 
-    fn view(&self, closed: bool) -> RelationState {
+    fn view(&self, phase: LoadPhase) -> RelationState {
         let (has_more, total, loaded_at) = match self.data {
             Data::Landed { has_more, total, loaded_at } => (has_more, total, Some(loaded_at)),
             _ => (false, None, None),
@@ -148,7 +170,7 @@ impl WindowFacts {
         let error = self.invalid.as_ref().or(self.read_error.as_ref()).or(failed).cloned();
         let running = |kind: LoadKind| self.flights.values().any(|running| *running == kind);
         RelationState {
-            phase: self.phase(closed),
+            phase,
             initial: running(LoadKind::Initial),
             refreshing: running(LoadKind::Refresh),
             fetching_more: running(LoadKind::More),
@@ -157,6 +179,21 @@ impl WindowFacts {
             error,
             loaded_at,
         }
+    }
+
+    fn announce(&mut self, context: &mut Context<'_>, phase: LoadPhase) {
+        if context.quiet {
+            return;
+        }
+        let view = self.view(phase);
+        if self.published.as_ref() != Some(&view) {
+            self.published = Some(view.clone());
+            context.effects.push(Effect::Publish { window: self.window.clone(), state: view });
+        }
+    }
+
+    fn fresh(&self, context: &Context<'_>, stored: &Option<Stored>) -> Option<Stored> {
+        stored.clone().filter(|stored| stored.epoch >= context.epochs.of(&self.model))
     }
 
     fn seed(&mut self, stored: Option<Stored>) {
@@ -175,8 +212,165 @@ impl WindowFacts {
         self.has_rows = stored.has_rows;
     }
 
-    fn end(&mut self, flight: FlightId) -> Option<LoadKind> {
-        self.flights.remove(&flight)
+    fn end(&mut self, context: &mut Context<'_>, flight: FlightId) -> Option<LoadKind> {
+        let kind = self.flights.remove(&flight);
+        if kind.is_none() {
+            context.orphan_ends += 1;
+        }
+        kind
+    }
+
+    fn load_kind(&self, cursor: bool) -> LoadKind {
+        match (cursor, &self.data) {
+            (true, _) => LoadKind::More,
+            (false, Data::Landed { .. } | Data::Local) => LoadKind::Refresh,
+            (false, _) => LoadKind::Initial,
+        }
+    }
+
+    fn resets(&self, models: &Option<BTreeSet<String>>) -> bool {
+        models.as_ref().is_none_or(|models| models.contains(&self.model))
+    }
+}
+
+#[state_machine(initial = "State::not_loaded()")]
+impl WindowFacts {
+    #[superstate]
+    fn open(&mut self, context: &mut Context<'_>, event: &Event) -> Outcome<State> {
+        match event {
+            Event::Observe { seed, .. } => {
+                let seed = self.fresh(context, seed);
+                self.seed(seed);
+            }
+            Event::Start { flight, cursor, seed, .. } => {
+                let seed = self.fresh(context, seed);
+                self.seed(seed);
+                let kind = self.load_kind(*cursor);
+                self.flights.insert(*flight, kind);
+                self.last_end = LastEnd::None;
+                self.retry_on_online = None;
+            }
+            Event::Landed { flight, stored, .. } => {
+                let stored = self.fresh(context, stored);
+                if self.end(context, *flight).is_some() {
+                    self.last_end = LastEnd::Landed;
+                    self.retry_on_online = None;
+                    self.accept(stored);
+                }
+            }
+            Event::Discarded { flight, .. } | Event::Abandoned { flight, .. } => {
+                self.end(context, *flight);
+            }
+            Event::Failed { flight, error, .. } => {
+                if let Some(kind) = self.end(context, *flight) {
+                    self.retry_on_online = (error.kind == LoadError::NETWORK).then_some(kind);
+                    self.last_end = LastEnd::Failed(error.clone());
+                }
+            }
+            Event::Panicked { flight, .. } => {
+                if self.end(context, *flight).is_some() {
+                    self.retry_on_online = None;
+                    self.last_end = LastEnd::Failed(LoadError::internal());
+                }
+            }
+            Event::Reset { models, .. } => {
+                if self.resets(models) {
+                    self.data = Data::NotLoaded;
+                    self.has_rows = false;
+                    self.order = Order::NONE;
+                    self.last_end = LastEnd::None;
+                    self.read_error = None;
+                    self.retry_on_online = None;
+                }
+            }
+            Event::Offline => {}
+            Event::Online { observed } => {
+                if self.flights.is_empty() && observed.contains(&self.window) {
+                    if let Some(kind) = self.retry_on_online.take() {
+                        context.effects.push(Effect::Retry { window: self.window.clone(), kind });
+                    }
+                }
+            }
+            Event::Close => return Transition(State::closed()),
+            Event::Rejected { error, .. } => self.invalid = Some(error.clone()),
+            Event::ReadOk { has_rows, .. } => {
+                self.has_rows = *has_rows;
+                self.read_error = None;
+            }
+            Event::ReadFailed { error, .. } => self.read_error = Some(error.clone()),
+        }
+        Transition(self.rest())
+    }
+
+    #[action]
+    fn enter_not_loaded(&mut self, context: &mut Context<'_>) {
+        self.announce(context, LoadPhase::NotLoaded);
+    }
+
+    #[state(superstate = "open", entry_action = "enter_not_loaded")]
+    fn not_loaded() -> Outcome<State> {
+        Super
+    }
+
+    #[action]
+    fn enter_loading(&mut self, context: &mut Context<'_>) {
+        self.announce(context, LoadPhase::Loading);
+    }
+
+    #[state(superstate = "open", entry_action = "enter_loading")]
+    fn loading() -> Outcome<State> {
+        Super
+    }
+
+    #[action]
+    fn enter_loaded(&mut self, context: &mut Context<'_>) {
+        self.announce(context, LoadPhase::Loaded);
+    }
+
+    #[state(superstate = "open", entry_action = "enter_loaded")]
+    fn loaded() -> Outcome<State> {
+        Super
+    }
+
+    #[action]
+    fn enter_empty(&mut self, context: &mut Context<'_>) {
+        self.announce(context, LoadPhase::Empty);
+    }
+
+    #[state(superstate = "open", entry_action = "enter_empty")]
+    fn empty() -> Outcome<State> {
+        Super
+    }
+
+    #[action]
+    fn enter_failed(&mut self, context: &mut Context<'_>) {
+        self.announce(context, LoadPhase::Failed);
+    }
+
+    #[state(superstate = "open", entry_action = "enter_failed")]
+    fn failed() -> Outcome<State> {
+        Super
+    }
+
+    #[action]
+    fn enter_closed(&mut self, context: &mut Context<'_>) {
+        self.announce(context, LoadPhase::Closed);
+    }
+
+    #[state(entry_action = "enter_closed")]
+    fn closed() -> Outcome<State> {
+        Handled
+    }
+}
+
+fn phase_of(state: &State) -> LoadPhase {
+    match state {
+        State::NotLoaded {} => LoadPhase::NotLoaded,
+        State::Loading {} => LoadPhase::Loading,
+        State::Loaded {} => LoadPhase::Loaded,
+        State::Empty {} => LoadPhase::Empty,
+        State::Failed {} => LoadPhase::Failed,
+        State::Closed {} => LoadPhase::Closed,
     }
 }
 
@@ -201,60 +395,13 @@ pub(crate) enum Event {
     ReadFailed { window: String, error: LoadError },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Effect {
-    Publish { window: String, state: RelationState },
-    Retry { window: String, kind: LoadKind },
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct Machine {
-    windows: BTreeMap<String, WindowFacts>,
-    closed: bool,
-    all_epoch: u64,
-    model_epochs: BTreeMap<String, u64>,
-    pub(crate) orphan_ends: u32,
-    pub(crate) after_close: u32,
-}
-
-impl Machine {
-    pub(crate) fn view(&self, window: &str) -> Option<RelationState> {
-        self.windows.get(window).map(|facts| facts.view(self.closed))
+impl Event {
+    fn ends_flight(&self) -> bool {
+        matches!(self, Event::Landed { .. } | Event::Discarded { .. } | Event::Failed { .. } | Event::Abandoned { .. } | Event::Panicked { .. })
     }
 
-    #[cfg(test)]
-    pub(crate) fn flights(&self, window: &str) -> usize {
-        self.windows.get(window).map_or(0, |facts| facts.flights.len())
-    }
-
-    fn epoch_of(&self, model: &str) -> u64 {
-        self.all_epoch.max(self.model_epochs.get(model).copied().unwrap_or(0))
-    }
-
-    fn fresh(&self, model: &str, stored: Option<Stored>) -> Option<Stored> {
-        stored.filter(|stored| stored.epoch >= self.epoch_of(model))
-    }
-
-    fn facts(&mut self, window: &str, model: &str) -> &mut WindowFacts {
-        self.windows.entry(window.to_string()).or_insert_with(|| WindowFacts::new(model))
-    }
-
-    fn open(&mut self, window: &str, flight: FlightId) -> Option<(&mut WindowFacts, LoadKind)> {
-        let Some(facts) = self.windows.get_mut(window) else {
-            self.orphan_ends += 1;
-            return None;
-        };
-        match facts.end(flight) {
-            Some(kind) => Some((facts, kind)),
-            None => {
-                self.orphan_ends += 1;
-                None
-            }
-        }
-    }
-
-    fn touched(&self, event: &Event) -> Vec<String> {
-        match event {
+    fn window(&self) -> Option<&str> {
+        match self {
             Event::Observe { window, .. }
             | Event::Start { window, .. }
             | Event::Landed { window, .. }
@@ -264,123 +411,83 @@ impl Machine {
             | Event::Panicked { window, .. }
             | Event::Rejected { window, .. }
             | Event::ReadOk { window, .. }
-            | Event::ReadFailed { window, .. } => vec![window.clone()],
-            Event::Reset { .. } | Event::Online { .. } | Event::Close | Event::Offline => self.windows.keys().cloned().collect(),
+            | Event::ReadFailed { window, .. } => Some(window),
+            Event::Reset { .. } | Event::Online { .. } | Event::Close | Event::Offline => None,
         }
     }
+}
 
-    fn apply(&mut self, event: Event, effects: &mut Vec<Effect>) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Effect {
+    Publish { window: String, state: RelationState },
+    Retry { window: String, kind: LoadKind },
+}
+
+#[derive(Default)]
+pub(crate) struct Machine {
+    windows: BTreeMap<String, InitializedStateMachine<WindowFacts>>,
+    closed: bool,
+    all_epoch: u64,
+    model_epochs: BTreeMap<String, u64>,
+    pub(crate) orphan_ends: u32,
+    pub(crate) after_close: u32,
+}
+
+impl Machine {
+    pub(crate) fn view(&self, window: &str) -> Option<RelationState> {
+        self.windows.get(window).map(|machine| machine.view(phase_of(machine.state())))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn flights(&self, window: &str) -> usize {
+        self.windows.get(window).map_or(0, |machine| machine.flights.len())
+    }
+
+    fn dispatch(&mut self, event: &Event, effects: &mut Vec<Effect>) {
         if self.closed {
             self.after_close += 1;
             return;
         }
-        match event {
-            Event::Observe { window, model, seed } => {
-                let seed = self.fresh(&model, seed);
-                self.facts(&window, &model).seed(seed);
-            }
-            Event::Start { window, model, flight, cursor, seed } => {
-                let seed = self.fresh(&model, seed);
-                let facts = self.facts(&window, &model);
-                facts.seed(seed);
-                let kind = match (cursor, &facts.data) {
-                    (true, _) => LoadKind::More,
-                    (false, Data::Landed { .. } | Data::Local) => LoadKind::Refresh,
-                    (false, _) => LoadKind::Initial,
-                };
-                facts.flights.insert(flight, kind);
-                facts.last_end = LastEnd::None;
-                facts.retry_on_online = None;
-            }
-            Event::Landed { window, flight, stored } => {
-                let Some(model) = self.windows.get(&window).map(|facts| facts.model.clone()) else {
-                    self.orphan_ends += 1;
-                    return;
-                };
-                let stored = self.fresh(&model, stored);
-                if let Some((facts, _)) = self.open(&window, flight) {
-                    facts.last_end = LastEnd::Landed;
-                    facts.retry_on_online = None;
-                    facts.accept(stored);
-                }
-            }
-            Event::Discarded { window, flight } | Event::Abandoned { window, flight } => {
-                self.open(&window, flight);
-            }
-            Event::Failed { window, flight, error } => {
-                if let Some((facts, kind)) = self.open(&window, flight) {
-                    facts.retry_on_online = (error.kind == LoadError::NETWORK).then_some(kind);
-                    facts.last_end = LastEnd::Failed(error);
-                }
-            }
-            Event::Panicked { window, flight } => {
-                if let Some((facts, _)) = self.open(&window, flight) {
-                    facts.retry_on_online = None;
-                    facts.last_end = LastEnd::Failed(LoadError::internal());
-                }
-            }
-            Event::Reset { epoch, models } => {
-                match &models {
-                    Some(models) => {
-                        for model in models {
-                            let known = self.model_epochs.entry(model.clone()).or_insert(0);
-                            *known = (*known).max(epoch);
-                        }
-                    }
-                    None => self.all_epoch = self.all_epoch.max(epoch),
-                }
-                for facts in self.windows.values_mut().filter(|facts| models.as_ref().is_none_or(|models| models.contains(&facts.model))) {
-                    facts.data = Data::NotLoaded;
-                    facts.has_rows = false;
-                    facts.order = Order::NONE;
-                    facts.last_end = LastEnd::None;
-                    facts.read_error = None;
-                    facts.retry_on_online = None;
-                }
-            }
-            Event::Offline => {}
-            Event::Online { observed } => {
-                for (window, facts) in &mut self.windows {
-                    if !facts.flights.is_empty() || !observed.contains(window) {
-                        continue;
-                    }
-                    if let Some(kind) = facts.retry_on_online.take() {
-                        effects.push(Effect::Retry { window: window.clone(), kind });
+        if let Event::Reset { epoch, models } = event {
+            match models {
+                Some(models) => {
+                    for model in models {
+                        let known = self.model_epochs.entry(model.clone()).or_insert(0);
+                        *known = (*known).max(*epoch);
                     }
                 }
+                None => self.all_epoch = self.all_epoch.max(*epoch),
             }
-            Event::Close => self.closed = true,
-            Event::Rejected { window, model, error } => self.facts(&window, &model).invalid = Some(error),
-            Event::ReadOk { window, has_rows } => {
-                if let Some(facts) = self.windows.get_mut(&window) {
-                    facts.has_rows = has_rows;
-                    facts.read_error = None;
+        }
+        let mut context = Context { epochs: Epochs { all: self.all_epoch, by_model: Some(&self.model_epochs) }, effects, orphan_ends: 0, quiet: false };
+        if let Event::Observe { window, model, .. } | Event::Start { window, model, .. } | Event::Rejected { window, model, .. } = event {
+            self.windows.entry(window.clone()).or_insert_with(|| {
+                context.quiet = true;
+                let machine = WindowFacts::new(window, model).uninitialized_state_machine().init_with_context(&mut context);
+                context.quiet = false;
+                machine
+            });
+        }
+        match event.window() {
+            None => {
+                for machine in self.windows.values_mut() {
+                    machine.handle_with_context(event, &mut context);
                 }
             }
-            Event::ReadFailed { window, error } => {
-                if let Some(facts) = self.windows.get_mut(&window) {
-                    facts.read_error = Some(error);
-                }
-            }
+            Some(window) => match self.windows.get_mut(window) {
+                Some(machine) => machine.handle_with_context(event, &mut context),
+                None => context.orphan_ends += u32::from(event.ends_flight()),
+            },
+        }
+        self.orphan_ends += context.orphan_ends;
+        if matches!(event, Event::Close) {
+            self.closed = true;
         }
     }
 }
 
 pub(crate) fn step(machine: &mut Machine, event: Event) -> Vec<Effect> {
-    let touched = machine.touched(&event);
-    let before: BTreeMap<String, Option<RelationState>> = touched.iter().map(|window| (window.clone(), machine.view(window))).collect();
     let mut effects = Vec::new();
-    let was_closed = machine.closed;
-    machine.apply(event, &mut effects);
-    let mut windows = touched;
-    if !was_closed && machine.closed {
-        windows = machine.windows.keys().cloned().collect();
-    }
-    for window in windows {
-        let after = machine.view(&window);
-        if let Some(state) = after.filter(|after| before.get(&window).is_none_or(|before| before.as_ref() != Some(after))) {
-            effects.push(Effect::Publish { window, state });
-        }
-    }
+    machine.dispatch(&event, &mut effects);
     effects
 }
