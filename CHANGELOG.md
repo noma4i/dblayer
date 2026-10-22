@@ -1,5 +1,27 @@
 # Changelog
 
+## 6.1.0 - 2026-10-22
+
+### Added
+- `.dbl` declares fields with `attribute` and scope arguments with `parameter`.
+- `query`, `response from:`, `paginate size:`, `freshness` and `subscribe` describe the server side of a scope.
+- `upsert`, `match_by`, `insert_on` and `stable_order` name response, correlation and list rules.
+- `validates :items, length:` sets the size limits of a batch upload.
+- Generation fails on an unknown, incomplete, repeated or misplaced declaration.
+
+### Changed
+- One change to a scoped list reads only the changed rows.
+- A second window over the same query shares its order index.
+- `max_pages` counts fetched pages and resets on refresh.
+- A confirmed create no longer reloads lists that insert rows from events.
+- The cache format changed. The cache is rebuilt on the first open.
+
+### Removed
+- The previous `.dbl` words: `field`, `fetch`, `root`, `lands`, `correlate`, `joins`, `listen`, `updates` and others.
+- `local_effect` and its `reason`.
+- Untyped `:object` and `:array` fields. Use `:json` or a named type.
+- `default` on non-enum scope parameters.
+
 ## 6.0.0 - 2026-10-22
 
 ### Added
