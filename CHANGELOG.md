@@ -1,5 +1,25 @@
 # Changelog
 
+## 6.4.0 - 2026-10-23
+
+### Added
+- `DBlayer.close()` and `DB.close()` close the database for tests and process end.
+- `Entity.isClosed` marks an entity whose database closed.
+- `entityCensus()` and `entityLeaseFailures()` count entity reads, skips and failed leases.
+
+### Changed
+- A second `open` while the database is open throws. Open it once at app start.
+- `DBlayer.database` and `DB.database` cannot be assigned from outside.
+- Signing out keeps held entities: they show empty, then the next account's rows.
+- A returning network reloads observed windows whose load failed offline, once.
+
+### Removed
+- Public `Database.open` and `Database.openWithClock`.
+
+### Fixed
+- An entity receives its row when the first read for it failed.
+- A load after reopening the database is no longer discarded.
+
 ## 6.3.0 - 2026-10-22
 
 ### Added
