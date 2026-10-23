@@ -100,15 +100,56 @@ impl SubscriptionEvent {
 pub struct Subscription {
     events: UnboundedReceiver<SubscriptionEvent>,
     handle: SubscriptionHandle,
+    #[cfg(any(test, feature = "stress"))]
+    on_next: Option<Box<dyn Fn(ConsumerSignal) + Send + Sync>>,
+}
+
+#[cfg(any(test, feature = "stress"))]
+#[derive(Clone, Copy)]
+pub(crate) enum ConsumerSignal {
+    Waiting,
+    Received,
+    Left,
+}
+
+#[cfg(any(test, feature = "stress"))]
+struct Waiting<'a>(&'a (dyn Fn(ConsumerSignal) + Send + Sync));
+
+#[cfg(any(test, feature = "stress"))]
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        (self.0)(ConsumerSignal::Left);
+    }
 }
 
 impl Subscription {
     pub fn new(events: UnboundedReceiver<SubscriptionEvent>, handle: SubscriptionHandle) -> Self {
-        Self { events, handle }
+        Self {
+            events,
+            handle,
+            #[cfg(any(test, feature = "stress"))]
+            on_next: None,
+        }
+    }
+
+    #[cfg(any(test, feature = "stress"))]
+    pub(crate) fn on_next(mut self, hook: impl Fn(ConsumerSignal) + Send + Sync + 'static) -> Self {
+        self.on_next = Some(Box::new(hook));
+        self
     }
 
     pub async fn next(&mut self) -> Option<SubscriptionEvent> {
-        self.events.recv().await
+        #[cfg(any(test, feature = "stress"))]
+        let _waiting = self.on_next.as_deref().map(|hook| {
+            hook(ConsumerSignal::Waiting);
+            Waiting(hook)
+        });
+        let event = self.events.recv().await;
+        #[cfg(any(test, feature = "stress"))]
+        if let (Some(hook), Some(_)) = (&self.on_next, &event) {
+            hook(ConsumerSignal::Received);
+        }
+        event
     }
 
     #[cfg(test)]

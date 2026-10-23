@@ -1,5 +1,5 @@
 use super::*;
-use super::rig::{params, put, remote, rig_on, let_tasks_run};
+use super::rig::{params, put, remote, rig_on};
 use crate::db::Db;
 use crate::identity::RowId;
 use crate::schema::{ActionDeclaration, Coverage, FieldSpec, ModelSpec, NodeRead, RelationSpec, RemoteShape, RootShape, VariableSource, NODE_PARAM};
@@ -65,7 +65,7 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
             "event" => {
                 let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changed"), "Changed", "Message", EventEffect::Upsert)).await.unwrap();
                 rig.transport.emit("Changed", SubscriptionEvent::Next(Response::data(json!({"changed": value}))));
-                let_tasks_run().await;
+                rig.transport.await_consumed("Changed").await;
             }
             "action" | "lands" => {
                 put(&rig, "Message", json!({"id": "m1", "reactions": []}));

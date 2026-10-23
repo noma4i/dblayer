@@ -82,10 +82,10 @@ async fn offline_flag_holds_the_mutation_without_a_call_or_an_attempt_and_online
     assert_eq!(rig.transport.call_count("UpdateMoment"), 0);
     let held = info(&rig, "m1");
     assert_eq!((held.state, held.attempts), (SyncState::Pending, 0));
+    let mut outbox = rig.db.outbox_changes();
     rig.sync.set_online(true);
-    let_tasks_run().await;
+    await_outbox(&mut outbox, || info(&rig, "m1").is_synced()).await;
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
-    assert!(info(&rig, "m1").is_synced());
 }
 
 #[tokio::test(start_paused = true)]

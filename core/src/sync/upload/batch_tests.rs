@@ -155,7 +155,7 @@ async fn batch_sends_ordered_items_once_and_replaces_by_key() {
     let _subscription = db.observe(crate::query::Query::new("Asset"), move |change| sink.lock().unwrap().push((change.size, change.diff.replaced.len()))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     sync.set_online(true);
-    super::super::rig::let_tasks_run().await;
+    transport.await_calls("CreateAssets", 1).await;
     assert_eq!(transport.call_count("CreateAssets"), 1);
     if early {
         let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, db.generation());
@@ -233,7 +233,7 @@ async fn discard_while_the_final_mutation_waits_offline_uses_the_single_operatio
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default() };
     let rows = sync.upload_create_batch("Asset", items, request).await.unwrap();
-    super::super::rig::let_tasks_run().await;
+    transport.await_put_calls(2).await;
     assert_eq!(transport.put_calls().len(), 2);
     assert_eq!(transport.call_count("CreateAssets"), 0);
     sync.discard("Asset", &rows[0].id).await.unwrap();

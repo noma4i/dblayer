@@ -99,7 +99,7 @@ pub async fn subscribe_to_events(rig: &Rig) -> super::super::subscribe::EventSub
 
 pub async fn event(rig: &Rig, node: Value) {
     rig.transport.emit("MessageChanged", SubscriptionEvent::Next(Response::data(json!({"messageChanged": node}))));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MessageChanged").await;
     rig.db.await_revision(rig.db.revision_seq().unwrap());
 }
 

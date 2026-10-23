@@ -43,7 +43,7 @@ async fn a_row_that_lands_before_the_answer_replaces_the_sent_temp_row() {
         let sync = rig.sync.clone();
         async move { sync.flush().await }
     });
-    let_tasks_run().await;
+    rig.transport.await_calls("CreateMoment", 1).await;
     landed(&rig, "m9", "hi", json!("u1"));
     assert_eq!(ids(&rig), ["m9"]);
     assert!(rig.db.find("moments", &temp.id).unwrap().is_none());
@@ -64,7 +64,7 @@ async fn a_row_with_other_fields_or_a_record_not_sent_yet_keeps_the_temp_row() {
         let sync = rig.sync.clone();
         async move { sync.flush().await }
     });
-    let_tasks_run().await;
+    rig.transport.await_calls("CreateMoment", 1).await;
     landed(&rig, "m7", "other", json!("u1"));
     landed(&rig, "m6", "hi", json!(null));
     assert!(rig.db.find("moments", &temp.id).unwrap().is_some());

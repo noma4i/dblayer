@@ -36,16 +36,14 @@ async fn initial_offline_subscription_makes_no_transport_call() {
     let rig = rig_with_subscription();
     rig.sync.set_online(false);
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
-    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentChanged"), 0);
     drop(subscription);
     rig.sync.set_online(true);
-    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentChanged"), 0);
     rig.sync.set_online(false);
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.sync.set_online(true);
-    let_tasks_run().await;
+    rig.transport.await_calls("MomentChanged", 1).await;
     assert_eq!(rig.transport.call_count("MomentChanged"), 1);
     assert!(!subscription.status().degraded);
 }
@@ -54,24 +52,23 @@ async fn initial_offline_subscription_makes_no_transport_call() {
 async fn ready_then_failure_keeps_growing_backoff() {
     let rig = rig_with_subscription();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
-    let_tasks_run().await;
+    rig.transport.await_calls("MomentChanged", 1).await;
     for (attempt, ceiling) in [1, 2, 4, 8, 16, 30, 30].into_iter().enumerate() {
         rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
         rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
-        let_tasks_run().await;
+        rig.transport.await_cancellations("MomentChanged", attempt + 1).await;
         tokio::time::advance(Duration::from_millis(ceiling * 800 - 10)).await;
-        let_tasks_run().await;
         assert_eq!(rig.transport.call_count("MomentChanged"), attempt + 1, "attempt {attempt} reset its delay");
         tokio::time::advance(Duration::from_millis(ceiling * 200 + 20)).await;
-        let_tasks_run().await;
+        rig.transport.await_calls("MomentChanged", attempt + 2).await;
         assert_eq!(rig.transport.call_count("MomentChanged"), attempt + 2, "attempt {attempt} exceeded its cap");
     }
     rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "healthy"})));
     rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
-    let_tasks_run().await;
+    rig.transport.await_cancellations("MomentChanged", 8).await;
     tokio::time::advance(Duration::from_secs(1)).await;
-    let_tasks_run().await;
+    rig.transport.await_calls("MomentChanged", 9).await;
     assert_eq!(rig.transport.call_count("MomentChanged"), 9);
 }
 
@@ -83,7 +80,7 @@ async fn subscription_normalization_does_not_invert_reset_locks() {
         rig.db.shared.store.require_unlocked_responses.store(true, std::sync::atomic::Ordering::SeqCst);
         let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "moments", effect)).await.unwrap();
         rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "after", "author": {"id": "u1", "name": "Ann"}})));
-        let_tasks_run().await;
+        rig.transport.await_consumed("MomentChanged").await;
         assert_eq!(subscription.status().applied, 1);
         let row = rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap();
         assert_eq!(row.text("text"), Some("after"));
@@ -132,7 +129,7 @@ async fn removal_closes_pending_writes(kind: &str) {
         log.lock().unwrap().clear();
         let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "users", EventEffect::Upsert)).await.unwrap();
         rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":area, "action":kind, "recordId":"u1"}]}}))));
-        let_tasks_run().await;
+        rig.transport.await_consumed("Changes").await;
         rig.db.await_revision(rig.db.revision_seq().unwrap());
         assert!(rig.db.query(&Query::new("users")).unwrap().is_empty(), "{kind}");
         assert!(rig.db.query(&Query::new("moments")).unwrap().is_empty(), "{kind}");
@@ -153,7 +150,7 @@ async fn missing_change_kind_is_rejected_before_reading() {
     rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "users", EventEffect::Upsert)).await.unwrap();
     rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"USER", "action":null, "recordId":"u1"}]}}))));
-    let_tasks_run().await;
+    rig.transport.await_consumed("Changes").await;
     assert_eq!(subscription.status().rejected, 1);
     assert_eq!(rig.transport.calls().iter().filter(|call| call.kind != crate::transport::CallKind::Subscription).count(), 0);
 }
@@ -172,7 +169,7 @@ async fn declared_removals_keep_created_and_updated_node_reads() {
         rig.transport.enqueue("ChatNode", crate::transport::Reply::data(json!({"node":{"id":"c1", "title":"after"}})));
         let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "chats", EventEffect::Upsert)).await.unwrap();
         rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"CHAT", "action":kind, "recordId":"c1"}]}}))));
-        let_tasks_run().await;
+        rig.transport.await_consumed("Changes").await;
         assert_eq!(rig.transport.call_count("ChatNode"), 1, "{kind}");
         assert_eq!(rig.db.find("chats", &crate::identity::RowId::new("c1").unwrap()).unwrap().unwrap().text("title"), Some("after"), "{kind}");
         assert_eq!(subscription.status().applied, 1);
@@ -193,7 +190,7 @@ async fn change_ids_reread_registered_nodes_and_count_undeclared_areas() {
     let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "chats", EventEffect::Upsert)).await.unwrap();
     put(&rig, "messages", json!({"id":"c1", "text":"remove"}));
     rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"CHAT", "action":"DELETED", "recordId":"c1", "title":"untrusted"}, {"topic":"UNKNOWN", "action":"UPDATED", "recordId":"x"}]}}))));
-    let_tasks_run().await;
+    rig.transport.await_consumed("Changes").await;
     let row = rig.db.find("chats", &crate::identity::RowId::new("c1").unwrap()).unwrap();
     assert_eq!(row.and_then(|row| row.text("title").map(str::to_string)), Some("reread".into()));
     assert_eq!(subscription.status().rejected, 1);
@@ -212,9 +209,9 @@ async fn declared_subscription_rereads_or_ignores_without_copying_event_fields()
         rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":"fetched"}})));
         rig.sync.register(super::OperationDef::new("RecordSignal", "subscription RecordSignal { recordSignal { id name } }", "recordSignal"));
         rig.sync.listen();
-        let_tasks_run().await;
+        rig.transport.await_calls("RecordSignal", 1).await;
         rig.transport.emit("RecordSignal", SubscriptionEvent::Next(Response::data(json!({"recordSignal":{"id":"u1", "name":"untrusted"}}))));
-        let_tasks_run().await;
+        rig.transport.await_consumed("RecordSignal").await;
         assert_eq!(rig.transport.call_count("CurrentUser"), usize::from(effect == "reread"));
         assert_eq!(rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap().text("name"), Some(if effect == "reread" { "fetched" } else { "before" }));
     }
@@ -228,11 +225,11 @@ async fn declared_activity_changes_only_ephemeral_typing_and_expires() {
     put(&rig, "users", json!({"id":"u1", "name":"Ann"}));
     rig.sync.register(super::OperationDef::new("PresenceSignal", "subscription PresenceSignal { presenceSignal { memberId active kind } }", "presenceSignal"));
     rig.sync.listen();
-    let_tasks_run().await;
+    rig.transport.await_calls("PresenceSignal", 1).await;
     let row = || rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
     for (kind, active, expected) in [("ACTIVE", true, true), ("OTHER", false, true), ("ACTIVE", false, false), ("ACTIVE", true, true)] {
         rig.transport.emit("PresenceSignal", SubscriptionEvent::Next(Response::data(json!({"presenceSignal":{"memberId":"u1", "kind":kind, "active":active}}))));
-        let_tasks_run().await;
+        rig.transport.await_consumed("PresenceSignal").await;
         assert_eq!(row().get("typing"), Some(&json!(expected)));
     }
     rig.clock.advance(Duration::from_secs(6));
@@ -258,7 +255,7 @@ async fn a_shared_change_area_reads_each_declared_node_once() {
     rig.transport.enqueue("MessageTranscodeStatus", crate::transport::Reply::data(json!({"node":{"id":"m1", "text":"updated"}})));
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changes"), "Changes", "messages", EventEffect::Upsert)).await.unwrap();
     rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"REACTION", "action":"DELETED", "recordId":"m1"}]}}))));
-    let_tasks_run().await;
+    rig.transport.await_consumed("Changes").await;
     assert_eq!(rig.transport.calls().iter().filter(|call| call.kind == crate::transport::CallKind::Query).count(), 2);
     assert_eq!(rig.db.find("messages", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap().text("text"), Some("updated"));
     assert!(rig.db.query(&Query::new("chats")).unwrap().is_empty());
@@ -282,7 +279,7 @@ async fn memory_events_without_server_ids_create_distinct_expiring_rows() {
         rig.sync.register(super::OperationDef::new("Notices", fixture["query"].as_str().unwrap(), root));
         let subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("notice"), "Notices", "notices", EventEffect::Upsert)).await.unwrap();
         for _ in 0..2 { rig.transport.emit("Notices", SubscriptionEvent::Next(serde_json::from_value(fixture["result"].clone()).unwrap())); }
-        let_tasks_run().await;
+        rig.transport.await_consumed("Notices").await;
         let rows = rig.db.query(&Query::new("notices")).unwrap();
         assert_eq!(rows.len(), 2, "{root}");
         assert_ne!(rows[0].id, rows[1].id);
@@ -304,10 +301,10 @@ async fn repeated_ready_rereads_expired_watched_queries_after_cable_reconnect() 
     rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
     rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     rig.clock.advance(Duration::from_secs(300));
     rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(rig.transport.call_count("CurrentUser"), 2);
     assert_eq!(rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap().text("name"), Some("after"));
 }
@@ -344,7 +341,7 @@ async fn reconnect_reads_only_expired_watched_nodes() {
                 }
                 let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
                 rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
-                let_tasks_run().await;
+                rig.transport.await_consumed("MomentChanged").await;
                 assert_eq!(rig.transport.call_count("MomentNode"), count, "first Ready");
                 if reopen {
                     rig.transport.disconnect("MomentChanged");
@@ -355,7 +352,7 @@ async fn reconnect_reads_only_expired_watched_nodes() {
                     rig.clock.advance(Duration::from_secs(age));
                 }
                 rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
-                let_tasks_run().await;
+                rig.transport.await_consumed("MomentChanged").await;
                 let reads = rig.transport.call_count("MomentNode") - count;
                 measurements.push((reopen, count, fresh_for, age, expired_first, reads));
                 let expired = if fresh_for == "0.seconds" || age >= 300 { count } else if expired_first { count.min(1) } else { 0 };
@@ -384,7 +381,7 @@ async fn partial_child_events_preserve_absent_parent_fields_and_apply_explicit_n
         let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
         for (node, expected) in [(json!({"id": "m1", "userId": "u1"}), Some("kept")), (json!({"id": "m1", "userId": "u1", "text": null}), None)] {
             rig.transport.emit("MomentChanged", next(node));
-            let_tasks_run().await;
+            rig.transport.await_consumed("MomentChanged").await;
             let parent = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
             assert_eq!(parent.text("lastText"), expected, "stored child: {stored_child}");
             assert_eq!(parent.text("lastMomentId"), Some("m1"));
@@ -408,7 +405,7 @@ async fn upsert_event_changes_the_row_and_fires_the_observer() {
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "after"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(text_of(&rig, "moments", "m1"), Some("after".to_string()));
     assert_eq!(*seen.lock().unwrap(), ["before", "after"]);
@@ -420,7 +417,7 @@ async fn upsert_event_lands_nested_author() {
     let rig = rig_with_subscription();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "author": {"id": "u7", "name": "Zed"}})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     let user = rig.db.find("users", &crate::identity::RowId::new("u7").unwrap()).unwrap().unwrap();
     assert_eq!(user.text("name"), Some("Zed"));
 }
@@ -433,7 +430,7 @@ async fn patch_event_merges_fields_and_skips_unknown_rows() {
     let _subscription = rig.sync.subscribe(def).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "patched"})));
     rig.transport.emit("MomentChanged", next(json!({"id": "ghost", "text": "x"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     let row = rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap();
     assert_eq!((row.text("text"), row.text("userId")), (Some("patched"), Some("u1")));
     assert_eq!(text_of(&rig, "moments", "ghost"), None);
@@ -446,7 +443,7 @@ async fn destroy_event_removes_the_row() {
     let def = SubscriptionDef::new(EventSpec::new("moment_gone"), "MomentChanged", "moments", EventEffect::Destroy);
     let _subscription = rig.sync.subscribe(def).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m1"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
 }
 
@@ -454,12 +451,11 @@ async fn destroy_event_removes_the_row() {
 async fn dropping_the_subscription_cancels_the_transport() {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
-    let_tasks_run().await;
+    rig.transport.await_calls("MomentChanged", 1).await;
     drop(subscription);
-    let_tasks_run().await;
+    rig.transport.await_cancellations("MomentChanged", 1).await;
     assert_eq!(rig.transport.cancellations("MomentChanged"), 1);
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "late"})));
-    let_tasks_run().await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
 }
 
@@ -471,7 +467,7 @@ async fn dropped_connection_is_reopened_after_a_delay() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(rig.transport.call_count("MomentChanged"), 2);
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "again"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("again".to_string()));
     assert_eq!(subscription.status().connects, 2);
 }
@@ -488,7 +484,7 @@ async fn offline_subscription_waits_without_spending_attempts_and_reconnects_onl
     assert_eq!(rig.transport.call_count("MomentChanged"), 1);
     assert!(!subscription.status().degraded);
     rig.sync.set_online(true);
-    let_tasks_run().await;
+    rig.transport.await_calls("MomentChanged", 2).await;
     assert_eq!(rig.transport.call_count("MomentChanged"), 2);
     assert_eq!(subscription.status().connects, 2);
 }
@@ -505,10 +501,10 @@ async fn repeated_transport_failures_stay_degraded_until_next_after_ready() {
     assert!(subscription.status().degraded);
     assert!(!subscription.status().stopped);
     rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert!(subscription.status().degraded);
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "healthy"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert!(!subscription.status().degraded);
 }
 
@@ -604,8 +600,9 @@ async fn debounced_events_land_once_per_row_after_the_interval() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(text_of(&rig, "moments", "m1"), Some("start".to_string()));
+    let waits = rig.transport.waits("MomentChanged");
     rig.clock.advance(Duration::from_millis(400));
-    let_tasks_run().await;
+    rig.transport.await_waits("MomentChanged", waits + 1).await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("three".to_string()));
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(rig.db.counters().observer_calls, 2);
@@ -633,7 +630,7 @@ async fn an_event_sets_the_declared_ephemeral_values_on_its_row() {
     let def = SubscriptionDef::new(EventSpec::new("typing"), "MomentChanged", "users", EventEffect::Patch).setting(params(json!({"typing": true})));
     let _subscription = rig.sync.subscribe(def).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "Ann"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
     assert_eq!(user.get("typing"), Some(&json!(true)));
 }
@@ -645,7 +642,7 @@ async fn a_destroying_event_sets_nothing() {
     let def = SubscriptionDef::new(EventSpec::new("typing"), "MomentChanged", "users", EventEffect::Destroy).setting(params(json!({"typing": true})));
     let _subscription = rig.sync.subscribe(def).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "u1"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
     let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
     assert_eq!(user.get("typing"), Some(&json!(false)));
@@ -657,7 +654,7 @@ async fn upsert_event_keeps_the_fields_it_does_not_select() {
     put(&rig, "moments", json!({"id": "m1", "text": "keep", "userId": "u1"}));
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "likedByMe": true})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     let row = rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap();
     assert_eq!((row.text("text"), row.text("userId"), row.get("likedByMe")), (Some("keep"), Some("u1"), Some(&json!(true))));
 }
@@ -675,7 +672,7 @@ async fn destroy_event_removes_the_dependent_children() {
     let def = SubscriptionDef::new(EventSpec::new("user_gone"), "MomentChanged", "users", EventEffect::Destroy);
     let _subscription = rig.sync.subscribe(def).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "u1"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
 }
 
@@ -749,7 +746,7 @@ async fn a_refused_first_connection_is_retried_like_a_reconnect() {
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(subscription.status().connects, 1);
     inner.emit("MomentChanged", next(json!({"id": "m1", "text": "late", "userId": null})));
-    let_tasks_run().await;
+    inner.await_consumed("MomentChanged").await;
     let row = db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap();
     assert_eq!(row.and_then(|row| row.text("text").map(str::to_string)), Some("late".to_string()));
 }
@@ -765,7 +762,7 @@ async fn upsert_event_touches_the_parent_that_asks_for_it() {
     let before = rig.db.find("users", &user).unwrap().unwrap().revision;
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "t", "userId": "u1"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert!(rig.db.find("users", &user).unwrap().unwrap().revision > before);
 }
 

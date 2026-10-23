@@ -56,7 +56,7 @@ async fn inv_loadm_17_the_state_of_a_real_sync_equals_the_oracle_over_random_com
                 7 => rig.clock.advance(Duration::from_secs(400)),
                 _ => {}
             }
-            let_tasks_run().await;
+            tokio::time::advance(Duration::from_millis(1)).await;
             let run = replay(&owner.history());
             assert_eq!(Some(state.borrow().clone()), expected(&run, &window), "seed {seed} step {step} commands {commands:?}");
             assert_eq!(owner.orphan_ends(), 0, "seed {seed} step {step}: the wiring ended a flight that never started");

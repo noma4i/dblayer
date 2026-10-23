@@ -9,15 +9,15 @@ use crate::syncstate::SyncState;
 use super::fixtures::*;
 use super::{CloudAccount, CloudError, CloudState, MergeSource};
 
-async fn let_tasks_run() {
-    for _ in 0..100 {
-        tokio::task::yield_now().await;
-    }
+async fn state_is(cloud: &super::Cloud, expected: CloudState) {
+    let mut state = cloud.state_changes();
+    tokio::time::timeout(Duration::from_secs(60), state.wait_for(|state| *state == expected)).await.expect("the cloud never reached the awaited state").unwrap();
 }
 
-async fn tick(device: &Device, by: Duration) {
+async fn tick_without_wake(device: &Device, by: Duration) {
+    let polls = device.clock.polls();
     device.clock.advance(by);
-    let_tasks_run().await;
+    device.clock.await_polls(polls + 1).await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -25,24 +25,25 @@ async fn inv_cloud_10_errors_decide_between_backoff_retry_and_stop() {
     let fake = FakeCloud::new();
     let a = device(&fake, 1_000);
     a.cloud.start();
-    let_tasks_run().await;
+    until(|| fake.calls() >= 2).await;
     fake.fail_pushes(vec![
         (CloudError::Unavailable { detail: "down".into() }, false),
         (CloudError::Throttled { retry_after_ms: 60_000 }, false),
     ]);
     note(&a, json!({"title": "t"}));
-    let_tasks_run().await;
+    a.clock.await_started(1).await;
     assert_eq!(fake.pushes(), 1);
-    tick(&a, Duration::from_millis(900)).await;
+    tick_without_wake(&a, Duration::from_millis(900)).await;
     assert_eq!(fake.pushes(), 1, "the first retry waits the backoff delay");
-    tick(&a, Duration::from_millis(200)).await;
+    a.clock.advance(Duration::from_millis(200));
+    a.clock.await_started(2).await;
     assert_eq!(fake.pushes(), 2);
-    tick(&a, Duration::from_secs(59)).await;
+    tick_without_wake(&a, Duration::from_secs(59)).await;
     assert_eq!(fake.pushes(), 2, "the server retry-after is a floor");
-    tick(&a, Duration::from_secs(2)).await;
+    a.clock.advance(Duration::from_secs(2));
+    state_is(&a.cloud, CloudState::Idle).await;
     assert_eq!(fake.pushes(), 3);
     assert_eq!(a.db.cloud_pending().unwrap(), 0);
-    assert_eq!(a.cloud.state(), CloudState::Idle);
     a.cloud.stop();
 }
 
@@ -55,15 +56,14 @@ async fn inv_cloud_10_authorization_and_quota_stop_without_retries_and_keep_the_
         let fake = FakeCloud::new();
         let a = device(&fake, 1_000);
         a.cloud.start();
-        let_tasks_run().await;
+        until(|| fake.calls() >= 2).await;
         fake.fail_pushes(vec![(error, false)]);
         let id = note(&a, json!({"title": "t"}));
-        let_tasks_run().await;
-        assert_eq!(a.cloud.state(), state);
+        state_is(&a.cloud, state.clone()).await;
         let calls = fake.calls();
-        tick(&a, Duration::from_secs(86_400)).await;
+        assert_eq!(a.clock.active(), 0, "{state:?} armed a retry timer");
+        a.clock.advance(Duration::from_secs(86_400));
         tokio::time::advance(Duration::from_secs(86_400)).await;
-        let_tasks_run().await;
         assert_eq!(fake.calls(), calls, "{state:?} does not retry on a timer");
         assert!(a.db.cloud_pending().unwrap() > 0);
         let row = a.db.sync_info("notes", &RowId::new(&id).unwrap()).unwrap();
@@ -79,16 +79,12 @@ async fn inv_cloud_10_offline_does_not_spend_attempts_and_a_signed_out_account_a
     a.online.set_online(false);
     a.cloud.start();
     note(&a, json!({"title": "t"}));
-    let_tasks_run().await;
     assert_eq!(fake.calls(), 0, "offline makes no cloud calls");
     a.online.set_online(true);
-    let_tasks_run().await;
-    assert_eq!(fake.pushes(), 1);
-    assert_eq!(a.db.cloud_pending().unwrap(), 0);
+    until(|| fake.pushes() == 1 && a.db.cloud_pending().unwrap() == 0).await;
     fake.set_account(CloudAccount::SignedOut);
     a.cloud.remote_changed();
-    let_tasks_run().await;
-    assert_eq!(a.cloud.state(), CloudState::NeedsAuthorization);
+    state_is(&a.cloud, CloudState::NeedsAuthorization).await;
     a.cloud.stop();
 }
 

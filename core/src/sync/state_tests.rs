@@ -25,7 +25,7 @@ async fn the_state_follows_a_load_from_loading_to_idle_with_the_page_flag() {
         let sync = rig.sync.clone();
         async move { sync.load("moments", "feed", &none(), LoadOptions::default()).await }
     });
-    let_tasks_run().await;
+    rig.transport.await_calls("MomentsFeed", 1).await;
     assert_eq!(state.borrow().phase, LoadPhase::Loading);
     load.await.unwrap().unwrap();
     let done = state.borrow().clone();
@@ -100,7 +100,7 @@ async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_
         let sync = rig.sync.clone();
         async move { sync.load("moments", "feed", &none(), LoadOptions::default()).await }
     });
-    let_tasks_run().await;
+    rig.transport.await_calls("MomentsFeed", 1).await;
     assert_eq!(running(&state.borrow()), (true, false, false));
     first.await.unwrap().unwrap();
     assert_eq!(running(&state.borrow()), (false, false, false));
@@ -108,14 +108,14 @@ async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_
         let sync = rig.sync.clone();
         async move { sync.load("moments", "feed", &none(), LoadOptions { force: true }).await }
     });
-    let_tasks_run().await;
+    rig.transport.await_calls("MomentsFeed", 2).await;
     assert_eq!(running(&state.borrow()), (false, true, false));
     refresh.await.unwrap().unwrap();
     let more = tokio::spawn({
         let sync = rig.sync.clone();
         async move { sync.load_more("moments", "feed", &none()).await }
     });
-    let_tasks_run().await;
+    rig.transport.await_calls("MomentsFeed", 3).await;
     assert_eq!(running(&state.borrow()), (false, false, true));
     more.await.unwrap().unwrap();
     assert_eq!(running(&state.borrow()), (false, false, false));

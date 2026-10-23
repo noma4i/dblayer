@@ -230,8 +230,29 @@ pub fn feed_page(nodes: Vec<Value>, has_next: bool, cursor: &str) -> Value {
     json!({"feed": {"nodes": nodes, "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}}})
 }
 
-pub async fn let_tasks_run() {
-    tokio::time::sleep(Duration::from_millis(1)).await;
+pub async fn await_outbox(changes: &mut tokio::sync::watch::Receiver<u64>, ready: impl Fn() -> bool) {
+    let wait = async {
+        while !ready() {
+            changes.changed().await.expect("outbox changes");
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(60), wait).await.expect("the outbox never reached the awaited state");
+}
+
+pub async fn await_tasks_ended() {
+    let metrics = tokio::runtime::Handle::current().metrics();
+    for _ in 0..10_000 {
+        if metrics.num_alive_tasks() == 0 {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("{} tasks are still alive", metrics.num_alive_tasks());
+}
+
+pub async fn await_state<T: Clone>(state: &tokio::sync::watch::Receiver<T>, ready: impl Fn(&T) -> bool) {
+    let mut state = state.clone();
+    tokio::time::timeout(Duration::from_secs(60), state.wait_for(|value| ready(value))).await.expect("the state never reached the awaited value").expect("state sender dropped");
 }
 
 pub fn member_ids(rig: &Rig, model: &str, relation: &str, params: &Map<String, Value>) -> Vec<String> {

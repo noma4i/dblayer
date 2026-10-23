@@ -76,7 +76,7 @@ async fn a_nested_row_of_an_event_keeps_the_fields_its_fragment_does_not_select(
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "moments", EventEffect::Upsert)).await.unwrap();
     let event = json!({"momentChanged": {"id": "m1", "text": "t", "author": {"id": "u1"}}});
     rig.transport.emit("MomentChanged", SubscriptionEvent::Next(Response::data(event)));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(row(&rig, "users", "u1").get("name"), Some(&json!("Ann")));
 }
 

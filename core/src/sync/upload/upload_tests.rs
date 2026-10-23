@@ -152,7 +152,7 @@ async fn cancel_multipart_offline_returns_and_aborts_after_reconnecting() {
     assert_eq!(stored_state(&rig).attempts(), 0);
     assert_eq!(stored_state(&rig).upload_id.as_deref(), Some("u1"));
     rig.sync.set_online(true);
-    let_tasks_run().await;
+    rig.transport.await_calls("AbortMultipart", 1).await;
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("AbortMultipart"), 1);
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -173,7 +173,7 @@ async fn repeated_expired_grants_wait_before_renewal() {
         let source = file(if multipart { TWELVE } else { b"abcdef" });
         let started = tokio::time::Instant::now();
         rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
-        let_tasks_run().await;
+        rig.transport.await_calls(operation, 1).await;
         let before_delay = rig.transport.call_count(operation);
         rig.sync.wait_uploads().await;
         observations.push((multipart, before_delay, rig.transport.call_count(operation), started.elapsed() >= small().backoff.delay(0) + small().backoff.delay(1), stored_state(&rig).attempts()));
@@ -299,11 +299,10 @@ async fn dropping_sync_stops_uploads_before_the_next_request() {
     rig.transport.enqueue("CreateBlob", blob().after(Duration::from_secs(60)));
     let source = file(b"abcdef");
     rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
-    let_tasks_run().await;
-    assert_eq!(rig.transport.call_count("CreateBlob"), 1);
+    rig.transport.await_calls("CreateBlob", 1).await;
     let inner = Arc::downgrade(&rig.sync.inner);
     drop(rig.sync);
-    let_tasks_run().await;
+    await_tasks_ended().await;
     assert!(inner.upgrade().is_none());
     tokio::time::sleep(Duration::from_secs(61)).await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 0);

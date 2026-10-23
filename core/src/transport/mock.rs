@@ -5,11 +5,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::Notify;
 
 use super::error::TransportError;
 use super::put::{PutRequest, PutResponse};
 use super::request::{GraphQLError, GraphQLRequest, Response};
-use super::subscription::{Subscription, SubscriptionEvent, SubscriptionHandle};
+use super::subscription::{ConsumerSignal, Subscription, SubscriptionEvent, SubscriptionHandle};
 use super::Transport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,15 +111,26 @@ struct MockState {
     puts_peak: usize,
     replies: HashMap<String, VecDeque<Reply>>,
     scripts: HashMap<String, Vec<SubscriptionEvent>>,
-    senders: HashMap<String, Vec<UnboundedSender<SubscriptionEvent>>>,
+    senders: HashMap<String, Vec<(usize, UnboundedSender<SubscriptionEvent>)>>,
+    streams: Vec<Stream>,
     cancellations: HashMap<String, usize>,
     calls: Vec<RecordedCall>,
     responder: Option<Responder>,
 }
 
+struct Stream {
+    operation_name: String,
+    sent: usize,
+    received: usize,
+    entered: usize,
+    waiting: bool,
+    open: bool,
+}
+
 #[derive(Clone, Default)]
 pub struct MockTransport {
     state: Arc<Mutex<MockState>>,
+    wake: Arc<Notify>,
 }
 
 impl MockTransport {
@@ -139,15 +151,72 @@ impl MockTransport {
     }
 
     pub fn emit(&self, operation_name: &str, event: SubscriptionEvent) {
-        if let Some(senders) = self.lock().senders.get(operation_name) {
-            for sender in senders {
-                let _ = sender.send(event.clone());
+        let mut state = self.lock();
+        let senders = state.senders.get(operation_name).cloned().unwrap_or_default();
+        for (index, sender) in senders {
+            if sender.send(event.clone()).is_ok() {
+                state.streams[index].sent += 1;
             }
         }
+        drop(state);
+        self.wake.notify_waiters();
     }
 
     pub fn disconnect(&self, operation_name: &str) {
-        self.lock().senders.remove(operation_name);
+        let mut state = self.lock();
+        for (index, _) in state.senders.remove(operation_name).unwrap_or_default() {
+            state.streams[index].open = false;
+        }
+        drop(state);
+        self.wake.notify_waiters();
+    }
+
+    pub async fn await_calls(&self, operation_name: &str, count: usize) {
+        self.until(&format!("{count} calls of {operation_name}"), |state| state.calls.iter().filter(|call| call.operation_name == operation_name).count() >= count).await;
+    }
+
+    pub async fn await_puts(&self, url: &str, count: usize) {
+        self.until(&format!("{count} puts to {url}"), |state| state.put_calls.iter().filter(|call| call.url == url).count() >= count).await;
+    }
+
+    pub async fn await_put_calls(&self, count: usize) {
+        self.until(&format!("{count} puts"), |state| state.put_calls.len() >= count).await;
+    }
+
+    pub async fn await_cancellations(&self, operation_name: &str, count: usize) {
+        self.until(&format!("{count} cancellations of {operation_name}"), |state| state.cancellations.get(operation_name).copied().unwrap_or(0) >= count).await;
+    }
+
+    pub async fn await_consumed(&self, operation_name: &str) {
+        self.until(&format!("every event of {operation_name} consumed"), |state| {
+            state.streams.iter().filter(|stream| stream.operation_name == operation_name && stream.open).all(|stream| stream.received == stream.sent && stream.waiting)
+        })
+        .await;
+    }
+
+    pub fn waits(&self, operation_name: &str) -> usize {
+        self.lock().streams.iter().filter(|stream| stream.operation_name == operation_name).map(|stream| stream.entered).sum()
+    }
+
+    pub async fn await_waits(&self, operation_name: &str, count: usize) {
+        self.until(&format!("{count} reads of {operation_name}"), |state| state.streams.iter().filter(|stream| stream.operation_name == operation_name).map(|stream| stream.entered).sum::<usize>() >= count).await;
+    }
+
+    async fn until(&self, what: &str, ready: impl Fn(&MockState) -> bool) {
+        let wait = async {
+            loop {
+                let notified = self.wake.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if ready(&self.lock()) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        if tokio::time::timeout(Duration::from_secs(60), wait).await.is_err() {
+            panic!("mock transport: waited for {what}");
+        }
     }
 
     pub fn enqueue_put(&self, url: &str, reply: PutReply) {
@@ -188,6 +257,7 @@ impl MockTransport {
             operation_name: request.operation_name.clone(),
             variables: request.variables.clone(),
         });
+        self.wake.notify_waiters();
     }
 
     async fn reply(&self, kind: CallKind, request: GraphQLRequest) -> Result<Response, TransportError> {
@@ -219,6 +289,7 @@ impl MockTransport {
             state.put_calls.push(RecordedPut { url: request.url.clone(), headers: request.headers.clone(), body: request.body.clone() });
             state.puts_running += 1;
             state.puts_peak = state.puts_peak.max(state.puts_running);
+            self.wake.notify_waiters();
             match state.puts.get_mut(&request.url) {
                 Some(queue) if queue.len() > 1 => queue.pop_front(),
                 Some(queue) => queue.front().cloned(),
@@ -263,15 +334,37 @@ impl Transport for MockTransport {
         let (sender, receiver) = mpsc::unbounded_channel();
         let name = request.operation_name;
         let mut state = self.lock();
+        let index = state.streams.len();
+        state.streams.push(Stream { operation_name: name.clone(), sent: 0, received: 0, entered: 0, waiting: false, open: true });
         for event in state.scripts.get(&name).cloned().unwrap_or_default() {
             let _ = sender.send(event);
+            state.streams[index].sent += 1;
         }
-        state.senders.entry(name.clone()).or_default().push(sender);
+        state.senders.entry(name.clone()).or_default().push((index, sender));
         drop(state);
-        let shared = self.state.clone();
+        self.wake.notify_waiters();
+        let (shared, wake) = (self.state.clone(), self.wake.clone());
         let handle = SubscriptionHandle::new(move || {
-            *shared.lock().expect("mock transport state").cancellations.entry(name.clone()).or_default() += 1;
+            let mut state = shared.lock().expect("mock transport state");
+            *state.cancellations.entry(name.clone()).or_default() += 1;
+            state.streams[index].open = false;
+            drop(state);
+            wake.notify_waiters();
         });
-        Ok(Subscription::new(receiver, handle))
+        let (shared, wake) = (self.state.clone(), self.wake.clone());
+        Ok(Subscription::new(receiver, handle).on_next(move |signal| {
+            let mut state = shared.lock().expect("mock transport state");
+            let stream = &mut state.streams[index];
+            match signal {
+                ConsumerSignal::Waiting => {
+                    stream.entered += 1;
+                    stream.waiting = true;
+                }
+                ConsumerSignal::Received => stream.received += 1,
+                ConsumerSignal::Left => stream.waiting = false,
+            }
+            drop(state);
+            wake.notify_waiters();
+        }))
     }
 }

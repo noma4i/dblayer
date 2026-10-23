@@ -80,7 +80,7 @@ async fn mutation(rig: &Rig, chat: Value) {
 
 async fn event(rig: &Rig, chat: Value) {
     rig.transport.emit("ChatChanged", SubscriptionEvent::Next(Response::data(json!({"chatChanged": chat}))));
-    let_tasks_run().await;
+    rig.transport.await_consumed("ChatChanged").await;
 }
 
 macro_rules! opponent_cases {

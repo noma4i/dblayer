@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 
 use crate::db::locked;
 use crate::db::Db;
-use crate::pacing::ManualClock;
+use crate::pacing::{Clock, ManualClock};
 use crate::schema::{FieldSpec, MergeRule, ModelSpec, Storage};
 use crate::transport::Connectivity;
 use crate::value::ScalarKind;
@@ -157,18 +157,107 @@ pub fn specs() -> Vec<ModelSpec> {
     vec![notes_spec(&["title", "body", "rank", "tags"]), profiles_spec()]
 }
 
+#[derive(Default)]
+struct Sleeps {
+    started: usize,
+    polls: usize,
+    active: usize,
+}
+
+pub struct WatchedClock {
+    inner: ManualClock,
+    sleeps: Arc<Mutex<Sleeps>>,
+    changed: Arc<tokio::sync::Notify>,
+}
+
+struct Active(Arc<Mutex<Sleeps>>);
+
+impl Drop for Active {
+    fn drop(&mut self) {
+        locked(&self.0).active -= 1;
+    }
+}
+
+impl WatchedClock {
+    pub fn new(start: Duration) -> Self {
+        Self { inner: ManualClock::new(start), sleeps: Arc::default(), changed: Arc::default() }
+    }
+
+    pub fn advance(&self, by: Duration) {
+        self.inner.advance(by);
+    }
+
+    pub fn started(&self) -> usize {
+        locked(&self.sleeps).started
+    }
+
+    pub fn polls(&self) -> usize {
+        locked(&self.sleeps).polls
+    }
+
+    pub fn active(&self) -> usize {
+        locked(&self.sleeps).active
+    }
+
+    pub async fn await_started(&self, count: usize) {
+        self.until(|sleeps| sleeps.started >= count).await;
+    }
+
+    pub async fn await_polls(&self, count: usize) {
+        self.until(|sleeps| sleeps.polls >= count).await;
+    }
+
+    async fn until(&self, ready: impl Fn(&Sleeps) -> bool) {
+        let wait = async {
+            loop {
+                let notified = self.changed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if ready(&locked(&self.sleeps)) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), wait).await.expect("the clock never reached the awaited sleeps");
+    }
+}
+
+impl Clock for WatchedClock {
+    fn now(&self) -> Duration {
+        self.inner.now()
+    }
+
+    fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        {
+            let mut sleeps = locked(&self.sleeps);
+            sleeps.started += 1;
+            sleeps.active += 1;
+        }
+        self.changed.notify_waiters();
+        let guard = Active(self.sleeps.clone());
+        let mut inner = self.inner.sleep(duration);
+        let changed = self.changed.clone();
+        Box::pin(std::future::poll_fn(move |context| {
+            locked(&guard.0).polls += 1;
+            changed.notify_waiters();
+            inner.as_mut().poll(context)
+        }))
+    }
+}
+
 pub struct Device {
     pub db: Db,
     pub cloud: Cloud,
-    pub clock: ManualClock,
+    pub clock: Arc<WatchedClock>,
     pub online: Arc<Connectivity>,
 }
 
 pub fn device_with(db: Db, fake: &Arc<FakeCloud>, start_ms: u64) -> Device {
-    let clock = ManualClock::new(Duration::from_millis(start_ms));
-    db.set_clock(Arc::new(clock.clone()));
+    let clock = Arc::new(WatchedClock::new(Duration::from_millis(start_ms)));
+    db.set_clock(clock.clone());
     let online = db.connectivity();
-    let cloud = Cloud::attach(&db, fake.clone(), Arc::new(clock.clone()));
+    let cloud = Cloud::attach(&db, fake.clone(), clock.clone());
     Device { db, cloud, clock, online }
 }
 

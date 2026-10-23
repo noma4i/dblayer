@@ -48,13 +48,13 @@ async fn inv_live_05_unversioned_events_apply_in_arrival_order_and_the_last_one_
     for text in ["a", "b", "c"] {
         rig.transport.emit("MomentChanged", event(json!({"id": "m1", "text": text})));
     }
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("c".to_string()));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.load("moments", "feed", &params(json!({})), LoadOptions { force: true }).await.unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("m1".to_string()));
     rig.transport.emit("MomentChanged", event(json!({"id": "m1", "text": "after the load"})));
-    let_tasks_run().await;
+    rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("after the load".to_string()));
 }
 
@@ -69,12 +69,12 @@ async fn inv_event_03_an_event_and_a_local_edit_of_one_row_end_as_one_of_the_two
             let push = || rig.transport.emit("MomentChanged", event(json!({"id": "m1", event_field: "server"})));
             if event_first {
                 push();
-                let_tasks_run().await;
+                rig.transport.await_consumed("MomentChanged").await;
                 edit();
             } else {
                 edit();
                 push();
-                let_tasks_run().await;
+                rig.transport.await_consumed("MomentChanged").await;
             }
             let case = format!("local {local_field}, event {event_field}, event first {event_first}");
             if local_field != event_field {
@@ -97,9 +97,8 @@ async fn inv_event_03_racing_events_never_lose_a_local_edit_of_another_field() {
         let db = rig.db.clone();
         let writer = std::thread::spawn(move || db.update("moments", &rid("m1"), params(json!({"userId": format!("u{turn}")}))).unwrap());
         rig.transport.emit("MomentChanged", event(json!({"id": "m1", "text": format!("t{turn}")})));
-        let_tasks_run().await;
+        rig.transport.await_consumed("MomentChanged").await;
         writer.join().unwrap();
-        let_tasks_run().await;
         let (author, text) = (column(&rig, "userId"), column(&rig, "text"));
         assert_eq!((author.as_deref(), text.as_deref()), (Some(format!("u{turn}").as_str()), Some(format!("t{turn}").as_str())), "turn {turn}");
     }

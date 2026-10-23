@@ -178,9 +178,10 @@ async fn event_burst_allocates_distinct_order_keys() {
     for id in ["r1", "r2"] {
         transport.emit("Changed", SubscriptionEvent::Next(Response::data(json!({"changed":{"id":id,"body":id}}))));
     }
-    super::rig::let_tasks_run().await;
+    transport.await_consumed("Changed").await;
+    let waits = transport.waits("Changed");
     clock.advance(Duration::from_millis(20));
-    super::rig::let_tasks_run().await;
+    transport.await_waits("Changed", waits + 1).await;
     assert_eq!(subscription.status().rejected, 0);
     assert_eq!(members(&db), ["r1", "r2"]);
 }
@@ -213,7 +214,7 @@ async fn network_writes_preserve_pending_fields() {
                 let node = json!({"id":"r1","body":"server","size":7});
                 let root = if source == "event-related" { json!({"id":"r0","linked":node}) } else { node };
                 transport.emit("Changed", SubscriptionEvent::Next(Response::data(json!({"changed":root}))));
-                super::rig::let_tasks_run().await;
+                transport.await_consumed("Changed").await;
             }
             "load" | "load-related" => {
                 let node = json!({"id":"r1","body":"server","size":7});
@@ -264,12 +265,12 @@ async fn event_join(nested: bool) {
         let _subscription = sync.subscribe(def).await.unwrap();
         let node = if nested { json!({"actor":{"id":"r1"},"body":"after"}) } else { json!({"id":"r1","body":"after"}) };
         transport.emit("Changed", SubscriptionEvent::Next(Response::data(json!({"changed":node}))));
-        super::rig::let_tasks_run().await;
+        transport.await_consumed("Changed").await;
         assert_eq!(db.shared.store.point("Record", "r1").unwrap().unwrap()["body"], "after", "nested={nested}");
         assert_eq!(members(&db), ["r1"], "nested={nested}");
         if nested {
             transport.emit("Changed", SubscriptionEvent::Next(Response::data(json!({"changed":{"actor":{"id":"r1"},"meta":{"deleted":true}}}))));
-            super::rig::let_tasks_run().await;
+            transport.await_consumed("Changed").await;
             assert!(db.shared.store.point("Record", "r1").unwrap().is_none());
             assert!(members(&db).is_empty());
         }
