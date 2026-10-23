@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use super::*;
 
+fn handle() -> Handle { super::super::database::executor().unwrap().handle().clone() }
+
 #[derive(Clone, Copy)]
 enum Step {
     Opened(&'static str),
@@ -13,7 +15,7 @@ enum Step {
 fn released_list() -> (Arc<Mutex<Vec<String>>>, TokenLease) {
     let released = Arc::new(Mutex::new(Vec::new()));
     let seen = released.clone();
-    let lease = TokenLease::new(move |token| {
+    let lease = TokenLease::new(handle(), move |token| {
         crate::db::locked(&seen).push(token);
         Box::pin(async {})
     });
@@ -41,7 +43,7 @@ fn every_order_of_open_abandon_and_take_releases_each_token_exactly_once() {
             match step {
                 Opened(token) => opened_seen.push(lease.opened(token.into()).is_ok()),
                 Abandon => lease.abandon(),
-                Take => taken_seen.push(lease.take_open()),
+                Take => taken_seen.push(lease.begin_close()),
             }
         }
         assert_eq!(opened_seen, opened_ok, "{name}: opened results");
@@ -66,11 +68,11 @@ fn a_release_that_calls_back_into_the_lease_does_not_deadlock() {
     let reentered = lease.clone();
     let released = Arc::new(Mutex::new(Vec::new()));
     let seen = released.clone();
-    let _ = lease.set(TokenLease::new(move |token| {
+    let _ = lease.set(TokenLease::new(handle(), move |token| {
         let lease = reentered.get().unwrap();
         lease.abandon();
         let _ = lease.token();
-        let _ = lease.take_open();
+        let _ = lease.begin_close();
         crate::db::locked(&seen).push(token);
         Box::pin(async {})
     }));
@@ -90,11 +92,69 @@ fn a_release_that_calls_back_into_the_lease_does_not_deadlock() {
 #[test]
 fn the_release_work_runs_detached_from_the_caller() {
     let (done, finished) = std::sync::mpsc::channel();
-    let lease = TokenLease::new(move |token| {
+    let lease = TokenLease::new(handle(), move |token| {
         let done = done.clone();
         Box::pin(async move { done.send(token).unwrap(); })
     });
     lease.opened("a".into()).unwrap();
     lease.abandon();
     assert_eq!(finished.recv_timeout(Duration::from_secs(10)).unwrap(), "a");
+}
+
+#[test]
+fn the_same_token_reported_again_is_never_closed_twice() {
+    use Step::*;
+    let table: [(&str, Vec<Step>, Vec<bool>, Vec<&str>); 4] = [
+        ("twice while open", vec![Opened("a"), Opened("a"), Abandon], vec![true, false], vec!["a"]),
+        ("after abandon released it", vec![Opened("a"), Abandon, Opened("a")], vec![true, false], vec!["a"]),
+        ("after a late open", vec![Abandon, Opened("a"), Opened("a")], vec![true, false], vec!["a"]),
+        ("after the owner took it to close", vec![Opened("a"), Take, Opened("a")], vec![true, false], vec![]),
+    ];
+    for (name, steps, opened_ok, released_expected) in table {
+        let (released, lease) = released_list();
+        let mut opened_seen = Vec::new();
+        for step in steps {
+            match step {
+                Opened(token) => opened_seen.push(lease.opened(token.into()).is_ok()),
+                Abandon => lease.abandon(),
+                Take => { lease.begin_close(); }
+            }
+        }
+        assert_eq!(opened_seen, opened_ok, "{name}: opened results");
+        assert_eq!(*crate::db::locked(&released), released_expected, "{name}: released tokens");
+    }
+}
+
+#[test]
+fn a_close_that_is_cancelled_returns_the_token_to_its_owner_and_a_finished_close_does_not() {
+    let (released, lease) = released_list();
+    lease.opened("a".into()).unwrap();
+    assert_eq!(lease.begin_close().as_deref(), Some("a"));
+    assert_eq!(lease.begin_close(), None);
+    lease.restore_close();
+    assert_eq!(lease.token().as_deref(), Some("a"));
+    lease.abandon();
+    assert_eq!(*crate::db::locked(&released), vec!["a".to_string()]);
+
+    let (released, lease) = released_list();
+    lease.opened("b".into()).unwrap();
+    lease.begin_close().unwrap();
+    lease.finish_close();
+    lease.abandon();
+    lease.restore_close();
+    assert_eq!(lease.token(), None);
+    assert!(crate::db::locked(&released).is_empty());
+}
+
+#[test]
+fn the_release_work_runs_on_the_runtime_the_lease_was_given() {
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).thread_name("lease-probe").enable_all().build().unwrap();
+    let (done, finished) = std::sync::mpsc::channel();
+    let lease = TokenLease::new(runtime.handle().clone(), move |_| {
+        let done = done.clone();
+        Box::pin(async move { done.send(std::thread::current().name().map(String::from)).unwrap(); })
+    });
+    lease.opened("a".into()).unwrap();
+    lease.abandon();
+    assert_eq!(finished.recv_timeout(Duration::from_secs(10)).unwrap().as_deref(), Some("lease-probe"));
 }

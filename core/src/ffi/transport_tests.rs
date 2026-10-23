@@ -9,7 +9,7 @@ use crate::transport::{SubscriptionEvent, SubscriptionFailureKind};
 
 fn sink() -> (SubscriptionSink, mpsc::UnboundedReceiver<SubscriptionEvent>) {
     let (sender, receiver) = mpsc::unbounded_channel();
-    (SubscriptionSink::new(sender, |_| Box::pin(async {})), receiver)
+    (SubscriptionSink::new(crate::ffi::database::executor().unwrap().handle().clone(), sender, |_| Box::pin(async {})), receiver)
 }
 
 #[test]
@@ -87,6 +87,7 @@ struct Ordered {
     subscribe: Mutex<Option<Script<super::SubscriptionSink>>>,
     open: Mutex<Option<Script<super::CableLease>>>,
     events: Mutex<std::sync::mpsc::Sender<String>>,
+    closes: std::sync::atomic::AtomicUsize,
 }
 
 impl Ordered {
@@ -101,7 +102,13 @@ impl super::Transport for Ordered {
     }
     async fn cable_send(&self, _: String, _: String) -> Result<(), super::DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, token: String) { self.say(format!("close:{token}")); }
+    async fn cable_close(&self, token: String) {
+        if self.closes.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 && token == "stuck" {
+            self.say(format!("close-started:{token}"));
+            std::future::pending::<()>().await;
+        }
+        self.say(format!("close:{token}"));
+    }
     async fn query(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), super::DbError> {
@@ -116,7 +123,7 @@ fn boxed(work: impl Future<Output = Result<(), super::DbError>> + Send + 'static
 
 fn ordered(subscribe: Option<Script<super::SubscriptionSink>>, open: Option<Script<super::CableLease>>) -> (super::ForeignTransport, std::sync::mpsc::Receiver<String>) {
     let (events, heard) = std::sync::mpsc::channel();
-    let transport = Ordered { subscribe: Mutex::new(subscribe), open: Mutex::new(open), events: Mutex::new(events) };
+    let transport = Ordered { subscribe: Mutex::new(subscribe), open: Mutex::new(open), events: Mutex::new(events), closes: std::sync::atomic::AtomicUsize::new(0) };
     (super::ForeignTransport(Arc::new(transport)), heard)
 }
 
@@ -224,4 +231,17 @@ async fn a_cable_socket_dropped_without_close_closes_its_token() {
     let socket = transport.open_cable().await.unwrap();
     drop(socket);
     assert_eq!(heard(&events), "close:c1");
+}
+
+#[tokio::test]
+async fn a_cancelled_close_leaves_the_token_to_the_dropped_socket() {
+    use crate::transport::Transport;
+    let (transport, events) = ordered(None, Some(Box::new(|lease| boxed(async move { lease.opened("stuck".into()) }))));
+    let socket = transport.open_cable().await.unwrap();
+    let mut closing = Box::pin(socket.close());
+    assert!(pending(&mut closing));
+    assert_eq!(heard(&events), "close-started:stuck");
+    drop(closing);
+    drop(socket);
+    assert_eq!(heard(&events), "close:stuck");
 }

@@ -50,6 +50,14 @@ impl CableLease {
     pub fn opened(&self, token: String) -> Result<(), DbError> { self.lease.opened(token) }
 }
 
+struct Closing<'a> { lease: &'a TokenLease, done: bool }
+
+impl Drop for Closing<'_> {
+    fn drop(&mut self) {
+        if self.done { self.lease.finish_close(); } else { self.lease.restore_close(); }
+    }
+}
+
 struct ForeignSocket { transport: Arc<dyn Transport>, lease: Arc<CableLease>, token: String }
 
 impl Drop for ForeignSocket {
@@ -66,7 +74,10 @@ impl core::CableSocket for ForeignSocket {
         })
     }
     async fn close(&self) {
-        if let Some(token) = self.lease.lease.take_open() { self.transport.cable_close(token).await; }
+        let Some(token) = self.lease.lease.begin_close() else { return };
+        let mut closing = Closing { lease: &self.lease.lease, done: false };
+        self.transport.cable_close(token).await;
+        closing.done = true;
     }
 }
 
@@ -94,8 +105,8 @@ impl SubscriptionSink {
 }
 
 impl SubscriptionSink {
-    fn new(sender: mpsc::UnboundedSender<core::SubscriptionEvent>, release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
-        Self { sender: Mutex::new(Some(sender)), lease: TokenLease::new(release) }
+    fn new(handle: tokio::runtime::Handle, sender: mpsc::UnboundedSender<core::SubscriptionEvent>, release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
+        Self { sender: Mutex::new(Some(sender)), lease: TokenLease::new(handle, release) }
     }
     fn abandon(&self) {
         self.lease.abandon();
@@ -183,7 +194,8 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 impl core::Transport for ForeignTransport {
     async fn open_cable(&self) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
         let transport = self.0.clone();
-        let lease = Arc::new(CableLease { lease: TokenLease::new(move |token| {
+        let handle = super::database::executor().map_err(transport_error)?.handle().clone();
+        let lease = Arc::new(CableLease { lease: TokenLease::new(handle, move |token| {
             let transport = transport.clone();
             Box::pin(async move { transport.cable_close(token).await })
         }) });
@@ -205,7 +217,8 @@ impl core::Transport for ForeignTransport {
     async fn subscribe(&self, request: core::GraphQLRequest) -> Result<core::Subscription, core::TransportError> {
         let (sender, receiver) = mpsc::unbounded_channel();
         let transport = self.0.clone();
-        let sink = Arc::new(SubscriptionSink::new(sender, move |token| {
+        let handle = super::database::executor().map_err(transport_error)?.handle().clone();
+        let sink = Arc::new(SubscriptionSink::new(handle, sender, move |token| {
             let transport = transport.clone();
             Box::pin(async move { transport.unsubscribe(token) })
         }));

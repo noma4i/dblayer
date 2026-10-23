@@ -2,6 +2,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Mutex;
 
+use tokio::runtime::Handle;
+
 use super::DbError;
 
 type Release = Box<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
@@ -9,37 +11,24 @@ type Release = Box<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + 
 enum Hold {
     Pending,
     Open(String),
+    Closing(String),
     Abandoned,
-    Released,
+    Released(Option<String>),
 }
 
 pub(super) struct TokenLease {
     hold: Mutex<Hold>,
+    handle: Handle,
     release: Release,
 }
 
-pub(super) fn detached(work: impl Future<Output = ()> + Send + 'static) {
-    match super::database::executor() {
-        Ok(executor) => {
-            executor.spawn(work);
-        }
-        Err(_) => {
-            let _ = std::thread::Builder::new().name("dblayer-release".into()).spawn(move || {
-                if let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
-                    runtime.block_on(work);
-                }
-            });
-        }
-    }
-}
-
 impl TokenLease {
-    pub(super) fn new(release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
-        Self { hold: Mutex::new(Hold::Pending), release: Box::new(release) }
+    pub(super) fn new(handle: Handle, release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
+        Self { hold: Mutex::new(Hold::Pending), handle, release: Box::new(release) }
     }
 
     pub(super) fn opened(&self, token: String) -> Result<(), DbError> {
-        let outcome = {
+        let (outcome, dispose) = {
             let mut hold = crate::db::locked(&self.hold);
             match &*hold {
                 Hold::Pending => {
@@ -47,14 +36,19 @@ impl TokenLease {
                     return Ok(());
                 }
                 Hold::Abandoned => {
-                    *hold = Hold::Released;
-                    Ok(())
+                    *hold = Hold::Released(Some(token.clone()));
+                    (Ok(()), true)
                 }
-                Hold::Open(_) => Err(DbError::Invalid { detail: "the token lease is already open".into() }),
-                Hold::Released => Err(DbError::Invalid { detail: "the token lease is already released".into() }),
+                Hold::Open(held) | Hold::Closing(held) | Hold::Released(Some(held)) if *held == token => {
+                    (Err(DbError::Invalid { detail: "the token lease already holds this token".into() }), false)
+                }
+                Hold::Open(_) | Hold::Closing(_) => (Err(DbError::Invalid { detail: "the token lease is already open".into() }), true),
+                Hold::Released(_) => (Err(DbError::Invalid { detail: "the token lease is already released".into() }), true),
             }
         };
-        self.dispose(token);
+        if dispose {
+            self.dispose(token);
+        }
         outcome
     }
 
@@ -65,30 +59,49 @@ impl TokenLease {
         }
     }
 
-    pub(super) fn take_open(&self) -> Option<String> {
+    pub(super) fn begin_close(&self) -> Option<String> {
         let mut hold = crate::db::locked(&self.hold);
-        match &*hold {
-            Hold::Open(_) => match std::mem::replace(&mut *hold, Hold::Released) {
-                Hold::Open(token) => Some(token),
-                _ => None,
-            },
-            _ => None,
+        match std::mem::replace(&mut *hold, Hold::Abandoned) {
+            Hold::Open(token) => {
+                *hold = Hold::Closing(token.clone());
+                Some(token)
+            }
+            other => {
+                *hold = other;
+                None
+            }
+        }
+    }
+
+    pub(super) fn finish_close(&self) {
+        self.settle_close(|token| Hold::Released(Some(token)));
+    }
+
+    pub(super) fn restore_close(&self) {
+        self.settle_close(Hold::Open);
+    }
+
+    fn settle_close(&self, next: impl FnOnce(String) -> Hold) {
+        let mut hold = crate::db::locked(&self.hold);
+        match std::mem::replace(&mut *hold, Hold::Abandoned) {
+            Hold::Closing(token) => *hold = next(token),
+            other => *hold = other,
         }
     }
 
     pub(super) fn abandon(&self) {
         let token = {
             let mut hold = crate::db::locked(&self.hold);
-            match &*hold {
-                Hold::Pending => {
-                    *hold = Hold::Abandoned;
+            match std::mem::replace(&mut *hold, Hold::Abandoned) {
+                Hold::Pending | Hold::Abandoned => None,
+                Hold::Open(token) => {
+                    *hold = Hold::Released(Some(token.clone()));
+                    Some(token)
+                }
+                other => {
+                    *hold = other;
                     None
                 }
-                Hold::Open(_) => match std::mem::replace(&mut *hold, Hold::Released) {
-                    Hold::Open(token) => Some(token),
-                    _ => None,
-                },
-                Hold::Abandoned | Hold::Released => None,
             }
         };
         if let Some(token) = token {
@@ -97,7 +110,7 @@ impl TokenLease {
     }
 
     fn dispose(&self, token: String) {
-        detached((self.release)(token));
+        self.handle.spawn((self.release)(token));
     }
 }
 
