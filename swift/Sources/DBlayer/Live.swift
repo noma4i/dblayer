@@ -136,7 +136,7 @@ public struct LiveSource<Value: Sendable>: Sendable {
 final class LiveBox<Value: Sendable>: ObservableObject {
   @Published var value: Value
   @Published var failure: Error?
-  private var task: Task<Void, Never>?
+  private(set) var task: Task<Void, Never>?
 
   init(_ source: LiveSource<Value>) {
     value = source.initial
@@ -188,7 +188,7 @@ public final class LiveList<Model: DBModel> {
   public private(set) var replaced: [String: String] = [:]
   @ObservationIgnored private let query: Query<Model>
   @ObservationIgnored private var pending: [ListEdit<Model>]?
-  @ObservationIgnored private var tasks: [Task<Void, Never>] = []
+  @ObservationIgnored private(set) var tasks: [Task<Void, Never>] = []
   @ObservationIgnored private var initialLoad: Task<Void, Error>?
 
   public convenience init(_ query: Query<Model>, refreshOnConnect: Bool = false) {

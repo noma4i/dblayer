@@ -26,6 +26,19 @@ class SingletonEntityTest {
         User.profile.refresh()
     }
 
+    /** A new singleton entity requests the profile at once, so its reply is queued first and the test goes on after that request. */
+    private suspend fun createEntity(): Entity<User> {
+        transport.enqueue("UserProfile", reply = """{"data":{"me":null}}""")
+        val entity = User.entity()
+        eventually("the profile request of the new entity") { transport.calls.size == 1 }
+        return entity
+    }
+
+    private suspend fun refreshTo(id: String, name: String) {
+        transport.enqueue("UserProfile", reply = """{"data":{"me":{"__typename":"User","id":"$id","name":"$name"}}}""")
+        User.profile.refresh()
+    }
+
     private suspend fun loaded(entity: Entity<User>) = withTimeout(5000) { entity.value.first { it != null } }
 
     private val registry get() = EntityRegistries.of("User", User)
@@ -47,9 +60,9 @@ class SingletonEntityTest {
     @Test
     fun tenReadersCostOneSubscriptionAndSeeOneValue() = bounded {
         open()
-        val readers = List(10) { User.entity() }
+        val readers = listOf(createEntity()) + List(9) { User.entity() }
         val feed = registry.currentSingleFeed
-        login("1", "Ann")
+        refreshTo("1", "Ann")
         loaded(readers[0])
         assertEquals(1, readers.map { System.identityHashCode(it) }.toSet().size)
         assertTrue(feed != null && feed === registry.currentSingleFeed)
@@ -57,13 +70,21 @@ class SingletonEntityTest {
         assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
     }
 
+    @Test
+    fun aNewSingletonEntityRequestsTheProfileByItself() = bounded {
+        open()
+        createEntity()
+
+        assertEquals(listOf("UserProfile"), transport.calls.map { it.operationName })
+    }
+
     /** The value is null before the first load and a collector is told when it loads. */
     @Test
     fun emptyUntilTheRowLoadsAndTheReaderIsTold() = bounded {
         open()
-        val entity = User.entity()
+        val entity = createEntity()
         assertTrue(entity.value.value == null && entity.id.isEmpty() && !entity.isStale)
-        login("1", "Ann")
+        refreshTo("1", "Ann")
         assertEquals("Ann", loaded(entity)?.name)
     }
 
@@ -71,8 +92,8 @@ class SingletonEntityTest {
     @Test
     fun logoutEmptiesTheEntityAtOnceAndStopsItsFeed() = bounded {
         open()
-        val entity = User.entity()
-        login("1", "Ann")
+        val entity = createEntity()
+        refreshTo("1", "Ann")
         loaded(entity)
         DBlayer.logout()
         assertTrue(entity.value.value == null && entity.id.isEmpty())
@@ -85,8 +106,8 @@ class SingletonEntityTest {
     @Test
     fun aLaterLoginLoadsTheNewUserIntoTheSameEntity() = bounded {
         open()
-        val entity = User.entity()
-        login("1", "Ann")
+        val entity = createEntity()
+        refreshTo("1", "Ann")
         loaded(entity)
         DBlayer.logout()
         login("2", "Bob")
@@ -102,16 +123,18 @@ class SingletonEntityTest {
     @Test
     fun aDeliveryOfAReplacedFeedNeverWrites() = bounded {
         open()
-        val entity = User.entity()
+        val entity = createEntity()
         val old = registry.currentSingleFeed!!
-        login("1", "Ann")
+        refreshTo("1", "Ann")
         loaded(entity)
         DBlayer.logout()
+        transport.enqueue("UserProfile", reply = """{"data":{"me":null}}""")
         DBlayer.resume()
+        eventually("the profile request after the resume") { transport.calls.size == 3 }
         assertTrue(User.entity() === entity && entity.value.value == null)
         registry.receive(old, Long.MAX_VALUE, User(id = "9", name = "Late", typing = false))
         assertNull(entity.value.value)
-        login("2", "Bob")
+        refreshTo("2", "Bob")
         assertEquals("Bob", loaded(entity)?.name)
         assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
     }
@@ -123,8 +146,8 @@ class SingletonEntityTest {
         DBlayer.close()
         val clock = DBlayer.openTesting(transport, modelsJSON)
         DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
-        val entity = User.entity()
-        login("1", "Ann")
+        val entity = createEntity()
+        refreshTo("1", "Ann")
         loaded(entity)
         val feed = registry.currentSingleFeed!!
         val before = Triple(feed.delivered, DBlayer.subscriptionCensus().observedQueries, transport.calls.size)
