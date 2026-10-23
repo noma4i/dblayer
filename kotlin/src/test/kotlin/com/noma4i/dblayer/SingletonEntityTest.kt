@@ -2,7 +2,6 @@ package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.User
 import com.noma4i.dblayer.models.modelsJSON
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -68,20 +67,28 @@ class SingletonEntityTest {
         assertEquals("Ann", loaded(entity)?.name)
     }
 
-    /** REL-24: logout empties the entity at once, and the next login loads the new user without the old one showing. */
+    /** REL-24: logout empties the entity at once and stops its feed. */
     @Test
-    fun logoutEmptiesItAndALaterLoginLoadsTheNewUser() = bounded {
+    fun logoutEmptiesTheEntityAtOnceAndStopsItsFeed() = bounded {
         open()
         val entity = User.entity()
         login("1", "Ann")
         loaded(entity)
         DBlayer.logout()
         assertTrue(entity.value.value == null && entity.id.isEmpty())
-        delay(300)
-        assertNull(entity.value.value)
         assertTrue(User.entity() === entity)
         assertEquals(0uL, DBlayer.subscriptionCensus().observedQueries)
         assertNull(registry.currentSingleFeed)
+    }
+
+    /** REL-24: the next login after a logout loads the new user into the same entity, and a second resume keeps the feed. */
+    @Test
+    fun aLaterLoginLoadsTheNewUserIntoTheSameEntity() = bounded {
+        open()
+        val entity = User.entity()
+        login("1", "Ann")
+        loaded(entity)
+        DBlayer.logout()
         login("2", "Bob")
         DBlayer.resume()
         assertEquals("Bob", loaded(entity)?.name)
@@ -109,18 +116,23 @@ class SingletonEntityTest {
         assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
     }
 
-    /** REL-27: 10 seconds without an event add no delivery and no subscription. */
+    /** REL-27: 10 seconds of the core clock without an event add no delivery and no subscription. */
+    @OptIn(DBlayerTestingApi::class)
     @Test
     fun idleTenSecondsCreatesNoWork() = bounded {
-        open()
+        DBlayer.close()
+        val clock = DBlayer.openTesting(transport, modelsJSON)
+        DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
         val entity = User.entity()
         login("1", "Ann")
         loaded(entity)
         val feed = registry.currentSingleFeed!!
-        val before = feed.delivered to DBlayer.subscriptionCensus()
-        delay(10_000)
+        val before = Triple(feed.delivered, DBlayer.subscriptionCensus().observedQueries, transport.calls.size)
+        clock.advance(10_000L)
+        DBlayer.database.flush()
         assertEquals(before.first, feed.delivered)
-        assertEquals(before.second.observedQueries, DBlayer.subscriptionCensus().observedQueries)
+        assertEquals(before.second, DBlayer.subscriptionCensus().observedQueries)
+        assertEquals(before.third, transport.calls.size)
         assertNotNull(entity.value.value)
     }
 }

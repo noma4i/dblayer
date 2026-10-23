@@ -6,12 +6,35 @@ import Testing
 extension BridgeProbeTests {
   private static let tailDocument = "query tailSince($containerId: ID!, $afterSequence: Int, $pinned: Boolean, $first: Int, $after: String) { tailSince(containerId: $containerId, afterSequence: $afterSequence, pinned: $pinned, first: $first, after: $after) { edges { cursor node { id text } } pageInfo { hasNextPage endCursor } } }"
 
-  @Test
-  func aScopeParamOfIntAndBoolIsSentAsItsJsonValue() {
-    let query = Tail.since("c1", afterSequence: 120, pinned: true)
-    #expect(query.relation == "since")
-    #expect(query.params == ["containerId": .string("c1"), "afterSequence": .number(120), "pinned": .bool(true)])
-    #expect(Tail.since("c1", afterSequence: 121, pinned: true).params != query.params)
+  struct ParamCase: Sendable, CustomTestStringConvertible {
+    let name: String
+    let relation: String?
+    let params: [String: JSONValue]
+    let expected: [String: JSONValue]
+    init<Model>(_ name: String, _ query: Query<Model>, _ expected: [String: JSONValue]) {
+      self.name = name
+      relation = query.relation
+      params = query.params
+      self.expected = expected
+    }
+    var testDescription: String { name }
+  }
+
+  static let paramCases: [ParamCase] = [
+    ParamCase("an int and a bool", Tail.since("c1", afterSequence: 120, pinned: true), ["containerId": .string("c1"), "afterSequence": .number(120), "pinned": .bool(true)]),
+    ParamCase("another int", Tail.since("c1", afterSequence: 121, pinned: true), ["containerId": .string("c1"), "afterSequence": .number(121), "pinned": .bool(true)]),
+    ParamCase("a schema enum", Inbox.shelf(list: .primary), ["list": .string("PRIMARY")]),
+    ParamCase("another schema enum value", Inbox.shelf(list: .secondary), ["list": .string("SECONDARY")]),
+    ParamCase("a schema enum value the build lacks", Inbox.shelf(list: .unknown("LATER")), ["list": .string("LATER")]),
+    ParamCase("the default order", Roster.containerMembers("c1"), ["containerId": .string("c1"), "order": .string("JOINED")]),
+    ParamCase("an order of the schema", Roster.containerMembers("c1", order: .ownerFirst), ["containerId": .string("c1"), "order": .string("OWNER_FIRST")]),
+    ParamCase("an order the build lacks", Roster.containerMembers("c1", order: .unknown("LATER")), ["containerId": .string("c1"), "order": .string("LATER")]),
+  ]
+
+  @Test(arguments: paramCases)
+  func aScopeParamIsSentAsItsJsonValue(_ item: ParamCase) {
+    #expect(item.relation != nil)
+    #expect(item.params == item.expected)
   }
 
   @MainActor
@@ -26,18 +49,5 @@ extension BridgeProbeTests {
 
     let sent = transport.calls.first { $0.operationName == "tailSince" }?.variablesJson ?? ""
     #expect(JSONValue.parse(sent) == JSONValue.parse(#"{"containerId":"c1","afterSequence":120,"pinned":false,"first":50}"#), "variables sent: \(sent)")
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func anAggregateOperationReturnsItsFieldsAsAValue() async throws {
-    let transport = try await Self.openOperationRig("containerMedia", document: "query containerMedia($containerId: ID!, $upToSequence: Int) { containerMedia(containerId: $containerId, upToSequence: $upToSequence) { visualCount audioCount rewardCount latestSequence } }", reply: #"{"data":{"containerMedia":{"visualCount":3,"audioCount":1,"rewardCount":0,"latestSequence":120}}}"#)
-
-    let result = try await Operations.containerMediaLoad(containerId: "c1", upToSequence: 120)
-
-    #expect(result.visualCount == 3)
-    #expect(result.latestSequence == 120)
-    let sent = transport.calls.first { $0.operationName == "containerMedia" }?.variablesJson ?? ""
-    #expect(JSONValue.parse(sent) == JSONValue.parse(#"{"containerId":"c1","upToSequence":120}"#), "variables sent: \(sent)")
   }
 }

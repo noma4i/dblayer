@@ -5,25 +5,6 @@ import DBlayerTesting
 
 extension BridgeProbeTests {
   @Suite struct ListChangeTests {
-    @Test func aSlowConsumerReceivesABoundedReplacementWithEveryCurrentRow() async throws {
-      try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
-      let query = Query<Moment>().order(Moment.createdAt.desc)
-      let cursor = Cursor(try await query.changes.stream())
-      for number in 0..<192 { _ = try await Moment.create(text: "row\(number)") }
-      var rows: [Moment] = []
-      var sawReplacement = false
-      for _ in 0...192 {
-        guard let change = await cursor.next("the queued changes") else { break }
-        if change.kind == .replaced {
-          rows = change.inserted.map(\.row)
-          sawReplacement = sawReplacement || change.inserted.count >= 64
-        }
-        else { for row in change.inserted { rows.insert(row.row, at: row.index) } }
-        if change.size == 192 { break }
-      }
-      #expect(sawReplacement, "overflow never delivered a replacement snapshot")
-      #expect(rows == (try await query.live.current()))
-    }
     final class Decodes: @unchecked Sendable {
       let lock = NSLock()
       var value = 0
@@ -42,45 +23,45 @@ extension BridgeProbeTests {
       init(wire: WireRow) throws { Self.decodes.add(); value = try Moment(wire: wire) }
     }
 
-    @Test func changesWork() {
-      for run in 1...5 {
-        let initial = ListChange<CountedMoment>(LiveChange(revision: 1, full: true, size: 2000, rows: (0..<2000).map { Self.wire("\($0)") }, rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: nil, inserted: (0..<2000).map(UInt32.init)))
-        #expect(initial.inserted.count == 2000)
+    enum Surface: Sendable { case listChange, listFeed }
+
+    @Test(arguments: [Surface.listChange, .listFeed], [20, 200, 2000])
+    func aDeltaOfOneRowDecodesOneRowAtEveryListSize(surface: Surface, size: Int) {
+      let rows = (0..<size).map { Self.wire("\($0)") }
+      let delta = LiveChange(revision: 2, full: false, size: UInt32(size + 1), rows: [Self.wire("new")], rowIndexes: [UInt32(size)], removed: [], placed: [Placement(id: "new", index: UInt32(size))], replaced: [], renamed: [], count: nil, error: nil, inserted: [0])
+      switch surface {
+      case .listChange:
+        let initial = ListChange<CountedMoment>(LiveChange(revision: 1, full: true, size: UInt32(size), rows: rows, rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: nil, inserted: (0..<size).map(UInt32.init)))
+        #expect(initial.kind == .replaced && initial.inserted.count == size)
         let before = CountedMoment.decodes.read()
-        let delta = LiveChange(revision: 2, full: false, size: 2001, rows: [Self.wire("new")], rowIndexes: [2000], removed: [], placed: [Placement(id: "new", index: 2000)], replaced: [], renamed: [], count: nil, error: nil, inserted: [0])
         let next = ListChange<CountedMoment>(delta)
-        #expect(next.inserted.count == 1)
-        #expect(next.inserted.first?.index == 2000)
+        #expect(next.kind == .delta && next.inserted.count == 1 && next.inserted.first?.index == size)
         #expect(CountedMoment.decodes.read() - before == 1)
-        print("delta-work swift run=\(run) ffi=\(delta.rows.count) decoded=\(CountedMoment.decodes.read() - before) consumer=\(next.inserted.count)")
+      case .listFeed:
+        let feed = ListFeed<Moment>()
+        _ = feed.apply(LiveChange(revision: 1, full: true, size: UInt32(size), rows: rows, rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: nil))
+        let before = feed.decodedRows
+        let snapshot = feed.apply(delta)
+        #expect(snapshot.rows.count == size + 1)
+        #expect(feed.decodedRows - before == 1)
       }
     }
 
-    @Test func changesDeliverOnlyChangedRowsAndRestart() async throws {
+    @Test func aChangeStreamDeliversOneInsertionAndARestartedStreamStartsWithTheWholeList() async throws {
       try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: nil)
       let query = Query<Moment>().order(Moment.createdAt.desc)
-      for number in 0..<2000 { _ = try await Moment.create(text: "row\(number)") }
+      for number in 0..<20 { _ = try await Moment.create(text: "row\(number)") }
       let cursor = Cursor(try await query.changes.stream())
       let initial = await cursor.next("initial inserts")
-      #expect(initial?.inserted.count == 2000)
-      var row: Moment?
-      for run in 1...5 {
-        row = try await Moment.create(text: "new\(run)")
-        let next = await cursor.next("one insertion")
-        #expect(next?.inserted.map(\.row.id) == [row!.id])
-        #expect(next?.updated.isEmpty == true)
-        #expect(next?.size == 2000 + run)
-        #expect((next?.revision ?? 0) > (initial?.revision ?? 0))
-        print("changes-work swift run=\(run) consumer=\(next?.inserted.count ?? -1)")
-      }
-      _ = try await row!.update(text: "edited")
-      let updated = await cursor.next("one update")
-      #expect(updated?.updated.first?.row.text == "edited")
-      try await row!.destroy()
-      let removed = await cursor.next("one removal")
-      #expect(removed?.removed == [row!.id])
+      #expect(initial?.inserted.count == 20)
+      let row = try await Moment.create(text: "new")
+      let next = await cursor.next("one insertion")
+      #expect(next?.inserted.map(\.row.id) == [row.id])
+      #expect(next?.size == 21)
+      #expect((next?.revision ?? 0) > (initial?.revision ?? 0))
       let restarted = Cursor(try await query.changes.stream())
-      #expect(await restarted.next("restart inserts")?.inserted.count == 2004)
+      let again = await restarted.next("restart inserts")
+      #expect(again?.kind == .replaced && again?.inserted.count == 21)
     }
 
     @Test func changesKeepAllBatchesAndCancel() async throws {
@@ -104,19 +85,6 @@ extension BridgeProbeTests {
       WireRow(id: id, revision: 1, estimatedBytes: 1, layout: Moment.wireLayout,
         cells: [.text(value: id), .null, .text(value: id), .bool(value: false), .keyed(entries: []), .null, .text(value: "x")],
         sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), upload: nil)
-    }
-
-    @Test func snapshotWork() {
-      for run in 1...5 {
-        let feed = ListFeed<Moment>()
-        _ = feed.apply(LiveChange(revision: 1, full: true, size: 2000, rows: (0..<2000).map { Self.wire("\($0)") }, rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: nil))
-        let before = feed.decodedRows
-        let delta = LiveChange(revision: 2, full: false, size: 2001, rows: [Self.wire("new")], rowIndexes: [2000], removed: [], placed: [Placement(id: "new", index: 2000)], replaced: [], renamed: [], count: nil, error: nil)
-        let snapshot = feed.apply(delta)
-        print("snapshot-work swift run=\(run) ffi=\(delta.rows.count) decoded=\(feed.decodedRows - before) consumer=\(snapshot.rows.count) known-scan=\(snapshot.rows.count)")
-        #expect(snapshot.rows.count == 2001)
-        #expect(feed.decodedRows - before == 1)
-      }
     }
   }
 }

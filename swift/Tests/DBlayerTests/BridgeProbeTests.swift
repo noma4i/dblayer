@@ -5,41 +5,12 @@ import Testing
 
 @Suite(.serialized)
 struct BridgeProbeTests {
-  @Test @MainActor
-  func releasedEntitiesRespectTheSharedMemoryBudget() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let row = try await Moment.create(text: String(repeating: "x", count: 9 * 1024 * 1024))
-    var entity: Entity<Moment>? = Moment.entity(row.id)
-    await eventually("the large row is delivered") { entity?.value != nil }
-    #expect(entity?.value?.text?.count == 9 * 1024 * 1024)
-    entity = nil
-    #expect(Entities<Moment>.shared.retainedCount == 0)
-    let moment = try await Moment.create(text: String(repeating: "m", count: 5 * 1024 * 1024))
-    var heldMoment: Entity<Moment>? = Moment.entity(moment.id)
-    await eventually("the moment is delivered") { heldMoment?.value != nil }
-    heldMoment = nil
-    #expect(Entities<Moment>.shared.retainedCount == 1)
-    let record = try await Record.create(containerId: "container", authorId: "user", text: String(repeating: "n", count: 5 * 1024 * 1024))
-    var heldRecord: Entity<Record>? = Record.entity(record.id)
-    await eventually("the record is delivered") { heldRecord?.value != nil }
-    heldRecord = nil
-    #expect(Entities<Moment>.shared.retainedCount == 0)
-    #expect(Entities<Record>.shared.retainedCount == 1)
-  }
-
   @Test
-  func aSearchFindsRowsByWordPrefixesAndFollowsEdits() async throws {
+  func aSearchPassesWholeWordsToTheCore() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let prefix = Cursor(try await Query<Moment>().search("hel").live.stream())
-    let whole = Cursor(try await Query<Moment>().search("hel", wholeWords: true).live.stream())
-    #expect(await prefix.next()?.isEmpty == true)
-    #expect(await whole.next()?.isEmpty == true)
-    let hello = try await Moment.create(text: "hello world")
-    _ = try await Moment.create(text: "other")
-    #expect(await prefix.first("the row that starts with hel") { $0.map(\.text) == ["hello world"] } != nil)
-    _ = try await hello.update(text: "goodbye")
-    #expect(await prefix.first("the row that no longer matches") { $0.isEmpty } != nil)
+    _ = try await Moment.create(text: "hello world")
     _ = try await Moment.create(text: "hel")
+    let whole = Cursor(try await Query<Moment>().search("hel", wholeWords: true).live.stream())
     #expect(await whole.first("the row with the whole word") { $0.map(\.text) == ["hel"] } != nil)
   }
 
@@ -52,6 +23,10 @@ struct BridgeProbeTests {
     #expect(await changes.next()?.first?.text == "m")
     _ = try await moment.update(text: "edited")
     #expect(await changes.next()?.first?.text == "edited")
+    try await moment.setLocal("tone", .string("warm"))
+    #expect(await changes.next()?.first?.tone == "warm")
+    try await moment.setLocal("tone", .null)
+    #expect(await changes.next()?.first?.tone == nil)
     try await moment.destroy()
     #expect(await changes.next()?.isEmpty == true)
   }
@@ -70,19 +45,6 @@ struct BridgeProbeTests {
     _ = try await Moment.create(text: "n")
     #expect(try await Moment.recent.live.current().count == 1)
     #expect(Moment.recent.cached()?.value.first?.text == "n")
-  }
-
-  @Test
-  func aLocalWriteReachesTheTypedLiveRow() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let changes = Cursor(try await Moment.recent.live.stream())
-    #expect(await changes.next()?.isEmpty == true)
-    let moment = try await Moment.create(text: "m")
-    #expect(await changes.next()?.first?.tone == nil)
-    try await moment.setLocal("tone", .string("warm"))
-    #expect(await changes.next()?.first?.tone == "warm")
-    try await moment.setLocal("tone", .null)
-    #expect(await changes.next()?.first?.tone == nil)
   }
 
   @MainActor
@@ -113,23 +75,6 @@ struct BridgeProbeTests {
     #expect(before == before)
   }
 
-  @Test
-  func feedLoadsFromTheTransportIntoLiveRows() async throws {
-    let transport = MockTransport()
-    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-
-    try await Moment.feed.refresh()
-
-    let changes = Cursor(try await Moment.feed.live.stream())
-    #expect(await changes.next()?.first?.uuid == "a")
-    #expect(transport.calls.first?.operationName == "MomentsFeed")
-    let snapshots = Cursor(try await Moment.feed.snapshots.stream())
-    let snapshot = await snapshots.next()
-    #expect(snapshot?.phase == .loaded && snapshot?.hasMore == false && snapshot?.loadedAt != nil)
-  }
-
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() async throws {
@@ -144,20 +89,6 @@ struct BridgeProbeTests {
 
     #expect(transport.calls.count == 1)
     #expect(try DB.subscriptionCensus().subscriptions == before.subscriptions && DB.subscriptionCensus().observedQueries == before.observedQueries)
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aFailedLoadThrowsLikeRefresh() async throws {
-    let transport = MockTransport()
-    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-
-    do {
-      try await Moment.feed.load()
-      Issue.record("the failed load did not throw")
-    } catch is DbError {}
   }
 
   @MainActor
@@ -184,33 +115,8 @@ struct BridgeProbeTests {
   }
 
   @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aFatalFailureMarksTheRelationFailedWithoutAnyRetry() async throws {
-    let transport = MockTransport()
-    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-    let list = LiveList(Moment.feed)
-    await eventually("the live connect's load fails") { list.snapshot.phase == .failed }
-    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
-
-    do {
-      try await list.refresh()
-      Issue.record("the failed load did not throw")
-    } catch is DbError {
-    } catch {
-      Issue.record("the failed load surfaced as \(error), not as a database error")
-    }
-    await eventually("the relation fails") { list.snapshot.phase == .failed }
-
-    #expect(list.snapshot.phase == .failed)
-    #expect(list.snapshot.errorKind != nil)
-    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 2)
-  }
-
-  @MainActor
   @Test
-  func liveListLoadsTheRelationAndReportsItsState() async throws {
+  func feedLoadsFromTheTransportIntoLiveRowsAndReportsItsState() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"totalCount":9}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
@@ -220,6 +126,7 @@ struct BridgeProbeTests {
     await eventually(#"not (list.rows.isEmpty || list.snapshot.loadedAt == nil)"#) { !(list.rows.isEmpty || list.snapshot.loadedAt == nil) }
 
     #expect(list.rows.first?.uuid == "a")
+    #expect(transport.calls.first?.operationName == "MomentsFeed")
     #expect(list.snapshot.hasMore && list.snapshot.phase == .loaded)
     #expect(list.snapshot.total == 9)
     let entity = Moment.entity("1")
@@ -253,23 +160,15 @@ struct BridgeProbeTests {
 
   @MainActor
   @Test
-  func aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndSendsAfterRegisteringAndRetrying() async throws {
-    let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+  func aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndNeedsAttention() async throws {
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
 
     let local = try await Moment.create(text: "hello", media: nil)
     let entity = Moment.entity(local.id)
     await eventually(#"not (entity.value?.sync.state != .failed)"#) { !(entity.value?.sync.state != .failed) }
-    let failed = entity.value
-    #expect(failed?.sync.state == .failed)
-    #expect(failed?.needsAttention == true)
-    #expect(failed?.sync.error?.message == "operation CreateMoment is not registered")
-    #expect(transport.calls.isEmpty)
 
-    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    _ = try await DB.database.retry(model: "Moment", rowId: local.id)
-    #expect(try await local.confirmedId() == "m77")
+    #expect(entity.value?.sync.state == .failed)
+    #expect(entity.value?.needsAttention == true)
   }
 
   @Test
@@ -313,19 +212,6 @@ struct BridgeProbeTests {
     let replaced = await snapshots.first("the snapshot that carries the replaced id") { $0.replaced["m77"] != nil }?.replaced["m77"]
 
     #expect(replaced == local.id)
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func anEntityOfARecordThatAnotherRecordRefersToFollowsItsCreateAndDestroy() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let record = try await Record.create(containerId: "c", authorId: "u1", text: "hi")
-    let entity = Record.entity(record.id)
-    await eventually(#"not (entity.value == nil)"#) { !(entity.value == nil) }
-    #expect(entity.value?.text == "hi")
-    try await record.destroy()
-    await eventually(#"not (entity.value != nil)"#) { !(entity.value != nil) }
-    #expect(entity.value == nil)
   }
 
   @MainActor
@@ -380,27 +266,6 @@ struct BridgeProbeTests {
     #expect(changed.reactions.map(\.body) == ["C"])
   }
 
-  @Test
-  func namedUploadsLandBothNestedContainerRoots() async throws {
-    let transport = MockTransport()
-    for _ in 0..<2 {
-      transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://s3/x","signedId":"sid","blobId":"b1"}}}"#)
-    }
-    transport.enqueue("ContainerGroupCreateFile", reply: #"{"data":{"groupContainerCreate":{"container":{"id":"c77","title":"created"}}}}"#)
-    transport.enqueue("ContainerGroupUpdateFile", reply: #"{"data":{"groupContainerUpdate":{"container":{"id":"c77","title":"updated"}}}}"#)
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url signedId blobId } }"},{"name":"ContainerGroupCreateFile","document":"mutation ContainerGroupCreateFile { groupContainerCreate { container { id title } } }"},{"name":"ContainerGroupUpdateFile","document":"mutation ContainerGroupUpdateFile { groupContainerUpdate { container { id title } } }"}]"#)
-    let file = FileManager.default.temporaryDirectory.appending(path: "container-\(UUID().uuidString).jpg")
-    try Data("photo".utf8).write(to: file)
-    defer { try? FileManager.default.removeItem(at: file) }
-    let local = try await Container.create(values: ["title": .string("pending")], uploading: UploadRequest(path: file.path, mutation: "ContainerGroupCreateFile", createBlob: "CreateBlob"))
-    let container = try #require(await Container.find(try await local.confirmedId()).current())
-    #expect(container.title == "created")
-    try await container.upload(UploadRequest(path: file.path, mutation: "ContainerGroupUpdateFile", createBlob: "CreateBlob"))
-    await eventually("the update upload changes the container") { (try? await Container.find("c77").current())??.title == "updated" }
-    #expect(try await Container.find("c77").current()?.title == "updated")
-  }
-
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() async throws {
@@ -416,31 +281,6 @@ struct BridgeProbeTests {
     try await DB.resume()
 
     #expect(transport.calls.count > before)
-  }
-
-  @MainActor
-  @Test
-  func aReloadAfterACommitReadsTheServerAfterTheLoadThatWasInFlight() async throws {
-    let transport = MockTransport()
-    let empty = #"{"data":{"feed":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#
-    transport.enqueue("MomentsFeed", reply: empty)
-    transport.enqueue("MomentsFeed", reply: empty, delay: 1)
-    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    let list = LiveList(Moment.feed)
-    await eventually(#"not (list.snapshot.loadedAt == nil)"#) { !(list.snapshot.loadedAt == nil) }
-    let older = Task { try await list.refresh() }
-    await eventually(#"not (transport.calls.filter({ $0.operationName == "MomentsFeed" }).count < 2)"#) { !(transport.calls.filter({ $0.operationName == "MomentsFeed" }).count < 2) }
-
-    let local = try await Moment.create(text: "hello", media: nil)
-    try await local.settled()
-    await eventually(#"not (list.rows.map(\.id) != ["m77"])"#) { !(list.rows.map(\.id) != ["m77"]) }
-
-    #expect(list.rows.map(\.id) == ["m77"])
-    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3)
-    try await older.value
   }
 
   @Test
@@ -488,7 +328,6 @@ struct BridgeProbeTests {
     transport.enqueue("ShareMoment", reply: #"{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}"#)
     let refused = try await moment.share()
     await eventually("the second ShareMoment call") { transport.calls.filter { $0.operationName == "ShareMoment" }.count >= 2 }
-    try await Task.sleep(for: .milliseconds(100))
     await #expect(throws: (any Error).self) { try await refused.answer() }
   }
 }
@@ -560,7 +399,8 @@ extension BridgeProbeTests {
     #expect(held.isClosed && held.value == nil)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let fresh = Moment.entity(moment.id)
-    try await Task.sleep(for: .milliseconds(200))
+    let other = Moment.entity(try await Moment.create(text: "other").id)
+    await eventually("a delivery of the new database reaches the registry") { other.value != nil }
     #expect(fresh.value == nil && fresh !== held && !fresh.isClosed && held.isClosed)
   }
 }

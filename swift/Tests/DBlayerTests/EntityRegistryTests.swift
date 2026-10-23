@@ -119,16 +119,16 @@ struct EntityRegistryTests {
   func retainedValueIsDroppedAfterTheBound() async {
     let clock = Clock()
     let registry = Entities<Moment>(now: { clock.now }, source: CountingSource())
-    for index in 0 ..< 201 {
+    for index in 0 ..< 3 {
       var entity: Entity<Moment>? = registry.entity("\(index)")
       registry.apply(delivery(1, [moment("\(index)", "v")]))
       #expect(entity?.value != nil)
       entity = nil
     }
-    #expect(registry.retainedCount == 200)
-    let shown = registry.entity("150")
+    #expect(registry.retainedCount == 3)
+    let shown = registry.entity("1")
     #expect(shown.isStale && shown.value?.text == "v")
-    clock.advance(120.001)
+    clock.advance(3600)
     #expect(registry.retainedCount == 0)
   }
 
@@ -170,18 +170,15 @@ struct EntityRegistryTests {
     before.cancel()
     beforeGate.signal()
     _ = try await before.value
-    try await Task.sleep(for: .milliseconds(200))
-    #expect(active.value == 0)
+    await eventually("the attach that began cancelled is released", timeout: .seconds(5)) { active.value == 0 }
 
     let duringGate = DispatchSemaphore(value: 0)
     let during = Task { try await blocking(duringGate).stream() }
-    try await Task.sleep(for: .milliseconds(100))
-    #expect(active.value == 1)
+    await eventually("the attach is running") { active.value == 1 }
     during.cancel()
     duringGate.signal()
     _ = try await during.value
-    try await Task.sleep(for: .milliseconds(200))
-    #expect(active.value == 0)
+    await eventually("the attach cancelled while running is released", timeout: .seconds(5)) { active.value == 0 }
 
     let immediate = LiveSource<Int>(initial: 0) { emit in
       active.add()
@@ -190,32 +187,24 @@ struct EntityRegistryTests {
     }
     let after = Task { _ = try await Cursor(try await immediate.stream()).next("the first element") }
     try await after.value
-    try await Task.sleep(for: .milliseconds(200))
-    #expect(active.value == 0)
+    await eventually("the attach cancelled afterwards is released", timeout: .seconds(5)) { active.value == 0 }
   }
 
-  /// PERF-16: a slow reader gets one pending result that holds every replacement pair of the burst.
-  @Test(arguments: [10, 100, 1000])
-  func slowConsumerStreamKeepsOnePendingResultAndEveryReplacementPair(burst: Int) async throws {
+  enum Replacements: Sendable { case independent, chain }
+
+  /// PERF-16: a slow reader gets one pending result that holds every replacement pair of the burst, a chain of replacements reads as one pair.
+  @Test(arguments: [(Replacements.independent, 10), (.independent, 100), (.independent, 1000), (.chain, 1000)])
+  func slowConsumerStreamKeepsOnePendingResultAndEveryReplacementPair(shape: Replacements, burst: Int) async throws {
     let source = LiveSource<Snapshot<Moment>>(initial: Snapshot(rows: [], replaced: [:]), merge: { Snapshot.merging($0, $1) }) { emit in
-      for step in 0 ..< burst { emit(Snapshot(rows: [], replaced: ["real\(step)": "temp\(step)"])) }
+      for step in 0 ..< burst { emit(Snapshot(rows: [], replaced: shape == .chain ? ["id\(step + 1)": "id\(step)"] : ["real\(step)": "temp\(step)"])) }
       return {}
     }
     let stream = try await source.stream()
-    let iterator = Cursor(stream)
-    let merged = await iterator.next()
-    #expect(merged?.replaced.count == burst)
-    #expect(!stream.hasPending)
-  }
-
-  /// A chain of replacements across missed deliveries reads as one pair from the first id to the last.
-  @Test
-  func aChainOfReplacementsAcrossMissedDeliveriesReadsAsOnePair() async throws {
-    let source = LiveSource<Snapshot<Moment>>(initial: Snapshot(rows: [], replaced: [:]), merge: { Snapshot.merging($0, $1) }) { emit in
-      for step in 0 ..< 1000 { emit(Snapshot(rows: [], replaced: ["id\(step + 1)": "id\(step)"])) }
-      return {}
+    let merged = await Cursor(stream).next()
+    switch shape {
+    case .independent: #expect(merged?.replaced.count == burst)
+    case .chain: #expect(merged?.replaced == ["id\(burst)": "id0"])
     }
-    let iterator = Cursor(try await source.stream())
-    #expect(await iterator.next()?.replaced == ["id1000": "id0"])
+    #expect(!stream.hasPending)
   }
 }

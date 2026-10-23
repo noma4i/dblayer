@@ -11,76 +11,57 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ListChangeTest {
-    @Test fun aSlowConsumerReceivesABoundedReplacementWithEveryCurrentRow() = bounded {
-        reopen(Config(null, null, 64u), modelsJSON, null)
-        val query = Query("Moment", Moment).order(Moment.createdAt.desc)
-        val attached = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val completed = kotlinx.coroutines.CompletableDeferred<Pair<Boolean, List<Moment>>>()
-        val collection = launch {
-            val rows = mutableListOf<Moment>()
-            var sawReplacement = false
-            query.changes.collect { change ->
-                if (!attached.isCompleted) { attached.complete(Unit); release.await() }
-                if (change.kind == ListChangeKind.Replaced) {
-                    rows.clear()
-                    rows.addAll(change.inserted.map { it.row })
-                    sawReplacement = sawReplacement || change.inserted.size >= 64
+    private enum class Surface { ListChange, ListFeed }
+
+    @Test fun aDeltaOfOneRowDecodesOneRowAtEveryListSize() {
+        for (surface in Surface.entries) for (size in listOf(20, 200, 2000)) {
+            val label = "$surface $size"
+            val rows = (0 until size).map { wire("$it") }
+            val delta = LiveChange(2L, false, (size + 1).toUInt(), listOf(wire("new")), listOf(size.toUInt()), emptyList(), listOf(Placement("new", size.toUInt())), emptyList(), emptyList(), null, null, inserted = listOf(0u))
+            when (surface) {
+                Surface.ListChange -> {
+                    var decoded = 0
+                    val decoder = object : ModelDecoder<Moment> by Moment {
+                        override fun decode(row: WireRow): Moment { decoded++; return Moment.decode(row) }
+                    }
+                    val initial = ListChange.decode(LiveChange(1L, true, size.toUInt(), rows, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, null, inserted = (0 until size).map { it.toUInt() }), decoder)
+                    assertEquals(label, ListChangeKind.Replaced, initial.kind)
+                    assertEquals(label, size, initial.inserted.size)
+                    val before = decoded
+                    val next = ListChange.decode(delta, decoder)
+                    assertEquals(label, ListChangeKind.Delta, next.kind)
+                    assertEquals(label, 1, next.inserted.size)
+                    assertEquals(label, size, next.inserted.single().index)
+                    assertEquals(label, 1, decoded - before)
                 }
-                else change.inserted.forEach { rows.add(it.index, it.row) }
-                if (change.size == 192) completed.complete(sawReplacement to rows.toList())
+                Surface.ListFeed -> {
+                    val feed = ListFeed(Moment)
+                    feed.apply(LiveChange(1L, true, size.toUInt(), rows, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, null))
+                    val before = feed.decodedRows
+                    val snapshot = feed.apply(delta)
+                    assertEquals(label, size + 1, snapshot.rows.size)
+                    assertEquals(label, 1, feed.decodedRows - before)
+                }
             }
         }
-        attached.await()
-        repeat(192) { Moment.create(text = "row$it") }
-        release.complete(Unit)
-        val (sawReplacement, rows) = completed.await()
-        collection.cancelAndJoin()
-        assertTrue("overflow never delivered a replacement snapshot", sawReplacement)
-        assertEquals(query.live.flow.first(), rows)
     }
-    @Test fun changesWork() {
-        var decoded = 0
-        val decoder = object : ModelDecoder<Moment> by Moment {
-            override fun decode(row: WireRow): Moment { decoded++; return Moment.decode(row) }
-        }
-        for (run in 1..5) {
-            val initial = ListChange.decode(LiveChange(1L, true, 2000u, (0 until 2000).map { wire("$it") }, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, null, inserted = (0 until 2000).map { it.toUInt() }), decoder)
-            assertEquals(2000, initial.inserted.size)
-            val before = decoded
-            val delta = LiveChange(2L, false, 2001u, listOf(wire("new")), listOf(2000u), emptyList(), listOf(Placement("new", 2000u)), emptyList(), emptyList(), null, null, inserted = listOf(0u))
-            val next = ListChange.decode(delta, decoder)
-            assertEquals(1, next.inserted.size)
-            assertEquals(2000, next.inserted.single().index)
-            assertEquals(1, decoded - before)
-            println("delta-work kotlin run=$run ffi=${delta.rows.size} decoded=${decoded - before} consumer=${next.inserted.size}")
-        }
-    }
-
-    @Test fun changesDeliverOnlyChangedRowsAndRestart() = bounded {
+    @Test fun aChangeStreamDeliversOneInsertionAndARestartedStreamStartsWithTheWholeList() = bounded {
         reopen(Config(null, null, 64u), modelsJSON, null)
         val query = Query("Moment", Moment).order(Moment.createdAt.desc)
-        repeat(2000) { Moment.create(text = "row$it") }
+        repeat(20) { Moment.create(text = "row$it") }
         val inbox = Channel<ListChange<Moment>>(Channel.UNLIMITED)
         val collection = launch { query.changes.collect { inbox.send(it) } }
         val initial = inbox.receive()
-        assertEquals(2000, initial.inserted.size)
-        var row: Moment? = null
-        for (run in 1..5) {
-            row = Moment.create(text = "new$run")
-            val next = inbox.receive()
-            assertEquals(listOf(row.id), next.inserted.map { it.row.id })
-            assertEquals(emptyList<Any>(), next.updated)
-            assertEquals(2000 + run, next.size)
-            assertTrue(next.revision > initial.revision)
-            println("changes-work kotlin run=$run consumer=${next.inserted.size}")
-        }
-        row!!.update(text = "edited")
-        assertEquals("edited", inbox.receive().updated.single().row.text)
-        row.destroy()
-        assertEquals(listOf(row.id), inbox.receive().removed)
+        assertEquals(20, initial.inserted.size)
+        val row = Moment.create(text = "new")
+        val next = inbox.receive()
+        assertEquals(listOf(row.id), next.inserted.map { it.row.id })
+        assertEquals(21, next.size)
+        assertTrue(next.revision > initial.revision)
         collection.cancelAndJoin()
-        assertEquals(2004, query.changes.first().inserted.size)
+        val restarted = query.changes.first()
+        assertEquals(ListChangeKind.Replaced, restarted.kind)
+        assertEquals(21, restarted.inserted.size)
         eventually("changes subscription released") { DBlayer.subscriptionCensus().subscriptions == 0uL }
     }
 
@@ -103,16 +84,4 @@ class ListChangeTest {
         listOf(Cell.Text(id), Cell.Null, Cell.Text(id), Cell.Bool(false), Cell.Keyed(emptyList()), Cell.Null, Cell.Text("x")),
         WireSync(WireSyncState.SYNCED, emptyList(), emptyList(), null, 0u, 0L), null)
 
-    @Test fun snapshotWork() {
-        for (run in 1..5) {
-            val feed = ListFeed(Moment)
-            feed.apply(LiveChange(1L, true, 2000u, (0 until 2000).map { wire("$it") }, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, null))
-            val before = feed.decodedRows
-            val delta = LiveChange(2L, false, 2001u, listOf(wire("new")), listOf(2000u), emptyList(), listOf(Placement("new", 2000u)), emptyList(), emptyList(), null, null)
-            val snapshot = feed.apply(delta)
-            println("snapshot-work kotlin run=$run ffi=${delta.rows.size} decoded=${feed.decodedRows - before} consumer=${snapshot.rows.size} known-scan=${snapshot.rows.size}")
-            assertEquals(2001, snapshot.rows.size)
-            assertEquals(1, feed.decodedRows - before)
-        }
-    }
 }

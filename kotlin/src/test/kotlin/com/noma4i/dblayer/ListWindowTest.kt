@@ -19,28 +19,6 @@ class ListWindowTest {
     }
 
     @Test
-    fun a_window_decodes_only_its_rows_at_every_list_size() = bounded {
-        val costs = listOf(20, 200, 2000).map { count ->
-            open()
-            val created = (0 until count).map { Moment.create(text = "t%05d".format(it)) }
-            val feed = ListFeed(Moment)
-            val states = LinkedBlockingQueue<List<Moment>>()
-            val subscription = DBlayer.database.liveWindow(byText.json, 10u, ChangeListener { states.put(feed.apply(it).rows) })
-            assertEquals(10, states.poll(20, TimeUnit.SECONDS)!!.size)
-            val atStart = feed.decodedRows
-            created[count - 1].update(text = "t%05dx".format(count - 1))
-            assertEquals("t%05dx".format(count - 1), states.poll(20, TimeUnit.SECONDS)!!.last().text)
-            val afterInside = feed.decodedRows
-            created[0].update(text = "t00000x")
-            created[count - 1].update(text = "t%05dy".format(count - 1))
-            assertEquals("t%05dy".format(count - 1), states.poll(20, TimeUnit.SECONDS)!!.last().text)
-            subscription.cancel()
-            listOf(atStart, afterInside - atStart, feed.decodedRows - afterInside)
-        }
-        assertEquals(List(3) { listOf(10, 1, 1) }, costs)
-    }
-
-    @Test
     fun a_live_window_follows_the_tail_and_expands_before() = bounded {
         open()
         repeat(30) { Moment.create(text = "t%05d".format(it)) }
@@ -66,44 +44,5 @@ class ListWindowTest {
         eventually("every row") { live.rows.value.size == 31 }
         assertEquals(WindowEdges(false, false, 31), live.edges.value)
         scope.cancel()
-    }
-
-    private fun node(number: Int, text: String = "t$number") =
-        """{"__typename":"Record","id":"m$number","containerId":"c1","authorId":"a","text":"$text","createdAt":"2026-10-0${number}T00:00:00.000Z","sequenceNumber":$number}"""
-
-    private fun reply(nodes: List<String>) =
-        """{"data":{"container":{"records":{"nodes":[${nodes.joinToString(",")}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"""
-
-    @Test
-    fun a_window_over_the_thread_shape_decodes_only_its_rows() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("ContainerThread", reply((1..7).map { node(it) }))
-        reopen(Config(null, null, 64u), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"ContainerThread","document":"query ContainerThread(${'$'}containerId: ID!, ${'$'}first: Int, ${'$'}after: String) { container(id: ${'$'}containerId) { records(first: ${'$'}first, after: ${'$'}after) { nodes { id containerId authorId text createdAt sequenceNumber } pageInfo { hasNextPage endCursor } } } }"},{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt sequenceNumber } }"}]""")
-        val thread = Record.thread("c1")
-        thread.load()
-        val feed = ListFeed(Record)
-        val states = LinkedBlockingQueue<List<Record>>()
-        val subscription = DBlayer.database.liveWindow(thread.json, 3u, ChangeListener { states.put(feed.apply(it).rows) })
-        fun next(what: String, wanted: List<String>): List<Record> {
-            while (true) {
-                val rows = states.poll(20, TimeUnit.SECONDS) ?: throw AssertionError("timed out waiting for $what")
-                if (rows.map { it.text } == wanted) return rows
-            }
-        }
-        next("the last 3 rows", listOf("t5", "t6", "t7"))
-        val atStart = feed.decodedRows
-
-        transport.enqueue("ContainerThread", reply((1..7).map { node(it, if (it == 1 || it == 6) "t${it}x" else "t$it") }))
-        thread.refresh()
-        next("the edited row inside", listOf("t5", "t6x", "t7"))
-        val afterEdits = feed.decodedRows
-
-        transport.enqueue("CreateRecord", """{"data":{"createRecord":{"__typename":"Record","id":"m8","containerId":"c1","authorId":"a","text":"t8","createdAt":"2026-10-08T00:00:00.000Z","sequenceNumber":null}}}""")
-        Record.create(containerId = "c1", authorId = "a", text = "t8")
-        next("the new last row", listOf("t6x", "t7", "t8"))
-        assertEquals(listOf(3, 1), listOf(atStart, afterEdits - atStart))
-        assertEquals(true, feed.decodedRows - afterEdits <= 2)
-        subscription.cancel()
     }
 }

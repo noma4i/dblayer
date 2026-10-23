@@ -4,7 +4,6 @@ import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -113,39 +112,54 @@ class EntityRegistryTest {
         jobs.forEach { it.cancel() }
     }
 
-    /** REL-10 */
     @Test
     fun secondReaderReadsWarmValueSynchronously() {
         val source = CountingSource()
         val registry = registry(source)
         val first = registry.entity("1")
         registry.apply(delivery(1, listOf(moment("1", "warm"))))
-        Thread.sleep(100)
-        val retainedBefore = source.retained.toList()
+        eventuallyBlocking("the first reader is retained") { source.retained.toList() == listOf("1") }
         val second = registry.entity("1")
-        Thread.sleep(100)
+        val fence = registry.entity("2")
+        eventuallyBlocking("a later reader is retained") { "2" in source.retained }
         assertEquals("warm", second.value.value?.text)
-        assertTrue(second === first)
-        assertEquals(retainedBefore, source.retained.toList())
-        assertEquals(listOf("1"), retainedBefore)
+        assertTrue(second === first && fence !== first)
+        assertEquals(listOf("1", "2"), source.retained.toList())
     }
 
-    /** REL-11 */
     @Test
     fun retainedValueIsDroppedAfterTheBound() {
         var clock = 0L
         val registry = registry(now = { clock })
-        repeat(201) { index ->
+        repeat(3) { index ->
             var entity: Entity<Moment>? = registry.entity("$index")
             registry.apply(delivery(1, listOf(moment("$index", "v"))))
             entity = null
             collectGarbage { registry.liveCount == 0 }
         }
-        assertEquals(200, registry.retainedCount)
-        val shown = registry.entity("150")
+        assertEquals(3, registry.retainedCount)
+        val shown = registry.entity("1")
         assertTrue(shown.isStale && shown.value.value?.text == "v")
-        clock = 120_001
+        clock = 3_600_000
         assertEquals(0, registry.retainedCount)
+    }
+
+    /** REL-24 */
+    @Test
+    fun resetDropsRetainedValuesAndKeepsEveryLeaseOfTheHeldEntities() {
+        val registry = registry()
+        val held = List(5) { registry.entity("$it") }
+        repeat(5) { registry.entity("${it + 5}") }
+        registry.apply(delivery(1, List(10) { moment("$it", "v") }))
+        collectGarbage { registry.liveCount == 5 }
+        assertEquals(5, registry.retainedCount)
+        registry.reset()
+        assertEquals(0, registry.retainedCount)
+        assertEquals(5, registry.liveCount)
+        registry.apply(delivery(2, removed = List(5) { "$it" }))
+        assertTrue(held.all { it.value.value == null && !it.isClosed })
+        registry.apply(delivery(3, List(5) { moment("$it", "next") }))
+        assertTrue(held.all { it.value.value?.text == "next" })
     }
 
     /** REL-24: a reset of the account empties the entities that readers hold and the same objects receive the next rows. */
@@ -177,8 +191,64 @@ class EntityRegistryTest {
         assertNull(held.value.value)
         reopen(Config(null, null, 32u), modelsJSON, null)
         val fresh = Moment.entity(moment.id)
-        delay(300)
+        val other = Moment.entity(Moment.create(text = "other").id)
+        withTimeout(5000) { other.value.first { it != null } }
         assertNull(fresh.value.value)
         assertTrue(fresh !== held && !fresh.isClosed && held.isClosed)
+    }
+
+    /** Addendum 3a: a collection cancelled before, during or after the attach leaves no subscription. */
+    @Test
+    fun aCollectionCancelledAtAnyMomentLeavesNoSubscription() = bounded {
+        val active = AtomicInteger()
+        fun blocking(gate: CountDownLatch) = LiveSource<Int>(0) { emit ->
+            active.incrementAndGet()
+            gate.await()
+            emit(1)
+            val release: () -> Unit = { active.decrementAndGet() }
+            release
+        }
+        val open = CountDownLatch(0)
+        val before = launch { blocking(open).flow.first() }
+        before.cancel()
+        before.join()
+        eventually("the attach that began cancelled is released", 5000) { active.get() == 0 }
+
+        val duringGate = CountDownLatch(1)
+        val during = launch { blocking(duringGate).flow.first() }
+        eventually("the attach is running") { active.get() == 1 }
+        during.cancel()
+        duringGate.countDown()
+        during.join()
+        eventually("the attach cancelled while running is released", 5000) { active.get() == 0 }
+
+        val immediate = LiveSource<Int>(0) { emit ->
+            active.incrementAndGet()
+            emit(1)
+            val release: () -> Unit = { active.decrementAndGet() }
+            release
+        }
+        immediate.flow.first()
+        eventually("the attach cancelled afterwards is released", 5000) { active.get() == 0 }
+    }
+
+    private enum class Replacements { Independent, Chain }
+
+    /** PERF-16: a slow reader gets one pending result that holds every replacement pair of the burst, a chain of replacements reads as one pair. */
+    @Test
+    fun aSlowReaderGetsOnePendingResultThatHoldsEveryReplacementPair() = bounded {
+        val cases = listOf(Replacements.Independent to 10, Replacements.Independent to 100, Replacements.Independent to 1000, Replacements.Chain to 1000)
+        for ((shape, burst) in cases) {
+            val latest = Latest<Snapshot<Moment>> { older, newer -> Snapshot.merging(older, newer) }
+            for (step in 0 until burst) {
+                latest.put(Snapshot(emptyList(), if (shape == Replacements.Chain) mapOf("id${step + 1}" to "id$step") else mapOf("real$step" to "temp$step")))
+            }
+            val merged = latest.next()
+            when (shape) {
+                Replacements.Independent -> assertEquals("$shape $burst", burst, merged.replaced.size)
+                Replacements.Chain -> assertEquals("$shape $burst", mapOf("id$burst" to "id0"), merged.replaced)
+            }
+            assertTrue("$shape $burst", !latest.hasPending)
+        }
     }
 }

@@ -123,13 +123,7 @@ class ListEditTest {
         val created = (0 until 5).map { Moment.create(text = "t$it") }
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
         val list = LiveList(Query("Moment", Moment).order(Order("text", "asc")), scope)
-        fun waitFor(what: String, done: (List<Moment>) -> Boolean) {
-            val until = System.nanoTime() + 20_000_000_000L
-            while (!done(list.rows.value)) {
-                require(System.nanoTime() < until) { "timed out waiting for $what" }
-                Thread.sleep(10)
-            }
-        }
+        suspend fun waitFor(what: String, done: (List<Moment>) -> Boolean) = eventually(what, 20_000) { done(list.rows.value) }
         waitFor("the whole list") { it.size == 5 }
         assertNull(list.takeEdits())
         val mirror = list.rows.value.toMutableList()

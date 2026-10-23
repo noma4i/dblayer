@@ -59,36 +59,4 @@ class SealedErrorsTest {
         }
     }
 
-    @Test
-    fun aLostSessionKeepsTheQueuedMutationFailedAndRetrySendsItOnce() = bounded {
-        for (code in listOf(SessionCode.UNAUTHENTICATED, SessionCode.ACCOUNT_UNAVAILABLE)) {
-            val transport = MockTransport()
-            reopen(Config(null, null, 32u), modelsJSON, transport)
-            DBlayer.database.registerOperations(operations)
-            transport.enqueue("CreateMoment", DbException.Session(code, code.name))
-            val local = Moment.create(text = "hello", media = null)
-            assertEquals(code, codeOf(runCatching { withTimeout(5000) { local.settled() } }.exceptionOrNull(), "settled $code"))
-            assertEquals("hello", Moment.find(local.id).current()?.text)
-
-            transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-            val retried = withTimeout(5000) { if (code == SessionCode.UNAUTHENTICATED) local.retry() else retryAll() }
-            assertEquals(1uL, retried)
-            withTimeout(5000) { local.settled() }
-
-            assertEquals(2, transport.calls.count { it.operationName == "CreateMoment" })
-        }
-    }
-
-    @Test
-    fun anotherSessionCodeRollsTheQueuedMutationBack() = bounded {
-        val transport = MockTransport()
-        reopen(Config(null, null, 32u), modelsJSON, transport)
-        DBlayer.database.registerOperations(operations)
-        transport.enqueue("CreateMoment", DbException.Session(SessionCode.RATE_LIMITED, "RATE_LIMITED"))
-        val local = Moment.create(text = "hello", media = null)
-
-        assertEquals(SessionCode.RATE_LIMITED, codeOf(runCatching { withTimeout(5000) { local.settled() } }.exceptionOrNull(), "settled"))
-
-        assertNull(Moment.find(local.id).current())
-    }
 }

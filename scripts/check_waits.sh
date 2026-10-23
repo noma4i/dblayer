@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# INV-WAIT-04: a test never waits without a bound. Swift waits through eventually and Cursor (Waiting.swift), Kotlin through bounded and eventually (TestWaiting.kt).
+# INV-WAIT-04: a test never waits without a bound or pauses for a time. Swift waits through eventually and Cursor (Waiting.swift), Kotlin through bounded and eventually (TestWaiting.kt); only those two files may sleep.
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -29,6 +29,8 @@ report "swift: a hand-written poll (use eventually)" "$(swift_hits 'for _ in 0 ?
 report "swift: an unbounded stream read (use Cursor)" "$(swift_hits 'makeAsyncIterator\(\)|\bfor await\b')"
 report "kotlin: runBlocking without a bound (use bounded)" "$(kotlin_hits '\brunBlocking\b')"
 report "kotlin: a while loop with a delay or a sleep (use eventually)" "$(kotlin_hits '\bwhile \(.*\bdelay\(|Thread\.sleep.*while|while.*Thread\.sleep')"
+report "swift: a pause in a test (wait for the event with eventually, or move the clock)" "$(swift_hits 'Task\.sleep|Thread\.sleep|\busleep\(|\bsleep\(')"
+report "kotlin: a pause in a test (wait for the event with eventually, or move the clock)" "$(kotlin_hits '\bdelay\(|Thread\.sleep')"
 
 if [ "$found" -eq 1 ]; then
   exit 1

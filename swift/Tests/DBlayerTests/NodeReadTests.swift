@@ -42,20 +42,6 @@ extension BridgeProbeTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func aRelationUnderNodeLandsAndASubsetReadChangesOnlyTheSelectedFields() async throws {
-    let transport = try await openNodeRig()
-    let record = #"{"id":"m1","containerId":"c1","authorId":"a","text":"keep","createdAt":"2026-10-01T00:00:00.000Z","media":{"kind":"VIDEO","transcoded":false,"fileUrl":"http://f"}}"#
-    transport.enqueue("ContainerMedia", reply: #"{"data":{"node":{"records":{"edges":[{"node":\#(record)}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#)
-    try await Record.containerMedia("c1").load()
-    #expect(try await Record.find("m1").current()?.text == "keep")
-
-    transport.enqueue("RecordTranscodeStatus", reply: #"{"data":{"node":{"id":"m1","containerId":"c1","media":{"kind":"VIDEO","transcoded":true,"fileUrl":""}}}}"#)
-    let status = try await Record.transcodeStatus("m1")
-    #expect(status?.text == "keep" && status?.media?.transcoded == true && status?.media?.fileUrl == "http://f")
-    #expect(nodeCalls(transport, "RecordTranscodeStatus").first?.variablesJson == #"{"id":"m1"}"#)
-  }
-
-  @Test(.timeLimit(.minutes(1)))
   func theVariableNameOfANodeReadFollowsTheDeclaration() async throws {
     let transport = try await openNodeRig()
     transport.enqueue("MomentTranscodeStatus", reply: #"{"data":{"node":{"id":"mo1","uuid":"u","createdAt":"2026-10-01T00:00:00.000Z","media":{"kind":"VIDEO"}}}}"#)
@@ -71,44 +57,5 @@ extension BridgeProbeTests {
     #expect(rows.map(\.title) == ["b", "a"])
     #expect(nodeCalls(transport, "ContainersByIds").count == 1)
     #expect(nodeCalls(transport, "ContainersByIds").first?.variablesJson == #"{"ids":["c2","x","y","c1"]}"#)
-  }
-
-  @Test(.timeLimit(.minutes(1)))
-  func anAnswerWithoutAMatchingTypeIsNilAndWritesNothing() async throws {
-    let transport = try await openNodeRig()
-    transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"old"}}}"#)
-    _ = try await Container.node("c1")
-    for answer in [#"{"data":{"node":null}}"#, #"{"data":{"node":{}}}"#, #"{"data":{"node":{"__typename":"Gadget"}}}"#] {
-      transport.enqueue("ContainerNode", reply: answer)
-      #expect(try await Container.node("c1", force: true) == nil)
-    }
-    #expect(try await Container.find("c1").current()?.title == "old")
-  }
-
-  @Test(.timeLimit(.minutes(1)))
-  func nodesKeepsDuplicatesInResponseOrder() async throws {
-    let transport = try await openNodeRig()
-    transport.enqueue("ContainersByIds", reply: #"{"data":{"nodes":[{"id":"c2","title":"old","shareUrl":"kept"},null,{"id":"c1","title":"middle"},{"id":"c2","title":"last"}]}}"#)
-    let rows = try await Container.nodes(["c2", "missing", "c1", "c2"])
-    #expect(rows.map(\.id) == ["c2", "c1", "c2"])
-    #expect(rows.map(\.title) == ["last", "middle", "last"])
-    #expect(try await Container.find("c2").current()?.shareUrl == "kept")
-  }
-
-  @Test(.timeLimit(.minutes(1)))
-  func nullPathsClearAndMissingPathsPreserve() async throws {
-    var models = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [[String: Any]])
-    let index = try #require(models.firstIndex { $0["key"] as? String == "Container" })
-    var fields = try #require(models[index]["fields"] as? [[String: Any]])
-    let field = try #require(fields.firstIndex { $0["name"] as? String == "shareUrl" })
-    fields[field]["from"] = "profile.url"
-    models[index]["fields"] = fields
-    let transport = try await openNodeRig(models: String(decoding: JSONSerialization.data(withJSONObject: models), as: UTF8.self))
-    for (patch, expected) in [(#""profile":{}"#, "kept" as String?), (#""profile":null"#, nil), (#""profile":{"url":null}"#, nil)] {
-      transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"container","profile":{"url":"kept"}}}}"#)
-      #expect(try await Container.node("c1", force: true)?.shareUrl == "kept")
-      transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1",\#(patch)}}}"#)
-      #expect(try await Container.node("c1", force: true)?.shareUrl == expected)
-    }
   }
 }

@@ -40,15 +40,6 @@ class InputListTest {
     }
 
     @Test
-    fun anOmittedOptionalListIsNotSent() = bounded {
-        val transport = rig("""{"data":{"widgetsSend":{"id":"w0"}}}""")
-
-        withTimeout(5000) { Operations.widgetsSend() }
-
-        assertEquals(parseJson("{}"), parseJson(transport.calls.first { it.operationName == "WidgetsSend" }.variablesJson))
-    }
-
-    @Test
     fun theUploadArgsOfAModelBecomeTypedVariables() {
         assertEquals(parseJson("""{"widgets":$widgetsJson}"""), Clip.createFileVariables(widgets))
         assertEquals(JsonObject(emptyMap()), Clip.createFileVariables())

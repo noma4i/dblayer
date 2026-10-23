@@ -60,8 +60,13 @@ class TransportFailureTest {
 
     @Test
     fun onlyTheClassifierAndTheBlobPutBuildTheRetryableNetworkError() {
-        val file = java.io.File("src/main/kotlin/com/noma4i/dblayer/Transports.kt").readText()
-        val offenders = file.lines().filter { it.contains("DbException.Network(") && !it.contains("the subscription socket is not open") }
-        assertEquals(listOf("        throw DbException.Network(error.message ?: error.toString())"), offenders)
+        val sources = java.io.File("src/main/kotlin/com/noma4i/dblayer")
+        for (file in sources.listFiles { f -> f.extension == "kt" }!!) {
+            if (file.name in listOf("dblayer.kt", "TransportFailure.kt", "MockTransport.kt", "Transports.kt")) continue
+            val offenders = file.readLines().filter { it.contains("DbException.Network(") }
+            assertEquals("${file.name}: $offenders", emptyList<String>(), offenders)
+        }
+        val blobPut = java.io.File(sources, "Transports.kt").readLines().filter { it.contains("DbException.Network(") }
+        assertEquals(blobPut.toString(), 1, blobPut.size)
     }
 }

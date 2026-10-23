@@ -67,27 +67,34 @@ extension BridgeProbeTests {
     #expect(entity.value?.name == "Ann" && told.value == 1)
   }
 
-  /// REL-24: logout empties the entity at once, and the next login loads the new user without the old one showing.
+  /// REL-24: logout empties the entity at once and stops its feed.
   @MainActor
   @Test
-  func logoutEmptiesItAndALaterLoginLoadsTheNewUser() async throws {
+  func logoutEmptiesTheEntityAtOnceAndStopsItsFeed() async throws {
     let transport = try await Self.openSingletonRig()
     let entity = User.entity()
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
-    let seen = Counter()
     try await DB.logout()
     #expect(entity.value == nil && entity.id.isEmpty)
-    withObservationTracking { _ = entity.value } onChange: { seen.add() }
-    try await Task.sleep(for: .milliseconds(200))
-    #expect(entity.value == nil)
     #expect(User.entity() === entity)
     #expect(try DB.subscriptionCensus().observedQueries == 0)
     #expect(Entities<User>.shared.singleFeed == nil)
+  }
+
+  /// REL-24: the next login after a logout loads the new user into the same entity, and a second resume keeps the feed.
+  @MainActor
+  @Test
+  func aLaterLoginLoadsTheNewUserIntoTheSameEntity() async throws {
+    let transport = try await Self.openSingletonRig()
+    let entity = User.entity()
+    try await Self.login(transport, "1", "Ann")
+    await eventually(#"entity.value != nil"#) { entity.value != nil }
+    try await DB.logout()
     try await Self.login(transport, "2", "Bob")
     try await DB.resume()
-    await eventually(#"entity.value != nil"#) { entity.value != nil }
-    #expect(try entity.value?.name == "Bob" && DB.subscriptionCensus().observedQueries == 1)
+    await eventually(#"entity.value?.name == "Bob""#) { entity.value?.name == "Bob" }
+    #expect(try DB.subscriptionCensus().observedQueries == 1)
     let resumed = Entities<User>.shared.singleFeed
     try await DB.resume()
     #expect(resumed === Entities<User>.shared.singleFeed)
@@ -114,17 +121,21 @@ extension BridgeProbeTests {
     #expect(try DB.subscriptionCensus().observedQueries == 1)
   }
 
-  /// REL-27: 10 seconds without an event add no delivery and no subscription.
+  /// REL-27: 10 seconds of the core clock without an event add no delivery and no subscription.
   @MainActor
   @Test
   func idleTenSecondsCreatesNoWork() async throws {
-    let transport = try await Self.openSingletonRig()
+    DB.close()
+    let transport = MockTransport()
+    let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
+    try DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
     let entity = User.entity()
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
     let feed = try #require(Entities<User>.shared.singleFeed)
-    let before = (feed.delivered, try DB.subscriptionCensus().observedQueries)
-    try await Task.sleep(for: .seconds(10))
-    #expect(try feed.delivered == before.0 && DB.subscriptionCensus().observedQueries == before.1 && entity.value?.name == "Ann")
+    let before = (feed.delivered, try DB.subscriptionCensus().observedQueries, transport.calls.count)
+    clock.advance(by: 10)
+    try await DB.database.flush()
+    #expect(try feed.delivered == before.0 && DB.subscriptionCensus().observedQueries == before.1 && transport.calls.count == before.2 && entity.value?.name == "Ann")
   }
 }

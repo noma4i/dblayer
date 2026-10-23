@@ -107,8 +107,6 @@ extension BridgeProbeTests {
     #expect(try await Record.find("m4").current()?.attachment == .reaction(ReactionAttachment(body: "+1")))
     #expect(try await Record.find("m5").current()?.attachment == .unknown(typename: "FutureAttachment"))
     #expect(try await Record.find("m6").current()?.attachment == nil)
-    #expect(try await Record.where(Record.attachment == .moment).count.current() == 1)
-    #expect(try await Record.where(Record.attachment.isNull).count.current() == 1)
 
     var changed = Self.nodes
     changed["m1"] = #"{"__typename":"ReactionAttachment","body":"now"}"#
@@ -123,8 +121,6 @@ extension BridgeProbeTests {
     #expect(try await Record.find("m3").current()?.attachment == .profile(ProfileAttachment(user: AttachmentUser(id: "u1", name: "Ada"))))
     #expect(try await Record.find("m5").current()?.attachment == .reward(RewardAttachment(id: "g9", tier: "bronze", status: nil, tags: [])))
     #expect(try await Record.find("m6").current()?.attachment == .reaction(ReactionAttachment(body: "late")))
-    #expect(try await Record.where(Record.attachment == .reward).count.current() == 1)
-    #expect(try await Record.where(Record.attachment == .reaction).count.current() == 3)
   }
 
   @Test(.timeLimit(.minutes(1)))

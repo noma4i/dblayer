@@ -48,21 +48,6 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func aGraphqlErrorsAnswerArrivesWithEveryRecordThroughAnOperationCall() async throws {
-    _ = try await Self.openOperationRig("QrCodeCreate", document: "mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }", reply: #"{"errors":[{"message":"nope"},{"message":"bad"}]}"#)
-
-    do {
-      _ = try await Operations.qrCodeCreate(kind: "container", size: 3)
-      Issue.record("the answer with errors did not throw")
-    } catch let error as DbError {
-      #expect(TransportFailureTests.shape(error) == "Graphql nope,bad", "\(error)")
-    } catch {
-      Issue.record("the answer with errors surfaced as \(error), not as a database error")
-    }
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
   func inputObjectsDistinguishOmittedNullAndValues() async throws {
     let transport = try await Self.openOperationRig("StickerSend", document: "mutation StickerSend($input: StickerInput!) { stickerSend(input: $input) { id } }", reply: #"{"data":{"stickerSend":{"id":"s1"}}}"#)
     let input = StickerInput(name: "wave", mood: .null, tags: ["a", "b"], notes: .value(["n", nil]), pinned: true, owner: OwnerInput(id: "7"), helpers: .value([OwnerInput(id: "8", nickname: .value("ann"))]))

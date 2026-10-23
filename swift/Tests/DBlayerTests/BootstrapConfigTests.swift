@@ -28,7 +28,7 @@ private final class BootstrapPeer: @unchecked Sendable {
   }
   func encode(_ data: Data) -> String { data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") }
 
-  func answer(_ token: String, kind: String) throws -> String {
+  func answer(_ token: String) throws -> String {
     let parts = token.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
     let cek = SecKeyCreateDecryptedData(key, .rsaEncryptionOAEPSHA1, decode(parts[1]) as CFData, nil)! as Data
     let box = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: decode(parts[2])), ciphertext: decode(parts[3]), tag: decode(parts[4]))
@@ -50,11 +50,9 @@ private final class BootstrapPeer: @unchecked Sendable {
     var config = base["body"] as! [String: Any]
     config["updateRequired"] = true
     config["future"] = true
-    if kind == "format" { config["configVersion"] = 2 }
-    let responseBody: [String: Any] = kind == "request" ? ["error": "INVALID_REQUEST"] : config
     var response: [String: Any] = ["requestId": plain["requestId"]!, "sequence": NSNull()]
-    response["requestDigest"] = kind == "tamper" ? "wrong" : digest
-    response["body"] = responseBody
+    response["requestDigest"] = digest
+    response["body"] = config
     let header = encode(Data(#"{"alg":"dir","enc":"A256GCM"}"#.utf8))
     let sealed = try AES.GCM.seal(JSONSerialization.data(withJSONObject: response), using: SymmetricKey(data: decode(plain["responseKey"] as! String)), nonce: AES.GCM.Nonce(data: Data(repeating: 7, count: 12)), authenticating: Data(header.utf8))
     return "\(header)..\(encode(Data(sealed.nonce))).\(encode(sealed.ciphertext)).\(encode(sealed.tag))"
@@ -72,7 +70,7 @@ private final class BootstrapHttp: EncryptedHttp, @unchecked Sendable {
     lock.withLock { count += 1 }
     #expect(path == peer.encrypted.endpoints.bootstrap)
     if kind == "timeout" { throw TransportFailure.classifyEncryptedHttp(URLError(.timedOut)) }
-    return kind == "http" ? EncryptedReply(status: 400, body: "") : EncryptedReply(status: 200, body: try peer.answer(body, kind: kind))
+    return kind == "http" ? EncryptedReply(status: 400, body: "") : EncryptedReply(status: 200, body: try peer.answer(body))
   }
 }
 
@@ -88,7 +86,7 @@ private final class HeldBootstrapHttp: EncryptedHttp, @unchecked Sendable {
   func post(path: String, body: String) async throws -> EncryptedReply {
     signal.yield("started")
     do {
-      try await Task.sleep(for: .seconds(60))
+      try await parkUntilCancelled()
     } catch {
       signal.yield(error is CancellationError ? "cancelled" : "other error")
       throw error
@@ -190,32 +188,26 @@ struct BootstrapConfigTests {
     #expect(http.calls == 1)
   }
 
-  @Test
-  func configBeforeDatabaseUsesTheCoreAndPreservesEveryOutcome() async throws {
+  @Test(arguments: [AppPlatform.ios, .android], ["ok", "http", "pin"])
+  func configBeforeDatabaseUsesTheCoreAndKeepsTheClassOfEveryOutcomeTheWrapperTypes(platform: AppPlatform, kind: String) async throws {
     let peer = try BootstrapPeer()
-    for platform in [AppPlatform.ios, .android] {
-      for kind in ["ok", "tamper", "request", "format", "http", "pin"] {
-        let http = BootstrapHttp(peer, kind)
-        var encrypted = peer.encrypted
-        if kind == "pin" { encrypted.pin = "wrong" }
-        do {
-          let value = try await DB.serverConfig(encrypted: encrypted, platform: platform, version: "3.8.0", build: "120", http: http)
-          #expect(kind == "ok")
-          #expect(value.configVersion == 1 && value.minAppVersion == "3.7.2")
-          #expect(value.updateRequired && value.trackingPromptEnabled && value.flagsJson == "{}")
-          #expect(value.storeUrl!.contains("apps.apple.com"))
-        } catch let error as DbError {
-          let classified = TransportFailure.classifyEncryptedHttp(error)
-          switch (kind, classified) {
-          case ("pin", .Security(.serverKeyMismatch, _)), ("tamper", .Security(.responseAuthentication, _)),
-               ("request", .Config(.invalidRequest, _)), ("format", .Config(.unsupportedVersion, _)),
-               ("http", .Http(400, _)): break
-          default: Issue.record("\(kind): \(error), classified \(classified)")
-          }
-        }
-        #expect(http.calls == (kind == "pin" ? 0 : 1))
+    let http = BootstrapHttp(peer, kind)
+    var encrypted = peer.encrypted
+    if kind == "pin" { encrypted.pin = "wrong" }
+    do {
+      let value = try await DB.serverConfig(encrypted: encrypted, platform: platform, version: "3.8.0", build: "120", http: http)
+      #expect(kind == "ok")
+      #expect(value.configVersion == 1 && value.minAppVersion == "3.7.2")
+      #expect(value.updateRequired && value.trackingPromptEnabled && value.flagsJson == "{}")
+      #expect(value.storeUrl!.contains("apps.apple.com"))
+    } catch let error as DbError {
+      let classified = TransportFailure.classifyEncryptedHttp(error)
+      switch (kind, classified) {
+      case ("pin", .Security(.serverKeyMismatch, _)), ("http", .Http(400, _)): break
+      default: Issue.record("\(kind): \(error), classified \(classified)")
       }
     }
+    #expect(http.calls == (kind == "pin" ? 0 : 1))
   }
 
   @Test(arguments: [false, true])

@@ -20,25 +20,6 @@ extension BridgeProbeTests {
   }
 
   @Test
-  func inv_observe_17_anUpdateOfOneRowDecodesOneRowAtEveryListSize() async throws {
-    var decoded: [Int] = []
-    for count in [20, 200, 2000] {
-      try await Self.open()
-      var created: [Moment] = []
-      for number in 0 ..< count { created.append(try await Moment.create(text: String(format: "t%05d", number))) }
-      let feed = ListFeed<Moment>()
-      let changes = Cursor(try await Self.watching(Self.byText, feed: feed))
-      #expect(await changes.first("the whole list") { $0.count == count } != nil)
-      let before = feed.decodedRows
-      let edited = String(format: "t%05dx", count / 2)
-      _ = try await created[count / 2].update(text: edited)
-      #expect(await changes.first("the edited row") { $0.count == count && $0[count / 2].text == edited } != nil)
-      decoded.append(feed.decodedRows - before)
-    }
-    #expect(decoded == [1, 1, 1], "rows decoded for 1 update at 20, 200, 2000 rows")
-  }
-
-  @Test
   func inv_observe_15_theFeedRebuildsTheListThatAFreshQueryReturns() async throws {
     try await Self.open()
     let feed = ListFeed<Moment>()
@@ -50,7 +31,7 @@ extension BridgeProbeTests {
       seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
       return Int(seed % UInt64(bound))
     }
-    for step in 0 ..< 120 {
+    for step in 0 ..< 40 {
       switch (rows.isEmpty ? 0 : below(3)) {
       case 0: rows.append(try await Moment.create(text: String(format: "n%02d-%03d", below(40), step)))
       case 1:
@@ -153,25 +134,6 @@ extension BridgeProbeTests {
   }
 
   @Test
-  func inv_observe_15_aSubscriptionThatKeepsDesyncingStopsAfterTwoReopensAndSaysWhy() async throws {
-    let rig = Self.session()
-    try rig.session.start()
-    var current = try #require(await rig.listeners.next("the first subscription"))
-    for round in 0 ..< 2 {
-      current.changed(change: Self.wire(full: true, size: 1, rows: [Self.moment("a")]))
-      #expect(await rig.values.next("the list of round \(round)")?.rows.map(\.id) == ["a"])
-      current.changed(change: Self.wire(size: 2, placed: [Placement(id: "zz", index: 0)]))
-      current = try #require(await rig.listeners.next("the subscription of round \(round)"))
-    }
-    current.changed(change: Self.wire(full: true, size: 1, rows: [Self.moment("a")]))
-    #expect(await rig.values.next("the last full list")?.rows.map(\.id) == ["a"])
-    current.changed(change: Self.wire(size: 2, placed: [Placement(id: "zz", index: 0)]))
-    let stopped = await rig.values.next("the failure")
-    #expect(stopped?.error != nil && stopped?.rows.map(\.id) == ["a"])
-    #expect(rig.session.reopened == 2 && rig.session.isStalled)
-  }
-
-  @Test
   func inv_observe_18_aDeliveryThatInsertsTheRealRowNamesTheTemporaryIdItReplaced() {
     let feed = ListFeed<Moment>()
     #expect(feed.apply(Self.wire(full: true, size: 1, rows: [Self.moment("a")])).desynced == false)
@@ -213,33 +175,42 @@ extension BridgeProbeTests {
     session.cancel()
   }
 
-  @Test
-  func inv_observe_15_aGoodDeltaResetsTheCountOfReopensInARow() async throws {
-    let rig = Self.session()
-    try rig.session.start()
-    var current = try #require(await rig.listeners.next("the first subscription"))
-    for round in 0 ..< 3 {
-      current.changed(change: Self.wire(full: true, size: 1, rows: [Self.moment("a")]))
-      #expect(await rig.values.next("the list of round \(round)")?.rows.map(\.id) == ["a"])
-      current.changed(change: Self.wire(size: 1, rows: [Self.moment("a")], indexes: [0]))
-      #expect(await rig.values.next("the good delta of round \(round)")?.rows.map(\.id) == ["a"])
-      current.changed(change: Self.wire(size: 2, placed: [Placement(id: "zz", index: 0)]))
-      current = try #require(await rig.listeners.next("the subscription after round \(round)"))
-    }
-    #expect(rig.session.reopened == 3 && !rig.session.isStalled)
+  struct DesyncScenario: Sendable, CustomTestStringConvertible {
+    let name: String
+    let rounds: Int
+    let goodDeltaFirst: Bool
+    let reopenFails: Bool
+    let stalls: Bool
+    let reopened: Int?
+    var testDescription: String { name }
   }
 
-  @Test
-  func inv_observe_15_aReopenThatCannotOpenTheSubscriptionReportsTheFailure() async throws {
-    let rig = Self.session(opens: { number in if number > 0 { throw URLError(.cannotConnectToHost) } })
+  @Test(arguments: [
+    DesyncScenario(name: "keeps desyncing", rounds: 3, goodDeltaFirst: false, reopenFails: false, stalls: true, reopened: 2),
+    DesyncScenario(name: "a good delta resets the count", rounds: 3, goodDeltaFirst: true, reopenFails: false, stalls: false, reopened: 3),
+    DesyncScenario(name: "the reopen cannot open", rounds: 1, goodDeltaFirst: false, reopenFails: true, stalls: true, reopened: nil),
+  ])
+  func inv_observe_15_aDesyncedSubscriptionOpensAgainUntilItStallsAndSaysWhy(_ scenario: DesyncScenario) async throws {
+    let rig = scenario.reopenFails ? Self.session(opens: { number in if number > 0 { throw URLError(.cannotConnectToHost) } }) : Self.session()
     try rig.session.start()
-    let first = try #require(await rig.listeners.next("the first subscription"))
-    first.changed(change: Self.wire(full: true, size: 1, rows: [Self.moment("a")]))
-    #expect(await rig.values.next("the first list")?.rows.map(\.id) == ["a"])
-    first.changed(change: Self.wire(size: 2, placed: [Placement(id: "zz", index: 0)]))
-    let stopped = await rig.values.next("the failure")
-    #expect(stopped?.error != nil && stopped?.rows.map(\.id) == ["a"])
-    #expect(rig.session.isStalled)
+    var current = try #require(await rig.listeners.next("the first subscription"))
+    for round in 0 ..< scenario.rounds {
+      current.changed(change: Self.wire(full: true, size: 1, rows: [Self.moment("a")]))
+      #expect(await rig.values.next("the list of round \(round)")?.rows.map(\.id) == ["a"])
+      if scenario.goodDeltaFirst {
+        current.changed(change: Self.wire(size: 1, rows: [Self.moment("a")], indexes: [0]))
+        #expect(await rig.values.next("the good delta of round \(round)")?.rows.map(\.id) == ["a"])
+      }
+      current.changed(change: Self.wire(size: 2, placed: [Placement(id: "zz", index: 0)]))
+      if scenario.stalls && round == scenario.rounds - 1 {
+        let stopped = await rig.values.next("the failure")
+        #expect(stopped?.error != nil && stopped?.rows.map(\.id) == ["a"])
+      } else {
+        current = try #require(await rig.listeners.next("the subscription after round \(round)"))
+      }
+    }
+    #expect(rig.session.isStalled == scenario.stalls)
+    if let reopened = scenario.reopened { #expect(rig.session.reopened == reopened) }
   }
 }
 

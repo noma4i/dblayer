@@ -2,7 +2,6 @@ package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -30,7 +29,6 @@ class ActionAnswerTest {
         transport.enqueue("ShareMoment", """{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}""")
         val refused = moment.share()
         eventually("not (transport.calls.count { it.operationName == \"ShareMoment\" } < 2)", 5000) { !(transport.calls.count { it.operationName == "ShareMoment" } < 2) }
-        delay(100)
         assertThrows(Exception::class.java) { bounded { refused.answer() } }
         Unit
     }

@@ -4,13 +4,15 @@ import Testing
 @testable import DBlayer
 
 extension BridgeProbeTests {
-  private static let edgeFeedDocument = "query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { edges { impressionScore impressionUuid node { id uuid likedByMe media createdAt } } pageInfo { hasNextPage endCursor } } }"
+  private static let edgeFeedDocument = "query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { edges { impressionScore impressionUuid rank node { id uuid likedByMe media createdAt } } pageInfo { hasNextPage endCursor } } }"
 
   private static func edgeReply(uuid: String?, score: Int?, text: String? = nil) -> String {
     let uuidText = uuid.map { #""\#($0)""# } ?? "null"
     let body = text.map { #","text":"\#($0)""# } ?? ""
     return #"{"data":{"feed":{"edges":[{"impressionUuid":\#(uuidText),"impressionScore":\#(score.map(String.init) ?? "null"),"node":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"\#(body)}}],"pageInfo":{"hasNextPage":false,"endCursor":"c"}}}}"#
   }
+
+  private static let rankedEdgeReply = #"{"data":{"feed":{"edges":[{"impressionUuid":"imp-1","impressionScore":9,"rank":"top","node":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z","text":"in a vibe"}}],"pageInfo":{"hasNextPage":false,"endCursor":"c"}}}}"#
 
   private func openEdgeRig() async throws -> MockTransport {
     let transport = MockTransport()
@@ -36,5 +38,10 @@ extension BridgeProbeTests {
     transport.enqueue("MomentsFeed", reply: Self.edgeReply(uuid: "imp-2", score: 6))
     try await Moment.feed.refresh()
     #expect(try Moment.feedEdge(of: "1") == MomentFeedEdge(["impressionUuid": "imp-2", "impressionScore": 6]))
+
+    transport.enqueue("MomentsFeed", reply: Self.rankedEdgeReply)
+    try await Moment.vibeFeed("v1").refresh()
+    let ranked = try Moment.vibeFeedEdge("v1", of: "1")
+    #expect(ranked?.score == 9 && ranked?.rank == .top && ranked?.impressionUuid == "imp-1")
   }
 }

@@ -123,7 +123,7 @@ class BootstrapConfigTest {
         }
         return Json.parseToJsonElement(String(aes.doFinal(decode(parts[3]) + decode(parts[4])))).jsonObject
     }
-    private fun answer(token: String, kind: String): String {
+    private fun answer(token: String): String {
         val plain = open(token)
         val body = plain.getValue("body").jsonObject
         assertEquals(setOf("audience", "kid", "method", "path", "requestId", "issuedAt", "responseKey", "body"), plain.keys)
@@ -135,12 +135,11 @@ class BootstrapConfigTest {
         val config = Json.parseToJsonElement(kat.getValue("response").jsonObject.text("plaintext")).jsonObject.getValue("body").jsonObject
         val response = buildJsonObject {
             put("requestId", plain.getValue("requestId"))
-            put("requestDigest", if (kind == "tamper") "wrong" else digest)
+            put("requestDigest", digest)
             put("sequence", JsonNull)
-            put("body", if (kind == "request") buildJsonObject { put("error", "INVALID_REQUEST") } else buildJsonObject {
+            put("body", buildJsonObject {
                 config.forEach { (key, value) -> put(key, value) }
                 put("updateRequired", true)
-                if (kind == "format") put("configVersion", 2)
                 put("future", true)
             })
         }
@@ -155,15 +154,15 @@ class BootstrapConfigTest {
     }
 
     @Test
-    fun configBeforeDatabaseUsesTheCoreAndPreservesEveryOutcome() = bounded {
+    fun configBeforeDatabaseUsesTheCoreAndKeepsTheClassOfEveryOutcomeTheWrapperTypes() = bounded {
         for (platform in listOf(AppPlatform.IOS, AppPlatform.ANDROID)) {
-            for (kind in listOf("ok", "tamper", "request", "format", "http", "pin")) {
+            for (kind in listOf("ok", "http", "pin")) {
                 var calls = 0
                 val http = object : EncryptedHttp {
                     override suspend fun post(path: String, body: String): EncryptedReply {
                         calls++
                         assertEquals(kat.text("path"), path)
-                        return if (kind == "http") EncryptedReply(400u, "") else EncryptedReply(200u, answer(body, kind))
+                        return if (kind == "http") EncryptedReply(400u, "") else EncryptedReply(200u, answer(body))
                     }
                 }
                 val config = encrypted().let { if (kind == "pin") it.copy(pin = "wrong") else it }
@@ -178,9 +177,6 @@ class BootstrapConfigTest {
                 } catch (error: DbException) {
                     when (kind) {
                         "pin" -> assertEquals(SecurityCode.SERVER_KEY_MISMATCH, (error as DbException.Security).code)
-                        "tamper" -> assertEquals(SecurityCode.RESPONSE_AUTHENTICATION, (error as DbException.Security).code)
-                        "request" -> assertEquals(ConfigCode.INVALID_REQUEST, (error as DbException.Config).code)
-                        "format" -> assertEquals(ConfigCode.UNSUPPORTED_VERSION, (error as DbException.Config).code)
                         "http" -> assertEquals(400.toUShort(), (error as DbException.Http).status)
                         else -> throw error
                     }

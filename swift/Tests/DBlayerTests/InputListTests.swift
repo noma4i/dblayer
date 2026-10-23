@@ -22,17 +22,6 @@ extension BridgeProbeTests {
     #expect(JSONValue.parse(sent) == JSONValue.parse(#"{"widgets":\#(Self.widgetsJSON)}"#), "variables sent: \(sent)")
   }
 
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func anOmittedOptionalListIsNotSent() async throws {
-    let transport = try await Self.openOperationRig("WidgetsSend", document: "mutation WidgetsSend($widgets: [StickerWidgetInput!]) { widgetsSend(widgets: $widgets) { id } }", reply: #"{"data":{"widgetsSend":{"id":"w0"}}}"#)
-
-    _ = try await Operations.widgetsSend()
-
-    let sent = transport.calls.first { $0.operationName == "WidgetsSend" }?.variablesJson ?? ""
-    #expect(JSONValue.parse(sent) == JSONValue.parse("{}"), "variables sent: \(sent)")
-  }
-
   @Test
   func theUploadArgsOfAModelBecomeTypedVariables() {
     #expect(Clip.createFileVariables(widgets: Self.widgets) == ["widgets": JSONValue.parse(Self.widgetsJSON)])

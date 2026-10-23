@@ -21,7 +21,7 @@ private final class HeldSubscribe: Transport, @unchecked Sendable {
   func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws -> String {
     lock.withLock { entered = true }
     do {
-      try await Task.sleep(for: .seconds(3600))
+      try await parkUntilCancelled()
     } catch {
       lock.withLock { cancelled = true }
       throw error

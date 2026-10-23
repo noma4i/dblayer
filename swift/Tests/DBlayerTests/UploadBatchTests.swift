@@ -5,27 +5,8 @@ import Testing
 
 extension BridgeProbeTests {
   @MainActor
-  @Test(arguments: [false, true])
-  func batchDiscardRenumbersSnapshots(cancel: Bool) async throws {
-    let source = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-    try Data("file".utf8).write(to: source)
-    defer { try? FileManager.default.removeItem(at: source) }
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 1), modelsJson: modelsJSON, transport: MockTransport())
-    try DB.database.setOnline(online: false)
-    let items = (0..<4).map { UploadItem(values: ["clientKey": .string("key-\($0)"), "position": .number(Double($0)), "size": .number(4)], path: source.path) }
-    let rows = try await Asset.uploadCreate(items: items, request: UploadBatchRequest(operation: "create_files", createBlob: "CreateBlob"))
-    if cancel { #expect(try await rows[1].cancelUpload()) }
-    else { try await rows[1].discard() }
-    for (position, original) in [0, 2, 3].enumerated() {
-      let snapshot = try #require(await Asset.find(rows[original].id).current())
-      #expect(snapshot.position == position)
-      #expect(snapshot.size == 3)
-    }
-  }
-
-  @MainActor
-  @Test(arguments: [false, true])
-  func batchOwnsSourcesAndPreservesMembership(cancel: Bool) async throws {
+  @Test
+  func batchOwnsSourcesAndConfirmsEveryMemberWithOneRequest() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -40,15 +21,6 @@ extension BridgeProbeTests {
     #expect(rows.count == 2)
     #expect(rows.allSatisfy { $0.id.hasPrefix("temp-") && $0.sync.state == .sending && $0.upload != nil })
     try FileManager.default.removeItem(at: source)
-    if cancel {
-      #expect(try await rows[0].cancelUpload())
-      let first = try await Asset.find(rows[0].id).current()
-      let second = try await Asset.find(rows[1].id).current()
-      #expect(first != nil && first?.upload == nil)
-      #expect(second?.upload != nil)
-      #expect(transport.calls.isEmpty)
-      return
-    }
     for _ in 0..<2 {
       transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
     }

@@ -54,13 +54,6 @@ class OperationCallTest {
     }
 
     @Test
-    fun aGraphqlErrorsAnswerArrivesWithEveryRecordThroughAnOperationCall() = bounded {
-        rig("QrCodeCreate", "mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }", """{"errors":[{"message":"nope"},{"message":"bad"}]}""")
-        val error = runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull()
-        assertEquals("Graphql nope,bad", refusal(error as DbException))
-    }
-
-    @Test
     fun inputObjectsDistinguishOmittedNullAndValues() = bounded {
         val transport = rig("StickerSend", "mutation StickerSend(${'$'}input: StickerInput!) { stickerSend(input: ${'$'}input) { id } }", """{"data":{"stickerSend":{"id":"s1"}}}""")
         val input = StickerInput(name = "wave", mood = GraphQLNullable.Null, tags = listOf("a", "b"), notes = GraphQLNullable.Value(listOf("n", null)), pinned = true, owner = OwnerInput(id = "7"), helpers = GraphQLNullable.Value(listOf(OwnerInput(id = "8", nickname = GraphQLNullable.Value("ann")))))

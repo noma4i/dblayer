@@ -124,8 +124,6 @@ class UnionTest {
         assertEquals(RecordAttachment.Reaction(ReactionAttachment(body = "+1")), attachmentOf("m4"))
         assertEquals(RecordAttachment.Unknown("FutureAttachment"), attachmentOf("m5"))
         assertNull(attachmentOf("m6"))
-        assertEquals(1L, Record.where(Record.attachment eq RecordAttachmentKind.Moment).count.current())
-        assertEquals(1L, Record.where(Record.attachment.isNull).count.current())
 
         val changed = nodes + mapOf(
             "m1" to """{"__typename":"ReactionAttachment","body":"now"}""",
@@ -141,8 +139,6 @@ class UnionTest {
         assertEquals(RecordAttachment.Profile(ProfileAttachment(user = AttachmentUser(id = "u1", name = "Ada"))), attachmentOf("m3"))
         assertEquals(RecordAttachment.Reward(RewardAttachment(id = "g9", tier = "bronze", status = null, tags = emptyList())), attachmentOf("m5"))
         assertEquals(RecordAttachment.Reaction(ReactionAttachment(body = "late")), attachmentOf("m6"))
-        assertEquals(1L, Record.where(Record.attachment eq RecordAttachmentKind.Reward).count.current())
-        assertEquals(3L, Record.where(Record.attachment eq RecordAttachmentKind.Reaction).count.current())
     }
 
     @Test

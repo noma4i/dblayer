@@ -31,4 +31,8 @@ expect_red "$work/swift/Bad.swift" '  var changes = await live.stream().makeAsyn
 expect_red "$work/swift/Bad.swift" '  for await frame in stream { }'
 expect_red "$work/kotlin/Bad.kt" '    fun a() = runBlocking { 1 }'
 expect_red "$work/kotlin/Bad.kt" '    withTimeout(5000) { while (x.size < 2) delay(10) }'
+expect_red "$work/swift/Bad.swift" '  try await Task.sleep(for: .milliseconds(200))'
+expect_red "$work/swift/Bad.swift" '  Thread.sleep(forTimeInterval: 0.1)'
+expect_red "$work/kotlin/Bad.kt" '    delay(300)'
+expect_red "$work/kotlin/Bad.kt" '    Thread.sleep(100)'
 echo "check_waits_test: ok"

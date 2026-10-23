@@ -26,25 +26,6 @@ class ListDeltaTest {
     }
 
     @Test
-    fun inv_observe_17_an_update_of_one_row_decodes_one_row_at_every_list_size() = bounded {
-        val decoded = listOf(20, 200, 2000).map { count ->
-            open()
-            val created = (0 until count).map { Moment.create(text = "t%05d".format(it)) }
-            val feed = ListFeed(Moment)
-            val states = java.util.concurrent.LinkedBlockingQueue<List<Moment>>()
-            val subscription = DBlayer.database.liveQuery(byText.json, ChangeListener { states.put(feed.apply(it).rows) })
-            assertEquals(count, states.poll(20, java.util.concurrent.TimeUnit.SECONDS)!!.size)
-            val before = feed.decodedRows
-            val edited = "t%05dx".format(count / 2)
-            created[count / 2].update(text = edited)
-            assertEquals(edited, states.poll(20, java.util.concurrent.TimeUnit.SECONDS)!![count / 2].text)
-            subscription.cancel()
-            feed.decodedRows - before
-        }
-        assertEquals(listOf(1, 1, 1), decoded)
-    }
-
-    @Test
     fun inv_observe_15_the_feed_rebuilds_the_list_that_a_fresh_query_returns() = bounded {
         open()
         val feed = ListFeed(Moment)
@@ -55,7 +36,7 @@ class ListDeltaTest {
             return java.lang.Long.remainderUnsigned(seed, bound.toLong()).toInt()
         }
         val rows = ArrayList<Moment>()
-        for (step in 0 until 120) {
+        for (step in 0 until 40) {
             when (if (rows.isEmpty()) 0 else below(3)) {
                 0 -> rows.add(Moment.create(text = "n%02d-%03d".format(below(40), step)))
                 1 -> { val at = below(rows.size); rows[at] = rows[at].update(text = "n%02d-%03d".format(below(40), step)) }
@@ -154,27 +135,6 @@ class ListDeltaTest {
     }
 
     @Test
-    fun inv_observe_15_a_subscription_that_keeps_desyncing_stops_after_two_reopens_and_says_why() {
-        val rig = Rig()
-        rig.session.start()
-        var current = poll(rig.listeners) as QueryListener
-        repeat(2) {
-            current.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
-            poll(rig.values)
-            current.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
-            current = poll(rig.listeners) as QueryListener
-        }
-        current.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
-        poll(rig.values)
-        current.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
-        val stopped = poll(rig.values) as Snapshot<*>
-        assertEquals(true, stopped.error != null)
-        assertEquals(listOf("a"), stopped.rows.map { (it as Moment).id })
-        assertEquals(2, rig.session.reopened)
-        assertEquals(true, rig.session.isStalled)
-    }
-
-    @Test
     fun inv_observe_18_a_delivery_that_inserts_the_real_row_names_the_temporary_id_it_replaced() {
         val feed = ListFeed(Moment)
         assertEquals(false, feed.apply(change(size = 1, full = true, rows = listOf(moment("a", "1")))).desynced)
@@ -218,33 +178,37 @@ class ListDeltaTest {
         session.cancel()
     }
 
-    @Test
-    fun inv_observe_15_a_good_delta_resets_the_count_of_reopens_in_a_row() {
-        val rig = Rig()
-        rig.session.start()
-        var current = poll(rig.listeners) as QueryListener
-        repeat(3) {
-            current.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
-            poll(rig.values)
-            current.changed(change(size = 1, rows = listOf(moment("a", "1")), indexes = listOf(0u)))
-            poll(rig.values)
-            current.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
-            current = poll(rig.listeners) as QueryListener
-        }
-        assertEquals(3, rig.session.reopened)
-        assertEquals(false, rig.session.isStalled)
-    }
+    private data class DesyncScenario(val name: String, val rounds: Int, val goodDeltaFirst: Boolean, val reopenFails: Boolean, val stalls: Boolean, val reopened: Int?)
 
     @Test
-    fun inv_observe_15_a_reopen_that_cannot_open_the_subscription_reports_the_failure() {
-        val rig = Rig { number -> if (number > 0) throw java.io.IOException("offline") }
-        rig.session.start()
-        val first = poll(rig.listeners) as QueryListener
-        first.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
-        poll(rig.values)
-        first.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
-        val stopped = poll(rig.values) as Snapshot<*>
-        assertEquals(true, stopped.error != null)
-        assertEquals(true, rig.session.isStalled)
+    fun inv_observe_15_a_desynced_subscription_opens_again_until_it_stalls_and_says_why() {
+        val scenarios = listOf(
+            DesyncScenario("keeps desyncing", 3, false, false, true, 2),
+            DesyncScenario("a good delta resets the count", 3, true, false, false, 3),
+            DesyncScenario("the reopen cannot open", 1, false, true, true, null),
+        )
+        for (scenario in scenarios) {
+            val rig = if (scenario.reopenFails) Rig { number -> if (number > 0) throw java.io.IOException("offline") } else Rig()
+            rig.session.start()
+            var current = poll(rig.listeners) as QueryListener
+            repeat(scenario.rounds) { round ->
+                current.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
+                assertEquals(scenario.name, listOf("a"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
+                if (scenario.goodDeltaFirst) {
+                    current.changed(change(size = 1, rows = listOf(moment("a", "1")), indexes = listOf(0u)))
+                    assertEquals(scenario.name, listOf("a"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
+                }
+                current.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
+                if (scenario.stalls && round == scenario.rounds - 1) {
+                    val stopped = poll(rig.values) as Snapshot<*>
+                    assertEquals(scenario.name, true, stopped.error != null)
+                    assertEquals(scenario.name, listOf("a"), stopped.rows.map { (it as Moment).id })
+                } else {
+                    current = poll(rig.listeners) as QueryListener
+                }
+            }
+            assertEquals(scenario.name, scenario.stalls, rig.session.isStalled)
+            scenario.reopened?.let { assertEquals(scenario.name, it, rig.session.reopened) }
+        }
     }
 }

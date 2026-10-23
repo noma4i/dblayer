@@ -19,8 +19,6 @@ extension BridgeProbeTests.EnumTests {
   @Test @MainActor
   func aListOfEnumValuesWrittenAsTextsReadsBackTypedAndAnAbsentListReadsAsNil() async throws {
     let database = try await openShelves()
-    let create: (String, [ContainerShelf]?) async throws -> Container = { try await Container.create(title: $0, shelves: $1) }
-    _ = create
     let typed = JSONValue.object(["title": .string("t"), "shelves": JSONValue.encode([ContainerShelf.secondary])])
     #expect(try Container.decode(try await database.create(model: "Container", valuesJson: typed.text, argsJson: "{}")).shelves == [.secondary])
     #expect(try Container.decode(try await database.create(model: "Container", valuesJson: #"{"title":"u"}"#, argsJson: "{}")).shelves == nil)
@@ -30,13 +28,5 @@ extension BridgeProbeTests.EnumTests {
   func aListOfEnumValuesEncodesAsTheirTexts() throws {
     let text = String(decoding: try JSONEncoder().encode([ContainerShelf.primary, .unknown("x")]), as: UTF8.self)
     #expect(text == #"["PRIMARY","x"]"#)
-  }
-
-  @Test
-  func aScopeParamOfASchemaEnumIsSentAsItsText() {
-    #expect(Inbox.shelf(list: .primary).relation == "shelf")
-    #expect(Inbox.shelf(list: .primary).params == ["list": .string("PRIMARY")])
-    #expect(Inbox.shelf(list: .secondary).params != Inbox.shelf(list: .primary).params)
-    #expect(Inbox.shelf(list: .unknown("LATER")).params == ["list": .string("LATER")])
   }
 }

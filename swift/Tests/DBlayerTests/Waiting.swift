@@ -20,6 +20,9 @@ func eventually(
   }
   Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
 }
+func parkUntilCancelled() async throws {
+  try await Task.sleep(for: .seconds(3600))
+}
 final class Cursor<Sequence: AsyncSequence>: @unchecked Sendable where Sequence.Element: Sendable {
   private var iterator: Sequence.AsyncIterator
 

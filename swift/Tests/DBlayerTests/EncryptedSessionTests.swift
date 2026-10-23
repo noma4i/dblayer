@@ -84,7 +84,13 @@ struct EncryptedSessionTests {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
     let http = UrlSessionEncryptedHttp(origin: Self.origin, session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
 
-    await #expect(throws: DbError.self) { try await http.post(path: "/api/logout", body: "x") }
+    do {
+      _ = try await http.post(path: "/api/logout", body: "x")
+      Issue.record("the failed transport did not throw")
+    } catch DbError.Network {
+    } catch {
+      Issue.record("the failure surfaced as \(error), not as a network error")
+    }
   }
 
   @Test
