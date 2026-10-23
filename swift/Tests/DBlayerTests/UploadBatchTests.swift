@@ -32,7 +32,7 @@ extension BridgeProbeTests {
     let source = directory.appending(path: "image.png")
     try Data("image".utf8).write(to: source)
     let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 1), modelsJson: modelsJSON, transport: transport)
     try DB.database.setOnline(online: false)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]"#)
     let items = (0..<2).map { UploadItem(values: ["clientKey": .string("key-\($0)"), "size": .number(2)], path: source.path) }
@@ -42,9 +42,8 @@ extension BridgeProbeTests {
     try FileManager.default.removeItem(at: source)
     if cancel {
       #expect(try await rows[0].cancelUpload())
-      try await DB.database.warm(queryJson: #"{"model":"Asset"}"#)
-      let first = try DB.database.peekRow(model: "Asset", rowId: rows[0].id)
-      let second = try DB.database.peekRow(model: "Asset", rowId: rows[1].id)
+      let first = try await Asset.find(rows[0].id).current()
+      let second = try await Asset.find(rows[1].id).current()
       #expect(first != nil && first?.upload == nil)
       #expect(second?.upload != nil)
       #expect(transport.calls.isEmpty)
