@@ -21,6 +21,25 @@ export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc 2>/dev/null || sysctl -n hw
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$HOME"/Library/Android/sdk/ndk/* | sort -V | tail -1)}"
 
 if [ "$part" = --host ]; then
+  kind=host
+  targets=(host)
+  stamp="$root/target/debug/libdblayer.dylib.SOURCE_HASH"
+  outputs=("$root/target/debug/libdblayer.dylib")
+else
+  kind=android
+  targets=("${abis[@]}")
+  stamp="$module/src/main/jniLibs/SOURCE_HASH"
+  outputs=()
+  for abi in "${abis[@]}"; do outputs+=("$module/src/main/jniLibs/$abi/libdblayer.so"); done
+fi
+outputs+=("$module/src/main/kotlin/com/noma4i/dblayer/dblayer.kt")
+if bash "$root/scripts/native_source_hash.sh" --fresh "$stamp" "$kind" "${targets[@]}" -- "${outputs[@]}"; then
+  [ "$part" = --host ] || for abi in "${abis[@]}"; do printf '%s\n' "$module/src/main/jniLibs/$abi/libdblayer.so"; done
+  exit 0
+fi
+hash="$(bash "$root/scripts/native_source_hash.sh" "$kind" "${targets[@]}")"
+
+if [ "$part" = --host ]; then
   cargo build --manifest-path "$root/core/Cargo.toml" --features cli
   library="$root/target/debug/libdblayer.dylib"
 else
@@ -33,10 +52,10 @@ if [ "$part" != --host ]; then
   rm -rf "$module/src/main/jniLibs"
   (cd -- "$root/core" && cargo ndk "${arguments[@]}" --platform 33 \
     -o "$module/src/main/jniLibs" build --release)
-  bash "$root/scripts/android_source_hash.sh" > "$module/src/main/jniLibs/SOURCE_HASH"
   for abi in "${abis[@]}"; do printf '%s\n' "$module/src/main/jniLibs/$abi/libdblayer.so"; done
   library="$root/target/aarch64-linux-android/release/libdblayer.a"
 fi
 
 bash "$root/scripts/generate_kotlin_bindings.sh" --bindgen "$root/target/debug/uniffi-bindgen" \
   --library "$library" --config "$root/core/uniffi.toml" --out "$module/src/main/kotlin"
+printf '%s\n' "$hash" > "$stamp"

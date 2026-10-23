@@ -21,6 +21,14 @@ export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}" RUST_TEST_THREADS="${RUST_TEST_THREADS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 export IPHONEOS_DEPLOYMENT_TARGET=17.0
 
+stamp="$build/SOURCE_HASH"
+outputs=("$bridge/DBlayerFFI.xcframework" "$bridge/Sources/DBlayer/dblayer.swift")
+for target in "${targets[@]}"; do outputs+=("$root/target/$target/release/libdblayer.a"); done
+if bash "$root/scripts/native_source_hash.sh" --fresh "$stamp" ios "${targets[@]}" -- "${outputs[@]}"; then
+  exit 0
+fi
+hash="$(bash "$root/scripts/native_source_hash.sh" ios "${targets[@]}")"
+
 for target in "${targets[@]}"; do
   cargo build --release --manifest-path "$root/core/Cargo.toml" --target "$target"
 done
@@ -54,4 +62,5 @@ for target in "${targets[@]}"; do
   arguments+=(-library "$root/target/$target/release/libdblayer.a" -headers "$build/headers")
 done
 xcodebuild -create-xcframework "${arguments[@]}" -output "$bridge/DBlayerFFI.xcframework"
+printf '%s\n' "$hash" > "$stamp"
 echo "xcframework: $bridge/DBlayerFFI.xcframework"

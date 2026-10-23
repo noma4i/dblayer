@@ -32,7 +32,7 @@ steps=(
   "kotlin|gradle-test|900|kotlin/|$slot gradle-step $gradle -p kotlin testDebugUnitTest --rerun createDebugUnitTestCoverageReport --console=plain --no-watch-fs -Dorg.gradle.daemon.idletimeout=600000 -Dorg.gradle.jvmargs=\"-Xmx1g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -XX:ErrorFile=/tmp/check-owner-\$CHECK_OWNER_ID-%p.log\" -Pkotlin.compiler.execution.strategy=in-process"
   "final|coverage|120|-|bash scripts/check_coverage.sh"
   "ship|android-abis|900|-|$slot bash-step bash scripts/build_kotlin.sh --release && bash scripts/check_android_artifacts.sh --release"
-  "ship|ios-device-check|600|-|$slot ios-check cargo check --manifest-path core/Cargo.toml --target aarch64-apple-ios"
+  "ship|ios-device-check|600|-|bash scripts/native_source_hash.sh --fresh target/ios-device-check.SOURCE_HASH ios-device-check aarch64-apple-ios || { $slot ios-check cargo check --manifest-path core/Cargo.toml --target aarch64-apple-ios && bash scripts/native_source_hash.sh ios-device-check aarch64-apple-ios > target/ios-device-check.SOURCE_HASH; }"
 )
 
 run_checks "$@"

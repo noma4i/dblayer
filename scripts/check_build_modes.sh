@@ -35,8 +35,8 @@ with tempfile.TemporaryDirectory() as directory:
     fixture = Path(directory)
     (fixture / "scripts").mkdir()
     (fixture / "core/src").mkdir(parents=True)
-    script = fixture / "scripts/android_source_hash.sh"
-    shutil.copyfile(Path(root) / "scripts/android_source_hash.sh", script)
+    script = fixture / "scripts/native_source_hash.sh"
+    shutil.copyfile(Path(root) / "scripts/native_source_hash.sh", script)
     for name in ("Cargo.toml", "Cargo.lock", "core/Cargo.toml", "core/src/lib.rs"):
         (fixture / name).write_text("initial\n")
     subprocess.run(["git", "init", "-q", directory], check=True)

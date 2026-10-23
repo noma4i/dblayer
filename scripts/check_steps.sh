@@ -134,6 +134,7 @@ run_step() {
   run_bounded "$outer" "$name" bash -c 'cd -- "$1" && shift && eval "$1"' _ "$root" "$command" > "$log" 2>&1 || code=$?
   waited="$(sed -n 's/.*got slot[0-9]* after \([0-9]*\)s.*/\1/p' "$log" | paste -sd+ - | bc 2> /dev/null)"
   printf '%-8s %-20s %-8s %4ss (queue for a build slot %ss)\n' "$lane" "$name" "$([ "$code" -eq 0 ] && echo ok || echo "FAIL($code)")" "$((SECONDS - start))" "${waited:-0}"
+  grep -h 'native build skipped' "$log" | sed 's/^/    | /'
   if [ "$code" -ne 0 ]; then
     tail -25 "$log" | sed 's/^/    | /'
     echo "    log: $log"

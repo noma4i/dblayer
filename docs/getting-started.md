@@ -28,7 +28,9 @@ It runs cheap checks first, including build modes, and stops on failure. Build c
 The workspace release profile uses optimization level 3, no LTO, one codegen unit, symbol stripping and panic unwinding.
 It applies to Android and iOS builds. Panic unwinding remains enabled for UniFFI.
 Android binding generation reads the static archive, which retains UniFFI metadata after the shared library loses its symbol table.
-The Android source hash includes the workspace manifest, so changing the release profile invalidates older native artifacts.
+Native builds reuse their artifacts. `scripts/native_source_hash.sh` fingerprints the content of `core/src`, `gen/`, the manifests, `Cargo.lock`, `core/uniffi.toml`, the build scripts, the toolchain versions, the build flags in the environment and the target list.
+The Android ABI libraries, the host library for Kotlin bindings and the iOS slices store the fingerprint next to the artifact. The iOS device check stores it in `target/ios-device-check.SOURCE_HASH`.
+When the stored fingerprint equals the current one and the artifacts exist, the step prints `native build skipped: inputs unchanged, fingerprint <hash>` and builds nothing. Any change of an input rebuilds, including the release profile in `Cargo.toml`.
 See [release profile measurements](release-profile-measurements.md) for the size, query CPU and compilation CPU comparisons.
 
 `specs/` is not in git: the invariants check reads `specs/invariants.md` of the main tree, or the file named by `SPEC=<file>`. The summary line counts CPU seconds of waited children plus the CPU of the processes below a java process (the single-use Gradle daemon and its test executors).
@@ -47,7 +49,7 @@ Single steps:
 | `bash scripts/build_kotlin.sh --abis` | Local development: explicitly builds all 4 Android ABIs and Kotlin bindings |
 | `bash scripts/build_kotlin.sh --host` | Builds the host debug library and Kotlin bindings for JNA unit tests |
 | `bash scripts/generate_kotlin_bindings.sh --bindgen <uniffi-bindgen> --library <libdblayer.a or .so> --config <uniffi.toml> --out <directory>` | Generates `dblayer.kt` from a built library and inserts `ProcessOwner.claim()`. Needs no DBlayer checkout layout: copy this one file and pass the paths. `build_kotlin.sh` uses it too |
-| `bash scripts/check_android_artifacts.sh --release` | Checks release ABI files and source hash. Use `--abis` to check all 4 ABIs |
+| `bash scripts/check_android_artifacts.sh --release` | Checks release ABI files and the fingerprint. Use `--abis` to check all 4 ABIs |
 | `bash scripts/check_zoo.sh` | Finds duplicate mechanisms and names (see [architecture](architecture.md)) |
 | `bash scripts/check_docs.sh` | Checks that paths mentioned in README and docs exist |
 | `bash scripts/reclaim_target.sh` | Removes the build output of `dblayer` and `dblayer-gen` from `target` and prints its size before and after. Refuses while `cargo` runs |
