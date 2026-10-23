@@ -39,3 +39,15 @@ marker='        Native.register(UniffiLib::class.java, findLibraryName(component
 awk -v marker="$marker" '$0 == marker { print "        ProcessOwner.claim()" } { print }' "$generated" > "$generated.claimed"
 mv "$generated.claimed" "$generated"
 [ "$(grep -cxF -- '        ProcessOwner.claim()' "$generated")" = 1 ] || { echo "$name: ProcessOwner.claim() was not inserted into dblayer.kt" >&2; exit 1; }
+
+launch='    val job = GlobalScope.launch coroutineBlock@ {'
+publish='    uniffiOutDroppedCallback.uniffiSetValue(UniffiForeignFutureDroppedCallbackStruct(handle, uniffiForeignFutureDroppedCallbackImpl))'
+[ "$(grep -cxF -- "$launch" "$generated")" = 2 ] || { echo "$name: expected exactly 2 GlobalScope.launch lines in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
+[ "$(grep -cxF -- "$publish" "$generated")" = 2 ] || { echo "$name: expected exactly 2 uniffiOutDroppedCallback.uniffiSetValue lines in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
+awk -v launch="$launch" -v publish="$publish" '
+  $0 == launch { print "    val job = GlobalScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) coroutineBlock@ {"; next }
+  $0 == publish { print; print "    uniffiOutDroppedCallback.write()"; print "    uniffiOutDroppedCallback.setAutoWrite(false)"; print "    job.start()"; next }
+  { print }' "$generated" > "$generated.published"
+mv "$generated.published" "$generated"
+[ "$(grep -cxF -- '    job.start()' "$generated")" = 2 ] || { echo "$name: job.start() was not inserted twice into dblayer.kt" >&2; exit 1; }
+[ "$(grep -cxF -- '    uniffiOutDroppedCallback.setAutoWrite(false)' "$generated")" = 2 ] || { echo "$name: setAutoWrite(false) was not inserted twice into dblayer.kt" >&2; exit 1; }
