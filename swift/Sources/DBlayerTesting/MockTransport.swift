@@ -1,7 +1,8 @@
 import DBlayer
 import Foundation
+import Testing
 
-/// What a call without a queued reply gets: `.strict` fails it with `Invalid` and records it in `unscripted`, `.networkError` throws the retried network error.
+/// What a call without a queued reply gets: `.strict` fails it with `Invalid`, records it in `unscripted` and records a Swift Testing issue on the test that created the mock, `.networkError` throws the retried network error.
 public enum Unanswered: Sendable { case strict, networkError }
 
 /// Answers by operation name, can delay or fail answers, and lets a test push or break a subscription.
@@ -23,7 +24,26 @@ public final class MockTransport: Transport, @unchecked Sendable {
   private var missed: [TransportRequest] = []
   public var unscripted: [TransportRequest] { lock.withLock { missed } }
 
-  public init(unanswered: Unanswered = .strict) { self.unanswered = unanswered }
+  private struct Report: Sendable {
+    let message: String
+    let done: CheckedContinuation<Void, Never>
+  }
+
+  private let reports: AsyncStream<Report>.Continuation
+
+  public init(unanswered: Unanswered = .strict) {
+    self.unanswered = unanswered
+    let (stream, continuation) = AsyncStream.makeStream(of: Report.self)
+    reports = continuation
+    Task {
+      for await report in stream {
+        Issue.record(Comment(rawValue: report.message))
+        report.done.resume()
+      }
+    }
+  }
+
+  deinit { reports.finish() }
 
   public func openCable() async throws -> String { throw DbError.Invalid(detail: "MockTransport does not support WebSocket connections") }
   public func cableSend(token: String, text: String) async throws { throw DbError.Interrupted(detail: "mock cable socket is closed") }
@@ -78,19 +98,23 @@ public final class MockTransport: Transport, @unchecked Sendable {
       replies[request.operationName] = queue
       return next
     }
-    guard let reply else { throw refuse(request) }
+    guard let reply else { throw await refuse(request) }
     if reply.delay > 0 { try await Task.sleep(for: .seconds(reply.delay)) }
     if let failure = reply.failure { throw failure }
     return reply.body ?? "{}"
   }
 
-  private func refuse(_ request: TransportRequest) -> DbError {
+  private func refuse(_ request: TransportRequest) async -> DbError {
     switch unanswered {
     case .networkError:
       return .Network(detail: "no reply queued for \(request.operationName)")
     case .strict:
       lock.withLock { missed.append(request) }
-      return .Invalid(detail: "MockTransport has no reply queued for \(request.operationName) variables=\(request.variablesJson)")
+      let detail = "MockTransport has no reply queued for \(request.operationName) variables=\(request.variablesJson)"
+      await withCheckedContinuation { done in
+        if case .terminated = reports.yield(Report(message: detail, done: done)) { done.resume() }
+      }
+      return .Invalid(detail: detail)
     }
   }
 }
