@@ -26,11 +26,12 @@ class SingletonEntityTest {
         User.profile.refresh()
     }
 
-    /** A new singleton entity requests the profile at once, so its reply is queued first and the test goes on after that request. */
+    /** A refresh sent while the first request is in flight joins it, so the first answer must be applied before the test refreshes. */
     private suspend fun createEntity(): Entity<User> {
         transport.enqueue("UserProfile", reply = """{"data":{"me":null}}""")
         val entity = User.entity()
         eventually("the profile request of the new entity") { transport.calls.size == 1 }
+        User.profile.load()
         return entity
     }
 
