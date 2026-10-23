@@ -23,7 +23,7 @@ extension Cell {
     switch self {
     case .null: .null
     case let .bool(value): .bool(value)
-    case let .int(value): .number(Double(value))
+    case let .int(value): .integer(value)
     case let .real(value): .number(value)
     case let .text(value): .string(value)
     case let .seq(items): .array(items.map(\.asJSON))

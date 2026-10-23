@@ -3,6 +3,7 @@ import Foundation
 public enum JSONValue: Codable, Sendable, Equatable, Hashable {
   case null
   case bool(Bool)
+  case integer(Int64)
   case number(Double)
   case string(String)
   case array([JSONValue])
@@ -12,6 +13,7 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
     let container = try decoder.singleValueContainer()
     if container.decodeNil() { self = .null }
     else if let value = try? container.decode(Bool.self) { self = .bool(value) }
+    else if let value = try? container.decode(Int64.self) { self = .integer(value) }
     else if let value = try? container.decode(Double.self) { self = .number(value) }
     else if let value = try? container.decode(String.self) { self = .string(value) }
     else if let value = try? container.decode([JSONValue].self) { self = .array(value) }
@@ -24,6 +26,7 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
     switch self {
     case .null: try container.encodeNil()
     case .bool(let value): try container.encode(value)
+    case .integer(let value): try container.encode(value)
     case .number(let value): try container.encode(value)
     case .string(let value): try container.encode(value)
     case .array(let value): try container.encode(value)
@@ -62,8 +65,20 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
   }
 
   public var objectValue: [String: JSONValue] { if case .object(let value) = self { value } else { [:] } }
-  public var intValue: Int? { if case .number(let value) = self { Int(exactly: value) } else { nil } }
-  public var doubleValue: Double? { if case .number(let value) = self { value } else { nil } }
+  public var intValue: Int? {
+    switch self {
+    case .integer(let value): Int(exactly: value)
+    case .number(let value): Int(exactly: value)
+    default: nil
+    }
+  }
+  public var doubleValue: Double? {
+    switch self {
+    case .integer(let value): Double(value)
+    case .number(let value): value
+    default: nil
+    }
+  }
   public var boolValue: Bool? { if case .bool(let value) = self { value } else { nil } }
   public var stringValue: String? { if case .string(let value) = self { value } else { nil } }
   public var text: String { String(decoding: (try? JSONEncoder().encode(self)) ?? Data("null".utf8), as: UTF8.self) }
@@ -71,7 +86,7 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
 
 extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral, ExpressibleByFloatLiteral {
   public init(stringLiteral value: String) { self = .string(value) }
-  public init(integerLiteral value: Int) { self = .number(Double(value)) }
+  public init(integerLiteral value: Int) { self = .integer(Int64(value)) }
   public init(booleanLiteral value: Bool) { self = .bool(value) }
   public init(floatLiteral value: Double) { self = .number(value) }
 }

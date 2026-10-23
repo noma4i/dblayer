@@ -33,7 +33,7 @@ fn json_literal(value: &Value, swift: bool) -> String {
         }
         Value::String(text) => if swift { format!(".string({})", string_literal(text, true)) } else { format!("JsonPrimitive({})", string_literal(text, false)) },
         Value::Bool(flag) => if swift { format!(".bool({flag})") } else { format!("JsonPrimitive({flag})") },
-        Value::Number(number) => if swift { format!(".number({number})") } else { format!("JsonPrimitive({number})") },
+        Value::Number(number) => if swift { format!(".{}({number})", if number.is_i64() { "integer" } else { "number" }) } else { format!("JsonPrimitive({number})") },
     }
 }
 

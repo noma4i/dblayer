@@ -2295,7 +2295,7 @@ public struct NestedValue: Codable, Sendable, Equatable {
     public let child: NestedValueChild?
     public let children: [NestedValueChild]
 
-    public init(title: String, note: String? = nil, nullableDefault: String? = "default", ownerId: String? = nil, count: Int = 2, ratio: Double = 1.5, enabled: Bool = false, createdAt: String? = nil, state: NestedValueState = NestedValueState.ready, labels: [String] = [], counts: [Int] = [], ratios: [Double] = [], flags: [Bool] = [], dates: [String] = [], owners: [String] = [], payload: JSONValue? = nil, rawValue: JSONValue = .object(["free": .array([.number(1), .bool(true), .null])]), preferences: NestedValuePreferences = NestedValuePreferences(label: "base"), presets: [NestedValuePreferences] = [NestedValuePreferences(label: "first")], metadata: JSONValue? = nil, values: JSONValue? = nil, child: NestedValueChild? = nil, children: [NestedValueChild] = []) {
+    public init(title: String, note: String? = nil, nullableDefault: String? = "default", ownerId: String? = nil, count: Int = 2, ratio: Double = 1.5, enabled: Bool = false, createdAt: String? = nil, state: NestedValueState = NestedValueState.ready, labels: [String] = [], counts: [Int] = [], ratios: [Double] = [], flags: [Bool] = [], dates: [String] = [], owners: [String] = [], payload: JSONValue? = nil, rawValue: JSONValue = .object(["free": .array([.integer(1), .bool(true), .null])]), preferences: NestedValuePreferences = NestedValuePreferences(label: "base"), presets: [NestedValuePreferences] = [NestedValuePreferences(label: "first")], metadata: JSONValue? = nil, values: JSONValue? = nil, child: NestedValueChild? = nil, children: [NestedValueChild] = []) {
         self.title = title
         self.note = note
         self.nullableDefault = nullableDefault
@@ -2365,7 +2365,7 @@ public struct NestedValue: Codable, Sendable, Equatable {
         dates = try container.decodeIfPresent([String].self, forKey: .dates) ?? []
         owners = try container.decodeIfPresent([IDText].self, forKey: .owners)?.map(\.value) ?? []
         payload = try container.decodeIfPresent(JSONValue.self, forKey: .payload)
-        rawValue = try container.decodeIfPresent(JSONValue.self, forKey: .rawValue) ?? .object(["free": .array([.number(1), .bool(true), .null])])
+        rawValue = try container.decodeIfPresent(JSONValue.self, forKey: .rawValue) ?? .object(["free": .array([.integer(1), .bool(true), .null])])
         preferences = try container.decodeIfPresent(NestedValuePreferences.self, forKey: .preferences) ?? NestedValuePreferences(label: "base")
         presets = try container.decodeIfPresent([NestedValuePreferences].self, forKey: .presets) ?? [NestedValuePreferences(label: "first")]
         metadata = try container.decodeIfPresent(JSONValue.self, forKey: .metadata)
@@ -2392,7 +2392,7 @@ public struct NestedValue: Codable, Sendable, Equatable {
         dates = try r.listOpt(13, \.asText) ?? []
         owners = try r.listOpt(14, \.asId) ?? []
         payload = try r.jsonOpt(15)
-        rawValue = try r.jsonOpt(16) ?? .object(["free": .array([.number(1), .bool(true), .null])])
+        rawValue = try r.jsonOpt(16) ?? .object(["free": .array([.integer(1), .bool(true), .null])])
         preferences = try r.objOpt(17, NestedValuePreferences.init(cells:)) ?? NestedValuePreferences(label: "base")
         presets = try r.arrOpt(18, NestedValuePreferences.init(cells:)) ?? [NestedValuePreferences(label: "first")]
         metadata = try r.jsonOpt(19)

@@ -26,7 +26,7 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 0), modelsJson: modelsJSON, transport: transport)
     let document = "query ScreenNode($id: ID!) { node(id: $id) { ... on CustomScreen { id slug version requires { ios android } spec { root state { path value } elements { id type slot children padding margin background radius expand align accessibilityLabel props visible press change } } } } }"
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ScreenNode"), "document": .string(document)])]).text)
-    let reply: JSONValue = .object(["data": .object(["node": .object(["__typename": .string("CustomScreen"), "id": .string("sample"), "slug": .string("sample"), "version": .number(1), "requires": .object(["ios": .number(2), "android": .null]), "spec": .object(input)])])])
+    let reply: JSONValue = .object(["data": .object(["node": .object(["__typename": .string("CustomScreen"), "id": .string("sample"), "slug": .string("sample"), "version": .integer(1), "requires": .object(["ios": .integer(2), "android": .null]), "spec": .object(input)])])])
     transport.enqueue("ScreenNode", reply: reply.text)
     _ = try await CustomScreen.node("sample")
     let saved = try #require(await CustomScreen.find("sample").current())

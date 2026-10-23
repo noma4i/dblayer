@@ -21,8 +21,8 @@ extension BridgeProbeTests {
   }
 
   static let paramCases: [ParamCase] = [
-    ParamCase("an int and a bool", Tail.since("c1", afterSequence: 120, pinned: true), ["containerId": .string("c1"), "afterSequence": .number(120), "pinned": .bool(true)]),
-    ParamCase("another int", Tail.since("c1", afterSequence: 121, pinned: true), ["containerId": .string("c1"), "afterSequence": .number(121), "pinned": .bool(true)]),
+    ParamCase("an int and a bool", Tail.since("c1", afterSequence: 120, pinned: true), ["containerId": .string("c1"), "afterSequence": .integer(120), "pinned": .bool(true)]),
+    ParamCase("another int", Tail.since("c1", afterSequence: 121, pinned: true), ["containerId": .string("c1"), "afterSequence": .integer(121), "pinned": .bool(true)]),
     ParamCase("a schema enum", Inbox.shelf(list: .primary), ["list": .string("PRIMARY")]),
     ParamCase("another schema enum value", Inbox.shelf(list: .secondary), ["list": .string("SECONDARY")]),
     ParamCase("a schema enum value the build lacks", Inbox.shelf(list: .unknown("LATER")), ["list": .string("LATER")]),

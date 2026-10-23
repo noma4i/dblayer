@@ -16,7 +16,7 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 1), modelsJson: modelsJSON, transport: transport)
     try DB.database.setOnline(online: false)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]"#)
-    let items = (0..<2).map { UploadItem(values: ["clientKey": .string("key-\($0)"), "size": .number(2)], path: source.path) }
+    let items = (0..<2).map { UploadItem(values: ["clientKey": .string("key-\($0)"), "size": .integer(2)], path: source.path) }
     let rows = try await Asset.uploadCreate(items: items, request: UploadBatchRequest(operation: "create_files", createBlob: "CreateBlob"))
     #expect(rows.count == 2)
     #expect(rows.allSatisfy { $0.id.hasPrefix("temp-") && $0.sync.state == .sending && $0.upload != nil })
