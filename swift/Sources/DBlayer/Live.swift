@@ -143,6 +143,7 @@ final class LiveBox<Value: Sendable>: ObservableObject {
     task = Task { [weak self] in
       do {
         for await next in try await source.stream() { self?.value = next }
+      } catch is CancellationError {
       } catch { self?.failure = error }
     }
   }
@@ -209,7 +210,7 @@ public final class LiveList<Model: DBModel> {
     tasks = [
       Task { [weak self] in
         let stream: LiveStream<Snapshot<Model>>
-        do { stream = try await snapshots.stream() } catch {
+        do { stream = try await snapshots.stream() } catch is CancellationError { return } catch {
           self?.snapshot = Snapshot(rows: [], replaced: [:], phase: .failed, error: error.localizedDescription, errorKind: "subscription")
           return
         }

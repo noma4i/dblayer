@@ -309,7 +309,7 @@ for await change in Moment.recent { handle(change.rows) }
 Moment.recent.collect { change -> handle(change.rows) }
 ```
 
-A live query that cannot start ends its stream without a value. `current()` then returns the initial value.
+A live query that cannot start throws its error from `current()` and `stream()`. A cancelled caller gets the cancellation error, not the initial value, and a cancellation is never shown as a load failure.
 
 ## Queries
 

@@ -25,7 +25,7 @@ end
 ```swift
 let session = try await Session.create(token: "saved")
 let edited = try await session.update(token: "changed")
-let cached = await Session.find(edited.id).current()
+let cached = try await Session.find(edited.id).current()
 try await edited.destroy()
 ```
 
