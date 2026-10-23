@@ -10,7 +10,7 @@ struct Tape(Mutex<Vec<LiveChange>>);
 async fn changes_classify_insert_update_move_and_remove_without_list_state() {
     let (db, ids) = with_rows(3).await;
     let tape = Arc::new(Tape(Mutex::default()));
-    let live = db.live_query(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), tape.clone()).unwrap();
+    let live = db.live_query(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), tape.clone());
     db.db.settle();
     assert_eq!(tape.0.lock().unwrap()[0].inserted, vec![0, 1, 2]);
     let row = db.create("Moment".into(), r#"{"text":"z"}"#.into(), "{}".into()).await.unwrap();
@@ -53,7 +53,7 @@ async fn inv_observe_17_a_live_change_of_one_changed_row_carries_one_row_at_ever
     for count in [20, 200, 2000] {
         let (db, ids) = with_rows(count).await;
         let tape = Arc::new(Tape(Mutex::default()));
-        let _live = db.live_query(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), tape.clone()).unwrap();
+        let _live = db.live_query(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), tape.clone());
         db.db.settle();
         assert_eq!(tape.0.lock().unwrap()[0].rows.len(), count, "the first delivery is the whole list");
         db.update("Moment".into(), ids[count / 2].clone(), format!(r#"{{"text":"t{:05}x"}}"#, count / 2), "{}".into()).await.unwrap();
@@ -66,9 +66,11 @@ async fn inv_observe_17_a_live_change_of_one_changed_row_carries_one_row_at_ever
 
 #[test]
 fn inv_panic_01_live_and_state_subscriptions_cancel_after_a_poisoned_lock() {
-    let (latest, _) = tokio::sync::watch::channel(None);
-    let (_, initial_load) = tokio::sync::watch::channel(Some(Ok(())));
-    let live = super::LiveSubscription { latest, initial_load, handles: Mutex::new(None) };
+    struct Quiet;
+    impl super::QueryListener for Quiet {
+        fn changed(&self, _: LiveChange) {}
+    }
+    let live = super::LiveSubscription { feed: super::live_feed::LiveFeed::new(Arc::new(Quiet)), handles: Mutex::new(None) };
     crate::db::fixtures::poison(&live.handles);
     live.cancel();
     let state = super::StateSubscription { task: Mutex::new(None) };
@@ -82,7 +84,7 @@ async fn a_live_query_leaves_its_rows_to_peek_and_no_subscription() {
     let query = r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#;
     assert!(db.peek_query(query.into()).unwrap().is_none());
     let tape = Arc::new(Tape(Mutex::default()));
-    let live = db.live_query(query.into(), tape.clone()).unwrap();
+    let live = db.live_query(query.into(), tape.clone());
     db.db.settle();
     live.cancel();
     drop(live);
@@ -115,7 +117,7 @@ async fn a_live_window_puts_only_its_rows_on_the_wire_at_every_list_size() {
     for count in [20, 200, 2000] {
         let (db, ids) = with_rows(count).await;
         let tape = Arc::new(Tape(Mutex::default()));
-        let live = db.live_window(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 10, tape.clone()).unwrap();
+        let live = db.live_window(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 10, tape.clone());
         db.db.settle();
         let first = tape.0.lock().unwrap()[0].clone();
         let edge = first.window.clone().unwrap();

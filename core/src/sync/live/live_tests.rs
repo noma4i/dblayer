@@ -111,7 +111,7 @@ async fn first_reader_starts_the_subscription_and_the_second_does_not_duplicate_
     let second = rig.sync.watch("moments", "pulse", &none()).unwrap();
     settle().await;
     assert_eq!(rig.transport.call_count("MomentEvents"), 1);
-    assert_eq!(rig.sync.inner.live_state(KEY), Some((2, true)));
+    assert_eq!(rig.sync.inner.live_status(KEY), Some((2, true)));
     drop((first, second));
 }
 
@@ -121,7 +121,7 @@ async fn watching_a_relation_without_updates_starts_nothing() {
     let _watch = rig.sync.watch("moments", "feed", &none()).unwrap();
     settle().await;
     assert_eq!(rig.transport.call_count("MomentEvents"), 0);
-    assert_eq!(rig.sync.inner.live_state(KEY), None);
+    assert_eq!(rig.sync.inner.live_status(KEY), None);
 }
 
 #[tokio::test(start_paused = true)]
@@ -131,10 +131,10 @@ async fn subscription_closes_after_the_last_reader_leaves_and_the_linger_passes(
     settle().await;
     drop(watch);
     tokio::time::sleep(Duration::from_secs(29)).await;
-    assert_eq!(rig.sync.inner.live_state(KEY), Some((0, true)));
+    assert_eq!(rig.sync.inner.live_status(KEY), Some((0, true)));
     assert_eq!(rig.transport.cancellations("MomentEvents"), 0);
     tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(rig.sync.inner.live_state(KEY), None);
+    assert_eq!(rig.sync.inner.live_status(KEY), None);
     assert_eq!(rig.transport.cancellations("MomentEvents"), 1);
 }
 
@@ -146,7 +146,7 @@ async fn reader_returning_within_the_linger_keeps_the_same_subscription() {
     tokio::time::sleep(Duration::from_secs(10)).await;
     let _back = rig.sync.watch("moments", "pulse", &none()).unwrap();
     tokio::time::sleep(Duration::from_secs(60)).await;
-    assert_eq!(rig.sync.inner.live_state(KEY), Some((1, true)));
+    assert_eq!(rig.sync.inner.live_status(KEY), Some((1, true)));
     assert_eq!(rig.transport.call_count("MomentEvents"), 1);
 }
 

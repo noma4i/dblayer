@@ -81,9 +81,10 @@ public struct Query<Model: DBModel>: Sendable {
     json(refreshOnConnect: false)
   }
 
-  private func json(refreshOnConnect: Bool) -> String {
+  private func json(refreshOnConnect: Bool, observeOnly: Bool = false) -> String {
     var object: [String: JSONValue] = ["model": .string(Model.modelName)]
     if refreshOnConnect { object["refreshOnConnect"] = .bool(true) }
+    if observeOnly { object["observeOnly"] = .bool(true) }
     if let condition { object["where"] = condition.json }
     if !orders.isEmpty { object["order"] = .array(orders.map { .object(["field": .string($0.field), "direction": .string($0.direction)]) }) }
     if let limitCount { object["limit"] = .number(Double(limitCount)) }
@@ -144,11 +145,7 @@ public struct Query<Model: DBModel>: Sendable {
   }
 
   public var state: LiveSource<LoadState> {
-    let model = Model.modelName, relation = relation ?? "", params = JSONValue.object(params).text
-    return LiveSource(initial: LoadState()) { emit in
-      let subscription = try DB.database.liveState(model: model, relation: relation, paramsJson: params, listener: StateObserver { emit(LoadState($0)) })
-      return { subscription.cancel() }
-    }
+    LiveSource(initial: LoadState(), attach: { listener in try DB.database.liveQuery(queryJson: json(refreshOnConnect: false, observeOnly: true), listener: listener) }, map: { LoadState($0) })
   }
 }
 
@@ -187,12 +184,6 @@ public struct Snapshot<Model: DBModel>: Sendable {
   }
 }
 
-final class StateObserver: StateListener, @unchecked Sendable {
-  let body: @Sendable (RelationStateChange) -> Void
-  init(_ body: @escaping @Sendable (RelationStateChange) -> Void) { self.body = body }
-  func changed(state: RelationStateChange) { body(state) }
-}
-
 public struct LoadState: Sendable, Equatable {
   public enum Phase: String, Sendable { case idle, loading, failed }
 
@@ -211,15 +202,19 @@ public struct LoadState: Sendable, Equatable {
 
   public init() {}
 
-  init(_ change: RelationStateChange) {
-    phase = Phase(rawValue: change.phase) ?? .idle
+  init(_ change: LiveChange) {
+    switch change.phase {
+    case .loading: phase = .loading
+    case .failed: phase = .failed
+    default: phase = .idle
+    }
     isInitialLoading = change.initial
     isRefreshing = change.refreshing
     isFetchingMore = change.fetchingMore
     hasMore = change.hasMore
     total = change.total
     errorKind = change.errorKind
-    error = change.error
+    error = change.error.map(String.init(describing:))
     loadedAt = change.loadedAt
   }
 

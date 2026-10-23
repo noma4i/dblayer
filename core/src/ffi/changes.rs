@@ -61,6 +61,7 @@ impl LiveChanges {
             let mut replacement = LiveChange::whole(change.revision, state.rows.clone());
             replacement.error = change.error.clone();
             replacement.window = change.window.clone();
+            replacement.carry_state(&change);
             state.pending.clear();
             state.pending.push_back(replacement);
         } else {
@@ -74,7 +75,7 @@ impl LiveChanges {
 impl Database {
     pub fn changes(&self, query_json: String) -> Result<Arc<LiveChanges>, DbError> {
         let queue = LiveChanges::new();
-        let subscription = self.live_query(query_json, Arc::new(Listener(Arc::downgrade(&queue))))?;
+        let subscription = self.live_query(query_json, Arc::new(Listener(Arc::downgrade(&queue))));
         *crate::db::locked(&queue.subscription) = Some(subscription);
         Ok(queue)
     }

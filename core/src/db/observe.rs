@@ -10,7 +10,7 @@ use serde_json::Value;
 use super::dispatch::Event;
 use super::entities::{EntityGroup, EntitySubscriber};
 use super::error::DbError;
-use super::listeners::{Listener, Subscriber};
+use super::listeners::{Feed, Listener, Subscriber};
 use super::open::{locked, Db, Shared};
 use super::reads::{ReadJob, ReadResult, ReadRows, ReadTarget};
 use super::window::WindowSeed;
@@ -27,6 +27,7 @@ struct GroupFacts {
     read_error: Option<DbError>,
     joining: Subscribers,
     grows: VecDeque<(usize, usize)>,
+    seen: i64,
 }
 
 struct Group {
@@ -49,6 +50,7 @@ struct Opening {
     missed: bool,
     read_error: Option<DbError>,
     grows: VecDeque<(usize, usize)>,
+    seen: i64,
 }
 
 pub(crate) struct Stepping {
@@ -246,8 +248,13 @@ impl Shared {
     pub(crate) fn refresh_groups(&self, batch: &[Event]) {
         let (due, touched): (Vec<Due>, Vec<(String, ModelKey, BTreeSet<RowId>)>) = {
             let mut observers = self.observers();
+            let top = batch.iter().map(|event| event.revision).max().unwrap_or(0);
             for opening in observers.opening.values_mut() {
                 opening.missed |= batch.iter().any(|event| opening.deps.hit(event));
+                opening.seen = opening.seen.max(top);
+            }
+            for group in observers.groups.values_mut() {
+                group.facts.seen = group.facts.seen.max(top);
             }
             let mut keys = observers.candidates(batch);
             keys.extend(observers.groups.iter().filter(|(_, group)| group.facts.read_error.is_some()).map(|(key, _)| key.clone()));
@@ -287,6 +294,10 @@ impl Shared {
             });
         }
         let mut observers = self.observers();
+        let idle: Vec<String> = observers.groups.keys().cloned().collect();
+        for key in idle {
+            self.pump(&mut observers, &key);
+        }
         let retry: Vec<String> = observers.opening.iter().filter(|(_, opening)| !opening.reading && opening.read_error.is_some()).map(|(key, _)| key.clone()).collect();
         for key in retry {
             self.issue_open(&mut observers, &key);
@@ -357,6 +368,22 @@ impl Shared {
             self.issue_publish(observers, key, Some(step), Some(grow));
         } else if !group.facts.joining.is_empty() {
             self.issue_join(observers, key);
+        } else {
+            let reach = group.facts.seen.max(group.at);
+            for (_, subscriber) in &group.subscribers {
+                subscriber.reach(&self.executor, reach);
+            }
+        }
+    }
+
+    fn tell_failure(&self, observers: &Observers, key: &str, error: &DbError) {
+        let waiting: Vec<&Arc<Subscriber>> = match (observers.groups.get(key), observers.opening.get(key)) {
+            (Some(group), _) => group.subscribers.iter().chain(&group.facts.joining).map(|(_, subscriber)| subscriber).collect(),
+            (None, Some(opening)) => opening.waiting.iter().map(|(_, subscriber)| subscriber).collect(),
+            (None, None) => Vec::new(),
+        };
+        for subscriber in waiting {
+            subscriber.fail(&self.executor, error.to_string());
         }
     }
 
@@ -400,14 +427,15 @@ impl Shared {
         }
         locked(&self.counters).owner_panics += 1;
         let mut observers = self.observers();
-        let error = || DbError::Internal(format!("panic while handling {key}"));
+        let error = DbError::Internal(format!("panic while handling {key}"));
+        self.tell_failure(&observers, key, &error);
         if let Some(group) = observers.groups.get_mut(key) {
             group.facts.reading = false;
             group.facts.again = false;
-            group.facts.read_error = Some(error());
+            group.facts.read_error = Some(error);
         } else if let Some(opening) = observers.opening.get_mut(key) {
             opening.reading = false;
-            opening.read_error = Some(error());
+            opening.read_error = Some(error);
         }
     }
 
@@ -426,6 +454,9 @@ impl Shared {
                     ReadTarget::Publish { key, token, .. } | ReadTarget::Join { key, token, .. } => {
                         locked(&self.counters).query_reads_failed += 1;
                         let mut observers = self.observers();
+                        if observers.groups.get(&key).is_some_and(|group| group.token == token) {
+                            self.tell_failure(&observers, &key, &error);
+                        }
                         if let Some(group) = observers.groups.get_mut(&key).filter(|group| group.token == token) {
                             group.facts.reading = false;
                             group.facts.read_error = Some(error);
@@ -434,6 +465,9 @@ impl Shared {
                     ReadTarget::Open { key, token } => {
                         locked(&self.counters).query_reads_failed += 1;
                         let mut observers = self.observers();
+                        if observers.opening.get(&key).is_some_and(|opening| opening.token == token) {
+                            self.tell_failure(&observers, &key, &error);
+                        }
                         if let Some(opening) = observers.opening.get_mut(&key).filter(|opening| opening.token == token) {
                             opening.reading = false;
                             opening.read_error = Some(error);
@@ -517,7 +551,7 @@ impl Shared {
         let Some(opening) = observers.opening.remove(key) else { return };
         let Evaluated { version, loaded } = evaluated;
         let version = Arc::new(version);
-        let facts = GroupFacts { again: opening.missed, grows: opening.grows, ..GroupFacts::default() };
+        let facts = GroupFacts { again: opening.missed, grows: opening.grows, seen: opening.seen, ..GroupFacts::default() };
         let token = observers.next();
         let group = Group { subject: opening.subject, deps: opening.deps, at: version.revision, epoch: version.epoch, token, version: version.clone(), subscribers: opening.waiting.clone(), facts };
         observers.add_group(key, group);
@@ -545,7 +579,7 @@ impl Db {
             opening.waiting.push((id, subscriber.clone()));
         } else {
             let token = observers.next();
-            observers.opening.insert(key.clone(), Opening { subject, deps, token, waiting: vec![(id, subscriber.clone())], reading: false, missed: false, read_error: None, grows: VecDeque::new() });
+            observers.opening.insert(key.clone(), Opening { subject, deps, token, waiting: vec![(id, subscriber.clone())], reading: false, missed: false, read_error: None, grows: VecDeque::new(), seen: 0 });
         }
         self.shared.pump(&mut observers, &key);
         drop(observers);
@@ -562,6 +596,14 @@ impl Db {
 
     pub fn observe_row(&self, model: &str, id: &RowId, listener: impl Fn(&Change) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
         self.subscribe(Subject::Row(RowRef::new(ModelKey::new(model), id.clone())), Listener::Rows(Box::new(listener)))
+    }
+
+    pub(crate) fn observe_feed(&self, subject: Subject, listener: impl Fn(Feed) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
+        self.subscribe(subject, Listener::Feed(Box::new(listener)))
+    }
+
+    pub(crate) fn observe_query_feed(&self, query: Query, count: bool, listener: impl Fn(Feed) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
+        self.observe_feed(if count { Subject::Count(query) } else { Subject::Rows(query) }, listener)
     }
 
     pub fn observe_count(&self, query: Query, listener: impl Fn(&CountChange) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {

@@ -17,7 +17,7 @@ impl LoadError {
             SyncError::Store(_) => "database",
             _ => "other",
         };
-        Self { kind, message: error.to_string() }
+        Self { kind, message: error.to_string(), cause: Some(error.clone()) }
     }
 }
 
@@ -40,8 +40,9 @@ impl Inner {
                 order: Order { applied: window.applied, pages: window.pages },
                 data: Data::Landed { has_more: window.has_next, total: window.total, loaded_at: freshness.landed_at },
                 has_rows,
+                revision: 0,
             },
-            _ => Stored { epoch, order: Order::NONE, data: if has_rows { Data::Local } else { Data::NotLoaded }, has_rows },
+            _ => Stored { epoch, order: Order::NONE, data: if has_rows { Data::Local } else { Data::NotLoaded }, has_rows, revision: 0 },
         })
     }
 }

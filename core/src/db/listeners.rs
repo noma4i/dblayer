@@ -41,11 +41,15 @@ pub(crate) struct Mailbox {
     unmergeable: bool,
     scheduled: bool,
     delivered: Option<Arc<Version>>,
+    reached: i64,
+    told_reached: i64,
+    failure: Option<String>,
 }
 
 impl Mailbox {
     pub(crate) fn push(&mut self, version: Arc<Version>, replaced: &[(RowId, RowId)], loaded: Loaded) -> bool {
         self.latest = Some(version);
+        self.failure = None;
         self.loaded.rows.extend(loaded.rows);
         for (name, parents) in loaded.related {
             self.loaded.related.entry(name).or_default().extend(parents);
@@ -92,6 +96,11 @@ impl Mailbox {
         self.scheduled = false;
     }
 
+    fn take_tail(&mut self) -> Tail {
+        let reached = (self.reached > self.told_reached).then(|| std::mem::replace(&mut self.told_reached, self.reached));
+        Tail { reached: reached.map(|_| self.reached), failure: self.failure.take() }
+    }
+
     fn drop_pending(&mut self) {
         self.latest = None;
         self.replaced.clear();
@@ -103,6 +112,19 @@ impl Mailbox {
     }
 }
 
+#[derive(Default)]
+struct Tail {
+    reached: Option<i64>,
+    failure: Option<String>,
+}
+
+pub(crate) enum Feed {
+    Rows(Change),
+    Count(CountChange),
+    Reached(i64),
+    Failed(String),
+}
+
 pub(crate) trait Runnable: Send + Sync {
     fn run(&self);
 }
@@ -110,6 +132,7 @@ pub(crate) trait Runnable: Send + Sync {
 pub(crate) enum Listener {
     Rows(Box<dyn Fn(&Change) + Send + Sync>),
     Count(Box<dyn Fn(&CountChange) + Send + Sync>),
+    Feed(Box<dyn Fn(Feed) + Send + Sync>),
 }
 
 pub(crate) struct Subscriber {
@@ -141,17 +164,48 @@ impl Subscriber {
         }
     }
 
+    pub(crate) fn reach(self: &Arc<Self>, executor: &Arc<Executor>, revision: i64) {
+        if !matches!(self.listener, Listener::Feed(_)) {
+            return;
+        }
+        let needs_run = {
+            let mut mailbox = held(&self.mailbox);
+            if revision <= mailbox.reached {
+                return;
+            }
+            mailbox.reached = revision;
+            !std::mem::replace(&mut mailbox.scheduled, true)
+        };
+        if needs_run {
+            executor.schedule(self.clone());
+        }
+    }
+
+    pub(crate) fn fail(self: &Arc<Self>, executor: &Arc<Executor>, error: String) {
+        if !matches!(self.listener, Listener::Feed(_)) {
+            return;
+        }
+        let needs_run = {
+            let mut mailbox = held(&self.mailbox);
+            mailbox.failure = Some(error);
+            !std::mem::replace(&mut mailbox.scheduled, true)
+        };
+        if needs_run {
+            executor.schedule(self.clone());
+        }
+    }
+
     fn run_deliveries(&self) {
         loop {
-            let mut taken = {
+            let (taken, tail) = {
                 let mut mailbox = held(&self.mailbox);
-                match mailbox.take() {
-                    Some(taken) => taken,
-                    None => {
-                        mailbox.finish();
-                        return;
-                    }
+                let taken = mailbox.take();
+                let tail = mailbox.take_tail();
+                if taken.is_none() && tail.reached.is_none() && tail.failure.is_none() {
+                    mailbox.finish();
+                    return;
                 }
+                (taken, tail)
             };
             if self.cancelled.load(Ordering::SeqCst) {
                 let mut mailbox = held(&self.mailbox);
@@ -159,33 +213,43 @@ impl Subscriber {
                 mailbox.finish();
                 return;
             }
-            self.deliver(&mut taken);
-            held(&self.mailbox).delivered = Some(taken.latest);
+            if let Some(mut taken) = taken {
+                self.deliver(&mut taken);
+                held(&self.mailbox).delivered = Some(taken.latest);
+            }
+            if let Listener::Feed(call) = &self.listener {
+                for feed in tail.reached.map(Feed::Reached).into_iter().chain(tail.failure.map(Feed::Failed)) {
+                    let _ = catch_unwind(AssertUnwindSafe(|| call(feed)));
+                }
+            }
         }
     }
 
+    fn rows_change(&self, taken: &mut Taken, body: &RowsBody) -> Option<Change> {
+        let first = taken.delivered.is_none();
+        let diff = match &taken.delivered {
+            None => Some(Diff::inserting(&body.entries(), if taken.overflowed { &[] } else { &taken.replaced })),
+            Some(previous) => self.rows_diff(previous, taken, body),
+        };
+        diff.map(|diff| {
+            let (rows, related) = if first { whole_rows(body, &mut taken.loaded) } else { changed_rows(&diff, &mut taken.loaded.rows, &mut taken.loaded.related) };
+            locked(&self.counters).rows_delivered += rows.len();
+            Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.len(), window: body.window.as_ref().map(|part| part.edge) }
+        })
+    }
+
+    fn count_change(&self, taken: &Taken, count: i64) -> Option<CountChange> {
+        let changed = !matches!(taken.delivered.as_deref(), Some(Version { body: Body::Count(previous), .. }) if *previous == count);
+        changed.then(|| CountChange { revision: taken.latest.revision, count })
+    }
+
     pub(crate) fn deliver(&self, taken: &mut Taken) {
-        let outcome = match (&self.listener, &taken.latest.body) {
-            (Listener::Rows(call), Body::Rows(body)) => {
-                let first = taken.delivered.is_none();
-                let diff = match &taken.delivered {
-                    None => Some(Diff::inserting(&body.entries(), if taken.overflowed { &[] } else { &taken.replaced })),
-                    Some(previous) => self.rows_diff(previous, taken, body),
-                };
-                diff.map(|diff| {
-                    let (rows, related) = if first { whole_rows(body, &mut taken.loaded) } else { changed_rows(&diff, &mut taken.loaded.rows, &mut taken.loaded.related) };
-                    locked(&self.counters).rows_delivered += rows.len();
-                    let change = Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.len(), window: body.window.as_ref().map(|part| part.edge) };
-                    catch_unwind(AssertUnwindSafe(|| call(&change)))
-                })
-            }
-            (Listener::Count(call), Body::Count(count)) => {
-                let changed = !matches!(taken.delivered.as_deref(), Some(Version { body: Body::Count(previous), .. }) if previous == count);
-                changed.then(|| {
-                    let change = CountChange { revision: taken.latest.revision, count: *count };
-                    catch_unwind(AssertUnwindSafe(|| call(&change)))
-                })
-            }
+        let latest = taken.latest.clone();
+        let outcome = match (&self.listener, &latest.body) {
+            (Listener::Rows(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| catch_unwind(AssertUnwindSafe(|| call(&change)))),
+            (Listener::Feed(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| catch_unwind(AssertUnwindSafe(|| call(Feed::Rows(change))))),
+            (Listener::Count(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| catch_unwind(AssertUnwindSafe(|| call(&change)))),
+            (Listener::Feed(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| catch_unwind(AssertUnwindSafe(|| call(Feed::Count(change))))),
             _ => None,
         };
         if outcome.is_some() {

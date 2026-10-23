@@ -40,7 +40,7 @@ async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
     renamed.replaced = vec![super::super::live::Replacement { from, to: "canonical".into() }];
     renamed.renamed = renamed.replaced.clone();
     queue.push(renamed);
-    for index in 0..CHANGE_QUEUE_LIMIT { queue.push(LiveChange::failed(current.revision + 2 + index as i64, DbError::Network { detail: "lost".into() })); }
+    for index in 0..CHANGE_QUEUE_LIMIT { queue.push(LiveChange { error: Some(DbError::Network { detail: "lost".into() }), ..LiveChange::empty(current.revision + 2 + index as i64) }); }
     let replacement = queue.next().await.unwrap();
     assert!(replacement.full);
     assert_eq!(replacement.rows, expected);

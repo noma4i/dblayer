@@ -169,7 +169,7 @@ impl Inner {
     }
 
     #[cfg(test)]
-    pub(crate) fn live_state(&self, key: &str) -> Option<(usize, bool)> {
+    pub(crate) fn live_status(&self, key: &str) -> Option<(usize, bool)> {
         locked(&self.lives).get(key).map(|live| (live.readers, live.subscription.is_some()))
     }
 }

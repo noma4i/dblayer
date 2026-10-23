@@ -10,11 +10,15 @@ mod load_owner;
 #[cfg(test)]
 mod load_machine_tests;
 #[cfg(test)]
+mod load_phase_tests;
+#[cfg(test)]
 mod load_owner_tests;
 #[cfg(test)]
 mod load_owner_panic_tests;
 #[cfg(test)]
 mod load_machine_oracle_tests;
+#[cfg(test)]
+mod load_wiring_tests;
 mod node;
 mod normalize;
 mod online;
@@ -35,6 +39,7 @@ pub use error::SyncError;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
 pub use load_machine::{LoadError, LoadPhase, RelationState};
+pub(crate) use load_machine::snapshot_phase;
 pub use resume::{ResumeReport, Watch};
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
 pub use subscribe::{EventEffect, EventSubscription, SubscriptionDef, SubscriptionStatus};

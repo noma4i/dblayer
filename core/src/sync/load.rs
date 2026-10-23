@@ -21,7 +21,7 @@ use super::land::{Landed, Landing};
 use super::normalize::normalize_nodes;
 use super::registry::OperationDef;
 use super::variables::load_variables;
-use super::load_machine::LoadError;
+use super::load_machine::{LoadError, Stored};
 use super::load_owner::FlightTicket;
 use super::{locked, FlightEnd, FlightResult, Inner, Sync};
 
@@ -84,7 +84,7 @@ impl Resolved<'_> {
 }
 
 enum Executed {
-    Landed(LoadOutcome),
+    Landed(LoadOutcome, i64),
     Kept(SyncError),
     Failed(SyncError),
 }
@@ -238,10 +238,10 @@ impl Inner {
                     let mut guard = FlightGuard { inner: self, key: flight_key, sender };
                     let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), self.stored(resolved));
                     let result = match self.execute(resolved, cursor, force).await {
-                        Executed::Landed(outcome) => {
+                        Executed::Landed(outcome, revision) => {
                             match outcome.status {
                                 LoadStatus::Discarded(_) => ticket.discarded(),
-                                _ => ticket.landed(self.stored(resolved)),
+                                _ => ticket.landed(self.stored(resolved).map(|stored| Stored { revision, ..stored })),
                             }
                             Ok(outcome)
                         }
@@ -318,10 +318,10 @@ impl Inner {
             keeps_total: resolved.remote.total_from.is_some(),
             attempt,
         };
-        Ok(Executed::Landed(match self.land(landing)? {
-            Landed::Applied { rows, invalid } => LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts },
-            Landed::Discarded(reason) => LoadOutcome { attempts, ..LoadOutcome::of(LoadStatus::Discarded(reason)) },
-        }))
+        Ok(match self.land(landing)? {
+            Landed::Applied { rows, invalid, revision } => Executed::Landed(LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts }, revision),
+            Landed::Discarded(reason) => Executed::Landed(LoadOutcome { attempts, ..LoadOutcome::of(LoadStatus::Discarded(reason)) }, 0),
+        })
     }
 
     fn failed(error: SyncError, force: bool, has_window: bool) -> Executed {

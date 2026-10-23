@@ -6,21 +6,21 @@ const WINDOWS: [(&str, &str); 2] = [("a", "m1"), ("b", "m2")];
 const SEQUENCES: u64 = 10_000;
 const LENGTH: usize = 40;
 
-struct Random(u64);
+pub(super) struct Random(pub(super) u64);
 
 impl Random {
-    fn next(&mut self) -> u64 {
+    pub(super) fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         self.0
     }
 
-    fn below(&mut self, bound: usize) -> usize {
+    pub(super) fn below(&mut self, bound: usize) -> usize {
         (self.next() % bound as u64) as usize
     }
 
-    fn chance(&mut self, one_in: usize) -> bool {
+    pub(super) fn chance(&mut self, one_in: usize) -> bool {
         self.below(one_in) == 0
     }
 }
@@ -41,16 +41,17 @@ impl Script {
         let epoch = if self.random.chance(4) { self.epoch.saturating_sub(1) } else { self.epoch };
         let has_rows = self.random.chance(2);
         let applied = self.random.below(20) as i64;
+        let revision = self.random.below(30) as i64;
         Some(match self.random.below(3) {
-            0 => Stored { epoch, order: Order::NONE, data: Data::NotLoaded, has_rows: false },
-            1 => Stored { epoch, order: Order::NONE, data: Data::Local, has_rows: true },
-            _ => Stored { epoch, order: Order { applied, pages: 1 + self.random.below(3) as i64 }, data: Data::Landed { has_more: has_rows, total: Some(applied), loaded_at: applied }, has_rows },
+            0 => Stored { epoch, order: Order::NONE, data: Data::NotLoaded, has_rows: false, revision },
+            1 => Stored { epoch, order: Order::NONE, data: Data::Local, has_rows: true, revision },
+            _ => Stored { epoch, order: Order { applied, pages: 1 + self.random.below(3) as i64 }, data: Data::Landed { has_more: has_rows, total: Some(applied), loaded_at: applied }, has_rows, revision },
         })
     }
 
     fn error(&mut self) -> LoadError {
         let kind = ["network", "server", "database", "unrecognized"][self.random.below(4)];
-        LoadError { kind, message: kind.to_string() }
+        LoadError::new(kind, kind)
     }
 
     fn next(&mut self) -> Event {
@@ -103,12 +104,13 @@ struct Seen {
     open: Vec<(FlightId, LoadKind)>,
     accepted: Option<(Order, Data)>,
     has_rows: bool,
+    needs: i64,
     outcome: Outcome,
     retry: Option<LoadKind>,
     read_error: Option<LoadError>,
 }
 
-struct Replay {
+pub(super) struct Replay {
     windows: BTreeMap<String, Seen>,
     closed: bool,
     ignored: u32,
@@ -116,10 +118,10 @@ struct Replay {
 }
 
 fn seen<'a>(run: &'a mut Replay, window: &str, model: &str) -> &'a mut Seen {
-    run.windows.entry(window.to_string()).or_insert_with(|| Seen { model: model.to_string(), open: vec![], accepted: None, has_rows: false, outcome: Outcome::Nothing, retry: None, read_error: None })
+    run.windows.entry(window.to_string()).or_insert_with(|| Seen { model: model.to_string(), open: vec![], accepted: None, has_rows: false, needs: 0, outcome: Outcome::Nothing, retry: None, read_error: None })
 }
 
-fn replay(history: &[Event]) -> Replay {
+pub(super) fn replay(history: &[Event]) -> Replay {
     let mut run = Replay { windows: BTreeMap::new(), closed: false, ignored: 0, retried: BTreeSet::new() };
     let mut all_epoch = 0;
     let mut model_epochs: BTreeMap<String, u64> = BTreeMap::new();
@@ -162,6 +164,9 @@ fn replay(history: &[Event]) -> Replay {
                         seen.open.remove(at);
                         seen.outcome = Outcome::Landed;
                         seen.retry = None;
+                        if let Some(stored) = stored.as_ref().filter(|stored| stored.epoch >= current) {
+                            seen.needs = seen.needs.max(stored.revision);
+                        }
                         take(seen, stored, false, current);
                         true
                     }
@@ -248,7 +253,7 @@ fn replay(history: &[Event]) -> Replay {
     run
 }
 
-fn expected(run: &Replay, window: &str) -> Option<RelationState> {
+pub(super) fn expected(run: &Replay, window: &str) -> Option<RelationState> {
     let seen = run.windows.get(window)?;
     let last_failure = match &seen.outcome {
         Outcome::Failed(error) => Some(error.clone()),
@@ -279,6 +284,7 @@ fn expected(run: &Replay, window: &str) -> Option<RelationState> {
         total,
         error: seen.read_error.clone().or(last_failure),
         loaded_at,
+        revision: seen.needs,
     })
 }
 

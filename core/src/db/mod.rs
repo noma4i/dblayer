@@ -42,6 +42,7 @@ pub use open::{Db, DbConfig, OpenReport};
 pub use replace::{OnAbsent, ReplaceRequest};
 pub use row::{Record, Row};
 pub use warm::Peeked;
+pub(crate) use listeners::Feed;
 pub(crate) use local_write::{plan_fault, read_outbox};
 pub(crate) use open::locked;
 pub(crate) use prior::Prior;
@@ -52,6 +53,8 @@ pub use window::{Page, Slice, WindowEdge, WindowHandle, WindowSpec};
 pub(crate) mod fixtures;
 #[cfg(test)]
 mod invariants;
+#[cfg(test)]
+mod feed_tests;
 #[cfg(test)]
 mod entity_pin_tests;
 #[cfg(test)]

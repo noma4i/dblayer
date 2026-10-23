@@ -13,7 +13,7 @@ fn none() -> Map<String, serde_json::Value> {
 async fn a_relation_never_loaded_is_idle_with_nothing_more() {
     let rig = rig();
     let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
-    assert_eq!(*state.borrow(), RelationState { phase: LoadPhase::NotLoaded, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None });
+    assert_eq!(*state.borrow(), RelationState { phase: LoadPhase::NotLoaded, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 });
 }
 
 #[tokio::test(start_paused = true)]

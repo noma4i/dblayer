@@ -111,23 +111,12 @@ data class LoadState(
     val isLoading get() = phase == LoadPhase.Loading
     val failed get() = phase == LoadPhase.Failed
 
-    internal constructor(change: RelationStateChange) : this(
-        when (change.phase) { "loading" -> LoadPhase.Loading; "failed" -> LoadPhase.Failed; else -> LoadPhase.Idle },
+    internal constructor(change: LiveChange) : this(
+        when (change.phase) { LivePhase.LOADING -> LoadPhase.Loading; LivePhase.FAILED -> LoadPhase.Failed; else -> LoadPhase.Idle },
         change.initial, change.refreshing, change.fetchingMore,
-        change.hasMore, change.total, change.errorKind, change.error, change.loadedAt,
+        change.hasMore, change.total, change.errorKind, change.error?.toString(), change.loadedAt,
     )
 }
-
-private class StateObserver(private val body: (RelationStateChange) -> Unit) : StateListener {
-    override fun changed(state: RelationStateChange) = body(state)
-}
-
-internal fun stateSource(model: String, relation: String, paramsJson: String): LiveSource<LoadState> =
-    LiveSource(LoadState()) { emit ->
-        val subscription = DBlayer.database.liveState(model, relation, paramsJson, StateObserver { emit(LoadState(it)) })
-        val cancel: () -> Unit = { subscription.cancel() }
-        cancel
-    }
 
 internal class ListUpdate<Model : DBModel>(val snapshot: Snapshot<Model>? = null, val state: LoadState? = null) {
     companion object {

@@ -81,7 +81,7 @@ pub(super) async fn open_viewer(delay: Duration, clock: Option<Arc<super::TestCl
 #[tokio::test]
 async fn switching_the_observed_list_from_a_foreign_thread_keeps_the_one_viewer_changes_subscription() {
     let (database, transport) = open_viewer(Duration::ZERO, None).await;
-    let feed = database.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Silent)).unwrap();
+    let feed = database.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Silent));
     feed.wait_for_initial_load().await.unwrap();
     for _ in 0..200 {
         if transport.subscriptions("DblayerViewerChanges") == 1 { break; }
@@ -90,7 +90,7 @@ async fn switching_the_observed_list_from_a_foreign_thread_keeps_the_one_viewer_
     assert_eq!(transport.subscriptions("DblayerViewerChanges"), 1);
 
     std::thread::spawn(move || feed.cancel()).join().unwrap();
-    let vibe = database.live_query(r#"{"model":"Moment","relation":"vibeFeed","params":{"vibeId":"3"}}"#.into(), Arc::new(Silent)).unwrap();
+    let vibe = database.live_query(r#"{"model":"Moment","relation":"vibeFeed","params":{"vibeId":"3"}}"#.into(), Arc::new(Silent));
     vibe.wait_for_initial_load().await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 

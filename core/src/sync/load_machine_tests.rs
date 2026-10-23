@@ -7,15 +7,15 @@ pub(super) const MODEL: &str = "moments";
 
 pub(super) fn stored(epoch: u64, applied: i64, has_rows: bool) -> Stored {
     let data = Data::Landed { has_more: false, total: None, loaded_at: applied };
-    Stored { epoch, order: Order { applied, pages: 1 }, data, has_rows }
+    Stored { epoch, order: Order { applied, pages: 1 }, data, has_rows, revision: 0 }
 }
 
 pub(super) fn not_loaded(epoch: u64) -> Stored {
-    Stored { epoch, order: Order::NONE, data: Data::NotLoaded, has_rows: false }
+    Stored { epoch, order: Order::NONE, data: Data::NotLoaded, has_rows: false, revision: 0 }
 }
 
 pub(super) fn network() -> LoadError {
-    LoadError { kind: "network", message: "offline".to_string() }
+    LoadError::new("network", "offline")
 }
 
 pub(super) fn observe(machine: &mut Machine, seed: Stored) {
@@ -81,7 +81,7 @@ fn end(event: &str, flight: FlightId, rows: bool) -> Event {
         "landed" => Event::Landed { window, flight, stored: Some(stored(0, 9, rows)) },
         "discarded" => Event::Discarded { window, flight },
         "failed_network" => Event::Failed { window, flight, error: network() },
-        "failed_database" => Event::Failed { window, flight, error: LoadError { kind: "database", message: "disk".to_string() } },
+        "failed_database" => Event::Failed { window, flight, error: LoadError::new("database", "disk") },
         "abandoned" => Event::Abandoned { window, flight },
         "panicked" => Event::Panicked { window, flight },
         other => panic!("unknown event {other}"),
@@ -206,7 +206,7 @@ fn inv_loadm_08_online_retries_each_observed_window_that_failed_by_network_once(
 
     let mut server_error = machine_in(Before::NotLoaded);
     start(&mut server_error, 3, false);
-    step(&mut server_error, Event::Failed { window: WINDOW.to_string(), flight: 3, error: LoadError { kind: "server", message: "no".to_string() } });
+    step(&mut server_error, Event::Failed { window: WINDOW.to_string(), flight: 3, error: LoadError::new("server", "no") });
     assert!(step(&mut server_error, Event::Online { observed: observed() }).is_empty());
 
     let mut running = machine_in(Before::Failed);

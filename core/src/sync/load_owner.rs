@@ -37,6 +37,8 @@ pub(crate) struct LoadOwner {
     epoch: AtomicU64,
     #[cfg(test)]
     panic_window: Mutex<Option<String>>,
+    #[cfg(test)]
+    history: Mutex<Vec<Event>>,
 }
 
 impl LoadOwner {
@@ -61,6 +63,8 @@ impl LoadOwner {
                 Queued::Event(event) => event,
                 Queued::Online => Event::Online { observed: state.senders.iter().filter(|(_, sender)| sender.receiver_count() > 0).map(|(window, _)| window.clone()).collect::<BTreeSet<_>>() },
             };
+            #[cfg(test)]
+            locked(&self.history).push(event.clone());
             let window = event.window().map(str::to_string);
             let stepped = catch_unwind(AssertUnwindSafe(|| {
                 #[cfg(test)]
@@ -122,6 +126,11 @@ impl LoadOwner {
     #[cfg(test)]
     pub(crate) fn panic_on(&self, window: &str) {
         *locked(&self.panic_window) = Some(window.to_string());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn history(&self) -> Vec<Event> {
+        locked(&self.history).clone()
     }
 
     #[cfg(test)]

@@ -61,7 +61,7 @@ pub(crate) struct Landing {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Landed {
-    Applied { rows: usize, invalid: usize },
+    Applied { rows: usize, invalid: usize, revision: i64 },
     Discarded(DiscardReason),
 }
 
@@ -140,14 +140,14 @@ impl Inner {
             }
             Ok::<_, SyncError>(Some(envelope))
         });
-        match committed {
-            Ok(_) => {}
+        let revision = match committed {
+            Ok(result) => result.revision.unwrap_or_else(|| self.db.revision_seq().unwrap_or_default()),
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(Landed::Discarded(DiscardReason::StaleGeneration)),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
-        }
+        };
         locked(&self.counters).record_stale_version_drops(drops);
-        Ok(Landed::Applied { rows: admitted_roots, invalid: invalid_roots })
+        Ok(Landed::Applied { rows: admitted_roots, invalid: invalid_roots, revision })
     }
 
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
@@ -220,13 +220,13 @@ impl Inner {
             });
             Ok::<_, SyncError>(Some(envelope))
         });
-        match committed {
-            Ok(_) => {}
+        let revision = match committed {
+            Ok(result) => result.revision.unwrap_or_else(|| self.db.revision_seq().unwrap_or_default()),
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(Landed::Discarded(DiscardReason::StaleGeneration)),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
-        }
+        };
         locked(&self.counters).record_stale_version_drops(drops);
-        Ok(Landed::Applied { rows: admitted_roots, invalid: invalid_roots })
+        Ok(Landed::Applied { rows: admitted_roots, invalid: invalid_roots, revision })
     }
 }

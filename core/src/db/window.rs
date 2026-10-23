@@ -289,6 +289,15 @@ impl Db {
 }
 
 impl Db {
+    pub(crate) fn observe_window_feed(&self, query: Query, spec: WindowSpec, listener: impl Fn(super::listeners::Feed) + Send + Sync + 'static) -> Result<WindowHandle, DbError> {
+        if !windowable(&query) {
+            return Err(QueryError::NotWindowable.into());
+        }
+        self.observe_feed(Subject::window(query, spec), listener).map(|observer| WindowHandle { observer })
+    }
+}
+
+impl Db {
     pub fn read_slice(&self, query: &Query, slice: Slice) -> Result<Page, DbError> {
         if !windowable(query) {
             return Err(QueryError::NotWindowable.into());

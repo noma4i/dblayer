@@ -40,7 +40,6 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
 
   func apply(_ change: LiveChange) -> ListApplied<Model> {
     lock.withLock {
-      if change.error != nil { return ListApplied(rows: current, reordered: false, desynced: false) }
       let carried: [(slot: Slot, index: Int)] = change.rows.enumerated().map { position, wire in
         decoded += 1
         let index = change.full ? position : Int(change.rowIndexes[position])

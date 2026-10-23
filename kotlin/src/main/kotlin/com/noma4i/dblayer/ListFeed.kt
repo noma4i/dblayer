@@ -52,7 +52,6 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
     @OptIn(ExperimentalSerializationApi::class)
     @Synchronized
     fun apply(change: LiveChange): ListState<Model> {
-        if (change.error != null) return ListState(current(), false)
         val carried = change.rows.mapIndexed { position, wire ->
             decoded.incrementAndGet()
             val index = if (change.full) position else change.rowIndexes[position].toInt()

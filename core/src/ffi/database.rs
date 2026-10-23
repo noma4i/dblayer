@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use serde_json::{Map, Value};
 use tokio::runtime::Runtime;
-use crate::db::{Db, DbConfig, OpenReport, WindowSpec};
+use crate::db::{Db, DbConfig, Feed, OpenReport, WindowSpec};
 use crate::identity::RowId;
 use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::query::{Query, Where};
@@ -12,11 +12,12 @@ use crate::schema::ModelSpec;
 use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
 use crate::transport::{self as core, EncryptedClient};
 use super::entities::{self, EntityListener, LiveEntities};
-use super::live::LiveHandles;
+use super::live::{follow_failures, intake, LiveHandles};
+use super::live_feed::LiveFeed;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::wire::{WireModel, WireRow};
-use super::{DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, RelationStateChange, StateListener, StateSubscription, Transport};
+use super::{DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, Transport};
 
 pub(super) fn executor() -> Result<&'static Runtime, DbError> {
     static EXECUTOR: Starter = Starter::new();
@@ -152,9 +153,11 @@ fn id(value: &str) -> Result<RowId, DbError> {
 
 #[uniffi::export]
 impl Database {
-    pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        let row_id = id(&row_id)?;
-        self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, LoadOptions::default(), listener)
+    pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
+        self.subscribed(listener, |feed| {
+            let row_id = id(&row_id)?;
+            self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, LoadOptions::default(), false, feed)
+        })
     }
     pub fn peek_row(&self, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
         let wire = self.wire(&model)?;
@@ -187,45 +190,29 @@ impl Database {
     pub fn live_entities(&self, model: String, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
         entities::open(&self.db, &model, self.wire(&model)?.clone(), listener)
     }
-    pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        self.connect_json(&query_json, false, listener)
+    pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
+        self.subscribed(listener, |feed| self.connect_json(&query_json, false, feed))
     }
-    pub fn live_window(&self, query_json: String, tail: u32, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        let (query, relation) = self.parsed_query(&query_json)?;
-        let _entered = executor()?.enter();
-        let mut watch = match (self.sync.as_ref(), relation) {
-            (Some(sync), Some((relation, params))) => Some(sync.watch(query.model.as_str(), &relation, &params)?),
-            _ => None,
-        };
-        let (latest, _) = tokio::sync::watch::channel(None);
-        let post = latest.clone();
-        let failures_listener = listener.clone();
-        let wire = self.wire(query.model.as_str())?.clone();
-        let window = self.db.observe_window(query, WindowSpec::Tail { size: tail as usize }, move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); listener.changed(value); })?;
-        let failure = super::live::forward_failure(watch.as_mut(), &latest, failures_listener);
-        let (_, initial_load) = tokio::sync::watch::channel(Some(Ok(())));
-        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None, failure })) }))
+    pub fn live_window(&self, query_json: String, tail: u32, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
+        self.subscribed(listener, |feed| {
+            let (query, relation) = self.parsed_query(&query_json)?;
+            let _entered = executor()?.enter();
+            let mut watch = match (self.sync.as_ref(), relation) {
+                (Some(sync), Some((relation, params))) => Some(sync.watch(query.model.as_str(), &relation, &params)?),
+                _ => None,
+            };
+            let wire = self.wire(query.model.as_str())?.clone();
+            let sink = feed.clone();
+            let window = self.db.observe_window_feed(query, WindowSpec::Tail { size: tail as usize }, move |item| intake(&sink, &wire, item))?;
+            let failure = follow_failures(watch.as_mut(), feed);
+            Ok(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None, failure, state: None })
+        })
     }
-    pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        self.connect_json(&query_json, true, listener)
+    pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
+        self.subscribed(listener, |feed| self.connect_json(&query_json, true, feed))
     }
-    pub fn live_state(&self, model: String, relation: String, params_json: String, listener: Arc<dyn StateListener>) -> Result<Arc<StateSubscription>, DbError> {
-        let params: Map<String, Value> = serde_json::from_str(&params_json)?;
-        let mut receiver = self.sync()?.relation_state(&model, &relation, &params)?;
-        let db = self.db.clone();
-        let task = executor()?.spawn(async move {
-            loop {
-                let change = RelationStateChange::of(&receiver.borrow_and_update());
-                let db = db.clone();
-                if tokio::task::spawn_blocking(move || db.settle()).await.is_err() { return; }
-                listener.changed(change);
-                if receiver.changed().await.is_err() { return; }
-            }
-        });
-        Ok(Arc::new(StateSubscription { task: Mutex::new(Some(task.abort_handle())) }))
-    }
-    pub fn live_has_many(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
-        self.related(model, row_id, name, listener)
+    pub fn live_has_many(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
+        self.subscribed(listener, |feed| self.related(model, row_id, name, feed))
     }
     pub async fn create(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
         let database = self.clone();
@@ -475,68 +462,85 @@ impl Database {
         }).transpose()?.flatten();
         Ok((query, remote))
     }
-    fn connect_json(&self, json: &str, count: bool, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
+    fn subscribed(&self, listener: Arc<dyn QueryListener>, open: impl FnOnce(Arc<LiveFeed>) -> Result<LiveHandles, DbError>) -> Arc<LiveSubscription> {
+        let feed = LiveFeed::new(listener);
+        let handles = match open(feed.clone()) {
+            Ok(handles) => Some(handles),
+            Err(error) => {
+                let failed = feed.clone();
+                match executor() {
+                    Ok(executor) => { executor.spawn(async move { failed.invalid(error) }); }
+                    Err(_) => failed.invalid(error),
+                }
+                None
+            }
+        };
+        Arc::new(LiveSubscription { feed, handles: Mutex::new(handles) })
+    }
+    fn connect_json(&self, json: &str, count: bool, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let (query, remote) = self.parsed_query(json)?;
         let description: Value = serde_json::from_str(json)?;
         let force = description.get("refreshOnConnect").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or(false);
-        self.connect(query, remote, count, LoadOptions { force }, listener)
+        let observe_only = description.get("observeOnly").and_then(Value::as_bool).unwrap_or(false);
+        self.connect(query, remote, count, LoadOptions { force }, observe_only, feed)
     }
-    fn connect(&self, query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, options: LoadOptions, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
+    fn connect(&self, query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, options: LoadOptions, observe_only: bool, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let _entered = executor()?.enter();
-        let (latest, _) = tokio::sync::watch::channel(None);
-        let post = latest.clone();
-        let callback = listener.clone();
-        let failures_listener = listener.clone();
+        let model = query.model.to_string();
+        let mut tracked = None;
+        let mut watch = match remote {
+            Some((relation, params)) => {
+                let sync = self.sync()?.clone();
+                let watch = sync.watch(&model, &relation, &params)?;
+                if self.db.spec(&model)?.relations.iter().any(|declared| declared.name == relation && declared.remote.is_some()) {
+                    let mut receiver = sync.relation_state(&model, &relation, &params)?;
+                    if !observe_only { feed.expect_load(); }
+                    feed.state(receiver.borrow_and_update().clone());
+                    tracked = Some((sync, relation, params, receiver));
+                }
+                Some(watch)
+            }
+            None => None,
+        };
         if !count {
             let _ = self.db.warm(&query);
         }
-        let wire = self.wire(query.model.as_str())?.clone();
-        let observer = if count {
-            self.db.observe_count(query.clone(), move |change| {
-                let value = LiveChange::counted(change.revision, change.count);
-                post.send_replace(Some(value.clone())); callback.changed(value);
-            })?
-        } else {
-            self.db.observe(query.clone(), move |change| { let value = LiveChange::rows(change, &wire); post.send_replace(Some(value.clone())); callback.changed(value); })?
-        };
-        let (completed, initial_load) = tokio::sync::watch::channel(None);
-        let (mut watch, load) = match remote {
-            Some((relation, params)) => {
-                let sync = self.sync()?.clone();
-                let watch = sync.watch(query.model.as_str(), &relation, &params)?;
-                let model = query.model.to_string();
-                let errors = latest.clone();
-                let remote = self.db.spec(&model)?.relations.iter().any(|declared| declared.name == relation && declared.remote.is_some());
-                let task = if remote { Some(executor()?.spawn(async move {
-                    let result = sync.load(&model, &relation, &params, options).await.map(|_| ());
-                    if let Err(error) = &result {
-                        let revision = errors.borrow().as_ref().map_or(0, |change| change.revision);
-                        let change = LiveChange::failed(revision, error.clone().into());
-                        errors.send_replace(Some(change.clone()));
-                        listener.changed(change);
-                    }
-                    completed.send_replace(Some(result));
-                }).abort_handle()) } else { completed.send_replace(Some(Ok(()))); None };
-                (Some(watch), task)
+        let wire = self.wire(&model)?.clone();
+        let sink = feed.clone();
+        let observer = self.db.observe_query_feed(query, count, move |item| intake(&sink, &wire, item))?;
+        let (load, state) = match tracked {
+            Some((sync, relation, params, receiver)) => {
+                let (follower, loader) = (feed.clone(), feed.clone());
+                let mut changes = receiver.clone();
+                let state = executor()?.spawn(async move {
+                    while changes.changed().await.is_ok() { follower.state(changes.borrow_and_update().clone()); }
+                }).abort_handle();
+                let load = (!observe_only).then(|| executor().map(|executor| executor.spawn(async move {
+                    let result = sync.load(&model, &relation, &params, options).await;
+                    loader.state(receiver.borrow().clone());
+                    loader.load_finished(result.err().map(DbError::from));
+                }).abort_handle())).transpose()?;
+                (load, Some(state))
             }
-            None => { completed.send_replace(Some(Ok(()))); (None, None) },
+            None => (None, None),
         };
-        let failure = super::live::forward_failure(watch.as_mut(), &latest, failures_listener);
-        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: Some(observer), window: None, _watch: watch, load, failure })) }))
+        let failure = follow_failures(watch.as_mut(), feed);
+        Ok(LiveHandles { _observer: Some(observer), window: None, _watch: watch, load, failure, state })
     }
-    fn related(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Result<Arc<LiveSubscription>, DbError> {
+    fn related(&self, model: String, row_id: String, name: String, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let row_id = id(&row_id)?;
-        let (latest, _) = tokio::sync::watch::channel(None);
-        let post = latest.clone();
         let target = self.db.spec(&model)?.associations.iter().find(|association| association.name == name).map(|association| association.target.to_string()).ok_or_else(|| DbError::Invalid { detail: format!("{model} has no association {name}") })?;
         let wire = self.wire(&target)?.clone();
         let query = Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))).including(&[&name]);
-        let observer = self.db.observe(query, move |change| {
-            let rows = change.related.get(&name).and_then(|parents| parents.get(&row_id)).cloned().unwrap_or_default();
-            let value = LiveChange::whole(change.revision, rows.iter().map(|row| wire.row(row)).collect());
-            post.send_replace(Some(value.clone())); listener.changed(value);
+        let observer = self.db.observe_query_feed(query, false, move |item| match item {
+            Feed::Rows(change) => {
+                let rows = change.related.get(&name).and_then(|parents| parents.get(&row_id)).cloned().unwrap_or_default();
+                feed.rows(LiveChange::whole(change.revision, rows.iter().map(|row| wire.row(row)).collect()));
+            }
+            Feed::Count(_) => {}
+            Feed::Reached(revision) => feed.reached(revision),
+            Feed::Failed(detail) => feed.read_failed(detail),
         })?;
-        let (_, initial_load) = tokio::sync::watch::channel(Some(Ok(())));
-        Ok(Arc::new(LiveSubscription { latest, initial_load, handles: Mutex::new(Some(LiveHandles { _observer: Some(observer), window: None, _watch: None, load: None, failure: None })) }))
+        Ok(LiveHandles { _observer: Some(observer), window: None, _watch: None, load: None, failure: None, state: None })
     }
 }

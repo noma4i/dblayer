@@ -1,7 +1,17 @@
-use std::sync::Mutex;
-use tokio::sync::watch;
-use crate::db::{Change, ObserverHandle, WindowHandle};
+use std::sync::{Arc, Mutex};
+use crate::db::{Change, Feed, ObserverHandle, WindowHandle};
+use super::live_feed::{LiveFeed, Readiness};
 use super::wire::{WireModel, WireRow};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum LivePhase {
+    NotLoaded,
+    Loading,
+    Loaded,
+    Empty,
+    Failed,
+    Closed,
+}
 
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct Placement {
@@ -46,6 +56,24 @@ pub struct LiveChange {
     pub updated: Vec<u32>,
     #[uniffi(default = [])]
     pub moved: Vec<Placement>,
+    #[uniffi(default = 0)]
+    pub seq: u64,
+    #[uniffi(default = None)]
+    pub phase: Option<LivePhase>,
+    #[uniffi(default = false)]
+    pub initial: bool,
+    #[uniffi(default = false)]
+    pub refreshing: bool,
+    #[uniffi(default = false)]
+    pub fetching_more: bool,
+    #[uniffi(default = false)]
+    pub has_more: bool,
+    #[uniffi(default = None)]
+    pub total: Option<i64>,
+    #[uniffi(default = None)]
+    pub loaded_at: Option<i64>,
+    #[uniffi(default = None)]
+    pub error_kind: Option<String>,
 }
 
 impl LiveChange {
@@ -65,11 +93,27 @@ impl LiveChange {
             inserted: inserted.into_iter().map(|(index, _)| index as u32).collect(),
             updated: updated.into_iter().map(|(index, _)| index as u32).collect(),
             moved: diff.moved.iter().map(|id| Placement { id: id.to_string(), index: diff.at[id] as u32 }).collect(),
+            ..Self::empty(change.revision)
         }
     }
 
-    fn empty(revision: i64) -> Self {
-        Self { revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None, window: None, inserted: Vec::new(), updated: Vec::new(), moved: Vec::new() }
+    pub(super) fn carry_state(&mut self, from: &LiveChange) {
+        self.seq = from.seq;
+        self.phase = from.phase;
+        self.initial = from.initial;
+        self.refreshing = from.refreshing;
+        self.fetching_more = from.fetching_more;
+        self.has_more = from.has_more;
+        self.total = from.total;
+        self.loaded_at = from.loaded_at;
+        self.error_kind.clone_from(&from.error_kind);
+    }
+
+    pub(super) fn empty(revision: i64) -> Self {
+        Self {
+            revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None, window: None, inserted: Vec::new(), updated: Vec::new(), moved: Vec::new(),
+            seq: 0, phase: None, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, loaded_at: None, error_kind: None,
+        }
     }
 
     pub(super) fn whole(revision: i64, rows: Vec<WireRow>) -> Self {
@@ -78,10 +122,6 @@ impl LiveChange {
 
     pub(super) fn counted(revision: i64, count: i64) -> Self {
         Self { count: Some(count), ..Self::empty(revision) }
-    }
-
-    pub(super) fn failed(revision: i64, error: super::DbError) -> Self {
-        Self { error: Some(error), ..Self::empty(revision) }
     }
 }
 
@@ -94,30 +134,25 @@ pub(super) struct LiveHandles {
     pub _watch: Option<crate::sync::Watch>,
     pub load: Option<tokio::task::AbortHandle>,
     pub failure: Option<tokio::task::AbortHandle>,
+    pub state: Option<tokio::task::AbortHandle>,
 }
 
 impl Drop for LiveHandles {
     fn drop(&mut self) {
-        for task in [self.load.take(), self.failure.take()].into_iter().flatten() { task.abort(); }
+        for task in [self.load.take(), self.failure.take(), self.state.take()].into_iter().flatten() { task.abort(); }
     }
 }
 
-pub(super) fn forward_failure(watch: Option<&mut crate::sync::Watch>, latest: &watch::Sender<Option<LiveChange>>, listener: std::sync::Arc<dyn QueryListener>) -> Option<tokio::task::AbortHandle> {
+pub(super) fn follow_failures(watch: Option<&mut crate::sync::Watch>, feed: Arc<LiveFeed>) -> Option<tokio::task::AbortHandle> {
     let (current, mut failures, subscriptions) = watch?.failures()?;
-    let latest = latest.clone();
+    let post = |feed: &LiveFeed, failure: crate::transport::SubscriptionFailure| feed.subscription_failed(Some(super::DbError::from(crate::sync::SyncError::Transport(failure.error))));
+    let mut failed = current.is_some();
+    if let Some(failure) = current { post(&feed, failure); }
     Some(tokio::spawn(async move {
-        let post = |failure: crate::transport::SubscriptionFailure| {
-            let revision = latest.borrow().as_ref().map_or(0, |change| change.revision);
-            let change = LiveChange::failed(revision, super::DbError::from(crate::sync::SyncError::Transport(failure.error)));
-            latest.send_replace(Some(change.clone()));
-            listener.changed(change);
-        };
-        let mut failed = current.is_some();
-        if let Some(failure) = current { post(failure); }
         loop {
             match failures.recv().await {
-                Ok(None) => failed = false,
-                Ok(Some((source, failure))) if subscriptions.contains(&source) && !failed => { post(failure); failed = true; }
+                Ok(None) => { failed = false; feed.subscription_failed(None); }
+                Ok(Some((source, failure))) if subscriptions.contains(&source) && !failed => { post(&feed, failure); failed = true; }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 _ => {}
             }
@@ -125,31 +160,41 @@ pub(super) fn forward_failure(watch: Option<&mut crate::sync::Watch>, latest: &w
     }).abort_handle())
 }
 
+pub(super) fn intake(feed: &LiveFeed, wire: &WireModel, item: Feed) {
+    match item {
+        Feed::Rows(change) => feed.rows(LiveChange::rows(&change, wire)),
+        Feed::Count(change) => feed.count(LiveChange::counted(change.revision, change.count)),
+        Feed::Reached(revision) => feed.reached(revision),
+        Feed::Failed(detail) => feed.read_failed(detail),
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct LiveSubscription {
-    pub(super) latest: watch::Sender<Option<LiveChange>>,
-    pub(super) initial_load: watch::Receiver<Option<Result<(), crate::sync::SyncError>>>,
+    pub(super) feed: Arc<LiveFeed>,
     pub(super) handles: Mutex<Option<LiveHandles>>,
 }
 
 #[uniffi::export]
 impl LiveSubscription {
     pub async fn wait_for_initial_load(&self) -> Result<(), super::DbError> {
-        let mut receiver = self.initial_load.clone();
-        loop {
-            if let Some(result) = receiver.borrow_and_update().clone() {
-                return result.map_err(Into::into);
-            }
-            receiver.changed().await
-                .map_err(|_| super::DbError::Interrupted { detail: "initial load cancelled".into() })?;
+        let mut receiver = self.feed.readiness.subscribe();
+        let seen = *receiver.wait_for(|readiness| *readiness != Readiness::Waiting).await
+            .map_err(|_| super::DbError::Interrupted { detail: "initial load cancelled".into() })?;
+        match seen {
+            Readiness::Ended => Err(super::DbError::Interrupted { detail: "initial load cancelled".into() }),
+            _ => self.feed.load_error().map_or(Ok(()), Err),
         }
     }
     pub async fn current(&self) -> LiveChange {
-        let mut receiver = self.latest.subscribe();
+        let mut receiver = self.feed.latest.subscribe();
         let value = receiver.wait_for(Option::is_some).await.expect("live owns sender").as_ref().expect("first delivery").clone();
         value
     }
-    pub fn cancel(&self) { crate::db::locked(&self.handles).take(); }
+    pub fn cancel(&self) {
+        crate::db::locked(&self.handles).take();
+        self.feed.end();
+    }
     pub fn expand_before(&self, rows: u32) {
         if let Some(window) = crate::db::locked(&self.handles).as_ref().and_then(|handles| handles.window.as_ref()) { window.expand_before(rows as usize); }
     }

@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use statig::prelude::*;
 
+use super::error::SyncError;
+
 pub(crate) type FlightId = u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -25,13 +27,18 @@ pub enum LoadPhase {
 pub struct LoadError {
     pub kind: &'static str,
     pub message: String,
+    pub cause: Option<SyncError>,
 }
 
 impl LoadError {
     pub(crate) const NETWORK: &'static str = "network";
 
+    pub(crate) fn new(kind: &'static str, message: impl Into<String>) -> Self {
+        Self { kind, message: message.into(), cause: None }
+    }
+
     pub(crate) fn internal() -> Self {
-        Self { kind: "internal", message: "load panicked".to_string() }
+        Self::new("internal", "load panicked")
     }
 }
 
@@ -45,11 +52,21 @@ pub struct RelationState {
     pub total: Option<i64>,
     pub error: Option<LoadError>,
     pub loaded_at: Option<i64>,
+    pub revision: i64,
 }
 
 impl RelationState {
     pub(crate) fn closed() -> Self {
-        Self { phase: LoadPhase::Closed, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None }
+        Self { phase: LoadPhase::Closed, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 }
+    }
+}
+
+pub(crate) fn snapshot_phase(state: &RelationState, size: usize) -> LoadPhase {
+    match state.phase {
+        LoadPhase::Closed | LoadPhase::Loading => state.phase,
+        _ if state.error.is_some() => if size > 0 { LoadPhase::Loaded } else { LoadPhase::Failed },
+        LoadPhase::NotLoaded => LoadPhase::NotLoaded,
+        _ => if size == 0 { LoadPhase::Empty } else { LoadPhase::Loaded },
     }
 }
 
@@ -78,6 +95,7 @@ pub(crate) struct Stored {
     pub order: Order,
     pub data: Data,
     pub has_rows: bool,
+    pub revision: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +113,7 @@ struct WindowFacts {
     data: Data,
     has_rows: bool,
     order: Order,
+    needs: i64,
     last_end: LastEnd,
     retry_on_online: Option<LoadKind>,
     read_error: Option<LoadError>,
@@ -129,6 +148,7 @@ impl WindowFacts {
             data: Data::Unread,
             has_rows: false,
             order: Order::NONE,
+            needs: 0,
             last_end: LastEnd::None,
             retry_on_online: None,
             read_error: None,
@@ -173,6 +193,7 @@ impl WindowFacts {
             total,
             error,
             loaded_at,
+            revision: self.needs,
         }
     }
 
@@ -250,6 +271,7 @@ impl WindowFacts {
                 if self.end(context, *flight).is_some() {
                     self.last_end = LastEnd::Landed;
                     self.retry_on_online = None;
+                    self.needs = self.needs.max(stored.as_ref().map_or(0, |stored| stored.revision));
                     self.accept(stored);
                 }
             }

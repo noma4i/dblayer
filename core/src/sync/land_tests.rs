@@ -30,7 +30,7 @@ fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
 #[test]
 fn newer_attempt_wins_when_responses_arrive_out_of_order() {
     let rig = rig();
-    assert_eq!(rig.sync.inner.land(landing(&rig, 200, &["m1"])).unwrap(), Landed::Applied { rows: 1, invalid: 0 });
+    assert!(matches!(rig.sync.inner.land(landing(&rig, 200, &["m1"])).unwrap(), Landed::Applied { rows: 1, invalid: 0, .. }));
     let late = rig.sync.inner.land(landing(&rig, 100, &["m1", "m2"])).unwrap();
     assert_eq!(late, Landed::Discarded(DiscardReason::Superseded));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("issued 200".to_string()));
@@ -42,7 +42,7 @@ fn newer_attempt_wins_when_responses_arrive_out_of_order() {
 fn later_attempt_replaces_an_earlier_one() {
     let rig = rig();
     rig.sync.inner.land(landing(&rig, 100, &["m1"])).unwrap();
-    assert_eq!(rig.sync.inner.land(landing(&rig, 200, &["m1", "m2"])).unwrap(), Landed::Applied { rows: 2, invalid: 0 });
+    assert!(matches!(rig.sync.inner.land(landing(&rig, 200, &["m1", "m2"])).unwrap(), Landed::Applied { rows: 2, invalid: 0, .. }));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("issued 200".to_string()));
 }
 
@@ -126,7 +126,7 @@ fn a_row_created_by_another_landing_after_the_fetch_began_still_joins_the_listed
     let rig = rig();
     let listing = landing(&rig, 100, &["m1"]);
     put(&rig, "moments", moment("m1", "from another landing"));
-    assert_eq!(rig.sync.inner.land(listing).unwrap(), Landed::Applied { rows: 1, invalid: 0 });
+    assert!(matches!(rig.sync.inner.land(listing).unwrap(), Landed::Applied { rows: 1, invalid: 0, .. }));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("from another landing".to_string()));
     assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()), ["m1"]);
 }
@@ -144,7 +144,7 @@ fn next_page_cost(size: usize) -> usize {
     next.coverage = crate::schema::Coverage::Page;
     next.requested_cursor = Some("c1".to_string());
     let before = crate::identity::touches::member_reads();
-    assert_eq!(rig.sync.inner.land(next).unwrap(), Landed::Applied { rows: 2, invalid: 0 });
+    assert!(matches!(rig.sync.inner.land(next).unwrap(), Landed::Applied { rows: 2, invalid: 0, .. }));
     let cost = crate::identity::touches::member_reads() - before;
     assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()).len(), size + 2);
     cost

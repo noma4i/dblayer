@@ -150,6 +150,8 @@ struct ProfileView: View {
 
 **Equality.** Two snapshots of a row are equal when every field and the sync state match (a Swift model compares like a Kotlin data class), so a view that diffs by value sees a field change. Hashing uses the id only.
 
+**One snapshot.** Every delivery of `live_query`, `live_find`, `live_count`, `live_window` and `live_has_many` carries the rows, the phase (`NotLoaded`, `Loading`, `Loaded`, `Empty`, `Failed`, `Closed`), the load flags, `hasMore`, `total`, `loadedAt`, the error and a `seq` that only grows. The first delivery comes after the first read of the rows and holds them, so there is no `Loaded` or `Empty` delivery with 0 rows before it. `Empty` and `Loaded` follow the `size` of the same delivery. After a load lands, the phase `Loaded` or `Empty` arrives only when the subscription has read the rows of that load, and until then the delivery shows `Loading`. A subscription call never fails: a query the core refuses gives one delivery with the phase `Failed` and the error kind `invalid`. A failed read of the rows, a failed load and a failed server subscription show in the `error` of the delivery until the next good read or recovery.
+
 **Loading state.** A remote relation reports `idle`, `loading` or `failed`, whether another page exists, when it last loaded and the `total` the server reports for the whole list (`totalCount` of the connection, or the field named by `total from:` of the scope, nil when the document does not select it):
 
 ```swift

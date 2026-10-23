@@ -8,6 +8,7 @@ mod database_tests;
 mod encrypted;
 mod entities;
 mod live;
+mod live_feed;
 mod retention;
 mod state;
 mod transport;
@@ -31,9 +32,9 @@ pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, Encrypt
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
-pub use live::{LiveChange, LiveSubscription, QueryListener};
+pub use live::{LiveChange, LivePhase, LiveSubscription, QueryListener};
 pub use retention::{RetentionChange, RetentionPool};
-pub use state::{RelationStateChange, StateListener, StateSubscription};
+pub use state::StateSubscription;
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
 pub use transport::{ByteProgress, EncryptedSocketEvent, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
 
@@ -119,6 +120,10 @@ mod load_tests;
 mod reject_tests;
 #[cfg(test)]
 mod live_tests;
+#[cfg(test)]
+mod live_feed_tests;
+#[cfg(test)]
+mod snapshot_tests;
 #[cfg(test)]
 mod stable_order_tests;
 #[cfg(test)]
