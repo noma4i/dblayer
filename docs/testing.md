@@ -2,7 +2,7 @@
 
 ## In your app
 
-Open a database in memory or in a temporary directory and give it a mock transport. The mock replies by operation name, can delay or fail replies, and can break a subscription.
+Open a database in memory or in a temporary directory and give it a mock transport. `DB.close()` is synchronous and runs on the main actor, so a test off the main actor writes `await DB.close()`. The mock replies by operation name, can delay or fail replies, and can break a subscription.
 
 ```swift
 import DBlayerTesting
@@ -29,7 +29,7 @@ JVM locals can become unreachable after their last use, even while the enclosing
 
 A live query loads by itself when something subscribes, and an explicit refresh can add a second request. Queue 2 or 3 replies per operation and assert the content of `transport.calls`, not their exact count.
 
-Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. The production `open` has no clock parameter.
+Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. The production `open` has no clock parameter. In Kotlin, `openTesting` and `TestClock.advance` need `@OptIn(DBlayerTestingApi::class)` on the calling declaration.
 
 ```swift
 let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
@@ -39,10 +39,15 @@ try await Moment.feed.load()    // requests again
 ```
 
 ```kotlin
-val clock = DBlayer.openTesting(transport, modelsJSON)
-Moment.feed.load()
-clock.advance(5 * 60_000L + 1_000)
-Moment.feed.load()
+import com.noma4i.dblayer.DBlayerTestingApi
+
+@OptIn(DBlayerTestingApi::class)
+suspend fun feedLoadsAgainAfterFreshness(transport: Transport) {
+    val clock = DBlayer.openTesting(transport, modelsJSON)
+    Moment.feed.load()
+    clock.advance(5 * 60_000L + 1_000)
+    Moment.feed.load()
+}
 ```
 
 Typical scenarios to cover:

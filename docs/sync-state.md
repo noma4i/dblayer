@@ -170,7 +170,7 @@ sync.setOnline(true)    // waiting changes and uploads are sent by themselves
 
 ## Refreshing
 
-A whole list refreshes with `refresh()`. The loading state of the relation (`idle`, `loading`, `failed`) is live, see [live data](live-data.md).
+A whole list refreshes with `refresh()`. The load phase of the relation (`LoadPhase`: `notLoaded`, `loading`, `loaded`, `empty`, `failed`) is live, see [live data](live-data.md).
 
 ## Guarantees
 

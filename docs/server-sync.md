@@ -69,7 +69,7 @@ object ArchiveGroupMutation : GraphQLOperation {
 }
 ```
 
-The transport is an interface with three calls: `query`, `mutate` and `subscribe`. Your app gets HTTP and WebSocket implementations for each platform. Tests use a mock transport. A REST transport implements the same interface.
+The transport is an interface with nine calls: `query`, `mutate`, `subscribe`, `unsubscribe`, `openCable`, `cableSend`, `cableNext`, `cableClose` and `put`. Your app gets HTTP and WebSocket implementations for each platform (`UrlSessionTransport`, `OkHttpTransport`). Tests use a mock transport. A REST transport implements the same interface, see [your own transport](cable-protocol.md#your-own-transport).
 
 ## Encrypted session
 
@@ -79,7 +79,7 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 | ----- | ---------- |
 | `EncryptedConfig` | `origin`, `serverKey`, `pin`, `endpoints`, `protocolLabel`, `cablePurpose`, `cableChannel`. The key is base64 DER with at least 3072 bits. Its SHA-256 must match the lowercase hex pin. Ship both with the app. See Application protocol configuration below |
 | `EncryptedHttp` | `post` sends the request text to `origin + path` as `application/jose` and returns status and body. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
-| `CredentialStore` | `get`, `set` and `clear` keep one string in the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite |
+| `CredentialStore` | `get`, `set` and `clear` keep one string. The library ships no store: your app implements it over the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite. The examples call that app code `AppCredentials` |
 
 The database uses encrypted JWE for queries and mutations, and encrypted Cable for subscriptions.
 The passed transport offers a text WebSocket and file upload. The shared subscription interface is described in [Cable protocol](cable-protocol.md).
@@ -90,7 +90,7 @@ The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin f
 let origin = URL(string: "https://api.example.com")!
 try await DB.open(
   encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
-  credentials: KeychainCredentials(),
+  credentials: AppCredentials(),
   transport: UrlSessionTransport(endpoint: origin, cablePath: endpoints.cable),
   modelsJSON: modelsJSON,
   path: path,
@@ -106,7 +106,7 @@ val origin = "https://api.example.com"
 DBlayer.open(
     context,
     encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel),
-    credentials = KeystoreCredentials(),
+    credentials = AppCredentials(context),
     transport = OkHttpTransport(origin, cablePath = endpoints.cable),
     modelsJson = modelsJSON,
     path = path,
@@ -394,11 +394,11 @@ Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]
 `transport` defaults to `UrlSessionTransport` or `OkHttpTransport` on the same origin, including the WebSocket at `encrypted.endpoints.cable`.
 
 ```swift
-try await DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel), credentials: KeychainCredentials(), modelsJSON: modelsJSON)
+try await DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel), credentials: AppCredentials(), modelsJSON: modelsJSON)
 ```
 
 ```kotlin
-DBlayer.open(context, encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel), credentials = KeystoreCredentials(), modelsJson = modelsJson)
+DBlayer.open(context, encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel), credentials = AppCredentials(context), modelsJson = modelsJson)
 ```
 
 Tests can pass their own transport and HTTP replies. A test that opens cable must also implement the 4 WebSocket calls.
@@ -609,7 +609,7 @@ do {
   _ = try await Operations.pricingLoad()
 } catch DbError.Http(let status, _) where status == 401 {
   signOut()
-} catch DbError.Graphql(let messages) {
+} catch let DbError.Graphql(messages, _) {
   show(messages)
 }
 ```
@@ -844,7 +844,7 @@ You never write "if the mutation worked, reload the list".
 
 ## State for the UI
 
-Loading state (idle, loading, error with its kind, has more pages, last loaded time) and the outbox (pending writes, send errors) are live too.
+Load phase (`LoadPhase`, error with its kind, has more pages, last loaded time) and the outbox (pending writes, send errors) are live too.
 
 ### Application protocol configuration
 

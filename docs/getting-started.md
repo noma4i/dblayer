@@ -74,7 +74,7 @@ if !report.resetModels.isEmpty { log("models cleared: \(report.resetModels), cha
 ```
 
 ```kotlin
-val report = DB.openReport()
+val report = DBlayer.openReport()
 report.recreated?.let { log("database recreated: $it") }
 if (report.resetModels.isNotEmpty()) log("models cleared: ${report.resetModels}, changed: ${report.changedModels}")
 ```

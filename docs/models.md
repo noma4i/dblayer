@@ -420,14 +420,16 @@ Singular associations capitalize their name, preserving a final `s`. Plural asso
 // group { id opponent { id } }       -> Group.opponent is the user
 // group { id opponent { id } }       -> opponent: null, Group.opponent is nil, the user row stays
 // group { id title }                 -> opponent not selected, Group.opponent keeps its last user
-let opponent = Group.find(groupId)?.opponent
+let group = try await Group.find(groupId).current()
+let opponent = try await group?.opponent.current().first
 ```
 
 ```kotlin
 // group { id opponent { id } }       -> Group.opponent is the user
 // group { id opponent { id } }       -> opponent: null, Group.opponent is null, the user row stays
 // group { id title }                 -> opponent not selected, Group.opponent keeps its last user
-val opponent = Group.find(groupId)?.opponent
+val group = Group.find(groupId).current()
+val opponent = group?.opponent?.current()?.firstOrNull()
 ```
 
 - `dependent: :destroy` removes children in the same commit as the parent.

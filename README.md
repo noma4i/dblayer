@@ -133,7 +133,7 @@ if (config.updateRequired) showUpdate(config.storeUrl)
 ```swift
 try await DB.open(
   encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
-  credentials: KeychainCredentials(), modelsJSON: modelsJSON, path: path
+  credentials: AppCredentials(), modelsJSON: modelsJSON, path: path
 )
 _ = try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
 ```
@@ -142,15 +142,15 @@ _ = try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+6
 DBlayer.open(
   context,
   encrypted = EncryptedConfig("https://api.example.com", serverKey, serverPin, endpoints, protocolLabel, cablePurpose, cableChannel),
-  credentials = KeystoreCredentials(), modelsJson = modelsJSON, path = path,
+  credentials = AppCredentials(context), modelsJson = modelsJSON, path = path,
 )
 DBlayer.database.sessionCall("otp", """{"phone":"+61400000000"}""")
 ```
 
 Await `DB.open` in Swift or call suspend `DBlayer.open` from a Kotlin coroutine.
 Opening files, WAL and migrations runs on the library's worker pool.
-Identical repeated calls reuse the opened database. Different parameters throw an error. Failed opens allow retry.
-Keep one instance of each credential store, transport and HTTP callback for the process. The core compares their identities.
+Open the database once at app start. A second `open` while it is open throws, whatever its parameters. Failed opens allow retry.
+`AppCredentials` is app code that implements `CredentialStore` over the Keychain or the Keystore, see [server sync](docs/server-sync.md).
 
 Omit `encrypted` and `credentials` for ordinary GraphQL through `endpoint` or a custom `transport`.
 Omit the endpoint and transport too for a local database. See [server sync](docs/server-sync.md) for arguments and errors.
