@@ -144,10 +144,10 @@ data class CloudCursor(
             return read(DBlayer.database.create("CloudCursor", values.toString(), "{}"))
         }
     }
-    suspend fun update(chatId: String? = null, readUntil: Long? = null, scroll: Long? = null): CloudCursor {
+    suspend fun update(chatId: String? = null, readUntil: GraphQLNullable<Long> = GraphQLNullable.Omitted, scroll: Long? = null): CloudCursor {
         val values = buildJsonObject {
             chatId?.let { put("chatId", jsonValue(it)) }
-            readUntil?.let { put("readUntil", jsonValue(it)) }
+            put("readUntil", readUntil)
             scroll?.let { put("scroll", jsonValue(it)) }
         }
         return CloudCursor.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
@@ -258,14 +258,14 @@ data class Container(
             return read(DBlayer.database.create("Container", values.toString(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, lastRecordAt: String? = null, lastRecordId: String? = null, shareUrl: String? = null, isPublic: Boolean? = null, shelves: List<ContainerShelf>? = null): Container {
+    suspend fun update(title: String? = null, lastRecordAt: GraphQLNullable<String> = GraphQLNullable.Omitted, lastRecordId: GraphQLNullable<String> = GraphQLNullable.Omitted, shareUrl: GraphQLNullable<String> = GraphQLNullable.Omitted, isPublic: GraphQLNullable<Boolean> = GraphQLNullable.Omitted, shelves: GraphQLNullable<List<ContainerShelf>> = GraphQLNullable.Omitted): Container {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
-            lastRecordAt?.let { put("lastRecordAt", jsonValue(it)) }
-            lastRecordId?.let { put("lastRecordId", jsonValue(it)) }
-            shareUrl?.let { put("shareUrl", jsonValue(it)) }
-            isPublic?.let { put("isPublic", jsonValue(it)) }
-            shelves?.let { put("shelves", jsonValue(it)) }
+            put("lastRecordAt", lastRecordAt)
+            put("lastRecordId", lastRecordId)
+            put("shareUrl", shareUrl)
+            put("isPublic", isPublic)
+            put("shelves", shelves)
         }
         return Container.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
@@ -356,10 +356,10 @@ data class InterfaceRecord(
             return read(DBlayer.database.create("InterfaceRecord", values.toString(), "{}"))
         }
     }
-    suspend fun update(slug: String? = null, spec: SampleSpec? = null): InterfaceRecord {
+    suspend fun update(slug: String? = null, spec: GraphQLNullable<SampleSpec> = GraphQLNullable.Omitted): InterfaceRecord {
         val values = buildJsonObject {
             slug?.let { put("slug", jsonValue(it)) }
-            spec?.let { put("spec", jsonValue(it)) }
+            put("spec", spec)
         }
         return InterfaceRecord.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
@@ -441,11 +441,11 @@ data class Moment(
             return read(DBlayer.database.create("Moment", values.toString(), "{}"))
         }
     }
-    suspend fun update(uuid: String? = null, userId: String? = null, text: String? = null, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String? = null): Moment {
+    suspend fun update(uuid: String? = null, userId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: GraphQLNullable<String> = GraphQLNullable.Omitted, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String? = null): Moment {
         val values = buildJsonObject {
             uuid?.let { put("uuid", jsonValue(it)) }
-            userId?.let { put("userId", jsonValue(it)) }
-            text?.let { put("text", jsonValue(it)) }
+            put("userId", userId)
+            put("text", text)
             likedByMe?.let { put("likedByMe", jsonValue(it)) }
             media?.let { put("media", jsonValue(it)) }
             createdAt?.let { put("createdAt", jsonValue(it)) }
@@ -460,7 +460,7 @@ data class Moment(
 
 @Immutable
 @Serializable
-data class MomentShareResult(val copies: Int? = null, val successMessage: String? = null)
+data class MomentShareResult(val copies: Long? = null, val successMessage: String? = null)
 
 @Immutable
 data class NestedSample(
@@ -511,13 +511,13 @@ data class NestedSample(
             return read(DBlayer.database.create("NestedSample", values_.toString(), "{}"))
         }
     }
-    suspend fun update(phase: NestedSamplePhase? = null, value: NestedValue? = null, values: List<NestedValue>? = null, tree: NestedTree? = null, replyTo: RecordReplyNode? = null): NestedSample {
+    suspend fun update(phase: GraphQLNullable<NestedSamplePhase> = GraphQLNullable.Omitted, value: GraphQLNullable<NestedValue> = GraphQLNullable.Omitted, values: List<NestedValue>? = null, tree: GraphQLNullable<NestedTree> = GraphQLNullable.Omitted, replyTo: GraphQLNullable<RecordReplyNode> = GraphQLNullable.Omitted): NestedSample {
         val values_ = buildJsonObject {
-            phase?.let { put("phase", jsonValue(it)) }
-            value?.let { put("value", jsonValue(it)) }
+            put("phase", phase)
+            put("value", value)
             values?.let { put("values", jsonValue(it)) }
-            tree?.let { put("tree", jsonValue(it)) }
-            replyTo?.let { put("replyTo", jsonValue(it)) }
+            put("tree", tree)
+            put("replyTo", replyTo)
         }
         return NestedSample.read(DBlayer.database.update(modelName, id, values_.toString(), "{}"))
     }
@@ -806,16 +806,16 @@ data class Record(
             return read(DBlayer.database.create("Record", values.toString(), args.toString()))
         }
     }
-    suspend fun update(containerId: String? = null, authorId: String? = null, text: String? = null, createdAt: String? = null, sequenceNumber: Long? = null, reactions: List<RecordReactionNode>? = null, attachment: RecordAttachment? = null, media: RecordMedia? = null): Record {
+    suspend fun update(containerId: String? = null, authorId: String? = null, text: String? = null, createdAt: String? = null, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted, reactions: List<RecordReactionNode>? = null, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, media: GraphQLNullable<RecordMedia> = GraphQLNullable.Omitted): Record {
         val values = buildJsonObject {
             containerId?.let { put("containerId", jsonValue(it)) }
             authorId?.let { put("authorId", jsonValue(it)) }
             text?.let { put("text", jsonValue(it)) }
             createdAt?.let { put("createdAt", jsonValue(it)) }
-            sequenceNumber?.let { put("sequenceNumber", jsonValue(it)) }
+            put("sequenceNumber", sequenceNumber)
             reactions?.let { put("reactions", jsonValue(it)) }
-            attachment?.let { put("attachment", jsonValue(it)) }
-            media?.let { put("media", jsonValue(it)) }
+            put("attachment", attachment)
+            put("media", media)
         }
         return Record.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
@@ -869,12 +869,12 @@ data class CustomScreen(
             return read(DBlayer.database.create("CustomScreen", values.toString(), "{}"))
         }
     }
-    suspend fun update(slug: String? = null, version: Long? = null, requires: ScreenRequires? = null, spec: ScreenSpec? = null): CustomScreen {
+    suspend fun update(slug: String? = null, version: Long? = null, requires: ScreenRequires? = null, spec: GraphQLNullable<ScreenSpec> = GraphQLNullable.Omitted): CustomScreen {
         val values = buildJsonObject {
             slug?.let { put("slug", jsonValue(it)) }
             version?.let { put("version", jsonValue(it)) }
             requires?.let { put("requires", jsonValue(it)) }
-            spec?.let { put("spec", jsonValue(it)) }
+            put("spec", spec)
         }
         return CustomScreen.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
@@ -1007,11 +1007,11 @@ data class UnionSample(
             return read(DBlayer.database.create("UnionSample", values.toString(), "{}"))
         }
     }
-    suspend fun update(label: String? = null, attachment: RecordAttachment? = null, props: MomentWidgetItemProps? = null): UnionSample {
+    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, props: GraphQLNullable<MomentWidgetItemProps> = GraphQLNullable.Omitted): UnionSample {
         val values = buildJsonObject {
-            label?.let { put("label", jsonValue(it)) }
-            attachment?.let { put("attachment", jsonValue(it)) }
-            props?.let { put("props", jsonValue(it)) }
+            put("label", label)
+            put("attachment", attachment)
+            put("props", props)
         }
         return UnionSample.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
@@ -1071,18 +1071,18 @@ data class User(
             return read(DBlayer.database.create("User", values.toString(), "{}"))
         }
     }
-    suspend fun update(name: String? = null, avatar: JsonElement? = null, birthday: String? = null): User {
+    suspend fun update(name: String? = null, avatar: GraphQLNullable<JsonElement> = GraphQLNullable.Omitted, birthday: GraphQLNullable<String> = GraphQLNullable.Omitted): User {
         val values = buildJsonObject {
             name?.let { put("name", jsonValue(it)) }
-            avatar?.let { put("avatar", jsonValue(it)) }
-            birthday?.let { put("birthday", jsonValue(it)) }
+            put("avatar", avatar)
+            put("birthday", birthday)
         }
         return User.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
-    suspend fun set(typing: Boolean? = null, mood: String? = null) {
+    suspend fun set(typing: Boolean? = null, mood: GraphQLNullable<String> = GraphQLNullable.Omitted) {
         DBlayer.database.setEphemeral(modelName, id, buildJsonObject {
             typing?.let { put("typing", jsonValue(it)) }
-            mood?.let { put("mood", jsonValue(it)) }
+            put("mood", mood)
         }.toString())
     }
 }

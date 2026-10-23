@@ -448,7 +448,7 @@ A `query "Operation"` line connects a scope to the server. A scope that depends 
 
 `where` accepts scalar and enum columns. A param passed as `nil` is a value of its own: `Moment.by_user(nil)` is the unfiltered list and has its own window. A parameter bound to a column gives the row one owner list: a row that belongs to several lists at once (a moment in the default feed and in a vibe feed) needs one scope per list, and the vibe id is a `parameter` without `where`, not a column parameter. A parameter without `where`, such as a search string, is sent as a variable and each value gets its own window: `parameter :query, :string` in `scope :search` generates `Model.search("cats")`.
 
-`parameter :afterSequence, :int` and `parameter :includeRewards, :bool` declare parameters that are sent as a JSON integer or boolean. The call takes `Int` and `Bool` (`Long` and `Boolean` in Kotlin), and the core refuses a text value. Each value has its own window and its own members. The document variable of the same name (or the name on the left of `variables name: :parameter`) must be `Int` or `Boolean`. A scope that pages in ascending order and one that pages in descending order are two scopes: a window key holds the scope, its params and the direction, so their cursors never meet.
+`parameter :afterSequence, :int` and `parameter :includeRewards, :bool` declare parameters that are sent as a JSON integer or boolean. The call takes `Int` and `Bool` (`Long` and `Boolean` in Kotlin: `:int` is `Long` in every Kotlin output, like the attribute), and the core refuses a text value. Each value has its own window and its own members. The document variable of the same name (or the name on the left of `variables name: :parameter`) must be `Int` or `Boolean`. A scope that pages in ascending order and one that pages in descending order are two scopes: a window key holds the scope, its params and the direction, so their cursors never meet.
 
 ```ruby
 scope :since do
@@ -896,7 +896,7 @@ The generator writes every input object that an operation names, and every input
 | a scalar mapped to `:long` | `Int` | `Long` |
 | an enum | its enum with an `unknown` case | its sealed class with `Unknown` |
 | the scalar named `JSON` | `JSONValue` | `JsonElement` |
-| `Int`, `Float`, `Boolean` | `Int`, `Double`, `Bool` | `Int`, `Double`, `Boolean` |
+| `Int`, `Float`, `Boolean` | `Int`, `Double`, `Bool` | `Long`, `Double`, `Boolean` |
 | `[T!]!`, `[T]` | `[T]`, `GraphQLNullable<[T?]>` | `List<T>`, `GraphQLNullable<List<T?>>` |
 | another input object | its struct | its data class |
 | an input object with `@oneOf` | an enum with one case per field | a sealed interface with one class per field |

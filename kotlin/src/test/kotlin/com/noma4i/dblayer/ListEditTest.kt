@@ -128,8 +128,8 @@ class ListEditTest {
         assertNull(list.takeEdits())
         val mirror = list.rows.value.toMutableList()
 
-        created[0].update(text = "z0")
-        created[3].update(text = "t3x")
+        created[0].update(text = GraphQLNullable.Value("z0"))
+        created[3].update(text = GraphQLNullable.Value("t3x"))
         waitFor("both updates") { rows -> rows.any { it.text == "z0" } && rows.any { it.text == "t3x" } }
         mirror.replay(list.takeEdits()!!)
 

@@ -78,5 +78,5 @@ fn an_aggregate_query_is_a_fetch_only_call_that_returns_its_fields() {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
-    assert!(kotlin.contains("suspend fun chatMediaState(chatId: String, upToSequence: Int? = null)"), "{kotlin}");
+    assert!(kotlin.contains("suspend fun chatMediaState(chatId: String, upToSequence: Long? = null)"), "{kotlin}");
 }

@@ -24,8 +24,18 @@ try await moment.destroy()
 
 ```kotlin
 val moment = Moment.create(text = "hello", media = null)
-moment.update(text = "hello world")
+moment.update(text = GraphQLNullable.Value("hello world"))
 moment.destroy()
+```
+
+In `update` and in `set`, an attribute that can be null takes three states: leave it alone, clear it, or set a value. Swift passes `String??` (omit, `.some(nil)`, `.some("x")`) and Kotlin passes `GraphQLNullable` (`Omitted`, `Null`, `Value`). An attribute that cannot be null takes a plain optional: omit it or set a value.
+
+```swift
+try await moment.update(text: .some(nil))
+```
+
+```kotlin
+moment.update(text = GraphQLNullable.Null)
 ```
 
 `create` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send (the author of a message, for example). Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.

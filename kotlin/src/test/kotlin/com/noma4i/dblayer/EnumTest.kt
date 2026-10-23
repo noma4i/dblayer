@@ -46,7 +46,7 @@ class EnumTest {
         assertEquals(NestedSamplePhase.Live, sample.phase)
         val live = withTimeout(5000) { NestedSample.where(NestedSample.phase eq NestedSamplePhase.Live).snapshots.flow.first { it.rows.isNotEmpty() } }
         assertEquals(listOf(sample.id), live.rows.map { it.id })
-        assertEquals(NestedSamplePhase.Unknown("later"), sample.update(phase = NestedSamplePhase.Unknown("later")).phase)
+        assertEquals(NestedSamplePhase.Unknown("later"), sample.update(phase = GraphQLNullable.Value(NestedSamplePhase.Unknown("later"))).phase)
     }
 
     @Test

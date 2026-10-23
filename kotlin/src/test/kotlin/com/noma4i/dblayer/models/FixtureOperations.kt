@@ -50,9 +50,9 @@ data class Clip(
             return read(DBlayer.database.create("Clip", values.toString(), "{}"))
         }
     }
-    suspend fun update(title: String? = null): Clip {
+    suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted): Clip {
         val values = buildJsonObject {
-            title?.let { put("title", jsonValue(it)) }
+            put("title", title)
         }
         return Clip.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
     }
@@ -232,7 +232,7 @@ data class StickerWidgetInput(val kind: WidgetKind, val props: StickerPropsInput
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Int> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)
+data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Long> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)
 
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
@@ -278,7 +278,7 @@ data class WidgetInput(val kind: WidgetKind, val settings: SettingsInput)
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class StickerTextInput(val body: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val sizes: GraphQLNullable<List<Int>> = GraphQLNullable.Omitted)
+data class StickerTextInput(val body: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val sizes: GraphQLNullable<List<Long>> = GraphQLNullable.Omitted)
 
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
@@ -361,7 +361,7 @@ data class ContainerMediaLoadResult(
 )
 
 object Operations {
-    suspend fun qrCodeCreate(kind: String, size: Int? = null): QrCodeCreateResult {
+    suspend fun qrCodeCreate(kind: String, size: Long? = null): QrCodeCreateResult {
         val variables = mutableMapOf<String, JsonElement>()
         variables["kind"] = jsonValue(kind)
         if (size != null) variables["size"] = jsonValue(size)
@@ -385,7 +385,7 @@ object Operations {
         variables["input"] = jsonValue(input)
         return DBlayer.run("MomentCreate", JsonObject(variables), MomentCreateResult.serializer())
     }
-    suspend fun giphyLoad(type: String, limit: Int? = null): List<GiphyLoadResult> {
+    suspend fun giphyLoad(type: String, limit: Long? = null): List<GiphyLoadResult> {
         val variables = mutableMapOf<String, JsonElement>()
         variables["type"] = jsonValue(type)
         if (limit != null) variables["limit"] = jsonValue(limit)
@@ -396,7 +396,7 @@ object Operations {
         if (widgets != null) variables["widgets"] = jsonValue(widgets)
         return DBlayer.run("WidgetsSend", JsonObject(variables), WidgetsSendResult.serializer())
     }
-    suspend fun containerMediaLoad(containerId: String, upToSequence: Int? = null): ContainerMediaLoadResult {
+    suspend fun containerMediaLoad(containerId: String, upToSequence: Long? = null): ContainerMediaLoadResult {
         val variables = mutableMapOf<String, JsonElement>()
         variables["containerId"] = jsonValue(containerId)
         if (upToSequence != null) variables["upToSequence"] = jsonValue(upToSequence)

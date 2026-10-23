@@ -178,8 +178,8 @@ fn arg_type(kind: &str, swift: bool) -> String {
     let name = match (kind, swift) {
         ("bool", true) => "Bool",
         ("bool", false) => "Boolean",
-        ("int", _) | ("long", true) => "Int",
-        ("long", false) => "Long",
+        ("int" | "long", true) => "Int",
+        ("int" | "long", false) => "Long",
         ("num", _) => "Double",
         ("ids", true) => "[String]",
         ("ids", false) => "List<String>",
@@ -187,6 +187,16 @@ fn arg_type(kind: &str, swift: bool) -> String {
         _ => "String",
     };
     name.to_string()
+}
+
+fn kotlin_patch_param(field: &FieldSpec) -> String {
+    if field.nullable || field.optional { format!("{}: GraphQLNullable<{}> = GraphQLNullable.Omitted", field.name, field_type(field, false).trim_end_matches('?')) }
+    else { format!("{}: {}? = null", field.name, field_type(field, false)) }
+}
+
+fn kotlin_patch_put(field: &FieldSpec) -> String {
+    if field.nullable || field.optional { format!("            put(\"{0}\", {0})", field.name) }
+    else { format!("            {0}?.let {{ put(\"{0}\", jsonValue(it)) }}", field.name) }
 }
 
 fn swift_default(field: &FieldSpec) -> Option<String> {
@@ -417,9 +427,9 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         }
         writeln!(out, "            return read(DBlayer.database.create(\"{class}\", {values}.toString(), {}))\n        }}\n    }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.toString()") }).unwrap();
         let update_args = standard_args(model, "update");
-        let params = fields.iter().map(|field| format!("{}: {}{} = null", field.name, field_type(field, false), if field.nullable || field.optional { "" } else { "?" })).chain(update_args.iter().map(|(name, kind)| format!("{name}: {}? = null", arg_type(kind, false)))).collect::<Vec<_>>().join(", ");
+        let params = fields.iter().map(|field| kotlin_patch_param(field)).chain(update_args.iter().map(|(name, kind)| format!("{name}: {}? = null", arg_type(kind, false)))).collect::<Vec<_>>().join(", ");
         writeln!(out, "    suspend fun update({params}): {class} {{\n        val {values} = buildJsonObject {{").unwrap();
-        for field in &fields { writeln!(out, "            {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.name, field.name).unwrap(); }
+        for field in &fields { writeln!(out, "{}", kotlin_patch_put(field)).unwrap(); }
         out.push_str("        }\n");
         if !update_args.is_empty() {
             writeln!(out, "        val {args} = buildJsonObject {{").unwrap();
@@ -428,9 +438,9 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         }
         writeln!(out, "        return {class}.read(DBlayer.database.update(modelName, id, {values}.toString(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.toString()") }).unwrap();
         if !model.ephemeral.is_empty() {
-            let params = model.ephemeral.iter().map(|field| format!("{}: {}{} = null", field.field.name, field_type(&field.field, false), if field.field.nullable || field.field.optional { "" } else { "?" })).collect::<Vec<_>>().join(", ");
+            let params = model.ephemeral.iter().map(|field| kotlin_patch_param(&field.field)).collect::<Vec<_>>().join(", ");
             writeln!(out, "    suspend fun set({params}) {{\n        DBlayer.database.setEphemeral(modelName, id, buildJsonObject {{").unwrap();
-            for field in &model.ephemeral { writeln!(out, "            {}?.let {{ put(\"{}\", jsonValue(it)) }}", field.field.name, field.field.name).unwrap(); }
+            for field in &model.ephemeral { writeln!(out, "{}", kotlin_patch_put(&field.field)).unwrap(); }
             out.push_str("        }.toString())\n    }\n");
         }
         for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {

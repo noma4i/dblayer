@@ -39,7 +39,7 @@ class ListDeltaTest {
         for (step in 0 until 40) {
             when (if (rows.isEmpty()) 0 else below(3)) {
                 0 -> rows.add(Moment.create(text = "n%02d-%03d".format(below(40), step)))
-                1 -> { val at = below(rows.size); rows[at] = rows[at].update(text = "n%02d-%03d".format(below(40), step)) }
+                1 -> { val at = below(rows.size); rows[at] = rows[at].update(text = GraphQLNullable.Value("n%02d-%03d".format(below(40), step))) }
                 else -> rows.removeAt(below(rows.size)).destroy()
             }
             val fresh = byText.live.flow.first().map { it.id to it.text }

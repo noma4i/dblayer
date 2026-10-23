@@ -25,6 +25,7 @@ fn a_result_with_objects_lists_and_raw_json_becomes_nested_types_on_both_platfor
         "data class PricingLoadResult(",
         "    val gifts: List<PricingLoadResultGifts>? = null,",
         "    val videoIntro: PricingLoadResultVideoIntro? = null,",
+        "    val price: Long? = null,",
         "    val tags: List<String>? = null,",
         "    val spec: JsonElement? = null,",
         "data class PricingLoadResultGifts(",

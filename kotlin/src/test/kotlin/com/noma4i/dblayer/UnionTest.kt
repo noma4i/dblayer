@@ -59,14 +59,14 @@ class UnionTest {
         assertEquals(props, created.props)
 
         val reaction = RecordAttachment.Reaction(ReactionAttachment(body = "+1"))
-        val switched = created.update(attachment = reaction)
+        val switched = created.update(attachment = GraphQLNullable.Value(reaction))
         assertEquals(reaction, switched.attachment)
         assertEquals(props, switched.props)
 
         val future = RecordAttachment.Unknown("FutureAttachment")
-        val kept = switched.update(attachment = future)
+        val kept = switched.update(attachment = GraphQLNullable.Value(future))
         assertEquals(future, kept.attachment)
-        val again = kept.update(label = "renamed")
+        val again = kept.update(label = GraphQLNullable.Value("renamed"))
         assertEquals(future, again.attachment)
         assertEquals("renamed", again.label)
 

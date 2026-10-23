@@ -265,3 +265,6 @@ mod upload_batch_tests;
 
 #[cfg(test)]
 mod raw_json_tests;
+
+#[cfg(test)]
+mod patch_tests;

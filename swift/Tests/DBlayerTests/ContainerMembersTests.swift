@@ -24,7 +24,9 @@ extension BridgeProbeTests {
     let first = User.containerMembers("c1")
     try await first.load()
     try await User.containerMembers("c2").load()
-    #expect(try await Cursor(await first.snapshots.stream()).first("the member count") { $0.total == 53 } != nil)
+    let counted = try await Cursor(await first.snapshots.stream()).first("the member count") { $0.total == 53 }
+    let total: Int? = counted?.total
+    #expect(total == 53)
     #expect(try await first.loadMore() == .loaded(hasMore: false))
     let calls = transport.calls.filter { $0.operationName == "ContainerMembers" }
     #expect(calls.count == 3)

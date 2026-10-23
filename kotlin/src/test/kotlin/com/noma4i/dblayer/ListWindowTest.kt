@@ -26,7 +26,7 @@ class ListWindowTest {
         val live = LiveWindow(byText.window(tail = 5), scope)
         eventually("the window") { live.rows.value.size == 5 }
         assertEquals((25 until 30).map { "t%05d".format(it) }, live.rows.value.map { it.text })
-        assertEquals(WindowEdges(true, false, 30), live.edges.value)
+        assertEquals(WindowEdges(true, false, 30L), live.edges.value)
         val held = ArrayList(live.rows.value)
         live.takeEdits()
 
@@ -34,7 +34,7 @@ class ListWindowTest {
         eventually("the new tail row") { live.rows.value.lastOrNull()?.text == "t00030" }
         held.replay(live.takeEdits() ?: emptyList())
         assertEquals(live.rows.value.map { it.id }, held.map { it.id })
-        assertEquals(31, live.edges.value.total)
+        assertEquals(31L, live.edges.value.total)
 
         live.expand(before = 3)
         eventually("the wider window") { live.rows.value.size == 8 }
@@ -42,7 +42,7 @@ class ListWindowTest {
         assertEquals(live.rows.value.map { it.id }, held.map { it.id })
         live.expand(before = 100)
         eventually("every row") { live.rows.value.size == 31 }
-        assertEquals(WindowEdges(false, false, 31), live.edges.value)
+        assertEquals(WindowEdges(false, false, 31L), live.edges.value)
         scope.cancel()
     }
 }
