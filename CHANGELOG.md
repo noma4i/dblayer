@@ -1,5 +1,31 @@
 # Changelog
 
+## 6.6.0 - 2026-10-23
+
+### Added
+- `DatabaseNotOpen` error for calls on a closed or unopened database.
+- `generate_kotlin_bindings.sh` generates Kotlin bindings from explicit paths.
+- `MockTransport` mode `networkError` answers an unqueued call with a network error.
+
+### Changed
+- A subscription delivers rows, phase, error and revision in one value.
+- The first value of a subscription waits for the first read of its rows.
+- A background load error with rows keeps the phase loaded and carries the error.
+- `DB.database` throws `DatabaseNotOpen` instead of crashing when the database is closed.
+- `subscriptionCensus`, `entityCensus` and `openReport` throw on a closed database.
+- `stream()` of live sources and query changes is `async throws`.
+- Kotlin `LiveSource.flow` throws the subscription error when collected.
+- A singleton entity of a closed database becomes closed.
+- A rejected query fails only its caller, the relation window stays intact.
+- An entity delivery carries `failure` when its read failed.
+- `MockTransport` fails the test that makes a call without a queued reply.
+- `MockTransport` records an unknown unsubscribe token on both platforms without throwing.
+
+### Fixed
+- `logout` returns after held entities received their removal.
+- Switching lists no longer opens a second viewer changes subscription.
+- A Kotlin process no longer aborts when an async transport callback completes early.
+
 ## 6.5.0 - 2026-10-23
 
 ### Changed
