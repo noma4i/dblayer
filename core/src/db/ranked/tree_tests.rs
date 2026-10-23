@@ -55,13 +55,50 @@ fn rank_of_an_absent_key_counts_the_smaller_keys() {
     assert_eq!([5u64, 10, 15, 30, 99].map(|key| tree.rank(&key)), [0, 0, 1, 2, 3]);
 }
 
+thread_local! {
+    static COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct Counted(u64);
+
+impl PartialOrd for Counted {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Counted {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        COMPARISONS.with(|count| count.set(count.get() + 1));
+        self.0.cmp(&other.0)
+    }
+}
+
+fn deepest_lookup(tree: &Tree<Counted, u64>, keys: impl Iterator<Item = u64>) -> usize {
+    keys.map(|key| {
+        COMPARISONS.with(|count| count.set(0));
+        assert_eq!(tree.get(&Counted(key)), Some(&key));
+        COMPARISONS.with(|count| count.get())
+    })
+    .max()
+    .unwrap()
+}
+
 #[test]
-fn a_tree_built_from_sorted_items_stays_balanced_under_edits() {
-    let items: Vec<(u64, u64)> = (0..1000).map(|key| (key, key)).collect();
+fn a_tree_stays_balanced_when_built_from_sorted_items_and_under_ascending_inserts_and_removals() {
+    let items: Vec<(Counted, u64)> = (0..1000).map(|key| (Counted(key), key)).collect();
     let mut tree = Tree::from_sorted(&items);
     for key in 0..500 {
-        tree = tree.without(&(key * 2));
+        tree = tree.without(&Counted(key * 2));
     }
     assert_eq!(tree.len(), 500);
     assert_eq!(tree.values(), (0..500).map(|key| key * 2 + 1).collect::<Vec<_>>());
+    assert!(deepest_lookup(&tree, (0..500).map(|key| key * 2 + 1)) <= 18, "removals left a tall tree");
+
+    let mut grown = Tree::<Counted, u64>::default();
+    for key in 0..1000 {
+        grown = grown.with(Counted(key), key);
+    }
+    assert!(deepest_lookup(&grown, 0..1000) <= 18, "ascending inserts built a chain");
 }

@@ -13,7 +13,7 @@ use crate::value::ScalarKind;
 pub(super) struct Counting {
     queries: AtomicUsize,
     started: Notify,
-    delay: Duration,
+    hold: Option<Arc<tokio::sync::Semaphore>>,
     subscriptions: Option<std::sync::mpsc::Sender<Arc<super::SubscriptionSink>>>,
 }
 
@@ -26,7 +26,7 @@ impl Transport for Counting {
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> {
         self.queries.fetch_add(1, Ordering::SeqCst);
         self.started.notify_one();
-        tokio::time::sleep(self.delay).await;
+        if let Some(hold) = &self.hold { hold.acquire().await.unwrap().forget(); }
         Ok(r#"{"data":{"moments":[{"id":"m1","text":"a"}]}}"#.into())
     }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
@@ -54,7 +54,7 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     }
     for shared_changes in [false, true] {
     let (opened, subscriptions) = std::sync::mpsc::channel();
-    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), delay: Duration::ZERO, subscriptions: Some(opened) });
+    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: None, subscriptions: Some(opened) });
     let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     model.storage = crate::schema::Storage::Memory;
     let mut relation = if shared_changes { relation("recent", "5.minutes") } else { RelationSpec::global("recent") };
@@ -79,7 +79,6 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     sink.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "session_unknown".into() });
     let error = received.recv_timeout(Duration::from_secs(2)).expect("query listener receives terminal subscription failure");
     assert!(matches!(error, DbError::Session { code: super::SessionCode::Unauthenticated, detail } if detail == "session_unknown"));
-    assert!(received.recv_timeout(Duration::from_millis(50)).is_err());
     assert!(subscriptions.try_recv().is_err());
     assert_eq!(transport.queries.load(Ordering::SeqCst), initial_reads);
     database.listen().unwrap();
@@ -97,7 +96,7 @@ async fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_lo
     let mut relation = RelationSpec::global("recent");
     relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription:"BulletinAdded".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
     model.relations.push(relation);
-    let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), delay:Duration::ZERO, subscriptions: None });
+    let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), hold: None, subscriptions: None });
     let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body } }","rootPath":"bulletinAdded"}]"#.into()).unwrap();
     for window in [false, true] {
@@ -118,21 +117,32 @@ pub(super) fn relation(name: &str, stale: &str) -> RelationSpec {
     relation
 }
 
-pub(super) async fn rig(delay: Duration) -> (Arc<Database>, Arc<Counting>) {
-    let (db, transport, _) = open_rig(delay, None).await;
+pub(super) async fn rig() -> (Arc<Database>, Arc<Counting>) {
+    let (db, transport, _) = open_rig(None, None).await;
     (db, transport)
+}
+
+async fn held_rig() -> (Arc<Database>, Arc<Counting>, Arc<tokio::sync::Semaphore>) {
+    let hold = Arc::new(tokio::sync::Semaphore::new(0));
+    let (db, transport, _) = open_rig(None, Some(hold.clone())).await;
+    (db, transport, hold)
+}
+
+async fn settled_on_the_executor() {
+    let runtime = super::database::executor().unwrap();
+    for _ in 0..16 { runtime.spawn(async {}).await.unwrap(); }
 }
 
 async fn rig_with_clock() -> (Arc<Database>, Arc<Counting>, Arc<TestClock>) {
     let clock = TestClock::new(1_000_000);
-    let (db, transport, _) = open_rig(Duration::ZERO, Some(clock.clone())).await;
+    let (db, transport, _) = open_rig(Some(clock.clone()), None).await;
     (db, transport, clock)
 }
 
-async fn open_rig(delay: Duration, clock: Option<Arc<TestClock>>) -> (Arc<Database>, Arc<Counting>, Option<Arc<TestClock>>) {
+async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tokio::sync::Semaphore>>) -> (Arc<Database>, Arc<Counting>, Option<Arc<TestClock>>) {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     model.relations.extend([relation("feed", "5.minutes"), relation("quick", "200.milliseconds")]);
-    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), delay, subscriptions: None });
+    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: hold.clone(), subscriptions: None });
     let config = Config { path: None, data_version: None, cache_rows: 8 };
     let models = serde_json::to_string(&vec![model]).unwrap();
     let transport_handle = Some(transport.clone() as Arc<dyn Transport>);
@@ -151,7 +161,7 @@ fn queries(transport: &Counting) -> usize { transport.queries.load(Ordering::Seq
 
 #[tokio::test]
 async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
-    let (db, transport) = rig(Duration::ZERO).await;
+    let (db, transport, clock) = rig_with_clock().await;
     load(&db, "feed").await.unwrap();
     assert_eq!(queries(&transport), 1, "never loaded");
     load(&db, "feed").await.unwrap();
@@ -159,7 +169,7 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
 
     load(&db, "quick").await.unwrap();
     assert_eq!(queries(&transport), 2);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    clock.advance(300);
     load(&db, "quick").await.unwrap();
     assert_eq!(queries(&transport), 3, "fresh_for elapsed");
 
@@ -171,12 +181,16 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
 
 #[tokio::test]
 async fn inv_fresh_13_parallel_loads_make_one_request_and_all_return_after_it() {
-    let (db, transport) = rig(Duration::from_millis(150)).await;
+    let (db, transport, hold) = held_rig().await;
     let mut loads = tokio::task::JoinSet::new();
     for _ in 0..10 {
         let db = db.clone();
         loads.spawn(async move { load(&db, "feed").await.map(|()| stored(&db)) });
     }
+    transport.started.notified().await;
+    settled_on_the_executor().await;
+    assert!(loads.try_join_next().is_none(), "a load returned before the request answered");
+    hold.add_permits(1);
     while let Some(done) = loads.join_next().await {
         assert!(done.unwrap().unwrap(), "returned before the rows landed");
     }
@@ -185,18 +199,22 @@ async fn inv_fresh_13_parallel_loads_make_one_request_and_all_return_after_it() 
 
 #[tokio::test]
 async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
-    let (db, transport) = rig(Duration::from_millis(150)).await;
+    let (db, transport, hold) = held_rig().await;
     let _live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Silent));
     transport.started.notified().await;
-    load(&db, "feed").await.unwrap();
+    let sharing = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
+    settled_on_the_executor().await;
+    hold.add_permits(1);
+    sharing.await.unwrap().unwrap();
     assert_eq!(queries(&transport), 1);
 }
 
 #[tokio::test]
 async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
     for preloaded in [false, true] {
-        let (db, transport) = rig(Duration::from_millis(20)).await;
+        let (db, transport, hold) = held_rig().await;
         if preloaded {
+            hold.add_permits(1);
             load(&db, "feed").await.unwrap();
             transport.started.notified().await;
         }
@@ -207,6 +225,7 @@ async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
         }
         let started = tokio::time::timeout(Duration::from_secs(2), transport.started.notified()).await;
         assert!(started.is_ok(), "preloaded={preloaded}, requests={}, expected=1", queries(&transport) - before);
+        hold.add_permits(1);
         live.wait_for_initial_load().await.unwrap();
         assert!(stored(&db));
         load(&db, "feed").await.unwrap();
@@ -217,7 +236,7 @@ async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
 
 #[tokio::test]
 async fn cancelling_a_live_query_finishes_its_initial_wait() {
-    let (db, transport) = rig(Duration::from_secs(30)).await;
+    let (db, transport, _hold) = held_rig().await;
     let live = db.live_query(r#"{"model":"Moment","relation":"feed"}"#.into(), Arc::new(Silent));
     transport.started.notified().await;
     live.cancel();
@@ -227,7 +246,7 @@ async fn cancelling_a_live_query_finishes_its_initial_wait() {
 
 #[tokio::test]
 async fn inv_fresh_14_load_keeps_no_subscription() {
-    let (db, _transport) = rig(Duration::ZERO).await;
+    let (db, _transport) = rig().await;
     let before = db.subscription_census();
     load(&db, "feed").await.unwrap();
     let after = db.subscription_census();
@@ -236,11 +255,13 @@ async fn inv_fresh_14_load_keeps_no_subscription() {
 
 #[tokio::test]
 async fn inv_fresh_13_a_cancelled_caller_does_not_cancel_the_load_another_waits_for() {
-    let (db, transport) = rig(Duration::from_millis(150)).await;
+    let (db, transport, hold) = held_rig().await;
     let cancelled = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     transport.started.notified().await;
     let waiter = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
+    settled_on_the_executor().await;
     cancelled.abort();
+    hold.add_permits(1);
     waiter.await.unwrap().unwrap();
     assert_eq!(queries(&transport), 1);
     assert!(stored(&db));

@@ -112,18 +112,6 @@ async fn dropping_foreign_calls_cancels_the_inflight_http_future() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn answers_come_back_as_json_and_error_answers_as_typed_codes_that_keep_the_session() {
-    let (database, _, credentials) = rig(public_key_der_b64(), pin()).await;
-
-    let started = database.session_call("social".into(), r#"{"provider":"google","idToken":"t"}"#.into()).await.unwrap();
-    let refused = database.session_call("confirm".into(), r#"{"code":"000000"}"#.into()).await.unwrap_err();
-
-    assert_eq!(started, r#"{"nextStep":"authenticated"}"#);
-    assert_eq!(code(refused), SessionCode::InvalidCode);
-    assert!(credentials.value().is_some());
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_sessionless_operation_posts_all_fields_without_a_session() {
     struct TicketPost;
 

@@ -48,33 +48,19 @@ fn unauthorized() -> DbError {
 const REFUSED: &str = r#"{"errors":[{"message":"nope"},{"message":"bad"}]}"#;
 
 #[tokio::test]
-async fn a_run_refused_with_http_401_keeps_its_status_and_is_sent_once() {
-    let (db, transport) = rig(Err(unauthorized)).await;
-    let error = db.run("Feed".into(), "{}".into()).await.unwrap_err();
-    assert!(matches!(&error, DbError::Http { status: 401, detail } if detail.contains("unauthorized")), "{error:?}");
-    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn a_load_refused_with_http_401_keeps_its_status_and_is_sent_once() {
-    let (db, transport) = rig(Err(unauthorized)).await;
-    let error = db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
-    assert!(matches!(&error, DbError::Http { status: 401, detail } if detail.contains("unauthorized")), "{error:?}");
-    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn a_run_answered_with_graphql_errors_keeps_every_message_and_is_sent_once() {
-    let (db, transport) = rig(Ok(REFUSED)).await;
-    let error = db.run("Feed".into(), "{}".into()).await.unwrap_err();
-    assert!(matches!(&error, DbError::Graphql { messages, .. } if messages == &["nope", "bad"]), "{error:?}");
-    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn a_load_answered_with_graphql_errors_keeps_every_message_and_is_sent_once() {
-    let (db, transport) = rig(Ok(REFUSED)).await;
-    let error = db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
-    assert!(matches!(&error, DbError::Graphql { messages, .. } if messages == &["nope", "bad"]), "{error:?}");
-    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+async fn a_refused_call_keeps_its_error_and_is_sent_once() {
+    for answer in [Err(unauthorized as fn() -> DbError), Ok(REFUSED)] {
+        for call in ["run", "refresh"] {
+            let (db, transport) = rig(answer).await;
+            let error = match call {
+                "run" => db.run("Feed".into(), "{}".into()).await.unwrap_err(),
+                _ => db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
+            };
+            match answer {
+                Err(_) => assert!(matches!(&error, DbError::Http { status: 401, detail } if detail.contains("unauthorized")), "{call}: {error:?}"),
+                Ok(_) => assert!(matches!(&error, DbError::Graphql { messages, .. } if messages == &["nope", "bad"]), "{call}: {error:?}"),
+            }
+            assert_eq!(transport.calls.load(Ordering::SeqCst), 1, "{call}");
+        }
+    }
 }

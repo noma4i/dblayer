@@ -1,16 +1,15 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use super::{Config, Database, DbError, LiveChange, QueryListener, SubscriptionSink, Transport, TransportRequest};
 use crate::schema::{ChangeFeed, ChangeRead, Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
 
 pub(super) struct Recording {
-    pub(super) queries: AtomicUsize,
-    delay: Duration,
+    queries: AtomicUsize,
     subscribed: Mutex<Vec<String>>,
+    subscribed_event: tokio::sync::Notify,
 }
 
 impl Recording {
@@ -27,12 +26,12 @@ impl Transport for Recording {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> {
         self.queries.fetch_add(1, Ordering::SeqCst);
-        tokio::time::sleep(self.delay).await;
         Ok(r#"{"data":{"moments":[{"id":"m1","text":"a"}]}}"#.into())
     }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<String, DbError> {
         self.subscribed.lock().unwrap().push(request.operation_name.clone());
+        self.subscribed_event.notify_one();
         sink.ready();
         Ok(request.operation_name)
     }
@@ -58,41 +57,36 @@ fn feed_relation(name: &str, text_param: Option<&str>) -> RelationSpec {
     relation
 }
 
-pub(super) async fn open_viewer(delay: Duration, clock: Option<Arc<super::TestClock>>) -> (Arc<Database>, Arc<Recording>) {
+async fn open_viewer() -> (Arc<Database>, Arc<Recording>) {
     let mut moment = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     moment.relations.extend([feed_relation("feed", None), feed_relation("vibeFeed", Some("vibeId"))]);
     moment.changes.push(ChangeRead { area: "MOMENT".into(), relation: "feed".into(), parameter: None, removes_on: vec![] });
     let mut notice = ModelSpec::new("ChangeNotice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     notice.storage = crate::schema::Storage::Memory;
     notice.change_feed = Some(ChangeFeed { subscription: "DblayerViewerChanges".into(), root: "viewerChanges.changes".into(), area: "area".into(), kind: "kind".into(), id: "entityId".into() });
-    let transport = Arc::new(Recording { queries: AtomicUsize::new(0), delay, subscribed: Mutex::new(Vec::new()) });
+    let transport = Arc::new(Recording { queries: AtomicUsize::new(0), subscribed: Mutex::new(Vec::new()), subscribed_event: tokio::sync::Notify::new() });
     let models = serde_json::to_string(&vec![moment, notice]).unwrap();
     let config = Config { path: None, data_version: None, cache_rows: 8 };
     let handle = Some(transport.clone() as Arc<dyn Transport>);
-    let database = match clock {
-        Some(clock) => Database::open_with_clock(config, models, handle, clock).await,
-        None => Database::open(config, models, handle, None, None, None).await,
-    }
-    .unwrap();
+    let database = Database::open(config, models, handle, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"},{"name":"DblayerViewerChanges","document":"subscription DblayerViewerChanges { viewerChanges { changes { area } } }","rootPath":"viewerChanges"}]"#.into()).unwrap();
     (database, transport)
 }
 
 #[tokio::test]
 async fn switching_the_observed_list_from_a_foreign_thread_keeps_the_one_viewer_changes_subscription() {
-    let (database, transport) = open_viewer(Duration::ZERO, None).await;
+    let (database, transport) = open_viewer().await;
     let feed = database.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Silent));
     feed.wait_for_initial_load().await.unwrap();
-    for _ in 0..200 {
-        if transport.subscriptions("DblayerViewerChanges") == 1 { break; }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    let live = || database.sync().unwrap().inner.live_status("ChangeNotice|DblayerViewerChanges");
+    transport.subscribed_event.notified().await;
+    while live() != Some((1, true)) { tokio::task::yield_now().await; }
     assert_eq!(transport.subscriptions("DblayerViewerChanges"), 1);
 
     std::thread::spawn(move || feed.cancel()).join().unwrap();
     let vibe = database.live_query(r#"{"model":"Moment","relation":"vibeFeed","params":{"vibeId":"3"}}"#.into(), Arc::new(Silent));
     vibe.wait_for_initial_load().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    while live() != Some((1, true)) { tokio::task::yield_now().await; }
 
     assert_eq!(transport.subscriptions("DblayerViewerChanges"), 1);
 }

@@ -12,26 +12,34 @@ fn inv_panic_01_an_executor_that_cannot_start_is_an_error_and_a_later_start_can_
     assert_eq!(runtime.block_on(async { 7 }), 7);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inv_panic_02_two_first_starts_build_one_runtime() {
+#[test]
+fn inv_panic_02_two_first_starts_build_one_runtime() {
     static SLOT: Starter = Starter::new();
     static BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let together = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let mut starts = tokio::task::JoinSet::new();
-    for _ in 0..2 {
-        let together = together.clone();
-        starts.spawn(async move {
-            together.wait();
-            started(&SLOT, || {
-                BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                tokio::runtime::Builder::new_multi_thread().worker_threads(1).build()
-            })
-            .map(|_| ())
-        });
-    }
-    while let Some(done) = starts.join_next().await {
-        done.unwrap().unwrap();
-    }
+    let (building_tx, building) = std::sync::mpsc::channel();
+    let (entering_tx, entering) = std::sync::mpsc::channel();
+    let (release_tx, release) = std::sync::mpsc::channel::<()>();
+    let first = std::thread::spawn(move || {
+        started(&SLOT, || {
+            BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            building_tx.send(()).unwrap();
+            release.recv().unwrap();
+            tokio::runtime::Builder::new_multi_thread().worker_threads(1).build()
+        })
+        .map(|_| ())
+    });
+    building.recv().unwrap();
+    let second = std::thread::spawn(move || {
+        entering_tx.send(()).unwrap();
+        started(&SLOT, || {
+            BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tokio::runtime::Builder::new_multi_thread().worker_threads(1).build()
+        })
+        .map(|_| ())
+    });
+    entering.recv().unwrap();
+    release_tx.send(()).unwrap();
+    first.join().unwrap().unwrap();
+    second.join().unwrap().unwrap();
     assert_eq!(BUILDS.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

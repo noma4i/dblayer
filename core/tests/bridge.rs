@@ -83,7 +83,7 @@ async fn a_create_left_pending_by_the_last_session_waits_for_registration_after_
 
     let transport = Arc::new(Recorder(Default::default()));
     let second = Database::open(config(), models, Some(transport.clone() as Arc<dyn Transport>), None, None, None).await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    second.maintain().await.unwrap();
     assert!(transport.0.lock().unwrap().is_empty());
     second.register_operations(r#"[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id text } }"}]"#.into()).unwrap();
     second.flush().await.unwrap();

@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use serde_json::json;
 
@@ -17,7 +16,7 @@ impl EntityListener for Removed {
 
 #[tokio::test]
 async fn inv_observe_27_a_leased_row_is_told_removed_before_logout_returns() {
-    let (db, _) = rig(Duration::ZERO).await;
+    let (db, _) = rig().await;
     put(&db.db, "Moment", json!({"id": "m1", "text": "old"}));
     let listener = Arc::new(Removed(Mutex::new(Vec::new())));
     let live = db.live_entities("Moment".into(), listener.clone()).unwrap();

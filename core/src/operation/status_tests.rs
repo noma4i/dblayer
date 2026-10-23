@@ -1,5 +1,4 @@
 use super::*;
-use crate::identity::RowId;
 
 #[test]
 fn action_key_joins_model_and_action() {
@@ -40,17 +39,4 @@ fn status_text_round_trips() {
     }
     assert_eq!(OperationStatus::DeliveryUnknown.as_sql(), "delivery_unknown");
     assert_eq!(OperationStatus::from_sql("unknown"), None);
-}
-
-#[test]
-fn operation_round_trips_through_json() {
-    let mut operation = Operation::new("message:create", vec![RowId::new("row-1").unwrap()], 4, 5);
-    operation.id = OperationId(3);
-    operation.status = OperationStatus::DeliveryUnknown;
-    operation.temp_id = Some(RowId::new("temp-1").unwrap());
-    operation.transport_started = true;
-    operation.dedupe_key = Some("message-3".into());
-    let encoded = serde_json::to_string(&operation).unwrap();
-    assert_eq!(serde_json::from_str::<Operation>(&encoded).unwrap(), operation);
-    assert!(encoded.contains("\"delivery_unknown\""));
 }

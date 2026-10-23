@@ -1,36 +1,6 @@
 use super::*;
 
 #[test]
-fn new_counters_have_zero_values() {
-    assert_eq!(Counters::default(), Counters {
-        stale_version_drops: 0,
-        membership_missing_entity: 0,
-        unknown_operation_acks: 0,
-        observation_reads: 0,
-        observer_calls: 0,
-        rows_delivered: 0,
-        rows_loaded: 0,
-        entity_facts_told: 0,
-        entity_position_skips: 0,
-        entity_reads_failed: 0,
-        cache_hits: 0,
-        cache_misses: 0,
-        cache_evictions: 0,
-        cache_estimated_bytes: 0,
-        peek_hits: 0,
-        peek_misses: 0,
-        transport_calls: 0,
-        lost_outcomes: 0,
-        settle_parks: 0,
-        edge_read_steps: 0,
-        edge_read_scans: 0,
-        sql_under_owner: 0,
-        query_reads_failed: 0,
-        owner_panics: 0,
-    });
-}
-
-#[test]
 fn record_methods_increment_matching_counters() {
     let mut counters = Counters::default();
     counters.record_transport_call();
@@ -40,9 +10,23 @@ fn record_methods_increment_matching_counters() {
     assert_eq!(counters.stale_version_drops, 3);
 }
 
+macro_rules! sums_each_field {
+    ($($field:ident),* $(,)?) => {
+        let Counters { $($field: _),* } = Counters::default();
+        $({
+            let left = Counters { $field: 1, ..Counters::default() };
+            let right = Counters { $field: 2, ..Counters::default() };
+            assert_eq!(left + right, Counters { $field: 3, ..Counters::default() }, stringify!($field));
+        })*
+    };
+}
+
 #[test]
-fn adding_counters_sums_every_field() {
-    let left = Counters { cache_hits: 1, observer_calls: 2, rows_loaded: 3, ..Counters::default() };
-    let right = Counters { cache_hits: 4, transport_calls: 5, ..Counters::default() };
-    assert_eq!(left + right, Counters { cache_hits: 5, observer_calls: 2, rows_loaded: 3, transport_calls: 5, ..Counters::default() });
+fn adding_counters_sums_every_field_and_no_other() {
+    sums_each_field!(
+        stale_version_drops, membership_missing_entity, unknown_operation_acks, observation_reads, observer_calls, rows_delivered,
+        rows_loaded, entity_facts_told, entity_position_skips, entity_reads_failed, cache_hits, cache_misses, cache_evictions,
+        cache_estimated_bytes, peek_hits, peek_misses, transport_calls, lost_outcomes, settle_parks, edge_read_steps,
+        edge_read_scans, sql_under_owner, query_reads_failed, owner_panics,
+    );
 }

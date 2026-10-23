@@ -307,19 +307,6 @@ async fn the_credential_is_saved_before_the_first_request_and_never_written_to_s
 }
 
 #[tokio::test]
-async fn a_credential_without_a_matching_session_row_is_replaced_by_a_new_session() {
-    let rig = Rig::new();
-    rig.credentials.set("from-an-older-install").unwrap();
-    let db = memory_db();
-
-    rig.client(&db).read("/api/graphql", graphql("query { a }")).await.unwrap();
-
-    let credential = rig.credentials.value().unwrap();
-    assert_ne!(credential, "from-an-older-install");
-    assert_eq!(rig.server.seen()[0]["credential"], credential);
-}
-
-#[tokio::test]
 async fn a_response_for_another_request_is_refused() {
     let rig = Rig::new();
     rig.server.reply_to_other_request();

@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::Map;
 
@@ -15,7 +14,7 @@ impl QueryListener for Quiet {
 
 #[tokio::test]
 async fn inv_loadm_12_a_query_the_core_rejects_tells_its_subscriber_in_the_snapshot_and_leaves_the_relation_window_alone() {
-    let (db, _) = rig(Duration::ZERO).await;
+    let (db, _) = rig().await;
     let sync = db.sync.as_ref().unwrap();
     let state = sync.relation_state("Moment", "feed", &Map::new()).unwrap();
     let query = r#"{"model":"Moment","relation":"feed","params":{},"where":{"type":"equal","field":"nope","value":1}}"#;
@@ -36,7 +35,7 @@ impl super::EntityListener for Failures {
 
 #[tokio::test]
 async fn inv_observe_24_an_entity_read_failure_reaches_the_foreign_listener() {
-    let (db, _) = rig(Duration::ZERO).await;
+    let (db, _) = rig().await;
     let listener = Arc::new(Failures(std::sync::Mutex::new(Vec::new())));
     let live = db.live_entities("Moment".into(), listener.clone()).unwrap();
     db.db.shared.store.fail_next_entity_reads(1);

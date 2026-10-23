@@ -89,17 +89,22 @@ async fn inv_event_03_an_event_and_a_local_edit_of_one_row_end_as_one_of_the_two
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_event_03_racing_events_never_lose_a_local_edit_of_another_field() {
-    let rig = rig_with_events();
-    put(&rig, "moments", json!({"id": "m1", "text": "start", "userId": "u0"}));
-    let _subscription = rig.sync.subscribe(upserts(EventSpec::new("moment_changed"))).await.unwrap();
-    for turn in 0..1000 {
-        let db = rig.db.clone();
-        let writer = std::thread::spawn(move || db.update("moments", &rid("m1"), params(json!({"userId": format!("u{turn}")}))).unwrap());
-        rig.transport.emit("MomentChanged", event(json!({"id": "m1", "text": format!("t{turn}")})));
+async fn inv_event_03_an_edit_before_during_or_after_a_held_event_is_never_lost() {
+    for schedule in ["before the event", "while the event is held", "after the event"] {
+        let rig = rig_with_events();
+        put(&rig, "moments", json!({"id": "m1", "text": "start", "userId": "u0"}));
+        let spec = EventSpec::new("moment_changed").debounced(Duration::from_millis(500)).merged_by_row();
+        let _subscription = rig.sync.subscribe(upserts(spec)).await.unwrap();
+        let edit = || rig.db.update("moments", &rid("m1"), params(json!({"userId": "local"}))).unwrap();
+        if schedule == "before the event" { edit(); }
+        rig.transport.emit("MomentChanged", event(json!({"id": "m1", "text": "server"})));
         rig.transport.await_consumed("MomentChanged").await;
-        writer.join().unwrap();
-        let (author, text) = (column(&rig, "userId"), column(&rig, "text"));
-        assert_eq!((author.as_deref(), text.as_deref()), (Some(format!("u{turn}").as_str()), Some(format!("t{turn}").as_str())), "turn {turn}");
+        if schedule == "while the event is held" { edit(); }
+        assert_eq!(column(&rig, "text").as_deref(), Some("start"), "{schedule}: the event is still held");
+        tokio::time::advance(Duration::from_millis(500)).await;
+        rig.db.await_revision(rig.db.revision_seq().unwrap());
+        while column(&rig, "text").as_deref() != Some("server") { tokio::task::yield_now().await; }
+        if schedule == "after the event" { edit(); }
+        assert_eq!((column(&rig, "userId").as_deref(), column(&rig, "text").as_deref()), (Some("local"), Some("server")), "{schedule}");
     }
 }

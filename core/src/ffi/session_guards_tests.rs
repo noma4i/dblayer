@@ -75,6 +75,7 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
         ("ACCOUNT_UNAVAILABLE", SessionCode::AccountUnavailable),
         ("UNAUTHENTICATED", SessionCode::Unauthenticated),
         ("PROVIDER_REJECTED", SessionCode::ProviderRejected),
+        ("INVALID_CODE", SessionCode::InvalidCode),
         ("BLOCKED", SessionCode::Other),
     ];
     for (wire, expected) in table {

@@ -78,30 +78,21 @@ async fn inv_loadm_16_the_first_value_of_a_loaded_window_holds_its_rows_and_the_
 }
 
 #[tokio::test]
-async fn inv_loadm_16_a_cold_window_never_shows_loaded_or_empty_before_its_rows_and_ends_loaded() {
-    let (db, _) = open(&[ONE_ROW]).await;
-    let listener = tape();
-    let live = db.live_query(FEED.into(), listener.clone());
-    live.wait_for_initial_load().await.unwrap();
-    let changes = heard(&listener);
-    consistent(&changes);
-    let last = changes.last().unwrap();
-    assert_eq!((last.phase, last.size, last.error.is_none()), (Some(LivePhase::Loaded), 1, true));
-    assert!(last.loaded_at.is_some());
-    assert!(changes.iter().all(|change| change.phase != Some(LivePhase::Empty)), "an Empty frame on the way to one row");
-}
-
-#[tokio::test]
-async fn inv_loadm_16_a_landing_of_no_rows_ends_in_empty_and_the_initial_wait_returns() {
-    let (db, _) = open(&[NO_ROWS]).await;
-    let listener = tape();
-    let live = db.live_query(FEED.into(), listener.clone());
-    tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the wait for a landing of no rows ends").unwrap();
-    let changes = heard(&listener);
-    consistent(&changes);
-    let last = changes.last().unwrap();
-    assert_eq!((last.phase, last.size, last.error.is_none()), (Some(LivePhase::Empty), 0, true));
-    assert!(last.loaded_at.is_some());
+async fn inv_loadm_16_a_cold_window_never_shows_loaded_or_empty_before_its_rows_and_ends_loaded_or_empty() {
+    for (reply, phase, size) in [(ONE_ROW, LivePhase::Loaded, 1), (NO_ROWS, LivePhase::Empty, 0)] {
+        let (db, _) = open(&[reply]).await;
+        let listener = tape();
+        let live = db.live_query(FEED.into(), listener.clone());
+        tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends").unwrap();
+        let changes = heard(&listener);
+        consistent(&changes);
+        let last = changes.last().unwrap();
+        assert_eq!((last.phase, last.size, last.error.is_none()), (Some(phase), size, true), "{reply}");
+        assert!(last.loaded_at.is_some(), "{reply}");
+        if size > 0 {
+            assert!(changes.iter().all(|change| change.phase != Some(LivePhase::Empty)), "an Empty frame on the way to one row");
+        }
+    }
 }
 
 #[tokio::test]

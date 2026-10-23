@@ -25,59 +25,57 @@ async fn load_page(rig: &Rig) {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_load_with_a_narrower_selection_keeps_the_fields_it_does_not_select() {
-    let rig = rig();
-    enqueue_pages(&rig, vec![json!({"id": "m1", "text": "first", "likedByMe": true, "userId": "u1"}), json!({"id": "m1", "mood": "calm"})]);
-    load_page(&rig).await;
-    load_page(&rig).await;
-    let stored = row(&rig, "moments", "m1");
-    assert_eq!(
-        (stored.get("text"), stored.get("likedByMe"), stored.get("userId"), stored.get("mood")),
-        (Some(&json!("first")), Some(&json!(true)), Some(&json!("u1")), Some(&json!("calm")))
-    );
+async fn a_narrower_response_keeps_the_fields_it_does_not_select_on_every_delivery_path() {
+    for path in ["load", "next page", "mutation"] {
+        let rig = rig();
+        let kept: Vec<(&str, Value)> = match path {
+            "load" => {
+                enqueue_pages(&rig, vec![json!({"id": "m1", "text": "first", "likedByMe": true, "userId": "u1"}), json!({"id": "m1", "mood": "calm"})]);
+                load_page(&rig).await;
+                load_page(&rig).await;
+                vec![("text", json!("first")), ("likedByMe", json!(true)), ("userId", json!("u1"))]
+            }
+            "next page" => {
+                rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![json!({"id": "m1", "text": "first", "userId": "u1"})], true, "c1")));
+                rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![json!({"id": "m1", "mood": "calm"})], false, "c2")));
+                rig.sync.load("moments", "feed", &serde_json::Map::new(), LoadOptions::default()).await.unwrap();
+                rig.sync.load_more("moments", "feed", &serde_json::Map::new()).await.unwrap();
+                vec![("text", json!("first")), ("userId", json!("u1"))]
+            }
+            _ => {
+                put(&rig, "moments", json!({"id": "m1", "text": "old", "userId": null, "likedByMe": true}));
+                rig.db.update("moments", &RowId::new("m1").unwrap(), params(json!({"text": "new"}))).unwrap();
+                rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "mood": "calm"}})));
+                rig.sync.flush().await.unwrap();
+                vec![("text", json!("new")), ("likedByMe", json!(true))]
+            }
+        };
+        let stored = row(&rig, "moments", "m1");
+        for (field, value) in kept {
+            assert_eq!(stored.get(field), Some(&value), "{path}: {field}");
+        }
+        assert_eq!(stored.get("mood"), Some(&json!("calm")), "{path}: mood");
+    }
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_next_page_with_a_narrower_selection_keeps_the_fields_it_does_not_select() {
-    let rig = rig();
-    rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![json!({"id": "m1", "text": "first", "userId": "u1"})], true, "c1")));
-    rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![json!({"id": "m1", "mood": "calm"})], false, "c2")));
-    rig.sync.load("moments", "feed", &serde_json::Map::new(), LoadOptions::default()).await.unwrap();
-    rig.sync.load_more("moments", "feed", &serde_json::Map::new()).await.unwrap();
-    let stored = row(&rig, "moments", "m1");
-    assert_eq!((stored.get("text"), stored.get("userId"), stored.get("mood")), (Some(&json!("first")), Some(&json!("u1")), Some(&json!("calm"))));
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_mutation_response_with_a_narrow_root_keeps_the_fields_it_does_not_select() {
-    let rig = rig();
-    put(&rig, "moments", json!({"id": "m1", "text": "old", "userId": null, "likedByMe": true}));
-    rig.db.update("moments", &RowId::new("m1").unwrap(), params(json!({"text": "new"}))).unwrap();
-    rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "mood": "calm"}})));
-    rig.sync.flush().await.unwrap();
-    let stored = row(&rig, "moments", "m1");
-    assert_eq!((stored.get("text"), stored.get("likedByMe"), stored.get("mood")), (Some(&json!("new")), Some(&json!(true)), Some(&json!("calm"))));
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_nested_row_keeps_the_fields_its_fragment_does_not_select() {
-    let rig = rig();
-    enqueue_pages(&rig, vec![json!({"id": "m1", "author": {"id": "u1", "name": "Ann"}}), json!({"id": "m1", "author": {"id": "u1"}})]);
-    load_page(&rig).await;
-    load_page(&rig).await;
-    assert_eq!(row(&rig, "users", "u1").get("name"), Some(&json!("Ann")));
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_nested_row_of_an_event_keeps_the_fields_its_fragment_does_not_select() {
-    let rig = rig();
-    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
-    put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
-    let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "moments", EventEffect::Upsert)).await.unwrap();
-    let event = json!({"momentChanged": {"id": "m1", "text": "t", "author": {"id": "u1"}}});
-    rig.transport.emit("MomentChanged", SubscriptionEvent::Next(Response::data(event)));
-    rig.transport.await_consumed("MomentChanged").await;
-    assert_eq!(row(&rig, "users", "u1").get("name"), Some(&json!("Ann")));
+async fn a_nested_row_keeps_the_fields_its_fragment_does_not_select_from_a_page_and_from_an_event() {
+    for source in ["page", "event"] {
+        let rig = rig();
+        if source == "page" {
+            enqueue_pages(&rig, vec![json!({"id": "m1", "author": {"id": "u1", "name": "Ann"}}), json!({"id": "m1", "author": {"id": "u1"}})]);
+            load_page(&rig).await;
+            load_page(&rig).await;
+        } else {
+            rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+            put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
+            let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "moments", EventEffect::Upsert)).await.unwrap();
+            let event = json!({"momentChanged": {"id": "m1", "text": "t", "author": {"id": "u1"}}});
+            rig.transport.emit("MomentChanged", SubscriptionEvent::Next(Response::data(event)));
+            rig.transport.await_consumed("MomentChanged").await;
+        }
+        assert_eq!(row(&rig, "users", "u1").get("name"), Some(&json!("Ann")), "{source}");
+    }
 }
 
 #[tokio::test(start_paused = true)]

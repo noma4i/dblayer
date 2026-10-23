@@ -41,17 +41,17 @@ fn scope_key_encodes_segments_with_utf16_length() {
 }
 
 #[test]
-fn scope_key_round_trips_any_content() {
-    let cases: Vec<Vec<&str>> = vec![vec!["chats", "42"], vec!["a:b"], vec!["3:xyz"], vec!["🚀"], vec![], vec![""]];
-    for segments in cases {
-        let key = ScopeKey::compose(&segments);
+fn scope_key_round_trips_any_content_and_keeps_ambiguous_splits_apart() {
+    let cases: Vec<Vec<&str>> = vec![vec!["chats", "42"], vec!["a:b"], vec!["3:xyz"], vec!["🚀"], vec![], vec![""], vec!["a", "bc"], vec!["a:b", "c"]];
+    let keys: Vec<ScopeKey> = cases.iter().map(|segments| ScopeKey::compose(segments)).collect();
+    for (segments, key) in cases.iter().zip(&keys) {
         assert_eq!(key.decompose(), Some(segments.iter().map(|s| s.to_string()).collect()));
     }
-}
-
-#[test]
-fn scope_key_distinguishes_ambiguous_splits() {
-    assert_ne!(ScopeKey::compose(&["a", "bc"]), ScopeKey::compose(&["a:b", "c"]));
+    for (i, left) in keys.iter().enumerate() {
+        for right in &keys[i + 1..] {
+            assert_ne!(left, right);
+        }
+    }
 }
 
 #[test]

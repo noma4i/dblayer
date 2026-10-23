@@ -54,20 +54,18 @@ fn schema_version_mismatch_is_reported_first() {
 }
 
 #[test]
-fn several_entity_ops_for_one_row_conflict() {
-    let mut conflicting = envelope();
-    conflicting.entity_ops = vec![upsert("m1"), touch("m1")];
-    let mut distinct = envelope();
-    distinct.entity_ops = vec![upsert("m1"), touch("m2")];
-    assert_eq!(conflicting.validate(Generation::INITIAL), Err(EnvelopeFault::ConflictingRowOps));
-    assert_eq!(distinct.validate(Generation::INITIAL), Ok(()));
-}
-
-#[test]
-fn same_id_in_other_model_is_not_a_conflict() {
-    let mut other = envelope();
-    other.entity_ops = vec![upsert("m1"), EntityOp::Touch { model: ModelKey::new("chats"), id: row("m1") }];
-    assert_eq!(other.validate(Generation::INITIAL), Ok(()));
+fn entity_ops_conflict_only_on_the_same_model_and_id() {
+    let other_model = EntityOp::Touch { model: ModelKey::new("chats"), id: row("m1") };
+    let cases = [
+        ("same model and id", touch("m1"), Err(EnvelopeFault::ConflictingRowOps)),
+        ("other id", touch("m2"), Ok(())),
+        ("same id in other model", other_model, Ok(())),
+    ];
+    for (name, second, expected) in cases {
+        let mut candidate = envelope();
+        candidate.entity_ops = vec![upsert("m1"), second];
+        assert_eq!(candidate.validate(Generation::INITIAL), expected, "{name}");
+    }
 }
 
 #[test]
@@ -91,20 +89,4 @@ fn upsert_payload_id_must_match_row_id() {
     let mut mismatch = envelope();
     mismatch.entity_ops = vec![EntityOp::Upsert { model: model(), id: row("m1"), row: payload("m2") }];
     assert_eq!(mismatch.validate(Generation::INITIAL), Err(EnvelopeFault::RowIdMismatch));
-}
-
-#[test]
-fn operation_status_round_trips_through_sql_text() {
-    for status in [
-        OperationStatus::Pending,
-        OperationStatus::Failed,
-        OperationStatus::DeliveryUnknown,
-        OperationStatus::Committed,
-        OperationStatus::RolledBack,
-    ] {
-        assert_eq!(OperationStatus::from_sql(status.as_sql()), Some(status));
-    }
-    assert_eq!(OperationStatus::from_sql("nope"), None);
-    assert!(OperationStatus::Committed.is_terminal());
-    assert!(!OperationStatus::Failed.is_terminal());
 }

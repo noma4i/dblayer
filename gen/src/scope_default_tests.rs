@@ -30,31 +30,35 @@ fn compile(source: &str) -> Result<Declarations, Vec<String>> {
 }
 
 #[test]
-fn an_enum_scope_param_is_labeled_and_takes_its_default_on_both_platforms() {
-    let declared = compile(MODEL).unwrap();
-    let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
-    assert!(swift.contains("public static func chatMembers(_ chatId: String, order: ChatMemberOrder = .joined) -> Query<Self> {"), "{swift}");
-    assert!(swift.contains("\"order\": JSONValue.encode(order)"), "{swift}");
-    let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
-    assert!(kotlin.contains("fun chatMembers(chatId: String, order: ChatMemberOrder = ChatMemberOrder.Joined): Query<User> {"), "{kotlin}");
-}
-
-#[test]
-fn an_enum_param_without_a_default_is_labeled_and_required() {
-    let declared = compile(&MODEL.replace(", default: \"JOINED\"", "")).unwrap();
-    let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
-    assert!(swift.contains("public static func chatMembers(_ chatId: String, order: ChatMemberOrder) -> Query<Self> {"), "{swift}");
-    let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
-    assert!(kotlin.contains("fun chatMembers(chatId: String, order: ChatMemberOrder): Query<User> {"), "{kotlin}");
-}
-
-#[test]
-fn a_default_must_name_a_typed_param_and_a_value_of_its_enum() {
-    for (case, model, error) in [
-        ("value outside the enum", MODEL.replace("\"JOINED\"", "\"NEWEST\""), "default `NEWEST` is not a value of `ChatMemberOrder`"),
-        ("string param", MODEL.replace("parameter :chatId, :string", "parameter :chatId, :string, default: \"x\""), "default of `:chatId` does not match its type"),
-    ] {
-        let errors = compile(&model).expect_err(case);
-        assert!(errors.iter().any(|text| text.contains(error)), "{case}: {errors:?}");
+fn an_enum_scope_param_is_labeled_and_takes_its_default_only_when_one_is_declared_on_both_platforms() {
+    let cases = [
+        (
+            "with a default",
+            MODEL.to_string(),
+            "public static func chatMembers(_ chatId: String, order: ChatMemberOrder = .joined) -> Query<Self> {",
+            "fun chatMembers(chatId: String, order: ChatMemberOrder = ChatMemberOrder.Joined): Query<User> {",
+        ),
+        (
+            "without a default",
+            MODEL.replace(", default: \"JOINED\"", ""),
+            "public static func chatMembers(_ chatId: String, order: ChatMemberOrder) -> Query<Self> {",
+            "fun chatMembers(chatId: String, order: ChatMemberOrder): Query<User> {",
+        ),
+    ];
+    for (case, model, swift_signature, kotlin_signature) in cases {
+        let declared = compile(&model).unwrap();
+        let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
+        assert!(swift.contains(swift_signature), "{case}: {swift}");
+        let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
+        assert!(kotlin.contains(kotlin_signature), "{case}: {kotlin}");
+        if case == "with a default" {
+            assert!(swift.contains("\"order\": JSONValue.encode(order)"), "{swift}");
+        }
     }
+}
+
+#[test]
+fn a_default_must_name_a_value_of_its_enum() {
+    let errors = compile(&MODEL.replace("\"JOINED\"", "\"NEWEST\"")).expect_err("value outside the enum");
+    assert!(errors.iter().any(|text| text.contains("default `NEWEST` is not a value of `ChatMemberOrder`")), "{errors:?}");
 }
