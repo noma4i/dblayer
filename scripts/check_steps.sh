@@ -151,6 +151,23 @@ run_lane() {
   done
 }
 
+# One check run per tree: two runs share target/ and kotlin/build and corrupt each other (a duplicate build_ios.sh, two Gradle test runs, doubled load).
+# The lock is a directory taken by mkdir, with the owner pid inside; a lock of a dead owner is renamed away first, so only one taker wins.
+take_tree_lock() {
+  local lock="$root/target/check.lock" owner
+  mkdir -p "$root/target"
+  until mkdir "$lock" 2> /dev/null; do
+    owner="$(cat "$lock/pid" 2> /dev/null || true)"
+    if [ -n "$owner" ] && kill -0 "$owner" 2> /dev/null; then
+      echo "check: another check run (pid $owner) holds $root, not starting a second one" >&2
+      return 3
+    fi
+    mv "$lock" "$lock.stale.$$" 2> /dev/null && rm -rf "$lock.stale.$$"
+  done
+  echo "$$" > "$lock/pid"
+  trap 'rm -rf "'"$lock"'"' EXIT
+}
+
 run_checks() {
   fast=0; only=""; local list=0 line lane lane_name paths
   while [ "$#" -gt 0 ]; do
@@ -174,6 +191,7 @@ run_checks() {
     printf '%s\n' "${selected[@]}"
     return 0
   fi
+  take_tree_lock || return 3
   logdir="$root/target/check-logs"
   mkdir -p "$logdir"
   local start=$SECONDS lanes=() ordered=() failed=0 cpu sampled before sampler cpu_children daemon

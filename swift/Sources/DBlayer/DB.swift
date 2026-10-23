@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DB {
-  static let reachability = Reachability.shared
+  nonisolated(unsafe) static var reachability = Reachability.shared
   nonisolated(unsafe) static var current: Database?
   /// The one database of the process. Throws `DatabaseNotOpen` before `open` and after `close`.
   public static var database: Database {

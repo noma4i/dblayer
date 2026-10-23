@@ -3,7 +3,7 @@ import Network
 
 final class Reachability: @unchecked Sendable {
   static let shared = Reachability()
-  private let monitor = NWPathMonitor()
+  private let monitor: NWPathMonitor?
   private let queue = DispatchQueue(label: "com.noma4i.dblayer.reachability")
   private let lock = NSLock()
   private let connectivity = Connectivity(online: false)
@@ -11,7 +11,9 @@ final class Reachability: @unchecked Sendable {
   private var online = false
   private var sink: OnlineSink?
 
-  private init() {}
+  init(monitor: NWPathMonitor? = NWPathMonitor()) {
+    self.monitor = monitor
+  }
 
   @discardableResult
   func start(_ sink: OnlineSink? = nil) -> Connectivity {
@@ -19,14 +21,14 @@ final class Reachability: @unchecked Sendable {
       if let sink { self.sink = sink; sink.setOnline(online: online) }
       if !started {
         started = true
-        monitor.pathUpdateHandler = { [weak self] path in self?.changed(path.status == .satisfied) }
-        monitor.start(queue: queue)
+        monitor?.pathUpdateHandler = { [weak self] path in self?.changed(path.status == .satisfied) }
+        monitor?.start(queue: queue)
       }
       return connectivity
     }
   }
 
-  private func changed(_ online: Bool) {
+  func changed(_ online: Bool) {
     lock.withLock {
       self.online = online
       connectivity.setOnline(online: online)

@@ -65,6 +65,7 @@ Typical scenarios to cover:
 | Touched directories only | `bash scripts/check_dblayer.sh --fast` |
 | Every invariant has a test with an assertion | `bash scripts/check_invariants.sh` |
 | Check scripts leave unrelated processes alone | `bash scripts/check_bounded.sh --selftest` |
+| A second check run in the same tree is refused (exit 3), a lock of a dead run is taken over | `bash scripts/check_lock_test.sh` |
 | Duplicate mechanisms and names | `bash scripts/check_zoo.sh` |
 | Docs reference real paths | `bash scripts/check_docs.sh` |
 | No test waits without a bound or pauses for a time (`Task.sleep`, `Thread.sleep`, `delay(`) outside the wait helpers | `bash scripts/check_waits.sh` |
