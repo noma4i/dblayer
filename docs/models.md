@@ -733,15 +733,15 @@ query GroupMembers($groupId: ID!, $order: GroupMemberOrder = JOINED, $first: Int
 ```
 
 ```swift
-let members = LiveList(User.groupMembers(groupId))                      // JOINED, members.rows, members.state.hasMore
+let members = LiveList(User.groupMembers(groupId))                      // JOINED, members.rows, members.snapshot.hasMore
 let owners = LiveList(User.groupMembers(groupId, order: .ownerFirst))   // its own window and cursor
-try await User.groupMembers(groupId).loadMore()                         // true while another page exists
+try await User.groupMembers(groupId).loadMore()                         // .loaded(hasMore: true) while another page exists
 ```
 
 ```kotlin
 val members = User.groupMembers(groupId)                                  // JOINED
 val owners = User.groupMembers(groupId, order = GroupMemberOrder.OwnerFirst)  // its own window and cursor
-members.loadMore()                                 // true while another page exists
+members.loadMore()                                 // LoadMoreResult.Loaded(true) while another page exists
 ```
 
 `total` is set only when the connection selects `totalCount`. Without it `total` stays nil and `hasMore` comes from `pageInfo`.
@@ -749,11 +749,11 @@ members.loadMore()                                 // true while another page ex
 `total from: "node.membersCount"` takes `total` from a field beside the connection: the path starts at the first field of the operation, like `response from:`. The group size `Group.membersCount` counts every member, `totalCount` of the connection counts only the members the viewer can see. The document must select the field and the schema check refuses a path that is not an `Int`. Each page that carries the field sets `total`, a page without it keeps the last value, and the value survives a restart. The line needs `paginate`.
 
 ```swift
-let state = try await User.groupMembers(groupId).state.stream()   // state.total is Group.membersCount, 53 for a group of 53
+let snapshots = try await User.groupMembers(groupId).snapshots.stream()   // snapshot.total is Group.membersCount, 53 for a group of 53
 ```
 
 ```kotlin
-val total = User.groupMembers(groupId).state.flow.first { it.total != null }.total   // Group.membersCount
+val total = User.groupMembers(groupId).snapshots.flow.first { it.total != null }.total   // Group.membersCount
 ```
 
 | Line | Meaning |

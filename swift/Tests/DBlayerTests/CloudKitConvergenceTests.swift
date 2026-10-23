@@ -8,7 +8,7 @@ private let zone = CKRecordZone.ID(zoneName: CloudKitRecords.zoneName, ownerName
 
 private func titles(_ database: Database) async throws -> [String: String] {
   let live = try database.liveQuery(queryJson: #"{"model":"Note"}"#, listener: ChangeListener { _ in })
-  let rows = await live.current().rows
+  let rows = try await live.current().rows
   return Dictionary(uniqueKeysWithValues: rows.compactMap { row in row.cells.compactMap { cell -> String? in if case .text(let value) = cell { return value } else { return nil } }.first.map { (row.id, $0) } })
 }
 

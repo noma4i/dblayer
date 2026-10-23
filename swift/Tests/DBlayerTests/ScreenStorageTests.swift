@@ -44,7 +44,7 @@ extension BridgeProbeTests {
     }
     transport.enqueue("ScreenNode", reply: #"{"data":{"node":{"__typename":"CustomScreen","id":"sample","slug":"updated"}}}"#)
     _ = try await CustomScreen.node("sample", force: true)
-    #expect(await CustomScreen.find("sample").current()?.spec == stored)
+    #expect(try await CustomScreen.find("sample").current()?.spec == stored)
   }
 
   @Test(.timeLimit(.minutes(1)))

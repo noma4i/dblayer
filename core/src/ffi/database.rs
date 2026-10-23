@@ -9,7 +9,8 @@ use crate::identity::RowId;
 use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::query::{Query, Where};
 use crate::schema::ModelSpec;
-use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
+use crate::read::LoadMoreVerdict;
+use crate::sync::{LoadOptions, LoadStatus, OperationDef, Sync, SyncConfig};
 use crate::transport::{self as core, EncryptedClient};
 use super::entities::{self, EntityListener, LiveEntities};
 use super::live::{follow_failures, intake, LiveHandles};
@@ -17,7 +18,7 @@ use super::live_feed::LiveFeed;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::wire::{WireModel, WireRow};
-use super::{DbError, LiveChange, LiveSubscription, OnlineSink, QueryListener, Transport};
+use super::{DbError, LiveChange, LiveSubscription, LoadMoreResult, OnlineSink, QueryListener, Transport};
 
 pub(super) fn executor() -> Result<&'static Runtime, DbError> {
     static EXECUTOR: Starter = Starter::new();
@@ -156,7 +157,7 @@ impl Database {
     pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| {
             let row_id = id(&row_id)?;
-            self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, LoadOptions::default(), false, feed)
+            self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, LoadOptions::default(), feed)
         })
     }
     pub fn peek_row(&self, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
@@ -310,10 +311,15 @@ impl Database {
         on_executor(async move { sync.refresh(&model, &relation, &params).await }).await?;
         Ok(())
     }
-    pub async fn load_more(&self, model: String, relation: String, params_json: String) -> Result<bool, DbError> {
+    pub async fn load_more(&self, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         let sync = self.sync()?.clone();
         let params = serde_json::from_str(&params_json)?;
-        Ok(on_executor(async move { sync.load_more(&model, &relation, &params).await }).await?.has_next)
+        let outcome = on_executor(async move { sync.load_more(&model, &relation, &params).await }).await?;
+        Ok(match outcome.status {
+            LoadStatus::NoMorePages(LoadMoreVerdict::AlreadyLoading) => LoadMoreResult::AlreadyLoading,
+            LoadStatus::NoMorePages(_) => LoadMoreResult::NoMore,
+            _ => LoadMoreResult::Loaded { has_more: outcome.has_next },
+        })
     }
     pub async fn node(&self, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
         let sync = self.sync()?.clone();
@@ -483,10 +489,9 @@ impl Database {
         let (query, remote) = self.parsed_query(json)?;
         let description: Value = serde_json::from_str(json)?;
         let force = description.get("refreshOnConnect").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or(false);
-        let observe_only = description.get("observeOnly").and_then(Value::as_bool).unwrap_or(false);
-        self.connect(query, remote, count, LoadOptions { force }, observe_only, feed)
+        self.connect(query, remote, count, LoadOptions { force }, feed)
     }
-    fn connect(&self, query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, options: LoadOptions, observe_only: bool, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
+    fn connect(&self, query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, options: LoadOptions, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let _entered = executor()?.enter();
         let model = query.model.to_string();
         let mut tracked = None;
@@ -496,7 +501,7 @@ impl Database {
                 let watch = sync.watch(&model, &relation, &params)?;
                 if self.db.spec(&model)?.relations.iter().any(|declared| declared.name == relation && declared.remote.is_some()) {
                     let mut receiver = sync.relation_state(&model, &relation, &params)?;
-                    if !observe_only { feed.expect_load(); }
+                    feed.expect_load();
                     feed.state(receiver.borrow_and_update().clone());
                     tracked = Some((sync, relation, params, receiver));
                 }
@@ -517,12 +522,12 @@ impl Database {
                 let state = executor()?.spawn(async move {
                     while changes.changed().await.is_ok() { follower.state(changes.borrow_and_update().clone()); }
                 }).abort_handle();
-                let load = (!observe_only).then(|| executor().map(|executor| executor.spawn(async move {
+                let load = executor()?.spawn(async move {
                     let result = sync.load(&model, &relation, &params, options).await;
                     loader.state(receiver.borrow().clone());
                     loader.load_finished(result.err().map(DbError::from));
-                }).abort_handle())).transpose()?;
-                (load, Some(state))
+                }).abort_handle();
+                (Some(load), Some(state))
             }
             None => (None, None),
         };

@@ -81,10 +81,9 @@ public struct Query<Model: DBModel>: Sendable {
     json(refreshOnConnect: false)
   }
 
-  private func json(refreshOnConnect: Bool, observeOnly: Bool = false) -> String {
+  private func json(refreshOnConnect: Bool) -> String {
     var object: [String: JSONValue] = ["model": .string(Model.modelName)]
     if refreshOnConnect { object["refreshOnConnect"] = .bool(true) }
-    if observeOnly { object["observeOnly"] = .bool(true) }
     if let condition { object["where"] = condition.json }
     if !orders.isEmpty { object["order"] = .array(orders.map { .object(["field": .string($0.field), "direction": .string($0.direction)]) }) }
     if let limitCount { object["limit"] = .number(Double(limitCount)) }
@@ -127,7 +126,7 @@ public struct Query<Model: DBModel>: Sendable {
 
   public func load() async throws { try await DB.database.load(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
   public func refresh() async throws { try await DB.database.refresh(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
-  @discardableResult public func loadMore() async throws -> Bool { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
+  @discardableResult public func loadMore() async throws -> LoadMoreResult { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
 
   /// The rows with the ids that the delivery replaced: a created record answered by the server (or matched by `correlate`) arrives under its real id.
   public var snapshots: LiveSource<Snapshot<Model>> {
@@ -140,12 +139,8 @@ public struct Query<Model: DBModel>: Sendable {
       connected(result)
       return try result.get()
     }) { (applied: ListApplied<Model>, change) in
-      Snapshot(rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, failure: applied.failure, edits: applied.edits)
+      Snapshot(applied, change)
     }
-  }
-
-  public var state: LiveSource<LoadState> {
-    LiveSource(initial: LoadState(), attach: { listener in try DB.database.liveQuery(queryJson: json(refreshOnConnect: false, observeOnly: true), listener: listener) }, map: { LoadState($0) })
   }
 }
 
@@ -154,25 +149,81 @@ public struct Cached<Value: Sendable>: Sendable {
   public let revision: Int64
 }
 
+public enum LoadPhase: Sendable, Equatable { case opening, notLoaded, loading, loaded, empty, failed, closed }
+
+extension LoadPhase {
+  init(_ phase: LivePhase?) {
+    switch phase {
+    case .notLoaded: self = .notLoaded
+    case .loading: self = .loading
+    case .loaded: self = .loaded
+    case .empty: self = .empty
+    case .failed: self = .failed
+    case .closed: self = .closed
+    case nil: self = .opening
+    }
+  }
+}
+
+/// One delivery of a live list: the rows with the ids it replaced, the load phase of the relation and the error, as the core saw them at `seq`.
 public struct Snapshot<Model: DBModel>: Sendable {
   public let rows: [Model]
   /// Real id of a row that replaced a temporary one in this delivery, to the temporary id.
   public let replaced: [String: String]
   public let reordered: Bool
-  public let failure: String?
   public let edits: [ListEdit<Model>]?
   public let window: WindowEdges?
+  public let seq: UInt64
+  public let phase: LoadPhase
+  /// The running load is the first one of a list that has no rows yet.
+  public let isInitialLoading: Bool
+  /// The running load reloads a list that already has rows.
+  public let isRefreshing: Bool
+  /// The running load fetches the next page.
+  public let isFetchingMore: Bool
+  public let hasMore: Bool
+  public let total: Int64?
+  public let loadedAt: Int64?
+  public let error: String?
+  public let errorKind: String?
+  /// The ids of the rows that this build cannot decode. They are not in `rows`.
+  public let undecodable: [String]
 
-  public init(rows: [Model], replaced: [String: String], reordered: Bool = false, failure: String? = nil, edits: [ListEdit<Model>]? = nil, window: WindowEdges? = nil) {
+  public init(
+    rows: [Model], replaced: [String: String], reordered: Bool = false, edits: [ListEdit<Model>]? = nil, window: WindowEdges? = nil, seq: UInt64 = 0, phase: LoadPhase = .opening,
+    isInitialLoading: Bool = false, isRefreshing: Bool = false, isFetchingMore: Bool = false, hasMore: Bool = false, total: Int64? = nil, loadedAt: Int64? = nil,
+    error: String? = nil, errorKind: String? = nil, undecodable: [String] = []
+  ) {
     self.rows = rows
     self.replaced = replaced
     self.reordered = reordered
-    self.failure = failure
     self.edits = edits
     self.window = window
+    self.seq = seq
+    self.phase = phase
+    self.isInitialLoading = isInitialLoading
+    self.isRefreshing = isRefreshing
+    self.isFetchingMore = isFetchingMore
+    self.hasMore = hasMore
+    self.total = total
+    self.loadedAt = loadedAt
+    self.error = error
+    self.errorKind = errorKind
+    self.undecodable = undecodable
   }
 
-  /// The newer rows with the replacements of both deliveries: a chain A to B to C reads as C replaced A, and no pair is lost.
+  init(_ applied: ListApplied<Model>, _ change: LiveChange) {
+    self.init(
+      rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, edits: applied.edits, window: change.window.map(WindowEdges.init), seq: change.seq, phase: LoadPhase(change.phase),
+      isInitialLoading: change.initial, isRefreshing: change.refreshing, isFetchingMore: change.fetchingMore, hasMore: change.hasMore, total: change.total, loadedAt: change.loadedAt,
+      error: applied.failure ?? change.error.map(String.init(describing:)), errorKind: applied.failure == nil ? change.errorKind : "invalid", undecodable: applied.undecodable
+    )
+  }
+
+  public var isLoading: Bool { phase == .loading }
+  public var failed: Bool { phase == .failed }
+
+  /// The newer delivery with the replacements of both: a chain A to B to C reads as C replaced A, and no pair is lost.
   static func merging(_ older: Snapshot, _ newer: Snapshot) -> Snapshot {
     var replaced = older.replaced
     for (real, temporary) in newer.replaced {
@@ -180,44 +231,10 @@ public struct Snapshot<Model: DBModel>: Sendable {
       if older.replaced[temporary] != nil { replaced[temporary] = nil }
     }
     let edits = ListEdit.composing(older.edits, newer.edits, within: newer.rows.count)
-    return Snapshot(rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered, failure: newer.failure ?? older.failure, edits: edits, window: newer.window ?? older.window)
+    return Snapshot(
+      rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered, edits: edits, window: newer.window ?? older.window, seq: newer.seq, phase: newer.phase,
+      isInitialLoading: newer.isInitialLoading, isRefreshing: newer.isRefreshing, isFetchingMore: newer.isFetchingMore, hasMore: newer.hasMore, total: newer.total, loadedAt: newer.loadedAt,
+      error: newer.error, errorKind: newer.errorKind, undecodable: newer.undecodable
+    )
   }
-}
-
-public struct LoadState: Sendable, Equatable {
-  public enum Phase: String, Sendable { case idle, loading, failed }
-
-  public var phase: Phase = .idle
-  /// The running load is the first one of a list that has no rows yet.
-  public var isInitialLoading = false
-  /// The running load reloads a list that already has rows.
-  public var isRefreshing = false
-  /// The running load fetches the next page.
-  public var isFetchingMore = false
-  public var hasMore = false
-  public var total: Int64?
-  public var errorKind: String?
-  public var error: String?
-  public var loadedAt: Int64?
-
-  public init() {}
-
-  init(_ change: LiveChange) {
-    switch change.phase {
-    case .loading: phase = .loading
-    case .failed: phase = .failed
-    default: phase = .idle
-    }
-    isInitialLoading = change.initial
-    isRefreshing = change.refreshing
-    isFetchingMore = change.fetchingMore
-    hasMore = change.hasMore
-    total = change.total
-    errorKind = change.errorKind
-    error = change.error.map(String.init(describing:))
-    loadedAt = change.loadedAt
-  }
-
-  public var isLoading: Bool { phase == .loading }
-  public var failed: Bool { phase == .failed }
 }

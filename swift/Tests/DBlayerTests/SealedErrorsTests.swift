@@ -80,7 +80,7 @@ extension BridgeProbeTests {
     transport.enqueue("CreateMoment", failure: DbError.Session(code: code, detail: "\(code)"))
     let local = try await Moment.create(text: "hello", media: nil)
     await #expect(throws: DbError.self) { try await local.settled() }
-    #expect(await Moment.find(local.id).current()?.text == "hello")
+    #expect(try await Moment.find(local.id).current()?.text == "hello")
 
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     let retried = try await (code == .unauthenticated ? local.retry() : Moment.retryAll())
@@ -100,6 +100,6 @@ extension BridgeProbeTests {
 
     await #expect(throws: DbError.self) { try await local.settled() }
 
-    #expect(await Moment.find(local.id).current() == nil)
+    #expect(try await Moment.find(local.id).current() == nil)
   }
 }

@@ -23,12 +23,12 @@ extension BridgeProbeTests {
     let first = User.containerMembers("c1")
     try await first.load()
     try await User.containerMembers("c2").load()
-    #expect(try await first.loadMore() == false)
+    #expect(try await first.loadMore() == .loaded(hasMore: false))
     let calls = transport.calls.filter { $0.operationName == "ContainerMembers" }
     #expect(calls.count == 3)
     #expect(calls[2].variablesJson.contains(#""after":"a29""#) && calls[2].variablesJson.contains(#""containerId":"c1""#))
-    #expect(await first.live.current().map(\.id) == (0..<45).map { "a\($0)" })
-    #expect(await User.containerMembers("c2").live.current().map(\.id) == ["b0", "b1"])
+    #expect(try await first.live.current().map(\.id) == (0..<45).map { "a\($0)" })
+    #expect(try await User.containerMembers("c2").live.current().map(\.id) == ["b0", "b1"])
     try await first.load()
     #expect(transport.calls.filter { $0.operationName == "ContainerMembers" }.count == 3)
   }

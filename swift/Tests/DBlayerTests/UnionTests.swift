@@ -68,10 +68,10 @@ extension BridgeProbeTests {
     _ = try await UnionSample.create(attachment: .reaction(ReactionAttachment(body: "x")))
     _ = try await UnionSample.create(attachment: .unknown(typename: "FutureAttachment"))
     _ = try await UnionSample.create()
-    #expect(await UnionSample.where(UnionSample.attachment == .moment).count.current() == 2)
-    #expect(await UnionSample.where(UnionSample.attachment == .reward).count.current() == 0)
-    #expect(await UnionSample.where(UnionSample.attachment.in([.moment, .reaction])).count.current() == 3)
-    #expect(await UnionSample.where(UnionSample.attachment.isNull).count.current() == 1)
+    #expect(try await UnionSample.where(UnionSample.attachment == .moment).count.current() == 2)
+    #expect(try await UnionSample.where(UnionSample.attachment == .reward).count.current() == 0)
+    #expect(try await UnionSample.where(UnionSample.attachment.in([.moment, .reaction])).count.current() == 3)
+    #expect(try await UnionSample.where(UnionSample.attachment.isNull).count.current() == 1)
   }
 
   private static let nodes: [String: String] = [
@@ -101,14 +101,14 @@ extension BridgeProbeTests {
     let thread = Record.thread("c1")
     try await thread.load()
 
-    #expect(await Record.find("m1").current()?.attachment == .reward(RewardAttachment(id: "g1", tier: "gold", status: "sent", tags: ["a"])))
-    #expect(await Record.find("m2").current()?.attachment == .moment(MomentAttachment(momentId: "7", caption: nil)))
-    #expect(await Record.find("m3").current()?.attachment == .profile(ProfileAttachment(user: AttachmentUser(id: "u1", name: "Ada"))))
-    #expect(await Record.find("m4").current()?.attachment == .reaction(ReactionAttachment(body: "+1")))
-    #expect(await Record.find("m5").current()?.attachment == .unknown(typename: "FutureAttachment"))
-    #expect(await Record.find("m6").current()?.attachment == nil)
-    #expect(await Record.where(Record.attachment == .moment).count.current() == 1)
-    #expect(await Record.where(Record.attachment.isNull).count.current() == 1)
+    #expect(try await Record.find("m1").current()?.attachment == .reward(RewardAttachment(id: "g1", tier: "gold", status: "sent", tags: ["a"])))
+    #expect(try await Record.find("m2").current()?.attachment == .moment(MomentAttachment(momentId: "7", caption: nil)))
+    #expect(try await Record.find("m3").current()?.attachment == .profile(ProfileAttachment(user: AttachmentUser(id: "u1", name: "Ada"))))
+    #expect(try await Record.find("m4").current()?.attachment == .reaction(ReactionAttachment(body: "+1")))
+    #expect(try await Record.find("m5").current()?.attachment == .unknown(typename: "FutureAttachment"))
+    #expect(try await Record.find("m6").current()?.attachment == nil)
+    #expect(try await Record.where(Record.attachment == .moment).count.current() == 1)
+    #expect(try await Record.where(Record.attachment.isNull).count.current() == 1)
 
     var changed = Self.nodes
     changed["m1"] = #"{"__typename":"ReactionAttachment","body":"now"}"#
@@ -118,13 +118,13 @@ extension BridgeProbeTests {
     transport.enqueue("ContainerThread", reply: Self.threadReply(changed))
     try await thread.refresh()
 
-    #expect(await Record.find("m1").current()?.attachment == .reaction(ReactionAttachment(body: "now")))
-    #expect(await Record.find("m2").current()?.attachment == .moment(MomentAttachment(momentId: "8", caption: "edited")))
-    #expect(await Record.find("m3").current()?.attachment == .profile(ProfileAttachment(user: AttachmentUser(id: "u1", name: "Ada"))))
-    #expect(await Record.find("m5").current()?.attachment == .reward(RewardAttachment(id: "g9", tier: "bronze", status: nil, tags: [])))
-    #expect(await Record.find("m6").current()?.attachment == .reaction(ReactionAttachment(body: "late")))
-    #expect(await Record.where(Record.attachment == .reward).count.current() == 1)
-    #expect(await Record.where(Record.attachment == .reaction).count.current() == 3)
+    #expect(try await Record.find("m1").current()?.attachment == .reaction(ReactionAttachment(body: "now")))
+    #expect(try await Record.find("m2").current()?.attachment == .moment(MomentAttachment(momentId: "8", caption: "edited")))
+    #expect(try await Record.find("m3").current()?.attachment == .profile(ProfileAttachment(user: AttachmentUser(id: "u1", name: "Ada"))))
+    #expect(try await Record.find("m5").current()?.attachment == .reward(RewardAttachment(id: "g9", tier: "bronze", status: nil, tags: [])))
+    #expect(try await Record.find("m6").current()?.attachment == .reaction(ReactionAttachment(body: "late")))
+    #expect(try await Record.where(Record.attachment == .reward).count.current() == 1)
+    #expect(try await Record.where(Record.attachment == .reaction).count.current() == 3)
   }
 
   @Test(.timeLimit(.minutes(1)))

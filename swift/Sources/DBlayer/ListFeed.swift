@@ -9,6 +9,7 @@ struct ListApplied<Model: DBModel> {
   let desynced: Bool
   var failure: String?
   var edits: [ListEdit<Model>]?
+  var undecodable: [String] = []
 }
 
 final class ListFeed<Model: DBModel>: @unchecked Sendable {
@@ -37,6 +38,7 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   var rows: [Model] { lock.withLock { current } }
 
   private var current: [Model] { missing == 0 ? loaded : slots.compactMap(\.row) }
+  private var missingIds: [String] { missing == 0 ? [] : slots.filter { $0.row == nil }.map(\.id) }
 
   func apply(_ change: LiveChange) -> ListApplied<Model> {
     lock.withLock {
@@ -56,18 +58,18 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
         slots = carried.map(\.slot)
         missing = slots.reduce(0) { $0 + ($1.row == nil ? 1 : 0) }
         loaded = missing == 0 ? slots.compactMap(\.row) : []
-        return ListApplied(rows: current, reordered: true, desynced: false)
+        return ListApplied(rows: current, reordered: true, desynced: false, undecodable: missingIds)
       }
       let reordered = !change.removed.isEmpty || !change.placed.isEmpty || !change.replaced.isEmpty
       let held = missing == 0
       var edits: [ListEdit<Model>] = []
       guard applyDelta(change, carried, edits: &edits) else {
         desynced += 1
-        return ListApplied(rows: current, reordered: reordered, desynced: true)
+        return ListApplied(rows: current, reordered: reordered, desynced: true, undecodable: missingIds)
       }
       guard held, missing == 0, edits.count <= slots.count else {
         loaded = missing == 0 ? slots.compactMap(\.row) : []
-        return ListApplied(rows: current, reordered: reordered, desynced: false)
+        return ListApplied(rows: current, reordered: reordered, desynced: false, undecodable: missingIds)
       }
       loaded.replay(edits)
       return ListApplied(rows: loaded, reordered: reordered, desynced: false, edits: edits)
@@ -245,7 +247,7 @@ final class ListSession<Model: DBModel, Value: Sendable>: @unchecked Sendable {
     current?()
     decodeLog.error("List of \(Model.modelName, privacy: .public) stopped: \(reason, privacy: .public)")
     let applied = ListApplied<Model>(rows: feed.rows, reordered: false, desynced: false, failure: reason)
-    emit(map(applied, LiveChange(revision: 0, full: false, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: .Invalid(detail: reason))))
+    emit(map(applied, LiveChange(revision: 0, full: false, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: .Invalid(detail: reason), phase: .failed, errorKind: "invalid")))
   }
 }
 

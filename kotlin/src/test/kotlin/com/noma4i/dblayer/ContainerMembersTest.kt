@@ -30,7 +30,7 @@ class ContainerMembersTest {
         val first = User.containerMembers("c1")
         first.load()
         User.containerMembers("c2").load()
-        assertEquals(false, first.loadMore())
+        assertEquals(LoadMoreResult.Loaded(false), first.loadMore())
         val calls = transport.calls.filter { it.operationName == "ContainerMembers" }
         assertEquals(3, calls.size)
         assertTrue(calls[2].variablesJson.contains(""""after":"a29"""") && calls[2].variablesJson.contains(""""containerId":"c1""""))

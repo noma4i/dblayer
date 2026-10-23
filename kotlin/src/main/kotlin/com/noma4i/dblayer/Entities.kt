@@ -11,12 +11,21 @@ import java.util.logging.Logger
 
 private val entityLog = Logger.getLogger("DBlayer")
 
+/** `Opening` until the core answers, then `Present` or `Absent`. `Failed` keeps the last value and says why the core could not read or decode the record. `Closed` after the database closed. */
+sealed class EntityPhase {
+    data object Opening : EntityPhase()
+    data object Present : EntityPhase()
+    data object Absent : EntityPhase()
+    data class Failed(val error: String) : EntityPhase()
+    data object Closed : EntityPhase()
+}
+
 internal class EntityCell<Model : DBModel> {
     val value = MutableStateFlow<Model?>(null)
+    val phase = MutableStateFlow<EntityPhase>(EntityPhase.Opening)
     @Volatile var stale = false
     @Volatile var revision = Long.MIN_VALUE
     @Volatile var bytes = 0uL
-    @Volatile var closed = false
 
     @Synchronized
     fun accept(next: Model?, incoming: Long, bytes: ULong = 0uL) {
@@ -24,7 +33,13 @@ internal class EntityCell<Model : DBModel> {
         revision = incoming
         this.bytes = bytes
         stale = false
+        phase.value = if (next == null) EntityPhase.Absent else EntityPhase.Present
         value.value = next
+    }
+
+    @Synchronized
+    fun fail(message: String) {
+        if (phase.value != EntityPhase.Closed) phase.value = EntityPhase.Failed(message)
     }
 
     @Synchronized
@@ -32,6 +47,13 @@ internal class EntityCell<Model : DBModel> {
         value.value = null
         revision = Long.MIN_VALUE
         stale = false
+        if (phase.value != EntityPhase.Closed) phase.value = EntityPhase.Opening
+    }
+
+    @Synchronized
+    fun close() {
+        clear()
+        phase.value = EntityPhase.Closed
     }
 }
 
@@ -42,8 +64,9 @@ class Entity<Model : DBModel> internal constructor(private val fixedId: String?,
     /** The newest value, null while none has arrived or when the record does not exist. */
     val value: StateFlow<Model?> get() = cell.value
     val isStale: Boolean get() = cell.stale
+    val phase: StateFlow<EntityPhase> get() = cell.phase
     /** True after the database closed. A closed entity never receives a value again. */
-    val isClosed: Boolean get() = cell.closed
+    val isClosed: Boolean get() = cell.phase.value == EntityPhase.Closed
 }
 
 internal interface EntitySource {
@@ -52,7 +75,7 @@ internal interface EntitySource {
     fun release(ids: List<String>)
 }
 
-internal class EntityDeliveryRows<Model>(val revision: Long, val rows: List<Pair<Model, ULong>>, val removed: List<String>)
+internal class EntityDeliveryRows<Model>(val revision: Long, val rows: List<Pair<Model, ULong>>, val removed: List<String>, val failure: String? = null, val failedIds: Map<String, String> = emptyMap())
 
 private class LiveRef<Model : DBModel>(entity: Entity<Model>, val id: String, val cell: EntityCell<Model>, private val collect: (LiveRef<Model>) -> Unit) :
     WeakReference<Entity<Model>>(entity, EntityReferences.queue) {
@@ -105,6 +128,7 @@ class Entities<Model : DBModel> internal constructor(
         }
         val cell = seed ?: EntityCell()
         cell.stale = seed != null
+        if (seed != null) cell.phase.value = EntityPhase.Present
         val made = Entity(id, cell)
         live[id] = LiveRef(made, id, cell, ::collected)
         steps[id] = if (retained || steps[id] == Step.Release) Step.Refresh else Step.Retain
@@ -127,7 +151,7 @@ class Entities<Model : DBModel> internal constructor(
     private fun startSingleton() {
         val query = singleQuery ?: return
         singleFeed?.cancel()
-        val feed = SingletonFeed(query, decoder, { from, revision, row -> receive(from, revision, row) }, ::unopened)
+        val feed = SingletonFeed(query, decoder, { from, revision, row -> receive(from, revision, row) }, ::unopened, ::singletonFailed)
         singleFeed = feed
         flusher.execute { feed.attach() }
     }
@@ -137,10 +161,14 @@ class Entities<Model : DBModel> internal constructor(
         if (singleFeed === feed) single?.cell?.accept(row, revision)
     }
 
+    private fun singletonFailed(feed: SingletonFeed<Model>, message: String) = synchronized(lock) {
+        if (singleFeed === feed) single?.cell?.fail(message)
+    }
+
     private fun unopened(feed: SingletonFeed<Model>) = synchronized(lock) {
         if (singleFeed !== feed) return@synchronized
         singleFeed = null
-        single?.cell?.let { it.closed = true; it.clear() }
+        single?.cell?.let { it.close() }
         single = null
         singleQuery = null
     }
@@ -157,13 +185,13 @@ class Entities<Model : DBModel> internal constructor(
 
     /** The database closed. Every entity that is still held becomes closed and the registry starts empty. */
     internal fun close() = synchronized(lock) {
-        live.values.forEach { ref -> ref.get()?.cell?.let { it.closed = true; it.clear() } }
+        live.values.forEach { ref -> ref.get()?.cell?.let { it.close() } }
         live.clear()
         steps.clear()
         kept.clear(modelName)
         singleFeed?.cancel()
         singleFeed = null
-        single?.cell?.let { it.closed = true; it.clear() }
+        single?.cell?.let { it.close() }
         single = null
         singleQuery = null
         core.close()
@@ -179,6 +207,8 @@ class Entities<Model : DBModel> internal constructor(
     internal fun apply(delivery: EntityDeliveryRows<Model>) = synchronized(lock) {
         delivery.rows.forEach { (model, bytes) -> live[model.id]?.takeIf { it.get() != null }?.cell?.accept(model, delivery.revision, bytes) }
         delivery.removed.forEach { id -> live[id]?.takeIf { it.get() != null }?.cell?.accept(null, delivery.revision) }
+        delivery.failure?.let { message -> live.values.forEach { ref -> if (ref.get() != null) ref.cell.fail(message) } }
+        delivery.failedIds.forEach { (id, message) -> live[id]?.takeIf { it.get() != null }?.cell?.fail(message) }
     }
 
     private fun collected(ref: LiveRef<Model>) = synchronized(lock) {
@@ -251,19 +281,21 @@ internal class CoreEntitySource<Model : DBModel>(
     private fun failed(call: String, ids: List<String>, error: Exception) {
         failures.incrementAndGet()
         entityLog.severe("Entity $call of ${ids.size} $modelName ids failed: $error")
+        deliver(EntityDeliveryRows(Long.MIN_VALUE, emptyList(), emptyList(), failedIds = ids.associateWith { error.toString() }))
     }
 
     private fun open(): LiveEntities = observer ?: DBlayer.database.liveEntities(modelName, Changes(this)).also { observer = it }
 
     private fun changed(delivery: EntityDelivery) {
         delivery.failure?.let { failures.incrementAndGet(); entityLog.severe("Entity read of $modelName failed: $it") }
+        val failedIds = HashMap<String, String>()
         val rows = delivery.rows.mapNotNull { row ->
             runCatching { decoder.read(row) to row.estimatedBytes }
-                .onFailure { failures.incrementAndGet(); entityLog.severe("Row of $modelName failed to decode for its entity: $it") }
+                .onFailure { failures.incrementAndGet(); failedIds[row.id] = it.toString(); entityLog.severe("Row of $modelName failed to decode for its entity: $it") }
                 .getOrNull()
         }
         decoded.addAndGet(rows.size)
-        deliver(EntityDeliveryRows(delivery.revision, rows, delivery.removed))
+        deliver(EntityDeliveryRows(delivery.revision, rows, delivery.removed, delivery.failure, failedIds))
     }
 }
 
@@ -273,6 +305,7 @@ internal class SingletonFeed<Model : DBModel>(
     private val decoder: ModelDecoder<Model>,
     private val deliver: (SingletonFeed<Model>, Long, Model?) -> Unit,
     private val unopened: (SingletonFeed<Model>) -> Unit,
+    private val failed: (SingletonFeed<Model>, String) -> Unit,
 ) {
     private var session: ListSession<Model, Pair<Long, Model?>>? = null
     private var cancelled = false
@@ -290,7 +323,7 @@ internal class SingletonFeed<Model : DBModel>(
             { applied, change -> change.revision to applied.rows.firstOrNull() },
         )
         val keep = synchronized(this) { if (cancelled) false else { session = made; true } }
-        if (keep) runCatching { made.start() }
+        if (keep) try { made.start() } catch (error: Exception) { failed(this, error.toString()) }
     }
 
     fun cancel() {

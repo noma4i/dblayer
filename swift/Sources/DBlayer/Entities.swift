@@ -4,6 +4,8 @@ import OSLog
 
 private let entityLog = Logger(subsystem: "DBlayer", category: "entities")
 
+public enum EntityPhase: Sendable, Equatable { case opening, present, absent, failed(String), closed }
+
 /// The live value of one record. The library keeps it current while the object is alive and lets go of the record when the last holder drops it.
 @MainActor
 @Observable
@@ -13,8 +15,10 @@ public final class Entity<Model: DBModel> {
   /// The newest value, nil while none has arrived or when the record does not exist.
   public private(set) var value: Model?
   public private(set) var isStale: Bool
+  /// `opening` until the core answers, then `present` or `absent`. `failed` keeps the last value and says why the core could not read or decode the record. `closed` after the database closed.
+  public private(set) var phase: EntityPhase = .opening
   /// True after the database closed. A closed entity never receives a value again.
-  public private(set) var isClosed = false
+  public var isClosed: Bool { phase == .closed }
   @ObservationIgnored private(set) var revision: Int64
   @ObservationIgnored private var bytes: UInt64 = 0
   @ObservationIgnored private let registry: Entities<Model>
@@ -26,6 +30,7 @@ public final class Entity<Model: DBModel> {
     revision = seed?.revision ?? Int64.min
     bytes = seed?.bytes ?? 0
     isStale = seed != nil
+    if seed?.value != nil { phase = .present }
     self.registry = registry
     isSingleton = false
   }
@@ -44,12 +49,18 @@ public final class Entity<Model: DBModel> {
     revision = incoming
     self.bytes = bytes
     isStale = false
+    phase = next == nil ? .absent : .present
     if next != value { value = next }
     if isSingleton, id != (next?.id ?? "") { id = next?.id ?? "" }
   }
 
+  fileprivate func fail(_ message: String) {
+    guard phase != .closed else { return }
+    phase = .failed(message)
+  }
+
   fileprivate func close() {
-    isClosed = true
+    phase = .closed
     value = nil
     revision = Int64.min
     isStale = false
@@ -58,13 +69,14 @@ public final class Entity<Model: DBModel> {
   fileprivate func detach() {
     value = nil
     guard isSingleton else { return }
+    phase = .opening
     id = ""
     revision = Int64.min
     isStale = false
   }
 
   isolated deinit {
-    guard !isSingleton, !isClosed else { return }
+    guard !isSingleton, phase != .closed else { return }
     registry.released(id: id, value: value, revision: revision, bytes: bytes)
   }
 }
@@ -153,6 +165,8 @@ public final class Entities<Model: DBModel> {
       DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.receive(from: feed, revision: revision, row: row) } } }
     }, unopened: { [weak self, weak feed] in
       DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.unopened(feed) } } }
+    }, failed: { [weak self, weak feed] message in
+      DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed, self.singleFeed === feed { self.single?.fail(message) } } }
     })
   }
 
@@ -213,6 +227,8 @@ public final class Entities<Model: DBModel> {
   func apply(_ delivery: EntityDecoding.Decoded<Model>) {
     for (model, bytes) in delivery.rows { live[model.id]?.entity?.accept(model, revision: delivery.revision, bytes: bytes) }
     for id in delivery.removed { live[id]?.entity?.accept(nil, revision: delivery.revision) }
+    if let message = delivery.failure { live.values.forEach { $0.entity?.fail(message) } }
+    for (id, message) in delivery.failedIds { live[id]?.entity?.fail(message) }
   }
 
   private func scheduleFlush() {
@@ -282,6 +298,8 @@ enum EntityDecoding {
     let revision: Int64
     let rows: [(Model, UInt64)]
     let removed: [String]
+    var failure: String?
+    var failedIds: [String: String] = [:]
   }
 }
 
@@ -303,10 +321,11 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
   var decodedRows: Int { lock.withLock { total } }
   var leaseFailures: Int { lock.withLock { failures } }
 
-  private func refused(_ call: () throws -> Void) {
+  private func refused(_ ids: [String], _ call: () throws -> Void) {
     do { try call() } catch {
       lock.withLock { failures += 1 }
       entityLog.error("Entity lease of \(Model.modelName, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+      deliver?(EntityDecoding.Decoded(revision: Int64.min, rows: [], removed: [], failedIds: Dictionary(ids.map { ($0, String(describing: error))}, uniquingKeysWith: { first, _ in first })))
     }
   }
 
@@ -315,11 +334,11 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
   }
 
   func retain(_ ids: [String]) {
-    queue.async { self.refused { try self.open().retain(ids: ids) } }
+    queue.async { self.refused(ids) { try self.open().retain(ids: ids) } }
   }
 
   func release(_ ids: [String]) {
-    queue.async { self.refused { try self.open().release(ids: ids) } }
+    queue.async { self.refused(ids) { try self.open().release(ids: ids) } }
   }
 
   func close() {
@@ -338,15 +357,17 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
       lock.withLock { failures += 1 }
       entityLog.error("Entity read of \(Model.modelName, privacy: .public) failed: \(failure, privacy: .public)")
     }
+    var failedIds: [String: String] = [:]
     let rows = delivery.rows.compactMap { row -> (Model, UInt64)? in
       do { return (try Model.decode(row), row.estimatedBytes) } catch {
         lock.withLock { failures += 1 }
         entityLog.error("Row of \(Model.modelName, privacy: .public) failed to decode for its entity: \(String(describing: error), privacy: .public)")
+        failedIds[row.id] = String(describing: error)
         return nil
       }
     }
     lock.withLock { total += rows.count }
-    deliver?(EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed))
+    deliver?(EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed, failure: delivery.failure, failedIds: failedIds))
   }
 }
 
@@ -363,7 +384,7 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
 
   init(query: Query<Model>) { queryJson = query.json }
 
-  func start(deliver: @escaping @Sendable (Int64, Model?) -> Void, unopened: @escaping @Sendable () -> Void) {
+  func start(deliver: @escaping @Sendable (Int64, Model?) -> Void, unopened: @escaping @Sendable () -> Void, failed: @escaping @Sendable (String) -> Void) {
     Task.detached(priority: .userInitiated) { [self] in
       let made = ListSession<Model, (Int64, Model?)>(
         open: { [queryJson] listener in let subscription = try DB.database.liveQuery(queryJson: queryJson, listener: listener); return { subscription.cancel() } },
@@ -379,7 +400,7 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
         return true
       }
       if keep {
-        do { try made.start() } catch is DatabaseNotOpen { unopened() } catch {}
+        do { try made.start() } catch is DatabaseNotOpen { unopened() } catch { failed(String(describing: error)) }
       }
     }
   }

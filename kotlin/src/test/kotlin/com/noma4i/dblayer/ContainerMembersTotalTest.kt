@@ -30,8 +30,8 @@ class ContainerMembersTotalTest {
 
         val members = User.containerMembers("c1")
         members.load()
-        assertEquals(53L, withTimeout(5000) { members.state.flow.first { it.total != null } }.total)
-        assertEquals(true, members.loadMore())
-        assertEquals(53L, withTimeout(5000) { members.state.flow.first { it.total != null } }.total)
+        assertEquals(53L, withTimeout(5000) { members.snapshots.flow.first { it.total != null } }.total)
+        assertEquals(LoadMoreResult.Loaded(true), members.loadMore())
+        assertEquals(53L, withTimeout(5000) { members.snapshots.flow.first { it.total != null } }.total)
     }
 }

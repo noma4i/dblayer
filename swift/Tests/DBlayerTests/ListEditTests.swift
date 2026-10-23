@@ -25,7 +25,7 @@ struct ListEditTests {
 
   static func snapshot(_ feed: ListFeed<Moment>, _ change: LiveChange) -> Snapshot<Moment> {
     let applied = feed.apply(change)
-    return Snapshot(rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, failure: applied.failure, edits: applied.edits)
+    return Snapshot(rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, edits: applied.edits, error: applied.failure)
   }
 
   static func texts(_ rows: [Moment]) -> [String] { rows.map { "\($0.id):\($0.text ?? "")" } }
@@ -130,7 +130,7 @@ struct ListEditTests {
       sink.emit = emit
       return {}
     }
-    let list = LiveList<Moment>(Moment.recent, snapshots: snapshots, state: LiveSource(initial: LoadState()) { _ in {} })
+    let list = LiveList<Moment>(Moment.recent, snapshots: snapshots)
     let feed = ListFeed<Moment>()
     func deliver(_ change: LiveChange) async {
       await eventually("the list source starts") { sink.emit != nil }

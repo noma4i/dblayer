@@ -66,6 +66,7 @@ impl LoadOwner {
             #[cfg(test)]
             locked(&self.history).push(event.clone());
             let window = event.window().map(str::to_string);
+            let resets = matches!(event, Event::Reset { .. });
             let stepped = catch_unwind(AssertUnwindSafe(|| {
                 #[cfg(test)]
                 if window.as_deref().is_some_and(|window| locked(&self.panic_window).as_deref() == Some(window)) {
@@ -88,6 +89,14 @@ impl LoadOwner {
                     }
                     Effect::Retry { window, kind } => state.retries.push((window, kind)),
                 }
+            }
+            if resets {
+                let state = &mut *state;
+                let observed = |window: &str| state.senders.get(window).is_some_and(|sender| sender.receiver_count() > 0);
+                state.machine.forget(observed);
+                let kept: BTreeSet<String> = state.senders.keys().filter(|window| state.machine.view(window).is_some()).cloned().collect();
+                state.senders.retain(|window, _| kept.contains(window));
+                state.targets.retain(|window, _| kept.contains(window));
             }
         }
     }
@@ -131,6 +140,11 @@ impl LoadOwner {
     #[cfg(test)]
     pub(crate) fn history(&self) -> Vec<Event> {
         locked(&self.history).clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tracked_windows(&self) -> usize {
+        locked(&self.state).machine.windows_len()
     }
 
     #[cfg(test)]

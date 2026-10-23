@@ -13,6 +13,13 @@ pub enum LivePhase {
     Closed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum LoadMoreResult {
+    Loaded { has_more: bool },
+    NoMore,
+    AlreadyLoading,
+}
+
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct Placement {
     pub id: String,
@@ -144,20 +151,30 @@ impl Drop for LiveHandles {
 }
 
 pub(super) fn follow_failures(watch: Option<&mut crate::sync::Watch>, feed: Arc<LiveFeed>) -> Option<tokio::task::AbortHandle> {
-    let (current, mut failures, subscriptions) = watch?.failures()?;
+    let failures = watch?.failures()?;
+    Some(follow(failures, feed))
+}
+
+pub(super) fn follow(failures: crate::sync::Failures, feed: Arc<LiveFeed>) -> tokio::task::AbortHandle {
+    let crate::sync::Failures { current, recheck, mut receiver, sources } = failures;
     let post = |feed: &LiveFeed, failure: crate::transport::SubscriptionFailure| feed.subscription_failed(Some(super::DbError::from(crate::sync::SyncError::Transport(failure.error))));
     let mut failed = current.is_some();
     if let Some(failure) = current { post(&feed, failure); }
-    Some(tokio::spawn(async move {
+    tokio::spawn(async move {
         loop {
-            match failures.recv().await {
+            match receiver.recv().await {
                 Ok(None) => { failed = false; feed.subscription_failed(None); }
-                Ok(Some((source, failure))) if subscriptions.contains(&source) && !failed => { post(&feed, failure); failed = true; }
+                Ok(Some((source, failure))) if sources.contains(&source) && !failed => { post(&feed, failure); failed = true; }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => match recheck() {
+                    Some(failure) if !failed => { post(&feed, failure); failed = true; }
+                    None if failed => { failed = false; feed.subscription_failed(None); }
+                    _ => {}
+                },
                 _ => {}
             }
         }
-    }).abort_handle())
+    }).abort_handle()
 }
 
 pub(super) fn intake(feed: &LiveFeed, wire: &WireModel, item: Feed) {

@@ -23,13 +23,13 @@ class ClosedDatabaseTest {
             refusal { Moment.create(text = "late") },
             refusal { Moment.recent.warm() },
             refusal { Moment.recent.live.flow.first() },
+            refusal { Moment.recent.live.current() },
             refusal { Moment.recent.changes.first() },
         )
         for (error in errors) {
             assertTrue(error is IllegalStateException)
             assertEquals(message, error?.message)
         }
-        assertEquals(emptyList<Moment>(), Moment.recent.live.current())
     }
 
     @Test

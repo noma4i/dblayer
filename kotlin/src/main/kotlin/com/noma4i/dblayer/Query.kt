@@ -88,10 +88,9 @@ class Query<Model : DBModel>(
     internal val json: String
         get() = json(false)
 
-    private fun json(refreshOnConnect: Boolean, observeOnly: Boolean = false) = buildJsonObject {
+    private fun json(refreshOnConnect: Boolean) = buildJsonObject {
         put("model", modelName)
         if (refreshOnConnect) put("refreshOnConnect", true)
-        if (observeOnly) put("observeOnly", true)
         condition?.let { put("where", it.json) }
         if (orders.isNotEmpty()) put("order", JsonArray(orders.map { buildJsonObject { put("field", it.field); put("direction", it.direction) } }))
         limitCount?.let { put("limit", it) }
@@ -110,7 +109,7 @@ class Query<Model : DBModel>(
             connected(result)
             result.getOrThrow()
         }) { applied, change ->
-            Snapshot(applied.rows, change.replacedIds(), applied.reordered, applied.failure, applied.edits)
+            Snapshot.of(applied, change)
         }
 
     val count: LiveSource<Long>
@@ -118,8 +117,6 @@ class Query<Model : DBModel>(
 
     fun find(id: String): LiveSource<Model?> =
         listSource<Model, Model?>(null, decoder, open = { listener -> DBlayer.database.liveFind(modelName, id, listener) }) { applied, _ -> applied.rows.firstOrNull() }
-
-    val state: LiveSource<LoadState> get() = LiveSource(LoadState(), { listener -> DBlayer.database.liveQuery(json(false, true).toString(), listener) }) { LoadState(it) }
 
     /** The rows of this query from memory, or null when the query is not warm. It reads no database file, so it is safe on the main thread. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows. */
     fun cached(): Cached<List<Model>>? =
@@ -140,7 +137,7 @@ class Query<Model : DBModel>(
 
     suspend fun load() = DBlayer.database.load(modelName, relation.orEmpty(), params.toString())
     suspend fun refresh() = DBlayer.database.refresh(modelName, relation.orEmpty(), params.toString())
-    suspend fun loadMore(): Boolean = DBlayer.database.loadMore(modelName, relation.orEmpty(), params.toString())
+    suspend fun loadMore(): LoadMoreResult = DBlayer.database.loadMore(modelName, relation.orEmpty(), params.toString())
 }
 
 data class Cached<Value>(val value: Value, val revision: Long)

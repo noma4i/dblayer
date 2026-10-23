@@ -36,7 +36,7 @@ class Window<Model : DBModel> internal constructor(private val query: Query<Mode
             subscription
         }) { applied, change ->
             control.shown(applied.rows.size)
-            Snapshot(applied.rows, change.replacedIds(), applied.reordered, applied.failure, applied.edits, change.window?.let(::WindowEdges))
+            Snapshot.of(applied, change)
         }
 
     fun expand(before: Int = 0, after: Int = 0) = control.grow(before, after)
@@ -56,7 +56,7 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
                 window.snapshots.flow.collect { snapshot ->
                     synchronized(this@LiveWindow) { pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size) }
                     mutableReplaced.value = snapshot.replaced
-                    mutableFailure.value = snapshot.failure
+                    mutableFailure.value = snapshot.error
                     snapshot.window?.let { mutableEdges.value = it }
                     mutableRows.value = snapshot.rows
                     if (snapshot.reordered) mutableIds.value = snapshot.rows.map { it.id }

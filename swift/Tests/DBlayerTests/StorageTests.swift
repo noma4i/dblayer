@@ -8,7 +8,7 @@ import Testing
 struct StorageTests {
   static func rows(_ database: Database) async throws -> [WireRow] {
     let live = try database.liveQuery(queryJson: #"{"model":"StorageRow"}"#, listener: ChangeListener { _ in })
-    return await live.current().rows
+    return try await live.current().rows
   }
 
   @Test

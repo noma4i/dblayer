@@ -18,7 +18,7 @@ val name by author.value.collectAsState()
 
 `value` is the newest known state of the record. The first reader receives a cached row immediately when it is in memory. A second reader of a live id receives the same object and opens no new subscription.
 
-Entity creation reads only memory. It never reads SQLite synchronously. A cache miss stays empty until the first delivery, even if the record exists on disk.
+Every entity has a `phase`: `opening` until the core answers, then `present` or `absent`. `failed(error)` keeps the last value and tells that the core could not lease the id, read the row or decode it on this build. `closed` follows `DB.close()`. Entity creation reads only memory. It never reads SQLite synchronously. A cache miss stays empty until the first delivery, even if the record exists on disk.
 Cached and retained values have `isStale` set until a fresh delivery arrives. An older cached row never replaces a newer live or retained value.
 A row that arrives after its entity reaches the entity. When the core cannot read the record for a lease, it counts the failure, keeps the id and reads it again on the next commit or the next lease of that id. `DBlayer.entityCensus()` and `DB.entityCensus()` show the facts told, the deliveries skipped as not newer, and the failed reads. `DBlayer.entityLeaseFailures()` and `DB.entityLeaseFailures()` count the lease calls that the platform registry could not hand to the core and the rows that failed to decode for an entity. Both write a line to the library log.
 Lists that already loaded their rows can create entities directly, with no extra prefetch call:
@@ -65,7 +65,7 @@ Every delivery carries the revision of the database. An entity ignores a deliver
 
 Native callbacks hold entity sources weakly. Releasing a source releases its observer without a separate cleanup call.
 
-The process has one database. Entities, lists and subscriptions belong to it for the life of the process, and the platform code does not follow a change of database. `DB.close()` and `DBlayer.close()` end it: every held entity becomes closed (`isClosed`, empty value, no further delivery) and the next `open` starts empty. After `close` and before `open`, `DB.database` throws `DatabaseNotOpen` and `DBlayer.database` throws `IllegalStateException`, both with the text "database is not open; call DBlayer.open once at app start". Every call that reads the database throws it, and a live source throws it from `stream()` (Swift) or from collecting `flow` (Kotlin).
+The process has one database. Entities, lists and subscriptions belong to it for the life of the process, and the platform code does not follow a change of database. `DB.close()` and `DBlayer.close()` end it: every held entity becomes closed (`phase` is `closed`, empty value, no further delivery) and the next `open` starts empty. After `close` and before `open`, `DB.database` throws `DatabaseNotOpen` and `DBlayer.database` throws `IllegalStateException`, both with the text "database is not open; call DBlayer.open once at app start". Every call that reads the database throws it, and a live source throws it from `stream()` (Swift) or from collecting `flow` (Kotlin).
 
 ## Ending a session
 

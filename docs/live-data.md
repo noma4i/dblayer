@@ -152,27 +152,27 @@ struct ProfileView: View {
 
 **One snapshot.** Every delivery of `live_query`, `live_find`, `live_count`, `live_window` and `live_has_many` carries the rows, the phase (`NotLoaded`, `Loading`, `Loaded`, `Empty`, `Failed`, `Closed`), the load flags, `hasMore`, `total`, `loadedAt`, the error and a `seq` that only grows. The first delivery comes after the first read of the rows and holds them, so there is no `Loaded` or `Empty` delivery with 0 rows before it. `Empty` and `Loaded` follow the `size` of the same delivery. After a load lands, the phase `Loaded` or `Empty` arrives only when the subscription has read the rows of that load, and until then the delivery shows `Loading`. A subscription call never fails: a query the core refuses gives one delivery with the phase `Failed` and the error kind `invalid`. A failed read of the rows, a failed load and a failed server subscription show in the `error` of the delivery until the next good read or recovery.
 
-**Loading state.** A remote relation reports `idle`, `loading` or `failed`, whether another page exists, when it last loaded and the `total` the server reports for the whole list (`totalCount` of the connection, or the field named by `total from:` of the scope, nil when the document does not select it):
+**Load phase.** `query.snapshots` is the one stream of a list: its `Snapshot` carries the rows, the phase (`opening` before the first delivery, then `notLoaded`, `loading`, `loaded`, `empty`, `failed`, `closed`), whether another page exists (`hasMore`), when the relation last loaded (`loadedAt`) and the `total` the server reports for the whole list (`totalCount` of the connection, or the field named by `total from:` of the scope, nil when the document does not select it). `error` and `errorKind` name the last failure, `seq` only grows, `undecodable` lists the ids of rows that this build cannot decode (they are not in `rows`):
 
 ```swift
-for await state in try await Moment.feed.state.stream() { if state.isLoading { showSpinner() } }
+for await snapshot in try await Moment.feed.snapshots.stream() { if snapshot.isLoading { showSpinner() } }
 ```
 
 ```kotlin
-Moment.feed.state.flow.collect { state -> if (state.isLoading) showSpinner() }
+Moment.feed.snapshots.flow.collect { snapshot -> if (snapshot.isLoading) showSpinner() }
 ```
 
-While a load runs the state also tells which load it is: `isInitialLoading` (the first load of a list without rows, for a skeleton), `isRefreshing` (a reload of a list with rows) and `isFetchingMore` (the next page, for a footer spinner). Concurrent loads of the same list do not mix, each flag follows its own loads.
+While a load runs the snapshot also tells which load it is: `isInitialLoading` (the first load of a list without rows, for a skeleton), `isRefreshing` (a reload of a list with rows) and `isFetchingMore` (the next page, for a footer spinner). Concurrent loads of the same list do not mix, each flag follows its own loads. A stream that cannot attach (the database is not open) throws; `LiveList` shows it as one snapshot with the phase `failed` and the error kind `subscription`.
 
-A load that ends with an error reports `failed` when the list has no rows. A list with rows reports `idle` and keeps the error in the state, so the rows stay on screen. A load started while the device is offline ends at once with a `network` error. When the device goes online again, each list that is observed and failed by network is loaded once more. A cache reset clears `loadedAt` and the error.
+A load that ends with an error reports `failed` when the list has no rows. A list with rows reports `loaded` and keeps the error in the snapshot, so the rows stay on screen. A load started while the device is offline ends at once with a `network` error. When the device goes online again, each list that is observed and failed by network is loaded once more. A cache reset clears `loadedAt` and the error, and drops the window facts of the lists that nobody observes.
 
-**Pages of a related list.** A list that lives under a node, such as the members of a group, pages with `loadMore()` and shows `hasMore` and `total` in its state (each order of the list, `order: .ownerFirst`, has its own window) (`total` is nil when the connection has no `totalCount` and the scope has no `total from:`). See [node reads](models.md#node-reads).
+**Pages of a related list.** A list that lives under a node, such as the members of a group, pages with `loadMore()` and shows `hasMore` and `total` in its snapshot (each order of the list, `order: .ownerFirst`, has its own window) (`total` is nil when the connection has no `totalCount` and the scope has no `total from:`). See [node reads](models.md#node-reads). `loadMore()` returns `loaded(hasMore:)` when it fetched a page, `noMore` when the chain has no next page and `alreadyLoading` when another load of the same list was in flight: it never says `noMore` for a load that was only busy.
 
 ```swift
 let members = User.groupMembers(groupId, order: .ownerFirst)
 try await members.load()
-for await state in try await members.state.stream() { footer.isHidden = !state.hasMore }
-try await members.loadMore()                       // true while another page exists
+for await snapshot in try await members.snapshots.stream() { footer.isHidden = !snapshot.hasMore }
+try await members.loadMore()                       // .loaded(hasMore: true) while another page exists
 ```
 
 ```kotlin
@@ -217,20 +217,20 @@ val edits = thread.takeEdits()
 if (edits != null) mirror.replay(edits) else mirror = thread.rows.value.toMutableList()
 ```
 
-**View models.** `LiveList` keeps the rows and the state of a query and moves the relation. It ends with its owner: there is nothing to start or stop. Creating one is cheap on the main thread: the subscription and the first read run on a background task (Swift) or on `Dispatchers.Default` (Kotlin), and `rows` stay empty until the first delivery arrives:
+**View models.** `LiveList` keeps the newest snapshot of a query and moves the relation. It ends with its owner: there is nothing to start or stop. Creating one is cheap on the main thread: the subscription and the first read run on a background task (Swift) or on `Dispatchers.Default` (Kotlin), and `rows` stay empty until the first delivery arrives:
 
 ```swift
-let feed = LiveList(Moment.feed)      // feed.rows, feed.state are observable
+let feed = LiveList(Moment.feed)      // feed.snapshot, feed.rows are observable
 try await feed.refresh()
 try await feed.loadMore()
 ```
 
-A `loadMore` that the server refuses with the error code `INVALID_CURSOR` restarts the list: the window keeps only the new first page and its cursor, and the load state shows no error.
+A `loadMore` that the server refuses with the error code `INVALID_CURSOR` restarts the list: the window keeps only the new first page and its cursor, and the snapshot shows no error.
 
 A list often shows records that its rows refer to by id (the users of a group, the last message of a group). Read those through [entities](entities.md): one live value per id, no second subscription to write.
 
 ```kotlin
-val feed = LiveList(Moment.feed, viewModelScope)   // feed.rows, feed.state are StateFlow
+val feed = LiveList(Moment.feed, viewModelScope)   // feed.snapshot, feed.rows are StateFlow
 feed.refresh()
 feed.loadMore()
 ```

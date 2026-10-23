@@ -169,10 +169,10 @@ class BridgeProbeTest {
 
         assertEquals("a", withTimeout(5000) { Moment.feed.live.flow.first { it.isNotEmpty() } }.first().uuid)
         assertEquals("MomentsFeed", transport.calls.first().operationName)
-        val state = withTimeout(5000) { Moment.feed.state.flow.first() }
-        assertEquals(LoadPhase.Idle, state.phase)
-        assertEquals(false, state.hasMore)
-        assertEquals(true, state.loadedAt != null)
+        val snapshot = withTimeout(5000) { Moment.feed.snapshots.flow.first() }
+        assertEquals(LoadPhase.Loaded, snapshot.phase)
+        assertEquals(false, snapshot.hasMore)
+        assertEquals(true, snapshot.loadedAt != null)
     }
 
     @Test
@@ -212,8 +212,8 @@ class BridgeProbeTest {
         val thrown = runCatching { Moment.feed.refresh() }.exceptionOrNull()
 
         assertEquals(true, thrown is DbException)
-        val state = withTimeout(5000) { Moment.feed.state.flow.first { it.phase == LoadPhase.Failed } }
-        assertEquals(true, state.errorKind != null)
+        val failed = withTimeout(5000) { Moment.feed.snapshots.flow.first { it.phase == LoadPhase.Failed } }
+        assertEquals(true, failed.errorKind != null)
     }
 
     @Test
@@ -226,11 +226,11 @@ class BridgeProbeTest {
         val listScope = CoroutineScope(SupervisorJob())
         val list = LiveList(Moment.feed, listScope)
         withTimeout(5000) { list.rows.first { it.isNotEmpty() } }
-        val state = withTimeout(5000) { list.state.first { it.loadedAt != null } }
+        val state = withTimeout(5000) { list.snapshot.first { it.loadedAt != null } }
         assertEquals("a", list.rows.value.first().uuid)
         assertEquals(true, state.hasMore)
         assertEquals(9L, state.total)
-        assertEquals(LoadPhase.Idle, state.phase)
+        assertEquals(LoadPhase.Loaded, state.phase)
         val entity = Moment.entity("1")
         withTimeout(5000) { entity.value.first { it != null } }
         assertEquals("a", entity.value.value?.uuid)
@@ -339,7 +339,7 @@ class BridgeProbeTest {
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
         val listScope = CoroutineScope(SupervisorJob())
         val list = LiveList(Moment.feed, listScope)
-        withTimeout(5000) { list.state.first { it.phase == LoadPhase.Failed } }
+        withTimeout(5000) { list.snapshot.first { it.phase == LoadPhase.Failed } }
         val before = transport.calls.size
 
         DBlayer.resume()
@@ -360,7 +360,7 @@ class BridgeProbeTest {
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
         val listScope = CoroutineScope(SupervisorJob())
         val list = LiveList(Moment.feed, listScope)
-        withTimeout(5000) { list.state.first { it.phase == LoadPhase.Idle && it.loadedAt != null } }
+        withTimeout(5000) { list.snapshot.first { it.phase == LoadPhase.Empty && it.loadedAt != null } }
         val older = launch { list.refresh() }
         eventually("not (transport.calls.count { it.operationName == \"MomentsFeed\" } < 2)", 5000) { !(transport.calls.count { it.operationName == "MomentsFeed" } < 2) }
 

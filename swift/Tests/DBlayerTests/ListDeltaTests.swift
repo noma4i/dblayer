@@ -58,7 +58,7 @@ extension BridgeProbeTests {
         rows[at] = try await rows[at].update(text: String(format: "n%02d-%03d", below(40), step))
       default: try await rows.remove(at: below(rows.count)).destroy()
       }
-      let fresh = await Self.byText.live.current()
+      let fresh = try await Self.byText.live.current()
       #expect(await changes.first("the list of step \(step)", timeout: .seconds(20)) { $0 == fresh } != nil)
     }
   }
@@ -107,7 +107,7 @@ extension BridgeProbeTests {
         return {}
       },
       emit: { sink.yield($0) },
-      map: { applied, _ in Snapshot(rows: applied.rows, replaced: [:], reordered: applied.reordered, failure: applied.failure) }
+      map: { applied, _ in Snapshot(rows: applied.rows, replaced: [:], reordered: applied.reordered, error: applied.failure) }
     )
     return (session, Cursor(listeners), Cursor(values))
   }
@@ -167,7 +167,7 @@ extension BridgeProbeTests {
     #expect(await rig.values.next("the last full list")?.rows.map(\.id) == ["a"])
     current.changed(change: Self.wire(size: 2, placed: [Placement(id: "zz", index: 0)]))
     let stopped = await rig.values.next("the failure")
-    #expect(stopped?.failure != nil && stopped?.rows.map(\.id) == ["a"])
+    #expect(stopped?.error != nil && stopped?.rows.map(\.id) == ["a"])
     #expect(rig.session.reopened == 2 && rig.session.isStalled)
   }
 
@@ -238,7 +238,7 @@ extension BridgeProbeTests {
     #expect(await rig.values.next("the first list")?.rows.map(\.id) == ["a"])
     first.changed(change: Self.wire(size: 2, placed: [Placement(id: "zz", index: 0)]))
     let stopped = await rig.values.next("the failure")
-    #expect(stopped?.failure != nil && stopped?.rows.map(\.id) == ["a"])
+    #expect(stopped?.error != nil && stopped?.rows.map(\.id) == ["a"])
     #expect(rig.session.isStalled)
   }
 }

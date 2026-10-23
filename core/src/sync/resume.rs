@@ -26,13 +26,22 @@ pub struct Watch {
 }
 
 impl Watch {
-    pub(crate) fn failures(&mut self) -> Option<(Option<crate::transport::SubscriptionFailure>, tokio::sync::broadcast::Receiver<super::SubscriptionFailureNotice>, Vec<String>)> {
+    pub(crate) fn failures(&mut self) -> Option<Failures> {
         let failures = self.failures.take()?;
-        let current = self.live.iter().find_map(|key| {
-            locked(&self.inner.lives).get(key)?.subscription.as_ref()?.status().failure
+        let (inner, live) = (self.inner.clone(), self.live.clone());
+        let current: Arc<dyn Fn() -> Option<crate::transport::SubscriptionFailure> + Send + std::marker::Sync> = Arc::new(move || {
+            let failure = live.iter().find_map(|key| locked(&inner.lives).get(key)?.subscription.as_ref()?.status().failure)?;
+            matches!(failure.error, crate::transport::TransportError::Session { .. }).then_some(failure)
         });
-        Some((current.filter(|failure| matches!(failure.error, crate::transport::TransportError::Session { .. })), failures, self.live.clone()))
+        Some(Failures { current: current(), recheck: current, receiver: failures, sources: self.live.clone() })
     }
+}
+
+pub(crate) struct Failures {
+    pub current: Option<crate::transport::SubscriptionFailure>,
+    pub recheck: Arc<dyn Fn() -> Option<crate::transport::SubscriptionFailure> + Send + std::marker::Sync>,
+    pub receiver: tokio::sync::broadcast::Receiver<super::SubscriptionFailureNotice>,
+    pub sources: Vec<String>,
 }
 
 impl Drop for Watch {

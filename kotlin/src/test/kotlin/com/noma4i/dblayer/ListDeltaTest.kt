@@ -134,7 +134,7 @@ class ListDeltaTest {
             Moment,
             { listener -> opens(count.getAndIncrement()); listeners.put(listener); val cancel: () -> Unit = {}; cancel },
             { values.put(it) },
-            { applied, _ -> Snapshot(applied.rows, emptyMap(), applied.reordered, applied.failure) },
+            { applied, _ -> Snapshot(applied.rows, emptyMap(), applied.reordered, error = applied.failure) },
         )
     }
 
@@ -168,7 +168,7 @@ class ListDeltaTest {
         poll(rig.values)
         current.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
         val stopped = poll(rig.values) as Snapshot<*>
-        assertEquals(true, stopped.failure != null)
+        assertEquals(true, stopped.error != null)
         assertEquals(listOf("a"), stopped.rows.map { (it as Moment).id })
         assertEquals(2, rig.session.reopened)
         assertEquals(true, rig.session.isStalled)
@@ -244,7 +244,7 @@ class ListDeltaTest {
         poll(rig.values)
         first.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
         val stopped = poll(rig.values) as Snapshot<*>
-        assertEquals(true, stopped.failure != null)
+        assertEquals(true, stopped.error != null)
         assertEquals(true, rig.session.isStalled)
     }
 }

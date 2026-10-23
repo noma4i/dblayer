@@ -17,9 +17,9 @@ extension BridgeProbeTests {
     #expect(await refused { try await row.destroy() })
     #expect(await refused { try await Moment.recent.warm() })
     #expect(await refused { _ = try await Moment.recent.live.stream() })
-    #expect(await refused { _ = try await Moment.recent.state.stream() })
+    #expect(await refused { _ = try await Moment.recent.snapshots.stream() })
     #expect(await refused { _ = try await Moment.recent.changes.stream() })
-    #expect(await Moment.recent.live.current().isEmpty)
+    #expect(await refused { _ = try await Moment.recent.live.current() })
   }
 
   @Test @MainActor func aSingletonOfAClosedDatabaseIsClosed() async throws {

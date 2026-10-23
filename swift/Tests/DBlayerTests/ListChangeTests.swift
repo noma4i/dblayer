@@ -22,7 +22,7 @@ extension BridgeProbeTests {
         if change.size == 192 { break }
       }
       #expect(sawReplacement, "overflow never delivered a replacement snapshot")
-      #expect(rows == (await query.live.current()))
+      #expect(rows == (try await query.live.current()))
     }
     final class Decodes: @unchecked Sendable {
       let lock = NSLock()

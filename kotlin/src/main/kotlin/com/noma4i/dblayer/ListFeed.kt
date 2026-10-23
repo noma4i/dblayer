@@ -18,6 +18,7 @@ internal class ListState<Model>(
     val desynced: Boolean = false,
     val failure: String? = null,
     val edits: List<ListEdit<Model>>? = null,
+    val undecodable: List<String> = emptyList(),
 )
 
 internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model>) {
@@ -47,6 +48,8 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
 
     private fun current(): List<Model> = if (missing == 0) loaded else slots.mapNotNull { it.row }
 
+    private fun missingIds(): List<String> = if (missing == 0) emptyList() else slots.filter { it.row == null }.map { it.id }
+
     private fun materialized(): List<Model> = if (missing == 0) slots.map { it.row!! }.also { copied.addAndGet(it.size) } else emptyList()
 
     @OptIn(ExperimentalSerializationApi::class)
@@ -65,18 +68,18 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
             slots.addAll(carried.map { it.first })
             missing = slots.count { it.row == null }
             loaded = materialized()
-            return ListState(current(), true)
+            return ListState(current(), true, undecodable = missingIds())
         }
         val reordered = change.removed.isNotEmpty() || change.placed.isNotEmpty() || change.replaced.isNotEmpty()
         val held = missing == 0
         val edits = ArrayList<ListEdit<Model>>()
         if (!applyDelta(change, carried, edits)) {
             desynced.incrementAndGet()
-            return ListState(current(), reordered, desynced = true)
+            return ListState(current(), reordered, desynced = true, undecodable = missingIds())
         }
         if (!held || missing != 0 || edits.size > slots.size) {
             loaded = materialized()
-            return ListState(current(), reordered)
+            return ListState(current(), reordered, undecodable = missingIds())
         }
         val next = ArrayList(loaded).also { copied.addAndGet(it.size) }
         next.replay(edits)
@@ -219,7 +222,7 @@ internal class ListSession<Model : DBModel, Value>(
         val current = synchronized(this) { if (cancelled || stalled) return; stalled = true; cancelSubscription.also { cancelSubscription = null } }
         current?.invoke()
         decodeLog.severe("List stopped: $reason")
-        emit(map(ListState(feed.rows, false, failure = reason), LiveChange(0L, false, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, DbException.Invalid(reason))))
+        emit(map(ListState(feed.rows, false, failure = reason), LiveChange(0L, false, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, DbException.Invalid(reason), phase = LivePhase.FAILED, errorKind = "invalid")))
     }
 }
 

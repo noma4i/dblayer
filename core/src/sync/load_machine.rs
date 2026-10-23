@@ -450,6 +450,15 @@ impl Machine {
         self.windows.get(window).map(|machine| machine.view(phase_of(machine.state())))
     }
 
+    pub(crate) fn forget(&mut self, keep: impl Fn(&str) -> bool) {
+        self.windows.retain(|window, machine| !machine.flights.is_empty() || keep(window));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn windows_len(&self) -> usize {
+        self.windows.len()
+    }
+
     #[cfg(test)]
     pub(crate) fn flights(&self, window: &str) -> usize {
         self.windows.get(window).map_or(0, |machine| machine.flights.len())

@@ -27,11 +27,6 @@ struct BridgeProbeTests {
     #expect(Entities<Record>.shared.retainedCount == 1)
   }
 
-  /// Waits for the event that the relation failed, not for a time.
-  static func failedState(of query: Query<Moment>) async throws -> LoadState {
-    try await Cursor(try await query.state.stream()).first("the relation to fail") { $0.phase == .failed } ?? LoadState()
-  }
-
   @Test
   func aSearchFindsRowsByWordPrefixesAndFollowsEdits() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
@@ -73,7 +68,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     #expect(Moment.recent.cached() == nil)
     _ = try await Moment.create(text: "n")
-    #expect(await Moment.recent.live.current().count == 1)
+    #expect(try await Moment.recent.live.current().count == 1)
     #expect(Moment.recent.cached()?.value.first?.text == "n")
   }
 
@@ -130,9 +125,9 @@ struct BridgeProbeTests {
     let changes = Cursor(try await Moment.feed.live.stream())
     #expect(await changes.next()?.first?.uuid == "a")
     #expect(transport.calls.first?.operationName == "MomentsFeed")
-    let states = Cursor(try await Moment.feed.state.stream())
-    let state = await states.next()
-    #expect(state?.phase == .idle && state?.hasMore == false && state?.loadedAt != nil)
+    let snapshots = Cursor(try await Moment.feed.snapshots.stream())
+    let snapshot = await snapshots.next()
+    #expect(snapshot?.phase == .loaded && snapshot?.hasMore == false && snapshot?.loadedAt != nil)
   }
 
   @MainActor
@@ -182,10 +177,10 @@ struct BridgeProbeTests {
     } catch {
       Issue.record("the failed load surfaced as \(error), not as a database error")
     }
-    let failed = try await Self.failedState(of: Moment.feed)
+    await eventually("the relation fails") { list.snapshot.phase == .failed }
 
-    #expect(failed.phase == .failed)
-    #expect(failed.errorKind != nil)
+    #expect(list.snapshot.phase == .failed)
+    #expect(list.snapshot.errorKind != nil)
   }
 
   @MainActor
@@ -196,8 +191,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
-    let connectLoad = try await Cursor(try await Moment.feed.state.stream()).first("the live connect's load to fail") { $0.phase == .failed }
-    #expect(connectLoad?.phase == .failed)
+    await eventually("the live connect's load fails") { list.snapshot.phase == .failed }
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
 
     do {
@@ -207,10 +201,10 @@ struct BridgeProbeTests {
     } catch {
       Issue.record("the failed load surfaced as \(error), not as a database error")
     }
-    let failed = try await Self.failedState(of: Moment.feed)
+    await eventually("the relation fails") { list.snapshot.phase == .failed }
 
-    #expect(failed.phase == .failed)
-    #expect(failed.errorKind != nil)
+    #expect(list.snapshot.phase == .failed)
+    #expect(list.snapshot.errorKind != nil)
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 2)
   }
 
@@ -223,11 +217,11 @@ struct BridgeProbeTests {
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
     let list = LiveList(Moment.feed)
-    await eventually(#"not (list.rows.isEmpty || list.state.loadedAt == nil)"#) { !(list.rows.isEmpty || list.state.loadedAt == nil) }
+    await eventually(#"not (list.rows.isEmpty || list.snapshot.loadedAt == nil)"#) { !(list.rows.isEmpty || list.snapshot.loadedAt == nil) }
 
     #expect(list.rows.first?.uuid == "a")
-    #expect(list.state.hasMore && list.state.phase == .idle)
-    #expect(list.state.total == 9)
+    #expect(list.snapshot.hasMore && list.snapshot.phase == .loaded)
+    #expect(list.snapshot.total == 9)
     let entity = Moment.entity("1")
     await eventually(#"not (entity.value == nil)"#) { !(entity.value == nil) }
     #expect(entity.value?.uuid == "a")
@@ -348,15 +342,11 @@ struct BridgeProbeTests {
       emit(Snapshot(rows: [], replaced: ["a": "b"]))
       return {}
     }
-    let state = LiveSource<LoadState>(initial: LoadState()) { _ in
-      seen.note()
-      return {}
-    }
 
-    let list = LiveList(Moment.recent, snapshots: snapshots, state: state)
+    let list = LiveList(Moment.recent, snapshots: snapshots)
     await eventually("the replacement reaches the list") { !list.replaced.isEmpty }
 
-    #expect(seen.mainThread == [false, false])
+    #expect(seen.mainThread == [false])
   }
 
   @Test
@@ -407,8 +397,8 @@ struct BridgeProbeTests {
     let container = try #require(await Container.find(try await local.confirmedId()).current())
     #expect(container.title == "created")
     try await container.upload(UploadRequest(path: file.path, mutation: "ContainerGroupUpdateFile", createBlob: "CreateBlob"))
-    await eventually("the update upload changes the container") { await Container.find("c77").current()?.title == "updated" }
-    #expect(await Container.find("c77").current()?.title == "updated")
+    await eventually("the update upload changes the container") { (try? await Container.find("c77").current())??.title == "updated" }
+    #expect(try await Container.find("c77").current()?.title == "updated")
   }
 
   @MainActor
@@ -420,7 +410,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = LiveList(Moment.feed)
-    _ = try await Self.failedState(of: Moment.feed)
+    await eventually("the relation fails") { list.snapshot.phase == .failed }
     let before = transport.calls.count
 
     try await DB.resume()
@@ -440,7 +430,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let list = LiveList(Moment.feed)
-    await eventually(#"not (list.state.loadedAt == nil)"#) { !(list.state.loadedAt == nil) }
+    await eventually(#"not (list.snapshot.loadedAt == nil)"#) { !(list.snapshot.loadedAt == nil) }
     let older = Task { try await list.refresh() }
     await eventually(#"not (transport.calls.filter({ $0.operationName == "MomentsFeed" }).count < 2)"#) { !(transport.calls.filter({ $0.operationName == "MomentsFeed" }).count < 2) }
 
@@ -466,8 +456,8 @@ struct BridgeProbeTests {
     transport.enqueue("LikeMoment", reply: #"{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}"#)
     let liked = try await moment.like()
     #expect(liked.likedByMe)
-    await eventually("the refused like rolls back") { await Moment.find(moment.id).current()?.likedByMe == false }
-    #expect(await Moment.find(moment.id).current()?.likedByMe == false)
+    await eventually("the refused like rolls back") { (try? await Moment.find(moment.id).current())??.likedByMe == false }
+    #expect(try await Moment.find(moment.id).current()?.likedByMe == false)
 
     await #expect(throws: (any Error).self) { try await liked.settled() }
     try await liked.settled()

@@ -50,7 +50,7 @@ public struct Window<Model: DBModel>: Sendable {
       return subscription
     }) { (applied: ListApplied<Model>, change) in
       control.shown(applied.rows.count)
-      return Snapshot(rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, failure: applied.failure, edits: applied.edits, window: change.window.map(WindowEdges.init))
+      return Snapshot(applied, change)
     }
   }
 
@@ -80,7 +80,7 @@ public final class LiveWindow<Model: DBModel> {
       for await snapshot in stream {
         guard let self else { return }
         replaced = snapshot.replaced
-        if snapshot.failure != failure { failure = snapshot.failure }
+        if snapshot.error != failure { failure = snapshot.error }
         if let edges = snapshot.window { (hasBefore, hasAfter, total) = (edges.hasBefore, edges.hasAfter, edges.total) }
         pending = ListEdit.composing(pending, snapshot.edits, within: snapshot.rows.count)
         rows = snapshot.rows

@@ -23,7 +23,7 @@ class ListEditTest {
 
     private fun snapshot(feed: ListFeed<Moment>, change: LiveChange): Snapshot<Moment> {
         val applied = feed.apply(change)
-        return Snapshot(applied.rows, change.replacedIds(), applied.reordered, applied.failure, applied.edits)
+        return Snapshot(applied.rows, change.replacedIds(), applied.reordered, applied.edits, error = applied.failure)
     }
 
     private fun texts(rows: List<Moment>) = rows.map { "${it.id}:${it.text}" }

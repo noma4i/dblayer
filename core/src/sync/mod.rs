@@ -14,6 +14,8 @@ mod load_phase_tests;
 #[cfg(test)]
 mod load_owner_tests;
 #[cfg(test)]
+mod load_forget_tests;
+#[cfg(test)]
 mod load_owner_panic_tests;
 #[cfg(test)]
 mod load_machine_oracle_tests;
@@ -41,6 +43,7 @@ pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
 pub use load_machine::{LoadError, LoadPhase, RelationState};
 pub(crate) use load_machine::snapshot_phase;
 pub use resume::{ResumeReport, Watch};
+pub(crate) use resume::Failures;
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
 pub use subscribe::{EventEffect, EventSubscription, SubscriptionDef, SubscriptionStatus};
 

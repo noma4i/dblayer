@@ -126,9 +126,8 @@ public struct LiveSource<Value: Sendable>: Sendable {
     return LiveStream(latest: latest, attachment: attachment)
   }
 
-  public func current() async -> Value {
-    guard let stream = try? await stream() else { return initial }
-    for await value in stream { return value }
+  public func current() async throws -> Value {
+    for await value in try await stream() { return value }
     return initial
   }
 }
@@ -136,13 +135,15 @@ public struct LiveSource<Value: Sendable>: Sendable {
 @MainActor
 final class LiveBox<Value: Sendable>: ObservableObject {
   @Published var value: Value
+  @Published var failure: Error?
   private var task: Task<Void, Never>?
 
   init(_ source: LiveSource<Value>) {
     value = source.initial
     task = Task { [weak self] in
-      guard let stream = try? await source.stream() else { return }
-      for await next in stream { self?.value = next }
+      do {
+        for await next in try await source.stream() { self?.value = next }
+      } catch { self?.failure = error }
     }
   }
 
@@ -155,6 +156,8 @@ public struct Live<Value: Sendable>: DynamicProperty {
   @StateObject private var box: LiveBox<Value>
   public init(_ source: LiveSource<Value>) { _box = StateObject(wrappedValue: LiveBox(source)) }
   public var wrappedValue: Value { box.value }
+  /// The error that ended the subscription, nil while it runs.
+  public var projectedValue: Error? { box.failure }
 }
 
 extension Live {
@@ -173,25 +176,15 @@ public struct LiveView<Value: Sendable, Content: View>: View {
   public var body: some View { content(value) }
 }
 
-struct ListUpdate<Model: DBModel>: Sendable {
-  var snapshot: Snapshot<Model>?
-  var state: LoadState?
-
-  static func merging(_ older: ListUpdate, _ newer: ListUpdate) -> ListUpdate {
-    ListUpdate(snapshot: older.snapshot.flatMap { old in newer.snapshot.map { Snapshot.merging(old, $0) } ?? old } ?? newer.snapshot, state: newer.state ?? older.state)
-  }
-}
-
-/// A live query for view models: the rows, the load state of the relation, and the calls that move them.
+/// A live query for view models: the newest snapshot of the list and the calls that move it.
 @MainActor
 @Observable
 public final class LiveList<Model: DBModel> {
+  public private(set) var snapshot = Snapshot<Model>(rows: [], replaced: [:])
   public private(set) var rows: [Model] = []
   public private(set) var ids: [String] = []
   /// The ids that the last delivery of `rows` replaced: real id to temporary id.
   public private(set) var replaced: [String: String] = [:]
-  public private(set) var state = LoadState()
-  public private(set) var failure: String?
   @ObservationIgnored private let query: Query<Model>
   @ObservationIgnored private var pending: [ListEdit<Model>]?
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
@@ -205,33 +198,28 @@ public final class LiveList<Model: DBModel> {
       case .failure(let error): continuation.finish(throwing: error)
       }
     }
-    self.init(query, snapshots: snapshots, state: query.state)
+    self.init(query, snapshots: snapshots)
     initialLoad = Task {
       for try await subscription in connections { try await subscription.waitForInitialLoad() }
     }
   }
 
-  init(_ query: Query<Model>, snapshots: LiveSource<Snapshot<Model>>, state: LiveSource<LoadState>) {
+  init(_ query: Query<Model>, snapshots: LiveSource<Snapshot<Model>>) {
     self.query = query
-    let source = LiveSource<ListUpdate<Model>>(initial: ListUpdate(), merge: { ListUpdate.merging($0, $1) }) { emit in
-      let rows = try snapshots.subscribe { emit(ListUpdate(snapshot: $0)) }
-      let load = try? state.subscribe { emit(ListUpdate(state: $0)) }
-      return { rows(); load?() }
-    }
     tasks = [
       Task { [weak self] in
-        let stream: LiveStream<ListUpdate<Model>>
-        do { stream = try await source.stream() } catch { self?.failure = error.localizedDescription; return }
+        let stream: LiveStream<Snapshot<Model>>
+        do { stream = try await snapshots.stream() } catch {
+          self?.snapshot = Snapshot(rows: [], replaced: [:], phase: .failed, error: error.localizedDescription, errorKind: "subscription")
+          return
+        }
         for await next in stream {
           guard let self else { return }
-          if let snapshot = next.snapshot {
-            replaced = snapshot.replaced
-            if snapshot.failure != failure { failure = snapshot.failure }
-            pending = ListEdit.composing(pending, snapshot.edits, within: snapshot.rows.count)
-            rows = snapshot.rows
-            if snapshot.reordered { ids = snapshot.rows.map(\.id) }
-          }
-          if let loaded = next.state { self.state = loaded }
+          replaced = next.replaced
+          pending = ListEdit.composing(pending, next.edits, within: next.rows.count)
+          rows = next.rows
+          if next.reordered { ids = next.rows.map(\.id) }
+          snapshot = next
         }
       }
     ]
@@ -254,7 +242,7 @@ public final class LiveList<Model: DBModel> {
   }
 
   @discardableResult
-  public func loadMore() async throws -> Bool { try await query.loadMore() }
+  public func loadMore() async throws -> LoadMoreResult { try await query.loadMore() }
 
   isolated deinit { tasks.forEach { $0.cancel() }; initialLoad?.cancel() }
 }

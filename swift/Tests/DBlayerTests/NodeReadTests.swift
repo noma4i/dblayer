@@ -47,7 +47,7 @@ extension BridgeProbeTests {
     let record = #"{"id":"m1","containerId":"c1","authorId":"a","text":"keep","createdAt":"2026-10-01T00:00:00.000Z","media":{"kind":"VIDEO","transcoded":false,"fileUrl":"http://f"}}"#
     transport.enqueue("ContainerMedia", reply: #"{"data":{"node":{"records":{"edges":[{"node":\#(record)}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#)
     try await Record.containerMedia("c1").load()
-    #expect(await Record.find("m1").current()?.text == "keep")
+    #expect(try await Record.find("m1").current()?.text == "keep")
 
     transport.enqueue("RecordTranscodeStatus", reply: #"{"data":{"node":{"id":"m1","containerId":"c1","media":{"kind":"VIDEO","transcoded":true,"fileUrl":""}}}}"#)
     let status = try await Record.transcodeStatus("m1")
@@ -82,7 +82,7 @@ extension BridgeProbeTests {
       transport.enqueue("ContainerNode", reply: answer)
       #expect(try await Container.node("c1", force: true) == nil)
     }
-    #expect(await Container.find("c1").current()?.title == "old")
+    #expect(try await Container.find("c1").current()?.title == "old")
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -92,7 +92,7 @@ extension BridgeProbeTests {
     let rows = try await Container.nodes(["c2", "missing", "c1", "c2"])
     #expect(rows.map(\.id) == ["c2", "c1", "c2"])
     #expect(rows.map(\.title) == ["last", "middle", "last"])
-    #expect(await Container.find("c2").current()?.shareUrl == "kept")
+    #expect(try await Container.find("c2").current()?.shareUrl == "kept")
   }
 
   @Test(.timeLimit(.minutes(1)))

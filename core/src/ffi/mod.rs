@@ -32,7 +32,7 @@ pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, Encrypt
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
-pub use live::{LiveChange, LivePhase, LiveSubscription, QueryListener};
+pub use live::{LiveChange, LoadMoreResult, LivePhase, LiveSubscription, QueryListener};
 pub use retention::{RetentionChange, RetentionPool};
 pub use state::StateSubscription;
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
@@ -140,3 +140,7 @@ mod viewer_changes_tests;
 mod stale_window_tests;
 #[cfg(test)]
 mod logout_tests;
+#[cfg(test)]
+mod load_more_tests;
+#[cfg(test)]
+mod follow_failures_tests;

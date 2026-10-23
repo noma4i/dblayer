@@ -90,6 +90,6 @@ extension BridgeProbeTests {
     let spacer = SampleElement.spacer(SampleSpacer(id: "b1", children: [], length: .numberLiteral(SampleNumberLiteral(number: 2))))
     let changed = try await created.update(spec: SampleSpec(root: "b1", elements: [spacer], state: []))
     #expect(changed.spec?.elements == [spacer])
-    #expect(await InterfaceRecord.find(created.id).current()?.spec?.elements == [spacer])
+    #expect(try await InterfaceRecord.find(created.id).current()?.spec?.elements == [spacer])
   }
 }

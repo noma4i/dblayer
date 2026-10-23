@@ -6,10 +6,12 @@ import org.junit.Test
 
 class LiveSourceTest {
     @Test
-    fun aSubscribeThatThrowsEndsTheFlowAndCurrentReturnsTheInitialValue() = bounded {
+    fun aSubscribeThatThrowsSurfacesItsErrorFromCurrent() = bounded {
         val source = LiveSource<Int>(7) { _ -> throw IllegalStateException("refused") }
 
-        assertEquals(7, withTimeout(3000) { source.current() })
+        val error = runCatching { withTimeout(3000) { source.current() } }.exceptionOrNull()
+
+        assertEquals("refused", error?.message)
     }
 
     @Test
