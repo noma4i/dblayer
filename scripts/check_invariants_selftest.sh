@@ -140,22 +140,48 @@ inv_check_04_a_missing_registry_is_red() {
   expect_red "registry removed"
 }
 
+wait_until_gone() {
+  local pid="$1" tries=0
+  while kill -0 "$pid" 2>/dev/null && [ "$tries" -lt 200 ]; do
+    sleep 0.05
+    tries=$((tries + 1))
+  done
+  ! kill -0 "$pid" 2>/dev/null
+}
+
 expect_red_step_killed() {
-  sleep 1
-  local pid
-  read -r pid < "$work/pid-sleep"
-  if [ "$1" -ne 124 ] || kill -0 "$pid" 2>/dev/null; then
-    echo "FAIL step code $1, leftover PID: $pid"
-    kill "$pid" 2>/dev/null || true
+  if [ "$1" -ne 124 ] || { [ -n "$2" ] && ! wait_until_gone "$2"; }; then
+    echo "FAIL step code $1, leftover PID: ${2:-none}"
     failed=1
   fi
-  rm -f "$work/pid-sleep"
 }
 
 inv_check_05_a_step_past_its_limit_leaves_no_process() {
-  local code=0
-  bash "$here/check_bounded.sh" 2 selftest bash -c 'set -m; sleep 601.7 & echo $! > "$1"; wait' _ "$work/pid-sleep" 2> /dev/null || code=$?
-  expect_red_step_killed "$code"
+  local code=0 pid=""
+  cat > "$work/subject.sh" <<'SUBJECT'
+set -m
+until [ -e "$1/go" ]; do sleep 0.02; done
+sleep 601.7 &
+echo $! > "$1/pid-sleep"
+wait
+SUBJECT
+  (
+    sleep() { if [ "$1" = 7777 ]; then return 0; fi; command sleep "$@"; }
+    pgrep() {
+      local found tries=0
+      found="$(command pgrep "$@")"
+      touch "$work/go"
+      while [ ! -s "$work/pid-sleep" ] && [ "$(command ps -o state= -p "$2" | tr -d ' ')" != T ] && [ "$tries" -lt 200 ]; do
+        command sleep 0.02
+        tries=$((tries + 1))
+      done
+      [ -z "$found" ] || echo "$found"
+    }
+    run_bounded 7777 selftest bash "$work/subject.sh" "$work" 2> /dev/null
+  ) || code=$?
+  [ -s "$work/pid-sleep" ] && read -r pid < "$work/pid-sleep"
+  expect_red_step_killed "$code" "$pid"
+  rm -f "$work/pid-sleep" "$work/go"
 }
 
 inv_check_05_the_wait_for_a_build_slot_is_not_test_time() {

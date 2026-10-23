@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sourced by check_<library>.sh and the self test. run_bounded <seconds> <name> <command...>:
 # runs the command in its own process group and, past the limit, kills the group and every descendant
-# (a test host that left the group included). Returns the command code, or 124 on the limit.
+# (a test host that left the group included; the tree is frozen before it is listed, so no process escapes between the list and the kill). Returns the command code, or 124 on the limit.
 
 descendants() {
   local child
@@ -11,11 +11,26 @@ descendants() {
   done
 }
 
+freeze_tree() {
+  local pid="$1" known="" now
+  kill -STOP -- "-$pid" 2>/dev/null || true
+  kill -STOP "$pid" 2>/dev/null || true
+  while :; do
+    now="$(descendants "$pid" | sort -u | tr '\n' ' ')"
+    [ "$now" = "$known" ] && break
+    kill -STOP $now 2>/dev/null || true
+    known="$now"
+  done
+  echo "$known"
+}
+
 kill_tree() {
   local pid="$1" tree
-  tree="$(descendants "$pid" | tr '\n' ' ')"
+  tree="$(freeze_tree "$pid")"
   kill -TERM -- "-$pid" $tree 2>/dev/null || true
   kill -TERM "$pid" 2>/dev/null || true
+  kill -CONT -- "-$pid" $tree 2>/dev/null || true
+  kill -CONT "$pid" 2>/dev/null || true
   sleep 2
   kill -KILL -- "-$pid" $tree 2>/dev/null || true
   kill -KILL "$pid" 2>/dev/null || true
