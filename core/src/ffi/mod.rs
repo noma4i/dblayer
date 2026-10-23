@@ -138,3 +138,5 @@ mod retention_tests;
 mod viewer_changes_tests;
 #[cfg(test)]
 mod stale_window_tests;
+#[cfg(test)]
+mod logout_tests;

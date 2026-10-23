@@ -433,7 +433,9 @@ impl Database {
     pub async fn logout(&self) -> Result<(), DbError> {
         let database = self.clone();
         blocking(move || {
-            database.db.reset_all()?; Ok(())
+            database.db.reset_all()?;
+            database.db.settle();
+            Ok(())
         }).await
     }
 }
