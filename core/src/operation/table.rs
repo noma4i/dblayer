@@ -64,7 +64,7 @@ fn operation_at(row: &Row<'_>) -> rusqlite::Result<Option<Operation>> {
     let Some(status) = OperationStatus::from_sql(&row.get::<_, String>(2)?) else { return Ok(None) };
     Ok(Some(Operation {
         id: OperationId(row.get(0)?), action_key: row.get(1)?, status, row_ids: Vec::new(),
-        temp_id: row.get::<_, Option<String>>(3)?.as_deref().and_then(|text| RowId::new(text).ok()),
+        temp_id: row.get::<_, Option<String>>(3)?.as_deref().map(stored_row_id).transpose()?,
         transport_started: row.get::<_, i64>(4)? != 0,
         base_revision: row.get::<_, Option<i64>>(5)?.unwrap_or(0), created_at: row.get(6)?, dedupe_key: row.get(7)?,
         attempts: row.get(8)?, error: failure_at(row, 9)?, since: row.get(12)?, upload: None, client_mutation_id: row.get(13)?,

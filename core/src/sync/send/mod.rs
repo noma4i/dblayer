@@ -37,7 +37,7 @@ impl Sync {
                 .db
                 .outbox()?
                 .iter()
-                .filter(|entry| entry.operation.status == OperationStatus::Pending && (entry.operation.row_ids.contains(row) || entry.operation.temp_id.as_ref() == Some(row)))
+                .filter(|entry| entry.operation.status == OperationStatus::Pending && crate::operation::Operation::split_action_key(&entry.operation.action_key).is_some_and(|(owner, _)| owner == model) && (entry.operation.row_ids.contains(row) || entry.operation.temp_id.as_ref() == Some(row)))
                 .map(|entry| entry.operation.id.0)
                 .collect())
         };

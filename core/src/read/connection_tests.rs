@@ -43,3 +43,10 @@ fn next_page_with_cursor_and_last_page_are_landable() {
     assert_eq!(landing_fault(&json!({"pageInfo": {"hasNextPage": true, "endCursor": "c1"}}), None), None);
     assert_eq!(landing_fault(&json!({"pageInfo": {"hasNextPage": false}}), None), None);
 }
+
+#[test]
+fn a_connection_whose_has_next_page_is_missing_or_not_a_bool_is_a_landing_fault() {
+    assert_eq!(landing_fault(&json!({"pageInfo": {}}), None), Some(LandingFault::HasNextPageInvalid));
+    assert_eq!(landing_fault(&json!({"pageInfo": {"hasNextPage": null}}), None), Some(LandingFault::HasNextPageInvalid));
+    assert_eq!(landing_fault(&json!({"pageInfo": {"hasNextPage": "false"}}), None), Some(LandingFault::HasNextPageInvalid));
+}

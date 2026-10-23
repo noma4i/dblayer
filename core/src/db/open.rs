@@ -340,7 +340,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
             let mut statement = inner.connection.prepare(&format!("SELECT id FROM {table} WHERE id LIKE 'temp-%'"))?;
             let ids = statement.query_map([], |row| row.get::<_, String>(0))?;
             for id in ids {
-                temp_rows.extend(RowId::new(&id?).ok());
+                temp_rows.insert(crate::operation::stored_row_id(&id?)?);
             }
             open_row_ids.extend(queue.open_row_ids(&spec.key));
         }

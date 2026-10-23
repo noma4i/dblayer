@@ -236,7 +236,11 @@ pub fn read_item_value(connection: &Connection, seq: i64, position: i64, part: &
 pub fn read_rows(connection: &Connection, seq: i64) -> Result<Vec<RowId>> {
     let mut statement = connection.prepare_cached("SELECT row_id FROM op_row WHERE seq = ?1 ORDER BY pos")?;
     let ids = statement.query_map([seq], |row| row.get::<_, String>(0))?;
-    Ok(ids.filter_map(|id| id.ok().and_then(|id| RowId::new(&id).ok())).collect())
+    ids.map(|id| stored_row_id(&id?)).collect()
+}
+
+pub fn stored_row_id(text: &str) -> Result<RowId> {
+    RowId::new(text).map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))
 }
 
 pub fn read_all_rows(connection: &Connection) -> Result<HashMap<i64, Vec<RowId>>> {
@@ -244,7 +248,7 @@ pub fn read_all_rows(connection: &Connection) -> Result<HashMap<i64, Vec<RowId>>
     let mut found: HashMap<i64, Vec<RowId>> = HashMap::new();
     for item in statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))? {
         let (seq, id) = item?;
-        found.entry(seq).or_default().extend(RowId::new(&id).ok());
+        found.entry(seq).or_default().push(stored_row_id(&id)?);
     }
     Ok(found)
 }

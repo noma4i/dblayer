@@ -7,6 +7,7 @@ use crate::store::PageInfo;
 pub enum LandingFault {
     PayloadNotObject,
     MissingPageInfo,
+    HasNextPageInvalid,
     CursorMissing,
 }
 
@@ -61,8 +62,10 @@ fn cursor_text(connection: &Value, info: Option<&Value>, cursor: Option<&CursorS
 pub fn landing_fault(connection: &Value, cursor: Option<&CursorSpec>) -> Option<LandingFault> {
     let Some(fields) = connection.as_object() else { return Some(LandingFault::PayloadNotObject) };
     let Some(info) = fields.get("pageInfo").and_then(Value::as_object) else { return Some(LandingFault::MissingPageInfo) };
-    if info.get("hasNextPage") != Some(&Value::Bool(true)) {
-        return None;
+    match info.get("hasNextPage") {
+        Some(Value::Bool(true)) => {}
+        Some(Value::Bool(false)) => return None,
+        _ => return Some(LandingFault::HasNextPageInvalid),
     }
     match cursor_text(connection, Some(&Value::Object(info.clone())), cursor) {
         Some(text) if !text.is_empty() => None,

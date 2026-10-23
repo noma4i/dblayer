@@ -93,3 +93,12 @@ fn inv_wait_04_no_test_of_the_wrappers_waits_without_a_bound() {
         assert!(output.status.success(), "{script}: {}", String::from_utf8_lossy(&output.stderr));
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn settled_ignores_a_pending_change_of_another_model_with_the_same_id() {
+    let rig = rig();
+    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    rig.sync.set_online(false);
+    let other = rig.sync.settled("users", &local.id).await;
+    assert!(other.is_ok(), "settled(users) waited for a moments change: {other:?}");
+}

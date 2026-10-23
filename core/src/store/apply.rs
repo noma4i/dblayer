@@ -11,7 +11,7 @@ use crate::cloud::{record_local, write_book, LocalEdit};
 use crate::commit::WriteOrigin;
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
-use crate::operation::{delete_operation, failure_cells, read_rows, read_value, write_rows, write_value};
+use crate::operation::{delete_operation, failure_cells, read_rows, read_value, stored_row_id, write_rows, write_value};
 use crate::syncstate::{operation_keys, recompute_sync, OperationFailure, SyncKey};
 
 use super::file_ops::{apply_file_ops, release_files};
@@ -667,7 +667,9 @@ fn apply_scope_ops(
             (ScopeOp::Move { .. }, Some(_)) => 0,
             (ScopeOp::Append { scope, row, .. }, Some((info, fields))) => {
                 let joined = stable::join(connection, info, fields, scope, row)?;
-                members.extend(joined.moved.iter().filter_map(|moved| crate::identity::RowId::new(moved).ok()).map(|moved| RowRef::new(scope.model.clone(), moved)));
+                for moved in &joined.moved {
+                    members.insert(RowRef::new(scope.model.clone(), stored_row_id(moved)?));
+                }
                 usize::from(joined.joined)
             }
             (ScopeOp::Append { scope, row, order_key }, None) => connection.execute(
@@ -700,7 +702,7 @@ fn op_keys_of(connection: &Connection, seq: i64) -> Result<Vec<SyncKey>, StoreEr
         connection.query_row("SELECT action_key, temp_id FROM op WHERE seq = ?1", params![seq], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
     let Some((action_key, temp_id)) = found else { return Ok(Vec::new()) };
     let row_ids = read_rows(connection, seq)?;
-    let temp_id = temp_id.and_then(|text| crate::identity::RowId::new(&text).ok());
+    let temp_id = temp_id.as_deref().map(stored_row_id).transpose()?;
     Ok(operation_keys(&action_key, &row_ids, temp_id.as_ref()))
 }
 

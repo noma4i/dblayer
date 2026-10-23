@@ -67,7 +67,10 @@ impl Outcomes {
     }
 
     pub(crate) fn take(&mut self, model: &str, sequence: i64) -> Result<Value, SyncError> {
-        let outcome = self.unread.remove(&sequence).filter(|outcome| outcome.model == model);
+        let outcome = match self.unread.get(&sequence) {
+            Some(outcome) if outcome.model == model => self.unread.remove(&sequence),
+            _ => None,
+        };
         match outcome {
             Some(Outcome { result: SendResult::Committed, answer, .. }) => Ok(answer.unwrap_or_else(|| Value::Object(Map::new()))),
             Some(outcome) => Err(error_of(model, &outcome.result, &sequence.to_string())),
