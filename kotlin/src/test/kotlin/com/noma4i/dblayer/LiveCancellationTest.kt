@@ -7,7 +7,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -17,17 +16,18 @@ import org.junit.Test
 class LiveCancellationTest {
     @Test
     fun currentDoesNotTurnCancellationIntoTheInitialValue() = bounded {
+        val subscribed = CompletableDeferred<Unit>()
         val outcome = CompletableDeferred<String>()
         val reader = launch(Dispatchers.Default) {
             try {
-                LiveSource<Int>(0) { _ -> {} }.current()
+                LiveSource<Int>(0) { _ -> subscribed.complete(Unit); {} }.current()
                 outcome.complete("returned")
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 outcome.complete("cancelled")
                 throw cancelled
             }
         }
-        delay(200)
+        withTimeout(3000) { subscribed.await() }
         reader.cancel()
 
         assertEquals("cancelled", withTimeout(3000) { outcome.await() })
@@ -38,9 +38,10 @@ class LiveCancellationTest {
         reopen(Config(null, null, 64u), modelsJSON, null)
         val scope = CoroutineScope(Dispatchers.Default + Job())
         val list = LiveList(Query("Moment", Moment), scope)
-        delay(300)
+        eventuallyBlocking("the first snapshot") { list.snapshot.value.phase != LoadPhase.Opening }
+        val job = scope.coroutineContext[Job]!!
         scope.cancel()
-        delay(300)
+        job.join()
 
         assertNull(list.snapshot.value.error)
     }

@@ -10,20 +10,23 @@ struct LiveCancellationTests {
     await #expect(throws: CancellationError.self) { try await source.current() }
   }
 
+  struct Refused: Error {}
+
   @Test
   func aCancelledStreamIsNotAFailureOfTheBox() async {
-    let box = LiveBox(LiveSource<Int>(initial: 7) { _ in throw CancellationError() })
-    try? await Task.sleep(for: .milliseconds(200))
+    let cancelled = LiveBox(LiveSource<Int>(initial: 7) { _ in throw CancellationError() })
+    let refused = LiveBox(LiveSource<Int>(initial: 7) { _ in throw Refused() })
 
-    #expect(box.failure == nil)
+    await eventually("the refused box failure") { refused.failure != nil }
+    #expect(cancelled.failure == nil)
   }
 
   @Test
   func aCancelledSubscriptionIsNotAFailureOfTheList() async {
-    let snapshots = LiveSource<Snapshot<Moment>>(initial: Snapshot(rows: [], replaced: [:])) { _ in throw CancellationError() }
-    let list = LiveList(Query<Moment>(), snapshots: snapshots)
-    try? await Task.sleep(for: .milliseconds(200))
+    let cancelled = LiveList(Query<Moment>(), snapshots: LiveSource<Snapshot<Moment>>(initial: Snapshot(rows: [], replaced: [:])) { _ in throw CancellationError() })
+    let refused = LiveList(Query<Moment>(), snapshots: LiveSource<Snapshot<Moment>>(initial: Snapshot(rows: [], replaced: [:])) { _ in throw Refused() })
 
-    #expect(list.snapshot.error == nil)
+    await eventually("the refused list error") { refused.snapshot.error != nil }
+    #expect(cancelled.snapshot.error == nil)
   }
 }
