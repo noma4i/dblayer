@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use crate::transport as core;
@@ -110,6 +113,33 @@ impl OnlineSink {
 
 pub(super) struct ForeignTransport(pub Arc<dyn Transport>);
 
+struct Issuing<'a, T> {
+    call: Pin<Box<dyn Future<Output = Result<T, DbError>> + Send + 'a>>,
+    hand_back: Option<Box<dyn FnOnce(T) + Send + 'a>>,
+}
+
+impl<'a, T> Issuing<'a, T> {
+    fn new(call: Pin<Box<dyn Future<Output = Result<T, DbError>> + Send + 'a>>, hand_back: impl FnOnce(T) + Send + 'a) -> Self {
+        Self { call, hand_back: Some(Box::new(hand_back)) }
+    }
+}
+
+impl<T> Future for Issuing<'_, T> {
+    type Output = Result<T, DbError>;
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        let polled = self.call.as_mut().poll(context);
+        if polled.is_ready() { self.hand_back = None; }
+        polled
+    }
+}
+
+impl<T> Drop for Issuing<'_, T> {
+    fn drop(&mut self) {
+        let Some(hand_back) = self.hand_back.take() else { return };
+        if let Poll::Ready(Ok(issued)) = self.call.as_mut().poll(&mut Context::from_waker(Waker::noop())) { hand_back(issued); }
+    }
+}
+
 pub(super) fn transport_error(error: DbError) -> core::TransportError {
     match error {
         DbError::Security { code, detail } => core::TransportError::Security { code, detail },
@@ -127,7 +157,11 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 #[async_trait]
 impl core::Transport for ForeignTransport {
     async fn open_cable(&self) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
-        Ok(Arc::new(ForeignSocket { token: self.0.open_cable().await.map_err(transport_error)?, transport: self.0.clone() }))
+        let transport = self.0.clone();
+        let token = Issuing::new(self.0.open_cable(), move |token| {
+            if let Ok(executor) = super::database::executor() { executor.spawn(async move { transport.cable_close(token).await }); }
+        }).await.map_err(transport_error)?;
+        Ok(Arc::new(ForeignSocket { token, transport: self.0.clone() }))
     }
     async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         let json = self.0.query(request.into()).await.map_err(transport_error)?;
@@ -140,8 +174,9 @@ impl core::Transport for ForeignTransport {
     async fn subscribe(&self, request: core::GraphQLRequest) -> Result<core::Subscription, core::TransportError> {
         let (sender, receiver) = mpsc::unbounded_channel();
         let sink = Arc::new(SubscriptionSink { sender: Mutex::new(Some(sender)) });
-        let token = self.0.subscribe(request.into(), sink.clone()).await.map_err(transport_error)?;
         let transport = self.0.clone();
+        let returned = (transport.clone(), sink.clone());
+        let token = Issuing::new(self.0.subscribe(request.into(), sink.clone()), move |token| { returned.0.unsubscribe(token); returned.1.closed(); }).await.map_err(transport_error)?;
         Ok(core::Subscription::new(receiver, core::SubscriptionHandle::new(move || { transport.unsubscribe(token.clone()); sink.closed(); })))
     }
     async fn put(&self, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {

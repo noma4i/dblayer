@@ -77,3 +77,73 @@ fn inv_panic_01_a_subscription_sink_survives_a_poisoned_lock() {
     assert!(matches!(receiver.try_recv(), Ok(SubscriptionEvent::Ready)));
     sink.closed();
 }
+
+struct LateToken {
+    issued: Mutex<Vec<String>>,
+    handed_back: Mutex<Vec<String>>,
+    delivered: Mutex<std::sync::mpsc::Receiver<()>>,
+    announce: std::sync::mpsc::Sender<()>,
+}
+
+impl LateToken {
+    async fn issue(self: &std::sync::Arc<Self>) -> Result<String, super::DbError> {
+        let (reply, result) = tokio::sync::oneshot::channel();
+        let foreign = self.clone();
+        std::thread::spawn(move || {
+            crate::db::locked(&foreign.issued).push("token-1".into());
+            let _ = reply.send("token-1".to_string());
+            let _ = foreign.announce.send(());
+        });
+        result.await.map_err(|_| super::DbError::Interrupted { detail: "reply dropped".into() })
+    }
+}
+
+#[async_trait::async_trait]
+impl super::Transport for std::sync::Arc<LateToken> {
+    async fn open_cable(&self) -> Result<String, super::DbError> { self.issue().await }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), super::DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, token: String) {
+        crate::db::locked(&self.handed_back).push(token);
+        let _ = self.announce.send(());
+    }
+    async fn query(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
+    async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
+    async fn subscribe(&self, _: super::TransportRequest, _: std::sync::Arc<super::SubscriptionSink>) -> Result<String, super::DbError> { self.issue().await }
+    fn unsubscribe(&self, token: String) { crate::db::locked(&self.handed_back).push(token); }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: std::sync::Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+}
+
+fn late_token() -> (std::sync::Arc<LateToken>, super::ForeignTransport) {
+    let (announce, delivered) = std::sync::mpsc::channel();
+    let foreign = std::sync::Arc::new(LateToken { issued: Mutex::new(Vec::new()), handed_back: Mutex::new(Vec::new()), delivered: Mutex::new(delivered), announce });
+    let transport = super::ForeignTransport(std::sync::Arc::new(foreign.clone()));
+    (foreign, transport)
+}
+
+#[test]
+fn a_token_issued_before_the_core_dropped_the_subscribe_call_is_handed_back() {
+    use crate::transport::Transport;
+    use std::future::Future;
+    let (foreign, transport) = late_token();
+    let mut call = Box::pin(transport.subscribe(crate::transport::GraphQLRequest::new("subscription s { s }", "s", serde_json::json!({}))));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(call.as_mut().poll(&mut context).is_pending());
+    crate::db::locked(&foreign.delivered).recv().unwrap();
+    drop(call);
+    assert_eq!(*crate::db::locked(&foreign.issued), *crate::db::locked(&foreign.handed_back));
+}
+
+#[test]
+fn a_cable_token_issued_before_the_core_dropped_the_open_call_is_closed() {
+    use crate::transport::Transport;
+    use std::future::Future;
+    let (foreign, transport) = late_token();
+    let mut call = Box::pin(transport.open_cable());
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(call.as_mut().poll(&mut context).is_pending());
+    crate::db::locked(&foreign.delivered).recv().unwrap();
+    drop(call);
+    crate::db::locked(&foreign.delivered).recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+    assert_eq!(*crate::db::locked(&foreign.issued), *crate::db::locked(&foreign.handed_back));
+}
