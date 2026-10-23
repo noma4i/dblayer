@@ -30,6 +30,7 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   private var missing = 0
   private var decoded = 0
   private var undecodable = 0
+  private var lastDecodeFailure: String?
   private var desynced = 0
 
   var decodedRows: Int { lock.withLock { decoded } }
@@ -38,6 +39,7 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   var rows: [Model] { lock.withLock { current } }
 
   private var current: [Model] { missing == 0 ? loaded : slots.compactMap(\.row) }
+  private var decodeFailure: String? { missing == 0 ? nil : lastDecodeFailure }
   private var missingIds: [String] { missing == 0 ? [] : slots.filter { $0.row == nil }.map(\.id) }
 
   func apply(_ change: LiveChange) -> ListApplied<Model> {
@@ -50,6 +52,7 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
           return (Slot(id: row.id, row: row), index)
         } catch {
           undecodable += 1
+          lastDecodeFailure = String(describing: error)
           decodeLog.error("Row of \(Model.modelName, privacy: .public) failed to decode: \(String(describing: error), privacy: .public)")
           return (Slot(id: wire.id, row: nil), index)
         }
@@ -58,18 +61,18 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
         slots = carried.map(\.slot)
         missing = slots.reduce(0) { $0 + ($1.row == nil ? 1 : 0) }
         loaded = missing == 0 ? slots.compactMap(\.row) : []
-        return ListApplied(rows: current, reordered: true, desynced: false, undecodable: missingIds)
+        return ListApplied(rows: current, reordered: true, desynced: false, failure: decodeFailure, undecodable: missingIds)
       }
       let reordered = !change.removed.isEmpty || !change.placed.isEmpty || !change.replaced.isEmpty
       let held = missing == 0
       var edits: [ListEdit<Model>] = []
       guard applyDelta(change, carried, edits: &edits) else {
         desynced += 1
-        return ListApplied(rows: current, reordered: reordered, desynced: true, undecodable: missingIds)
+        return ListApplied(rows: current, reordered: reordered, desynced: true, failure: decodeFailure, undecodable: missingIds)
       }
       guard held, missing == 0, edits.count <= slots.count else {
         loaded = missing == 0 ? slots.compactMap(\.row) : []
-        return ListApplied(rows: current, reordered: reordered, desynced: false, undecodable: missingIds)
+        return ListApplied(rows: current, reordered: reordered, desynced: false, failure: decodeFailure, undecodable: missingIds)
       }
       loaded.replay(edits)
       return ListApplied(rows: loaded, reordered: reordered, desynced: false, edits: edits)

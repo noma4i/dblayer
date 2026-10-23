@@ -97,16 +97,16 @@ public struct Query<Model: DBModel>: Sendable {
     listSource(initial: nil, open: { listener in try DB.database.liveFind(model: Model.modelName, rowId: id, listener: listener) }) { (applied: ListApplied<Model>, _) in applied.rows.first }
   }
 
-  /// The rows of this query from memory, or nil when the query is not warm. It reads no database file, so it is safe on the main thread. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows.
-  public func cached() -> Cached<[Model]>? {
-    guard let change = try? DB.database.peekQuery(queryJson: json) else { return nil }
-    return Cached(value: change.rows.compactMap { try? Model.decode($0) }, revision: change.revision)
+  /// The rows of this query from memory, or nil when the query is not warm. It throws when the cache read or the decode of a row fails. It reads no database file, so it is safe on the main thread. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows.
+  public func cached() throws -> Cached<[Model]>? {
+    guard let change = try DB.database.peekQuery(queryJson: json) else { return nil }
+    return Cached(value: try change.rows.map { try Model.decode($0) }, revision: change.revision)
   }
 
-  /// One row from the row cache, or nil when it is not cached. Nil does not mean that the row does not exist.
-  public func cachedRow(_ id: String) -> Model? {
-    guard let row = try? DB.database.peekRow(model: Model.modelName, rowId: id) else { return nil }
-    return try? Model.decode(row)
+  /// One row from the row cache, or nil when it is not cached. It throws when the cache read or the decode fails. Nil does not mean that the row does not exist.
+  public func cachedRow(_ id: String) throws -> Model? {
+    guard let row = try DB.database.peekRow(model: Model.modelName, rowId: id) else { return nil }
+    return try Model.decode(row)
   }
 
   /// Reads the query once and keeps its rows in memory, so that `cached()` answers at once. The library keeps the latest queries warm and drops the oldest.
@@ -114,13 +114,13 @@ public struct Query<Model: DBModel>: Sendable {
 
   /// The values that the connection of this relation carried on the edge of one row, or nil when the row is not in the connection. It reads one row by key and never waits for a write.
   public func edgeValues(of id: String) throws -> [String: JSONValue]? {
-    JSONValue.parse(try DB.database.edgeValues(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
+    try JSONValue.read(try DB.database.edgeValues(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
   }
 
   public func readEdgeValues(of id: String) async throws -> [String: JSONValue]? {
     let model = Model.modelName, relation = relation ?? "", params = JSONValue.object(params).text
     return try await Task.detached(priority: .userInitiated) {
-      JSONValue.parse(try DB.database.edgeValues(model: model, relation: relation, paramsJson: params, rowIds: [id])).objectValue[id]?.objectValue
+      try JSONValue.read(try DB.database.edgeValues(model: model, relation: relation, paramsJson: params, rowIds: [id])).objectValue[id]?.objectValue
     }.value
   }
 

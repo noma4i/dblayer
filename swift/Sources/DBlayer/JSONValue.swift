@@ -53,8 +53,12 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
     return object
   }
 
+  public static func read(_ text: String) throws -> JSONValue {
+    try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+  }
+
   public static func parse(_ text: String) -> JSONValue {
-    (try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))) ?? .null
+    (try? read(text)) ?? .null
   }
 
   public var objectValue: [String: JSONValue] { if case .object(let value) = self { value } else { [:] } }

@@ -1,0 +1,15 @@
+swift/Sources/DBlayer/IDText.swift	if let text = try? container.decode(String.self) {	picks the String or Int64 variant of an id
+swift/Sources/DBlayer/CloudKit/CloudKitWire.swift	guard let token = try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: data) else {	an unreadable change token becomes the thrown changeTokenExpired error
+swift/Sources/DBlayer/CloudKit/CloudKitRecords.swift	if let url = (record[assetField] as? CKAsset)?.fileURL, let bytes = try? Data(contentsOf: url) {	an unreadable asset file becomes the thrown Rejected error on the next line
+swift/Sources/DBlayer/CloudKit/CloudKitRecords.swift	if let url = (record[assetField] as? CKAsset)?.fileURL { try? FileManager.default.removeItem(at: url) }	removes a temporary asset file, a missing file is the goal
+swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(Bool.self) { self = .bool(value) }	picks the variant of a JSON value
+swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(Double.self) { self = .number(value) }	picks the variant of a JSON value
+swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(String.self) { self = .string(value) }	picks the variant of a JSON value
+swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([JSONValue].self) { self = .array(value) }	picks the variant of a JSON value
+swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }	picks the variant of a JSON value
+swift/Sources/DBlayer/JSONValue.swift	guard let data = try? JSONEncoder().encode(value), let decoded = try? JSONDecoder().decode(JSONValue.self, from: data) else { return .null }	a JSONValue encodes except for a non-finite number, which renders as null
+swift/Sources/DBlayer/JSONValue.swift	(try? read(text)) ?? .null	parse is for text that the caller or the generator wrote, read throws
+swift/Sources/DBlayer/JSONValue.swift	public var text: String { String(decoding: (try? JSONEncoder().encode(self)) ?? Data("null".utf8), as: UTF8.self) }	a JSONValue encodes except for a non-finite number, which renders as null
+kotlin/src/main/kotlin/com/noma4i/dblayer/ListChange.kt	runCatching { IndexedRow(if (change.full) position else change.rowIndexes[position].toInt(), decoder.read(wire)) }	the decode error is kept in the failure of the ListChange
+kotlin/src/main/kotlin/com/noma4i/dblayer/Entities.kt	runCatching { decoder.read(row) to row.estimatedBytes }	the decode error goes to failedIds and the phase of the entity
+kotlin/src/main/kotlin/com/noma4i/dblayer/ListFeed.kt	val row = runCatching { decoder.read(wire) }	the decode error goes to the failure and the undecodable ids of the state

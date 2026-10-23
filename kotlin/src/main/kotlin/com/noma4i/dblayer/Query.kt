@@ -118,13 +118,13 @@ class Query<Model : DBModel>(
     fun find(id: String): LiveSource<Model?> =
         listSource<Model, Model?>(null, decoder, open = { listener -> DBlayer.database.liveFind(modelName, id, listener) }) { applied, _ -> applied.rows.firstOrNull() }
 
-    /** The rows of this query from memory, or null when the query is not warm. It reads no database file, so it is safe on the main thread. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows. */
+    /** The rows of this query from memory, or null when the query is not warm. It throws when the cache read or the decode of a row fails. It reads no database file, so it is safe on the main thread. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows. */
     fun cached(): Cached<List<Model>>? =
-        DBlayer.database.peekQuery(json)?.let { change -> Cached(change.rows.mapNotNull { row -> runCatching { decoder.read(row) }.getOrNull() }, change.revision) }
+        DBlayer.database.peekQuery(json)?.let { change -> Cached(change.rows.map(decoder::read), change.revision) }
 
-    /** One row from the row cache, or null when it is not cached. Null does not mean that the row does not exist. */
+    /** One row from the row cache, or null when it is not cached. It throws when the cache read or the decode fails. Null does not mean that the row does not exist. */
     fun cachedRow(id: String): Model? =
-        DBlayer.database.peekRow(modelName, id)?.let { row -> runCatching { decoder.read(row) }.getOrNull() }
+        DBlayer.database.peekRow(modelName, id)?.let(decoder::read)
 
     /** Reads the query once and keeps its rows in memory, so that `cached()` answers at once. The library keeps the latest queries warm and drops the oldest. */
     suspend fun warm() = DBlayer.database.warm(json)

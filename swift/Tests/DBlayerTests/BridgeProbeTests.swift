@@ -34,17 +34,18 @@ struct BridgeProbeTests {
   @Test
   func aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    #expect(Moment.recent.cached() == nil)
+    #expect(try Moment.recent.cached() == nil)
     let moment = try await Moment.create(text: "m")
     try await Moment.recent.warm()
-    let warm = try #require(Moment.recent.cached())
+    let cached = try Moment.recent.cached()
+    let warm = try #require(cached)
     #expect(warm.value.map(\.id) == [moment.id] && warm.value.first?.text == "m")
-    #expect(Moment.recent.cachedRow("ghost") == nil)
+    #expect(try Moment.recent.cachedRow("ghost") == nil)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    #expect(Moment.recent.cached() == nil)
+    #expect(try Moment.recent.cached() == nil)
     _ = try await Moment.create(text: "n")
     #expect(try await Moment.recent.live.current().count == 1)
-    #expect(Moment.recent.cached()?.value.first?.text == "n")
+    #expect(try Moment.recent.cached()?.value.first?.text == "n")
   }
 
   @MainActor

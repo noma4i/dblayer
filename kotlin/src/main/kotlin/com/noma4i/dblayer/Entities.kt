@@ -120,15 +120,20 @@ class Entities<Model : DBModel> internal constructor(
         if (previous != null) collected(previous)
         var seed = kept.take<Model>(modelName, id, now())
         val retained = seed != null
-        val cached = source.cachedRow(id)
-        if (cached != null && cached.revision > (seed?.revision ?: Long.MIN_VALUE)) {
-            runCatching { decoder.read(cached) }.getOrNull()?.let { value ->
+        var seedFailure: String? = null
+        try {
+            val cached = source.cachedRow(id)
+            if (cached != null && cached.revision > (seed?.revision ?: Long.MIN_VALUE)) {
+                val value = decoder.read(cached)
                 seed = EntityCell<Model>().also { it.accept(value, cached.revision, cached.estimatedBytes) }
             }
+        } catch (error: Exception) {
+            seedFailure = error.toString()
         }
         val cell = seed ?: EntityCell()
         cell.stale = seed != null
         if (seed != null) cell.phase.value = EntityPhase.Present
+        seedFailure?.let(cell::fail)
         val made = Entity(id, cell)
         live[id] = LiveRef(made, id, cell, ::collected)
         steps[id] = if (retained || steps[id] == Step.Release) Step.Refresh else Step.Retain

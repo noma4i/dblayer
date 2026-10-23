@@ -7,6 +7,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   private let encryptedCable: UrlSessionCable
   private let lock = NSLock()
   private var sockets: [String: URLSessionWebSocketTask] = [:]
+  var openSocketCount: Int { lock.withLock { sockets.count } }
 
   public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared, cablePath: String? = nil) {
     self.endpoint = endpoint
@@ -29,8 +30,8 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   public func cableNext(token: String) async -> EncryptedSocketEvent? { await encryptedCable.next(token: token) }
   public func cableClose(token: String) async { await encryptedCable.close(token: token) }
 
-  private func body(_ request: TransportRequest) -> [String: Any] {
-    let variables = (try? JSONSerialization.jsonObject(with: Data(request.variablesJson.utf8))) ?? [String: Any]()
+  private func body(_ request: TransportRequest) throws -> [String: Any] {
+    let variables = try JSONSerialization.jsonObject(with: Data(request.variablesJson.utf8))
     return ["query": request.document, "operationName": request.operationName, "variables": variables]
   }
 
@@ -53,6 +54,8 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
     components?.scheme = endpoint.scheme == "http" ? "ws" : "wss"
     guard let url = components?.url else { throw DbError.Invalid(detail: "bad subscription url") }
+    let payload = try body(request)
+    let initial = try JSONSerialization.data(withJSONObject: ["type": "connection_init", "payload": headers()])
     var urlRequest = URLRequest(url: url)
     urlRequest.setValue(headers().first { $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame }?.value, forHTTPHeaderField: "User-Agent")
     urlRequest.setUserAgent()
@@ -61,9 +64,10 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     let token = UUID().uuidString
     lock.withLock { sockets[token] = socket }
     socket.resume()
-    let payload = body(request)
-    let initial = try JSONSerialization.data(withJSONObject: ["type": "connection_init", "payload": headers()])
-    try await socket.send(.string(String(decoding: initial, as: UTF8.self)))
+    do { try await socket.send(.string(String(decoding: initial, as: UTF8.self))) } catch {
+      lock.withLock { sockets.removeValue(forKey: token) }?.cancel(with: .normalClosure, reason: nil)
+      throw error
+    }
     Task { await self.pump(socket, token: token, payload: payload, sink: sink) }
     return token
   }

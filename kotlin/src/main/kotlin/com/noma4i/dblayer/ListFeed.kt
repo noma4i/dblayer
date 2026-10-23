@@ -46,6 +46,10 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
     @get:Synchronized
     val rows: List<Model> get() = current()
 
+    private var lastDecodeFailure: String? = null
+
+    private fun decodeFailure(): String? = if (missing == 0) null else lastDecodeFailure
+
     private fun current(): List<Model> = if (missing == 0) loaded else slots.mapNotNull { it.row }
 
     private fun missingIds(): List<String> = if (missing == 0) emptyList() else slots.filter { it.row == null }.map { it.id }
@@ -59,7 +63,7 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
             decoded.incrementAndGet()
             val index = if (change.full) position else change.rowIndexes[position].toInt()
             val row = runCatching { decoder.read(wire) }
-                .onFailure { undecodable.incrementAndGet(); decodeLog.severe("Row of ${decoder.modelName} failed to decode: $it") }
+                .onFailure { undecodable.incrementAndGet(); lastDecodeFailure = it.toString(); decodeLog.severe("Row of ${decoder.modelName} failed to decode: $it") }
                 .getOrNull()
             Slot(wire.id, row) to index
         }
@@ -68,18 +72,18 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
             slots.addAll(carried.map { it.first })
             missing = slots.count { it.row == null }
             loaded = materialized()
-            return ListState(current(), true, undecodable = missingIds())
+            return ListState(current(), true, failure = decodeFailure(), undecodable = missingIds())
         }
         val reordered = change.removed.isNotEmpty() || change.placed.isNotEmpty() || change.replaced.isNotEmpty()
         val held = missing == 0
         val edits = ArrayList<ListEdit<Model>>()
         if (!applyDelta(change, carried, edits)) {
             desynced.incrementAndGet()
-            return ListState(current(), reordered, desynced = true, undecodable = missingIds())
+            return ListState(current(), reordered, desynced = true, failure = decodeFailure(), undecodable = missingIds())
         }
         if (!held || missing != 0 || edits.size > slots.size) {
             loaded = materialized()
-            return ListState(current(), reordered, undecodable = missingIds())
+            return ListState(current(), reordered, failure = decodeFailure(), undecodable = missingIds())
         }
         val next = ArrayList(loaded).also { copied.addAndGet(it.size) }
         next.replay(edits)

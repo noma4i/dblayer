@@ -89,9 +89,9 @@ A new subscription delivers its first rows from a library thread, so a screen th
 
 ```swift
 let list = Moment.recent
-if let cached = list.cached() { show(cached.value, revision: cached.revision) }   // rows and revision, or nil
+if let cached = try list.cached() { show(cached.value, revision: cached.revision) }   // rows and revision, or nil
 try await list.warm()                    // read once, keep in memory
-let row = list.cachedRow(id)             // one row from the row cache, or nil
+let row = try list.cachedRow(id)           // one row from the row cache, or nil
 ```
 
 ```kotlin
@@ -104,6 +104,7 @@ val row = list.cachedRow(id)             // one row from the row cache, or null
 - A query is warm after `warm()` and after any read of it through `live` or `snapshots`, even when that read has ended. The library keeps the 16 latest queries warm and drops the oldest. A warm query is not a subscription: the subscription count does not include it.
 - A warm query follows every commit. `revision` grows with each commit that reaches the rows, so you can tell a stale value from a newer one. The value can be one delivery behind a commit that you just made.
 - `cachedRow` reads the row cache, which holds a limited number of rows. A miss does not say the row is absent.
+- `cached()` and `cachedRow` throw when the cache read or the decode of a row fails. They never drop a row that does not decode.
 - `cached()` and `cachedRow` count `peek_hits` and `peek_misses` in the counters and read no rows from storage.
 
 ## What a query depends on
@@ -152,7 +153,7 @@ struct ProfileView: View {
 
 **One snapshot.** Every delivery of `live_query`, `live_find`, `live_count`, `live_window` and `live_has_many` carries the rows, the phase (`NotLoaded`, `Loading`, `Loaded`, `Empty`, `Failed`, `Closed`), the load flags, `hasMore`, `total`, `loadedAt`, the error and a `seq` that only grows. The first delivery comes after the first read of the rows and holds them, so there is no `Loaded` or `Empty` delivery with 0 rows before it. `Empty` and `Loaded` follow the `size` of the same delivery. After a load lands, the phase `Loaded` or `Empty` arrives only when the subscription has read the rows of that load, and until then the delivery shows `Loading`. A subscription call never fails: a query the core refuses gives one delivery with the phase `Failed` and the error kind `invalid`. A failed read of the rows, a failed load and a failed server subscription show in the `error` of the delivery until the next good read or recovery.
 
-**Load phase.** `query.snapshots` is the one stream of a list: its `Snapshot` carries the rows, the phase (`opening` before the first delivery, then `notLoaded`, `loading`, `loaded`, `empty`, `failed`, `closed`), whether another page exists (`hasMore`), when the relation last loaded (`loadedAt`) and the `total` the server reports for the whole list (`totalCount` of the connection, or the field named by `total from:` of the scope, nil when the document does not select it). `error` and `errorKind` name the last failure, `seq` only grows, `undecodable` lists the ids of rows that this build cannot decode (they are not in `rows`):
+**Load phase.** `query.snapshots` is the one stream of a list: its `Snapshot` carries the rows, the phase (`opening` before the first delivery, then `notLoaded`, `loading`, `loaded`, `empty`, `failed`, `closed`), whether another page exists (`hasMore`), when the relation last loaded (`loadedAt`) and the `total` the server reports for the whole list (`totalCount` of the connection, or the field named by `total from:` of the scope, nil when the document does not select it). `error` and `errorKind` name the last failure, `seq` only grows, `undecodable` lists the ids of rows that this build cannot decode (they are not in `rows`) and `error` with `errorKind` `invalid` says why the last of them failed:
 
 ```swift
 for await snapshot in try await Moment.feed.snapshots.stream() { if snapshot.isLoading { showSpinner() } }

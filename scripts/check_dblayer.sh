@@ -22,6 +22,8 @@ steps=(
   "cheap|waits|120|*|bash scripts/check_waits.sh"
   "cheap|waits-selftest|120|*|bash scripts/check_waits_test.sh"
   "cheap|check-lock-selftest|120|*|bash scripts/check_lock_test.sh"
+  "cheap|silent|120|*|bash scripts/check_silent.sh"
+  "cheap|silent-selftest|120|*|bash scripts/check_silent_test.sh"
   "features|cargo-check-features|600|core/ Cargo.|$slot cargo-step cargo check --manifest-path core/Cargo.toml --all-features --all-targets"
   "cargo|cargo-test-core|600|core/ Cargo.|$slot cargo-step cargo test --manifest-path core/Cargo.toml"
   "cargo|cargo-test-gen|600|gen/ Cargo.|$slot cargo-step cargo test --manifest-path Cargo.toml -p dblayer-gen"

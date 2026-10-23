@@ -88,7 +88,7 @@ struct Retained<Model: DBModel> {
 }
 
 protocol EntitySource: AnyObject, Sendable {
-  func cachedRow(_ id: String) -> WireRow?
+  func cachedRow(_ id: String) throws -> WireRow?
   func retain(_ ids: [String])
   func release(_ ids: [String])
 }
@@ -134,10 +134,14 @@ public final class Entities<Model: DBModel> {
     if let existing = live[id]?.entity { return existing }
     let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
     var seed = retained
-    if let cached = source.cachedRow(id), cached.revision > (seed?.revision ?? Int64.min), let value = try? Model.decode(cached) {
-      seed = Retained(value: value, revision: cached.revision, bytes: cached.estimatedBytes)
-    }
+    var seedFailure: String?
+    do {
+      if let cached = try source.cachedRow(id), cached.revision > (seed?.revision ?? Int64.min) {
+        seed = Retained(value: try Model.decode(cached), revision: cached.revision, bytes: cached.estimatedBytes)
+      }
+    } catch { seedFailure = String(describing: error) }
     let made = Entity<Model>(id: id, seed: seed, registry: self)
+    if let seedFailure { made.fail(seedFailure) }
     live[id] = Weak(entity: made)
     steps[id] = (retained != nil || steps[id] == .release) ? .refresh : .retain
     scheduleFlush()
@@ -329,8 +333,8 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
     }
   }
 
-  func cachedRow(_ id: String) -> WireRow? {
-    try? DB.database.peekRow(model: Model.modelName, rowId: id)
+  func cachedRow(_ id: String) throws -> WireRow? {
+    try DB.database.peekRow(model: Model.modelName, rowId: id)
   }
 
   func retain(_ ids: [String]) {
