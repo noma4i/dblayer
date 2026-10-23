@@ -13,7 +13,7 @@ async fn server_destroys(rig: &Rig, id: &str) -> crate::sync::subscribe::EventSu
     let def = SubscriptionDef::new(EventSpec::new("moment_gone"), "MomentChanged", "moments", EventEffect::Destroy);
     let subscription = rig.sync.subscribe(def).await.unwrap();
     rig.transport.emit("MomentChanged", SubscriptionEvent::Next(Response::data(json!({"momentChanged": {"id": id}}))));
-    settle().await;
+    let_tasks_run().await;
     subscription
 }
 

@@ -133,12 +133,12 @@ impl Inner {
                 }
             }
             first = false;
-            self.settle(pull).await;
+            self.finish_cycle(pull).await;
             pull = false;
         }
     }
 
-    async fn settle(&self, pull: bool) {
+    async fn finish_cycle(&self, pull: bool) {
         let mut attempt = 0u32;
         loop {
             self.online.online().await;

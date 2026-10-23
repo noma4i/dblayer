@@ -79,12 +79,12 @@ pub fn enqueue_page(rig: &Rig, nodes: Vec<Value>, has_next: bool, cursor: &str) 
 
 pub async fn load_first_page(rig: &Rig) {
     rig.sync.load("messages", "thread", &chat_params(), LoadOptions { force: true }).await.unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
 }
 
 pub async fn load_next_page(rig: &Rig) {
     rig.sync.load_more("messages", "thread", &chat_params()).await.unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
 }
 
 pub async fn load_page(rig: &Rig, nodes: Vec<Value>, has_next: bool, cursor: &str) {
@@ -99,8 +99,8 @@ pub async fn subscribe_to_events(rig: &Rig) -> super::super::subscribe::EventSub
 
 pub async fn event(rig: &Rig, node: Value) {
     rig.transport.emit("MessageChanged", SubscriptionEvent::Next(Response::data(json!({"messageChanged": node}))));
-    settle().await;
-    rig.db.settle();
+    let_tasks_run().await;
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
 }
 
 pub fn thread_query(rig: &Rig) -> Query {
@@ -110,7 +110,7 @@ pub fn thread_query(rig: &Rig) -> Query {
 pub fn watch_thread(rig: &Rig, size: usize) -> (ChangeLog, crate::db::WindowHandle) {
     let (log, callback) = recorder();
     let handle = rig.db.observe_window(thread_query(rig), WindowSpec::Tail { size }, callback).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     (log, handle)
 }
 

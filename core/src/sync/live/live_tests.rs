@@ -23,25 +23,25 @@ async fn memory_scope_events_follow_readers_and_expire_without_http() {
     rig.sync.register(super::super::OperationDef::new("BulletinAdded", "subscription BulletinAdded { bulletinAdded { body } }", "bulletinAdded"));
     let emit = || rig.transport.emit("BulletinAdded", SubscriptionEvent::Next(Response::data(json!({"bulletinAdded":{"body":"hello"}}))));
     emit();
-    settle().await;
+    let_tasks_run().await;
     assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
     let first = rig.sync.watch("notices", "recent", &none()).unwrap();
     let second = rig.sync.watch("notices", "recent", &none()).unwrap();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("BulletinAdded"), 1);
     emit();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.db.query(&crate::query::Query::new("notices")).unwrap()[0].text("body"), Some("hello"));
     rig.clock.advance(Duration::from_secs(6));
     rig.db.expire_ephemeral().unwrap();
     assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
     drop(first);
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.cancellations("BulletinAdded"), 0);
     drop(second);
     tokio::time::sleep(Duration::from_secs(2)).await;
     emit();
-    settle().await;
+    let_tasks_run().await;
     assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
     assert_eq!(rig.transport.cancellations("BulletinAdded"), 1);
     assert!(rig.transport.calls().iter().all(|call| call.kind == crate::transport::CallKind::Subscription));
@@ -58,15 +58,15 @@ async fn changes_declarations_share_one_subscription_until_the_last_reader_leave
     rig.sync.register(super::super::OperationDef::new("RecordEvents", "subscription RecordEvents { recordEvents { entries { topic action recordId } } }", "recordEvents"));
     let first = rig.sync.watch("users", "current", &none()).unwrap();
     let second = rig.sync.watch("users", "current", &none()).unwrap();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("RecordEvents"), 1);
     drop(first);
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.cancellations("RecordEvents"), 0);
     drop(second);
-    settle().await;
+    let_tasks_run().await;
     tokio::time::advance(Duration::from_secs(10)).await;
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.cancellations("RecordEvents"), 1);
 }
 
@@ -81,15 +81,15 @@ async fn dropping_sync_stops_subscriptions_at_every_lifetime_stage() {
             rig.sync.listen();
             None
         };
-        if stage != "starting" { settle().await; }
+        if stage != "starting" { let_tasks_run().await; }
         if stage == "lingering" { rig.sync.unlisten(); }
         let survivor = (stage == "clone").then(|| rig.sync.clone());
         let inner = std::sync::Arc::downgrade(&rig.sync.inner);
         drop(rig.sync);
-        settle().await;
+        let_tasks_run().await;
         if survivor.is_some() { assert!(inner.upgrade().is_some()); }
         drop(survivor);
-        settle().await;
+        let_tasks_run().await;
         results.push((stage, inner.upgrade().is_none(), rig.transport.call_count("MomentListen"), rig.transport.cancellations("MomentListen")));
     }
     assert!(results.iter().all(|(_, released, opened, closed)| *released && opened == closed), "{results:?}");
@@ -107,9 +107,9 @@ fn event(node: serde_json::Value) -> SubscriptionEvent {
 async fn first_reader_starts_the_subscription_and_the_second_does_not_duplicate_it() {
     let rig = rig();
     let first = rig.sync.watch("moments", "pulse", &none()).unwrap();
-    settle().await;
+    let_tasks_run().await;
     let second = rig.sync.watch("moments", "pulse", &none()).unwrap();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentEvents"), 1);
     assert_eq!(rig.sync.inner.live_status(KEY), Some((2, true)));
     drop((first, second));
@@ -119,7 +119,7 @@ async fn first_reader_starts_the_subscription_and_the_second_does_not_duplicate_
 async fn watching_a_relation_without_updates_starts_nothing() {
     let rig = rig();
     let _watch = rig.sync.watch("moments", "feed", &none()).unwrap();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentEvents"), 0);
     assert_eq!(rig.sync.inner.live_status(KEY), None);
 }
@@ -128,7 +128,7 @@ async fn watching_a_relation_without_updates_starts_nothing() {
 async fn subscription_closes_after_the_last_reader_leaves_and_the_linger_passes() {
     let rig = rig();
     let watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
-    settle().await;
+    let_tasks_run().await;
     drop(watch);
     tokio::time::sleep(Duration::from_secs(29)).await;
     assert_eq!(rig.sync.inner.live_status(KEY), Some((0, true)));
@@ -142,7 +142,7 @@ async fn subscription_closes_after_the_last_reader_leaves_and_the_linger_passes(
 async fn reader_returning_within_the_linger_keeps_the_same_subscription() {
     let rig = rig();
     drop(rig.sync.watch("moments", "pulse", &none()).unwrap());
-    settle().await;
+    let_tasks_run().await;
     tokio::time::sleep(Duration::from_secs(10)).await;
     let _back = rig.sync.watch("moments", "pulse", &none()).unwrap();
     tokio::time::sleep(Duration::from_secs(60)).await;
@@ -157,7 +157,7 @@ async fn dropped_connection_rereads_the_expired_watched_relation_after_it_reconn
     rig.transport.enqueue("MomentsPulse", feed_reply(&["m1", "m2"], false, "c2"));
     let _watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
     rig.sync.load("moments", "pulse", &none(), LoadOptions::default()).await.unwrap();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentsPulse"), 1);
     rig.transport.disconnect("MomentEvents");
     rig.clock.advance(Duration::from_secs(300));
@@ -172,12 +172,12 @@ async fn event_with_the_deleted_by_field_set_removes_the_row() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     let _watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
-    settle().await;
+    let_tasks_run().await;
     rig.transport.emit("MomentEvents", event(json!({"id": "m1", "text": "edited", "userId": null, "destroyed": false})));
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("edited".to_string()));
     rig.transport.emit("MomentEvents", event(json!({"id": "m1", "text": "edited", "userId": null, "destroyed": true})));
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
 }
 
@@ -186,11 +186,11 @@ async fn a_relation_with_two_subscriptions_starts_both_and_a_removing_one_delete
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     let watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentEvents"), 1);
     assert_eq!(rig.transport.call_count("MomentRemoved"), 1);
     rig.transport.emit("MomentRemoved", SubscriptionEvent::Next(Response::data(json!({"momentRemoved": {"id": "m1"}}))));
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     drop(watch);
     tokio::time::sleep(Duration::from_secs(31)).await;
@@ -201,10 +201,10 @@ async fn a_relation_with_two_subscriptions_starts_both_and_a_removing_one_delete
 async fn listen_opens_the_model_subscriptions_without_a_reader_and_unlisten_closes_them() {
     let rig = rig();
     rig.sync.listen();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentListen"), 1);
     rig.transport.emit("MomentListen", SubscriptionEvent::Next(Response::data(json!({"momentListen": {"id": "m9", "text": "pushed", "userId": null}}))));
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(text_of(&rig, "moments", "m9"), Some("pushed".to_string()));
     rig.sync.unlisten();
     tokio::time::sleep(Duration::from_secs(31)).await;
@@ -216,9 +216,9 @@ async fn event_root_and_id_paths_find_the_row_in_a_wrapped_payload() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     rig.sync.listen();
-    settle().await;
+    let_tasks_run().await;
     rig.transport.emit("MomentWrapped", SubscriptionEvent::Next(Response::data(json!({"momentWrapped": {"wrapped": {"key": "m1", "text": "from wrapper"}}}))));
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("from wrapper".to_string()));
 }
 
@@ -226,11 +226,11 @@ async fn event_root_and_id_paths_find_the_row_in_a_wrapped_payload() {
 async fn a_debounced_listen_subscribes_and_lands_its_frame_after_the_interval() {
     let rig = rig();
     rig.sync.listen();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentDebounced"), 1);
     rig.transport.emit("MomentDebounced", SubscriptionEvent::Next(Response::data(json!({"momentDebounced": {"id": "m7", "text": "later", "userId": null}}))));
     tokio::time::sleep(Duration::from_millis(400)).await;
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(text_of(&rig, "moments", "m7"), Some("later".to_string()));
 }
 
@@ -244,7 +244,7 @@ async fn readers_with_different_params_open_separate_subscriptions_with_those_va
     let a = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
     let b = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "b"}))).unwrap();
     let a_again = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
-    settle().await;
+    let_tasks_run().await;
     let mut variables = vibe_sub_variables(&rig);
     variables.sort_by_key(|value| value.to_string());
     assert_eq!(variables, [json!({"vibeId": "a"}), json!({"vibeId": "b"})]);
@@ -257,7 +257,7 @@ async fn last_reader_of_a_param_set_closes_only_its_subscription_and_the_event_l
     let a = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
     let a_again = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
     let b = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "b"}))).unwrap();
-    settle().await;
+    let_tasks_run().await;
     drop(a);
     tokio::time::sleep(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("VibeEvents"), 0);
@@ -265,7 +265,7 @@ async fn last_reader_of_a_param_set_closes_only_its_subscription_and_the_event_l
     tokio::time::sleep(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("VibeEvents"), 1);
     rig.transport.emit("VibeEvents", SubscriptionEvent::Next(Response::data(json!({"momentEvent": moment("m9", "from b")}))));
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.db.query(&crate::query::Query::new("moments")).unwrap().iter().filter(|row| row.text("text") == Some("from b")).count(), 1);
     drop(b);
 }

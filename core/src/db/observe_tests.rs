@@ -13,7 +13,7 @@ fn observe_delivers_the_first_value_with_everything_inserted() {
     seed_tree(&db);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let first = changes(&log);
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].diff.inserted.len(), 2);
@@ -27,7 +27,7 @@ fn observe_returns_without_calling_the_listener_on_the_caller_thread() {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = seen.clone();
     let _subscription = db.observe(Query::new("moments"), move |_| sink.lock().unwrap().push(std::thread::current().id())).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let threads = seen.lock().unwrap().clone();
     assert_eq!(threads.len(), 1);
     assert_ne!(threads[0], caller);
@@ -52,7 +52,7 @@ fn observer_is_called_when_a_matching_row_lands() {
     let db = booted();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     assert_eq!(calls(&log), vec![0, 1]);
     assert_eq!(changes(&log)[1].diff.inserted, vec![rid("m1")]);
@@ -63,7 +63,7 @@ fn observer_is_not_called_for_a_commit_on_another_model() {
     let db = booted();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let reads = db.counters().observation_reads;
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     put(&db, "chats", json!({"id": "c1", "title": "t"}));
@@ -78,7 +78,7 @@ fn observer_is_not_called_when_the_result_set_is_unchanged() {
     let query = Query::new("moments").filtered(Where::equal("text", json!("keep")));
     let (log, callback) = recorder();
     let _subscription = db.observe(query, callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let reads = db.counters().observation_reads;
     put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "other"}));
     assert_eq!(calls(&log), vec![1]);
@@ -91,7 +91,7 @@ fn a_commit_with_the_same_content_is_silent() {
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "keep"}));
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let revision = db.revision_seq().unwrap();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "keep"}));
     assert_eq!(db.revision_seq().unwrap(), revision);
@@ -105,9 +105,9 @@ fn observer_is_called_when_a_member_changes_revision() {
     let query = Query::new("moments").filtered(Where::equal("text", json!("keep")));
     let (log, callback) = recorder();
     let _subscription = db.observe(query, callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.update("moments", &rid("m1"), obj(json!({"userId": "u2"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![1, 1]);
     assert_eq!(changes(&log)[1].diff.updated, vec![rid("m1")]);
 }
@@ -119,9 +119,9 @@ fn observer_is_called_when_a_member_leaves_the_result() {
     let query = Query::new("moments").filtered(Where::equal("text", json!("keep")));
     let (log, callback) = recorder();
     let _subscription = db.observe(query, callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.update("moments", &rid("m1"), obj(json!({"text": "gone"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![1, 0]);
     assert_eq!(changes(&log)[1].diff.removed, vec![rid("m1")]);
 }
@@ -132,9 +132,9 @@ fn touching_a_parent_notifies_observers_of_the_parent() {
     put(&db, "chats", json!({"id": "c1", "title": "t"}));
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("chats"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![1, 1]);
     assert_eq!(changes(&log)[1].diff.updated, vec![rid("c1")]);
 }
@@ -144,7 +144,7 @@ fn revisions_of_deliveries_grow() {
     let db = booted();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     for number in 0..5 {
         put(&db, "moments", json!({"id": format!("m{number}"), "userId": "u1", "text": "t"}));
     }
@@ -158,7 +158,7 @@ fn dropping_the_subscription_stops_delivery() {
     let db = booted();
     let (log, callback) = recorder();
     let subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(db.observer_census().subscriptions, 1);
     drop(subscription);
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
@@ -177,7 +177,7 @@ fn many_observers_of_one_query_share_one_read_per_commit() {
             (log, db.observe(Query::new("moments"), callback).unwrap())
         })
         .collect();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(db.counters().observation_reads, 1);
     assert_eq!(db.observer_census().observed_queries, 1);
     put(&db, "moments", json!({"id": "m3", "userId": "u1", "text": "three"}));
@@ -194,7 +194,7 @@ fn different_queries_are_read_separately() {
     let _a = db.observe(Query::new("moments"), first).unwrap();
     let _b = db.observe(Query::new("moments").limited(1), second).unwrap();
     assert_eq!(db.observer_census().observed_queries, 2);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let reads = db.counters().observation_reads;
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     assert_eq!(db.counters().observation_reads, reads + 2);
@@ -206,11 +206,11 @@ fn late_subscriber_joins_the_shared_value_without_a_read() {
     seed_tree(&db);
     let (_, first) = recorder();
     let _a = db.observe(Query::new("moments"), first).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let reads = db.counters().observation_reads;
     let (log, second) = recorder();
     let _b = db.observe(Query::new("moments"), second).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(db.counters().observation_reads, reads);
     assert_eq!(calls(&log), vec![2]);
     assert_eq!(changes(&log)[0].diff.inserted.len(), 2);
@@ -231,7 +231,7 @@ fn observer_may_read_and_write_the_database_from_its_callback() {
         })
         .unwrap();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(seen.load(Ordering::SeqCst), 1);
     assert_eq!(db.count(&Query::new("chats")).unwrap(), 1);
 }
@@ -242,7 +242,7 @@ fn a_panicking_listener_does_not_stop_the_others() {
     let _bad = db.observe(Query::new("moments"), |_| panic!("listener failed")).unwrap();
     let (log, callback) = recorder();
     let _good = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     assert_eq!(calls(&log), vec![0, 1]);
 }
@@ -253,7 +253,7 @@ fn late_observer_of_a_shared_query_sees_the_write_that_preceded_it() {
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
     let (_, first) = recorder();
     let _early = db.observe(Query::new("moments"), first).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     for round in 0..50 {
         let text = format!("v{round}");
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
@@ -261,7 +261,7 @@ fn late_observer_of_a_shared_query_sees_the_write_that_preceded_it() {
         db.land(envelope).unwrap();
         let (log, second) = recorder();
         let _late = db.observe(Query::new("moments"), second).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         assert_eq!(texts(&changes(&log)[0]), vec![text], "round {round}");
     }
 }
@@ -271,17 +271,17 @@ fn attach_cancelled_at_any_moment_leaves_no_subscription() {
     let db = booted();
     drop(db.observe(Query::new("users"), |_: &Change| {}).unwrap());
     let settled = db.observe(Query::new("users"), |_: &Change| {}).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     drop(settled);
     let (log, callback) = recorder();
     let after_first = db.observe(Query::new("users"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log).len(), 1);
     drop(after_first);
     let entities = db.observe_entities("users", |_| {}).unwrap();
     entities.retain(&[rid("u1")]).unwrap();
     drop(entities);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let census = db.observer_census();
     assert_eq!((census.observed_queries, census.subscriptions), (0, 0));
 }

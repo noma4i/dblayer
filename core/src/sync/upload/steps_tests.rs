@@ -8,7 +8,7 @@ use crate::value::ScalarKind;
 use crate::transport::{MockTransport, PutReply, Reply};
 use crate::upload::{UploadConfig, UploadSteps};
 use super::super::{OperationDef, SyncConfig};
-use super::super::rig::{Rig, rig_without_operations, put, settle};
+use super::super::rig::{Rig, rig_without_operations, put, let_tasks_run};
 use super::upload_tests::{file, rid, small};
 
 fn reopen(path: &Path, budget: u32) -> Rig {
@@ -53,7 +53,7 @@ async fn restart_preserves_each_put_budget_and_deadline() {
         grants(&rig);
         rig.transport.enqueue_put("https://storage/file", PutReply::status(503));
         rig.sync.upload("assets", &rid("a"), source_input(&source)).await.unwrap();
-        settle().await;
+        let_tasks_run().await;
         assert_eq!(rig.transport.put_count("https://storage/file"), 1);
         assert_eq!(rig.db.upload_info("assets", &rid("a")).unwrap().unwrap().attempts, 1);
         shutdown(rig).await;
@@ -61,11 +61,11 @@ async fn restart_preserves_each_put_budget_and_deadline() {
         grants(&rig);
         for _ in 0..2 { rig.transport.enqueue_put("https://storage/file", PutReply::status(503)); }
         rig.sync.inner.start_uploads().unwrap();
-        settle().await;
+        let_tasks_run().await;
         assert!(rig.transport.put_calls().is_empty(), "restart skipped saved deadline");
         rig.sync.set_online(false);
         tokio::time::advance(Duration::from_secs(1)).await;
-        settle().await;
+        let_tasks_run().await;
         assert!(rig.transport.put_calls().is_empty(), "offline during the saved wait sent a PUT");
         rig.sync.set_online(true);
         rig.sync.wait_uploads().await;
@@ -92,7 +92,7 @@ async fn restart_preserves_each_graphql_step_budget() {
         rig.transport.enqueue(operation, Reply::fail(crate::transport::TransportError::Network("unavailable".into())));
         grants(&rig);
         rig.sync.upload("assets", &rid("a"), source_input(&source)).await.unwrap();
-        settle().await;
+        let_tasks_run().await;
         assert_eq!(rig.transport.call_count(operation), 1);
         assert_eq!(retry_rows(&rig), 1);
         shutdown(rig).await;
@@ -100,7 +100,7 @@ async fn restart_preserves_each_graphql_step_budget() {
         for _ in 0..2 { rig.transport.enqueue(operation, Reply::fail(crate::transport::TransportError::Network("unavailable".into()))); }
         grants(&rig);
         rig.sync.inner.start_uploads().unwrap();
-        settle().await;
+        let_tasks_run().await;
         assert_eq!(rig.transport.call_count(operation), 0, "{operation} skipped its deadline");
         rig.sync.wait_uploads().await;
         observed.push((operation, rig.transport.call_count(operation)));

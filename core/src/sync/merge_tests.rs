@@ -76,7 +76,7 @@ async fn a_nested_row_of_an_event_keeps_the_fields_its_fragment_does_not_select(
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "moments", EventEffect::Upsert)).await.unwrap();
     let event = json!({"momentChanged": {"id": "m1", "text": "t", "author": {"id": "u1"}}});
     rig.transport.emit("MomentChanged", SubscriptionEvent::Next(Response::data(event)));
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(row(&rig, "users", "u1").get("name"), Some(&json!("Ann")));
 }
 
@@ -100,15 +100,15 @@ async fn an_observer_gets_a_diff_of_the_changed_fields_only_and_nothing_for_equa
     let _observer = rig.db.observe(Query::new("moments"), move |_| {
         counter.fetch_add(1, Ordering::SeqCst);
     }).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     let before = rig.db.shared.store.read(&[], |reader| reader.stored_row("moments", "m1")).unwrap().unwrap();
     load_page(&rig).await;
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     let after = rig.db.shared.store.read(&[], |reader| reader.stored_row("moments", "m1")).unwrap().unwrap();
     assert_eq!(deliveries.load(Ordering::SeqCst), 2);
     assert_eq!(after.field_rev["mood"], before.field_rev["mood"]);
     assert!(after.field_rev["text"] > before.field_rev["text"]);
     load_page(&rig).await;
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(deliveries.load(Ordering::SeqCst), 2);
 }

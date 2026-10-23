@@ -97,17 +97,17 @@ fn cannot_enter_cost(size: usize) -> usize {
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: id_at(index), row });
     }
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let (_log, callback) = recorder();
     let _observer = db.observe(Query::new("users").ordered(vec![Order::new("id", SortDirection::Asc)]), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let users = ModelKey::new("users");
     let event = super::dispatch::Event { revision: i64::MAX / 2, models: [users.clone()].into(), rows: [RowRef::new(users, rid("absent"))].into(), ..super::dispatch::Event::default() };
     db.shared.reads.inline.store(true, std::sync::atomic::Ordering::SeqCst);
     let before = total();
     db.shared.refresh_groups(&[event]);
     let cost = total() - before;
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     cost
 }
 

@@ -83,7 +83,7 @@ async fn offline_flag_holds_the_mutation_without_a_call_or_an_attempt_and_online
     let held = info(&rig, "m1");
     assert_eq!((held.state, held.attempts), (SyncState::Pending, 0));
     rig.sync.set_online(true);
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
     assert!(info(&rig, "m1").is_synced());
 }

@@ -208,7 +208,7 @@ impl Db {
             observers: Mutex::new(Observers::default()),
             warm: Mutex::new(Warm::default()),
             counters: Arc::new(Mutex::new(Counters::default())),
-            executor: Executor::new(dispatch.busy.clone()),
+            executor: Executor::new(dispatch.progress.clone()),
             reads: reads.clone(),
             dispatch: dispatch.clone(),
             outbox_changes,

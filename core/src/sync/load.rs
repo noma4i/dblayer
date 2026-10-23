@@ -96,7 +96,7 @@ struct FlightGuard<'a> {
 }
 
 impl FlightGuard<'_> {
-    fn settle(&mut self, result: FlightResult) {
+    fn finish(&mut self, result: FlightResult) {
         self.release(FlightEnd::Settled(result));
     }
 
@@ -254,7 +254,7 @@ impl Inner {
                             Err(error)
                         }
                     };
-                    guard.settle(result.clone());
+                    guard.finish(result.clone());
                     return result;
                 }
                 Err(Some(mut receiver)) => {

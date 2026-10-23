@@ -76,6 +76,23 @@ pub(crate) struct Observers {
 }
 
 impl Observers {
+    /// The revision that a group has read, or None while it still has work. Subscribers are told this revision, and `Db::await_revision` waits for it.
+    fn mark(group: &Group) -> Option<i64> {
+        let facts = &group.facts;
+        let idle = !facts.reading && facts.read_error.is_none() && !facts.again && facts.grows.is_empty() && facts.joining.is_empty();
+        idle.then(|| facts.seen.max(group.at))
+    }
+
+    fn reached_through(&self, revision: i64) -> bool {
+        let groups = self.groups.values().all(|group| {
+            let read = if group.facts.read_error.is_some() { !group.facts.reading } else { Self::mark(group).is_some_and(|reached| reached >= revision) };
+            read && group.subscribers.iter().chain(&group.facts.joining).all(|(_, subscriber)| subscriber.idle())
+        });
+        let opening = self.opening.values().all(|opening| opening.read_error.is_some() && !opening.reading && opening.waiting.iter().all(|(_, subscriber)| subscriber.idle()));
+        let entities = self.entities.values().all(EntityGroup::idle);
+        groups && opening && entities
+    }
+
     #[cfg(test)]
     pub(crate) fn keyed_rows(&self) -> usize {
         self.by_row.len()
@@ -368,12 +385,16 @@ impl Shared {
             self.issue_publish(observers, key, Some(step), Some(grow));
         } else if !group.facts.joining.is_empty() {
             self.issue_join(observers, key);
-        } else {
-            let reach = group.facts.seen.max(group.at);
+        } else if let Some(reach) = Observers::mark(group) {
             for (_, subscriber) in &group.subscribers {
                 subscriber.reach(&self.executor, reach);
             }
         }
+    }
+
+    pub(crate) fn reached_through(&self, revision: i64) -> bool {
+        let observers = self.observers();
+        observers.reached_through(revision) && self.dispatch.progress.entity_reads() == 0
     }
 
     fn tell_failure(&self, observers: &Observers, key: &str, error: &DbError) {

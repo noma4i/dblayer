@@ -231,7 +231,7 @@ async fn drain(world: &World, progress: &Progress) {
             world.findings.report("hang", format!("drain round {round} did not finish in {} s\n{}", STEP_LIMIT.as_secs(), dump(world, progress)));
             return;
         }
-        world.rig.db.settle();
+        world.rig.db.await_revision(world.rig.db.revision_seq().unwrap());
         tokio::time::sleep(Duration::from_millis(5)).await;
         if world.rig.db.outbox().map(|queue| queue.is_empty()).unwrap_or(false) {
             return;
@@ -248,7 +248,7 @@ async fn reload(world: &World) {
     for _ in 0..8 {
         let _ = world.rig.sync.load_more("moments", "feed", &params).await;
     }
-    world.rig.db.settle();
+    world.rig.db.await_revision(world.rig.db.revision_seq().unwrap());
 }
 
 async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressReport {
@@ -282,7 +282,7 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     let ops = progress.ops();
     drain(&world, &progress).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
-    world.rig.db.settle();
+    world.rig.db.await_revision(world.rig.db.revision_seq().unwrap());
     let _ = world.rig.db.expire_ephemeral();
     check::queue(&world.rig.db, &findings);
     check::lists(&world.rig.db, &findings);

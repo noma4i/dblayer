@@ -9,7 +9,7 @@ use crate::syncstate::SyncState;
 use super::fixtures::*;
 use super::{CloudAccount, CloudError, CloudState, MergeSource};
 
-async fn settle() {
+async fn let_tasks_run() {
     for _ in 0..100 {
         tokio::task::yield_now().await;
     }
@@ -17,7 +17,7 @@ async fn settle() {
 
 async fn tick(device: &Device, by: Duration) {
     device.clock.advance(by);
-    settle().await;
+    let_tasks_run().await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -25,13 +25,13 @@ async fn inv_cloud_10_errors_decide_between_backoff_retry_and_stop() {
     let fake = FakeCloud::new();
     let a = device(&fake, 1_000);
     a.cloud.start();
-    settle().await;
+    let_tasks_run().await;
     fake.fail_pushes(vec![
         (CloudError::Unavailable { detail: "down".into() }, false),
         (CloudError::Throttled { retry_after_ms: 60_000 }, false),
     ]);
     note(&a, json!({"title": "t"}));
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(fake.pushes(), 1);
     tick(&a, Duration::from_millis(900)).await;
     assert_eq!(fake.pushes(), 1, "the first retry waits the backoff delay");
@@ -55,15 +55,15 @@ async fn inv_cloud_10_authorization_and_quota_stop_without_retries_and_keep_the_
         let fake = FakeCloud::new();
         let a = device(&fake, 1_000);
         a.cloud.start();
-        settle().await;
+        let_tasks_run().await;
         fake.fail_pushes(vec![(error, false)]);
         let id = note(&a, json!({"title": "t"}));
-        settle().await;
+        let_tasks_run().await;
         assert_eq!(a.cloud.state(), state);
         let calls = fake.calls();
         tick(&a, Duration::from_secs(86_400)).await;
         tokio::time::advance(Duration::from_secs(86_400)).await;
-        settle().await;
+        let_tasks_run().await;
         assert_eq!(fake.calls(), calls, "{state:?} does not retry on a timer");
         assert!(a.db.cloud_pending().unwrap() > 0);
         let row = a.db.sync_info("notes", &RowId::new(&id).unwrap()).unwrap();
@@ -79,15 +79,15 @@ async fn inv_cloud_10_offline_does_not_spend_attempts_and_a_signed_out_account_a
     a.online.set_online(false);
     a.cloud.start();
     note(&a, json!({"title": "t"}));
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(fake.calls(), 0, "offline makes no cloud calls");
     a.online.set_online(true);
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(fake.pushes(), 1);
     assert_eq!(a.db.cloud_pending().unwrap(), 0);
     fake.set_account(CloudAccount::SignedOut);
     a.cloud.remote_changed();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(a.cloud.state(), CloudState::NeedsAuthorization);
     a.cloud.stop();
 }

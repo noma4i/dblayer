@@ -40,7 +40,7 @@ fn append(rig: &Rig, number: usize, text: &str) {
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: id.clone(), row: obj(json!({"id": id.as_str(), "text": text, "userId": "c1"})) });
     envelope.scope_ops.push(ScopeOp::Append { scope, row: id, order_key: format!("k{number}") });
     rig.db.land(envelope).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
 }
 
 fn obj(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
@@ -61,7 +61,7 @@ async fn a_window_over_the_thread_shape_follows_the_tail_and_ignores_rows_before
     assert!(query.scope.is_some(), "a relation that lists by a param column is a scoped query");
     let (log, callback) = recorder();
     let _window = rig.db.observe_window(query, WindowSpec::Tail { size: 3 }, callback).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     let first = changes(&log).pop().unwrap();
     assert_eq!(ids(&first), ["m5", "m6", "m7"]);
     assert_eq!((first.window.unwrap().has_before, first.window.unwrap().total), (true, Some(7)));
@@ -70,23 +70,23 @@ async fn a_window_over_the_thread_shape_follows_the_tail_and_ignores_rows_before
     assert_eq!(ids(&changes(&log).pop().unwrap()), ["m6", "m7", "m8"]);
 
     put(&rig, "moments", json!({"id": "m9", "text": "t9", "userId": "c1"}));
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     let scope = ScopeRef::new(ModelKey::new("moments"), rig.db.remote_relation_query("moments", "thread", &params(json!({"userId": "c1"}))).unwrap().unwrap().scope.unwrap());
     let mut membership = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     membership.scope_ops.push(ScopeOp::Append { scope, row: RowId::new("m9").unwrap(), order_key: "k9".to_string() });
     rig.db.land(membership).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(ids(&changes(&log).pop().unwrap()), ["m7", "m8", "m9"], "a row that joins the scope alone enters the window");
 
     let (calls, loaded) = (changes(&log).len(), rig.db.counters().rows_loaded);
     put(&rig, "moments", json!({"id": "m7", "text": "t6x", "userId": "c1"}));
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(changes(&log).len(), calls + 1);
     assert_eq!(rig.db.counters().rows_loaded - loaded, 1);
 
     let (calls, loaded) = (changes(&log).len(), rig.db.counters().rows_loaded);
     put(&rig, "moments", json!({"id": "m1", "text": "t1x", "userId": "c1"}));
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(changes(&log).len(), calls, "a row before the window is not delivered");
     assert_eq!(rig.db.counters().rows_loaded, loaded);
 }

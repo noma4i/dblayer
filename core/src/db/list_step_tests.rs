@@ -27,7 +27,7 @@ fn upsert(db: &Db, rows: impl Iterator<Item = (String, String)>) {
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row });
     }
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
 }
 
 fn query() -> Query {
@@ -76,7 +76,7 @@ fn remove(db: &Db, size: usize) -> Vec<String> {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("users"), id: rid(&id), reason: crate::commit::DestroyReason::Server });
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     vec![id]
 }
 
@@ -149,7 +149,7 @@ fn a_live_ordered_list_reads_only_the_written_rows_after_a_write() {
     let db = seeded(2_000);
     let (log, callback) = recorder();
     let _observer = db.observe(query(), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let loaded = |db: &Db| crate::db::locked(&db.shared.counters).rows_loaded;
     let before = loaded(&db);
     for index in [500, 900, 1500] {
@@ -175,7 +175,7 @@ fn scoped_step_cost(size: usize) -> usize {
         envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid(&id), order_key: format!("k{index:06}") });
     }
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let previous = Arc::new(db.shared.evaluate(&Subject::Rows(scoped_query())).unwrap().version);
     let id = format!("u{:06}", size / 2);
     upsert(&db, [(id.clone(), "changed".to_string())].into_iter());

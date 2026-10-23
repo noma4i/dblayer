@@ -38,7 +38,7 @@ async fn a_reset_gives_the_order_of_the_server_back() {
     assert_eq!(shown(&log), ["m1", "m2", "m5", "m9"]);
 
     rig.db.reset_all().unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(shown(&log), Vec::<String>::new());
 
     load_first_page(&rig).await;

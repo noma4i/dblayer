@@ -152,7 +152,7 @@ async fn cancel_multipart_offline_returns_and_aborts_after_reconnecting() {
     assert_eq!(stored_state(&rig).attempts(), 0);
     assert_eq!(stored_state(&rig).upload_id.as_deref(), Some("u1"));
     rig.sync.set_online(true);
-    settle().await;
+    let_tasks_run().await;
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("AbortMultipart"), 1);
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -173,7 +173,7 @@ async fn repeated_expired_grants_wait_before_renewal() {
         let source = file(if multipart { TWELVE } else { b"abcdef" });
         let started = tokio::time::Instant::now();
         rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
-        settle().await;
+        let_tasks_run().await;
         let before_delay = rig.transport.call_count(operation);
         rig.sync.wait_uploads().await;
         observations.push((multipart, before_delay, rig.transport.call_count(operation), started.elapsed() >= small().backoff.delay(0) + small().backoff.delay(1), stored_state(&rig).attempts()));
@@ -299,11 +299,11 @@ async fn dropping_sync_stops_uploads_before_the_next_request() {
     rig.transport.enqueue("CreateBlob", blob().after(Duration::from_secs(60)));
     let source = file(b"abcdef");
     rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("CreateBlob"), 1);
     let inner = Arc::downgrade(&rig.sync.inner);
     drop(rig.sync);
-    settle().await;
+    let_tasks_run().await;
     assert!(inner.upgrade().is_none());
     tokio::time::sleep(Duration::from_secs(61)).await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 0);
@@ -346,7 +346,7 @@ async fn observers_and_reads_see_the_upload_state_and_bytes_while_it_runs() {
     let source = file(b"abcdef");
     rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
     tokio::time::sleep(Duration::from_millis(1500)).await;
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     let running = upload_of(&rig, "m1").unwrap();
     assert_eq!((running.status, running.stage, running.total_bytes), (UploadStatus::Uploading, UploadStage::Put, 6));
     assert!(running.sent_bytes >= 1 && running.fraction() > 0.0);
@@ -354,7 +354,7 @@ async fn observers_and_reads_see_the_upload_state_and_bytes_while_it_runs() {
     let last = seen.lock().unwrap().last().cloned().unwrap().unwrap();
     assert_eq!((last.0, last.1), (UploadStatus::Uploading, UploadStage::Put));
     rig.sync.wait_uploads().await;
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(seen.lock().unwrap().last().cloned().unwrap(), None);
 }
 

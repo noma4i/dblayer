@@ -122,7 +122,7 @@ pub fn put(db: &Db, model: &str, value: Value) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
 }
 
 pub type ChangeLog = Arc<Mutex<Vec<Change>>>;

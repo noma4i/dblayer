@@ -208,7 +208,7 @@ async fn older_response_does_not_overwrite_newer_event_data() {
     rig.transport.enqueue("MomentsFeed", page.after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
     let task = tokio::spawn(async move { sync.load("moments", "feed", &Map::new(), LoadOptions::default()).await });
-    settle().await;
+    let_tasks_run().await;
     put(&rig, "moments", json!({"id": "m1", "text": "event wins", "userId": null}));
     task.await.unwrap().unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("event wins".to_string()));
@@ -224,7 +224,7 @@ async fn row_destroyed_during_flight_is_not_resurrected() {
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2").after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
     let task = tokio::spawn(async move { sync.load("moments", "feed", &Map::new(), LoadOptions::default()).await });
-    settle().await;
+    let_tasks_run().await;
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     let id = crate::identity::RowId::new("m1").unwrap();
     envelope.entity_ops.push(EntityOp::Destroy { model: crate::identity::ModelKey::new("moments"), id, reason: DestroyReason::Server });
@@ -240,7 +240,7 @@ async fn response_after_a_reset_is_discarded() {
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1").after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
     let task = tokio::spawn(async move { sync.load("moments", "feed", &Map::new(), LoadOptions::default()).await });
-    settle().await;
+    let_tasks_run().await;
     rig.db.shared.store.reset_cache_only(&["moments"]).unwrap();
     let outcome = task.await.unwrap().unwrap();
     assert_eq!(outcome.status, LoadStatus::Discarded(DiscardReason::StaleGeneration));
@@ -357,13 +357,13 @@ async fn forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery()
             sink.lock().unwrap().push((whole.of(change).iter().map(|row| row.id.to_string()).collect(), change.diff.removed.len()));
         })
         .unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m2", "m3"], false, "c2"));
     rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m2", "m3"], false, "c2"));
     rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     let all = seen.lock().unwrap().clone();
     assert_eq!(all, vec![(vec!["m1".to_string(), "m2".to_string()], 0), (vec!["m2".to_string(), "m3".to_string()], 1)]);
 }

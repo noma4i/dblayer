@@ -84,7 +84,6 @@ impl ReadPool {
     }
 
     pub(crate) fn submit(&self, shared: &Shared, job: ReadJob) {
-        self.dispatch.busy.enter();
         #[cfg(test)]
         if self.inline.load(std::sync::atomic::Ordering::SeqCst) {
             let result = Self::run(shared, job);
@@ -123,7 +122,7 @@ impl ReadPool {
             let Some(job) = job else { return };
             match shared.upgrade() {
                 Some(shared) => self.dispatch.push_read(Self::run(&shared, job)),
-                None => self.dispatch.busy.leave(1),
+                None => self.dispatch.progress.advance(),
             }
         }
     }

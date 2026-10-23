@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::*;
-use super::super::rig::settle;
+use super::super::rig::let_tasks_run;
 use super::upload_tests::{blob, created, file, input, rid, single_replies, small, upload_rig};
 use crate::transport::PutReply;
 use crate::upload::{UploadConfig, UploadStage};
@@ -20,7 +20,7 @@ async fn a_final_mutation_does_not_hold_a_file_permit() {
         let permits = locked(&rig.sync.inner.uploads).permits.clone();
         let held = if transferred { Some(permits.acquire_owned().await.unwrap()) } else { None };
         rig.sync.inner.spawn_run(seq, 0, Mode::Transfer);
-        settle().await;
+        let_tasks_run().await;
         assert_eq!(rig.transport.call_count("CreateMoment"), 1, "transferred={transferred}");
         drop(held);
         assert_eq!(locked(&rig.sync.inner.uploads).permits.available_permits(), 1);

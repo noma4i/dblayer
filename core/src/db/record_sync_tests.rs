@@ -88,9 +88,9 @@ fn state_change_without_a_data_change_reaches_a_row_observer_as_updated() {
     db.update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
     let (log, callback) = recorder();
     let _subscription = db.observe_row("moments", &rid("m1"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     apply(&db, OperationTransition::Start { seq: only_seq(&db) });
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0].rows[0].revision, seen[1].rows[0].revision);
@@ -105,9 +105,9 @@ fn state_change_reaches_a_list_observer_and_a_scope_free_query() {
     db.update("moments", &rid("m2"), obj(json!({"text": "deux"}))).unwrap();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").ordered(vec![Order::new("id", SortDirection::Asc)]), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     rejected(&db, only_seq(&db));
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let last = changes(&log).pop().unwrap();
     assert_eq!(last.diff.updated, vec![rid("m2")]);
     assert_eq!(last.rows.iter().map(|row| row.sync.state).collect::<Vec<_>>(), [SyncState::Synced, SyncState::Failed]);
@@ -203,9 +203,9 @@ fn a_new_action_on_a_pending_row_reaches_its_observer() {
     db.update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
     let (log, callback) = recorder();
     let _subscription = db.observe_row("moments", &rid("m1"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.act("moments", "like", &rid("m1"), serde_json::Map::new(), serde_json::Map::new()).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let last = changes(&log).pop().unwrap();
     assert_eq!(last.rows[0].sync.actions, vec!["update".to_string(), "like".to_string()]);
 }
@@ -218,9 +218,9 @@ fn a_state_change_of_an_included_row_reaches_the_parent_observer() {
     db.update("users", &rid("u1"), obj(json!({"name": "Anna"}))).unwrap();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").including(&["author"]), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     apply(&db, OperationTransition::Start { seq: only_seq(&db) });
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let last = changes(&log).pop().unwrap();
     assert_eq!(last.diff.updated, vec![rid("m1")]);
 }
@@ -233,9 +233,9 @@ fn a_retained_row_receives_a_change_of_its_sync_state() {
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("moments", callback).unwrap();
     observer.retain(&[rid("m1")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     apply(&db, OperationTransition::Start { seq: only_seq(&db) });
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = log.lock().unwrap().clone();
     assert_eq!((seen.len(), seen[1].rows[0].sync.state), (2, SyncState::Sending));
 }

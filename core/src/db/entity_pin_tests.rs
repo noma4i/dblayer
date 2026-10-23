@@ -48,7 +48,7 @@ fn screen_db() -> Db {
     for n in 0..50 {
         put(&db, "moments", json!({"id": format!("m{n}"), "userId": format!("u{}", n % 10), "text": "hello"}));
     }
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db
 }
 
@@ -79,7 +79,7 @@ fn open_screen(db: &Db, mode: Mode) -> Vec<ObserverHandle> {
         Mode::IdsOnce => handles.push(ids(db, &authors)),
         Mode::RowPerUser => handles.extend((0..50).map(|n| row(db, &format!("u{}", n % 10)))),
     }
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     handles
 }
 
@@ -89,7 +89,7 @@ fn background(db: &Db) -> Vec<ObserverHandle> {
         let set: Vec<String> = (0..10).map(|n| format!("b{tab}_{n}")).collect();
         handles.push(ids(db, &set));
     }
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     handles
 }
 
@@ -109,12 +109,12 @@ fn entity_fanout_counts_stay_with_the_touched_rows() {
         let _background = background(&db);
         let before = db.counters();
         put(&db, "users", user_json("u900", true));
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         let (reads, calls) = diff(&db.counters(), &before);
         assert_eq!((reads, calls), (0, 0), "{mode:?}: a commit of a user that no query pins must not read or deliver");
         let before = db.counters();
         commit_user(&db, "u3", true);
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         let (reads, _) = diff(&db.counters(), &before);
         assert_eq!(reads, 1, "{mode:?}: only the group that pins u3 reads");
     }
@@ -128,7 +128,7 @@ fn pinned_id_queries_follow_rows_that_appear_leave_or_vanish() {
     let (anded_log, anded) = recorder();
     let both = Where::AllOf { clauses: vec![Where::in_list("id", vec![json!("u1"), json!("u2")]), Where::equal("online", json!(true))] };
     let _anded = db.observe(Query::new("users").filtered(both), anded).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![0]);
     put(&db, "users", user_json("late", false));
     assert_eq!(calls(&log), vec![0, 1], "a pinned id that did not exist lands later");
@@ -139,7 +139,7 @@ fn pinned_id_queries_follow_rows_that_appear_leave_or_vanish() {
     assert_eq!(db.keyed_rows(), 3);
     drop(_later);
     drop(_anded);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(db.keyed_rows(), 0, "a dropped group leaves no row in the reverse index");
 }
 
@@ -155,7 +155,7 @@ fn queries_whose_result_can_gain_rows_outside_the_id_set_keep_the_model_pin() {
     for (name, clause) in shapes {
         let (log, callback) = recorder();
         let _handle = db.observe(Query::new("users").filtered(clause), callback).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         let before = calls(&log).len();
         commit_user(&db, "u7", true);
         assert_eq!(calls(&log).len(), before + 1, "{name}: a row outside the id set changes the result, the group must wake");

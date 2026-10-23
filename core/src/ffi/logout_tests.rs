@@ -22,7 +22,7 @@ async fn inv_observe_27_a_leased_row_is_told_removed_before_logout_returns() {
     let listener = Arc::new(Removed(Mutex::new(Vec::new())));
     let live = db.live_entities("Moment".into(), listener.clone()).unwrap();
     live.retain(vec!["m1".into()]).unwrap();
-    db.db.settle();
+    db.db.await_revision(db.db.revision_seq().unwrap());
     db.logout().await.unwrap();
     assert_eq!(listener.0.lock().unwrap().clone(), vec!["m1".to_string()]);
 }

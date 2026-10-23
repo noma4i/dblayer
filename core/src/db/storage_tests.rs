@@ -24,14 +24,14 @@ fn storage_rules_and_writes_follow_the_shared_cases() {
         let db = opened.unwrap();
         let (log, callback) = recorder();
         let observer = db.observe(crate::query::Query::new("StorageRow"), callback).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         let row = db.create("StorageRow", obj(json!({"record": "one"}))).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         assert_eq!(changes(&log).last().unwrap().rows[0].text("record"), Some("one"), "{name}");
         assert_eq!(row.sync.state, state, "{name}");
         assert_eq!(db.outbox().unwrap().len(), usize::from(!local), "{name}: create");
         db.update("StorageRow", &row.id, obj(json!({"record": "two"}))).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         assert_eq!(changes(&log).last().unwrap().rows[0].text("record"), Some("two"), "{name}");
         assert_eq!(db.outbox().unwrap().len(), 2 * usize::from(!local), "{name}: update");
         drop(observer);

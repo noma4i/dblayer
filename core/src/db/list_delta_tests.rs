@@ -24,7 +24,7 @@ fn list_of(count: usize, query: Query) -> (Db, ChangeLog, ObserverHandle) {
     }
     let (log, callback) = recorder();
     let observer = db.observe(query, callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     (db, log, observer)
 }
 
@@ -77,7 +77,7 @@ fn inv_observe_15_deliveries_rebuild_the_list_that_a_fresh_query_returns() {
         let mut seed = Seed(0x9E3779B97F4A7C15);
         for step in 0..300 {
             operate(&db, &mut seed, 40);
-            db.settle();
+            db.await_revision(db.revision_seq().unwrap());
             let fresh = ids_of(&db.query(&query).unwrap());
             assert_eq!(ids_of(&mirror.lock().unwrap()), fresh, "step {step} of {query:?}");
         }
@@ -114,7 +114,7 @@ fn inv_observe_15_a_listener_that_falls_behind_still_rebuilds_the_fresh_list() {
         db.land(envelope).unwrap();
     }
     release.send(()).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids_of(&mirror.lock().unwrap()), ids_of(&db.query(&by_name()).unwrap()));
 }
 
@@ -124,7 +124,7 @@ fn inv_observe_16_a_row_that_cannot_enter_the_list_costs_no_read_and_no_delivery
     put(&db, "users", json!({"id": "u1", "name": "keep"}));
     let (log, callback) = recorder();
     let _observer = db.observe(Query::new("users").filtered(Where::equal("name", json!("keep"))), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let cost = |run: &dyn Fn()| {
         let before = db.counters();
         run();
@@ -163,7 +163,7 @@ fn inv_observe_18_a_replaced_pair_reaches_a_reader_that_never_saw_the_temporary_
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
     db.land(envelope).unwrap();
     release.send(()).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = log.lock().unwrap().clone();
     let last = seen.last().unwrap();
     let told: Vec<_> = seen.iter().map(|change| (ids(change), change.diff.replaced.clone(), change.diff.renamed.clone(), change.revision)).collect();
@@ -175,7 +175,7 @@ fn inv_observe_18_a_pair_replaced_while_the_group_is_evaluated_still_reaches_the
     let db = booted();
     let (log, callback) = recorder();
     let _observer = db.observe(Query::new("moments").limited(50), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let hold = crate::db::open::locked(&db.shared.observers);
     let temp = db.create("moments", obj(json!({"text": "new"}))).unwrap();
     let deadline = std::time::Instant::now() + WAIT;
@@ -188,7 +188,7 @@ fn inv_observe_18_a_pair_replaced_while_the_group_is_evaluated_still_reaches_the
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
     db.land(envelope).unwrap();
     drop(hold);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
     let last = seen.last().unwrap();
     assert_eq!((ids(last), last.diff.renamed.clone()), (vec!["m7".to_string()], vec![(temp.id.clone(), rid("m7"))]));
@@ -200,7 +200,7 @@ fn inv_observe_18_more_replaced_pairs_than_the_log_keeps_deliver_none_of_them() 
     let db = booted();
     let (log, callback) = recorder();
     let _observer = db.observe(Query::new("moments").limited(count as u32 + 10), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let mut first = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
     let mut second = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
     for n in 0..count {
@@ -209,9 +209,9 @@ fn inv_observe_18_more_replaced_pairs_than_the_log_keeps_deliver_none_of_them() 
         second.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{n}")), row: obj(json!({"id": format!("m{n}"), "text": "new"})) });
     }
     db.land(first).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.land(second).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
     let last = seen.last().unwrap();
     assert_eq!((ids(last).len(), last.diff.renamed.len()), (count, 0));

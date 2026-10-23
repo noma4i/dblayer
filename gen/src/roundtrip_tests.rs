@@ -77,7 +77,7 @@ fn inv_row_09_inv_dsl_01_every_accepted_model_survives_create_find_observe_updat
         let row = db.create(model, values.clone()).unwrap_or_else(|error| panic!("{context}: {error}"));
         let found = db.find(model, &row.id).unwrap_or_else(|error| panic!("{context}: {error}"));
         assert!(found.is_some(), "{context}: create returned a row that find cannot read");
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         assert!(*heard.lock().unwrap() >= 1, "{context}: the observer saw no row");
         let key = values.keys().next().cloned().unwrap();
         db.update(model, &row.id, values.iter().filter(|(name, _)| **name == key).map(|(name, value)| (name.clone(), value.clone())).collect()).unwrap_or_else(|error| panic!("{context}: {error}"));

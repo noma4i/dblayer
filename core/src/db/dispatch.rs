@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::collections::{BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 
 use crate::commit::{CommitResult, ScopeRef};
@@ -86,37 +87,40 @@ impl Event {
 }
 
 #[derive(Default)]
-pub(crate) struct Busy {
-    count: Mutex<usize>,
-    zero: Condvar,
+pub(crate) struct Progress {
+    generation: Mutex<u64>,
+    changed: Condvar,
+    entity_reads: AtomicUsize,
 }
 
-impl Busy {
-    pub(crate) fn enter(&self) {
-        *held(&self.count) += 1;
+impl Progress {
+    pub(crate) fn advance(&self) {
+        *held(&self.generation) += 1;
+        self.changed.notify_all();
     }
 
-    pub(crate) fn leave(&self, units: usize) {
-        let mut count = held(&self.count);
-        *count -= units;
-        if *count == 0 || cfg!(test) {
-            self.zero.notify_all();
+    fn generation(&self) -> u64 {
+        *held(&self.generation)
+    }
+
+    fn wait_after(&self, seen: u64) {
+        let mut generation = held(&self.generation);
+        while *generation == seen {
+            generation = self.changed.wait(generation).unwrap_or_else(|poisoned| poisoned.into_inner());
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn wait_down_to(&self, units: usize) {
-        let mut count = held(&self.count);
-        while *count > units {
-            count = self.zero.wait(count).unwrap_or_else(|poisoned| poisoned.into_inner());
-        }
+    pub(crate) fn entity_read_started(&self) {
+        self.entity_reads.fetch_add(1, Ordering::SeqCst);
     }
 
-    pub(crate) fn wait_idle(&self) {
-        let mut count = held(&self.count);
-        while *count > 0 {
-            count = self.zero.wait(count).unwrap_or_else(|poisoned| poisoned.into_inner());
-        }
+    pub(crate) fn entity_read_finished(&self) {
+        self.entity_reads.fetch_sub(1, Ordering::SeqCst);
+        self.advance();
+    }
+
+    pub(crate) fn entity_reads(&self) -> usize {
+        self.entity_reads.load(Ordering::SeqCst)
     }
 }
 
@@ -126,6 +130,7 @@ struct Pending {
     replaced: Vec<(i64, RowId, RowId)>,
     dropped_through: i64,
     reads: VecDeque<ReadResult>,
+    processing_through: Option<i64>,
     closed: bool,
 }
 
@@ -137,17 +142,16 @@ pub(crate) enum Work {
 pub(crate) struct Dispatch {
     pending: Mutex<Pending>,
     wake: Condvar,
-    pub busy: Arc<Busy>,
+    pub progress: Arc<Progress>,
 }
 
 impl Dispatch {
     pub(crate) fn new() -> Self {
-        Self { pending: Mutex::new(Pending::default()), wake: Condvar::new(), busy: Arc::new(Busy::default()) }
+        Self { pending: Mutex::new(Pending::default()), wake: Condvar::new(), progress: Arc::new(Progress::default()) }
     }
 
     pub(crate) fn push(&self, event: Event) {
         let mut pending = held(&self.pending);
-        self.busy.enter();
         pending.replaced.extend(event.replaced.iter().map(|(from, to)| (event.revision, from.clone(), to.clone())));
         if pending.replaced.len() > MAX_REPLACED_LOG {
             let excess = pending.replaced.len() - MAX_REPLACED_LOG;
@@ -158,8 +162,8 @@ impl Dispatch {
             let first = pending.events.pop_front().expect("queue is not empty");
             let second = pending.events.pop_front().expect("queue holds two events");
             pending.events.push_front(first.merge(second));
-            self.busy.leave(1);
         }
+        self.progress.advance();
         self.wake.notify_one();
     }
 
@@ -172,15 +176,39 @@ impl Dispatch {
         let mut pending = held(&self.pending);
         loop {
             if let Some(result) = pending.reads.pop_front() {
+                pending.processing_through = Some(i64::MIN);
                 return Some(Work::Read(result));
             }
             if !pending.events.is_empty() {
-                return Some(Work::Batch(pending.events.drain(..).collect()));
+                let batch: Vec<Event> = pending.events.drain(..).collect();
+                pending.processing_through = batch.iter().map(|event| event.revision).max();
+                return Some(Work::Batch(batch));
             }
             if pending.closed {
                 return None;
             }
             pending = self.wake.wait(pending).unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
+
+    pub(crate) fn finished_work(&self) {
+        held(&self.pending).processing_through = None;
+        self.progress.advance();
+    }
+
+    pub(crate) fn quiet_through(&self, revision: i64) -> bool {
+        let pending = held(&self.pending);
+        pending.reads.is_empty() && pending.processing_through.is_none_or(|through| through > revision) && pending.events.iter().all(|event| event.revision > revision)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_owner_through(&self, revision: i64) {
+        loop {
+            let seen = self.progress.generation();
+            if self.quiet_through(revision) && self.progress.entity_reads() == 0 {
+                return;
+            }
+            self.progress.wait_after(seen);
         }
     }
 
@@ -207,27 +235,30 @@ impl Dispatch {
                 mark_core_thread();
                 OWNER_THREAD.with(|flag| flag.set(true));
                 while let Some(work) = dispatch.next_work() {
-                    let units = match &work {
-                        Work::Read(_) => 1,
-                        Work::Batch(batch) => batch.len(),
-                    };
                     if let Some(shared) = shared.upgrade() {
                         match work {
                             Work::Read(result) => shared.land_read(result),
                             Work::Batch(batch) => shared.refresh_groups(&batch),
                         }
                     }
-                    dispatch.busy.leave(units);
+                    dispatch.finished_work();
                 }
             })
     }
 }
 
 impl Db {
-    pub fn settle(&self) {
+    /// Returns when the owner has handled every commit up to `revision`, every group has read it and every subscriber has taken the result. It reads the mark that the bridge reads as `rows_at`.
+    pub fn await_revision(&self, revision: i64) {
         if on_core_thread() {
             return;
         }
-        self.shared.dispatch.busy.wait_idle();
+        loop {
+            let seen = self.shared.dispatch.progress.generation();
+            if self.shared.dispatch.quiet_through(revision) && self.shared.reached_through(revision) {
+                return;
+            }
+            self.shared.dispatch.progress.wait_after(seen);
+        }
     }
 }

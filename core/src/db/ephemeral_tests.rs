@@ -59,7 +59,7 @@ fn rig() -> (Db, Arc<ManualClock>) {
 
 fn typing(db: &Db, value: bool) {
     db.set_ephemeral("people", &rid("p1"), obj(json!({"typing": value}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
 }
 
 fn value_of(db: &Db, field: &str) -> serde_json::Value {
@@ -95,7 +95,7 @@ fn a_write_reaches_observers_as_an_updated_row_without_a_database_revision() {
     let (db, _) = rig();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("people"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let before = db.revision_seq().unwrap();
     typing(&db, true);
     let seen = changes(&log);
@@ -112,12 +112,12 @@ fn row_observers_and_scope_observers_hear_the_write() {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid("p1"), order_key: "a".into() });
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let (row_log, row_callback) = recorder();
     let (scope_log, scope_callback) = recorder();
     let _row = db.observe_row("people", &rid("p1"), row_callback).unwrap();
     let _scoped = db.observe(Query { scope: Some(scope.key.clone()), ..Query::new("people") }, scope_callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     typing(&db, true);
     assert_eq!(changes(&row_log).len(), 2);
     assert_eq!(changes(&scope_log).len(), 2);
@@ -128,7 +128,7 @@ fn the_value_returns_to_default_by_the_clock_and_observers_see_the_reset() {
     let (db, clock) = rig();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("people"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     typing(&db, true);
     let before = db.revision_seq().unwrap();
     clock.advance(seconds(4));
@@ -137,7 +137,7 @@ fn the_value_returns_to_default_by_the_clock_and_observers_see_the_reset() {
     clock.advance(seconds(2));
     db.expire_ephemeral().unwrap();
     assert_eq!(value_of(&db, "typing"), json!(false));
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
     assert_eq!(seen.len(), 3);
     assert_eq!((seen[2].diff.updated.clone(), seen[2].rows[0].get("typing").cloned()), (vec![rid("p1")], Some(json!(false))));
@@ -163,7 +163,7 @@ fn writing_the_same_value_stays_silent() {
     let (db, _) = rig();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("people"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     typing(&db, true);
     typing(&db, true);
     typing(&db, false);
@@ -213,12 +213,12 @@ fn memory_models_read_and_observe_like_stored_ones_and_expire_by_the_clock() {
     let (db, clock) = rig();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("presence"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "presence", json!({"id": "r1", "room": "lobby"}));
     assert_eq!(db.find("presence", &rid("r1")).unwrap().unwrap().text("room"), Some("lobby"));
     clock.advance(seconds(31));
     db.expire_ephemeral().unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert!(db.find("presence", &rid("r1")).unwrap().is_none());
     let seen = changes(&log);
     assert_eq!((seen.len(), seen.last().unwrap().diff.removed.clone()), (3, vec![rid("r1")]));
@@ -273,13 +273,13 @@ fn the_background_timer_resets_a_value_by_itself() {
     put(&db, "people", json!({"id": "p1"}));
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("people"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.set_ephemeral("people", &rid("p1"), obj(json!({"typing": true}))).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while changes(&log).len() < 3 && std::time::Instant::now() < deadline {
         std::thread::yield_now();
     }
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
     assert_eq!(seen.len(), 3);
     assert_eq!(seen[2].rows[0].get("typing"), Some(&json!(false)));
@@ -316,7 +316,7 @@ fn an_ephemeral_change_of_an_included_row_updates_the_parent_observer() {
     put(&db, "notes", json!({"id": "n1", "personId": "p1"}));
     let (log, callback) = recorder();
     let _subscription = db.observe(Query { include: vec!["author".into()], ..Query::new("notes") }, callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     typing(&db, true);
     let seen = changes(&log);
     assert_eq!(seen.len(), 2);
@@ -329,11 +329,11 @@ fn a_query_pinned_to_an_id_sees_the_write_and_the_reset_of_its_row() {
     let (db, clock) = rig();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("people").filtered(Where::equal("id", json!("p1"))), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     typing(&db, true);
     clock.advance(seconds(6));
     db.expire_ephemeral().unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
     assert_eq!(seen.len(), 3);
     assert_eq!(seen[1].rows[0].get("typing").cloned(), Some(json!(true)));
@@ -346,11 +346,11 @@ fn a_retained_row_receives_the_write_and_the_reset_of_its_ephemeral_value() {
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("people", callback).unwrap();
     observer.retain(&[rid("p1")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     typing(&db, true);
     clock.advance(seconds(6));
     db.expire_ephemeral().unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = log.lock().unwrap().clone();
     assert_eq!(seen.len(), 3);
     assert_eq!(seen[1].rows[0].get("typing").cloned(), Some(json!(true)));

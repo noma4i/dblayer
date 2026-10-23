@@ -26,14 +26,14 @@ fn rig_of(count: usize) -> (Db, EntityLog, EntityObserver) {
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("users", callback).unwrap();
     observer.retain(&users(0..count)).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     (db, log, observer)
 }
 
 fn work(db: &Db, run: impl FnOnce()) -> (usize, usize) {
     let before = db.counters();
     run();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let after = db.counters();
     (after.observation_reads - before.observation_reads, after.observer_calls - before.observer_calls)
 }
@@ -69,7 +69,7 @@ fn delivery_order_by_revision() {
     for n in 0..20 {
         named(&db, "u1", &format!("name{n}"));
     }
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = delivered(&log);
     let revisions: Vec<i64> = seen.iter().map(|change| change.revision).collect();
     assert!(revisions.windows(2).all(|pair| pair[0] <= pair[1]), "revisions {revisions:?}");
@@ -91,13 +91,13 @@ fn dropping_the_observer_empties_the_index_and_stops_delivery() {
 fn a_row_that_appears_later_and_one_that_is_destroyed_are_delivered() {
     let (db, log, observer) = rig();
     observer.retain(&[rid("late")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     named(&db, "late", "here");
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("users"), id: rid("u4"), reason: DestroyReason::Server });
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = delivered(&log);
     assert_eq!(seen[1].removed, vec![rid("late")], "an absent id is told as removed once, so the reader knows it is not there");
     assert_eq!(seen[2].rows[0].id.as_str(), "late");
@@ -108,7 +108,7 @@ fn a_row_that_appears_later_and_one_that_is_destroyed_are_delivered() {
 fn a_reset_of_the_model_delivers_the_removed_ids() {
     let (db, log, _observer) = rig();
     db.reset(&["users"]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let mut removed: Vec<String> = delivered(&log).iter().flat_map(|change| change.removed.iter().map(ToString::to_string)).collect();
     removed.sort();
     assert_eq!(removed, (0..10).map(|n| format!("u{n}")).collect::<Vec<_>>());

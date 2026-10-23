@@ -39,7 +39,7 @@ fn inv_observe_25_a_subscriber_reaches_the_revision_of_a_commit_that_changed_non
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let (log, feed) = tape();
     let _observer = db.observe_query_feed(Query::new("users"), false, feed).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     let at = db.revision_seq().unwrap();
     assert_eq!(last_reached(&log), Some(at), "told {:?}", told(&log));
@@ -53,7 +53,7 @@ fn inv_observe_25_a_commit_that_reaches_a_group_but_leaves_its_rows_is_reached_t
     let (log, feed) = tape();
     let query = Query::new("users").filtered(Where::equal("name", json!("Ann")));
     let _observer = db.observe_query_feed(query, false, feed).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "users", json!({"id": "u2", "name": "Bob"}));
     let at = db.revision_seq().unwrap();
     assert_eq!(last_reached(&log), Some(at), "told {:?}", told(&log));
@@ -66,11 +66,11 @@ fn inv_observe_25_a_subscriber_that_joins_a_group_is_told_how_far_the_group_has_
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let (first, first_feed) = tape();
     let _one = db.observe_query_feed(Query::new("users"), false, first_feed).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     let (second, second_feed) = tape();
     let _two = db.observe_query_feed(Query::new("users"), false, second_feed).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let at = db.revision_seq().unwrap();
     assert_eq!((last_reached(&first), last_reached(&second)), (Some(at), Some(at)), "told {:?} and {:?}", told(&first), told(&second));
 }
@@ -84,7 +84,7 @@ fn inv_observe_25_a_window_and_a_count_are_told_how_far_they_have_read() {
     let ordered = Query::new("users").ordered(vec![Order::new("name", SortDirection::Asc)]);
     let _window = db.observe_window_feed(ordered, WindowSpec::Tail { size: 2 }, window_feed).unwrap();
     let _count = db.observe_query_feed(Query::new("users"), true, count_feed).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     let at = db.revision_seq().unwrap();
     assert_eq!((last_reached(&windowed), last_reached(&counted)), (Some(at), Some(at)), "told {:?} and {:?}", told(&windowed), told(&counted));
@@ -97,10 +97,11 @@ fn inv_observe_26_a_read_that_failed_reaches_the_subscriber_and_the_next_read_he
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let (log, feed) = tape();
     let _observer = db.observe_query_feed(Query::new("users"), false, feed).unwrap();
-    db.settle();
+    let at = db.revision_seq().unwrap();
+    db.await_revision(at);
     *db.shared.store.lock().poison.lock().unwrap() = Some("the store cannot read".to_string());
     db.shared.refresh_groups(&[super::dispatch::Event { revision: i64::MAX / 2, models: [crate::identity::ModelKey::new("users")].into(), ..Default::default() }]);
-    db.settle();
+    db.await_revision(at);
     assert_eq!(told(&log).iter().filter(|tag| *tag == "failed").count(), 1, "told {:?}", told(&log));
     *db.shared.store.lock().poison.lock().unwrap() = None;
     put(&db, "users", json!({"id": "u2", "name": "Bob"}));
@@ -113,10 +114,11 @@ fn inv_observe_26_a_read_that_failed_reaches_the_subscriber_and_the_next_read_he
 fn inv_observe_26_an_open_that_failed_reaches_the_subscriber_before_any_rows() {
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
+    let at = db.revision_seq().unwrap();
     *db.shared.store.lock().poison.lock().unwrap() = Some("the store cannot read".to_string());
     let (log, feed) = tape();
     let _observer = db.observe_query_feed(Query::new("users"), false, feed).unwrap();
-    db.settle();
+    db.await_revision(at);
     assert_eq!(told(&log), vec!["failed".to_string()]);
     *db.shared.store.lock().poison.lock().unwrap() = None;
     put(&db, "users", json!({"id": "u2", "name": "Bob"}));
@@ -129,7 +131,7 @@ fn inv_observe_26_a_panic_while_applying_a_group_reaches_its_subscriber() {
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let (log, feed) = tape();
     let _observer = db.observe_query_feed(Query::new("users"), false, feed).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     *db.shared.panic_key.lock().unwrap() = Some(Subject::Rows(Query::new("users")).key());
     put(&db, "users", json!({"id": "u2", "name": "Bob"}));
     assert!(told(&log).contains(&"failed".to_string()), "told {:?}", told(&log));

@@ -9,7 +9,7 @@ async fn a_step_answered_after_reset_all_sends_nothing_and_leaves_nothing() {
     rig.transport.enqueue("CreateBlob", blob().after(Duration::from_secs(5)));
     let source = file(b"abcdef");
     rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
-    settle().await;
+    let_tasks_run().await;
     rig.db.reset_all().unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!((rig.transport.put_calls().len(), rig.transport.call_count("CreateMoment")), (0, 0));

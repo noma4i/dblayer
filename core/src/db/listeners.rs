@@ -10,7 +10,7 @@ use crate::pacing::Counters;
 use super::open::locked;
 use super::DbError;
 use super::diff::Diff;
-use super::dispatch::{mark_core_thread, Busy};
+use super::dispatch::{mark_core_thread, Progress};
 use super::watch::{changed_rows, Body, Change, CountChange, Loaded, Related, RowsBody, Step, Version};
 
 const MAX_WORKERS: usize = 64;
@@ -157,6 +157,10 @@ impl Subscriber {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    pub(crate) fn idle(&self) -> bool {
+        !held(&self.mailbox).scheduled
+    }
+
     pub(crate) fn post(self: &Arc<Self>, executor: &Arc<Executor>, version: Arc<Version>, replaced: &[(RowId, RowId)], loaded: Loaded) {
         let needs_run = held(&self.mailbox).push(version, replaced, loaded);
         if needs_run {
@@ -292,24 +296,23 @@ struct Queue {
 pub(crate) struct Executor {
     queue: Mutex<Queue>,
     wake: Condvar,
-    busy: Arc<Busy>,
+    progress: Arc<Progress>,
     #[cfg(test)]
     pub(crate) refuse_spawn: AtomicBool,
 }
 
 impl Executor {
-    pub(crate) fn new(busy: Arc<Busy>) -> Arc<Self> {
+    pub(crate) fn new(progress: Arc<Progress>) -> Arc<Self> {
         Arc::new(Self {
             queue: Mutex::new(Queue::default()),
             wake: Condvar::new(),
-            busy,
+            progress,
             #[cfg(test)]
             refuse_spawn: AtomicBool::new(false),
         })
     }
 
     pub(crate) fn schedule(self: &Arc<Self>, subscriber: Arc<dyn Runnable>) {
-        self.busy.enter();
         let mut queue = held(&self.queue);
         queue.ready.push_back(subscriber);
         if queue.ready.len() > queue.idle && queue.workers < MAX_WORKERS {
@@ -322,7 +325,7 @@ impl Executor {
                     drop(queue);
                     if let Some(subscriber) = stranded {
                         subscriber.run();
-                        self.busy.leave(1);
+                        self.progress.advance();
                     }
                 } else {
                     self.wake.notify_one();
@@ -360,7 +363,7 @@ impl Executor {
             };
             let Some(subscriber) = next else { return };
             subscriber.run();
-            self.busy.leave(1);
+            self.progress.advance();
         }
     }
 

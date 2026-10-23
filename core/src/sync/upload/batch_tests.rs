@@ -47,11 +47,11 @@ async fn batch_renumber_preserves_order_and_publishes_complete_rows() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = seen.clone();
         let _subscription = db.observe(crate::query::Query::new("Asset"), move |change| sink.lock().unwrap().push(change.rows.clone())).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         seen.lock().unwrap().clear();
         if cancel { assert!(sync.cancel_upload("Asset", &rows[removed].id).await.unwrap()); }
         else { assert_eq!(db.discard("Asset", &rows[removed].id).unwrap(), 1); }
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         let remaining: Vec<_> = rows.iter().enumerate().filter(|(index, _)| *index != removed).collect();
         for (index, (original, row)) in remaining.iter().enumerate() {
             let row = db.find("Asset", &row.id).unwrap().unwrap();
@@ -101,7 +101,7 @@ async fn batch_renumber_delivery_unknown_discards_every_member_without_rewriting
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = seen.clone();
     let _subscription = db.observe(crate::query::Query::new("Asset"), move |change| sink.lock().unwrap().push(change.rows.clone())).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     seen.lock().unwrap().clear();
     for (position, row) in rows.iter().enumerate() {
         let stored = db.find("Asset", &row.id).unwrap().unwrap();
@@ -110,7 +110,7 @@ async fn batch_renumber_delivery_unknown_discards_every_member_without_rewriting
         assert_eq!(stored.data["size"], 4);
     }
     assert_eq!(db.discard("Asset", &rows[1].id).unwrap(), 1);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert!(rows.iter().all(|row| db.find("Asset", &row.id).unwrap().is_none()));
     assert!(seen.lock().unwrap().iter().all(Vec::is_empty));
 }
@@ -153,9 +153,9 @@ async fn batch_sends_ordered_items_once_and_replaces_by_key() {
     let changes = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = changes.clone();
     let _subscription = db.observe(crate::query::Query::new("Asset"), move |change| sink.lock().unwrap().push((change.size, change.diff.replaced.len()))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     sync.set_online(true);
-    super::super::rig::settle().await;
+    super::super::rig::let_tasks_run().await;
     assert_eq!(transport.call_count("CreateAssets"), 1);
     if early {
         let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, db.generation());
@@ -163,10 +163,10 @@ async fn batch_sends_ordered_items_once_and_replaces_by_key() {
             envelope.entity_ops.push(crate::commit::EntityOp::Upsert { model: crate::identity::ModelKey::new("Asset"), id: crate::identity::RowId::new(&format!("a{position}")).unwrap(), row: json!({"id":format!("a{position}"),"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone() });
         }
         assert_eq!(db.land(envelope).unwrap().replaced.len(), 2);
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
     }
     sync.wait_uploads().await;
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = changes.lock().unwrap();
     assert!(seen.iter().all(|(count, _)| *count == 2), "{seen:?}");
     assert_eq!(seen.iter().map(|(_, replaced)| replaced).sum::<usize>(), 2);
@@ -233,7 +233,7 @@ async fn discard_while_the_final_mutation_waits_offline_uses_the_single_operatio
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default() };
     let rows = sync.upload_create_batch("Asset", items, request).await.unwrap();
-    super::super::rig::settle().await;
+    super::super::rig::let_tasks_run().await;
     assert_eq!(transport.put_calls().len(), 2);
     assert_eq!(transport.call_count("CreateAssets"), 0);
     sync.discard("Asset", &rows[0].id).await.unwrap();

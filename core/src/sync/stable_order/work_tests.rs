@@ -31,7 +31,7 @@ fn enqueue_chat(rig: &Rig, size: usize) {
 }
 
 async fn measured<F: std::future::Future<Output = ()>>(rig: &Rig, directory: tempfile::TempDir, operation: F) -> Work {
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     STEPS.store(0, Ordering::SeqCst);
     {
         let inner = rig.db.shared.store.lock();
@@ -39,7 +39,7 @@ async fn measured<F: std::future::Future<Output = ()>>(rig: &Rig, directory: tem
     }
     let loaded = rig.db.counters().rows_loaded;
     operation.await;
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     {
         let inner = rig.db.shared.store.lock();
         inner.connection.progress_handler(0, None::<fn() -> bool>).unwrap();

@@ -25,13 +25,13 @@ fn members(db: &Db, name: &str) -> Vec<String> {
 fn observe_scope(db: &Db, name: &str) -> (ChangeLog, ObserverHandle) {
     let (log, callback) = recorder();
     let subscription = db.observe(Query::new("moments").in_scope(scope(name).key), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     (log, subscription)
 }
 
 fn start(db: &Db, name: &str, items: &[(&str, &str)]) {
     db.replace(&request(name, Coverage::Complete), rows(items)).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn three_merges_in_a_row_give_one_delivery_each_and_unchanged_rows_stay_out_of_u
         let before = db.revision_seq().unwrap();
         db.replace(&request("feed", Coverage::Complete), step).unwrap();
         assert_eq!(db.revision_seq().unwrap(), before + 1);
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
     }
     let all = changes(&log);
     assert_eq!(all.len(), 4);
@@ -93,7 +93,7 @@ fn a_found_anchor_keeps_the_tail_and_drops_the_vanished_row_before_it() {
     start(&db, "feed", &[("m1", "1"), ("m2", "2"), ("m3", "3"), ("m4", "4"), ("m5", "5")]);
     let (log, _subscription) = observe_scope(&db, "feed");
     db.replace(&request("feed", Coverage::Page), rows(&[("m1", "1"), ("m3", "3")])).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids(changes(&log).last().unwrap()), ["m1", "m3", "m4", "m5"]);
     assert_eq!(changes(&log).len(), 2);
     assert!(db.find("moments", &rid("m2")).unwrap().is_some());
@@ -135,7 +135,7 @@ fn a_merge_changes_only_its_own_scope() {
     let (other, _subscription) = observe_scope(&db, "byUser2");
     let (feed, _feed_subscription) = observe_scope(&db, "feed");
     db.replace(&request("byUser1", Coverage::Complete), rows(&[("m2", "2")])).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(members(&db, "byUser2"), ["m3"]);
     assert_eq!(calls(&other), vec![1]);
     assert_eq!(changes(&feed).len(), 1);

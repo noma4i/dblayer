@@ -36,9 +36,9 @@ fn inv_observe_19_a_retained_row_destroyed_while_the_listener_is_busy_is_told_as
     db.update("users", &rid("a"), obj(json!({"name": "edited"}))).unwrap();
     db.update("users", &rid("b"), obj(json!({"name": "seen"}))).unwrap();
     db.destroy("users", &rid("b")).unwrap();
-    db.shared.dispatch.busy.wait_down_to(1);
+    db.shared.dispatch.wait_owner_through(db.revision_seq().unwrap());
     open.send(()).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = log.lock().unwrap().clone();
     let removed: Vec<_> = seen.iter().flat_map(|change| change.removed.iter().cloned()).collect();
     assert_eq!(removed, vec![rid("b")], "deliveries {seen:?}");
@@ -52,7 +52,7 @@ fn inv_observe_19_a_destroy_right_after_a_delivered_update_is_told_as_removed() 
             {
             let one = db.create("moments", obj(json!({"userId": "u1", "text": "one"}))).unwrap().id.clone();
             let two = db.create("moments", obj(json!({"userId": "u1", "text": "two"}))).unwrap().id.clone();
-            db.settle();
+            db.await_revision(db.revision_seq().unwrap());
             (one, two)
         }
         } else {
@@ -63,15 +63,15 @@ fn inv_observe_19_a_destroy_right_after_a_delivered_update_is_told_as_removed() 
         let (log, callback) = entity_recorder();
         let observer = db.observe_entities("moments", callback).unwrap();
         observer.retain(&[a.clone(), b.clone()]).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         db.update("moments", &a, obj(json!({"text": "edited"}))).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         observer.release(&[a.clone()]);
         db.update("moments", &a, obj(json!({"text": "unseen"}))).unwrap();
         db.update("moments", &b, obj(json!({"text": "seen"}))).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         db.destroy("moments", &b).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         let seen = log.lock().unwrap().clone();
         assert_eq!(seen.len(), 4, "temporary {temporary}: {seen:?}");
         assert_eq!(seen[3].removed, vec![b.clone()], "temporary {temporary}");
@@ -89,15 +89,16 @@ fn inv_observe_19_a_refresh_that_cannot_read_is_counted_and_a_reset_tells_every_
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("users", callback).unwrap();
     observer.retain(&[rid("u0"), rid("u1"), rid("u2")]).unwrap();
-    db.settle();
+    let at = db.revision_seq().unwrap();
+    db.await_revision(at);
     *db.shared.store.lock().poison.lock().unwrap() = Some("the store cannot read".to_string());
     let key = locked(&db.shared.observers).entities.keys().next().cloned().unwrap();
     db.shared.refresh_entities(&key, &crate::identity::ModelKey::new("users"), [rid("u1")].into_iter().collect());
-    db.settle();
+    db.await_revision(at);
     let failures: Vec<_> = log.lock().unwrap().iter().map(|change| change.failure.is_some()).collect();
     assert_eq!((db.counters().entity_reads_failed, failures), (1, vec![false, true]), "the failed read is counted and tells its subscriber the failure");
     db.reset(&["users"]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let mut removed: Vec<String> = log.lock().unwrap().iter().flat_map(|change| change.removed.iter().map(ToString::to_string)).collect();
     removed.sort();
     assert_eq!(removed, ["u0", "u1", "u2"], "the reset that ends the poison tells every retained row");
@@ -109,10 +110,10 @@ fn failed_destroy_of_b(db: &Db) -> (EntityLog, EntityObserver) {
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("users", callback).unwrap();
     observer.retain(&[rid("a"), rid("b")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.shared.store.fail_next_entity_reads(1);
     db.destroy("users", &rid("b")).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!((told_removed(&log), db.counters().entity_reads_failed), (vec![], 1), "the read failed once, the destroy is dirty and told nothing");
     (log, observer)
 }
@@ -134,7 +135,7 @@ fn inv_observe_19_a_dirty_destroy_is_told_by_the_next_change_of_the_same_group()
     let db = booted();
     let (log, _observer) = failed_destroy_of_b(&db);
     db.update("users", &rid("a"), obj(json!({"name": "edited"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(told_removed(&log), vec![rid("b")], "a change of the same group re-reads the dirty id");
 }
 
@@ -151,9 +152,9 @@ fn inv_observe_19_a_row_is_never_in_rows_and_removed_of_one_delivery() {
     refresh(&db, "b");
     db.destroy("users", &rid("b")).unwrap();
     refresh(&db, "b");
-    db.shared.dispatch.busy.wait_down_to(1);
+    db.shared.dispatch.wait_owner_through(db.revision_seq().unwrap());
     open.send(()).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let after_destroy = log.lock().unwrap().clone();
     assert!(after_destroy.iter().skip(1).all(|change| change.rows.is_empty() && change.removed == vec![rid("b")]), "update then destroy while busy: {after_destroy:?}");
     assert_eq!(after_destroy.len(), 2);
@@ -170,9 +171,9 @@ fn inv_observe_19_an_absent_id_that_appears_while_busy_is_told_as_a_row_and_not_
     observer.retain(&[rid("late")]).unwrap();
     put_without_settle(&db, "users", json!({"id": "late", "name": "here"}));
     refresh(&db, "late");
-    db.shared.dispatch.busy.wait_down_to(1);
+    db.shared.dispatch.wait_owner_through(db.revision_seq().unwrap());
     open.send(()).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = log.lock().unwrap().clone();
     let told: Vec<_> = seen.iter().skip(1).collect();
     assert!(told.iter().all(|change| change.removed.is_empty()), "absent then present while busy: {seen:?}");
@@ -200,11 +201,11 @@ fn inv_observe_19_a_retain_whose_read_failed_reports_it_and_keeps_the_id_dirty_u
     let observer = db.observe_entities("users", callback).unwrap();
     db.shared.store.fail_next_entity_reads(1);
     observer.retain(&[rid("u1")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let failures: Vec<_> = log.lock().unwrap().iter().map(|change| (change.failure.is_some(), change.rows.len())).collect();
     assert_eq!((failures, db.keyed_rows(), db.counters().entity_reads_failed), (vec![(true, 0)], 1, 1), "the failure is told and counted and the id is indexed for the next read");
     observer.retain(&[rid("u1")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let told: Vec<_> = log.lock().unwrap().iter().map(|change| (change.failure.is_some(), change.rows.len())).collect();
     assert_eq!(told, [(true, 0), (false, 1)], "the next retain tells the row");
 }

@@ -12,14 +12,14 @@ async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
     let mut ids = Vec::new();
     for number in 0..(CHANGE_QUEUE_LIMIT * 3) {
         ids.push(database.create("Note".into(), serde_json::json!({"text": number.to_string()}).to_string(), "{}".into()).await.unwrap().id);
-        database.db.settle();
+        database.db.await_revision(database.db.revision_seq().unwrap());
     }
     database.update("Note".into(), ids[0].clone(), r#"{"text":"edited"}"#.into(), "{}".into()).await.unwrap();
     database.destroy("Note".into(), ids[1].clone()).await.unwrap();
-    database.db.settle();
+    database.db.await_revision(database.db.revision_seq().unwrap());
     for _ in 0..CHANGE_QUEUE_LIMIT {
         database.create("Note".into(), r#"{"text":"new"}"#.into(), "{}".into()).await.unwrap();
-        database.db.settle();
+        database.db.await_revision(database.db.revision_seq().unwrap());
         let state = crate::db::locked(&queue.state);
         if state.pending.len() == 1 && state.pending[0].full { break; }
     }

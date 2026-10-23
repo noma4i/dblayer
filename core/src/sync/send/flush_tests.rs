@@ -69,7 +69,7 @@ async fn create_success_swaps_the_temp_id_for_the_real_one_and_observers_see_it(
     assert_eq!(text_of(&rig, "moments", "m77"), Some("hello".to_string()));
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(call_variables(&rig, "CreateMoment"), [json!({"text": "hello"})]);
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     let last = seen.lock().unwrap().last().cloned().unwrap();
     assert_eq!(last, ["m77"]);
 }
@@ -535,7 +535,7 @@ async fn lands_joins_only_loaded_matching_threads_and_keeps_existing_places() {
         for (id, _) in answers {
             rig.db.act("moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
             assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
-            rig.db.settle();
+            rig.db.await_revision(rig.db.revision_seq().unwrap());
             known_joined |= id == "stored";
             let expected = if known_joined { vec!["a", "new", "stored", "z"] } else { vec!["a", "new", "z"] };
             assert_eq!(shown(&log), expected, "stable={stable}, id={id}");
@@ -556,7 +556,7 @@ async fn lands_joins_only_loaded_matching_threads_and_keeps_existing_places() {
         let response = crate::transport::Response::data(json!({"starMoment": {"message": message("atomic", Some(4), 4)}}));
         assert_eq!(rig.sync.inner.settle_response(&sending, &operation, response).await.unwrap(), SendResult::Committed);
         assert_eq!(rig.db.revision_seq().unwrap(), before + 1, "the response writes its row and membership in one commit");
-        rig.db.settle();
+        rig.db.await_revision(rig.db.revision_seq().unwrap());
         assert_eq!(shown(&log), ["a", "new", "stored", "atomic", "z"]);
     }
 }

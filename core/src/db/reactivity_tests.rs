@@ -20,7 +20,7 @@ fn land_scope(db: &Db, scope_ops: Vec<ScopeOp>) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops = scope_ops;
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
 }
 
 fn append(row: &str, order_key: &str) -> ScopeOp {
@@ -33,11 +33,11 @@ fn changing_an_included_author_wakes_the_observer_of_moments() {
     seed_tree(&db);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").including(&["author"]), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let first = changes(&log);
     assert_eq!(first[0].related["author"][&rid("m1")][0].text("name"), Some("Ann"));
     db.update("users", &rid("u1"), obj(json!({"name": "Zed"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let all = changes(&log);
     assert_eq!(all.len(), 2);
     assert_eq!(all[1].diff.updated, vec![rid("m1")]);
@@ -50,7 +50,7 @@ fn without_include_a_change_of_the_author_is_not_a_dependency() {
     seed_tree(&db);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let reads = db.counters().observation_reads;
     put(&db, "users", json!({"id": "u1", "name": "Zed"}));
     assert_eq!(calls(&log), vec![2]);
@@ -63,7 +63,7 @@ fn include_of_has_many_follows_new_children() {
     seed_tree(&db);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").including(&["vibes"]), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(changes(&log)[0].related["vibes"][&rid("m1")].len(), 2);
     put(&db, "vibes", json!({"id": "v3", "momentId": "m1", "kind": "fire"}));
     let all = changes(&log);
@@ -78,7 +78,7 @@ fn a_scope_query_reads_in_the_server_order_and_follows_its_scope() {
     land_scope(&db, vec![append("m2", "a0"), append("m1", "a1")]);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").in_scope(feed().key), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids(&changes(&log)[0]), ["m2", "m1"]);
     land_scope(&db, vec![ScopeOp::Move { scope: feed(), row: rid("m1"), order_key: "Zz".to_string() }]);
     let all = changes(&log);
@@ -93,7 +93,7 @@ fn a_scope_query_ignores_other_scopes_and_rows_outside_its_scope() {
     land_scope(&db, vec![append("m1", "a0")]);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").in_scope(feed().key), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let reads = db.counters().observation_reads;
     land_scope(&db, vec![ScopeOp::Append { scope: ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("other")), row: rid("m2"), order_key: "a".to_string() }]);
     put(&db, "moments", json!({"id": "m3", "userId": "u1", "text": "outside"}));
@@ -109,15 +109,15 @@ fn observe_row_follows_one_row() {
     seed_tree(&db);
     let (log, callback) = recorder();
     let _subscription = db.observe_row("moments", &rid("m1"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let reads = db.counters().observation_reads;
     put(&db, "moments", json!({"id": "m2", "userId": "u2", "text": "other row"}));
     assert_eq!(db.counters().observation_reads, reads);
     db.update("moments", &rid("m1"), obj(json!({"text": "changed"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(texts(&changes(&log)[1]), ["changed"]);
     db.destroy("moments", &rid("m1")).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let last = changes(&log).pop().unwrap();
     assert!(last.rows.is_empty());
     assert_eq!(last.diff.removed, vec![rid("m1")]);
@@ -131,10 +131,10 @@ fn observe_count_delivers_only_when_the_count_changes() {
     let sink = counts.clone();
     let query = Query::new("moments").filtered(Where::equal("text", json!("one")));
     let _subscription = db.observe_count(query, move |change| sink.lock().unwrap().push((change.revision, change.count))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "moments", json!({"id": "m3", "userId": "u1", "text": "three"}));
     db.update("moments", &rid("m1"), obj(json!({"userId": "u2"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(counts.lock().unwrap().iter().map(|(_, count)| *count).collect::<Vec<_>>(), [1]);
     put(&db, "moments", json!({"id": "m4", "userId": "u1", "text": "one"}));
     let seen = counts.lock().unwrap().clone();
@@ -148,12 +148,12 @@ fn a_temp_id_swap_arrives_as_replaced() {
     let temp = db.create("moments", obj(json!({"text": "new"}))).unwrap();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: DestroyReason::Replaced { by: rid("m7") } });
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let all = changes(&log);
     assert_eq!(all.len(), 2);
     assert_eq!(all[1].diff.replaced, vec![(temp.id.clone(), rid("m7"))]);
@@ -172,9 +172,9 @@ fn destroying_a_parent_is_one_delivery_per_observer_with_one_revision() {
             (log, db.observe(Query::new(model), callback).unwrap())
         })
         .collect();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.destroy("users", &rid("u1")).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let revisions: Vec<i64> = observed
         .iter()
         .map(|(log, _)| {
@@ -197,14 +197,14 @@ fn a_thousand_subscribers_cost_at_most_one_read_per_commit() {
             (log, db.observe(Query::new("moments"), callback).unwrap())
         })
         .collect();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let reads = db.counters().observation_reads;
     for number in 0..100 {
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{number}")), row: obj(json!({"id": format!("m{number}"), "userId": "u1", "text": "t"})) });
         db.land(envelope).unwrap();
     }
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert!(db.counters().observation_reads - reads <= 100);
     assert!(logs.iter().all(|(log, _)| changes(log).last().unwrap().rows.len() == 100));
 }
@@ -226,7 +226,7 @@ fn a_cancelled_subscription_gets_no_call_after_the_cancel_returns() {
             }
         })
         .unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m1"), row: obj(json!({"id": "m1", "userId": "u1", "text": "one"})) });
     db.land(envelope).unwrap();
@@ -274,7 +274,7 @@ fn a_slow_listener_does_not_hold_back_the_others_and_gets_the_latest_state() {
     }
     assert_eq!(*slow_log.lock().unwrap().last().unwrap(), 1);
     release.send(()).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = slow_log.lock().unwrap().clone();
     assert_eq!(*seen.last().unwrap(), 3);
     assert!(seen.len() <= 3);
@@ -286,9 +286,9 @@ fn reset_moves_every_observer_to_the_empty_state_and_keeps_the_subscriptions() {
     seed_tree(&db);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.reset_all().unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![2, 0]);
     assert_eq!(changes(&log)[1].diff.removed.len(), 2);
     assert_eq!(db.observer_census().subscriptions, 1);
@@ -407,7 +407,7 @@ fn model_test_with_threads_ends_every_observer_on_the_fresh_state() {
         for handle in handles {
             handle.join().unwrap();
         }
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         for (query, log, _) in &logs {
             let stream = changes(log);
             check_stream(&stream);

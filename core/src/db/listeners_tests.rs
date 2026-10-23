@@ -40,6 +40,6 @@ fn inv_panic_01_a_listener_worker_that_cannot_start_still_delivers_and_releases_
     db.shared.executor.refuse_spawn.store(true, Ordering::SeqCst);
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![0]);
 }

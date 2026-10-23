@@ -92,7 +92,7 @@ fn a_search_follows_updates_and_deletes() {
     assert_eq!(found(&db, "hello", false), Vec::<String>::new());
     assert_eq!(found(&db, "moon", false), ["n1"]);
     db.destroy("notes", &rid("n3")).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(found(&db, "submarine", false), Vec::<String>::new());
 }
 
@@ -151,9 +151,9 @@ fn an_observed_search_reports_a_row_when_its_text_starts_to_match() {
     put(&db, "notes", json!({"id": "n1", "chatId": "c1", "body": "nothing"}));
     let (log, listener) = recorder();
     let _handle = db.observe(Query::new("notes").filtered(Where::search("rocket", false)), listener).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "notes", json!({"id": "n1", "chatId": "c1", "body": "rocket science"}));
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(changes(&log).last().map(ids), Some(vec!["n1".to_string()]));
 }
 

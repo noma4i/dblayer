@@ -440,7 +440,7 @@ impl Database {
         let database = self.clone();
         blocking(move || {
             database.db.reset_all()?;
-            database.db.settle();
+            database.db.await_revision(database.db.revision_seq()?);
             Ok(())
         }).await
     }

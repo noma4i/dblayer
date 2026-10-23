@@ -256,12 +256,12 @@ fn create_lands_the_temp_row_in_the_unfiltered_scope_of_its_params() {
     let db = threaded_db();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("messages").in_scope(scope_of("thread", "c1")), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let row = db.create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids(changes(&log).last().unwrap()), [row.id.to_string()]);
     let other = db.create("messages", obj(json!({"chatId": "c2", "body": "elsewhere"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids(changes(&log).last().unwrap()), [row.id.to_string()]);
     assert_eq!(db.shared.store.scope_members("messages", scope_of("media", "c1").as_str()).unwrap(), vec![]);
     assert!(db.shared.store.scope_members("messages", scope_of("thread", "c2").as_str()).unwrap().iter().any(|(id, _)| id == other.id.as_str()));
@@ -277,9 +277,9 @@ fn changing_a_by_column_moves_the_row_between_the_unfiltered_scopes() {
     let (second, second_callback) = recorder();
     let _one = db.observe(Query::new("messages").in_scope(scope_of("thread", "c1")), first_callback).unwrap();
     let _two = db.observe(Query::new("messages").in_scope(scope_of("thread", "c2")), second_callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.update("messages", &row.id, obj(json!({"chatId": "c2"}))).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids(changes(&first).last().unwrap()), Vec::<String>::new());
     assert_eq!(ids(changes(&second).last().unwrap()), [row.id.to_string()]);
 }

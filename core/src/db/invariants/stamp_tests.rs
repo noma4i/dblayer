@@ -68,10 +68,10 @@ fn inv_observe_01_every_stamp_field_change_reaches_the_row_observer_and_the_list
         let (list_log, list_listener) = recorder();
         let _row = db.observe_row("moments", &rid("m1"), row_listener).unwrap();
         let _list = db.observe(crate::query::Query::new("moments").including(&["author"]), list_listener).unwrap();
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         let (row_before, list_before) = (changes(&row_log).len(), changes(&list_log).len());
         change(&db);
-        db.settle();
+        db.await_revision(db.revision_seq().unwrap());
         let row_after = changes(&row_log);
         if cause != "included row sync" {
             assert!(row_after.len() > row_before, "{cause}: the row observer heard nothing");

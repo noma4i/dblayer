@@ -53,6 +53,10 @@ impl EntityGroup {
         ids
     }
 
+    pub(crate) fn idle(&self) -> bool {
+        !locked(&self.subscriber.pending).scheduled
+    }
+
     pub(crate) fn model(&self) -> &ModelKey {
         &self.model
     }
@@ -65,7 +69,7 @@ impl EntityGroup {
         self.known.keys()
     }
 
-    fn settle(&mut self, position: Position, loaded: &HashMap<String, Row>, ids: impl Iterator<Item = RowId>) -> Vec<(RowId, Position, Option<Row>)> {
+    fn apply_read(&mut self, position: Position, loaded: &HashMap<String, Row>, ids: impl Iterator<Item = RowId>) -> Vec<(RowId, Position, Option<Row>)> {
         let mut changes = Vec::new();
         for id in ids {
             let Some(known) = self.known.get_mut(&id) else { continue };
@@ -242,6 +246,7 @@ impl Shared {
 
     fn read_entities_in_pool(&self, key: &str, model: &ModelKey, ids: BTreeSet<RowId>, counted: bool) {
         let target = ReadTarget::Entities { key: key.to_string(), ids: ids.clone() };
+        self.dispatch.progress.entity_read_started();
         let model = model.clone();
         let run = move |shared: &Shared| {
             if counted {
@@ -254,6 +259,7 @@ impl Shared {
     }
 
     pub(crate) fn apply_entities(&self, key: &str, ids: &BTreeSet<RowId>, read: Result<(Position, HashMap<String, Row>), DbError>) {
+        let _finished = ReadFinished(&self.dispatch.progress);
         if read.is_err() {
             locked(&self.counters).entity_reads_failed += 1;
         }
@@ -268,8 +274,16 @@ impl Shared {
             }
         };
         group.dirty.retain(|id| !ids.contains(id));
-        let changes = group.settle(position, &loaded, ids.iter().cloned());
+        let changes = group.apply_read(position, &loaded, ids.iter().cloned());
         group.subscriber.clone().post(&self.executor, changes);
+    }
+}
+
+struct ReadFinished<'a>(&'a super::dispatch::Progress);
+
+impl Drop for ReadFinished<'_> {
+    fn drop(&mut self) {
+        self.0.entity_read_finished();
     }
 }
 

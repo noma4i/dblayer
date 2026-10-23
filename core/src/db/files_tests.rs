@@ -181,9 +181,9 @@ fn attach_notifies_observers_of_the_row_and_refreshes_the_cache() {
     let db = seeded();
     let (log, callback) = recorder();
     let _subscription = db.observe(crate::query::Query::new("moments"), callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     attach(&db, "m1", "media", SMALL);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![2, 2]);
     assert!(media(&db, "m1").is_some());
 }

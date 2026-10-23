@@ -8,7 +8,7 @@ fn a_row_inserted_after_its_id_was_retained_is_delivered() {
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("users", callback).unwrap();
     observer.retain(&[rid("late")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "users", json!({"id": "late", "name": "arrived"}));
     let seen = log.lock().unwrap().clone();
     let rows: Vec<_> = seen.iter().flat_map(|change| change.rows.iter().map(|row| row.id.to_string())).collect();
@@ -22,7 +22,7 @@ fn a_row_inserted_before_its_id_was_retained_is_delivered_by_the_retain() {
     let observer = db.observe_entities("users", callback).unwrap();
     put(&db, "users", json!({"id": "early", "name": "arrived"}));
     observer.retain(&[rid("early")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let seen = log.lock().unwrap().clone();
     let rows: Vec<_> = seen.iter().flat_map(|change| change.rows.iter().map(|row| row.id.to_string())).collect();
     assert_eq!(rows, ["early"], "deliveries {seen:?}");
@@ -35,7 +35,7 @@ fn a_retain_whose_read_failed_still_delivers_the_row_that_arrives_later() {
     let observer = db.observe_entities("users", callback).unwrap();
     db.shared.store.fail_next_entity_reads(1);
     observer.retain(&[rid("late")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "users", json!({"id": "late", "name": "arrived"}));
     let seen = log.lock().unwrap().clone();
     let rows: Vec<_> = seen.iter().flat_map(|change| change.rows.iter().map(|row| row.id.to_string())).collect();
@@ -50,9 +50,9 @@ fn a_reset_of_all_data_tells_every_retained_row_as_removed_and_the_next_row_of_t
     let (log, callback) = entity_recorder();
     let observer = db.observe_entities("users", callback).unwrap();
     observer.retain(&[rid("kept")]).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db.reset_all().unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     put(&db, "users", json!({"id": "kept", "name": "after"}));
     let seen = log.lock().unwrap().clone();
     let shape: Vec<(Vec<String>, Vec<String>)> = seen.iter().map(|change| (change.rows.iter().map(|row| row.id.to_string()).collect(), change.removed.iter().map(ToString::to_string).collect())).collect();

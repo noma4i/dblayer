@@ -230,7 +230,7 @@ pub fn feed_page(nodes: Vec<Value>, has_next: bool, cursor: &str) -> Value {
     json!({"feed": {"nodes": nodes, "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}}})
 }
 
-pub async fn settle() {
+pub async fn let_tasks_run() {
     tokio::time::sleep(Duration::from_millis(1)).await;
 }
 

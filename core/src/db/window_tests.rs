@@ -39,7 +39,7 @@ fn seeded(size: usize) -> Db {
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row: obj(json!({"id": id, "name": name_at(index)})) });
     }
     db.land(envelope).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     db
 }
 
@@ -53,7 +53,7 @@ fn a_tail_window_holds_the_last_rows_and_follows_the_tail() {
     let db = seeded(12);
     let (log, callback) = recorder();
     let _window = db.observe_window(query(), WindowSpec::Tail { size: 5 }, callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let first = changes(&log).pop().unwrap();
     assert_eq!(ids(&first), expected_ids(&db, &query(), 5));
     assert_eq!(first.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(12) }));
@@ -70,7 +70,7 @@ fn a_change_before_the_window_delivers_no_rows_and_only_moves_the_total() {
     let db = seeded(30);
     let (log, callback) = recorder();
     let _window = db.observe_window(query(), WindowSpec::Tail { size: 5 }, callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let (calls_before, counters_before) = (changes(&log).len(), db.counters());
     upsert(&db, "u000001", "n000001!");
     assert_eq!(changes(&log).len(), calls_before, "an update before the window is not delivered");
@@ -88,21 +88,21 @@ fn expanding_before_adds_local_rows_and_stops_at_the_first_row() {
     let db = seeded(8);
     let (log, callback) = recorder();
     let window = db.observe_window(query(), WindowSpec::Tail { size: 3 }, callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     window.expand_before(4);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let wider = changes(&log).pop().unwrap();
     assert_eq!(ids(&wider), expected_ids(&db, &query(), 7));
     assert_eq!(wider.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(8) }));
     window.expand_before(10);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let all = changes(&log).pop().unwrap();
     assert_eq!(ids(&all), expected_ids(&db, &query(), 8));
     assert_eq!(all.window, Some(WindowEdge { has_before: false, has_after: false, total: Some(8) }));
     let calls = changes(&log).len();
     window.expand_before(3);
     window.expand_after(3);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(changes(&log).len(), calls, "no local row is left to add");
 }
 
@@ -112,18 +112,18 @@ fn a_window_around_a_row_expands_after_and_follows_the_row() {
     let (log, callback) = recorder();
     let spec = WindowSpec::Around { id: rid("u000010"), before: 2, after: 1 };
     let window = db.observe_window(query(), spec, callback).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let names = |change: &Change| ids(change);
     assert_eq!(names(&changes(&log).pop().unwrap()), ["u000008", "u000009", "u000010", "u000011"]);
     window.expand_after(2);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let wider = changes(&log).pop().unwrap();
     assert_eq!(names(&wider), ["u000008", "u000009", "u000010", "u000011", "u000012", "u000013"]);
     assert_eq!(wider.window, Some(WindowEdge { has_before: true, has_after: true, total: Some(20) }));
     upsert(&db, "older", "a");
     assert_eq!(names(&changes(&log).pop().unwrap()), ["u000008", "u000009", "u000010", "u000011", "u000012", "u000013"]);
     window.expand_after(50);
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     let tail = changes(&log).pop().unwrap();
     assert_eq!(tail.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(21) }));
     assert_eq!(ids(&tail).last().unwrap(), "u000019");
@@ -414,7 +414,7 @@ fn windows_equal_the_tail_of_a_fresh_query_over_random_edit_sequences() {
 fn open_cost(db: &Db) -> (usize, super::window::WindowHandle) {
     let before = total();
     let handle = db.observe_window(query(), WindowSpec::Tail { size: WINDOW }, |_| {}).unwrap();
-    db.settle();
+    db.await_revision(db.revision_seq().unwrap());
     (total() - before, handle)
 }
 

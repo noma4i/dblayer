@@ -11,13 +11,13 @@ async fn confirming_a_created_row_keeps_it_after_the_rows_shown_before() {
     load_page(&rig, vec![message("m1", Some(1), 1), message("m2", Some(2), 2), message("m5", Some(5), 5)], false, "c").await;
     let (log, _window) = watch_thread(&rig, 50);
     let local = rig.db.create("messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:09.000Z"}))).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(shown(&log), ["m1", "m2", "m5", local.id.as_str()]);
 
     let seen = changes(&log).len();
     rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": message("m9", Some(3), 9)})));
     rig.sync.flush().await.unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
 
     assert_eq!(shown(&log), ["m1", "m2", "m5", "m9"]);
     assert_eq!(moves_since(&log, seen), Vec::<String>::new());
@@ -38,7 +38,7 @@ async fn a_row_delivered_by_an_event_before_its_create_is_confirmed_keeps_the_pl
 
     rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": message("m9", Some(3), 9)})));
     rig.sync.flush().await.unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(shown(&log), ["m1", "m2", "m5", "m9"]);
 
     event(&rig, message("m10", Some(4), 10)).await;
@@ -124,6 +124,6 @@ async fn a_created_row_goes_after_the_last_row_even_when_its_clock_is_behind() {
     load_page(&rig, vec![message("m1", Some(1), 1), message("m2", Some(2), 5)], false, "c").await;
     let (log, _window) = watch_thread(&rig, 50);
     let local = rig.db.create("messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:03.000Z"}))).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(shown(&log), ["m1", "m2", local.id.as_str()]);
 }

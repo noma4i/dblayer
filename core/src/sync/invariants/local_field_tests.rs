@@ -124,13 +124,13 @@ async fn inv_merge_12_one_write_is_one_delivery_to_every_subscription_of_the_row
     let _row = rig.db.observe_row("moments", &rid("m1"), move |_| {
         row_seen.fetch_add(1, Ordering::SeqCst);
     }).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     let base = (rows.load(Ordering::SeqCst), row_count.load(Ordering::SeqCst));
     rig.db.set_local("moments", &rid("m1"), "cover.tone", json!({"hue": 30})).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!((rows.load(Ordering::SeqCst), row_count.load(Ordering::SeqCst)), (base.0 + 1, base.1 + 1));
     rig.db.set_local("moments", &rid("m1"), "cover.tone", json!({"hue": 30})).unwrap();
-    rig.db.settle();
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!((rows.load(Ordering::SeqCst), row_count.load(Ordering::SeqCst)), (base.0 + 1, base.1 + 1));
 }
 

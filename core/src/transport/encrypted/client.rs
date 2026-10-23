@@ -186,7 +186,7 @@ impl EncryptedClient {
                 pending
             }
         };
-        self.settle(pending).await
+        self.await_answer(pending).await
     }
 
     pub fn pending_call(&self) -> Result<Option<(String, Value)>, TransportError> {
@@ -214,7 +214,7 @@ impl EncryptedClient {
         let credential = self.credential()?;
         let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
         self.pending_token(&credential, &pending)?;
-        self.settle(pending).await.map(Some)
+        self.await_answer(pending).await.map(Some)
     }
 
     pub async fn read(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -238,7 +238,7 @@ impl EncryptedClient {
         self.request_token(Some(RequestSession { credential: credential.into(), sequence: Some(pending.sequence) }), &pending.request_id, &pending.response_key, &pending.path, &body)
     }
 
-    async fn settle(&self, mut pending: Pending) -> Result<Answer, TransportError> {
+    async fn await_answer(&self, mut pending: Pending) -> Result<Answer, TransportError> {
       let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events, &self.online, RetryPolicy::Http);
       loop {
         self.online.online().await;

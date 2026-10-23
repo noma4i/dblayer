@@ -11,22 +11,22 @@ async fn changes_classify_insert_update_move_and_remove_without_list_state() {
     let (db, ids) = with_rows(3).await;
     let tape = Arc::new(Tape(Mutex::default()));
     let live = db.live_query(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), tape.clone());
-    db.db.settle();
+    db.db.await_revision(db.db.revision_seq().unwrap());
     assert_eq!(tape.0.lock().unwrap()[0].inserted, vec![0, 1, 2]);
     let row = db.create("Moment".into(), r#"{"text":"z"}"#.into(), "{}".into()).await.unwrap();
-    db.db.settle();
+    db.db.await_revision(db.db.revision_seq().unwrap());
     let inserted = tape.0.lock().unwrap().last().unwrap().clone();
     assert_eq!(inserted.inserted, vec![0]);
     assert_eq!(inserted.row_indexes, vec![3]);
     assert!(inserted.updated.is_empty());
     db.update("Moment".into(), ids[0].clone(), r#"{"text":"zz"}"#.into(), "{}".into()).await.unwrap();
-    db.db.settle();
+    db.db.await_revision(db.db.revision_seq().unwrap());
     let updated = tape.0.lock().unwrap().last().unwrap().clone();
     assert!(updated.inserted.is_empty());
     assert_eq!(updated.updated, vec![0]);
     assert_eq!(updated.moved.iter().map(|place| (&place.id, place.index)).collect::<Vec<_>>(), vec![(&ids[0], 3)]);
     db.destroy("Moment".into(), row.id.clone()).await.unwrap();
-    db.db.settle();
+    db.db.await_revision(db.db.revision_seq().unwrap());
     assert_eq!(tape.0.lock().unwrap().last().unwrap().removed, vec![row.id]);
     live.cancel();
 }
@@ -54,10 +54,10 @@ async fn inv_observe_17_a_live_change_of_one_changed_row_carries_one_row_at_ever
         let (db, ids) = with_rows(count).await;
         let tape = Arc::new(Tape(Mutex::default()));
         let _live = db.live_query(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), tape.clone());
-        db.db.settle();
+        db.db.await_revision(db.db.revision_seq().unwrap());
         assert_eq!(tape.0.lock().unwrap()[0].rows.len(), count, "the first delivery is the whole list");
         db.update("Moment".into(), ids[count / 2].clone(), format!(r#"{{"text":"t{:05}x"}}"#, count / 2), "{}".into()).await.unwrap();
-        db.db.settle();
+        db.db.await_revision(db.db.revision_seq().unwrap());
         let last = tape.0.lock().unwrap().last().unwrap().clone();
         sizes.push((last.rows.len(), last.full));
     }
@@ -85,7 +85,7 @@ async fn a_live_query_leaves_its_rows_to_peek_and_no_subscription() {
     assert!(db.peek_query(query.into()).unwrap().is_none());
     let tape = Arc::new(Tape(Mutex::default()));
     let live = db.live_query(query.into(), tape.clone());
-    db.db.settle();
+    db.db.await_revision(db.db.revision_seq().unwrap());
     live.cancel();
     drop(live);
     let peeked = db.peek_query(query.into()).unwrap().unwrap();
@@ -93,7 +93,7 @@ async fn a_live_query_leaves_its_rows_to_peek_and_no_subscription() {
     assert_eq!(peeked.revision, tape.0.lock().unwrap()[0].revision);
     assert_eq!((db.subscription_census().subscriptions, db.subscription_census().observed_queries), (0, 0));
     db.update("Moment".into(), ids[0].clone(), r#"{"text":"zz"}"#.into(), "{}".into()).await.unwrap();
-    db.db.settle();
+    db.db.await_revision(db.db.revision_seq().unwrap());
     let after = db.peek_query(query.into()).unwrap().unwrap();
     assert!(after.revision > peeked.revision);
     assert_eq!(after.rows[2].cells, vec![Cell::Text { value: "zz".into() }]);
@@ -118,7 +118,7 @@ async fn a_live_window_puts_only_its_rows_on_the_wire_at_every_list_size() {
         let (db, ids) = with_rows(count).await;
         let tape = Arc::new(Tape(Mutex::default()));
         let live = db.live_window(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 10, tape.clone());
-        db.db.settle();
+        db.db.await_revision(db.db.revision_seq().unwrap());
         let first = tape.0.lock().unwrap()[0].clone();
         let edge = first.window.clone().unwrap();
         assert_eq!((first.rows.len(), first.full, edge.has_before, edge.has_after, edge.total), (10, true, true, false, Some(count as u32)));
@@ -127,7 +127,7 @@ async fn a_live_window_puts_only_its_rows_on_the_wire_at_every_list_size() {
             let id = ids[at].clone();
             async move {
                 db.update("Moment".into(), id, format!(r#"{{"text":"t{at:05}x"}}"#), "{}".into()).await.unwrap();
-                db.db.settle();
+                db.db.await_revision(db.db.revision_seq().unwrap());
             }
         };
         let calls = tape.0.lock().unwrap().len();
@@ -136,7 +136,7 @@ async fn a_live_window_puts_only_its_rows_on_the_wire_at_every_list_size() {
         update(count - 1).await;
         let inside = tape.0.lock().unwrap().last().unwrap().clone();
         live.expand_before(5);
-        db.db.settle();
+        db.db.await_revision(db.db.revision_seq().unwrap());
         let wider = tape.0.lock().unwrap().last().unwrap().clone();
         costs.push((inside.rows.len(), inside.full, wider.rows.len(), wider.window.unwrap().has_before));
     }

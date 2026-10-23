@@ -161,7 +161,7 @@ async fn second_load_more_during_flight_is_already_loading() {
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let sync = rig.sync.clone();
     let first = tokio::spawn(async move { sync.load_more("moments", "feed", &Map::new()).await });
-    settle().await;
+    let_tasks_run().await;
     let second = rig.sync.load_more("moments", "feed", &none()).await.unwrap();
     assert_eq!(second.status, LoadStatus::NoMorePages(LoadMoreVerdict::AlreadyLoading));
     assert_eq!(first.await.unwrap().unwrap().status, LoadStatus::Loaded);
@@ -177,7 +177,7 @@ async fn refresh_during_load_more_discards_the_late_page() {
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let sync = rig.sync.clone();
     let late = tokio::spawn(async move { sync.load_more("moments", "feed", &Map::new()).await });
-    settle().await;
+    let_tasks_run().await;
     rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     let outcome = late.await.unwrap().unwrap();
     assert_eq!(outcome.status, LoadStatus::Discarded(DiscardReason::ChainMoved));

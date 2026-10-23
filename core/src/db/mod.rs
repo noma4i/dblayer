@@ -56,6 +56,8 @@ mod invariants;
 #[cfg(test)]
 mod feed_tests;
 #[cfg(test)]
+mod await_revision_tests;
+#[cfg(test)]
 mod entity_pin_tests;
 #[cfg(test)]
 mod entity_delta_tests;

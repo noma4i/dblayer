@@ -59,7 +59,7 @@ async fn inv_loadm_05_going_offline_in_the_middle_of_a_flight_ends_it_with_a_net
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1").after(Duration::from_secs(30)));
     let state = feed_state(&rig);
     let flight = load(&rig, false);
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(state.borrow().phase, LoadPhase::Loading);
     rig.sync.set_online(false);
     assert_eq!(flight.await.unwrap().unwrap_err(), SyncError::Offline);
@@ -72,7 +72,7 @@ async fn inv_loadm_06_an_answer_that_arrives_after_the_caller_left_changes_nothi
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1").after(Duration::from_secs(30)));
     let state = feed_state(&rig);
     let flight = load(&rig, false);
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(state.borrow().phase, LoadPhase::Loading);
     flight.abort();
     let _ = flight.await;
@@ -95,9 +95,9 @@ async fn inv_loadm_07_a_window_with_two_flights_stays_loading_until_both_end_in_
         let state = feed_state(&rig);
         rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
         let refresh = load(&rig, true);
-        settle().await;
+        let_tasks_run().await;
         let more = load_more(&rig);
-        settle().await;
+        let_tasks_run().await;
         let running = |state: &RelationState| (state.phase, state.refreshing, state.fetching_more);
         assert_eq!(running(&state.borrow()), (LoadPhase::Loading, true, true), "{refresh_takes}/{more_takes}");
         let (first, second) = if refresh_takes < more_takes { (refresh, more) } else { (more, refresh) };
@@ -120,13 +120,13 @@ async fn inv_loadm_08_going_online_repeats_the_load_that_failed_by_network_once(
     assert_eq!(state.borrow().phase, LoadPhase::Failed);
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     rig.sync.set_online(true);
-    settle().await;
-    settle().await;
+    let_tasks_run().await;
+    let_tasks_run().await;
     assert_eq!(summary(&state.borrow()), (LoadPhase::Loaded, None));
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
     rig.sync.set_online(false);
     rig.sync.set_online(true);
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1, "a healed window is not loaded again");
 }
 
@@ -139,7 +139,7 @@ async fn inv_loadm_08_going_online_skips_a_window_nobody_observes_and_a_server_e
     assert!(rig.sync.load("moments", "history", &none(), LoadOptions::default()).await.is_err());
     drop(watched);
     rig.sync.set_online(true);
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(rig.transport.call_count("MomentsFeed") + rig.transport.call_count("MomentsHistory"), 0);
 
     let server = super::rig::rig();
@@ -148,7 +148,7 @@ async fn inv_loadm_08_going_online_skips_a_window_nobody_observes_and_a_server_e
     assert!(server.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
     server.sync.set_online(false);
     server.sync.set_online(true);
-    settle().await;
+    let_tasks_run().await;
     assert_eq!(server.transport.call_count("MomentsFeed"), 1);
     assert_eq!(summary(&state.borrow()), (LoadPhase::Failed, Some("server")));
 }
