@@ -52,7 +52,7 @@ async fn bridge_subscription_without_a_sync_tells_its_subscriber_in_the_snapshot
 struct Recorder(std::sync::Mutex<Vec<String>>);
 #[async_trait::async_trait]
 impl Transport for Recorder {
-    async fn open_cable(&self) -> Result<String, dblayer::ffi::DbError> { Err(dblayer::ffi::DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn open_cable(&self, _: Arc<dblayer::ffi::CableLease>) -> Result<(), dblayer::ffi::DbError> { Err(dblayer::ffi::DbError::Network { detail: "fake socket unavailable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), dblayer::ffi::DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<dblayer::ffi::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
@@ -61,7 +61,7 @@ impl Transport for Recorder {
         self.0.lock().unwrap().push(request.operation_name);
         Ok(r#"{"data":{"createMoment":{"id":"m1","text":"hello"}}}"#.into())
     }
-    async fn subscribe(&self, _: dblayer::ffi::TransportRequest, _: Arc<dblayer::ffi::SubscriptionSink>) -> Result<String, dblayer::ffi::DbError> { unreachable!() }
+    async fn subscribe(&self, _: dblayer::ffi::TransportRequest, _: Arc<dblayer::ffi::SubscriptionSink>) -> Result<(), dblayer::ffi::DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<dblayer::ffi::ByteProgress>) -> Result<dblayer::ffi::PutReply, dblayer::ffi::DbError> { unreachable!() }
 }

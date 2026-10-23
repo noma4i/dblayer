@@ -15,13 +15,13 @@ class ForeignFutureOutStructTest {
     private val sentinel: Byte = 0x5A
 
     private class Instant : Transport {
-        override suspend fun openCable(): String = ""
+        override suspend fun openCable(lease: CableLease) {}
         override suspend fun cableSend(token: String, text: String) {}
         override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
         override suspend fun cableClose(token: String) {}
         override suspend fun query(request: TransportRequest): String = "{}"
         override suspend fun mutate(request: TransportRequest): String = "{}"
-        override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink): String = ""
+        override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {}
         override fun unsubscribe(token: String) {}
         override suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray, progress: ByteProgress): PutReply = PutReply(200u, null)
     }

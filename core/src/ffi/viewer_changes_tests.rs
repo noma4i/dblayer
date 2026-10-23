@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::{Config, Database, DbError, LiveChange, QueryListener, SubscriptionSink, Transport, TransportRequest};
+use super::{CableLease, Config, Database, DbError, LiveChange, QueryListener, SubscriptionSink, Transport, TransportRequest};
 use crate::schema::{ChangeFeed, ChangeRead, Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
 
@@ -20,7 +20,7 @@ impl Recording {
 
 #[async_trait::async_trait]
 impl Transport for Recording {
-    async fn open_cable(&self) -> Result<String, DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
@@ -29,11 +29,12 @@ impl Transport for Recording {
         Ok(r#"{"data":{"moments":[{"id":"m1","text":"a"}]}}"#.into())
     }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<String, DbError> {
+    async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<(), DbError> {
         self.subscribed.lock().unwrap().push(request.operation_name.clone());
         self.subscribed_event.notify_one();
+        sink.opened(request.operation_name)?;
         sink.ready();
-        Ok(request.operation_name)
+        Ok(())
     }
     fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }

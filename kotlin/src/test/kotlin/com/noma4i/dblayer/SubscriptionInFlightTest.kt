@@ -16,16 +16,15 @@ class SubscriptionInFlightTest {
         mock.enqueue("documentBySlug", """{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}""")
         val entered = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
-        val finished = CompletableDeferred<Result<String>>()
+        val finished = CompletableDeferred<Result<Unit>>()
         val unsubscribed = CopyOnWriteArrayList<String>()
         val transport = object : Transport by mock {
-            override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink): String {
+            override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
                 entered.complete(Unit)
                 try {
                     gate.await()
-                    val token = mock.subscribe(request, sink)
-                    finished.complete(Result.success(token))
-                    return token
+                    mock.subscribe(request, sink)
+                    finished.complete(Result.success(Unit))
                 } catch (error: Throwable) {
                     finished.complete(Result.failure(error))
                     throw error

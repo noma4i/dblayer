@@ -51,26 +51,3 @@ awk -v launch="$launch" -v publish="$publish" '
 mv "$generated.published" "$generated"
 [ "$(grep -cxF -- '    job.start()' "$generated")" = 2 ] || { echo "$name: job.start() was not inserted twice into dblayer.kt" >&2; exit 1; }
 [ "$(grep -cxF -- '    uniffiOutDroppedCallback.setAutoWrite(false)' "$generated")" = 2 ] || { echo "$name: setAutoWrite(false) was not inserted twice into dblayer.kt" >&2; exit 1; }
-
-helper='internal inline fun<T, reified E: Throwable> uniffiTraitInterfaceCallAsyncWithError('
-dropped_param='    uniffiOutDroppedCallback: UniffiForeignFutureDroppedCallbackStruct,'
-success='        handleSuccess(callResult)'
-last_argument='                uniffiOutDroppedCallback'
-[ "$(grep -cxF -- "$helper" "$generated")" = 1 ] || { echo "$name: expected exactly 1 uniffiTraitInterfaceCallAsyncWithError helper in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
-[ "$(grep -cxF -- "$success" "$generated")" = 2 ] || { echo "$name: expected exactly 2 handleSuccess(callResult) lines in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
-awk -v helper="$helper" -v dropped_param="$dropped_param" -v success="$success" -v last_argument="$last_argument" '
-  /^internal inline fun/ { inside = ($0 == helper) }
-  /^    internal object `/ { handed = ($0 ~ /^    internal object `subscribe`:/) ? "unsubscribe" : (($0 ~ /^    internal object `openCable`:/) ? "cableClose" : "") }
-  inside && $0 == dropped_param { print; print "    crossinline giveBack: suspend (T) -> Unit = {},"; next }
-  inside && $0 == success {
-    print "        if (coroutineContext[kotlinx.coroutines.Job]!!.isCancelled) {"
-    print "            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { giveBack(callResult) }"
-    print "        }"
-    print; inside = 0; next
-  }
-  handed != "" && $0 == last_argument { print $0 ","; print "                giveBack = { issued -> uniffiObj.`" handed "`(issued) }"; next }
-  { print }' "$generated" > "$generated.returned"
-mv "$generated.returned" "$generated"
-[ "$(grep -cF -- 'crossinline giveBack: suspend (T) -> Unit = {},' "$generated")" = 1 ] || { echo "$name: the giveBack parameter was not inserted once into dblayer.kt" >&2; exit 1; }
-[ "$(grep -cF -- 'kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { giveBack(callResult) }' "$generated")" = 1 ] || { echo "$name: the giveBack call was not inserted once into dblayer.kt" >&2; exit 1; }
-[ "$(grep -cF -- 'giveBack = { issued -> uniffiObj.' "$generated")" = 2 ] || { echo "$name: giveBack was not passed to exactly 2 callbacks (subscribe, openCable) in dblayer.kt" >&2; exit 1; }

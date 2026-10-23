@@ -1,4 +1,7 @@
-use std::sync::Mutex;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::SubscriptionSink;
@@ -6,7 +9,7 @@ use crate::transport::{SubscriptionEvent, SubscriptionFailureKind};
 
 fn sink() -> (SubscriptionSink, mpsc::UnboundedReceiver<SubscriptionEvent>) {
     let (sender, receiver) = mpsc::unbounded_channel();
-    (SubscriptionSink { sender: Mutex::new(Some(sender)) }, receiver)
+    (SubscriptionSink::new(sender, |_| Box::pin(async {})), receiver)
 }
 
 #[test]
@@ -25,7 +28,7 @@ struct FakeSocket;
 
 #[async_trait::async_trait]
 impl super::Transport for FakeSocket {
-    async fn open_cable(&self) -> Result<String, super::DbError> { Ok("socket-1".into()) }
+    async fn open_cable(&self, lease: Arc<super::CableLease>) -> Result<(), super::DbError> { lease.opened("socket-1".into()) }
     async fn cable_send(&self, token: String, text: String) -> Result<(), super::DbError> {
         assert_eq!(token, "socket-1");
         assert_eq!(text, "ciphertext");
@@ -38,7 +41,7 @@ impl super::Transport for FakeSocket {
     async fn cable_close(&self, token: String) { assert_eq!(token, "socket-1"); }
     async fn query(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
-    async fn subscribe(&self, _: super::TransportRequest, _: std::sync::Arc<super::SubscriptionSink>) -> Result<String, super::DbError> { unreachable!() }
+    async fn subscribe(&self, _: super::TransportRequest, _: std::sync::Arc<super::SubscriptionSink>) -> Result<(), super::DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) { unreachable!() }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: std::sync::Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
 }
@@ -78,72 +81,147 @@ fn inv_panic_01_a_subscription_sink_survives_a_poisoned_lock() {
     sink.closed();
 }
 
-struct LateToken {
-    issued: Mutex<Vec<String>>,
-    handed_back: Mutex<Vec<String>>,
-    delivered: Mutex<std::sync::mpsc::Receiver<()>>,
-    announce: std::sync::mpsc::Sender<()>,
+type Script<A> = Box<dyn FnOnce(Arc<A>) -> Pin<Box<dyn Future<Output = Result<(), super::DbError>> + Send>> + Send>;
+
+struct Ordered {
+    subscribe: Mutex<Option<Script<super::SubscriptionSink>>>,
+    open: Mutex<Option<Script<super::CableLease>>>,
+    events: Mutex<std::sync::mpsc::Sender<String>>,
 }
 
-impl LateToken {
-    async fn issue(self: &std::sync::Arc<Self>) -> Result<String, super::DbError> {
-        let (reply, result) = tokio::sync::oneshot::channel();
-        let foreign = self.clone();
-        std::thread::spawn(move || {
-            crate::db::locked(&foreign.issued).push("token-1".into());
-            let _ = reply.send("token-1".to_string());
-            let _ = foreign.announce.send(());
-        });
-        result.await.map_err(|_| super::DbError::Interrupted { detail: "reply dropped".into() })
-    }
+impl Ordered {
+    fn say(&self, event: String) { let _ = crate::db::locked(&self.events).send(event); }
 }
 
 #[async_trait::async_trait]
-impl super::Transport for std::sync::Arc<LateToken> {
-    async fn open_cable(&self) -> Result<String, super::DbError> { self.issue().await }
+impl super::Transport for Ordered {
+    async fn open_cable(&self, lease: Arc<super::CableLease>) -> Result<(), super::DbError> {
+        let script = crate::db::locked(&self.open).take().expect("open script");
+        script(lease).await
+    }
     async fn cable_send(&self, _: String, _: String) -> Result<(), super::DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, token: String) {
-        crate::db::locked(&self.handed_back).push(token);
-        let _ = self.announce.send(());
-    }
+    async fn cable_close(&self, token: String) { self.say(format!("close:{token}")); }
     async fn query(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
-    async fn subscribe(&self, _: super::TransportRequest, _: std::sync::Arc<super::SubscriptionSink>) -> Result<String, super::DbError> { self.issue().await }
-    fn unsubscribe(&self, token: String) { crate::db::locked(&self.handed_back).push(token); }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: std::sync::Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+    async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), super::DbError> {
+        let script = crate::db::locked(&self.subscribe).take().expect("subscribe script");
+        script(sink).await
+    }
+    fn unsubscribe(&self, token: String) { self.say(format!("unsubscribe:{token}")); }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
 }
 
-fn late_token() -> (std::sync::Arc<LateToken>, super::ForeignTransport) {
-    let (announce, delivered) = std::sync::mpsc::channel();
-    let foreign = std::sync::Arc::new(LateToken { issued: Mutex::new(Vec::new()), handed_back: Mutex::new(Vec::new()), delivered: Mutex::new(delivered), announce });
-    let transport = super::ForeignTransport(std::sync::Arc::new(foreign.clone()));
-    (foreign, transport)
+fn boxed(work: impl Future<Output = Result<(), super::DbError>> + Send + 'static) -> Pin<Box<dyn Future<Output = Result<(), super::DbError>> + Send>> { Box::pin(work) }
+
+fn ordered(subscribe: Option<Script<super::SubscriptionSink>>, open: Option<Script<super::CableLease>>) -> (super::ForeignTransport, std::sync::mpsc::Receiver<String>) {
+    let (events, heard) = std::sync::mpsc::channel();
+    let transport = Ordered { subscribe: Mutex::new(subscribe), open: Mutex::new(open), events: Mutex::new(events) };
+    (super::ForeignTransport(Arc::new(transport)), heard)
+}
+
+fn heard(events: &std::sync::mpsc::Receiver<String>) -> String { events.recv_timeout(Duration::from_secs(10)).expect("the transport was told nothing") }
+
+fn request() -> crate::transport::GraphQLRequest { crate::transport::GraphQLRequest::new("subscription s { s }", "s", serde_json::json!({})) }
+
+fn pending<F: Future>(call: &mut Pin<Box<F>>) -> bool {
+    call.as_mut().poll(&mut std::task::Context::from_waker(std::task::Waker::noop())).is_pending()
+}
+
+fn opened_then_stuck() -> Script<super::SubscriptionSink> {
+    Box::new(|sink| boxed(async move { sink.opened("t1".into())?; std::future::pending::<()>().await; Ok(()) }))
+}
+
+fn opened_after_a_gate() -> (Script<super::SubscriptionSink>, std::sync::mpsc::Sender<()>) {
+    let (go, gate) = std::sync::mpsc::channel::<()>();
+    let script: Script<super::SubscriptionSink> = Box::new(move |sink| {
+        std::thread::spawn(move || { gate.recv().unwrap(); sink.opened("t1".into()).unwrap(); });
+        boxed(async { std::future::pending::<()>().await; Ok(()) })
+    });
+    (script, go)
 }
 
 #[test]
-fn a_token_issued_before_the_core_dropped_the_subscribe_call_is_handed_back() {
+fn a_subscription_token_opened_before_the_call_is_dropped_is_unsubscribed() {
     use crate::transport::Transport;
-    use std::future::Future;
-    let (foreign, transport) = late_token();
-    let mut call = Box::pin(transport.subscribe(crate::transport::GraphQLRequest::new("subscription s { s }", "s", serde_json::json!({}))));
-    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-    assert!(call.as_mut().poll(&mut context).is_pending());
-    crate::db::locked(&foreign.delivered).recv().unwrap();
+    let (transport, events) = ordered(Some(opened_then_stuck()), None);
+    let mut call = Box::pin(transport.subscribe(request()));
+    assert!(pending(&mut call));
     drop(call);
-    assert_eq!(*crate::db::locked(&foreign.issued), *crate::db::locked(&foreign.handed_back));
+    assert_eq!(heard(&events), "unsubscribe:t1");
 }
 
 #[test]
-fn a_cable_token_issued_before_the_core_dropped_the_open_call_is_closed() {
+fn a_subscription_token_opened_after_the_call_was_dropped_is_unsubscribed() {
     use crate::transport::Transport;
-    use std::future::Future;
-    let (foreign, transport) = late_token();
+    let (script, go) = opened_after_a_gate();
+    let (transport, events) = ordered(Some(script), None);
+    let mut call = Box::pin(transport.subscribe(request()));
+    assert!(pending(&mut call));
+    drop(call);
+    go.send(()).unwrap();
+    assert_eq!(heard(&events), "unsubscribe:t1");
+}
+
+#[tokio::test]
+async fn a_cancelled_subscription_unsubscribes_its_token() {
+    use crate::transport::Transport;
+    let (transport, events) = ordered(Some(Box::new(|sink| boxed(async move { sink.opened("t1".into())?; sink.ready(); Ok(()) }))), None);
+    let subscription = transport.subscribe(request()).await.unwrap();
+    drop(subscription);
+    assert_eq!(heard(&events), "unsubscribe:t1");
+}
+
+#[tokio::test]
+async fn a_call_that_fails_after_opened_still_unsubscribes_its_token() {
+    use crate::transport::Transport;
+    let (transport, events) = ordered(Some(Box::new(|sink| boxed(async move { sink.opened("t1".into())?; Err(super::DbError::Network { detail: "refused".into() }) }))), None);
+    assert!(transport.subscribe(request()).await.is_err());
+    assert_eq!(heard(&events), "unsubscribe:t1");
+}
+
+#[tokio::test]
+async fn a_call_that_finishes_without_opened_fails_and_unsubscribes_a_late_token() {
+    use crate::transport::Transport;
+    let (kept, sinks) = std::sync::mpsc::channel();
+    let (transport, events) = ordered(Some(Box::new(move |sink| boxed(async move { kept.send(sink).unwrap(); Ok(()) }))), None);
+    assert!(transport.subscribe(request()).await.is_err());
+    sinks.recv().unwrap().opened("late".into()).unwrap();
+    assert_eq!(heard(&events), "unsubscribe:late");
+}
+
+#[test]
+fn a_cable_token_opened_before_the_call_is_dropped_is_closed() {
+    use crate::transport::Transport;
+    let script: Script<super::CableLease> = Box::new(|lease| boxed(async move { lease.opened("c1".into())?; std::future::pending::<()>().await; Ok(()) }));
+    let (transport, events) = ordered(None, Some(script));
     let mut call = Box::pin(transport.open_cable());
-    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-    assert!(call.as_mut().poll(&mut context).is_pending());
-    crate::db::locked(&foreign.delivered).recv().unwrap();
+    assert!(pending(&mut call));
     drop(call);
-    crate::db::locked(&foreign.delivered).recv_timeout(std::time::Duration::from_secs(10)).unwrap();
-    assert_eq!(*crate::db::locked(&foreign.issued), *crate::db::locked(&foreign.handed_back));
+    assert_eq!(heard(&events), "close:c1");
+}
+
+#[test]
+fn a_cable_token_opened_after_the_call_was_dropped_is_closed() {
+    use crate::transport::Transport;
+    let (go, gate) = std::sync::mpsc::channel::<()>();
+    let script: Script<super::CableLease> = Box::new(move |lease| {
+        std::thread::spawn(move || { gate.recv().unwrap(); lease.opened("c1".into()).unwrap(); });
+        boxed(async { std::future::pending::<()>().await; Ok(()) })
+    });
+    let (transport, events) = ordered(None, Some(script));
+    let mut call = Box::pin(transport.open_cable());
+    assert!(pending(&mut call));
+    drop(call);
+    go.send(()).unwrap();
+    assert_eq!(heard(&events), "close:c1");
+}
+
+#[tokio::test]
+async fn a_cable_socket_dropped_without_close_closes_its_token() {
+    use crate::transport::Transport;
+    let (transport, events) = ordered(None, Some(Box::new(|lease| boxed(async move { lease.opened("c1".into()) }))));
+    let socket = transport.open_cable().await.unwrap();
+    drop(socket);
+    assert_eq!(heard(&events), "close:c1");
 }

@@ -51,10 +51,10 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
     private val sentFrames = CopyOnWriteArrayList<Pair<String, String>>()
     val cableFrames: List<Pair<String, String>> get() { failTestThread(); return sentFrames.toList() }
 
-    override suspend fun openCable(): String {
+    override suspend fun openCable(lease: CableLease) {
         val token = UUID.randomUUID().toString()
         cableEvents[token] = Channel(Channel.UNLIMITED)
-        return token
+        lease.opened(token)
     }
 
     override suspend fun cableSend(token: String, text: String) {
@@ -98,12 +98,12 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
 
     override suspend fun mutate(request: TransportRequest): String = answer(request)
 
-    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink): String {
+    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
         recorded.add(request)
         sinks[request.operationName] = sink
         issuedTokens.add(request.operationName)
+        sink.opened(request.operationName)
         sink.ready()
-        return request.operationName
     }
 
     override fun unsubscribe(token: String) {

@@ -20,7 +20,7 @@ pub(super) struct Counting {
 
 #[async_trait::async_trait]
 impl Transport for Counting {
-    async fn open_cable(&self) -> Result<String, DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn open_cable(&self, _: Arc<super::CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
@@ -32,10 +32,11 @@ impl Transport for Counting {
         Ok(r#"{"data":{"moments":[{"id":"m1","text":"a"}]}}"#.into())
     }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<String, DbError> {
+    async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), DbError> {
+        sink.opened("notice".into())?;
         sink.ready();
         if let Some(sender) = &self.subscriptions { sender.send(sink).unwrap(); }
-        Ok("notice".into())
+        Ok(())
     }
     fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }

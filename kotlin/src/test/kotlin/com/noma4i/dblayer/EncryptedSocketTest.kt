@@ -27,7 +27,7 @@ class EncryptedSocketTest {
                 }))
                 val endpoint = server.url("/api/graphql").toString()
                 val transport: Transport = OkHttpTransport(endpoint, cablePath = "/api/cable")
-                val token = transport.openCable()
+                val token = transport.openedCable()
                 try {
                     assertEquals(EncryptedSocketEvent.Text("server challenge"), transport.cableNext(token))
                     transport.cableSend(token, "encrypted hello")
@@ -51,7 +51,7 @@ class EncryptedSocketTest {
                 }
             }))
             val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
-            val token = transport.openCable()
+            val token = transport.openedCable()
             assertEquals(EncryptedSocketEvent.Closed(4401u, "UNAUTHENTICATED"), transport.cableNext(token))
             assertNull(transport.cableNext(token))
             transport.cableClose(token)
@@ -73,7 +73,7 @@ class EncryptedSocketTest {
                     }
                 }))
                 val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
-                val token = transport.openCable()
+                val token = transport.openedCable()
                 val event = transport.cableNext(token) as EncryptedSocketEvent.Closed
                 assertEquals(if (binary) 1003.toUShort() else 1006.toUShort(), event.code)
                 assertTrue(event.reason.isNotBlank())
@@ -99,8 +99,8 @@ class EncryptedSocketTest {
                 }
             }))
             val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
-            val first = transport.openCable()
-            val second = transport.openCable()
+            val first = transport.openedCable()
+            val second = transport.openedCable()
             assertNotEquals(first, second)
             val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.cableNext(first) }
             transport.cableClose(first)
@@ -114,8 +114,8 @@ class EncryptedSocketTest {
     @Test
     fun mockConnectionsHaveIndependentLifetimes() = bounded {
         val transport = MockTransport()
-        val first = transport.openCable()
-        val second = transport.openCable()
+        val first = transport.openedCable()
+        val second = transport.openedCable()
         assertNotEquals(first, second)
         transport.cableSend(second, "hello")
         val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.cableNext(first) }
@@ -143,7 +143,7 @@ class EncryptedSocketTest {
             server.enqueue(MockResponse().setResponseCode(403))
             val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
             try {
-                transport.openCable()
+                transport.openedCable()
                 fail("expected HTTP refusal")
             } catch (error: DbException.Http) {
                 assertEquals(403.toUShort(), error.status)

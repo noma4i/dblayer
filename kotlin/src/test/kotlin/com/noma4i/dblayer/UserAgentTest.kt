@@ -13,9 +13,11 @@ class UserAgentTest {
     }
 
     private class Sink : SubscriptionSink(NoHandle) {
+        @Volatile var token: String? = null
         override fun ready() {}
         override fun failed(error: DbException) {}
         override fun closed() {}
+        override fun opened(token: String) { this.token = token }
     }
 
     @Test
@@ -35,11 +37,12 @@ class UserAgentTest {
                         "encrypted" -> OkHttpEncryptedHttp(origin, client).post("/api/session", "jwe")
                         "graphql" -> runCatching { transport.query(operation) }
                         "put" -> transport.put(origin, headers, byteArrayOf(1, 2), Progress())
-                        "encryptedSocket" -> runCatching { transport.openCable() }
+                        "encryptedSocket" -> runCatching { transport.openCable(RecordingLease()) }
                         "graphqlSocket" -> {
-                            val token = transport.subscribe(operation, Sink())
+                            val sink = Sink()
+                            transport.subscribe(operation, sink)
                             eventually("GraphQL handshake received") { server.requestCount == 1 }
-                            transport.unsubscribe(token)
+                            transport.unsubscribe(requireNotNull(sink.token))
                         }
                         else -> error("unexpected request kind")
                     }

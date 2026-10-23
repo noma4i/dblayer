@@ -1,4 +1,5 @@
 mod database;
+mod lease;
 mod open_slot;
 mod opening;
 mod changes;
@@ -36,7 +37,7 @@ pub use live::{LiveChange, LoadMoreResult, LivePhase, LiveSubscription, QueryLis
 pub use retention::{RetentionChange, RetentionPool};
 pub use state::StateSubscription;
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
-pub use transport::{ByteProgress, EncryptedSocketEvent, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
+pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
 
 #[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum DbError {

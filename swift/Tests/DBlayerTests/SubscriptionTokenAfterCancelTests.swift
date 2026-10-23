@@ -33,23 +33,31 @@ private final class CancellationEvent: @unchecked Sendable {
   }
 }
 
-private final class ReturnsAfterDrop: Transport, @unchecked Sendable {
+private enum Order {
+  case openedBeforeTheDrop
+  case openedAfterTheDrop
+}
+
+private final class OrderedSubscribe: Transport, @unchecked Sendable {
   let mock = MockTransport()
   let box = DatabaseBox()
+  let order: Order
   private let lock = NSLock()
   private var issuedTokens: [String] = []
   private var revoked: [String] = []
   var issued: [String] { lock.withLock { issuedTokens } }
   var revokedTokens: [String] { lock.withLock { revoked } }
-  func openCable() async throws -> String { try await mock.openCable() }
+  init(_ order: Order) { self.order = order }
+  func openCable(lease: CableLease) async throws { try await mock.openCable(lease: lease) }
   func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
   func cableClose(token: String) async { await mock.cableClose(token: token) }
   func query(request: TransportRequest) async throws -> String { try await mock.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await mock.mutate(request: request) }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws -> String {
-    let token = try await mock.subscribe(request: request, sink: sink)
+  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
+    let token = "token-\(request.operationName)"
     lock.withLock { issuedTokens.append(token) }
+    if order == .openedBeforeTheDrop { try sink.opened(token: token) }
     box.release()
     let dropped = CancellationEvent()
     await withTaskCancellationHandler {
@@ -57,7 +65,7 @@ private final class ReturnsAfterDrop: Transport, @unchecked Sendable {
     } onCancel: {
       dropped.fire()
     }
-    return token
+    if order == .openedAfterTheDrop { try sink.opened(token: token) }
   }
   func unsubscribe(token: String) {
     lock.withLock { revoked.append(token) }
@@ -73,14 +81,17 @@ private final class IgnoredChanges: QueryListener, @unchecked Sendable {
 }
 
 struct SubscriptionTokenAfterCancelTests {
-  @Test func aTokenReturnedAfterTheCoreDroppedTheCallIsHandedBack() async throws {
-    let transport = ReturnsAfterDrop()
+  private func handedBack(_ order: Order) async throws {
+    let transport = OrderedSubscribe(order)
     transport.mock.enqueue("documentBySlug", reply: #"{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}"#)
     transport.box.hold(try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport))
     try transport.box.current?.registerOperations(defsJson: #"[{"name":"documentBySlug","document":"query documentBySlug($slug: String!, $source: String!) { documentBySlug(slug: $slug, source: $source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated($slug: String!, $source: String!) { documentUpdated(slug: $slug, source: $source) { id slug } }","rootPath":"documentUpdated"}]"#)
     _ = transport.box.current?.liveQuery(queryJson: #"{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"#, listener: IgnoredChanges())
-    await eventually("the call returns its token") { transport.issued.count == 1 }
+    await eventually("the call issues its token") { transport.issued.count == 1 }
     await eventually("the token is handed back") { transport.revokedTokens.count == 1 }
     #expect(transport.revokedTokens == transport.issued)
   }
+
+  @Test func aTokenOpenedBeforeTheCoreDroppedTheCallIsHandedBack() async throws { try await handedBack(.openedBeforeTheDrop) }
+  @Test func aTokenOpenedAfterTheCoreDroppedTheCallIsHandedBack() async throws { try await handedBack(.openedAfterTheDrop) }
 }

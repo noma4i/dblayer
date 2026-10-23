@@ -4,6 +4,7 @@ import com.noma4i.dblayer.models.modelsJSON
 import java.lang.ref.PhantomReference
 import java.lang.ref.ReferenceQueue
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -17,15 +18,16 @@ class SubscriptionTokenTest {
         val issued = CopyOnWriteArrayList<String>()
         val revoked = CopyOnWriteArrayList<String>()
         val unknown = CopyOnWriteArrayList<String>()
+        val sequence = AtomicInteger()
         val queue = ReferenceQueue<Any>()
         val watched = CopyOnWriteArrayList<PhantomReference<Any>>()
         val transport = object : Transport by mock {
-            override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink): String {
-                val token = "token-${issued.size}-${request.operationName}-${"x".repeat(40)}"
+            override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
+                val token = "token-${sequence.getAndIncrement()}-${request.operationName}-${"x".repeat(40)}"
                 issued.add(token)
                 watched.add(PhantomReference<Any>(sink, queue))
+                sink.opened(token)
                 sink.ready()
-                return token
             }
             override fun unsubscribe(token: String) {
                 if (token !in issued) unknown.add(token)

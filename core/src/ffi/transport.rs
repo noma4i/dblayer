@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use crate::transport as core;
+use super::lease::TokenLease;
 use super::DbError;
 
 #[derive(Clone, uniffi::Record)]
@@ -24,13 +25,13 @@ impl From<core::GraphQLRequest> for TransportRequest {
 #[uniffi::export(rust, foreign)]
 #[async_trait]
 pub trait Transport: Send + Sync {
-    async fn open_cable(&self) -> Result<String, DbError>;
+    async fn open_cable(&self, lease: Arc<CableLease>) -> Result<(), DbError>;
     async fn cable_send(&self, token: String, text: String) -> Result<(), DbError>;
     async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent>;
     async fn cable_close(&self, token: String);
     async fn query(&self, request: TransportRequest) -> Result<String, DbError>;
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError>;
-    async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<String, DbError>;
+    async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<(), DbError>;
     fn unsubscribe(&self, token: String);
     async fn put(&self, url: String, headers: HashMap<String, String>, bytes: Vec<u8>, progress: Arc<ByteProgress>) -> Result<PutReply, DbError>;
 }
@@ -41,7 +42,19 @@ pub enum EncryptedSocketEvent {
     Closed { code: u16, reason: String },
 }
 
-struct ForeignSocket { transport: Arc<dyn Transport>, token: String }
+#[derive(uniffi::Object)]
+pub struct CableLease { lease: TokenLease }
+
+#[uniffi::export]
+impl CableLease {
+    pub fn opened(&self, token: String) -> Result<(), DbError> { self.lease.opened(token) }
+}
+
+struct ForeignSocket { transport: Arc<dyn Transport>, lease: Arc<CableLease>, token: String }
+
+impl Drop for ForeignSocket {
+    fn drop(&mut self) { self.lease.lease.abandon(); }
+}
 
 #[async_trait]
 impl core::CableSocket for ForeignSocket {
@@ -52,11 +65,13 @@ impl core::CableSocket for ForeignSocket {
             EncryptedSocketEvent::Closed { code, reason } => core::SocketEvent::Closed { code, reason },
         })
     }
-    async fn close(&self) { self.transport.cable_close(self.token.clone()).await; }
+    async fn close(&self) {
+        if let Some(token) = self.lease.lease.take_open() { self.transport.cable_close(token).await; }
+    }
 }
 
 #[derive(uniffi::Object)]
-pub struct SubscriptionSink { sender: Mutex<Option<mpsc::UnboundedSender<core::SubscriptionEvent>>> }
+pub struct SubscriptionSink { sender: Mutex<Option<mpsc::UnboundedSender<core::SubscriptionEvent>>>, lease: TokenLease }
 
 #[uniffi::export]
 impl SubscriptionSink {
@@ -75,9 +90,17 @@ impl SubscriptionSink {
         self.send(core::SubscriptionEvent::Failed(core::SubscriptionFailure::from_error(transport_error(error))));
     }
     pub fn closed(&self) { crate::db::locked(&self.sender).take(); }
+    pub fn opened(&self, token: String) -> Result<(), DbError> { self.lease.opened(token) }
 }
 
 impl SubscriptionSink {
+    fn new(sender: mpsc::UnboundedSender<core::SubscriptionEvent>, release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
+        Self { sender: Mutex::new(Some(sender)), lease: TokenLease::new(release) }
+    }
+    fn abandon(&self) {
+        self.lease.abandon();
+        crate::db::locked(&self.sender).take();
+    }
     fn send(&self, event: core::SubscriptionEvent) {
         if let Some(sender) = crate::db::locked(&self.sender).as_ref() { let _ = sender.send(event); }
     }
@@ -113,30 +136,32 @@ impl OnlineSink {
 
 pub(super) struct ForeignTransport(pub Arc<dyn Transport>);
 
-struct Issuing<'a, T> {
-    call: Pin<Box<dyn Future<Output = Result<T, DbError>> + Send + 'a>>,
-    hand_back: Option<Box<dyn FnOnce(T) + Send + 'a>>,
+struct Calling<'a> {
+    call: Pin<Box<dyn Future<Output = Result<(), DbError>> + Send + 'a>>,
+    abandon: Option<Box<dyn FnOnce() + Send + 'a>>,
 }
 
-impl<'a, T> Issuing<'a, T> {
-    fn new(call: Pin<Box<dyn Future<Output = Result<T, DbError>> + Send + 'a>>, hand_back: impl FnOnce(T) + Send + 'a) -> Self {
-        Self { call, hand_back: Some(Box::new(hand_back)) }
+impl<'a> Calling<'a> {
+    fn new(call: Pin<Box<dyn Future<Output = Result<(), DbError>> + Send + 'a>>, abandon: impl FnOnce() + Send + 'a) -> Self {
+        Self { call, abandon: Some(Box::new(abandon)) }
     }
 }
 
-impl<T> Future for Issuing<'_, T> {
-    type Output = Result<T, DbError>;
+impl Future for Calling<'_> {
+    type Output = Result<(), DbError>;
     fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let polled = self.call.as_mut().poll(context);
-        if polled.is_ready() { self.hand_back = None; }
+        if let Poll::Ready(result) = &polled {
+            let abandon = self.abandon.take();
+            if let (Err(_), Some(abandon)) = (result, abandon) { abandon(); }
+        }
         polled
     }
 }
 
-impl<T> Drop for Issuing<'_, T> {
+impl Drop for Calling<'_> {
     fn drop(&mut self) {
-        let Some(hand_back) = self.hand_back.take() else { return };
-        if let Poll::Ready(Ok(issued)) = self.call.as_mut().poll(&mut Context::from_waker(Waker::noop())) { hand_back(issued); }
+        if let Some(abandon) = self.abandon.take() { abandon(); }
     }
 }
 
@@ -158,10 +183,16 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 impl core::Transport for ForeignTransport {
     async fn open_cable(&self) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
         let transport = self.0.clone();
-        let token = Issuing::new(self.0.open_cable(), move |token| {
-            if let Ok(executor) = super::database::executor() { executor.spawn(async move { transport.cable_close(token).await }); }
-        }).await.map_err(transport_error)?;
-        Ok(Arc::new(ForeignSocket { token, transport: self.0.clone() }))
+        let lease = Arc::new(CableLease { lease: TokenLease::new(move |token| {
+            let transport = transport.clone();
+            Box::pin(async move { transport.cable_close(token).await })
+        }) });
+        let abandoned = lease.clone();
+        Calling::new(self.0.open_cable(lease.clone()), move || abandoned.lease.abandon()).await.map_err(transport_error)?;
+        let Some(token) = lease.lease.token() else {
+            return Err(transport_error(DbError::Invalid { detail: "open_cable finished without opened".into() }));
+        };
+        Ok(Arc::new(ForeignSocket { transport: self.0.clone(), lease, token }))
     }
     async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         let json = self.0.query(request.into()).await.map_err(transport_error)?;
@@ -173,11 +204,18 @@ impl core::Transport for ForeignTransport {
     }
     async fn subscribe(&self, request: core::GraphQLRequest) -> Result<core::Subscription, core::TransportError> {
         let (sender, receiver) = mpsc::unbounded_channel();
-        let sink = Arc::new(SubscriptionSink { sender: Mutex::new(Some(sender)) });
         let transport = self.0.clone();
-        let returned = (transport.clone(), sink.clone());
-        let token = Issuing::new(self.0.subscribe(request.into(), sink.clone()), move |token| { returned.0.unsubscribe(token); returned.1.closed(); }).await.map_err(transport_error)?;
-        Ok(core::Subscription::new(receiver, core::SubscriptionHandle::new(move || { transport.unsubscribe(token.clone()); sink.closed(); })))
+        let sink = Arc::new(SubscriptionSink::new(sender, move |token| {
+            let transport = transport.clone();
+            Box::pin(async move { transport.unsubscribe(token) })
+        }));
+        let abandoned = sink.clone();
+        Calling::new(self.0.subscribe(request.into(), sink.clone()), move || abandoned.abandon()).await.map_err(transport_error)?;
+        if sink.lease.token().is_none() {
+            sink.abandon();
+            return Err(transport_error(DbError::Invalid { detail: "subscribe finished without opened".into() }));
+        }
+        Ok(core::Subscription::new(receiver, core::SubscriptionHandle::new(move || sink.abandon())))
     }
     async fn put(&self, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });

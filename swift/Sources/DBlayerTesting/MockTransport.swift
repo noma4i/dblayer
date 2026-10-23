@@ -45,7 +45,7 @@ public final class MockTransport: Transport, @unchecked Sendable {
 
   deinit { reports.finish() }
 
-  public func openCable() async throws -> String { throw DbError.Invalid(detail: "MockTransport does not support WebSocket connections") }
+  public func openCable(lease: CableLease) async throws { throw DbError.Invalid(detail: "MockTransport does not support WebSocket connections") }
   public func cableSend(token: String, text: String) async throws { throw DbError.Interrupted(detail: "mock cable socket is closed") }
   public func cableNext(token: String) async -> EncryptedSocketEvent? { nil }
   public func cableClose(token: String) async {}
@@ -72,10 +72,10 @@ public final class MockTransport: Transport, @unchecked Sendable {
   public func query(request: TransportRequest) async throws -> String { try await answer(request) }
   public func mutate(request: TransportRequest) async throws -> String { try await answer(request) }
 
-  public func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws -> String {
+  public func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
     lock.withLock { recorded.append(request); sinks[request.operationName] = sink; issuedTokens.insert(request.operationName) }
+    try sink.opened(token: request.operationName)
     sink.ready()
-    return request.operationName
   }
 
   public func unsubscribe(token: String) {

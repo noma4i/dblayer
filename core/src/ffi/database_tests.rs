@@ -7,7 +7,7 @@ struct Plain;
 
 #[async_trait::async_trait]
 impl Transport for Plain {
-    async fn open_cable(&self) -> Result<String, DbError> { unreachable!() }
+    async fn open_cable(&self, _: Arc<super::CableLease>) -> Result<(), DbError> { unreachable!() }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) { unreachable!() }
@@ -18,7 +18,7 @@ impl Transport for Plain {
         Ok(r#"{"data":{"greeting":"Hello Ada"}}"#.into())
     }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<String, DbError> { unreachable!() }
+    async fn subscribe(&self, _: TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) { unreachable!() }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }

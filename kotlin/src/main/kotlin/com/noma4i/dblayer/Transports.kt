@@ -18,7 +18,7 @@ class OkHttpTransport(
 ) : Transport {
     private val sockets = ConcurrentHashMap<String, okhttp3.WebSocket>()
     private val encryptedSocket = OkHttpEncryptedSocket(endpoint, client, cablePath) { headers().toHeaders()["User-Agent"] }
-    override suspend fun openCable(): String = encryptedSocket.open()
+    override suspend fun openCable(lease: CableLease) = lease.opened(encryptedSocket.open())
     override suspend fun cableSend(token: String, text: String) = encryptedSocket.send(token, text)
     override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket.next(token)
     override suspend fun cableClose(token: String) = encryptedSocket.close(token)
@@ -48,7 +48,7 @@ class OkHttpTransport(
 
     override suspend fun mutate(request: TransportRequest): String = post(request, GraphQLOperationKind.Mutation)
 
-    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink): String {
+    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
         val token = UUID.randomUUID().toString()
         val url = endpoint.replaceFirst("https", "wss").replaceFirst("http", "ws")
         val payload = body(request)
@@ -88,7 +88,7 @@ class OkHttpTransport(
             },
         )
         sockets[token] = socket
-        return token
+        sink.opened(token)
     }
 
     override fun unsubscribe(token: String) {

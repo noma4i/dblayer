@@ -32,8 +32,10 @@ The platform passes WebSocket text through `openCable`, `cableSend`, `cableNext`
 `DB.open` and `DBlayer.open` choose a platform transport when `transport` is omitted.
 Swift uses `URLSessionWebSocketTask`. Kotlin uses OkHttp WebSocket.
 Both combine `EncryptedConfig.endpoints.cable` with `EncryptedConfig.origin`: HTTPS becomes WSS, and development HTTP becomes WS.
-Every open returns a new token. Calls for that token send and receive text without interpreting the encrypted payload.
+Every open creates a new token and reports it with `opened` on the lease that `openCable` receives. `subscribe` reports its token with `opened` on its sink. Call `opened` once, after the socket exists and before the call finishes.
+Calls for that token send and receive text without interpreting the encrypted payload.
 `cableClose` removes the token and cancels its socket. Further reads return no event.
+The core owns the token from `opened` and closes it exactly once with `cableClose` or `unsubscribe`, whether the call finished, failed or was dropped. A token reported after the core dropped the call is closed at once. A second `opened` on the same lease throws and closes the new token.
 
 | Socket result | Result for Rust |
 | --- | --- |

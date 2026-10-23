@@ -12,13 +12,13 @@ private final class HeldSubscribe: Transport, @unchecked Sendable {
   var hasEntered: Bool { lock.withLock { entered } }
   var wasCancelled: Bool { lock.withLock { cancelled } }
   var revokedTokens: [String] { lock.withLock { revoked } }
-  func openCable() async throws -> String { try await mock.openCable() }
+  func openCable(lease: CableLease) async throws { try await mock.openCable(lease: lease) }
   func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
   func cableClose(token: String) async { await mock.cableClose(token: token) }
   func query(request: TransportRequest) async throws -> String { try await mock.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await mock.mutate(request: request) }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws -> String {
+  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
     lock.withLock { entered = true }
     do {
       try await parkUntilCancelled()
@@ -26,7 +26,7 @@ private final class HeldSubscribe: Transport, @unchecked Sendable {
       lock.withLock { cancelled = true }
       throw error
     }
-    return try await mock.subscribe(request: request, sink: sink)
+    try await mock.subscribe(request: request, sink: sink)
   }
   func unsubscribe(token: String) {
     lock.withLock { revoked.append(token) }

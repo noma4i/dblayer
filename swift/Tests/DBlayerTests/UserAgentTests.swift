@@ -8,9 +8,13 @@ private final class AgentProgress: ByteProgress, @unchecked Sendable {
 }
 
 private final class AgentSink: SubscriptionSink, @unchecked Sendable {
+  private let lock = NSLock()
+  private var opened: String?
+  var token: String? { lock.withLock { opened } }
   override func ready() {}
   override func failed(error: DbError) {}
   override func closed() {}
+  override func opened(token: String) throws { lock.withLock { opened = token } }
 }
 
 struct UserAgentTests {
@@ -32,11 +36,12 @@ struct UserAgentTests {
     case "put":
       _ = try await transport.put(url: origin.absoluteString, headers: headers, bytes: Data([1, 2]), progress: AgentProgress(noHandle: .init()))
     case "encryptedSocket":
-      _ = try? await transport.openCable()
+      _ = try? await transport.openCable(lease: RecordingLease(noHandle: .init()))
     case "graphqlSocket":
-      let token = try? await transport.subscribe(request: operation, sink: AgentSink(noHandle: .init()))
+      let sink = AgentSink(noHandle: .init())
+      _ = try? await transport.subscribe(request: operation, sink: sink)
       await eventually("GraphQL handshake received") { !server.requests.isEmpty }
-      if let token { transport.unsubscribe(token: token) }
+      if let token = sink.token { transport.unsubscribe(token: token) }
     default: break
     }
     let request = try #require(server.requests.first)

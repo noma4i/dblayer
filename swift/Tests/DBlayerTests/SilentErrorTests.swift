@@ -61,6 +61,7 @@ private final class IdleSink: SubscriptionSink, @unchecked Sendable {
   override func ready() {}
   override func failed(error: DbError) {}
   override func closed() {}
+  override func opened(token: String) throws {}
 }
 
 struct SubscribeRequestTests {

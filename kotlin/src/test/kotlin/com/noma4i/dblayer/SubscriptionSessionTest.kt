@@ -13,9 +13,9 @@ class SubscriptionSessionTest {
         val mock = MockTransport()
         val subscription = CompletableDeferred<SubscriptionSink>()
         val transport = object : Transport by mock {
-            override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink): String {
+            override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
                 subscription.complete(sink)
-                return mock.subscribe(request, sink)
+                mock.subscribe(request, sink)
             }
         }
         val database = openDatabase(Config(null, null, 8u), modelsJSON, transport)

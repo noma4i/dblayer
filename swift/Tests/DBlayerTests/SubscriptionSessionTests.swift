@@ -9,15 +9,15 @@ private final class SessionSubscriptions: Transport, @unchecked Sendable {
   private var sink: SubscriptionSink?
   var subscribed: Bool { lock.withLock { sink != nil } }
   func fail() { lock.withLock { sink }?.failed(error: .Session(code: .unauthenticated, detail: "session_unknown")) }
-  func openCable() async throws -> String { try await mock.openCable() }
+  func openCable(lease: CableLease) async throws { try await mock.openCable(lease: lease) }
   func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
   func cableClose(token: String) async { await mock.cableClose(token: token) }
   func query(request: TransportRequest) async throws -> String { try await mock.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await mock.mutate(request: request) }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws -> String {
+  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
     lock.withLock { self.sink = sink }
-    return try await mock.subscribe(request: request, sink: sink)
+    try await mock.subscribe(request: request, sink: sink)
   }
   func unsubscribe(token: String) { mock.unsubscribe(token: token) }
   func put(url: String, headers: [String: String], bytes: Data, progress: ByteProgress) async throws -> PutReply {

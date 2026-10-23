@@ -25,7 +25,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   public func query(request: TransportRequest) async throws -> String { try await post(request, kind: .query) }
   public func mutate(request: TransportRequest) async throws -> String { try await post(request, kind: .mutation) }
 
-  public func openCable() async throws -> String { try await encryptedCable.open() }
+  public func openCable(lease: CableLease) async throws { try lease.opened(token: try await encryptedCable.open()) }
   public func cableSend(token: String, text: String) async throws { try await encryptedCable.send(token: token, text: text) }
   public func cableNext(token: String) async -> EncryptedSocketEvent? { await encryptedCable.next(token: token) }
   public func cableClose(token: String) async { await encryptedCable.close(token: token) }
@@ -50,7 +50,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     return String(decoding: data, as: UTF8.self)
   }
 
-  public func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws -> String {
+  public func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
     var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
     components?.scheme = endpoint.scheme == "http" ? "ws" : "wss"
     guard let url = components?.url else { throw DbError.Invalid(detail: "bad subscription url") }
@@ -68,8 +68,8 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
       lock.withLock { sockets.removeValue(forKey: token) }?.cancel(with: .normalClosure, reason: nil)
       throw error
     }
+    try sink.opened(token: token)
     Task { await self.pump(socket, token: token, payload: payload, sink: sink) }
-    return token
   }
 
   private func pump(_ socket: URLSessionWebSocketTask, token: String, payload: [String: Any], sink: SubscriptionSink) async {
