@@ -18,10 +18,6 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     }) { session.webSocketTask(with: $0) }
   }
 
-  public convenience init(endpoint: URL, headers: [String: String], cablePath: String? = nil) {
-    self.init(endpoint: endpoint, headers: { headers }, cablePath: cablePath)
-  }
-
   public func query(request: TransportRequest) async throws -> String { try await post(request, kind: .query) }
   public func mutate(request: TransportRequest) async throws -> String { try await post(request, kind: .mutation) }
 

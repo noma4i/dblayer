@@ -66,7 +66,7 @@ object DBlayer {
     suspend fun open(
         context: Context,
         endpoint: String? = null,
-        headers: Map<String, String> = emptyMap(),
+        headers: () -> Map<String, String> = { emptyMap() },
         encrypted: EncryptedConfig? = null,
         credentials: CredentialStore? = null,
         transport: Transport? = null,
@@ -77,7 +77,7 @@ object DBlayer {
     ) = opening.withLock {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
         val options = OpenOptions(JsonArray(definitions).toString())
-        val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, { headers.toMap() }, cablePath = encrypted?.endpoints?.cable) }
+        val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers, cablePath = encrypted?.endpoints?.cable) }
         Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) })
         Reachability.connect(made.onlineSink())

@@ -8,7 +8,7 @@ HTTP subscription errors follow query retry classification: 5xx errors retry, wh
 
 ## Connecting
 
-1. Create a transport with the endpoint and a token supplier. The transport reads the current token once per request.
+1. Pass the endpoint and a `headers` closure to `open`, or create a transport with the endpoint and a token supplier. The closure runs for every request, so a refreshed token is sent without reopening the database.
 2. Open the database with your models and the transport.
 3. Pass your GraphQL operation types. The name and document come from the type, the response root is the first field of the document.
 
@@ -20,15 +20,15 @@ The library opens files and runs migrations on its worker pool.
 Open the database once at app start and use that instance everywhere. A second call to `open` while the database is open fails with `database is already open; open it once at app start`, whatever its parameters. An opening error permits retry. `close` ends the database, meant for tests and the end of the process, and the next `open` opens it again.
 
 ```swift
-try await DB.open(endpoint: endpoint, headers: headers, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
+try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(session.token)"] }, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
 ```
 
 ```kotlin
-DBlayer.open(context, endpoint = endpoint, headers = headers, modelsJson = modelsJson, operations = GraphQLOperations.all)
+DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to "Bearer ${session.token}") }, modelsJson = modelsJson, operations = GraphQLOperations.all)
 ```
 
 `endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
-`headers` defaults to an empty map. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
+`headers` is a closure that returns the request headers, `@Sendable () -> [String: String]` in Swift and `() -> Map<String, String>` in Kotlin. It defaults to an empty map and is called for every query, mutation and subscription handshake. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
 
 The built-in clients send `User-Agent: DBlayer/<version>` on HTTP requests, file PUTs and WebSocket handshakes.
 The core supplies the library version from `core/Cargo.toml`.
