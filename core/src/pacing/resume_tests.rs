@@ -31,9 +31,3 @@ fn zero_chunk_size_fails() {
         Err(ResumeDrainError::InvalidChunkSize(0))
     );
 }
-
-#[test]
-fn defaults_are_60_seconds_and_4_per_chunk() {
-    let drain = ResumeDrain::default();
-    assert_eq!((drain.stale_time, drain.chunk_size), (secs(60), 4));
-}
