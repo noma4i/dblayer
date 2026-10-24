@@ -19,11 +19,11 @@ class OpenHeadersTest {
                 override val operationName = "HeaderProbe"
                 override val document = "query HeaderProbe { __typename }"
             }
-            @Volatile var token = "first"
-            DBlayer.open(org.robolectric.RuntimeEnvironment.getApplication(), endpoint = server.url("/").toString(), headers = { mapOf("X-Token" to token) }, modelsJson = modelsJSON, operations = listOf(operation))
+            val token = java.util.concurrent.atomic.AtomicReference("first")
+            DBlayer.open(org.robolectric.RuntimeEnvironment.getApplication(), endpoint = server.url("/").toString(), headers = { mapOf("X-Token" to token.get()) }, modelsJson = modelsJSON, operations = listOf(operation))
 
             runCatching { DBlayer.database.run("HeaderProbe", "{}") }
-            token = "second"
+            token.set("second")
             runCatching { DBlayer.database.run("HeaderProbe", "{}") }
 
             assertEquals(listOf("first", "second"), List(2) { server.takeRequest().getHeader("X-Token") })
