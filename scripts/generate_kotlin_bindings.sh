@@ -51,3 +51,37 @@ awk -v launch="$launch" -v publish="$publish" '
 mv "$generated.published" "$generated"
 [ "$(grep -cxF -- '    job.start()' "$generated")" = 2 ] || { echo "$name: job.start() was not inserted twice into dblayer.kt" >&2; exit 1; }
 [ "$(grep -cxF -- '    uniffiOutDroppedCallback.setAutoWrite(false)' "$generated")" = 2 ] || { echo "$name: setAutoWrite(false) was not inserted twice into dblayer.kt" >&2; exit 1; }
+
+complete_pattern='`uniffiFutureCallback`: UniffiForeignFutureComplete'
+alloc='    external fun ffi_dblayer_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, '
+[ "$(grep -cF -- "$complete_pattern" "$generated")" = 24 ] || { echo "$name: expected exactly 24 UniffiForeignFutureComplete parameters in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
+[ "$(grep -cE -- '`uniffiFutureCallback`: UniffiForeignFutureComplete(RustBuffer|Void),' "$generated")" = 24 ] || { echo "$name: dblayer.kt uses a UniffiForeignFutureComplete type without a scalar completion in core/src/ffi/foreign_future.rs" >&2; exit 1; }
+[ "$(grep -cxF -- "$alloc" "$generated")" = 1 ] || { echo "$name: expected exactly 1 ffi_dblayer_rustbuffer_alloc declaration in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
+awk -v alloc="$alloc" '
+  $0 == alloc {
+    print "    external fun dblayer_complete_foreign_future_buffer(`callback`: Pointer?,`handle`: Long,`returnValue`: RustBuffer.ByValue,`code`: Byte,`errorBuf`: RustBuffer.ByValue,): Unit"
+    print "    external fun dblayer_complete_foreign_future_unit(`callback`: Pointer?,`handle`: Long,`code`: Byte,`errorBuf`: RustBuffer.ByValue,): Unit"
+  }
+  /`uniffiFutureCallback`: UniffiForeignFutureCompleteRustBuffer,/ { sub(/`uniffiFutureCallback`: UniffiForeignFutureCompleteRustBuffer,/, "`uniffiFuturePointer`: Pointer?,"); kind = "RustBuffer" }
+  /`uniffiFutureCallback`: UniffiForeignFutureCompleteVoid,/ { sub(/`uniffiFutureCallback`: UniffiForeignFutureCompleteVoid,/, "`uniffiFuturePointer`: Pointer?,"); kind = "Void" }
+  { print }
+  /^        override fun callback\(.*`uniffiFuturePointer`/ { print "            val uniffiFutureCallback = UniffiForeignFutureAnswer" kind "(uniffiFuturePointer)" }
+  { if ($0 !~ /uniffiFuturePointer/) kind = "" }' "$generated" > "$generated.scalar"
+mv "$generated.scalar" "$generated"
+cat >> "$generated" <<'KOTLIN'
+
+internal class UniffiForeignFutureAnswerRustBuffer(private val pointer: Pointer?) {
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultRustBuffer.UniffiByValue,) {
+        UniffiLib.dblayer_complete_foreign_future_buffer(pointer, callbackData, result.`returnValue`, result.`callStatus`.code, result.`callStatus`.error_buf)
+    }
+}
+
+internal class UniffiForeignFutureAnswerVoid(private val pointer: Pointer?) {
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultVoid.UniffiByValue,) {
+        UniffiLib.dblayer_complete_foreign_future_unit(pointer, callbackData, result.`callStatus`.code, result.`callStatus`.error_buf)
+    }
+}
+KOTLIN
+[ "$(grep -c '`uniffiFuturePointer`: Pointer?,' "$generated")" = 24 ] || { echo "$name: 24 uniffiFuturePointer parameters were not written to dblayer.kt" >&2; exit 1; }
+[ "$(grep -c '^            val uniffiFutureCallback = UniffiForeignFutureAnswer' "$generated")" = 12 ] || { echo "$name: 12 UniffiForeignFutureAnswer values were not inserted into dblayer.kt" >&2; exit 1; }
+[ "$(grep -c 'external fun dblayer_complete_foreign_future_' "$generated")" = 2 ] || { echo "$name: the scalar completion declarations were not inserted into dblayer.kt" >&2; exit 1; }
