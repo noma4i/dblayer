@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 data class WindowEdges(val hasBefore: Boolean, val hasAfter: Boolean, val total: Long?) {
-    internal constructor(edge: LiveWindowEdge) : this(edge.hasBefore, edge.hasAfter, edge.total)
+    internal constructor(edge: LiveWindowEdge) : this(edge.hasBefore, edge.hasAfter, edge.total?.toLong())
 }
 
 internal class WindowControl(tail: Int) {
