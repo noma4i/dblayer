@@ -23,7 +23,7 @@ class ActionAnswerTest {
         assertEquals("m77", shared.model.id)
         val answer = withTimeout(5000) { shared.answer() }
         assertEquals("Shared", answer.successMessage)
-        assertEquals(3, answer.copies)
+        assertEquals(3L, answer.copies)
         assertThrows(Exception::class.java) { bounded { shared.answer() } }
 
         transport.enqueue("ShareMoment", """{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}""")
