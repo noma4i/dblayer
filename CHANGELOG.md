@@ -1,5 +1,42 @@
 # Changelog
 
+## 6.7.0 - 2026-10-24
+
+### Added
+- Entities expose opening, present, absent, failed and closed phases.
+- `CableLease` and `SubscriptionSink` receive the transport token through `opened`.
+- `loadMore` reports loaded pages, exhausted pagination and concurrent loading.
+
+### Changed
+- Custom transports report tokens through leases instead of returning strings.
+- `DB.open` and `DBlayer.open` take a headers closure read on every request.
+- Kotlin `update` and `set` write null through `GraphQLNullable`.
+- Kotlin maps the DSL type `:int` to `Long` in every generated output.
+- Swift `JSONValue` keeps integers exact as `Int64`.
+- Swift cached reads throw when reading or decoding fails.
+- `Snapshot.total` and `WindowEdges.total` use one integer type on each platform.
+- Android uses JNA 5.19.1.
+
+### Fixed
+- A Kotlin process no longer aborts on a corrupted foreign future result.
+- A stored operation with an invalid id fails instead of losing the id.
+- Waiting for a record matches its model as well as its id.
+- An answer kept for one model stays available when another model asks first.
+- A connection with an invalid `hasNextPage` fails instead of ending the list.
+- Cancelled transport calls release tokens reported before or after cancellation.
+- Interrupted cable closing keeps token ownership until cleanup completes.
+- Logout waits until subscribers receive the reset revision.
+- Cache resets discard unobserved loading windows.
+- Subscription failures survive notification queue overflow.
+- Read and decoding errors reach callers or live snapshots.
+- Invalid subscription requests leave no open socket.
+- Cancelling live reads does not show a failure.
+- Concurrent initialization with another UniFFI library avoids a JNA lock inversion.
+
+### Removed
+- Separate query loading-state streams.
+- Swift `UrlSessionTransport` initializer that takes a headers dictionary.
+
 ## 6.6.0 - 2026-10-23
 
 ### Added
