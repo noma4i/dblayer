@@ -16,7 +16,7 @@ object DBlayer {
     /** Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`. */
     fun listen() = database.listen()
     fun unlisten() = database.unlisten()
-    /** Reloads the stale relations that have readers. Call it when the app returns to the foreground. */
+    /** Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground and when the network returns. Call this for a manual refresh and after sign-in: it also restarts stopped subscriptions and singleton entities. */
     suspend fun resume() {
         offCaller { database.resume() }
         EntityRegistries.resumeAll()
@@ -31,6 +31,7 @@ object DBlayer {
     /** Closes the database. Every entity becomes closed, and `open` may open the database again. Meant for tests and the end of the process. */
     fun close() {
         EntityRegistries.closeAll()
+        ForegroundEvents.stop()
         opened?.shutdown()
         opened = null
     }
@@ -81,7 +82,9 @@ object DBlayer {
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers, cablePath = encrypted?.endpoints?.cable) }
         Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) })
-        Reachability.connect(made.onlineSink())
+        val sink = made.onlineSink()
+        Reachability.connect(sink)
+        ForegroundEvents.start(sink)
         database = made
     }
 

@@ -143,6 +143,12 @@ impl OnlineSink {
             _ => self.online.set_online(online),
         }
     }
+
+    pub fn enter_foreground(&self) {
+        let (Some(sync), Ok(executor)) = (&self.sync, super::database::executor()) else { return };
+        let _entered = executor.enter();
+        sync.enter_foreground();
+    }
 }
 
 pub(super) struct ForeignTransport(pub Arc<dyn Transport>);

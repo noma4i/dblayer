@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Stale observed windows reload when the app returns to the foreground or the network returns.
 - `UploadOperations` declares upload operations once in `DB.open` on Swift and `DBlayer.open` on Kotlin.
 - `Query.loadAll(force:)` reads every page of a related list to its confirmed end, on Swift and Kotlin.
 - Generated GraphQL inputs support recursive input objects and `@oneOf` choices.

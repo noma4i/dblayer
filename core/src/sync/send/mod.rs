@@ -114,7 +114,7 @@ impl Sync {
     /// Opens the model-level subscriptions declared with `listen`.
     pub fn listen(&self) {
         self.inner.transport.resume_subscriptions();
-        self.inner.restart_live();
+        self.inner.restart_live(super::resume_machine::Cause::Explicit);
         self.inner.listen_all();
     }
 

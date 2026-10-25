@@ -186,6 +186,11 @@ impl LoadOwner {
         self.submit(Event::Reset { epoch, models: models.map(|models| models.iter().cloned().collect()) });
     }
 
+    pub(crate) fn session_refused(&self, window: &str) -> bool {
+        let error = locked(&self.state).machine.view(window).and_then(|state| state.error);
+        error.is_some_and(|error| matches!(error.cause, Some(super::SyncError::Transport(crate::transport::TransportError::Session { .. }))))
+    }
+
     pub(crate) fn online(&self) -> Vec<(Target, LoadKind)> {
         self.enqueue(Queued::Online);
         let mut state = locked(&self.state);

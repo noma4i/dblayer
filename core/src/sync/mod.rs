@@ -32,6 +32,7 @@ mod state_tests;
 #[cfg(test)]
 mod registry_tests;
 mod resume;
+mod resume_machine;
 mod run;
 mod send;
 mod subscribe;
@@ -135,6 +136,7 @@ pub(crate) struct Inner {
     pub(crate) file_tasks: Arc<tokio::sync::watch::Sender<usize>>,
     pub connectivity: Arc<Connectivity>,
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
+    pub(crate) resume: resume::ResumeOwner,
     pub replaced: Mutex<HashMap<String, String>>,
     pub outcomes: Mutex<send::Outcomes>,
     pub final_attempts: Mutex<send::FinalAttempts>,
@@ -217,6 +219,7 @@ impl Sync {
             file_tasks: Arc::new(tokio::sync::watch::channel(0).0),
             connectivity,
             wake: Mutex::new(None),
+            resume: resume::ResumeOwner::new(),
             replaced: Mutex::new(HashMap::new()),
             outcomes: Mutex::new(send::Outcomes::default()),
             final_attempts: Mutex::new(send::FinalAttempts::default()),

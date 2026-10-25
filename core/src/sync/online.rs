@@ -22,6 +22,7 @@ impl Sync {
             for (target, kind) in self.inner.owner.online() {
                 self.inner.spawn_retry(target, kind);
             }
+            self.inner.resume_on_event();
         }
     }
 }

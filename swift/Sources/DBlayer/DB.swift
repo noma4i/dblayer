@@ -21,6 +21,7 @@ public enum DB {
   /// Closes the database. Every entity becomes closed, and `open` may open the database again. Meant for tests and the end of the process.
   @MainActor public static func close() {
     EntityRegistries.closeAll()
+    ForegroundEvents.shared.stop()
     current?.shutdown()
     current = nil
   }
@@ -40,7 +41,7 @@ public enum DB {
   /// Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`.
   public static func listen() throws { try database.listen() }
   public static func unlisten() throws { try database.unlisten() }
-  /// Reloads the stale relations that have readers. Call it when the app returns to the foreground.
+  /// Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground and when the network returns. Call this for a manual refresh and after sign-in: it also restarts stopped subscriptions and singleton entities.
   @concurrent public static func resume() async throws {
     try await database.resume()
     await EntityRegistries.resumeAll()
@@ -64,7 +65,9 @@ public enum DB {
     let origin = encrypted.flatMap { URL(string: $0.origin) }
     let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers, cablePath: encrypted?.endpoints.cable) }
     let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, uploads: uploads?.wire), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) })
-    reachability.start(try opened.onlineSink())
+    let sink = try opened.onlineSink()
+    reachability.start(sink)
+    ForegroundEvents.shared.start { sink.enterForeground() }
     current = opened
   }
 
@@ -75,7 +78,9 @@ public enum DB {
   @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) throws {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     if transport != nil { try database.registerOperations(defsJson: JSONValue.array(definitions).text) }
-    reachability.start(try database.onlineSink())
+    let sink = try database.onlineSink()
+    reachability.start(sink)
+    ForegroundEvents.shared.start { sink.enterForeground() }
     current = database
   }
 }

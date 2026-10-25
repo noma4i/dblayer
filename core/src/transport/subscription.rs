@@ -49,6 +49,10 @@ pub struct SubscriptionClose {
 }
 
 impl SubscriptionFailure {
+    pub fn session_refused(&self) -> bool {
+        matches!(self.error, super::TransportError::Session { .. }) || self.close.as_ref().is_some_and(|close| close.terminal)
+    }
+
     pub fn new(kind: SubscriptionFailureKind, message: impl Into<String>) -> Self {
         let message = message.into();
         let error = match kind {

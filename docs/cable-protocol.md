@@ -176,7 +176,7 @@ The client validates code shapes without copying the server's vocabulary.
 
 An `error` for a subscription contains its `id`, `code` and `retryable`, without a message or reason field.
 With `retryable=false`, the feed records `SubscriptionStatus.failure` and stops until explicit `resume` or `listen`.
-Explicit resume restarts every stopped live subscription with a saved failure, including GraphQL refusals.
+Explicit resume restarts every stopped live subscription with a saved failure, including GraphQL refusals. The foreground event and the return of the network restart only stopped subscriptions whose saved failure is not a session refusal, and they send no cable resume command. A session refusal (`SessionCode` or a terminal close) stays stopped until explicit resume or `listen`.
 With `retryable=true`, the feed retains the GraphQL error and retries after backoff.
 Code spelling never selects retry behavior. For example, `REFUSED` can stop or retry according to the flag.
 Removing the last subscription closes the socket without cable retry attempts, timers or a new connection.

@@ -30,13 +30,14 @@ impl Drop for Live {
 }
 
 impl Inner {
-    pub(crate) fn restart_live(self: &std::sync::Arc<Self>) {
-        let _ = self.subscription_failures.send(None);
+    pub(crate) fn restart_live(self: &std::sync::Arc<Self>, cause: super::resume_machine::Cause) {
+        let explicit = cause == super::resume_machine::Cause::Explicit;
+        if explicit { let _ = self.subscription_failures.send(None); }
         let mut lives = locked(&self.lives);
         for (key, live) in lives.iter_mut() {
             let Some(subscription) = live.subscription.as_ref().filter(|subscription| {
                 let status = subscription.status();
-                status.stopped && status.failure.is_some()
+                status.stopped && status.failure.as_ref().is_some_and(|failure| explicit || !failure.session_refused())
             }) else { continue };
             let definition = subscription.definition.clone();
             live.subscription = None;
