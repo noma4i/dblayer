@@ -8,6 +8,96 @@ use super::window::WindowSpec;
 use crate::identity::{ModelKey, RowRef};
 use crate::query::Query;
 
+#[test]
+fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() {
+    let db = booted();
+    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
+    let (_initial, initial_callback) = recorder();
+    let _initial_observer = db.observe(Query::new("users"), initial_callback).unwrap();
+    let (window_log, window_callback) = recorder();
+    let query = Query::new("users").ordered(vec![crate::query::Order::new("id", crate::value::SortDirection::Asc)]);
+    let window = db.observe_window(query, WindowSpec::Tail { size: 0 }, window_callback).unwrap();
+    let (entity_log, entity_callback) = entity_recorder();
+    let entities = db.observe_entities("users", entity_callback).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let paused = db.shared.dispatch.pause_owner();
+    db.shared.reads.inline.store(true, std::sync::atomic::Ordering::SeqCst);
+    let before = db.counters().observation_reads;
+    let mut observers = Vec::new();
+    let mut logs = Vec::new();
+    for index in 0..32 {
+        let (log, callback) = recorder();
+        observers.push(db.observe(Query::new("users").limited(index + 1), callback).unwrap());
+        logs.push(log);
+    }
+    let (joined, joined_callback) = recorder();
+    let _joined_observer = db.observe(Query::new("users"), joined_callback).unwrap();
+    window.expand_before(1);
+    entities.retain(&[rid("u1")]).unwrap();
+    let cancelled = logs.pop().unwrap();
+    drop(observers.pop());
+    let issued = db.counters().observation_reads - before;
+    db.update("users", &rid("u1"), obj(json!({"name": "latest"}))).unwrap();
+    drop(paused);
+    db.await_revision(db.revision_seq().unwrap());
+    assert!(issued <= 2, "ready results retain their read slots: {issued} reads before any result was applied");
+    assert!(logs.iter().all(|log| log.lock().unwrap().last().is_some_and(|change| change.rows.len() == 1 && change.rows[0].text("name") == Some("latest"))), "every deferred opening reaches the last committed row");
+    assert_eq!(calls(&joined).last(), Some(&1), "deferred join retains its subscriber");
+    assert_eq!(window_log.lock().unwrap().last().unwrap().rows.len(), 1, "deferred growth retains its requested size");
+    assert_eq!(entity_log.lock().unwrap().last().unwrap().rows[0].text("name"), Some("latest"), "deferred retain reaches the row");
+    assert!(cancelled.lock().unwrap().is_empty(), "cancelled deferred opening stays silent");
+}
+
+#[test]
+fn inv_observe_29_entity_refreshes_merge_until_the_in_flight_read_is_applied() {
+    let db = booted();
+    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
+    let (log, callback) = entity_recorder();
+    let observer = db.observe_entities("users", callback).unwrap();
+    observer.retain(&[rid("u1")]).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let key = db.shared.observers().entities.keys().next().cloned().unwrap();
+    let paused = db.shared.dispatch.pause_owner();
+    db.shared.reads.inline.store(true, std::sync::atomic::Ordering::SeqCst);
+    let before = db.counters().observation_reads;
+    for _ in 0..64 {
+        db.shared.refresh_entities(&key, &ModelKey::new("users"), [rid("u1")].into());
+    }
+    let issued = db.counters().observation_reads - before;
+    db.update("users", &rid("u1"), obj(json!({"name": "latest"}))).unwrap();
+    drop(paused);
+    db.await_revision(db.revision_seq().unwrap());
+    assert_eq!(issued, 1, "one retained group has one read in flight");
+    assert_eq!(log.lock().unwrap().last().unwrap().rows[0].text("name"), Some("latest"));
+    assert!(db.counters().observation_reads - before <= 3, "repeated refreshes become one following read plus the committed update");
+}
+
+#[test]
+fn inv_observe_29_repeated_window_growth_keeps_one_pending_read() {
+    let db = booted();
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    for index in 0..64 {
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&format!("u{index:02}")), row: obj(json!({"id": format!("u{index:02}"), "name": "Ann"})) });
+    }
+    db.land(envelope).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let (log, callback) = recorder();
+    let query = Query::new("users").ordered(vec![crate::query::Order::new("id", crate::value::SortDirection::Asc)]);
+    let window = db.observe_window(query, WindowSpec::Tail { size: 1 }, callback).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let paused = db.shared.dispatch.pause_owner();
+    db.shared.reads.inline.store(true, std::sync::atomic::Ordering::SeqCst);
+    let before = db.counters().observation_reads;
+    for _ in 0..64 {
+        window.expand_before(1);
+    }
+    drop(paused);
+    db.await_revision(db.revision_seq().unwrap());
+    let issued = db.counters().observation_reads - before;
+    assert!(issued <= 2, "one in-flight growth and one combined growth: {issued} reads");
+    assert_eq!(log.lock().unwrap().last().unwrap().rows.len(), 64);
+}
+
 fn hit(model: &str, id: &str) -> Event {
     let model = ModelKey::new(model);
     Event { revision: i64::MAX / 2, models: [model.clone()].into(), rows: [RowRef::new(model, rid(id))].into(), ..Event::default() }

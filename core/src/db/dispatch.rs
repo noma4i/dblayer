@@ -8,7 +8,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 
 use super::error::DbError;
 use super::open::{Db, Shared};
-use super::reads::ReadResult;
+use super::reads::CompletedRead;
 
 pub(crate) const MAX_PENDING: usize = 256;
 pub(crate) const MAX_REPLACED_LOG: usize = 4096;
@@ -129,13 +129,26 @@ struct Pending {
     events: VecDeque<Event>,
     replaced: Vec<(i64, RowId, RowId)>,
     dropped_through: i64,
-    reads: VecDeque<ReadResult>,
+    reads: VecDeque<CompletedRead>,
     processing_through: Option<i64>,
     closed: bool,
+    #[cfg(test)]
+    paused: bool,
+}
+
+#[cfg(test)]
+pub(crate) struct OwnerPaused(Arc<Dispatch>);
+
+#[cfg(test)]
+impl Drop for OwnerPaused {
+    fn drop(&mut self) {
+        held(&self.0.pending).paused = false;
+        self.0.wake.notify_all();
+    }
 }
 
 pub(crate) enum Work {
-    Read(ReadResult),
+    Read(CompletedRead),
     Batch(Vec<Event>),
 }
 
@@ -167,7 +180,7 @@ impl Dispatch {
         self.wake.notify_one();
     }
 
-    pub(crate) fn push_read(&self, result: ReadResult) {
+    pub(crate) fn push_read(&self, result: CompletedRead) {
         held(&self.pending).reads.push_back(result);
         self.wake.notify_one();
     }
@@ -175,6 +188,11 @@ impl Dispatch {
     pub(crate) fn next_work(&self) -> Option<Work> {
         let mut pending = held(&self.pending);
         loop {
+            #[cfg(test)]
+            if pending.paused {
+                pending = self.wake.wait(pending).unwrap_or_else(|poisoned| poisoned.into_inner());
+                continue;
+            }
             if let Some(result) = pending.reads.pop_front() {
                 pending.processing_through = Some(i64::MIN);
                 return Some(Work::Read(result));
@@ -194,6 +212,18 @@ impl Dispatch {
     pub(crate) fn finished_work(&self) {
         held(&self.pending).processing_through = None;
         self.progress.advance();
+        #[cfg(test)]
+        self.wake.notify_all();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_owner(self: &Arc<Self>) -> OwnerPaused {
+        let mut pending = held(&self.pending);
+        while pending.processing_through.is_some() {
+            pending = self.wake.wait(pending).unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        pending.paused = true;
+        OwnerPaused(self.clone())
     }
 
     pub(crate) fn quiet_through(&self, revision: i64) -> bool {

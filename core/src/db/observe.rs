@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Weak};
 
@@ -12,7 +12,7 @@ use super::entities::{EntityGroup, EntitySubscriber};
 use super::error::DbError;
 use super::listeners::{Feed, Listener, Subscriber};
 use super::open::{locked, Db, Shared};
-use super::reads::{ReadJob, ReadResult, ReadRows, ReadTarget};
+use super::reads::{CompletedRead, ReadJob, ReadResult, ReadRows, ReadTarget};
 use super::window::WindowSeed;
 use super::watch::{Body, Change, CountChange, Deps, Evaluated, Loaded, Step, Subject, Version};
 
@@ -20,13 +20,19 @@ const MAX_PROBED_ROWS: usize = 8;
 
 type Subscribers = Vec<(u64, Arc<Subscriber>)>;
 
+fn accumulate_growth(pending: &mut Option<(usize, usize)>, before: usize, after: usize) {
+    let growth = pending.get_or_insert((0, 0));
+    growth.0 = growth.0.saturating_add(before);
+    growth.1 = growth.1.saturating_add(after);
+}
+
 #[derive(Default)]
 struct GroupFacts {
     reading: bool,
     again: bool,
     read_error: Option<DbError>,
     joining: Subscribers,
-    grows: VecDeque<(usize, usize)>,
+    growth: Option<(usize, usize)>,
     seen: i64,
 }
 
@@ -49,7 +55,7 @@ struct Opening {
     reading: bool,
     missed: bool,
     read_error: Option<DbError>,
-    grows: VecDeque<(usize, usize)>,
+    growth: Option<(usize, usize)>,
     seen: i64,
 }
 
@@ -73,13 +79,30 @@ pub(crate) struct Observers {
     by_row: HashMap<RowRef, BTreeSet<String>>,
     pub(crate) entities: HashMap<String, EntityGroup>,
     pub(crate) warm_ids: HashSet<u64>,
+    read_ready: BTreeMap<u64, String>,
+    read_order: HashMap<String, u64>,
 }
 
 impl Observers {
+    pub(crate) fn defer_read(&mut self, key: &str) {
+        if self.read_order.contains_key(key) {
+            return;
+        }
+        let order = self.next();
+        self.read_order.insert(key.to_string(), order);
+        self.read_ready.insert(order, key.to_string());
+    }
+
+    fn remove_deferred(&mut self, key: &str) {
+        if let Some(order) = self.read_order.remove(key) {
+            self.read_ready.remove(&order);
+        }
+    }
+
     /// The revision that a group has read, or None while it still has work. Subscribers are told this revision, and `Db::await_revision` waits for it.
     fn mark(group: &Group) -> Option<i64> {
         let facts = &group.facts;
-        let idle = !facts.reading && facts.read_error.is_none() && !facts.again && facts.grows.is_empty() && facts.joining.is_empty();
+        let idle = !facts.reading && facts.read_error.is_none() && !facts.again && facts.growth.is_none() && facts.joining.is_empty();
         idle.then(|| facts.seen.max(group.at))
     }
 
@@ -124,6 +147,7 @@ impl Observers {
     }
 
     pub(crate) fn remove_entities(&mut self, key: &str) {
+        self.remove_deferred(key);
         let Some(group) = self.entities.remove(key) else { return };
         let ids: Vec<RowId> = group.ids().cloned().collect();
         self.unindex_rows(key, group.model(), ids.iter());
@@ -139,6 +163,7 @@ impl Observers {
     }
 
     fn remove_group(&mut self, key: &str) {
+        self.remove_deferred(key);
         let Some(group) = self.groups.remove(key) else { return };
         if !group.deps.keyed() {
             return;
@@ -225,10 +250,10 @@ impl ObserverHandle {
         if let Some(shared) = self.shared.upgrade() {
             let mut observers = shared.observers();
             if let Some(group) = observers.groups.get_mut(&self.group) {
-                group.facts.grows.push_back((before, after));
+                accumulate_growth(&mut group.facts.growth, before, after);
                 shared.pump(&mut observers, &self.group);
             } else if let Some(opening) = observers.opening.get_mut(&self.group) {
-                opening.grows.push_back((before, after));
+                accumulate_growth(&mut opening.growth, before, after);
             }
         }
     }
@@ -250,6 +275,7 @@ impl Drop for ObserverHandle {
             opening.waiting.retain(|(id, _)| *id != self.id);
             if opening.waiting.is_empty() {
                 observers.opening.remove(&self.group);
+                observers.remove_deferred(&self.group);
             }
         }
     }
@@ -333,9 +359,18 @@ impl Shared {
     fn issue_publish(&self, observers: &mut Observers, key: &str, step: Option<Stepping>, grow: Option<(usize, usize)>) {
         let Some(group) = observers.groups.get_mut(key) else { return };
         group.facts.reading = true;
+        group.facts.read_error = None;
         let (subject, previous, token) = (group.subject.clone(), group.version.clone(), group.token);
         let target = ReadTarget::Publish { key: key.to_string(), token, previous: previous.clone(), grow };
-        self.reads.submit(self, ReadJob { target, run: Box::new(move |shared| shared.read_publish(&subject, &previous, step, grow)) });
+        if !self.reads.submit(self, ReadJob { target, run: Box::new(move |shared| shared.read_publish(&subject, &previous, step, grow)) }) {
+            group.facts.reading = false;
+            if let Some(grow) = grow {
+                accumulate_growth(&mut group.facts.growth, grow.0, grow.1);
+            } else {
+                group.facts.again = true;
+            }
+            observers.defer_read(key);
+        }
     }
 
     fn issue_join(&self, observers: &mut Observers, key: &str) {
@@ -344,7 +379,10 @@ impl Shared {
         let (subject, version, token) = (group.subject.clone(), group.version.clone(), group.token);
         let joiners = group.facts.joining.iter().map(|(id, _)| *id).collect();
         let target = ReadTarget::Join { key: key.to_string(), token, joiners };
-        self.reads.submit(self, ReadJob { target, run: Box::new(move |shared| shared.load_whole(&subject, &version).map(ReadRows::Whole)) });
+        if !self.reads.submit(self, ReadJob { target, run: Box::new(move |shared| shared.load_whole(&subject, &version).map(ReadRows::Whole)) }) {
+            group.facts.reading = false;
+            observers.defer_read(key);
+        }
     }
 
     fn issue_open(&self, observers: &mut Observers, key: &str) {
@@ -354,9 +392,10 @@ impl Shared {
         };
         let Some(opening) = observers.opening.get_mut(key) else { return };
         opening.reading = true;
+        opening.read_error = None;
         let subject = opening.subject.clone();
         let target = ReadTarget::Open { key: key.to_string(), token: opening.token };
-        self.reads.submit(
+        if !self.reads.submit(
             self,
             ReadJob {
                 target,
@@ -365,7 +404,10 @@ impl Shared {
                     shared.evaluate_seeded(&subject, seed.as_ref()).map(ReadRows::Evaluated)
                 }),
             },
-        );
+        ) {
+            opening.reading = false;
+            observers.defer_read(key);
+        }
     }
 
     fn pump(&self, observers: &mut Observers, key: &str) {
@@ -380,7 +422,7 @@ impl Shared {
         }
         if std::mem::take(&mut group.facts.again) {
             self.issue_publish(observers, key, None, None);
-        } else if let Some(grow) = group.facts.grows.pop_front() {
+        } else if let Some(grow) = group.facts.growth.take() {
             let step = Stepping { touched: HashSet::new(), reached: None, horizon: group.version.position() };
             self.issue_publish(observers, key, Some(step), Some(grow));
         } else if !group.facts.joining.is_empty() {
@@ -437,9 +479,21 @@ impl Shared {
         self.read(&[probe.model.as_str()], |reader| Ok(self.query_keys(reader, &probe)?.is_empty()))
     }
 
-    pub(crate) fn land_read(&self, result: ReadResult) {
+    pub(crate) fn land_read(&self, completed: CompletedRead) {
+        let CompletedRead { result, permit } = completed;
         let key = result.key().to_string();
         self.contained(&key, || self.apply(result));
+        let mut observers = self.observers();
+        drop(permit);
+        while self.reads.has_capacity() {
+            let Some((_, key)) = observers.read_ready.pop_first() else { break };
+            observers.read_order.remove(&key);
+            if observers.entities.contains_key(&key) {
+                self.pump_entities(&mut observers, &key);
+            } else {
+                self.pump(&mut observers, &key);
+            }
+        }
     }
 
     fn contained(&self, key: &str, run: impl FnOnce()) {
@@ -572,7 +626,7 @@ impl Shared {
         let Some(opening) = observers.opening.remove(key) else { return };
         let Evaluated { version, loaded } = evaluated;
         let version = Arc::new(version);
-        let facts = GroupFacts { again: opening.missed, grows: opening.grows, seen: opening.seen, ..GroupFacts::default() };
+        let facts = GroupFacts { again: opening.missed, growth: opening.growth, seen: opening.seen, ..GroupFacts::default() };
         let token = observers.next();
         let group = Group { subject: opening.subject, deps: opening.deps, at: version.revision, epoch: version.epoch, token, version: version.clone(), subscribers: opening.waiting.clone(), facts };
         observers.add_group(key, group);
@@ -600,7 +654,7 @@ impl Db {
             opening.waiting.push((id, subscriber.clone()));
         } else {
             let token = observers.next();
-            observers.opening.insert(key.clone(), Opening { subject, deps, token, waiting: vec![(id, subscriber.clone())], reading: false, missed: false, read_error: None, grows: VecDeque::new(), seen: 0 });
+            observers.opening.insert(key.clone(), Opening { subject, deps, token, waiting: vec![(id, subscriber.clone())], reading: false, missed: false, read_error: None, growth: None, seen: 0 });
         }
         self.shared.pump(&mut observers, &key);
         drop(observers);

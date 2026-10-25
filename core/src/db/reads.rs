@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::identity::RowId;
 
@@ -46,9 +47,22 @@ pub(crate) struct ReadJob {
     pub run: Box<dyn FnOnce(&Shared) -> Result<ReadRows, DbError> + Send>,
 }
 
+pub(crate) struct ReadPermit(Arc<AtomicUsize>);
+
+impl Drop for ReadPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+pub(crate) struct CompletedRead {
+    pub result: ReadResult,
+    pub permit: ReadPermit,
+}
+
 #[derive(Default)]
 struct Queue {
-    jobs: VecDeque<ReadJob>,
+    jobs: VecDeque<(ReadJob, ReadPermit)>,
     closed: bool,
 }
 
@@ -56,6 +70,7 @@ pub(crate) struct ReadPool {
     queue: Mutex<Queue>,
     wake: Condvar,
     dispatch: Arc<Dispatch>,
+    outstanding: Arc<AtomicUsize>,
     #[cfg(test)]
     pub(crate) inline: std::sync::atomic::AtomicBool,
 }
@@ -70,6 +85,7 @@ impl ReadPool {
             queue: Mutex::new(Queue::default()),
             wake: Condvar::new(),
             dispatch,
+            outstanding: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
             inline: std::sync::atomic::AtomicBool::new(false),
         })
@@ -83,16 +99,25 @@ impl ReadPool {
         Ok(())
     }
 
-    pub(crate) fn submit(&self, shared: &Shared, job: ReadJob) {
+    pub(crate) fn has_capacity(&self) -> bool {
+        self.outstanding.load(Ordering::Acquire) < READERS
+    }
+
+    pub(crate) fn submit(&self, shared: &Shared, job: ReadJob) -> bool {
+        if self.outstanding.try_update(Ordering::AcqRel, Ordering::Acquire, |count| (count < READERS).then_some(count + 1)).is_err() {
+            return false;
+        }
+        let permit = ReadPermit(self.outstanding.clone());
         #[cfg(test)]
         if self.inline.load(std::sync::atomic::Ordering::SeqCst) {
             let result = Self::run(shared, job);
-            self.dispatch.push_read(result);
-            return;
+            self.dispatch.push_read(CompletedRead { result, permit });
+            return true;
         }
         let _ = shared;
-        held(&self.queue).jobs.push_back(job);
+        held(&self.queue).jobs.push_back((job, permit));
         self.wake.notify_one();
+        true
     }
 
     fn run(shared: &Shared, job: ReadJob) -> ReadResult {
@@ -119,9 +144,9 @@ impl ReadPool {
                     queue = self.wake.wait(queue).unwrap_or_else(|poisoned| poisoned.into_inner());
                 }
             };
-            let Some(job) = job else { return };
+            let Some((job, permit)) = job else { return };
             match shared.upgrade() {
-                Some(shared) => self.dispatch.push_read(Self::run(&shared, job)),
+                Some(shared) => self.dispatch.push_read(CompletedRead { result: Self::run(&shared, job), permit }),
                 None => self.dispatch.progress.advance(),
             }
         }

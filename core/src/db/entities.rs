@@ -11,6 +11,7 @@ use super::dispatch::Event;
 use super::error::DbError;
 use super::listeners::{Executor, Runnable};
 use super::open::{locked, Db, Shared};
+use super::observe::Observers;
 use super::reads::{Position, ReadJob, ReadRows, ReadTarget};
 use super::row::Row;
 
@@ -33,6 +34,9 @@ pub(crate) struct EntityGroup {
     model: ModelKey,
     known: HashMap<RowId, Known>,
     pub(crate) dirty: BTreeSet<RowId>,
+    pending: BTreeSet<RowId>,
+    reading: bool,
+    counted: bool,
     subscriber: Arc<EntitySubscriber>,
 }
 
@@ -54,7 +58,7 @@ impl EntityGroup {
     }
 
     pub(crate) fn idle(&self) -> bool {
-        !locked(&self.subscriber.pending).scheduled
+        !self.reading && self.pending.is_empty() && !locked(&self.subscriber.pending).scheduled
     }
 
     pub(crate) fn model(&self) -> &ModelKey {
@@ -62,7 +66,7 @@ impl EntityGroup {
     }
 
     pub(crate) fn new(model: ModelKey, subscriber: Arc<EntitySubscriber>) -> Self {
-        Self { model, known: HashMap::new(), dirty: BTreeSet::new(), subscriber }
+        Self { model, known: HashMap::new(), dirty: BTreeSet::new(), pending: BTreeSet::new(), reading: false, counted: false, subscriber }
     }
 
     pub(crate) fn ids(&self) -> impl Iterator<Item = &RowId> {
@@ -201,8 +205,9 @@ impl EntityObserver {
         for id in &fresh {
             group.known.entry(id.clone()).or_insert(Known { position: (i64::MIN, 0), stamp: None, told: false });
         }
+        group.pending.extend(fresh.iter().cloned());
         observers.index_rows(&self.key, &model, fresh.iter());
-        shared.read_entities_in_pool(&self.key, &model, fresh, false);
+        shared.pump_entities(&mut observers, &self.key);
         Ok(())
     }
 
@@ -214,6 +219,7 @@ impl EntityObserver {
         let gone: Vec<RowId> = ids.iter().filter(|id| group.known.remove(*id).is_some()).cloned().collect();
         for id in &gone {
             group.dirty.remove(id);
+            group.pending.remove(id);
         }
         let subscriber = group.subscriber.clone();
         observers.unindex_rows(&self.key, &model, gone.iter());
@@ -241,21 +247,38 @@ impl Shared {
     }
 
     pub(crate) fn refresh_entities(&self, key: &str, model: &ModelKey, ids: BTreeSet<RowId>) {
-        self.read_entities_in_pool(key, model, ids, true);
+        let mut observers = self.observers();
+        let Some(group) = observers.entities.get_mut(key).filter(|group| group.model == *model) else { return };
+        group.pending.extend(ids.into_iter().filter(|id| group.known.contains_key(id)));
+        group.counted = true;
+        self.pump_entities(&mut observers, key);
     }
 
-    fn read_entities_in_pool(&self, key: &str, model: &ModelKey, ids: BTreeSet<RowId>, counted: bool) {
+    pub(crate) fn pump_entities(&self, observers: &mut Observers, key: &str) {
+        let Some(group) = observers.entities.get_mut(key) else { return };
+        if group.reading || group.pending.is_empty() {
+            return;
+        }
+        let ids = std::mem::take(&mut group.pending);
+        let counted = std::mem::take(&mut group.counted);
         let target = ReadTarget::Entities { key: key.to_string(), ids: ids.clone() };
-        self.dispatch.progress.entity_read_started();
-        let model = model.clone();
+        let model = group.model.clone();
+        let wanted = ids.clone();
         let run = move |shared: &Shared| {
             if counted {
                 locked(&shared.counters).observation_reads += 1;
             }
-            let (position, loaded) = shared.read_entities(&model, ids.iter())?;
+            let (position, loaded) = shared.read_entities(&model, wanted.iter())?;
             Ok(ReadRows::Entities { position, loaded })
         };
-        self.reads.submit(self, ReadJob { target, run: Box::new(run) });
+        if self.reads.submit(self, ReadJob { target, run: Box::new(run) }) {
+            group.reading = true;
+            self.dispatch.progress.entity_read_started();
+        } else {
+            group.pending = ids;
+            group.counted = counted;
+            observers.defer_read(key);
+        }
     }
 
     pub(crate) fn apply_entities(&self, key: &str, ids: &BTreeSet<RowId>, read: Result<(Position, HashMap<String, Row>), DbError>) {
@@ -265,17 +288,20 @@ impl Shared {
         }
         let mut observers = self.observers();
         let Some(group) = observers.entities.get_mut(key) else { return };
+        group.reading = false;
         let (position, loaded) = match read {
             Ok(loaded) => loaded,
             Err(error) => {
                 group.dirty.extend(ids.iter().filter(|id| group.known.contains_key(*id)).cloned());
                 group.subscriber.clone().post_failure(&self.executor, &error);
+                self.pump_entities(&mut observers, key);
                 return;
             }
         };
         group.dirty.retain(|id| !ids.contains(id));
         let changes = group.apply_read(position, &loaded, ids.iter().cloned());
         group.subscriber.clone().post(&self.executor, changes);
+        self.pump_entities(&mut observers, key);
     }
 }
 

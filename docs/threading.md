@@ -19,12 +19,12 @@ Live results arrive from library threads. Record writes run on background thread
 - Listener callbacks never run under the store lock.
 - Listeners are called from library threads, never from the main thread. Move to the main thread in your UI code.
 - Each listener has its own queue where the latest state wins. A slow listener does not delay others and does not build up a backlog.
-- Entities never block either: `entity(id)` answers at once from memory, and the calls into the database for a batch of new ids run on one background queue (Swift) or thread (Kotlin), in order.
+- `entity(id)` returns from memory. Swift and Kotlin submit batched retain/release calls in order on background threads. Rust reads the rows in its reader pool.
 - Frequent changes are merged: a listener gets one change per dispatch cycle, and the last state always arrives.
 - Cancelling or dropping a subscription stops its work at once without leaking tasks.
 - Releasing the last owning synchronization handle stops background subscriptions, uploads and scheduled retries. Background tasks never keep that handle alive.
 - Cloned database handles and connectivity sinks keep synchronization alive until they are released. Explicitly awaited operations retain their handle until they finish.
-- Queues are bounded. A full queue makes the caller wait asynchronously. Data is never dropped.
+- Queues are bounded. Producers wait asynchronously where work cannot be combined. Observation requests combine within each live group. Data is never dropped.
 
 ## Consistency under load
 
@@ -33,6 +33,10 @@ Speed never relaxes the guarantees of [live data](live-data.md): ordered deliver
 ## Reads
 
 Observers never read SQLite on the thread that routes events, and never under the lock that holds the observer registry. A pool of 2 reader threads (`dblayer-read`) runs every read of a subscription, of a group refresh after a commit, of a window growing and of a retained entity. The result returns to the routing thread as an event: `ReadOk` with the rows, or `ReadFailed` with the error. A subscription returns its handle at once and the first value arrives after its read. `Db::await_revision(r)` waits for these reads too, up to revision `r`. A group has at most one read in flight. A commit that arrives meanwhile marks the group to read again.
+
+At most 2 reads can be queued, running or awaiting application of their results. A slot stays occupied until the routing thread applies its result. When both slots are occupied, live groups retain their pending requests in FIFO order without blocking the caller. Each group occupies at most one position in that queue.
+
+Repeated entity refreshes combine their retained ids into one pending read. Repeated window expansions add their requested row counts into one pending expansion. Releasing ids or cancelling an observation removes its pending work.
 
 A read that fails is counted (`query_reads_failed`, `entity_reads_failed`). A failed entity read reaches the subscriber of those ids as a delivery with `failure` set and no rows. The group keeps the error and its last rows, and the next batch of events of any model reads the group again. A panic while the routing thread handles one group is counted (`owner_panics`), fails that group in the same way and does not stop the other groups of the batch. The counter `sql_under_owner` counts SQL run on the routing thread or under the registry lock. It stays 0.
 
