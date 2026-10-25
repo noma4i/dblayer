@@ -3,112 +3,100 @@
 ## Unreleased
 
 ### Added
-- `DB.sessionCall` and `DBlayer.sessionCall` send a declared session operation with an `Encodable` / `@Serializable` body and decode the answer. `sessionResume`, `sessionReset` and `retryAll` move to `DB` and `DBlayer`. `Model.retry(id:action:)` (Kotlin `ModelDecoder.retry(id, action)`) retries a record by id.
+- `DB.sessionCall` and `DBlayer.sessionCall` send a declared session operation and decode the answer.
+- `sessionResume`, `sessionReset` and `retryAll` on `DB` and `DBlayer`.
+- `Model.retry(id:action:)` and Kotlin `ModelDecoder.retry(id, action)` retry a record by id.
 - `preload` in a `.dbl` scope loads the scope after open, sign-in, reset and network return.
-- `RetryProgress` follows encrypted HTTP calls that wait for a retry: `changes` on Swift and `flow` on Kotlin deliver `RetrySnapshot(activeCalls, lastAttempt)`. Pass one object as `retries` to `open` and `serverConfig`.
-- `Model.events` streams declared change events with the row before and after on Swift and Kotlin; a full queue reports `missed` with the dropped count. `changed_by ..., via: :observed` rereads every observed read of the model.
-- Uploads continue in the background: iOS sends files through a background `URLSession` and the app adds one `DB.handleBackgroundSession` line; Android runs a user-initiated job on API 34+ and a sticky `dataSync` foreground task on API 33, with the notification text and icon passed to `DBlayer.open`.
-- The core tells the platform which accepted upload needs a system round, and a refusal by the system is written to the `error` of that upload only.
-- Upload requests carry an `upload` mark, so Android sends them over the network of the job.
-- `Query.related(Association)` reads typed related rows on Swift and Kotlin; `Model.Relations` lists links.
-- Stale observed windows reload when the app returns to the foreground or the network returns.
-- `UploadOperations` declares upload operations once in `DB.open` on Swift and `DBlayer.open` on Kotlin.
-- `Query.loadAll(force:)` reads every page of a related list to its confirmed end, on Swift and Kotlin.
+- `RetryProgress` reports encrypted HTTP calls waiting for a retry through `retries` in `open` and `serverConfig`.
+- `Model.events` streams declared change events with the row before and after.
+- `missed` event item reports the count of events dropped by a full queue.
+- `changed_by ..., via: :observed` rereads every observed read of the model.
+- Background uploads on iOS through a background `URLSession` and `DB.handleBackgroundSession`.
+- Background uploads on Android through a user-initiated job and a `dataSync` foreground task.
+- `Query.related(Association)` reads typed related rows, and `Model.Relations` lists links.
+- `Query.loadAll(force:)` reads every page of a related list to its confirmed end.
+- `UploadOperations` declares upload operations once in `DB.open` and `DBlayer.open`.
+- `uploads[action]` on a model and `SyncInfo.uploads` report one upload per declared action.
 - Generated GraphQL inputs support recursive input objects and `@oneOf` choices.
 - Kotlin `JsonElement.jsonText()` serializes JSON with the library settings.
-- Kotlin `offCaller` runs a block off the caller thread, for generated code.
-- Swift `Entity.changes()` streams the value of an entity, current value then updates, and holds the entity while it is read.
+- Swift `Entity.changes()` streams the current value of an entity, then its updates.
+- Stale observed windows reload when the app returns to the foreground or the network returns.
 
 ### Changed
-- `create` and `update` refuse a field the model does not declare and a value that does not fit the type of its field. The call fails with the database error and writes nothing; before, the field was dropped and the value was stored as null or the default.
-- A list with equal order values puts a row with a temporary id before the permanent rows; the other equal rows stay ordered by id.
-- The store calls its hook after it releases the writer lock, in commit order, so a hook may read the store.
-- Swift `Model.retryAll()` and Kotlin top-level `retryAll()` are removed; use `DB.retryAll()` and `DBlayer.retryAll()`.
-- The core decides what happens after a list delivery does not fit the rows of a reader: one whole list on the same subscription, a failure after 2 refusals in a row. Swift and Kotlin only report the refusal; the subscription is no longer opened again.
-- `RetryListener` and `Database.setRetryListener` are removed; `serverConfig(retryListener:)` becomes `serverConfig(retries:)`. A call leaves the retry state on success, failure and cancel by itself.
-- Preserve typed errors in `Snapshot.error` and `LiveWindow.failure` on Swift and Kotlin.
+- `create` and `update` refuse an undeclared field or a wrongly typed value.
+- A row with a temporary id sorts before permanent rows of equal order.
+- The store hook runs after the writer lock is released.
+- `serverConfig(retryListener:)` becomes `serverConfig(retries:)`.
+- `takeEdits()` becomes `takeUpdate()`: rows, edits and revision from one delivery.
+- A delivery that does not fit the rows gives one whole list.
+- The subscription stops with a failure after two refusals in a row.
+- `Snapshot.error` and `LiveWindow.failure` keep typed errors.
 - A live query delivers again when only the GraphQL `extensions` of the same error change.
-- The core decides every `Entity` transition (seed, revision order, stale, failure, reset, close) with one state machine on both platforms. A late failure of a replaced singleton feed no longer changes the new state.
-- Stored operation, upload and sync-state errors keep GraphQL `extensions` as node rows instead of JSON text. An existing database file is recreated on open.
-- Cable reopens right after the network returns, without waiting for a pending retry delay.
-- Kotlin `Entity.value` keeps the entity reachable while it is collected.
-- Swift query conditions, `JSONValue.encode`, `JSONValue.text` and `JSONValue.tagged` throw on serialization failure.
-- Generated Swift parameterized scopes and upload variable builders throw on serialization failure.
+- Stored operation, upload and sync-state errors keep GraphQL `extensions` as node rows.
+- An existing database file is recreated on open.
+- Cable reopens right after the network returns, without waiting for a retry delay.
+- Swift query conditions and `JSONValue` encoding throw on serialization failure.
+- Generated Swift scopes and upload variable builders throw on serialization failure.
 - Kotlin `parseJsonObject` throws when the body is not a JSON object.
 - Cancelling a single upload after its content mutation starts returns false.
-- Upload phase and stage change only through typed events of one state machine, and operation status changes follow a second machine; stored data and public API are unchanged.
 - Uploads reject local and memory models without creating records or files.
-- Upload sources are copied and hashed before the operation is written.
-- Upload file reads and checksums run on blocking tasks and stop on cancellation.
-- Upload transfers reserve their file slot before starting and hold it through retries.
-- Observation reads queued, running or awaiting application are limited to two.
-- Database calls prepare JSON and decode answers off the caller thread on both platforms.
-- Live lists and windows build their ids off the main thread.
-- `takeEdits()` is replaced by `takeUpdate()`: rows, edits and revision from one delivery.
+- `upload`, `uploadCreate` and `cancelUpload` take the declared upload action.
+- A record holds one upload per declared action, and an undeclared action admits nothing.
+- Upload requests are typed records, and the content mutation comes from the declared upload action.
+- `retry`, `discard` and `settled` take an `action`, `nil` or `null` for the whole record.
+- `settled` of one action reports the failure of that action only.
+- `SyncInfo.actions` lists ordinary operations only.
+- Failed uploads older than 7 days are removed at the first flush after start.
+- A failed batch item is removed on its own and its siblings stay.
+- `Query.cached()` and `cachedRow()` are `async` in Swift and `suspend` in Kotlin.
+- `Database.peekQuery`, `Database.edgeValues` and `<scope>Edge` reads are `async` or `suspend`.
+- Database calls, writes, actions and operations run off the caller thread.
 - Kotlin live lists and windows publish their state from a background thread.
-- Generated writes, actions, node reads and operations run off the caller thread.
-- `Query.cached()` and `cachedRow()` are now `async` in Swift and `suspend` in Kotlin.
-- Kotlin entity readers no longer wait while a delivery applies.
-- Every commit on a disk database plans on a read connection outside the writer. The writer only checks the revision, and a commit that landed first makes the plan run again off the writer.
-- Upload, run, load, refresh, load-more and warm calls parse their JSON arguments and convert results on the library executor, not on the caller thread.
-- `Database.peekQuery` and `Database.edgeValues` are `async`. `Query.edgeValues` and the generated `<scope>Edge` reads are `async` in Swift and `suspend` in Kotlin and do their work on the library executor.
-- Loading rows builds them and sizes them outside the row cache lock, so cached reads are not held back by a large load.
-- Cancelling a subscription and expanding a window never wait for the observer registry: a busy registry takes the request later.
-- A listener call never starts after the cancel of its subscription returns, also when the delivery thread had already passed the cancel check.
-- A refresh deferred by the read limit or a running read keeps its touched rows and reads only those, instead of re-reading the whole list.
-- Connecting a live query to a remote relation no longer waits for the storage writer: the stored window state is read on a blocking task and the query delivers its first snapshot, merged from everything that happened meanwhile, once the state is known.
-- A commit that touches none of a query's rows no longer notifies every live query: only queries whose relation state is ahead of their rows ask to be told.
-- Upload files are written to the cache and removed on the blocking pool, never on an async executor.
-- Removing files after a confirmed destroy or a server destroy event runs on the blocking pool.
-- Uploads are identified by their declared upload action (`model:upload:action`): `upload`, `uploadCreate` and `cancelUpload` take the action, a record can hold one upload per action, and an undeclared action admits nothing.
-- Swift and Kotlin pass upload requests as typed records; `UploadRequest` no longer carries the content mutation, it comes from the declared upload action, and an upload action without a mutation is refused.
-- Swift `upload`, `create(uploading:)` and `cancelUpload` and Kotlin `upload`, `uploadCreate` and `cancelUpload` take the declared upload action and run off the caller thread.
-- `retry`, `discard` and `settled` on Swift and Kotlin take a required `action` that is `nil`/`null` for the whole record.
-- A model exposes `uploads[action]` instead of `upload`.
-- A record reports its uploads in `SyncInfo.uploads`, one entry per declared action, stored in the `sync_upload` table; `SyncInfo.actions` lists ordinary operations only. The single `upload` property of a record is removed.
-- `settled` of one action reports the failure of that action's upload or operation only, and an unknown action is refused as such.
-- `retry`, `discard` and `settled` take an optional declared action: none selects the whole record, an action selects only its operations or uploads, and an unknown action is refused.
-- Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns. A failed batch item is removed on its own and its siblings stay.
+- Observation reads queued, running or awaiting application are limited to two.
+- A commit that touches no row of a query no longer notifies that live query.
+- A refresh deferred by the read limit rereads only its touched rows.
+- A live query on a remote relation delivers its first snapshot without waiting.
 
 ### Fixed
-- A batch of server events no longer drops when two rows of it touch the same parent.
+- A batch of server events keeps both rows that touch the same parent.
 - The answer of an action is ready when its operation turns committed.
-- A refused batch of server events reloads the observed lists of its model, and a failed reload reports a gap to the readers of its events.
-- A session failure is no longer hidden by another subscription's failure.
-- A mutation answer that cannot be read keeps the operation open in delivery unknown instead of confirming it.
-- A destroy answered with `NOT_FOUND` closes as deleted instead of failing.
+- A refused batch of server events reloads the observed lists of its model.
+- A failed reload reports a gap to the readers of model events.
+- A session failure is not hidden by another subscription's failure.
+- An unreadable mutation answer keeps the operation in delivery unknown.
+- A destroy answered with `NOT_FOUND` closes as deleted.
 - Explicit null stays distinct from an absent field after reopening the database.
 - Non-finite numbers fail serialization instead of becoming null.
 - Fields named like SQL keywords work in storage, indexes, filters and updates.
-- Generated APIs and GraphQL inputs escape Swift and Kotlin keywords and keep serialized keys.
-- List changes reserve order keys together, so removals release keys before additions.
-- Rows that join one list in a single commit, and appends planned from a stale snapshot, receive distinct order keys instead of failing the commit.
+- Generated APIs escape Swift and Kotlin keywords and keep serialized keys.
+- Rows joining one list in a single commit receive distinct order keys.
 - Kotlin GraphQL subscriptions end when the server closes the WebSocket.
-- Recovery and temporary-id replacement keep records of different models with equal ids separate.
+- Recovery and temporary-id replacement keep equal ids of different models separate.
 - Interrupted database resets resume from the complete recorded model list.
-- Cloud replies from before a database reset are rejected before writing rows.
+- Cloud replies from before a database reset are rejected.
 - `UseLocal` keeps edits made while remote clocks are fetched.
 - Cloud values received before their server row are kept until the row arrives.
 - Subscriptions connect without waiting for storage.
-- Unused load state is released after its last observer and request finish.
 - File cleanup failures are reported, and committed row changes stay committed.
 - A failed multipart `complete` keeps confirmed parts and the upload id.
 - A database reset rejects upload admission queued before the reset.
 - Bundled SQLite respects the macOS 14 deployment target.
-- Dropping `Sync` no longer cancels queued upload file cleanup.
-- Discarding or rolling back an upload keeps its multipart abort until the server answers, with or without confirmed parts.
-- A finished or committed upload never records a multipart abort.
-- Discarding one item of a rejected batch operation removes that item instead of failing as in flight, and a rejected batch operation older than 7 days expires like a failed item.
-- A panic inside an upload task fails that upload and frees its file slot, so queued uploads keep starting.
-- One unreadable upload no longer stops the other waiting uploads from starting.
-- Waiting for a record or for one queued action reads the in-memory queue and no longer loads every queued operation on each event.
-- Two uploads of one file no longer fail when they write the cache copy at the same time.
-- A failure while removing expired uploads or sending a recorded abort is reported by `flush` and retried at the next start or online event.
+- Discarding an upload keeps its multipart abort until the server answers.
+- A finished upload never records a multipart abort.
+- Discarding one item of a rejected batch operation removes only that item.
+- A rejected batch operation older than 7 days expires like a failed item.
+- A panic inside an upload task fails that upload and frees its file slot.
+- One unreadable upload does not stop the other waiting uploads.
+- Two uploads of one file no longer fail when they write the cache copy together.
+- `flush` reports a failure while removing expired uploads and retries at the next start.
 
 ### Removed
-- The `liveHasMany` bridge call; instance links use `Query.related`.
-- `readEdgeValues` and the generated `read<Scope>Edge` functions: `edgeValues` and `<scope>Edge` are the only reads and are `async` in Swift and `suspend` in Kotlin.
-- `UploadRequest` and `UploadBatchRequest` lose `createBlob` and `multipart`.
+- The `liveHasMany` bridge call; use `Query.related`.
+- `readEdgeValues` and generated `read<Scope>Edge`; use `edgeValues` and `<scope>Edge`.
+- `createBlob` and `multipart` from `UploadRequest` and `UploadBatchRequest`.
+- `RetryListener` and `Database.setRetryListener`.
+- Swift `Model.retryAll()` and Kotlin top-level `retryAll()`; use `DB.retryAll()`.
+- The single `upload` property of a record.
 - Swift `JSONValue.parse`.
 
 ## 6.7.0 - 2026-10-24

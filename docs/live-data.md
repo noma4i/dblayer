@@ -207,19 +207,19 @@ for await snapshot in try await Note.thread(groupId).snapshots.stream() {
 ```
 
 ```kotlin
-Note.thread(groupId).snapshots.collect { snapshot ->
+Note.thread(groupId).snapshots.flow.collect { snapshot ->
     val edits = snapshot.edits
     if (edits != null) mirror.replay(edits) else mirror = snapshot.rows.toMutableList()
 }
 ```
 
 ```swift
-let update = thread.takeUpdate()
+let update = thread.takeUpdate()   // ListUpdate: rows, edits, revision
 if let edits = update.edits { mirror.replay(edits) } else { mirror = update.rows }
 ```
 
 ```kotlin
-val update = thread.takeUpdate()
+val update = thread.takeUpdate()   // ListUpdate: rows, edits, revision
 val edits = update.edits
 if (edits != null) mirror.replay(edits) else mirror = update.rows.toMutableList()
 ```
@@ -308,16 +308,16 @@ fun ProfileScreen(userId: RowId) {
 }
 ```
 
-**ViewModels and plain Kotlin.** A live query is a `Flow<Change>` with a `rows` shortcut: `Moment.recent.rows` is `Flow<List<Moment>>`, and `.stateIn(scope)` gives a `StateFlow`.
+**ViewModels and plain Kotlin.** `Moment.recent.live.flow` is a `Flow<List<Moment>>`, `Moment.recent.snapshots.flow` carries snapshots, and `.stateIn(scope)` gives a `StateFlow`.
 
 **Low level.** Without a UI framework, iterate the stream:
 
 ```swift
-for await change in Moment.recent { handle(change.rows) }
+for await rows in try await Moment.recent.live.stream() { handle(rows) }
 ```
 
 ```kotlin
-Moment.recent.collect { change -> handle(change.rows) }
+Moment.recent.live.flow.collect { rows -> handle(rows) }
 ```
 
 A live query that cannot start throws its error from `current()` and `stream()`. A cancelled caller gets the cancellation error, not the initial value, and a cancellation is never shown as a load failure.
@@ -348,7 +348,7 @@ moment.vibes.count                  // counted by SQLite, no cache field
 
 ```swift
 let authors = try Moment.where(Moment.userId == id).order(Moment.createdAt.desc).limit(20).related(Moment.Relations.author)
-for try await snapshot in try await authors.snapshots.stream() { show(snapshot.rows, snapshot.hasMore) }
+for await snapshot in try await authors.snapshots.stream() { show(snapshot.rows, snapshot.hasMore) }
 ```
 
 ```kotlin

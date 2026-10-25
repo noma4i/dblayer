@@ -102,7 +102,7 @@ func application(_ application: UIApplication, handleEventsForBackgroundURLSessi
 }
 ```
 
-The completion waits only for the uploads whose tasks reported in this launch. Other unfinished uploads do not hold it.
+The identifier of that session is `uploadSessionIdentifier` of `UrlSessionTransport`. The completion waits only for the uploads whose tasks reported in this launch. Other unfinished uploads do not hold it.
 
 On Android the app gives the text and the small icon of the notification to `open`:
 

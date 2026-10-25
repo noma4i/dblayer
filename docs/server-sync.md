@@ -47,7 +47,6 @@ An omitted endpoint and transport opens a local database when `encrypted` is abs
 With `encrypted`, the default HTTP uses its origin. The default transport uses `endpoint`, or that origin when endpoint is absent.
 `http` is the last optional argument and accepts custom encrypted HTTP replies.
 The core rejects `encrypted` without credentials, credentials without `encrypted`, and `http` without `encrypted` as `DbError.Invalid` (`DbException.Invalid` in Kotlin).
-`DB.open` and `DBlayer.open` with `encrypted` also require the HTTP and transport arguments.
 Encrypted sessions require JWE requests.
 
 An operation type declares `Data` (Swift) or a `dataSerializer` (Kotlin) when its generated call returns a decoded response.
@@ -528,8 +527,6 @@ Events of the plain transport with a full row save that row directly. `insert_on
 A scope with a parameter that has no `where` stores the server response as it was and does not accept event rows.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
 `via: :observed` uses this reread for each event. Each event also reaches `Model.events` with the row before and after the reread, see [Models](models.md).
-
-`refresh(replace: true)` replaces the whole list with the response (unconfirmed records still stay). It is meant for small lists where the server is the only authority.
 
 ## Mutations
 
