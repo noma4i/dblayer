@@ -302,30 +302,6 @@ pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStateme
     Ok(CompiledStatement { sql, bindings })
 }
 
-#[cfg(test)]
-fn scope_join(model: &ModelKey) -> String {
-    format!(
-        "FROM scope_member AS m JOIN {} AS r ON r.id = m.row_id WHERE m.model = ? AND m.scope_key = ?",
-        table_name(model.as_str())
-    )
-}
-
 fn scope_bindings(model: &ModelKey, scope: &ScopeKey) -> Vec<SqlValue> {
     vec![SqlValue::Text(model.as_str().to_string()), SqlValue::Text(scope.as_str().to_string())]
-}
-
-#[cfg(test)]
-pub fn scope_statement(model: &ModelKey, scope: &ScopeKey, limit: Option<usize>) -> CompiledStatement {
-    let mut bindings = scope_bindings(model, scope);
-    let mut sql = format!("SELECT {KEY_COLUMNS} {} ORDER BY m.order_key, m.row_id", scope_join(model));
-    if let Some(limit) = limit {
-        sql.push_str(" LIMIT ?");
-        bindings.push(SqlValue::Integer(i64::try_from(limit).unwrap_or(i64::MAX)));
-    }
-    CompiledStatement { sql, bindings }
-}
-
-#[cfg(test)]
-pub fn scope_count_statement(model: &ModelKey, scope: &ScopeKey) -> CompiledStatement {
-    CompiledStatement { sql: format!("SELECT COUNT(*) {}", scope_join(model)), bindings: scope_bindings(model, scope) }
 }

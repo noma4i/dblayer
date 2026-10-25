@@ -1058,6 +1058,14 @@ impl ModelSpec {
         resolve(&self.fields, path)
     }
 
+    pub fn column_scalar_kind(&self, column: &str) -> Option<ScalarKind> {
+        match self.field(column).map(|field| &field.kind) {
+            Some(FieldKind::Scalar { kind }) => Some(*kind),
+            Some(FieldKind::Enum { .. }) => Some(ScalarKind::Str),
+            _ => None,
+        }
+    }
+
     pub fn list_scopes(&self, row: &Map<String, Value>) -> Vec<ScopeKey> {
         self.relations
             .iter()
@@ -1066,11 +1074,7 @@ impl ModelSpec {
                 let mut params = Map::new();
                 let mut kinds = BTreeMap::new();
                 for column in &relation.by_columns {
-                    let kind = match self.field(column).map(|field| &field.kind) {
-                        Some(FieldKind::Scalar { kind }) => *kind,
-                        Some(FieldKind::Enum { .. }) => ScalarKind::Str,
-                        _ => return None,
-                    };
+                    let kind = self.column_scalar_kind(column)?;
                     params.insert(column.clone(), row.get(column)?.clone());
                     kinds.insert(column.clone(), kind);
                 }

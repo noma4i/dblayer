@@ -135,11 +135,7 @@ impl Inner {
         let mut scope_params = Map::new();
         let mut kinds = std::collections::BTreeMap::new();
         for column in &declared.by_columns {
-            let kind = match spec.field(column).map(|field| &field.kind) {
-                Some(crate::schema::FieldKind::Scalar { kind }) => *kind,
-                Some(crate::schema::FieldKind::Enum { .. }) => ScalarKind::Str,
-                _ => return Err(SyncError::Params(format!("{column} is not a scalar or enum field"))),
-            };
+            let kind = spec.column_scalar_kind(column).ok_or_else(|| SyncError::Params(format!("{column} is not a scalar or enum field")))?;
             let value = params.get(column).ok_or_else(|| SyncError::Params(format!("missing param {column}")))?;
             scope_params.insert(column.clone(), value.clone());
             kinds.insert(column.clone(), kind as ScalarKind);
