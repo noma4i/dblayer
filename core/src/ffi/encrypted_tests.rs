@@ -72,6 +72,20 @@ pub(super) async fn cancel_on_retry(retries: &super::RetryProgress, call: impl s
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn cancel_on_retry_waits_for_a_retry_that_the_executor_reaches_late() {
+    use crate::transport::retry::Retrying;
+    let retries = super::RetryProgress::new();
+    let progress = retries.inner.clone();
+    let clock = crate::pacing::ManualClock::new(std::time::Duration::ZERO);
+    let online = crate::transport::Connectivity::new(true);
+    let call = async {
+        super::database::executor().unwrap().spawn_blocking(|| std::thread::sleep(std::time::Duration::from_millis(300))).await.unwrap();
+        let _ = Retrying::new(&clock, &progress, &online, crate::pacing::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
+    };
+    cancel_on_retry(&retries, call).await;
+}
+
 #[tokio::test]
 async fn dropping_foreign_calls_cancels_the_inflight_http_future() {
     struct Waiting {
