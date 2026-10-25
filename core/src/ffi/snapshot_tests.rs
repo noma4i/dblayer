@@ -208,9 +208,13 @@ async fn related_rows_and_the_source_load_arrive_in_one_snapshot_with_the_typed_
     let listener = tape();
     let live = db.live_related(RELATED_FEED.into(), "author".into(), listener.clone());
     tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends").unwrap();
-    let shown = heard(&listener).pop().unwrap();
-    assert_eq!((shown.phase, shown.size, shown.total, shown.rows.first().map(|row| row.id.as_str())), (Some(LivePhase::Loaded), 1, None, Some("u1")));
-    consistent(&heard(&listener));
+    let frames = heard(&listener);
+    let shown = frames.last().unwrap();
+    assert_eq!((shown.phase, shown.size, shown.total), (Some(LivePhase::Loaded), 1, None));
+    let snapshots = super::live_feed_tests::folded(&frames);
+    assert!(snapshots.iter().all(|(phase, ids, _)| *phase != Some(LivePhase::Loaded) || ids == &["u1"]), "no Loaded snapshot without the related row: {snapshots:?}");
+    assert_eq!(snapshots.last().map(|(_, ids, _)| ids.clone()), Some(vec!["u1".to_string()]));
+    consistent(&frames);
     live.cancel();
     assert_eq!((db.subscription_census().subscriptions, db.subscription_census().observed_queries), (0, 0));
 

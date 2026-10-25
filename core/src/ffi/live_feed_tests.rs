@@ -27,8 +27,12 @@ fn relation(phase: LoadPhase, revision: i64, error: Option<LoadError>) -> Relati
     RelationState { phase, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error, loaded_at: None, revision }
 }
 
+fn wire_row(id: String) -> super::wire::WireRow {
+    super::wire::WireRow { id, revision: 0, estimated_bytes: 0, layout: String::new(), cells: Vec::new(), sync: super::wire::WireSync { state: super::wire::WireSyncState::Synced, actions: Vec::new(), dirty_fields: Vec::new(), error: None, attempts: 0, since: 0 }, uploads: Vec::new() }
+}
+
 fn rows(revision: i64, size: u32) -> LiveChange {
-    LiveChange { full: true, size, ..LiveChange::empty(revision) }
+    LiveChange { full: true, size, rows: (0..size).map(|index| wire_row(format!("r{index}"))).collect(), ..LiveChange::empty(revision) }
 }
 
 #[derive(Clone)]
@@ -102,6 +106,8 @@ fn inv_loadm_14_the_rows_of_a_landing_and_its_state_reach_the_subscriber_in_ever
         consistent(&changes, 5, &context);
         let last = changes.last().unwrap();
         assert_eq!((last.phase, last.size, last.revision), (Some(LivePhase::Loaded), 1, 5), "{context}");
+        let snapshots = folded(&changes);
+        assert!(snapshots.iter().all(|(phase, ids, _)| *phase != Some(LivePhase::Loaded) || ids.len() == 1), "{context}: a Loaded snapshot without its row {snapshots:?}");
     }
     assert_eq!(orders, 3);
 }
@@ -288,4 +294,23 @@ fn a_targets_only_feed_shows_no_total_of_the_source_relation() {
     feed.state(RelationState { total: Some(9), ..relation(LoadPhase::Loaded, 1, None) });
     let shown = heard(&tape).pop().expect("a delivery");
     assert_eq!((shown.total, shown.size, shown.phase), (None, 3, Some(LivePhase::Loaded)));
+}
+
+pub(super) fn folded(changes: &[LiveChange]) -> Vec<(Option<LivePhase>, Vec<String>, u32)> {
+    let mut ids: Vec<String> = Vec::new();
+    changes
+        .iter()
+        .map(|change| {
+            if change.full {
+                ids.clear();
+            }
+            ids.retain(|id| !change.removed.contains(id));
+            for row in &change.rows {
+                if !ids.contains(&row.id) {
+                    ids.push(row.id.clone());
+                }
+            }
+            (change.phase, ids.clone(), change.size)
+        })
+        .collect()
 }
