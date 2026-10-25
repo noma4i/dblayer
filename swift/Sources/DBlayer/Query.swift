@@ -110,7 +110,7 @@ public struct Query<Model: DBModel>: Sendable {
   }
 
   /// Reads the query once and keeps its rows in memory, so that `cached()` answers at once. The library keeps the latest queries warm and drops the oldest.
-  public func warm() async throws { try await DB.database.warm(queryJson: json) }
+  @concurrent public func warm() async throws { try await DB.database.warm(queryJson: json) }
 
   /// The values that the connection of this relation carried on the edge of one row, or nil when the row is not in the connection. It reads one row by key and never waits for a write.
   public func edgeValues(of id: String) throws -> [String: JSONValue]? {
@@ -124,9 +124,9 @@ public struct Query<Model: DBModel>: Sendable {
     }.value
   }
 
-  public func load() async throws { try await DB.database.load(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
-  public func refresh() async throws { try await DB.database.refresh(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
-  @discardableResult public func loadMore() async throws -> LoadMoreResult { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
+  @concurrent public func load() async throws { try await DB.database.load(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
+  @concurrent public func refresh() async throws { try await DB.database.refresh(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
+  @discardableResult @concurrent public func loadMore() async throws -> LoadMoreResult { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
 
   /// The rows with the ids that the delivery replaced: a created record answered by the server (or matched by `correlate`) arrives under its real id.
   public var snapshots: LiveSource<Snapshot<Model>> {

@@ -41,17 +41,17 @@ public enum DB {
   public static func listen() throws { try database.listen() }
   public static func unlisten() throws { try database.unlisten() }
   /// Reloads the stale relations that have readers. Call it when the app returns to the foreground.
-  public static func resume() async throws {
+  @concurrent public static func resume() async throws {
     try await database.resume()
     await EntityRegistries.resumeAll()
   }
 
   /// Sends one registered operation that no model owns and decodes the value at its root field. The generated `Operations` calls use it.
-  public static func run<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type) async throws -> Answer {
+  @concurrent public static func run<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type) async throws -> Answer {
     try JSONDecoder().decode(Answer.self, from: Data(try await database.run(operation: operation, variablesJson: JSONValue.object(variables).text).utf8))
   }
 
-  public static func run(_ operation: String, variables: [String: JSONValue]) async throws {
+  @concurrent public static func run(_ operation: String, variables: [String: JSONValue]) async throws {
     _ = try await database.run(operation: operation, variablesJson: JSONValue.object(variables).text)
   }
 

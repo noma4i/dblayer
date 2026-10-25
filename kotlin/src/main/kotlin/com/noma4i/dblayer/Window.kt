@@ -1,8 +1,11 @@
 package com.noma4i.dblayer
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 data class WindowEdges(val hasBefore: Boolean, val hasAfter: Boolean, val total: Long?) {
@@ -53,13 +56,13 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
     init {
         scope.launch {
             try {
-                window.snapshots.flow.collect { snapshot ->
+                window.snapshots.flow.map { it to if (it.reordered) it.rows.map { row -> row.id } else null }.flowOn(Dispatchers.Default).collect { (snapshot, ids) ->
                     synchronized(this@LiveWindow) { pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size) }
                     mutableReplaced.value = snapshot.replaced
                     mutableFailure.value = snapshot.error
                     snapshot.window?.let { mutableEdges.value = it }
                     mutableRows.value = snapshot.rows
-                    if (snapshot.reordered) mutableIds.value = snapshot.rows.map { it.id }
+                    if (ids != null) mutableIds.value = ids
                 }
             } catch (error: IllegalStateException) {
                 mutableFailure.value = error.message

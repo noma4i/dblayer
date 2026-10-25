@@ -208,22 +208,31 @@ public final class LiveList<Model: DBModel> {
   init(_ query: Query<Model>, snapshots: LiveSource<Snapshot<Model>>) {
     self.query = query
     tasks = [
-      Task { [weak self] in
+      Task.detached { [weak self] in
         let stream: LiveStream<Snapshot<Model>>
         do { stream = try await snapshots.stream() } catch is CancellationError { return } catch {
-          self?.snapshot = Snapshot(rows: [], replaced: [:], phase: .failed, error: error.localizedDescription, errorKind: "subscription")
+          await self?.fail(error)
           return
         }
         for await next in stream {
+          let ids = next.reordered ? next.rows.map(\.id) : nil
           guard let self else { return }
-          replaced = next.replaced
-          pending = ListEdit.composing(pending, next.edits, within: next.rows.count)
-          rows = next.rows
-          if next.reordered { ids = next.rows.map(\.id) }
-          snapshot = next
+          await self.show(next, ids: ids)
         }
       }
     ]
+  }
+
+  private func fail(_ error: Error) {
+    snapshot = Snapshot(rows: [], replaced: [:], phase: .failed, error: error.localizedDescription, errorKind: "subscription")
+  }
+
+  private func show(_ next: Snapshot<Model>, ids: [String]?) {
+    replaced = next.replaced
+    pending = ListEdit.composing(pending, next.edits, within: next.rows.count)
+    rows = next.rows
+    if let ids { self.ids = ids }
+    snapshot = next
   }
 
   public func takeEdits() -> [ListEdit<Model>]? {

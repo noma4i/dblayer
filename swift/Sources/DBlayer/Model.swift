@@ -18,45 +18,45 @@ extension DBModel {
 
   public static func ids(_ ids: [String]) -> Query<Self> { Query<Self>().where(.inList("id", ids.map(JSONValue.string))) }
 
-  public static func create(values: [String: JSONValue], args: [String: JSONValue] = [:]) async throws -> Self {
+  @concurrent public static func create(values: [String: JSONValue], args: [String: JSONValue] = [:]) async throws -> Self {
     try decode(try await DB.database.create(model: modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
   }
-  public func update(values: [String: JSONValue], args: [String: JSONValue] = [:]) async throws -> Self {
+  @concurrent public func update(values: [String: JSONValue], args: [String: JSONValue] = [:]) async throws -> Self {
     try Self.decode(try await DB.database.update(model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
   }
   /// Writes a field the server never sends. A `nil` value clears it.
-  public func setLocal(_ path: String, _ value: JSONValue) async throws {
+  @concurrent public func setLocal(_ path: String, _ value: JSONValue) async throws {
     try await DB.database.setLocal(model: Self.modelName, rowId: id, path: path, valueJson: value.text)
   }
-  public func act(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> Self {
+  @concurrent public func act(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> Self {
     try Self.decode(try await DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text).row)
   }
-  public func actAnswering<Answer: Decodable & Sendable>(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> ActionAnswer<Self, Answer> {
+  @concurrent public func actAnswering<Answer: Decodable & Sendable>(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> ActionAnswer<Self, Answer> {
     let queued = try await DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text)
     return ActionAnswer(model: try Self.decode(queued.row), operation: queued.operation)
   }
-  public func set(values: [String: JSONValue]) async throws {
+  @concurrent public func set(values: [String: JSONValue]) async throws {
     try await DB.database.setEphemeral(model: Self.modelName, rowId: id, valuesJson: JSONValue.object(values).text)
   }
-  public func destroy() async throws { try await DB.database.destroy(model: Self.modelName, rowId: id) }
+  @concurrent public func destroy() async throws { try await DB.database.destroy(model: Self.modelName, rowId: id) }
   /// Waits until the server has answered every queued change of the record, throws on a refusal or when offline.
-  public func settled() async throws { try await DB.database.settled(model: Self.modelName, rowId: id) }
+  @concurrent public func settled() async throws { try await DB.database.settled(model: Self.modelName, rowId: id) }
   /// The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline.
-  public func confirmedId() async throws -> String { try await DB.database.confirmed(model: Self.modelName, rowId: id) }
+  @concurrent public func confirmedId() async throws -> String { try await DB.database.confirmed(model: Self.modelName, rowId: id) }
 
-  @discardableResult public func retry() async throws -> UInt64 { try await DB.database.retry(model: Self.modelName, rowId: id) }
-  public func discard() async throws { try await DB.database.discard(model: Self.modelName, rowId: id) }
-  @discardableResult public static func retryAll() async throws -> UInt64 { try await DB.database.retryAll() }
+  @discardableResult @concurrent public func retry() async throws -> UInt64 { try await DB.database.retry(model: Self.modelName, rowId: id) }
+  @concurrent public func discard() async throws { try await DB.database.discard(model: Self.modelName, rowId: id) }
+  @discardableResult @concurrent public static func retryAll() async throws -> UInt64 { try await DB.database.retryAll() }
 
   public func related<Target: DBModel>(_ name: String, as _: Target.Type) -> LiveSource<[Target]> {
     let model = Self.modelName, rowId = id
     return listSource(initial: [], open: { listener in try DB.database.liveHasMany(model: model, rowId: rowId, name: name, listener: listener) }) { (applied: ListApplied<Target>, _) in applied.rows }
   }
 
-  public static func readNode(relation: String, id: String, force: Bool) async throws -> Self? {
+  @concurrent public static func readNode(relation: String, id: String, force: Bool) async throws -> Self? {
     try await DB.database.node(model: modelName, relation: relation, rowId: id, force: force).map(decode)
   }
-  public static func readNodes(relation: String, ids: [String]) async throws -> [Self] {
+  @concurrent public static func readNodes(relation: String, ids: [String]) async throws -> [Self] {
     try await DB.database.nodes(model: modelName, relation: relation, rowIds: ids).map(decode)
   }
 
@@ -72,7 +72,7 @@ public struct ActionAnswer<Model: DBModel, Answer: Decodable & Sendable>: Sendab
   let operation: Int64
 
   /// Waits until the server answers the action, throws on a refusal or when offline. The answer is read once.
-  public func answer() async throws -> Answer {
+  @concurrent public func answer() async throws -> Answer {
     try JSONDecoder().decode(Answer.self, from: Data(try await DB.database.answer(model: Model.modelName, operation: operation).utf8))
   }
 }

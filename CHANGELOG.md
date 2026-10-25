@@ -16,6 +16,8 @@
 - Upload file reads and checksums run on blocking tasks and stop on cancellation.
 - Upload transfers reserve their file slot before starting and hold it through retries.
 - Observation reads queued, running or awaiting application are limited to two.
+- Kotlin calls to the database prepare their JSON and read their answers on `Dispatchers.Default`, not on the caller thread. Swift marks them `@concurrent`.
+- `LiveList` and `LiveWindow` build `ids` off the main thread on both platforms.
 
 ### Fixed
 - Explicit null stays distinct from an absent field after reopening the database.

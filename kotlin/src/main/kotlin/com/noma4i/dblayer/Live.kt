@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 
@@ -142,12 +143,12 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
         }
         scope.launch {
             try {
-                snapshots.flow.collect {
-                    synchronized(this@LiveList) { pending = ListEdit.composing(pending, it.edits, it.rows.size) }
-                    mutableReplaced.value = it.replaced
-                    mutableRows.value = it.rows
-                    if (it.reordered) mutableIds.value = it.rows.map { row -> row.id }
-                    mutableSnapshot.value = it
+                snapshots.flow.map { it to if (it.reordered) it.rows.map { row -> row.id } else null }.flowOn(kotlinx.coroutines.Dispatchers.Default).collect { (snapshot, ids) ->
+                    synchronized(this@LiveList) { pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size) }
+                    mutableReplaced.value = snapshot.replaced
+                    mutableRows.value = snapshot.rows
+                    if (ids != null) mutableIds.value = ids
+                    mutableSnapshot.value = snapshot
                 }
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error

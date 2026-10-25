@@ -18,13 +18,13 @@ object DBlayer {
     fun unlisten() = database.unlisten()
     /** Reloads the stale relations that have readers. Call it when the app returns to the foreground. */
     suspend fun resume() {
-        database.resume()
+        offCaller { database.resume() }
         EntityRegistries.resumeAll()
     }
 
     /** Ends the session: clears the stored data. Entities that readers hold become empty and receive the next session's rows. */
     suspend fun logout() {
-        database.logout()
+        offCaller { database.logout() }
         EntityRegistries.resetAll()
     }
 
@@ -49,10 +49,10 @@ object DBlayer {
 
     /** Sends one registered operation that no model owns and decodes the value at its root field. The generated `Operations` calls use it. */
     suspend fun <Answer> run(operation: String, variables: JsonObject, serializer: KSerializer<Answer>): Answer =
-        dbJson.decodeFromString(serializer, database.run(operation, variables.jsonText()))
+        offCaller { dbJson.decodeFromString(serializer, database.run(operation, variables.jsonText())) }
 
     suspend fun run(operation: String, variables: JsonObject) {
-        database.run(operation, variables.jsonText())
+        offCaller { database.run(operation, variables.jsonText()) }
     }
 
     /** The one database of the process. Set by `open`, empty again after `close`. */

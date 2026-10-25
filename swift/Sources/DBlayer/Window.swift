@@ -74,19 +74,26 @@ public final class LiveWindow<Model: DBModel> {
 
   public init(_ window: Window<Model>) {
     self.window = window
-    task = Task { [weak self] in
+    task = Task.detached { [weak self] in
       let stream: LiveStream<Snapshot<Model>>
-      do { stream = try await window.snapshots.stream() } catch { self?.failure = error.localizedDescription; return }
+      do { stream = try await window.snapshots.stream() } catch { await self?.fail(error); return }
       for await snapshot in stream {
+        let ids = snapshot.reordered ? snapshot.rows.map(\.id) : nil
         guard let self else { return }
-        replaced = snapshot.replaced
-        if snapshot.error != failure { failure = snapshot.error }
-        if let edges = snapshot.window { (hasBefore, hasAfter, total) = (edges.hasBefore, edges.hasAfter, edges.total) }
-        pending = ListEdit.composing(pending, snapshot.edits, within: snapshot.rows.count)
-        rows = snapshot.rows
-        if snapshot.reordered { ids = snapshot.rows.map(\.id) }
+        await self.show(snapshot, ids: ids)
       }
     }
+  }
+
+  private func fail(_ error: Error) { failure = error.localizedDescription }
+
+  private func show(_ snapshot: Snapshot<Model>, ids: [String]?) {
+    replaced = snapshot.replaced
+    if snapshot.error != failure { failure = snapshot.error }
+    if let edges = snapshot.window { (hasBefore, hasAfter, total) = (edges.hasBefore, edges.hasAfter, edges.total) }
+    pending = ListEdit.composing(pending, snapshot.edits, within: snapshot.rows.count)
+    rows = snapshot.rows
+    if let ids { self.ids = ids }
   }
 
   public func takeEdits() -> [ListEdit<Model>]? {

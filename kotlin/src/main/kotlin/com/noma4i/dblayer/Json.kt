@@ -1,5 +1,7 @@
 package com.noma4i.dblayer
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.ListSerializer
@@ -23,6 +25,9 @@ val dbJson = Json {
 }
 
 inline fun <reified Value> jsonValue(value: Value): JsonElement = dbJson.encodeToJsonElement(value)
+
+/** Runs a call of the library off the thread of the caller: its JSON, the core call and the read of the answer never run on Main. */
+internal suspend fun <Result> offCaller(block: suspend () -> Result): Result = withContext(Dispatchers.Default) { block() }
 
 fun JsonElement.jsonText(): String = dbJson.encodeToString(JsonElement.serializer(), this)
 
