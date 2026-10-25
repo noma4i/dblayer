@@ -335,7 +335,7 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
                     if change.kind == RowChangeKind::Destroyed {
                         values.forget(model, id);
                     } else {
-                        values.track(model, id);
+                        values.track(model, id, result.revision.unwrap_or(i64::MAX));
                     }
                 }
             }

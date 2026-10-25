@@ -18,16 +18,16 @@ fn expiry_visits_only_due_rows_and_claims_only_candidates() {
     let held = super::ephemeral::Ephemerals::new(&[presence_spec()]);
     let mut state = held.lock();
     state.clock = clock.clone();
-    state.track("presence", "due");
+    state.track("presence", "due", 0);
     clock.advance(seconds(1));
-    for id in 0..1000 { state.track("presence", &id.to_string()); }
+    for id in 0..1000 { state.track("presence", &id.to_string(), 0); }
     clock.advance(seconds(29));
     state.due_visits.set(0);
     let due = state.take_due();
     assert_eq!(due.expired, vec![("presence".to_string(), "due".to_string())]);
     assert_eq!(state.due_visits.get(), 1);
     state.due_visits.set(0);
-    assert_eq!(state.claim_expired(&due.expired), due.expired);
+    assert_eq!(state.claim_expired(&due.expired), vec![(due.expired[0].clone(), 0)]);
     assert_eq!(state.due_visits.get(), 1);
 }
 
@@ -256,14 +256,30 @@ fn memory_models_read_and_observe_like_stored_ones_and_expire_by_the_clock() {
 }
 
 #[test]
-fn inv_ephemeral_03_a_landing_after_the_due_scan_keeps_the_memory_row_alive() {
+fn inv_ephemeral_03_a_landing_before_its_expiry_is_armed_keeps_the_memory_row_alive() {
     let (db, clock) = rig();
     put(&db, "presence", json!({"id": "r1", "room": "lobby"}));
+    let _scan = db.shared.expiry_gate.lock().unwrap();
     clock.advance(seconds(31));
-    let due = db.shared.ephemeral.lock().take_due();
+    let claimed = {
+        let mut state = db.shared.ephemeral.lock();
+        let due = state.take_due();
+        state.claim_expired(&due.expired)
+    };
+    assert_eq!(claimed.len(), 1);
+    let (rival, fired, destroyed) = (db.clone(), std::sync::atomic::AtomicBool::new(false), Arc::new(std::sync::Mutex::new(Vec::new())));
+    let seen = destroyed.clone();
+    *db.shared.store.after_commit.lock().unwrap() = Some(Box::new(move |_| {
+        if fired.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let (rival, claimed) = (rival.clone(), claimed.clone());
+        let count = crate::test_wait::join_within(std::thread::spawn(move || rival.destroy_claimed(rival.generation(), &claimed).unwrap()));
+        seen.lock().unwrap().push(count);
+    }));
     put(&db, "presence", json!({"id": "r1", "room": "garden"}));
-    assert_eq!(db.destroy_expired(&due.expired).unwrap(), 0);
-    assert!(db.find("presence", &rid("r1")).unwrap().is_some());
+    assert_eq!(*destroyed.lock().unwrap(), vec![0]);
+    assert_eq!(db.find("presence", &rid("r1")).unwrap().unwrap().text("room"), Some("garden"));
 }
 
 #[test]

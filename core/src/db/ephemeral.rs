@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
-use crate::identity::{ModelKey, RowId, RowRef, ListKey};
+use crate::identity::{Generation, ModelKey, RowId, RowRef, ListKey};
 use crate::commit::ScopeRef;
 use crate::pacing::{Clock, SystemClock};
 use crate::schema::ModelSpec;
@@ -34,7 +34,7 @@ pub(crate) struct State {
     pub epoch: u64,
     closed: bool,
     rows: HashMap<RowKey, RowValues>,
-    expiry: HashMap<RowKey, Duration>,
+    expiry: HashMap<RowKey, (Duration, i64)>,
     deadlines: BTreeSet<(Duration, RowKey, Option<String>)>,
     windows: HashMap<String, Duration>,
     #[cfg(test)]
@@ -109,9 +109,9 @@ impl State {
             }
             self.rows.entry(to.clone()).or_insert(values);
         }
-        if let Some(due) = self.expiry.remove(&from) {
-            self.deadlines.remove(&(due, from, None));
-            let due = *self.expiry.entry(to.clone()).or_insert(due);
+        if let Some(armed) = self.expiry.remove(&from) {
+            self.deadlines.remove(&(armed.0, from, None));
+            let due = self.expiry.entry(to.clone()).or_insert(armed).0;
             self.deadlines.insert((due, to, None));
         }
     }
@@ -123,7 +123,7 @@ impl State {
                 if let Some(due) = slot.due { self.deadlines.remove(&(due, key.clone(), Some(name))); }
             }
         }
-        if let Some(due) = self.expiry.remove(&key) { self.deadlines.remove(&(due, key, None)); }
+        if let Some((due, _)) = self.expiry.remove(&key) { self.deadlines.remove(&(due, key, None)); }
     }
 
     pub(crate) fn clear(&mut self, models: Option<&[String]>) {
@@ -133,11 +133,11 @@ impl State {
         self.deadlines.retain(|(_, key, _)| keep(key));
     }
 
-    pub(crate) fn track(&mut self, model: &str, id: &str) -> bool {
+    pub(crate) fn track(&mut self, model: &str, id: &str, revision: i64) -> bool {
         let Some(window) = self.windows.get(model).copied() else { return false };
         let key = (model.to_string(), id.to_string());
         let due = self.clock.now() + window;
-        if let Some(previous) = self.expiry.insert(key.clone(), due) { self.deadlines.remove(&(previous, key.clone(), None)); }
+        if let Some((previous, _)) = self.expiry.insert(key.clone(), (due, revision)) { self.deadlines.remove(&(previous, key.clone(), None)); }
         self.deadlines.insert((due, key, None));
         true
     }
@@ -172,16 +172,16 @@ impl State {
         Due { reset: reset.into_iter().collect(), expired }
     }
 
-    pub(crate) fn claim_expired(&mut self, candidates: &[RowKey]) -> Vec<RowKey> {
+    pub(crate) fn claim_expired(&mut self, candidates: &[RowKey]) -> Vec<(RowKey, i64)> {
         let now = self.clock.now();
         let mut claimed = Vec::new();
         for key in candidates {
             #[cfg(test)]
             self.due_visits.set(self.due_visits.get() + 1);
-            if let Some(due) = self.expiry.get(key).copied().filter(|due| *due <= now) {
+            if let Some((due, revision)) = self.expiry.get(key).copied().filter(|(due, _)| *due <= now) {
                 self.expiry.remove(key);
                 self.deadlines.remove(&(due, key.clone(), None));
-                claimed.push(key.clone());
+                claimed.push((key.clone(), revision));
             }
         }
         claimed
@@ -304,11 +304,22 @@ impl Db {
         }
         let generation = self.generation();
         let claimed = self.shared.ephemeral.lock().claim_expired(candidates);
-        let destroyed = claimed.len();
+        self.destroy_claimed(generation, &claimed)
+    }
+
+    pub(crate) fn destroy_claimed(&self, generation: Generation, claimed: &[(RowKey, i64)]) -> Result<usize, DbError> {
+        let mut destroyed = 0;
         let committed = self.commit_following(generation, |reader| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
             let mut targets: Vec<RowRef> = Vec::new();
-            for (model, id) in &claimed {
+            let mut expired: Vec<&RowKey> = Vec::new();
+            for (key, armed) in claimed {
+                if reader.stored_row(&key.0, &key.1)?.is_some_and(|row| row.revision <= *armed) {
+                    expired.push(key);
+                }
+            }
+            destroyed = expired.len();
+            for (model, id) in expired {
                 let own = RowRef::new(ModelKey::new(model), RowId::new(id)?);
                 for target in self.destroy_targets(reader, &own, WriteOrigin::Event)? {
                     if !targets.contains(&target) {

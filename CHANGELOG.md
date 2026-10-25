@@ -61,6 +61,7 @@
 - A live query on a remote relation delivers its first snapshot without waiting.
 
 ### Fixed
+- An expiring memory row written again before its removal commits stays alive.
 - A batch of server events keeps both rows that touch the same parent.
 - The answer of an action is ready when its operation turns committed.
 - A refused batch of server events reloads the observed lists of its model.
