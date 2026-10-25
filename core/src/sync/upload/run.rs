@@ -93,12 +93,24 @@ impl Runner {
             let input: UploadInput = serde_json::from_value(value).map_err(|error| crate::store::StoreError::from(std::io::Error::other(error)))?;
             let (id, error): (Option<String>, Option<String>) = connection.query_row("SELECT file_id, source_error FROM op_item WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position], |row| Ok((row.get(0)?, row.get(1)?)))?;
             let file = if needs_file {
-                id.as_ref().map(|id| connection.query_row("SELECT name, data FROM file WHERE id = ?1", [id], |row| Ok((id.clone(), row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))).transpose()?
+                id.as_ref().map(|id| {
+                    let (name, location): (String, String) = connection.query_row("SELECT name, location FROM file WHERE id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                    let bytes = match location.as_str() {
+                        "disk" => None,
+                        "inline" => Some(connection.query_row("SELECT data FROM file WHERE id = ?1", [id], |row| row.get::<_, Vec<u8>>(0))?),
+                        _ => return Err(crate::store::StoreError::Constraint("invalid upload file location".into())),
+                    };
+                    Ok((id.clone(), name, bytes))
+                }).transpose()?
             } else { None };
             Ok((input, file, error, id))
         })?;
         if let Some((id, name, bytes)) = file {
-            input.path = inner.db.shared.files.materialize(&id, &name, &bytes).map_err(|error| super::super::SyncError::Store(error.to_string()))?.to_string_lossy().into_owned();
+            let path = match bytes {
+                Some(bytes) => inner.db.shared.files.materialize(&id, &name, &bytes).map_err(|error| super::super::SyncError::Store(error.to_string()))?,
+                None => inner.db.shared.files.path(&id).ok_or_else(|| super::super::SyncError::Store("upload file directory is missing".into()))?,
+            };
+            input.path = path.to_string_lossy().into_owned();
         }
         let progress = TransferProgress::new(state.total_bytes, inner.config.upload.tick);
         Ok(Some(Self { inner, seq, position, run, token, input, source_error, file_id, model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))

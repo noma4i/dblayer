@@ -46,7 +46,7 @@ impl Db {
             }).collect();
             for transition in &mut envelope.operation_transitions {
                 let record = match transition {
-                    OperationTransition::Begin(record) | OperationTransition::BeginUploadBatch { record, .. } if record.seq.is_none_or(|seq| changed_uploads.contains(&seq)) => record,
+                    OperationTransition::Begin(record) | OperationTransition::BeginUpload { record, .. } if record.seq.is_none_or(|seq| changed_uploads.contains(&seq)) => record,
                     _ => continue,
                 };
                 record.rollback = record.rollback.take().map(|prior| super::prior::Prior::with_edits(prior, reader, &followed.edits)).transpose().map_err(DbError::from)?;

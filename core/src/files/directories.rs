@@ -1,8 +1,14 @@
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 const PART_SUFFIX: &str = ".part";
+const COPY_CHUNK: usize = 1024 * 1024;
+
+pub(crate) enum CopiedSource {
+    Ready { size: u64, sha256: String, data: Vec<u8>, location: super::Location },
+    Unreadable(String),
+}
 
 pub(crate) struct FileDirectories {
     directory: Option<PathBuf>,
@@ -67,6 +73,58 @@ impl FileDirectories {
         Ok(target)
     }
 
+    pub(crate) fn copy_source(&self, id: &str, source: &Path) -> io::Result<CopiedSource> {
+        let result = self.copy_into(id, source);
+        if !matches!(&result, Ok(CopiedSource::Ready { .. })) {
+            self.discard(&[id.to_string()])?;
+        }
+        result
+    }
+
+    fn copy_into(&self, id: &str, source: &Path) -> io::Result<CopiedSource> {
+        use sha2::{Digest, Sha256};
+        let mut source = match File::open(source) {
+            Ok(source) => source,
+            Err(error) => return Ok(CopiedSource::Unreadable(error.to_string())),
+        };
+        let mut buffer = vec![0; COPY_CHUNK];
+        let mut data = Vec::new();
+        let mut disk: Option<(File, PathBuf)> = None;
+        let mut size = 0u64;
+        let mut digest = Sha256::new();
+        loop {
+            let length = match source.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(length) => length,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Ok(CopiedSource::Unreadable(error.to_string())),
+            };
+            let chunk = &buffer[..length];
+            size += length as u64;
+            digest.update(chunk);
+            if disk.is_none() && size > super::TABLE_LIMIT as u64 {
+                if let Some(target) = self.path(id) {
+                    if let Some(parent) = target.parent() { fs::create_dir_all(parent)?; }
+                    let mut file = File::create(suffixed(&target, PART_SUFFIX))?;
+                    file.write_all(&data)?;
+                    data = Vec::new();
+                    disk = Some((file, target));
+                }
+            }
+            match &mut disk {
+                Some((file, _)) => file.write_all(chunk)?,
+                None => data.extend_from_slice(chunk),
+            }
+        }
+        let location = if let Some((file, target)) = disk {
+            file.sync_all()?;
+            drop(file);
+            fs::rename(suffixed(&target, PART_SUFFIX), target)?;
+            super::Location::Directory
+        } else { super::Location::Table };
+        Ok(CopiedSource::Ready { size, sha256: digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect(), data, location })
+    }
+
     pub(crate) fn read(&self, id: &str) -> io::Result<Vec<u8>> {
         let path = self.path(id).ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "no file directory"))?;
         fs::read(path)
@@ -84,6 +142,7 @@ impl FileDirectories {
     pub(crate) fn discard(&self, ids: &[String]) -> io::Result<()> {
         for id in ids {
             if let Some(path) = self.path(id) {
+                ignore_missing(fs::remove_file(suffixed(&path, PART_SUFFIX)))?;
                 ignore_missing(fs::remove_file(path))?;
             }
             ignore_missing(fs::remove_dir_all(self.cache.join(id)))?;

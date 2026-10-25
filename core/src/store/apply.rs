@@ -770,13 +770,12 @@ fn apply_transitions(
     let mut wrote = false;
     for transition in transitions {
         match transition {
-            OperationTransition::BeginUploadBatch { record, items } => {
+            OperationTransition::BeginUpload { record, items } => {
                 let seq = begin_operation(connection, record)?;
-                for (position, (row, key, input)) in items.iter().enumerate() {
+                for (position, item) in items.iter().enumerate() {
                     let position = position as i64;
-                    crate::operation::write_upload(connection, seq, position, &crate::upload::UploadState::queued())?;
-                    write_item_source(connection, seq, position, row.as_str(), record, input.clone())?;
-                    connection.execute("UPDATE op_item SET client_key = ?3 WHERE seq = ?1 AND position = ?2", params![seq, position, key])?;
+                    crate::operation::write_upload(connection, seq, position, &item.state)?;
+                    write_item_source(connection, seq, position, item)?;
                 }
                 synced.extend(operation_keys(&record.action_key, &record.row_ids, None));
                 result.operations.insert(seq);
@@ -943,43 +942,23 @@ pub(super) fn begin_operation(connection: &Connection, record: &OperationRecord)
     write_value(connection, seq, "prior", record.rollback.as_ref())?;
     if let Some(state) = &record.upload {
         crate::operation::write_upload(connection, seq, 0, state)?;
-        if record.seq.is_none() {
-            write_upload_source(connection, seq, record)?;
-        }
     }
     Ok(seq)
 }
 
-fn write_upload_source(connection: &Connection, seq: i64, record: &OperationRecord) -> Result<(), StoreError> {
-    let Ok(input) = serde_json::from_value::<crate::upload::UploadInput>(record.input.clone()) else { return Ok(()) };
-    let row_id = record.row_ids.first().map(|id| id.as_str()).unwrap_or_default();
-    write_item_source(connection, seq, 0, row_id, record, input.clone())?;
-    write_value(connection, seq, "input", Some(&Value::Object(input.variables)))?;
-    Ok(())
-}
-
-fn write_item_source(connection: &Connection, seq: i64, position: i64, row_id: &str, record: &OperationRecord, mut input: crate::upload::UploadInput) -> Result<(), StoreError> {
-    let model = crate::operation::Operation::split_action_key(&record.action_key).map(|pair| pair.0).unwrap_or_default();
-    let name = input.name.clone().unwrap_or_else(|| std::path::Path::new(&input.path).file_name().unwrap_or_default().to_string_lossy().into_owned());
-    let mime = input.mime.clone().unwrap_or_else(|| crate::upload::mime_of(&name).into());
-    let (file_id, error) = match std::fs::read(&input.path) {
-        Ok(bytes) => {
-            let file_id = uuid::Uuid::new_v4().to_string();
-            let descriptor = crate::files::FileDescriptor { id: file_id.clone(), size: bytes.len() as u64, name: Some(name.clone()), mime: Some(mime.clone()), sha256: Some(crate::files::sha256_hex(&bytes)) };
-            crate::files::put(connection, &crate::files::FileRecord {
-                id: file_id.clone(), model, row_id: row_id.into(), field: format!("op_item.{seq}.{position}"), descriptor,
-                location: crate::files::Location::Table, data: bytes, created_at: record.created_at,
-            })?;
-            (Some(file_id), None)
+fn write_item_source(connection: &Connection, seq: i64, position: i64, item: &crate::commit::UploadAdmission) -> Result<(), StoreError> {
+    let (file_id, error) = match &item.source {
+        Ok(file) => {
+            let mut file = file.clone();
+            file.field = format!("op_item.{seq}.{position}");
+            crate::files::put(connection, &file)?;
+            (Some(file.id), None)
         }
-        Err(error) => (None, Some(error.to_string())),
+        Err(error) => (None, Some(error)),
     };
-    input.path.clear();
-    input.name = Some(name);
-    input.mime = Some(mime);
-    let value = serde_json::to_value(&input).map_err(|error| StoreError::from(std::io::Error::other(error)))?;
+    let value = serde_json::to_value(&item.input).map_err(|error| StoreError::from(std::io::Error::other(error)))?;
     crate::operation::write_item_value(connection, seq, position, "input", Some(&value))?;
-    connection.execute("UPDATE op_item SET row_id = ?2, file_id = ?3, source_error = ?4 WHERE seq = ?1 AND position = ?5", params![seq, row_id, file_id, error, position])?;
+    connection.execute("UPDATE op_item SET row_id = ?2, file_id = ?3, source_error = ?4, client_key = ?6 WHERE seq = ?1 AND position = ?5", params![seq, item.row.as_str(), file_id, error, position, item.client_key])?;
     Ok(())
 }
 

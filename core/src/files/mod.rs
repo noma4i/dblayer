@@ -6,7 +6,7 @@ pub use descriptor::FileDescriptor;
 pub use table::{FileRecord, Location};
 
 pub(crate) use descriptor::sha256_hex;
-pub(crate) use directories::{is_partial, FileDirectories};
+pub(crate) use directories::{is_partial, CopiedSource, FileDirectories};
 pub(crate) use table::{
     all_references, clear_all, clear_model, find, move_row, put, references_of_row, remove_pair, remove_row, FileReference,
 };

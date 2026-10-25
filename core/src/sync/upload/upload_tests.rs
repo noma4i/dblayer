@@ -190,7 +190,7 @@ async fn http_put_failure_does_not_confirm_transfer() {
 async fn cancel_multipart_offline_returns_and_aborts_after_reconnecting() {
     let rig = upload_rig(small());
     let source = file(TWELVE);
-    rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
+    rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
     rig.transport.enqueue("AbortMultipart", abort());
     rig.sync.set_online(false);
     let id = rid("m1");
@@ -241,7 +241,7 @@ async fn wait_uploads_parks_while_resume_owns_the_upload() {
     }
     let rig = upload_rig(small());
     let source = file(b"abcdef");
-    let seq = rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
     let owner = crate::transport::RequestOwner { seq, item_position: 0, stage: "prepare".into() };
     let resume = rig.sync.inner.claim_upload_resume(&owner).await.unwrap().unwrap();
     let wakes = Arc::new(Wakes(std::sync::atomic::AtomicUsize::new(0)));
@@ -759,7 +759,7 @@ async fn a_stored_multipart_resumes_from_its_finished_parts_after_a_restart() {
     rig.transport.enqueue("CreateMoment", created("m9"));
     let source = file(TWELVE);
     let state = resumable(vec![UploadPart { number: 1, etag: "e1".to_string(), confirmed_bytes: 5 }]);
-    rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), state).unwrap();
+    rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), state).unwrap();
     let report = rig.sync.flush().await.unwrap();
     assert!(report.operations.is_empty());
     rig.sync.wait_uploads().await;
@@ -775,7 +775,7 @@ async fn an_orphaned_multipart_of_a_failed_upload_is_aborted_on_start() {
     let rig = upload_rig(small());
     rig.transport.enqueue("AbortMultipart", abort());
     let source = file(TWELVE);
-    let seq = rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Response, rig.db.generation());
     envelope.operation_transitions.push(OperationTransition::Fail {
         seq,
@@ -803,7 +803,7 @@ async fn inv_op_10_parallel_uploads_for_one_record_leave_exactly_one_open() {
                 std::thread::spawn(move || {
                     let input = UploadInput::new("/nonexistent/file.bin", steps());
                     barrier.wait();
-                    inner.begin_upload("moments", &id, &input, UploadState::queued()).is_ok()
+                    inner.begin_upload(inner.db.generation(), "moments", &id, &input, UploadState::queued()).is_ok()
                 })
             })
             .collect::<Vec<_>>()
@@ -820,7 +820,7 @@ async fn inv_op_09_a_retry_that_lands_while_the_old_run_is_ending_still_starts_t
     let rig = upload_rig(small());
     single_replies(&rig);
     let source = file(b"abcdef");
-    let seq = rig.sync.inner.begin_upload("moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
     let (run, _, _) = rig.sync.inner.register(seq, 0).unwrap();
     rig.sync.inner.start_uploads().unwrap();
     rig.sync.inner.finish_run(seq, 0, run);

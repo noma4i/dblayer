@@ -158,9 +158,18 @@ pub struct OperationRecord {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct UploadAdmission {
+    pub row: RowId,
+    pub client_key: String,
+    pub input: crate::upload::UploadInput,
+    pub state: UploadState,
+    pub source: Result<FileRecord, String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum OperationTransition {
     Begin(OperationRecord),
-    BeginUploadBatch { record: OperationRecord, items: Vec<(RowId, String, crate::upload::UploadInput)> },
+    BeginUpload { record: OperationRecord, items: Vec<UploadAdmission> },
     RemoveUploadItem { seq: i64, position: i64, inputs: Vec<(i64, crate::upload::UploadInput)> },
     SeparateUploads { seq: i64, single_action: String, single_mutation: String },
     Close { seq: i64, status: OperationStatus },

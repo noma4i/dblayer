@@ -9,6 +9,7 @@ mod ephemeral;
 mod entities;
 mod error;
 mod files;
+mod upload;
 mod land;
 mod listeners;
 mod local_field;

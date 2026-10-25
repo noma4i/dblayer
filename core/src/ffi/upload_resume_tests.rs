@@ -152,7 +152,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart"));
     let state = crate::upload::UploadState { key: Some("key".into()), upload_id: Some("upload".into()), ..crate::upload::UploadState::queued() };
     let row = crate::identity::RowId::new("42").unwrap();
-    database.sync.as_ref().unwrap().inner.begin_upload("Moment", &row, &input, state).unwrap();
+    database.sync.as_ref().unwrap().inner.begin_upload(database.sync.as_ref().unwrap().inner.db.generation(), "Moment", &row, &input, state).unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
     database.cancel_upload("Moment".into(), "42".into()).await.unwrap();
     drop(database);

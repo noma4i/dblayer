@@ -148,7 +148,7 @@ fn batch(db: &Db, count: usize) -> Vec<RowId> {
         values: fields(json!({"clientKey":format!("key-{position}"),"position":position,"size":count})),
         path: "/missing/probe.bin".into(), name: None, mime: None, variables: Map::new(),
     }).collect();
-    db.create_upload_batch("Record", items, UploadBatchInput { operation: "create_files".into(), variables: Map::new(), steps: UploadSteps::new("CreateRecords") }).unwrap()
+    db.create_upload_batch(db.generation(), "Record", items, UploadBatchInput { operation: "create_files".into(), variables: Map::new(), steps: UploadSteps::new("CreateRecords") }).unwrap()
 }
 
 #[test]
@@ -529,7 +529,7 @@ fn batch_parent_edits_survive_item_removal_and_rollback() {
         values: fields(json!({"folderId":"f1","clientKey":format!("key-{position}"),"position":position,"size":3})),
         path: "/missing/probe.bin".into(), name: None, mime: None, variables: Map::new(),
     }).collect();
-    let ids = db.create_upload_batch("Record", items, UploadBatchInput { operation: "create_files".into(), variables: Map::new(), steps: UploadSteps::new("CreateRecords") }).unwrap();
+    let ids = db.create_upload_batch(db.generation(), "Record", items, UploadBatchInput { operation: "create_files".into(), variables: Map::new(), steps: UploadSteps::new("CreateRecords") }).unwrap();
     let seq = db.outbox().unwrap()[0].operation.id.0;
     assert_ne!(db.shared.store.point("Folder", "f1").unwrap().unwrap()["lastId"], "old");
     if external {
