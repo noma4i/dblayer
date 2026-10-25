@@ -89,7 +89,7 @@ async fn inv_op_15_rejected_update_restores_the_row_and_reports_the_error() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn rejected_create_removes_the_temp_row_and_rejected_destroy_restores_the_row_as_failed() {
+async fn inv_op_15_rejected_create_removes_the_temp_row_and_rejected_destroy_restores_the_row_as_failed() {
     let rig = rig();
     let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
     put(&rig, "moments", moment("m2", "keep"));
@@ -326,7 +326,7 @@ async fn interrupted_transfer_records_the_kind_and_attempt_and_retry_sends_the_s
 }
 
 #[tokio::test(start_paused = true)]
-async fn kept_update_stays_failed_with_the_error_and_blocks_only_its_own_record() {
+async fn inv_op_15_kept_update_stays_failed_with_the_error_and_blocks_only_its_own_record() {
     let rig = keeping_rig();
     put(&rig, "moments", moment("m1", "old"));
     put(&rig, "moments", moment("m2", "other"));
