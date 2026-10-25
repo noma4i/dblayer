@@ -160,3 +160,42 @@ async fn inv_loadm_16_a_refresh_that_changes_no_row_still_shows_its_state_once_t
     assert_eq!((shown.phase, shown.size), (Some(LivePhase::Loaded), 1));
     consistent(&heard(&listener));
 }
+
+async fn open_with_authors(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
+    let mut user = ModelSpec::new("User", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str).optional()]);
+    user.storage = crate::schema::Storage::Disk;
+    let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional(), FieldSpec::scalar("userId", ScalarKind::Id).nullable().indexed()]);
+    model.associations.push(crate::schema::AssociationSpec::new("author", crate::schema::AssociationKind::BelongsTo, "User", "userId"));
+    model.relations.push(relation("feed", "5.minutes"));
+    let transport = Arc::new(Replying(Mutex::new(replies.iter().map(|reply| reply.to_string()).collect())));
+    let clock = TestClock::new(1_000_000);
+    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![user, model]).unwrap(), Some(transport), clock.clone()).await.unwrap();
+    db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text author { id name } } }","rootPath":"moments"}]"#.into()).unwrap();
+    (db, clock)
+}
+
+#[tokio::test]
+async fn inv_loadm_16_a_refresh_that_only_changes_a_related_row_still_shows_its_state() {
+    const ANN: &str = r#"{"data":{"moments":[{"id":"m1","text":"a","author":{"id":"u1","name":"Ann"}}]}}"#;
+    const BOB: &str = r#"{"data":{"moments":[{"id":"m1","text":"a","author":{"id":"u1","name":"Bob"}}]}}"#;
+    let (db, clock) = open_with_authors(&[ANN, BOB]).await;
+    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    let listener = tape();
+    let live = db.live_query(FEED.into(), listener.clone());
+    live.wait_for_initial_load().await.unwrap();
+    let first_loaded_at = heard(&listener).last().and_then(|change| change.loaded_at).expect("the first frame is loaded");
+    clock.advance(60_000);
+    db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    let shown = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let current = live.current().await;
+            if current.loaded_at.is_some_and(|at| at > first_loaded_at) && !current.refreshing {
+                return current;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the state of the refresh reaches the listener although no row of the query changed");
+    assert_eq!((shown.phase, shown.size), (Some(LivePhase::Loaded), 1));
+}

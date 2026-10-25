@@ -25,6 +25,7 @@ impl Db {
     ) -> Result<(CommitResult, Followed), PlanCommitError<E>> {
         let mut followed = Followed::default();
         let result = self.shared.store.commit_prepared(generation, |reader| {
+            followed = Followed::default();
             let Some(envelope) = plan(reader)? else { return Ok(None) };
             let (envelope, found) = self.follow(reader, envelope)?;
             followed = found;

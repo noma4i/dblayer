@@ -60,6 +60,7 @@ impl RowCache {
         self.committed_revision = self.committed_revision.max(revision);
     }
 
+    #[cfg(test)]
     pub(crate) fn put(&mut self, model: &str, row: Row, snapshot_revision: i64) {
         let bytes = row_bytes(model, &row);
         self.put_sized(model, row, bytes, snapshot_revision);

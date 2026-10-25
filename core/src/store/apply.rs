@@ -75,9 +75,11 @@ impl Store {
         }
         let prepared = self.read(&[], |reader| Ok((reader.revision_seq()?, plan(reader))))?;
         #[cfg(test)]
-        let hook = self.before_write.lock().unwrap_or_else(|error| error.into_inner()).take();
-        if let Some(hook) = hook {
-            hook();
+        {
+            let hook = self.before_write.lock().unwrap_or_else(|error| error.into_inner()).take();
+            if let Some(hook) = hook {
+                hook();
+            }
         }
         let mut inner = self.lock();
         inner.ensure_healthy()?;
