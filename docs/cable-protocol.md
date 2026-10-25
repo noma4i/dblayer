@@ -218,6 +218,7 @@ Ready does not reset the counter. A known subscription's `subscribed` or parsed,
 A pong resets it only when its `ts` matches the pending ping.
 Unknown subscription ids, malformed or empty responses and unmatched pongs preserve the retry count and pending ping deadline.
 Offline state and an empty subscription list use no attempts and add no retry delay.
+Going offline drops a pending retry delay. Coming back online reopens at once while subscriptions remain, and the failure count stays.
 The last cancellation, offline transition or transport drop interrupts a pending socket open or handshake receive.
 `Sync.set_online` passes the connection state to the transport.
 

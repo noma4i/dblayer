@@ -5,6 +5,7 @@ mod link;
 mod keys;
 mod frame;
 mod schema;
+mod lifecycle;
 mod session;
 pub use session::CableSession;
 mod wire;
