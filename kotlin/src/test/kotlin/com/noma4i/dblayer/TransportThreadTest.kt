@@ -19,6 +19,8 @@ import org.junit.Test
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class TransportThreadTest {
     private val server = MockWebServer()
     private val executor = Executors.newSingleThreadExecutor { Thread(it, "caller-main") }

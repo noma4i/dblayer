@@ -102,6 +102,7 @@ Test conventions:
 - Tests are never embedded in source files. A module is a directory with `mod.rs`, and the tests of `x.rs` are in `x_tests.rs` next to it.
 - Every behavior test is written first and seen failing.
 - Rust tests own storage, synchronization and ordering rules. Swift and Kotlin tests check typed calls, decoding, callbacks and platform APIs.
+- Kotlin network tests use Robolectric because the Android OkHttp artifact requires Android APIs, including logging.
 - Keep one test per requirement at the lowest level that identifies its failure. Combine similar cases in a table.
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.
 - Tests count work (reads, calls, commits) instead of measuring time.

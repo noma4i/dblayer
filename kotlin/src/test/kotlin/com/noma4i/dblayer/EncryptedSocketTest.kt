@@ -12,6 +12,8 @@ import okio.ByteString.Companion.encodeUtf8
 import org.junit.Assert.*
 import org.junit.Test
 
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class EncryptedSocketTest {
     @Test
     fun exchangesTextOnTheConfiguredPathWithoutLegacyAuthentication() = bounded {

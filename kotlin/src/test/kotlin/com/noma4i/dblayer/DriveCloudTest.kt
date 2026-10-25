@@ -11,6 +11,8 @@ import org.junit.Test
 
 private fun blob(key: String, size: Int = 8) = CloudBlob(key, ByteArray(size) { (it * 37 + key.length + 200).toByte() })
 
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class DriveCloudTest {
     private val drive = FakeDrive()
     private val server = MockWebServer()

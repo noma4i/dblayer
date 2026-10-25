@@ -6,6 +6,8 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class UserAgentTest {
     private class Progress : ByteProgress(NoHandle) {
         override fun sent(bytes: ULong) {}

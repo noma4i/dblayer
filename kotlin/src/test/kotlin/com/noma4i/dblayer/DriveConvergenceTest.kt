@@ -14,6 +14,8 @@ private suspend fun titles(database: Database): Map<String, String> {
     return live.current().rows.associate { row -> row.id to (row.cells.filterIsInstance<Cell.Text>().first().value) }
 }
 
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class DriveConvergenceTest {
     @Test
     fun twoDatabasesConvergeThroughTheAdapterOnASharedDrive() = bounded {

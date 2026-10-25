@@ -45,6 +45,8 @@ private suspend inline fun <reified Failure : Throwable> failsWith(block: () -> 
     throw AssertionError("expected ${Failure::class.simpleName}")
 }
 
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class EncryptedSessionTest {
     @Test
     fun oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() = bounded {
