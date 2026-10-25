@@ -483,3 +483,47 @@ async fn discarding_one_batch_member_keeps_its_multipart_abort_after_the_item_is
     let orphans = db.shared.store.upload_orphans().unwrap();
     assert_eq!(orphans.iter().map(|(_, key, upload, abort)| (key.as_str(), upload.as_str(), abort.as_str())).collect::<Vec<_>>(), [("k1", "u1", "Abort")]);
 }
+
+async fn one_failed_batch_item() -> (Db, Sync, Arc<ManualClock>, Vec<crate::identity::RowId>) {
+    let db = Db::open_in_memory(vec![spec()], None).unwrap();
+    let transport = Arc::new(MockTransport::new());
+    let clock = Arc::new(ManualClock::new(std::time::Duration::ZERO));
+    let sync = Sync::new(db.clone(), transport.clone(), clock.clone(), SyncConfig::default());
+    sync.register(crate::sync::OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
+    sync.register(crate::sync::OperationDef::new("CreateAssets", "mutation x { x }", "createAssets.assets"));
+    let source = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(source.path(), b"image").unwrap();
+    transport.enqueue("CreateBlob", crate::transport::Reply::data(json!({"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}})));
+    let items = ["missing.png", source.path().to_str().unwrap()].into_iter().enumerate().map(|(position, path)| UploadItem {
+        values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(), path: path.into(), name: None, mime: None, variables: Default::default(),
+    }).collect();
+    let request = UploadBatchInput { operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default() };
+    let ids: Vec<_> = sync.upload_create_batch("Asset", items, request).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    sync.wait_uploads().await;
+    assert_eq!(db.find("Asset", &ids[0]).unwrap().unwrap().sync.state, SyncState::Failed);
+    (db, sync, clock, ids)
+}
+
+#[tokio::test]
+async fn a_failed_batch_item_older_than_seven_days_is_removed_and_its_siblings_stay() {
+    let (db, sync, clock, ids) = one_failed_batch_item().await;
+    clock.advance(std::time::Duration::from_secs(7 * 24 * 3600 - 3600));
+    sync.inner.expire_uploads().await.unwrap();
+    assert!(db.find("Asset", &ids[0]).unwrap().is_some(), "not yet due");
+    clock.advance(std::time::Duration::from_secs(2 * 3600));
+    sync.inner.expire_uploads().await.unwrap();
+    assert!(db.find("Asset", &ids[0]).unwrap().is_none(), "the failed item is expired");
+    assert!(db.find("Asset", &ids[1]).unwrap().is_some(), "the healthy sibling stays");
+}
+
+#[tokio::test]
+async fn a_batch_item_retried_after_it_was_selected_is_not_expired() {
+    let (db, sync, clock, ids) = one_failed_batch_item().await;
+    clock.advance(std::time::Duration::from_secs(8 * 24 * 3600));
+    let due = sync.inner.now_ms() - 7 * 24 * 3600 * 1000;
+    let stale = db.failed_upload_candidates(due).unwrap();
+    assert_eq!(stale.len(), 1);
+    db.retry("Asset", &ids[0]).unwrap();
+    assert_eq!(db.expire_candidates(stale, due, &[]).unwrap(), 0);
+    assert!(db.find("Asset", &ids[0]).unwrap().is_some());
+}

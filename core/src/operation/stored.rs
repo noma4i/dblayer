@@ -11,7 +11,7 @@ use crate::nodes::{delete_trees, read_trees, write_tree};
 use crate::syncstate::OperationFailure;
 use crate::upload::{UploadInfo, UploadPart, UploadRequest, UploadRetry, UploadState};
 
-pub const UPLOAD_COLUMNS: &str = "phase, stage, scenario, total_bytes, sent_bytes, storage_key, upload_id, signed_id, blob_id, document, operation, transferred, confirmed_bytes, checksum, put_url, url_issued_at, error_kind, error_message, error_extensions";
+pub const UPLOAD_COLUMNS: &str = "phase, stage, scenario, total_bytes, sent_bytes, storage_key, upload_id, signed_id, blob_id, document, operation, transferred, confirmed_bytes, checksum, put_url, url_issued_at, failed_at, error_kind, error_message, error_extensions";
 pub const INFO_COLUMNS: &str = "up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_extensions";
 
 pub fn enum_text<T: Serialize>(value: &T) -> Option<String> {
@@ -48,7 +48,7 @@ pub fn failure_at(row: &Row<'_>, first: usize) -> Result<Option<OperationFailure
 }
 
 pub fn upload_cells(state: Option<&UploadState>) -> Result<Vec<SqlValue>> {
-    let Some(state) = state else { return Ok(vec![SqlValue::Null; 19]) };
+    let Some(state) = state else { return Ok(vec![SqlValue::Null; 20]) };
     let [kind, message, extensions] = failure_cells(state.error.as_ref())?;
     Ok(vec![
         text_cell(enum_text(&state.phase)),
@@ -67,6 +67,7 @@ pub fn upload_cells(state: Option<&UploadState>) -> Result<Vec<SqlValue>> {
         text_cell(state.checksum.clone()),
         text_cell(state.put_url.clone()),
         state.url_issued_at.map_or(SqlValue::Null, |time| SqlValue::Integer(time as i64)),
+        state.failed_at.map_or(SqlValue::Null, |time| SqlValue::Integer(time as i64)),
         kind,
         message,
         extensions,
@@ -95,8 +96,9 @@ pub fn upload_at(row: &Row<'_>, first: usize) -> Result<Option<UploadState>> {
         checksum: row.get(first + 13)?,
         put_url: row.get(first + 14)?,
         url_issued_at: row.get::<_, Option<i64>>(first + 15)?.map(|time| time as u64),
+        failed_at: row.get::<_, Option<i64>>(first + 16)?.map(|time| time as u64),
         headers: Vec::new(),
-        error: failure_at(row, first + 16)?,
+        error: failure_at(row, first + 17)?,
     }))
 }
 

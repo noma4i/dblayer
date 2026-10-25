@@ -121,6 +121,7 @@ const CORE_STATEMENTS: [&str; 36] = [
   checksum TEXT,
   put_url TEXT,
   url_issued_at INTEGER,
+  failed_at INTEGER,
   PRIMARY KEY (seq, position)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS op_item_retry (

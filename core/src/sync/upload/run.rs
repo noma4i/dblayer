@@ -381,6 +381,7 @@ impl Runner {
                 state.stage = stage;
             }
             state.error = Some(failure.clone());
+            state.failed_at = Some(self.inner.clock.now().as_millis() as u64);
             if batch { state.phase = UploadStatus::Failed; }
             state.clone()
         };

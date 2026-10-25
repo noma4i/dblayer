@@ -12,6 +12,8 @@ use super::local_write::{plan_fault, OutboxOperation};
 use super::open::Db;
 use super::prior::{Prior, PriorRow};
 
+pub(crate) type Still<'a> = dyn Fn(&Reader<'_>, &OutboxOperation) -> bool + 'a;
+
 #[derive(Default)]
 struct Restore {
     entity_ops: Vec<EntityOp>,
@@ -172,11 +174,16 @@ fn restore_edit(
 
 impl Db {
     pub(crate) fn remove_upload_item(&self, model: &str, id: &RowId, seq: i64, remove_row: bool) -> Result<bool, DbError> {
+        self.remove_upload_item_if(model, id, seq, remove_row, None)
+    }
+
+    pub(crate) fn remove_upload_item_if(&self, model: &str, id: &RowId, seq: i64, remove_row: bool, still: Option<&Still<'_>>) -> Result<bool, DbError> {
         let generation = self.generation();
         let spec = self.spec(model)?;
         let mut removed = false;
         self.commit_following(generation, |reader| {
             let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
+            if still.is_some_and(|still| !still(reader, &entry)) { return Ok(None); }
             if entry.operation.transport_started { return Err(DbError::InFlight { model: model.into(), id: id.to_string() }); }
             let position = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get(0))?;
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
@@ -226,9 +233,19 @@ impl Db {
     }
 
     pub(crate) fn roll_back_at(&self, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
+        self.roll_back_if(seq, generation, None)
+    }
+
+    pub(crate) fn roll_back_if(&self, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
         let result = self.commit_following(generation, |reader| {
-                let entry = OutboxOperation::read(reader, seq)?.ok_or(DbError::UnknownOperation(seq))?;
+                let found = OutboxOperation::read(reader, seq)?;
+                let entry = match (found, still) {
+                    (Some(entry), None) => entry,
+                    (Some(entry), Some(still)) if still(reader, &entry) => entry,
+                    (None, None) => return Err(DbError::UnknownOperation(seq)),
+                    _ => return Ok(None),
+                };
                 let plan = restore(reader, &Prior::related_operations(reader, &entry)?, &entry)?;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 envelope.entity_ops = plan.entity_ops;

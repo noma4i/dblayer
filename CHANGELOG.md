@@ -31,7 +31,7 @@
 - Connecting a live query to a remote relation no longer waits for the storage writer: the stored window state is read on a blocking task and the first value is held until it arrives.
 - Upload files are written to the cache and removed on the blocking pool, never on an async executor.
 - Removing files after a confirmed destroy or a server destroy event runs on the blocking pool.
-- Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns.
+- Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns. A failed batch item is removed on its own and its siblings stay.
 
 ### Fixed
 - Explicit null stays distinct from an absent field after reopening the database.

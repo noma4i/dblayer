@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::commit::OperationStatus;
 use crate::transport::{GraphQLRequest, ResponseOutcome, RetryClass};
 
 use super::super::{locked, Inner, SyncError};
@@ -32,20 +31,11 @@ impl Inner {
     pub(crate) async fn expire_uploads(self: &Arc<Self>) -> Result<(), SyncError> {
         let limit = i64::try_from(self.config.upload.failed_ttl.as_millis()).unwrap_or(i64::MAX);
         let due = self.now_ms().saturating_sub(limit);
-        let expired: Vec<i64> = {
-            let queue = locked(self.operation_queue()?);
-            let running = locked(&self.uploads);
-            queue.entries.iter()
-                .filter(|(seq, entry)| entry.uploading && entry.operation.status == OperationStatus::Failed && entry.operation.since <= due && !running.active.keys().any(|key| key.0 == **seq))
-                .map(|(seq, _)| *seq)
-                .collect()
-        };
-        if expired.is_empty() { return Ok(()); }
-        let shared = self.db.shared.clone();
+        let running: Vec<i64> = locked(&self.uploads).active.keys().map(|key| key.0).collect();
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let _held = shared;
-            expired.into_iter().try_for_each(|seq| db.roll_back(seq).map(|_| ()))
+            let candidates = db.failed_upload_candidates(due)?;
+            db.expire_candidates(candidates, due, &running)
         }).await.map_err(|error| SyncError::Store(error.to_string()))??;
         Ok(())
     }

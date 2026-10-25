@@ -67,6 +67,7 @@ impl Db {
                 if status != "pending" || target.is_some_and(|(model, id)| row != id.as_str() || crate::operation::Operation::split_action_key(&action).is_none_or(|(owner, _)| owner != model)) { continue; }
                 state.phase = crate::upload::UploadStatus::Queued;
                 state.error = None;
+                state.failed_at = None;
                 state.retries.clear();
                 envelope.operation_transitions.push(OperationTransition::Progress { seq, item_position: position, state });
                 retried += 1;
@@ -89,6 +90,42 @@ impl Db {
             })
             .map_err(plan_fault)?;
         Ok(stuck.len())
+    }
+
+    pub(crate) fn failed_upload_candidates(&self, due: i64) -> Result<Vec<(i64, String, String, String)>, DbError> {
+        Ok(self.shared.read(&[], |reader| {
+            let mut statement = reader.connection().prepare_cached(
+                "SELECT op.seq, op.action_key, op.status, op_item.row_id FROM op JOIN op_item USING (seq) \
+                 WHERE (op.status = 'failed' AND op.since <= ?1) \
+                    OR (op.status = 'pending' AND op_item.phase = 'failed' AND op_item.failed_at <= ?1) ORDER BY op.seq, op_item.position",
+            )?;
+            let rows = statement.query_map([due], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })?)
+    }
+
+    pub(crate) fn expire_candidates(&self, candidates: Vec<(i64, String, String, String)>, due: i64, running: &[i64]) -> Result<usize, DbError> {
+        let mut removed = 0;
+        let mut rolled_back = std::collections::BTreeSet::new();
+        for (seq, action_key, status, row) in candidates {
+            if running.contains(&seq) { continue; }
+            let Some((model, _)) = crate::operation::Operation::split_action_key(&action_key) else { continue };
+            let batched = self.spec(&model)?.actions.iter().any(|action| action.batch.is_some() && action_key == crate::operation::Operation::action_key(&model, &action.name));
+            if batched && status != "delivery_unknown" {
+                let id = RowId::new(&row).map_err(|error| DbError::InvalidUpload(error.to_string()))?;
+                let item = row.clone();
+                let still = move |reader: &crate::store::Reader<'_>, entry: &OutboxOperation| {
+                    let states = crate::operation::read_operation_uploads(reader.connection(), seq).unwrap_or_default();
+                    let position = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, item], |found| found.get::<_, i64>(0));
+                    entry.operation.status == OperationStatus::Pending && position.is_ok_and(|position| states.get(&(seq, position)).is_some_and(|state| state.phase == crate::upload::UploadStatus::Failed && state.failed_at.is_some_and(|failed| failed as i64 <= due)))
+                };
+                if self.remove_upload_item_if(&model, &id, seq, true, Some(&still))? { removed += 1; }
+            } else if rolled_back.insert(seq) {
+                let still = |_: &crate::store::Reader<'_>, entry: &OutboxOperation| entry.operation.status == OperationStatus::Failed && entry.operation.since <= due;
+                if !self.roll_back_if(seq, self.generation(), Some(&still))?.is_noop() { removed += 1; }
+            }
+        }
+        Ok(removed)
     }
 
     pub fn discard(&self, model: &str, id: &RowId) -> Result<usize, DbError> {

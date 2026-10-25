@@ -78,6 +78,7 @@ pub struct UploadState {
     pub checksum: Option<String>,
     pub put_url: Option<String>,
     pub url_issued_at: Option<u64>,
+    pub failed_at: Option<u64>,
     pub headers: Vec<(String, String)>,
     pub error: Option<OperationFailure>,
 }
@@ -115,6 +116,7 @@ impl UploadState {
             checksum: None,
             put_url: None,
             url_issued_at: None,
+            failed_at: None,
             headers: Vec::new(),
             error: None,
         }

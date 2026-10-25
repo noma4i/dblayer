@@ -1107,3 +1107,42 @@ async fn a_recorded_abort_that_cannot_be_sent_is_reported_and_retried_at_the_nex
     rig.sync.inner.upload_housekeeping().await.unwrap();
     assert_eq!((rig.transport.call_count("AbortMultipart"), orphan_count(&rig)), (1, 0));
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_recorded_abort_survives_closing_and_reopening_the_database() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("1.sqlite");
+    let source = file(TWELVE);
+    {
+        let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), SyncConfig { upload: small(), ..SyncConfig::default() });
+        put(&rig, "moments", moment("m1", "x"));
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(confirmed_parts())).unwrap();
+        fail_open_upload(&rig, seq);
+        rig.db.discard("moments", &rid("m1")).unwrap();
+        assert_eq!(orphan_count(&rig), 1);
+        rig.sync.wait_uploads().await;
+    }
+    let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), SyncConfig { upload: small(), ..SyncConfig::default() });
+    rig.sync.register(OperationDef::new("AbortMultipart", "operation x { x }", "abortMultipart"));
+    rig.transport.enqueue("AbortMultipart", abort());
+    assert_eq!(orphan_count(&rig), 1, "the abort must survive the restart");
+    rig.sync.inner.upload_housekeeping().await.unwrap();
+    assert_eq!((variables(&rig, "AbortMultipart"), orphan_count(&rig)), (vec![json!({"key": "k1", "uploadId": "u1"})], 0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn expiry_skips_an_upload_that_was_retried_or_removed_after_it_was_selected() {
+    let rig = upload_rig(small());
+    let source = file(TWELVE);
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
+    fail_open_upload(&rig, seq);
+    rig.clock.advance(Duration::from_secs(8 * 24 * 3600));
+    let due = rig.sync.inner.now_ms() - 7 * 24 * 3600 * 1000;
+    let stale = rig.db.failed_upload_candidates(due).unwrap();
+    assert_eq!(stale.len(), 1);
+    rig.db.retry("moments", &rid("m1")).unwrap();
+    assert_eq!(rig.db.expire_candidates(stale.clone(), due, &[]).unwrap(), 0);
+    assert_eq!(rig.db.outbox().unwrap().len(), 1, "a retried upload is not expired by an old snapshot");
+    rig.db.discard("moments", &rid("m1")).unwrap();
+    assert_eq!(rig.db.expire_candidates(stale, due, &[]).unwrap(), 0, "a removed upload is skipped, not an error");
+}
