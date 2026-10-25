@@ -13,6 +13,7 @@ source "$root/scripts/check_steps.sh"
 
 steps=(
   "cheap|fixtures|120|*|bash scripts/gen_fixtures.sh --check"
+  "cheap|fixtures-args|120|*|bash scripts/gen_fixtures_test.sh"
   "cheap|zoo|120|*|bash scripts/check_zoo.sh"
   "cheap|protocol-config|120|*|bash scripts/check_protocol_config.sh && bash scripts/check_protocol_config.sh --selftest"
   "cheap|build-modes|120|*|bash scripts/check_build_modes.sh"

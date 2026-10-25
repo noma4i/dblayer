@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--check" ]; }; then
+  echo "usage: scripts/gen_fixtures.sh [--check]" >&2
+  exit 2
+fi
+
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 swift_out="$root/swift/Tests/DBlayerTests/FixtureModels.swift"
@@ -16,7 +21,7 @@ kotlin="$(gen kotlin)"
 swift_operations="$(gen_operations swift)"
 kotlin_operations="$(gen_operations kotlin)"
 
-if [ "${1:-}" = "--check" ]; then
+if [ "$#" -eq 1 ]; then
   [ "$swift" = "$(cat "$swift_out")" ] && [ "$kotlin" = "$(cat "$kotlin_out")" ] && [ "$swift_operations" = "$(cat "$swift_operations_out")" ] && [ "$kotlin_operations" = "$(cat "$kotlin_operations_out")" ] || { echo "Fixture models differ from fixtures. Run scripts/gen_fixtures.sh."; exit 1; }
   echo "Fixture models match."
   exit 0
