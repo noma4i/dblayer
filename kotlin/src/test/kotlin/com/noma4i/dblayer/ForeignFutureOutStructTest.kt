@@ -7,6 +7,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ForeignFutureOutStructTest {
@@ -32,10 +33,11 @@ class ForeignFutureOutStructTest {
         val function = Function.getFunction(CallbackReference.getFunctionPointer(uniffiCallbackInterfaceTransport.query))
         val handle = FfiConverterTypeTransport.handleMap.insert(Instant())
         val clobbered = AtomicInteger()
+        val unanswered = AtomicInteger()
         val done = CountDownLatch(threads)
         repeat(threads) {
             Thread {
-                repeat(rounds) {
+                for (round in 0 until rounds) {
                     val owned = Memory(16).also { memory -> memory.setMemory(0, 16, 0) }
                     val completed = CountDownLatch(1)
                     val complete = object : UniffiForeignFutureCompleteRustBuffer {
@@ -46,13 +48,19 @@ class ForeignFutureOutStructTest {
                         }
                     }
                     function.invoke(Void.TYPE, arrayOf(handle, FfiConverterTypeTransportRequest.lower(TransportRequest("", "", "", false)), complete, 0L, owned))
-                    completed.await(10, TimeUnit.SECONDS)
+                    if (!completed.await(10, TimeUnit.SECONDS)) {
+                        unanswered.incrementAndGet()
+                        break
+                    }
                     if (owned.getByteArray(0, 16).any { byte -> byte != sentinel }) clobbered.incrementAndGet()
                 }
                 done.countDown()
             }.start()
         }
-        done.await(60, TimeUnit.SECONDS)
+        val finished = done.await(60, TimeUnit.SECONDS)
+        FfiConverterTypeTransport.handleMap.remove(handle)
+        assertTrue("the workers did not finish", finished)
+        assertEquals(0, unanswered.get())
         assertEquals(0, clobbered.get())
     }
 }

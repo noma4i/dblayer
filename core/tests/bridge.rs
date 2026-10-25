@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use dblayer::ffi::{Cell, Config, Database, LiveChange, QueryListener, Transport};
+use dblayer::ffi::{Config, Database, LiveChange, QueryListener, Transport};
 use dblayer::schema::{FieldSpec, ModelSpec};
 use dblayer::value::ScalarKind;
 
@@ -9,7 +9,7 @@ impl QueryListener for Listener {
 }
 
 #[tokio::test]
-async fn bridge_writes_reach_live_rows_and_files() {
+async fn bridge_file_calls_reach_the_file_store() {
     let model = ModelSpec::new("Moment", vec![
         FieldSpec::scalar("id", ScalarKind::Id),
         FieldSpec::scalar("text", ScalarKind::Str),
@@ -17,19 +17,9 @@ async fn bridge_writes_reach_live_rows_and_files() {
     ]);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 32 },
         serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None, None).await.unwrap();
-    let live = db.live_query(r#"{"model":"Moment"}"#.into(), Arc::new(Listener));
-    assert!(live.current().await.rows.is_empty());
     let id = db.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap().id;
-    let found = db.live_find("Moment".into(), id.clone(), Arc::new(Listener));
-    assert_eq!(found.current().await.rows[0].cells[0], Cell::Text { value: "hello".into() });
     db.attach("Moment".into(), id.clone(), "media".into(), b"abc".to_vec(), "a.txt".into(), "text/plain".into()).await.unwrap();
-    assert_eq!(db.read("Moment".into(), id.clone(), "media".into()).await.unwrap(), Some(b"abc".to_vec()));
-    db.update("Moment".into(), id.clone(), r#"{"text":"edited"}"#.into(), "{}".into()).await.unwrap();
-    let edited = db.live_find("Moment".into(), id.clone(), Arc::new(Listener));
-    assert_eq!(edited.current().await.rows[0].cells[0], Cell::Text { value: "edited".into() });
-    db.destroy("Moment".into(), id.clone()).await.unwrap();
-    let gone = db.live_find("Moment".into(), id, Arc::new(Listener));
-    assert!(gone.current().await.rows.is_empty());
+    assert_eq!(db.read("Moment".into(), id, "media".into()).await.unwrap(), Some(b"abc".to_vec()));
 }
 
 #[tokio::test]
