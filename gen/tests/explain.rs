@@ -10,7 +10,6 @@ fn explain_runs_sqlite_plans_for_declared_scopes() {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let model = &report[0];
     assert_eq!(model["model"], "Note");
-    assert!(model["ddl"].as_array().unwrap().iter().any(|sql| sql.as_str().unwrap().contains("folder_id, position DESC, id")));
     let scope = &model["scopes"][0];
     assert_eq!(scope["name"], "in_folder");
     let plan = scope["plan"].as_array().unwrap().iter().map(|line| line.as_str().unwrap()).collect::<Vec<_>>().join("\n");

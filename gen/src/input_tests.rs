@@ -78,7 +78,7 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
         "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Long> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val scale: GraphQLNullable<Double> = GraphQLNullable.Omitted, val pinned: Boolean, @EncodeDefault(EncodeDefault.Mode.NEVER) val sentAt: GraphQLNullable<String> = GraphQLNullable.Omitted, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)",
         "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: GraphQLNullable<String> = GraphQLNullable.Omitted)",
         "import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n",
-        "suspend fun stickerSend(input: StickerInput): StickerSendResult {",
+        "suspend fun stickerSend(input: StickerInput): StickerSendResult = offCaller {",
         "variables[\"input\"] = jsonValue(input)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");

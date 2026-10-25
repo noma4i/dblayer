@@ -41,7 +41,7 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
         let returns = if operation.result.is_none() { String::new() } else { format!(" -> {}", returned(operation, true)) };
         let binding = if operation.args.is_empty() { "let" } else { "var" };
-        writeln!(out, "    public static func {method}({params}) async throws{returns} {{\n        {binding} variables: [String: JSONValue] = [:]").unwrap();
+        writeln!(out, "    @concurrent public static func {method}({params}) async throws{returns} {{\n        {binding} variables: [String: JSONValue] = [:]").unwrap();
         for (arg, kind) in &operation.args {
             if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ variables[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
             else { writeln!(out, "        variables[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }
@@ -65,15 +65,15 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
         let method = identifier(&name(&operation.name), false);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
         let returns = if operation.result.is_none() { String::new() } else { format!(": {}", returned(operation, false)) };
-        writeln!(out, "    suspend fun {method}({params}){returns} {{\n        val variables = mutableMapOf<String, JsonElement>()").unwrap();
+        writeln!(out, "    suspend fun {method}({params}){returns} = offCaller {{\n        val variables = mutableMapOf<String, JsonElement>()").unwrap();
         for (arg, kind) in &operation.args {
             if kind.ends_with('?') { writeln!(out, "        if ({printed} != null) variables[\"{arg}\"] = jsonValue({printed})", printed = identifier(arg, false)).unwrap(); }
             else { writeln!(out, "        variables[\"{arg}\"] = jsonValue({printed})", printed = identifier(arg, false)).unwrap(); }
         }
         let sent = operation.wrap.as_ref().map_or("JsonObject(variables)".to_string(), |wrap| format!("JsonObject(mapOf(\"{wrap}\" to JsonObject(variables)))"));
         if operation.result.is_none() { writeln!(out, "        DBlayer.run(\"{}\", {sent})\n    }}", operation.operation).unwrap(); }
-        else if operation.list { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, kotlinx.serialization.builtins.ListSerializer({}.serializer()))\n    }}", operation.operation, result_name(operation)).unwrap(); }
-        else { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, {}.serializer())\n    }}", operation.operation, result_name(operation)).unwrap(); }
+        else if operation.list { writeln!(out, "        DBlayer.run(\"{}\", {sent}, kotlinx.serialization.builtins.ListSerializer({}.serializer()))\n    }}", operation.operation, result_name(operation)).unwrap(); }
+        else { writeln!(out, "        DBlayer.run(\"{}\", {sent}, {}.serializer())\n    }}", operation.operation, result_name(operation)).unwrap(); }
     }
     writeln!(out, "}}\n").unwrap();
 }

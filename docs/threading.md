@@ -5,7 +5,7 @@ Live results arrive from library threads. Record writes run on background thread
 ## What you can rely on
 
 - Record writes use `async` in Swift and `suspend` in Kotlin. Rust runs SQLite writes, argument decoding and result conversion off the caller thread.
-- Database calls prepare their JSON and decode their answers off the caller thread: Kotlin on `Dispatchers.Default`, Swift through `@concurrent`. `LiveList` and `LiveWindow` build `ids` off the main thread and only assign ready values on it. Generated `create`, `update`, `set`, actions and node reads follow the same rule.
+- Database calls prepare their JSON and decode their answers off the caller thread: Kotlin on `Dispatchers.Default`, Swift through `@concurrent`. `LiveList` and `LiveWindow` build `ids` off the main thread and only assign ready values on it. Generated `create`, `update`, `set`, actions, node reads, edge reads and operation calls follow the same rule.
 - A delivery to entities touches only the live entities whose ids it carries. Kotlin applies the values after it releases the registry lock, so `entity(id)` never waits for a delivery.
 - Await `discard()` and `logout()` to finish removing queued changes or clearing account data before starting dependent work.
 - Opening a database is asynchronous (`await DB.open` in Swift, suspend `DBlayer.open` in Kotlin). Registering operations and starting live queries execute synchronously.

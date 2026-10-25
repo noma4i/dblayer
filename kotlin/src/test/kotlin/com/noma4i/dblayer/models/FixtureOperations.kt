@@ -426,50 +426,50 @@ data class ContainerMediaLoadResult(
 )
 
 object Operations {
-    suspend fun `when`(`class`: String): WhenResult {
+    suspend fun `when`(`class`: String): WhenResult = offCaller {
         val variables = mutableMapOf<String, JsonElement>()
         variables["class"] = jsonValue(`class`)
-        return DBlayer.run("KeywordCall", JsonObject(variables), WhenResult.serializer())
+        DBlayer.run("KeywordCall", JsonObject(variables), WhenResult.serializer())
     }
-    suspend fun qrCodeCreate(kind: String, size: Long? = null): QrCodeCreateResult {
+    suspend fun qrCodeCreate(kind: String, size: Long? = null): QrCodeCreateResult = offCaller {
         val variables = mutableMapOf<String, JsonElement>()
         variables["kind"] = jsonValue(kind)
         if (size != null) variables["size"] = jsonValue(size)
-        return DBlayer.run("QrCodeCreate", JsonObject(mapOf("input" to JsonObject(variables))), QrCodeCreateResult.serializer())
+        DBlayer.run("QrCodeCreate", JsonObject(mapOf("input" to JsonObject(variables))), QrCodeCreateResult.serializer())
     }
-    suspend fun signOut() {
+    suspend fun signOut() = offCaller {
         val variables = mutableMapOf<String, JsonElement>()
         DBlayer.run("SignOut", JsonObject(variables))
     }
-    suspend fun stickerSend(input: StickerInput): StickerSendResult {
+    suspend fun stickerSend(input: StickerInput): StickerSendResult = offCaller {
         val variables = mutableMapOf<String, JsonElement>()
         variables["input"] = jsonValue(input)
-        return DBlayer.run("StickerSend", JsonObject(variables), StickerSendResult.serializer())
+        DBlayer.run("StickerSend", JsonObject(variables), StickerSendResult.serializer())
     }
-    suspend fun pricingLoad(): PricingLoadResult {
+    suspend fun pricingLoad(): PricingLoadResult = offCaller {
         val variables = mutableMapOf<String, JsonElement>()
-        return DBlayer.run("Pricing", JsonObject(variables), PricingLoadResult.serializer())
+        DBlayer.run("Pricing", JsonObject(variables), PricingLoadResult.serializer())
     }
-    suspend fun momentCreate(input: MomentInput): MomentCreateResult {
+    suspend fun momentCreate(input: MomentInput): MomentCreateResult = offCaller {
         val variables = mutableMapOf<String, JsonElement>()
         variables["input"] = jsonValue(input)
-        return DBlayer.run("MomentCreate", JsonObject(variables), MomentCreateResult.serializer())
+        DBlayer.run("MomentCreate", JsonObject(variables), MomentCreateResult.serializer())
     }
-    suspend fun giphyLoad(type: String, limit: Long? = null): List<GiphyLoadResult> {
+    suspend fun giphyLoad(type: String, limit: Long? = null): List<GiphyLoadResult> = offCaller {
         val variables = mutableMapOf<String, JsonElement>()
         variables["type"] = jsonValue(type)
         if (limit != null) variables["limit"] = jsonValue(limit)
-        return DBlayer.run("Giphy", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()))
+        DBlayer.run("Giphy", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()))
     }
-    suspend fun widgetsSend(widgets: List<StickerWidgetInput>? = null): WidgetsSendResult {
+    suspend fun widgetsSend(widgets: List<StickerWidgetInput>? = null): WidgetsSendResult = offCaller {
         val variables = mutableMapOf<String, JsonElement>()
         if (widgets != null) variables["widgets"] = jsonValue(widgets)
-        return DBlayer.run("WidgetsSend", JsonObject(variables), WidgetsSendResult.serializer())
+        DBlayer.run("WidgetsSend", JsonObject(variables), WidgetsSendResult.serializer())
     }
-    suspend fun containerMediaLoad(containerId: String, upToSequence: Long? = null): ContainerMediaLoadResult {
+    suspend fun containerMediaLoad(containerId: String, upToSequence: Long? = null): ContainerMediaLoadResult = offCaller {
         val variables = mutableMapOf<String, JsonElement>()
         variables["containerId"] = jsonValue(containerId)
         if (upToSequence != null) variables["upToSequence"] = jsonValue(upToSequence)
-        return DBlayer.run("containerMedia", JsonObject(variables), ContainerMediaLoadResult.serializer())
+        DBlayer.run("containerMedia", JsonObject(variables), ContainerMediaLoadResult.serializer())
     }
 }

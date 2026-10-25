@@ -55,7 +55,7 @@ pub(super) fn swift_accessors(out: &mut String, types: &mut String, model: &Mode
     let printed = identifier(&method, true);
     let scope = if passed.is_empty() { printed } else { format!("{printed}({passed})") };
     writeln!(out, "    public static func {method}Edge({declared}of id: String) throws -> {class}? {{ try {scope}.edgeValues(of: id).map({class}.init) }}").unwrap();
-    writeln!(out, "    public static func read{}Edge({declared}of id: String) async throws -> {class}? {{ try await {scope}.readEdgeValues(of: id).map({class}.init) }}", pascal(&method)).unwrap();
+    writeln!(out, "    @concurrent public static func read{}Edge({declared}of id: String) async throws -> {class}? {{ try await {scope}.readEdgeValues(of: id).map({class}.init) }}", pascal(&method)).unwrap();
     writeln!(types, "public struct {class}: Sendable, Equatable {{").unwrap();
     for field in &relation.edge_fields {
         writeln!(types, "    public let {}: {}", identifier(&field.name, true), field_type(field, true)).unwrap();

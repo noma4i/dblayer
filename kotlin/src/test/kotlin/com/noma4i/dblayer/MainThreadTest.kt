@@ -1,6 +1,11 @@
 package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.Moment
+import com.noma4i.dblayer.models.MomentInput
+import com.noma4i.dblayer.models.Operations
+import com.noma4i.dblayer.models.SettingsInput
+import com.noma4i.dblayer.models.WidgetInput
+import com.noma4i.dblayer.models.WidgetKind
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -79,6 +84,20 @@ class MainThreadTest {
 
         val created = withContext(main) { Moment.create(text = "a", media = media) }
         withContext(main) { created.update(text = GraphQLNullable.Value("b"), media = media) }
+
+        assertEquals(setOf("prepare"), stages())
+        assertEquals(0, onMain("prepare"))
+    }
+
+    @Test
+    fun a_generated_operation_prepares_its_variables_off_the_caller_thread() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("MomentCreate", """{"data":{"momentCreate":{"moment":{"id":9}}}}""")
+        reopen(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentCreate","document":"mutation MomentCreate(${'$'}input: MomentInput!) { momentCreate(input: ${'$'}input) { moment { id } } }"}]""")
+        val widget = WidgetInput(kind = WidgetKind.Emoji, settings = SettingsInput(itemProps = recording("emoji")))
+
+        withContext(main) { Operations.momentCreate(MomentInput(file = "s1", widgets = GraphQLNullable.Value(listOf(widget)))) }
 
         assertEquals(setOf("prepare"), stages())
         assertEquals(0, onMain("prepare"))

@@ -3,8 +3,8 @@ use dblayer::schema::{NodeRead, RelationSpec};
 pub(super) fn swift_node(out: &mut String, method: &str, relation: &RelationSpec, kind: NodeRead) {
     let relation = &relation.name;
     match kind {
-        NodeRead::One => out.push_str(&format!("    public static func {method}(_ id: String, force: Bool = false) async throws -> Self? {{\n        try await readNode(relation: \"{relation}\", id: id, force: force)\n    }}\n")),
-        NodeRead::Many => out.push_str(&format!("    public static func {method}(_ ids: [String]) async throws -> [Self] {{\n        try await readNodes(relation: \"{relation}\", ids: ids)\n    }}\n")),
+        NodeRead::One => out.push_str(&format!("    @concurrent public static func {method}(_ id: String, force: Bool = false) async throws -> Self? {{\n        try await readNode(relation: \"{relation}\", id: id, force: force)\n    }}\n")),
+        NodeRead::Many => out.push_str(&format!("    @concurrent public static func {method}(_ ids: [String]) async throws -> [Self] {{\n        try await readNodes(relation: \"{relation}\", ids: ids)\n    }}\n")),
     }
 }
 

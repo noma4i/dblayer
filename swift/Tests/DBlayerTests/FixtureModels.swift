@@ -238,10 +238,10 @@ public struct Container: DBModel {
     public static let shelves = Column<Container, [ContainerShelf]?>("shelves")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func node(_ id: String, force: Bool = false) async throws -> Self? {
+    @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "node", id: id, force: force)
     }
-    public static func nodes(_ ids: [String]) async throws -> [Self] {
+    @concurrent public static func nodes(_ ids: [String]) async throws -> [Self] {
         try await readNodes(relation: "nodes", ids: ids)
     }
     public static var recent: Query<Self> {
@@ -347,7 +347,7 @@ public struct InterfaceRecord: DBModel {
     public static let spec = Column<InterfaceRecord, SampleSpec?>("spec")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func node(_ id: String, force: Bool = false) async throws -> Self? {
+    @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "node", id: id, force: force)
     }
     @concurrent public static func create(slug: String, spec: SampleSpec? = nil) async throws -> Self {
@@ -471,7 +471,7 @@ public struct Moment: DBModel {
     public static let createdAt = Column<Moment, String>("createdAt")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func transcodeStatus(_ id: String, force: Bool = false) async throws -> Self? {
+    @concurrent public static func transcodeStatus(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "transcode_status", id: id, force: force)
     }
     public static var recent: Query<Self> {
@@ -490,13 +490,13 @@ public struct Moment: DBModel {
         return built
     }
     public static func feedEdge(of id: String) throws -> MomentFeedEdge? { try feed.edgeValues(of: id).map(MomentFeedEdge.init) }
-    public static func readFeedEdge(of id: String) async throws -> MomentFeedEdge? { try await feed.readEdgeValues(of: id).map(MomentFeedEdge.init) }
+    @concurrent public static func readFeedEdge(of id: String) async throws -> MomentFeedEdge? { try await feed.readEdgeValues(of: id).map(MomentFeedEdge.init) }
     public static func vibeFeed(_ vibeId: String) throws -> Query<Self> {
         let built = Query<Self>(relation: "vibe_feed", params: ["vibeId": try JSONValue.encode(vibeId)])
         return built
     }
     public static func vibeFeedEdge(_ vibeId: String, of id: String) throws -> MomentVibeFeedEdge? { try vibeFeed(vibeId).edgeValues(of: id).map(MomentVibeFeedEdge.init) }
-    public static func readVibeFeedEdge(_ vibeId: String, of id: String) async throws -> MomentVibeFeedEdge? { try await vibeFeed(vibeId).readEdgeValues(of: id).map(MomentVibeFeedEdge.init) }
+    @concurrent public static func readVibeFeedEdge(_ vibeId: String, of id: String) async throws -> MomentVibeFeedEdge? { try await vibeFeed(vibeId).readEdgeValues(of: id).map(MomentVibeFeedEdge.init) }
     @concurrent public static func create(text: String? = nil, media: JSONValue? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = text { values["text"] = try JSONValue.encode(value) }
@@ -858,7 +858,7 @@ public struct Record: DBModel {
         let built = Query<Self>(relation: "thread", params: ["containerId": try JSONValue.encode(containerId)])
         return built
     }
-    public static func transcodeStatus(_ id: String, force: Bool = false) async throws -> Self? {
+    @concurrent public static func transcodeStatus(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "transcode_status", id: id, force: force)
     }
     public static func containerMedia(_ containerId: String) throws -> Query<Self> {
@@ -937,7 +937,7 @@ public struct CustomScreen: DBModel {
     public static let spec = Column<CustomScreen, ScreenSpec?>("spec")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func node(_ id: String, force: Bool = false) async throws -> Self? {
+    @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "node", id: id, force: force)
     }
     @concurrent public static func create(slug: String, version: Int, requires: ScreenRequires, spec: ScreenSpec? = nil) async throws -> Self {

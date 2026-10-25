@@ -814,47 +814,47 @@ public struct ContainerMediaLoadResult: Codable, Sendable, Equatable {
 }
 
 public enum Operations {
-    public static func when(`class`: String) async throws -> WhenResult {
+    @concurrent public static func when(`class`: String) async throws -> WhenResult {
         var variables: [String: JSONValue] = [:]
         variables["class"] = try JSONValue.encode(`class`)
         return try await DB.run("KeywordCall", variables: variables, as: WhenResult.self)
     }
-    public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {
+    @concurrent public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {
         var variables: [String: JSONValue] = [:]
         variables["kind"] = try JSONValue.encode(kind)
         if let value = size { variables["size"] = try JSONValue.encode(value) }
         return try await DB.run("QrCodeCreate", variables: ["input": JSONValue.object(variables)], as: QrCodeCreateResult.self)
     }
-    public static func signOut() async throws {
+    @concurrent public static func signOut() async throws {
         let variables: [String: JSONValue] = [:]
         try await DB.run("SignOut", variables: variables)
     }
-    public static func stickerSend(input: StickerInput) async throws -> StickerSendResult {
+    @concurrent public static func stickerSend(input: StickerInput) async throws -> StickerSendResult {
         var variables: [String: JSONValue] = [:]
         variables["input"] = try JSONValue.encode(input)
         return try await DB.run("StickerSend", variables: variables, as: StickerSendResult.self)
     }
-    public static func pricingLoad() async throws -> PricingLoadResult {
+    @concurrent public static func pricingLoad() async throws -> PricingLoadResult {
         let variables: [String: JSONValue] = [:]
         return try await DB.run("Pricing", variables: variables, as: PricingLoadResult.self)
     }
-    public static func momentCreate(input: MomentInput) async throws -> MomentCreateResult {
+    @concurrent public static func momentCreate(input: MomentInput) async throws -> MomentCreateResult {
         var variables: [String: JSONValue] = [:]
         variables["input"] = try JSONValue.encode(input)
         return try await DB.run("MomentCreate", variables: variables, as: MomentCreateResult.self)
     }
-    public static func giphyLoad(type: String, limit: Int? = nil) async throws -> [GiphyLoadResult] {
+    @concurrent public static func giphyLoad(type: String, limit: Int? = nil) async throws -> [GiphyLoadResult] {
         var variables: [String: JSONValue] = [:]
         variables["type"] = try JSONValue.encode(type)
         if let value = limit { variables["limit"] = try JSONValue.encode(value) }
         return try await DB.run("Giphy", variables: variables, as: [GiphyLoadResult].self)
     }
-    public static func widgetsSend(widgets: [StickerWidgetInput]? = nil) async throws -> WidgetsSendResult {
+    @concurrent public static func widgetsSend(widgets: [StickerWidgetInput]? = nil) async throws -> WidgetsSendResult {
         var variables: [String: JSONValue] = [:]
         if let value = widgets { variables["widgets"] = try JSONValue.encode(value) }
         return try await DB.run("WidgetsSend", variables: variables, as: WidgetsSendResult.self)
     }
-    public static func containerMediaLoad(containerId: String, upToSequence: Int? = nil) async throws -> ContainerMediaLoadResult {
+    @concurrent public static func containerMediaLoad(containerId: String, upToSequence: Int? = nil) async throws -> ContainerMediaLoadResult {
         var variables: [String: JSONValue] = [:]
         variables["containerId"] = try JSONValue.encode(containerId)
         if let value = upToSequence { variables["upToSequence"] = try JSONValue.encode(value) }
