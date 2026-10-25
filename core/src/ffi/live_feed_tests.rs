@@ -255,3 +255,28 @@ fn inv_loadm_14_snapshots_from_many_threads_arrive_in_strictly_growing_order() {
     assert!(changes.len() > 100);
     consistent(&changes, 0, "threads");
 }
+
+#[test]
+fn rows_arriving_before_the_relation_state_are_held_and_delivered_in_order_with_it() {
+    let (feed, tape) = feed();
+    feed.expect_load();
+    feed.rows(rows(1, 1));
+    feed.rows(rows(2, 2));
+    assert!(heard(&tape).is_empty(), "nothing is shown before the relation state arrives");
+    feed.state(relation(LoadPhase::Loaded, 0, None));
+    let sizes: Vec<u32> = heard(&tape).iter().map(|change| change.size).collect();
+    assert_eq!(sizes, vec![1, 2]);
+    assert!(heard(&tape).iter().all(|change| change.phase == Some(LivePhase::Loaded)));
+    assert!(heard(&tape).windows(2).all(|pair| pair[0].seq < pair[1].seq));
+}
+
+#[test]
+fn a_load_that_ends_without_a_relation_state_releases_the_held_rows() {
+    let (feed, tape) = feed();
+    feed.expect_load();
+    feed.rows(rows(1, 3));
+    assert!(heard(&tape).is_empty());
+    feed.load_finished(Some(DbError::Invalid { detail: "relation".into() }));
+    let heard = heard(&tape);
+    assert_eq!(heard.iter().map(|change| change.size).collect::<Vec<_>>(), vec![3]);
+}
