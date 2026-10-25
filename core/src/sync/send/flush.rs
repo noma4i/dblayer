@@ -460,8 +460,8 @@ impl Inner {
         let data = response.data.unwrap_or(Value::Null);
         let entry = sending.entry;
         let temp = entry.operation.temp_id.clone();
-        let (normalized, landings) = self.read_response(sending, operation, &data);
         let spec = self.db.spec(&sending.model)?;
+        let (normalized, landings) = self.read_response(spec, sending, operation, &data);
         let batch_action = spec.actions.iter().find(|action| action.name == sending.action && action.batch.is_some());
         let mut replacements = Vec::new();
         if let Some(action) = batch_action {
@@ -483,7 +483,7 @@ impl Inner {
             if replacements.len() != expected.len() { return self.quarantine(sending, &data); }
         }
         let real = normalized.roots.first().and_then(|row| row.get("id")).and_then(read_id);
-        let creatable = normalized.roots.first().is_some_and(|row| self.db.spec(&sending.model).is_ok_and(|spec| spec.normalize(row).is_ok()));
+        let creatable = normalized.roots.first().is_some_and(|row| spec.normalize(row).is_ok());
         if temp.is_some() && (normalized.roots.len() != 1 || real.is_none() || real == temp || !creatable) {
             return self.quarantine(sending, &data);
         }
@@ -535,13 +535,13 @@ impl Inner {
         }
         for (temp, real) in replacements { locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string()); }
         self.discard_files(held.iter().map(|file| file.id.clone()).collect()).await?;
-        self.keep_answer(sending, operation, &data);
+        self.keep_answer(spec, sending, operation, &data);
         self.invalidate_after(&sending.model, &sending.action).await?;
         Ok(SendResult::Committed)
     }
 
-    fn keep_answer(&self, sending: &Sending<'_>, operation: &OperationDef, data: &Value) {
-        let Some(declared) = self.db.spec(&sending.model).ok().and_then(|spec| spec.actions.iter().find(|declared| declared.name == sending.action).cloned()) else { return };
+    fn keep_answer(&self, spec: &crate::schema::ModelSpec, sending: &Sending<'_>, operation: &OperationDef, data: &Value) {
+        let Some(declared) = spec.actions.iter().find(|declared| declared.name == sending.action).cloned() else { return };
         if declared.result.is_empty() {
             return;
         }
@@ -553,12 +553,12 @@ impl Inner {
         locked(&self.outcomes).answered(entry.operation.id.0, &sending.model, &entry.operation.action_key, rows, Value::Object(fields.collect()));
     }
 
-    fn read_response(&self, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> (Normalized, Vec<RowRef>) {
-        let ignored = self.db.spec(&sending.model).ok().is_some_and(|spec| spec.actions.iter().any(|declared| declared.name == sending.action && declared.ignore_response));
+    fn read_response(&self, spec: &crate::schema::ModelSpec, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> (Normalized, Vec<RowRef>) {
+        let ignored = spec.actions.iter().any(|declared| declared.name == sending.action && declared.ignore_response);
         if sending.action == "destroy" || ignored {
             return (Normalized::default(), Vec::new());
         }
-        let declared = self.db.spec(&sending.model).ok().and_then(|spec| spec.actions.iter().find(|declared| declared.name == sending.action).cloned());
+        let declared = spec.actions.iter().find(|declared| declared.name == sending.action).cloned();
         let root = declared.as_ref().and_then(|declared| declared.root.as_deref()).unwrap_or(&operation.root_path);
         let shape = if declared.as_ref().is_some_and(|action| action.batch.is_some()) { RemoteShape::List { coverage: crate::schema::Coverage::Complete } } else { RemoteShape::Single };
         let mut normalized = extract(data, root, &shape, None)

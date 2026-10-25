@@ -677,3 +677,17 @@ async fn update_whose_mutation_is_not_registered_fails_visibly_and_sends_after_r
     assert_eq!(rig.sync.retry("moments", &rid("m1"), None).await.unwrap().committed(), 1);
     assert!(info(&rig, "m1").is_synced());
 }
+
+#[tokio::test(start_paused = true)]
+async fn settling_an_answer_for_an_unregistered_model_is_an_error_not_a_silent_fallback() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    let entry = rig.db.outbox().unwrap().remove(0);
+    let operation = rig.sync.inner.operations.lock().unwrap()["UpdateMoment"].clone();
+    let sending = super::Sending { entry: &entry, model: "ghosts".into(), action: "update".into(), generation: rig.db.generation(), base_revision: rig.db.revision_seq().unwrap() };
+    let outcome = rig.sync.inner.settle_response(&sending, &operation, crate::transport::Response::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}}))).await;
+    let error = outcome.unwrap_err();
+    assert!(error.to_string().contains("ghosts"), "{error}");
+    assert_eq!(rig.db.outbox().unwrap().len(), 1);
+}

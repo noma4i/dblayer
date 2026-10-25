@@ -28,6 +28,7 @@ pub(super) struct Runner {
     file_id: Option<String>,
     inline_file: Mutex<Option<(String, String, Vec<u8>)>>,
     model: String,
+    batch: bool,
     state: Mutex<UploadState>,
     progress: Mutex<TransferProgress>,
     pub(super) resumed: Mutex<Option<Result<Response, TransportError>>>,
@@ -116,8 +117,9 @@ impl Runner {
             };
             input.path = path.to_string_lossy().into_owned();
         }
+        let batch = inner.db.spec(&model)?.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&input.steps.mutation));
         let progress = TransferProgress::new(state.total_bytes, inner.config.upload.tick);
-        Ok(Some(Self { inner, seq, position, run, token, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
+        Ok(Some(Self { inner, seq, position, run, token, batch, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
     }
 
     pub(super) fn snapshot(&self) -> UploadState {
@@ -335,7 +337,7 @@ impl Runner {
     }
 
     async fn failed(&self, failure: OperationFailure) {
-        let batch = self.inner.db.spec(&self.model).is_ok_and(|spec| spec.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&self.input.steps.mutation)));
+        let batch = self.batch;
         let stage = self.snapshot().stage;
         let snapshot = self.snapshot();
         if snapshot.upload_id.is_some() && !snapshot.all_parts_confirmed() && !self.has_pending_request() {
@@ -355,7 +357,7 @@ impl Runner {
     }
 
     pub(super) async fn cancelled(&self) {
-        let batch = self.inner.db.spec(&self.model).is_ok_and(|spec| spec.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&self.input.steps.mutation)));
+        let batch = self.batch;
         let _ = self.save(UploadEvent::Cancel);
         if self.snapshot().upload_id.is_some() {
             let _ = self.save(UploadEvent::AbortStarted);
