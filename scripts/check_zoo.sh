@@ -73,7 +73,7 @@ for path in files:
     if re.search(r"\binvalidate_model\(", path.read_text()):
         findings.append(f"Z10 lists are marked stale and reloaded in sync/invalidate only: {relative}")
 
-test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/")
+test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs")
 panic_call = re.compile(r"\b(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")
 panic_allowed = [entry[len("panic:"):] for entry in allowed if entry.startswith("panic:")]
 for path in files:
