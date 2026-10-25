@@ -45,6 +45,7 @@ struct FeedState {
     subscription_error: Option<DbError>,
     load_pending: bool,
     load_error: Option<DbError>,
+    held: Vec<(bool, LiveChange)>,
     ready_pending: bool,
     shown: Option<Shown>,
     queue: VecDeque<LiveChange>,
@@ -100,6 +101,7 @@ impl LiveFeed {
             subscription_error: None,
             load_pending: false,
             load_error: None,
+            held: Vec::new(),
             ready_pending: false,
             shown: None,
             queue: VecDeque::new(),
@@ -110,22 +112,42 @@ impl LiveFeed {
     }
 
     pub(super) fn rows(&self, part: LiveChange) {
-        let mut state = held(&self.state);
-        state.opened = true;
-        state.read_error = None;
-        state.rows_at = state.rows_at.max(part.revision);
-        state.size = part.size;
-        state.window = part.window.clone();
-        self.compose(state, Some(part));
+        let state = held(&self.state);
+        self.part(state, false, part);
     }
 
     pub(super) fn count(&self, part: LiveChange) {
-        let mut state = held(&self.state);
+        let state = held(&self.state);
+        self.part(state, true, part);
+    }
+
+    fn part<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, count: bool, part: LiveChange) {
+        if state.load_pending && state.relation.is_none() {
+            state.held.push((count, part));
+            return;
+        }
         state.opened = true;
         state.read_error = None;
         state.rows_at = state.rows_at.max(part.revision);
-        state.count = part.count;
+        if count {
+            state.count = part.count;
+        } else {
+            state.size = part.size;
+            state.window = part.window.clone();
+        }
         self.compose(state, Some(part));
+    }
+
+    fn release<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>) {
+        let parts = std::mem::take(&mut state.held);
+        if parts.is_empty() {
+            return self.compose(state, None);
+        }
+        drop(state);
+        for (count, part) in parts {
+            self.part(held(&self.state), count, part);
+        }
+        self.compose(held(&self.state), None);
     }
 
     pub(super) fn reached(&self, revision: i64) {
@@ -145,7 +167,7 @@ impl LiveFeed {
     pub(super) fn state(&self, relation: RelationState) {
         let mut state = held(&self.state);
         state.relation = Some(relation);
-        self.compose(state, None);
+        self.release(state);
     }
 
     pub(super) fn expect_load(&self) {
@@ -160,7 +182,7 @@ impl LiveFeed {
         let mut state = held(&self.state);
         state.load_pending = false;
         state.load_error = error;
-        self.compose(state, None);
+        self.release(state);
     }
 
     pub(super) fn subscription_failed(&self, error: Option<DbError>) {
@@ -189,7 +211,7 @@ impl LiveFeed {
     }
 
     fn compose<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, part: Option<LiveChange>) {
-        if !state.opened || state.ended {
+        if !state.opened || state.ended || (state.load_pending && state.relation.is_none()) {
             return;
         }
         let rows_at = state.rows_at;

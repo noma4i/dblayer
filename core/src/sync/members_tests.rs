@@ -102,7 +102,7 @@ async fn the_server_order_survives_load_more_a_refresh_by_another_list_and_a_res
         put(&rig, "users", json!({"id": "u1", "name": "renamed"}));
         put(&rig, "users", json!({"id": "u0", "name": "a"}));
         assert_eq!(member_ids(&rig, "users", "chat_members", &chat), server_order);
-        let state = rig.sync.relation_state("users", "chat_members", &chat).unwrap();
+        let state = rig.sync.relation_state("users", "chat_members", &chat).await.unwrap();
         assert_eq!(state.borrow().total, None);
     }
     let reopened = rig_with_db(Db::open(&path, vec![users()], None).unwrap());

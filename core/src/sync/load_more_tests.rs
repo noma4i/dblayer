@@ -22,7 +22,7 @@ async fn reset_invalid_cursor(rig: &Rig, ids: &[&str]) {
     let outcome = rig.sync.load_more("moments", "feed", &none()).await.unwrap();
     assert_eq!((outcome.status, outcome.has_next), (LoadStatus::Loaded, true));
     assert_eq!(rig.transport.calls()[3].variables, json!({"first": 2}));
-    assert!(rig.sync.relation_state("moments", "feed", &none()).unwrap().borrow().error.is_none());
+    assert!(rig.sync.relation_state("moments", "feed", &none()).await.unwrap().borrow().error.is_none());
 }
 
 fn cursor_specs() -> Vec<crate::schema::ModelSpec> {

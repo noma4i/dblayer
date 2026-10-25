@@ -30,7 +30,7 @@ async fn inv_loadm_17_the_state_of_a_real_sync_equals_the_oracle_over_random_com
     for seed in 1..=SEEDS {
         let mut random = Random(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let rig = rig();
-        let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+        let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
         let window = rig.sync.window_key("moments", "feed", &none()).unwrap();
         let owner = &rig.sync.inner.owner;
         let mut flights: Vec<Flight> = Vec::new();

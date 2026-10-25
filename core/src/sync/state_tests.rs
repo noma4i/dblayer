@@ -12,7 +12,7 @@ fn none() -> Map<String, serde_json::Value> {
 #[tokio::test(start_paused = true)]
 async fn a_relation_never_loaded_is_idle_with_nothing_more() {
     let rig = rig();
-    let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+    let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     assert_eq!(*state.borrow(), RelationState { phase: LoadPhase::NotLoaded, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 });
 }
 
@@ -20,7 +20,7 @@ async fn a_relation_never_loaded_is_idle_with_nothing_more() {
 async fn the_state_follows_a_load_from_loading_to_idle_with_the_page_flag() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2").after(Duration::from_secs(1)));
-    let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+    let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     let load = tokio::spawn({
         let sync = rig.sync.clone();
         async move { sync.load("moments", "feed", &none(), LoadOptions::default()).await }
@@ -37,7 +37,7 @@ async fn load_more_clears_the_page_flag_on_the_last_page() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["b"], false, "c2"));
-    let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+    let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert!(state.borrow().has_more);
     rig.sync.load_more("moments", "feed", &none()).await.unwrap();
@@ -54,13 +54,13 @@ async fn the_state_carries_the_total_the_server_reports_for_the_whole_list() {
     };
     rig.transport.enqueue("MomentsFeed", page(&["a"], "c1", 7));
     rig.transport.enqueue("MomentsFeed", page(&["b"], "c2", 8));
-    let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+    let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     assert_eq!(state.borrow().total, None);
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(state.borrow().total, Some(7));
     rig.sync.load_more("moments", "feed", &none()).await.unwrap();
     assert_eq!(state.borrow().total, Some(8));
-    let reopened = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+    let reopened = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     assert_eq!(reopened.borrow().total, Some(8));
 }
 
@@ -69,7 +69,7 @@ async fn a_failed_load_reports_its_kind_and_the_next_success_clears_it() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::fail(crate::transport::TransportError::Http { status: 422, body: "no".to_string() }));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
-    let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+    let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     assert!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
     let failed = state.borrow().clone();
     assert_eq!(failed.phase, LoadPhase::Failed);
@@ -84,7 +84,8 @@ async fn a_second_receiver_starts_from_the_stored_window() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1"));
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
-    let fresh = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+    let mut fresh = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
+    fresh.changed().await.unwrap();
     assert!(fresh.borrow().has_more && fresh.borrow().loaded_at.is_some());
 }
 
@@ -94,7 +95,7 @@ async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1").after(Duration::from_secs(1)));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1").after(Duration::from_secs(1)));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["b"], false, "c2").after(Duration::from_secs(1)));
-    let state = rig.sync.relation_state("moments", "feed", &none()).unwrap();
+    let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     let running = |state: &RelationState| (state.initial, state.refreshing, state.fetching_more);
     let first = tokio::spawn({
         let sync = rig.sync.clone();
@@ -119,4 +120,36 @@ async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_
     assert_eq!(running(&state.borrow()), (false, false, true));
     more.await.unwrap().unwrap();
     assert_eq!(running(&state.borrow()), (false, false, false));
+}
+
+#[tokio::test]
+async fn watching_a_relation_state_does_not_wait_for_the_store_writer() {
+    let rig = rig();
+    let held = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let release = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let holder = {
+        let (db, held, release) = (rig.db.clone(), held.clone(), release.clone());
+        std::thread::spawn(move || {
+            let _writer = db.shared.store.lock();
+            held.wait();
+            release.wait();
+        })
+    };
+    held.wait();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let caller = {
+        let (sync, runtime) = (rig.sync.clone(), tokio::runtime::Handle::current());
+        std::thread::spawn(move || {
+            let _entered = runtime.enter();
+            let params = none();
+            let mut call = std::pin::pin!(sync.relation_state("moments", "feed", &params));
+            let _ = std::future::Future::poll(call.as_mut(), &mut std::task::Context::from_waker(std::task::Waker::noop()));
+            let _ = sender.send(());
+        })
+    };
+    let returned = receiver.recv_timeout(Duration::from_secs(2));
+    release.wait();
+    holder.join().unwrap();
+    caller.join().unwrap();
+    assert!(returned.is_ok(), "relation_state waited for the store lock");
 }

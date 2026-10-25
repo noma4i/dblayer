@@ -11,9 +11,9 @@ fn vibe(number: usize) -> serde_json::Map<String, serde_json::Value> {
 async fn inv_loadm_19_unobserved_windows_are_forgotten_without_waiting_for_reset() {
     let rig = rig();
     for number in 0..30 {
-        drop(rig.sync.relation_state("moments", "vibe_feed", &vibe(number)).unwrap());
+        drop(rig.sync.relation_state("moments", "vibe_feed", &vibe(number)).await.unwrap());
     }
-    let kept = rig.sync.relation_state("moments", "vibe_feed", &vibe(99)).unwrap();
+    let kept = rig.sync.relation_state("moments", "vibe_feed", &vibe(99)).await.unwrap();
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);
     let second = kept.clone();
     drop(kept);

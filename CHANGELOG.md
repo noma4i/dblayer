@@ -24,6 +24,7 @@
 - Generated writes, actions, node reads and operations run off the caller thread.
 - `Query.cached()` and `cachedRow()` are now `async` in Swift and `suspend` in Kotlin.
 - Kotlin entity readers no longer wait while a delivery applies.
+- Connecting a live query to a remote relation no longer waits for the storage writer: the stored window state is read on a blocking task and the first value is held until it arrives.
 
 ### Fixed
 - Explicit null stays distinct from an absent field after reopening the database.

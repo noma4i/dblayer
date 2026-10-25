@@ -500,10 +500,8 @@ impl Database {
                 let sync = self.sync()?.clone();
                 let watch = sync.watch(&model, &relation, &params)?;
                 if self.db.spec(&model)?.relations.iter().any(|declared| declared.name == relation && declared.remote.is_some()) {
-                    let mut receiver = sync.relation_state(&model, &relation, &params)?;
                     feed.expect_load();
-                    feed.state(receiver.borrow_and_update().clone());
-                    tracked = Some((sync, relation, params, receiver));
+                    tracked = Some((sync, relation, params));
                 }
                 Some(watch)
             }
@@ -516,13 +514,20 @@ impl Database {
         let sink = feed.clone();
         let observer = self.db.observe_query_feed(query, count, move |item| intake(&sink, &wire, item))?;
         let (load, state) = match tracked {
-            Some((sync, relation, params, receiver)) => {
+            Some((sync, relation, params)) => {
                 let (follower, loader) = (feed.clone(), feed.clone());
-                let mut changes = receiver.clone();
+                let (ready, seeded) = tokio::sync::oneshot::channel();
                 let state = executor()?.spawn(async move {
+                    let mut changes = match sync.relation_state(&model, &relation, &params).await {
+                        Ok(changes) => changes,
+                        Err(error) => return follower.load_finished(Some(DbError::from(error))),
+                    };
+                    follower.state(changes.borrow_and_update().clone());
+                    let _ = ready.send((sync, model, relation, params, changes.clone()));
                     while changes.changed().await.is_ok() { follower.state(changes.borrow_and_update().clone()); }
                 }).abort_handle();
                 let load = executor()?.spawn(async move {
+                    let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
                     let result = sync.load(&model, &relation, &params, options).await;
                     loader.state(receiver.borrow().clone());
                     loader.load_finished(result.err().map(DbError::from));

@@ -167,6 +167,14 @@ impl LoadOwner {
         RelationWatch { receiver, _lease: RelationLease { owner: Arc::downgrade(self), window: window.to_string() } }
     }
 
+    pub(crate) fn seed_observed(&self, window: &str, model: String, seed: Option<Stored>) {
+        let mut state = locked(&self.state);
+        if state.senders.get(window).is_some_and(|sender| sender.receiver_count() > 0) {
+            locked(&self.queue).push_back(Queued::Event(Event::Observe { window: window.to_string(), model, seed }));
+            self.drain_locked(&mut state);
+        }
+    }
+
     pub(crate) fn begin_flight(&self, window: &str, target: Target, cursor: bool, seed: Option<Stored>) -> FlightId {
         let flight = self.next_flight.fetch_add(1, Ordering::SeqCst);
         self.enqueue(Queued::Target(Event::Start { window: window.to_string(), model: target.model.clone(), flight, cursor, seed }, target));

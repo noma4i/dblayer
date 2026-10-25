@@ -16,7 +16,7 @@ impl QueryListener for Quiet {
 async fn inv_loadm_12_a_query_the_core_rejects_tells_its_subscriber_in_the_snapshot_and_leaves_the_relation_window_alone() {
     let (db, _) = rig().await;
     let sync = db.sync.as_ref().unwrap();
-    let state = sync.relation_state("Moment", "feed", &Map::new()).unwrap();
+    let state = sync.relation_state("Moment", "feed", &Map::new()).await.unwrap();
     let query = r#"{"model":"Moment","relation":"feed","params":{},"where":{"type":"equal","field":"nope","value":1}}"#;
     let rejected = db.live_query(query.into(), Arc::new(Quiet));
     let first = rejected.current().await;

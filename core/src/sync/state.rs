@@ -28,11 +28,15 @@ impl Resolved<'_> {
 
 impl Inner {
     pub(crate) fn stored(&self, resolved: &Resolved<'_>) -> Option<Stored> {
+        self.stored_of(&resolved.model, resolved.scope.key.as_str(), &resolved.window_key)
+    }
+
+    fn stored_of(&self, model: &str, scope_key: &str, window_key: &str) -> Option<Stored> {
         let epoch = self.owner.epoch();
         let store = &self.db.shared.store;
-        let window = store.window(&resolved.window_key).ok()?;
-        let freshness = store.window_freshness(&resolved.window_key).ok()?;
-        let has_rows = store.read(&[resolved.model.as_str()], |reader| reader.scope_first_key(resolved.model.as_str(), resolved.scope.key.as_str())).ok()?.is_some();
+        let window = store.window(window_key).ok()?;
+        let freshness = store.window_freshness(window_key).ok()?;
+        let has_rows = store.read(&[model], |reader| reader.scope_first_key(model, scope_key)).ok()?.is_some();
         Some(match (window, freshness) {
             (Some(window), Some(freshness)) => Stored {
                 epoch,
@@ -47,8 +51,15 @@ impl Inner {
 }
 
 impl Sync {
-    pub fn relation_state(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<RelationWatch, SyncError> {
+    pub async fn relation_state(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<RelationWatch, SyncError> {
         let resolved = self.inner.resolve(model, relation, params)?;
-        Ok(self.inner.owner.observe(&resolved.window_key, resolved.target(), self.inner.stored(&resolved)))
+        let watch = self.inner.owner.observe(&resolved.window_key, resolved.target(), None);
+        let (inner, window, model, scope) = (self.inner.clone(), resolved.window_key.clone(), resolved.model.clone(), resolved.scope.key.as_str().to_string());
+        let seeded = tokio::task::spawn_blocking(move || {
+            let seed = inner.stored_of(&model, &scope, &window);
+            inner.owner.seed_observed(&window, model, seed);
+        });
+        seeded.await.map_err(|error| SyncError::Event(error.to_string()))?;
+        Ok(watch)
     }
 }

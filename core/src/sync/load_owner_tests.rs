@@ -12,8 +12,8 @@ fn none() -> Map<String, serde_json::Value> {
     Map::new()
 }
 
-fn feed_state(rig: &Rig) -> super::RelationWatch {
-    rig.sync.relation_state("moments", "feed", &none()).unwrap()
+async fn feed_state(rig: &Rig) -> super::RelationWatch {
+    rig.sync.relation_state("moments", "feed", &none()).await.unwrap()
 }
 
 fn load(rig: &Rig, force: bool) -> tokio::task::JoinHandle<Result<super::load::LoadOutcome, SyncError>> {
@@ -33,7 +33,7 @@ fn summary(state: &RelationState) -> (LoadPhase, Option<&'static str>) {
 #[tokio::test(start_paused = true)]
 async fn inv_loadm_05_a_load_offline_before_the_flight_ends_with_a_network_error() {
     let rig = rig();
-    let state = feed_state(&rig);
+    let state = feed_state(&rig).await;
     rig.sync.set_online(false);
     let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
     assert_eq!(result.unwrap_err(), SyncError::Offline);
@@ -45,7 +45,7 @@ async fn inv_loadm_05_a_load_offline_before_the_flight_ends_with_a_network_error
 async fn inv_loadm_05_an_offline_load_of_a_window_with_rows_keeps_the_rows_phase_and_shows_the_error() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
-    let state = feed_state(&rig);
+    let state = feed_state(&rig).await;
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     rig.sync.set_online(false);
     assert!(rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.is_err());
@@ -56,7 +56,7 @@ async fn inv_loadm_05_an_offline_load_of_a_window_with_rows_keeps_the_rows_phase
 async fn inv_loadm_05_going_offline_in_the_middle_of_a_flight_ends_it_with_a_network_error() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1").after(Duration::from_secs(30)));
-    let state = feed_state(&rig);
+    let state = feed_state(&rig).await;
     let flight = load(&rig, false);
     rig.transport.await_calls("MomentsFeed", 1).await;
     assert_eq!(state.borrow().phase, LoadPhase::Loading);
@@ -69,7 +69,7 @@ async fn inv_loadm_05_going_offline_in_the_middle_of_a_flight_ends_it_with_a_net
 async fn inv_loadm_06_an_answer_that_arrives_after_the_caller_left_changes_nothing() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1").after(Duration::from_secs(30)));
-    let state = feed_state(&rig);
+    let state = feed_state(&rig).await;
     let flight = load(&rig, false);
     rig.transport.await_calls("MomentsFeed", 1).await;
     assert_eq!(state.borrow().phase, LoadPhase::Loading);
@@ -91,7 +91,7 @@ async fn inv_loadm_07_a_window_with_two_flights_stays_loading_until_both_end_in_
         rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1"));
         rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1").after(Duration::from_secs(refresh_takes)));
         rig.transport.enqueue("MomentsFeed", feed_reply(&["b"], false, "c2").after(Duration::from_secs(more_takes)));
-        let state = feed_state(&rig);
+        let state = feed_state(&rig).await;
         rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
         let refresh = load(&rig, true);
         rig.transport.await_calls("MomentsFeed", 2).await;
@@ -113,7 +113,7 @@ async fn inv_loadm_07_a_window_with_two_flights_stays_loading_until_both_end_in_
 #[tokio::test(start_paused = true)]
 async fn inv_loadm_08_going_online_repeats_the_load_that_failed_by_network_once() {
     let rig = rig();
-    let state = feed_state(&rig);
+    let state = feed_state(&rig).await;
     rig.sync.set_online(false);
     assert!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
     assert_eq!(state.borrow().phase, LoadPhase::Failed);
@@ -131,7 +131,7 @@ async fn inv_loadm_08_going_online_repeats_the_load_that_failed_by_network_once(
 #[tokio::test(start_paused = true)]
 async fn inv_loadm_08_going_online_skips_a_window_nobody_observes_and_a_server_error() {
     let rig = rig();
-    let watched = feed_state(&rig);
+    let watched = feed_state(&rig).await;
     rig.sync.set_online(false);
     assert!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
     assert!(rig.sync.load("moments", "history", &none(), LoadOptions::default()).await.is_err());
@@ -141,7 +141,7 @@ async fn inv_loadm_08_going_online_skips_a_window_nobody_observes_and_a_server_e
     assert_eq!(rig.transport.call_count("MomentsFeed") + rig.transport.call_count("MomentsHistory"), 0);
 
     let server = super::rig::rig();
-    let state = feed_state(&server);
+    let state = feed_state(&server).await;
     server.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
     assert!(server.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
     server.sync.set_online(false);
@@ -156,7 +156,7 @@ async fn inv_loadm_04_a_background_failure_with_rows_is_loaded_with_the_error() 
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
-    let state = feed_state(&rig);
+    let state = feed_state(&rig).await;
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     rig.clock.advance(Duration::from_secs(400));
     let kept = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -168,7 +168,7 @@ async fn inv_loadm_04_a_background_failure_with_rows_is_loaded_with_the_error() 
 async fn inv_loadm_09_a_cache_reset_returns_the_window_to_not_loaded() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
-    let state = feed_state(&rig);
+    let state = feed_state(&rig).await;
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(state.borrow().phase, LoadPhase::Loaded);
     rig.db.reset(&["moments"]).unwrap();
@@ -179,7 +179,7 @@ async fn inv_loadm_09_a_cache_reset_returns_the_window_to_not_loaded() {
 #[tokio::test(start_paused = true)]
 async fn inv_loadm_01_closing_the_last_sync_handle_ends_every_window_as_closed() {
     let rig = rig();
-    let state = feed_state(&rig);
+    let state = feed_state(&rig).await;
     let Rig { sync, .. } = rig;
     drop(sync);
     assert_eq!(state.borrow().phase, LoadPhase::Closed);

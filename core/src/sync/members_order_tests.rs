@@ -41,8 +41,8 @@ fn page(ids: &[&str], has_next: bool, count: i64) -> Reply {
     Reply::data(json!({"node": {"membersCount": count, "members": {"edges": edges, "pageInfo": {"hasNextPage": has_next, "endCursor": format!("{}-cursor", ids.last().unwrap())}}}}))
 }
 
-fn total_of(rig: &Rig, params: &serde_json::Map<String, Value>) -> Option<i64> {
-    let state = rig.sync.relation_state("users", "chat_members", params).unwrap();
+async fn total_of(rig: &Rig, params: &serde_json::Map<String, Value>) -> Option<i64> {
+    let state = rig.sync.relation_state("users", "chat_members", params).await.unwrap();
     let total = state.borrow().total;
     total
 }
@@ -84,7 +84,7 @@ async fn each_order_of_one_chat_has_its_own_window_members_cursor_and_total() {
     assert_eq!(calls[3].variables, json!({"chatId": "c1", "order": "JOINED", "first": 30, "after": "j2-cursor"}));
     assert_eq!(member_ids(&rig, "users", "chat_members", &joined), ["j1", "j2", "j3", "j4"]);
     assert_eq!(member_ids(&rig, "users", "chat_members", &owner_first), ["o1", "o2", "o3", "o4"]);
-    assert_eq!((total_of(&rig, &joined), total_of(&rig, &owner_first)), (Some(4), Some(4)));
+    assert_eq!((total_of(&rig, &joined).await, total_of(&rig, &owner_first).await), (Some(4), Some(4)));
 }
 
 #[tokio::test(start_paused = true)]
@@ -97,5 +97,5 @@ async fn two_chats_stay_apart_in_the_same_order() {
     rig.sync.load("users", "chat_members", &two, Default::default()).await.unwrap();
     assert_eq!(member_ids(&rig, "users", "chat_members", &one), ["a1", "a2"]);
     assert_eq!(member_ids(&rig, "users", "chat_members", &two), ["b1"]);
-    assert_eq!((total_of(&rig, &one), total_of(&rig, &two)), (Some(2), Some(1)));
+    assert_eq!((total_of(&rig, &one).await, total_of(&rig, &two).await), (Some(2), Some(1)));
 }

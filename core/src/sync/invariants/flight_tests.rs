@@ -35,7 +35,7 @@ async fn inv_conc_05_a_waiting_caller_survives_the_cancelled_flight_owner() {
 async fn inv_conc_05_a_cancelled_flight_owner_leaves_no_loading_state() {
     let rig = rig();
     slow_feed(&rig);
-    let state = rig.sync.relation_state("moments", "feed", &Map::new()).unwrap();
+    let state = rig.sync.relation_state("moments", "feed", &Map::new()).await.unwrap();
     let owner = spawn_load(&rig);
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(state.borrow().phase, LoadPhase::Loading);
