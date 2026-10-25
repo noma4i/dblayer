@@ -147,7 +147,8 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq}")), 0, "retry clears the operation tree");
         assert!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {upload_seq} AND item_position = 0")) > 0);
         for seq in [seq, upload_seq] {
-            send(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
+            let status = if seq == upload_seq { OperationStatus::RolledBack } else { OperationStatus::Committed };
+            send(&store, vec![OperationTransition::Close { seq, status }]);
         }
         for table in ["op_error", "sync_row_error", "sync_upload_error"] {
             assert_eq!(nodes(&store, table), 0, "{table} after close");
