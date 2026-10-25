@@ -232,7 +232,7 @@ data class StickerWidgetInput(val kind: WidgetKind, val props: StickerPropsInput
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Long> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)
+data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Long> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val recursive: GraphQLNullable<RecursiveInput> = GraphQLNullable.Omitted)
 
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
@@ -273,6 +273,11 @@ data class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) v
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
+data class RecursiveInput(@EncodeDefault(EncodeDefault.Mode.NEVER) val next: GraphQLNullable<RecursiveInput> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val choice: GraphQLNullable<RecursiveChoice> = GraphQLNullable.Omitted)
+
+@Immutable
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
 data class WidgetInput(val kind: WidgetKind, val settings: SettingsInput)
 
 @Immutable
@@ -284,6 +289,29 @@ data class StickerTextInput(val body: String, @EncodeDefault(EncodeDefault.Mode.
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class StickerEmojiInput(val code: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val kind: GraphQLNullable<WidgetKind> = GraphQLNullable.Omitted)
+
+@Immutable
+@Serializable(with = RecursiveChoiceSerializer::class)
+sealed interface RecursiveChoice {
+    @Immutable
+    data class Next(val value: RecursiveChoice) : RecursiveChoice
+    @Immutable
+    data class Value(val value: String) : RecursiveChoice
+}
+
+object RecursiveChoiceSerializer : KSerializer<RecursiveChoice> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("RecursiveChoice")
+
+    override fun serialize(encoder: Encoder, value: RecursiveChoice) {
+        val (key, element) = when (value) {
+            is RecursiveChoice.Next -> "next" to jsonValue(value.value)
+            is RecursiveChoice.Value -> "value" to jsonValue(value.value)
+        }
+        (encoder as JsonEncoder).encodeJsonElement(JsonObject(mapOf(key to element)))
+    }
+
+    override fun deserialize(decoder: Decoder): RecursiveChoice = throw SerializationException("RecursiveChoice is only sent")
+}
 
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)

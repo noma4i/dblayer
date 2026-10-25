@@ -67,7 +67,7 @@ fn a_one_of_input_becomes_an_enum_with_one_case_per_field() {
     let declared = compile(&operation("[:WidgetInput]?"), SEND_MUTATION, SCHEMA).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
-        "public enum PropsInput: Encodable, Sendable, Equatable {\n    case text(TextInput)\n    case emoji(EmojiInput)\n",
+        "public indirect enum PropsInput: Encodable, Sendable, Equatable {\n    case text(TextInput)\n    case emoji(EmojiInput)\n",
         "        case .text(let value): try container.encode(value, forKey: .text)\n",
         "        case .emoji(let value): try container.encode(value, forKey: .emoji)\n",
         "    public let props: PropsInput\n",

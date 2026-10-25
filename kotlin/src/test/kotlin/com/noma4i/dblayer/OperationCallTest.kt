@@ -3,6 +3,8 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.Operations
 import com.noma4i.dblayer.models.MomentInput
 import com.noma4i.dblayer.models.OwnerInput
+import com.noma4i.dblayer.models.RecursiveInput
+import com.noma4i.dblayer.models.RecursiveChoice
 import com.noma4i.dblayer.models.SettingsInput
 import com.noma4i.dblayer.models.StickerInput
 import com.noma4i.dblayer.models.WidgetInput
@@ -62,6 +64,16 @@ class OperationCallTest {
 
         assertEquals("s1", result.id)
         val expected = """{"input":{"name":"wave","mood":null,"tags":["a","b"],"notes":["n",null],"pinned":true,"owner":{"id":"7"},"helpers":[{"id":"8","nickname":"ann"}]}}"""
+        assertEquals(parseJson(expected), parseJson(transport.calls.first { it.operationName == "StickerSend" }.variablesJson))
+    }
+
+    @Test
+    fun recursiveInputsPreserveNestedValues() = bounded {
+        val transport = rig("StickerSend", "mutation StickerSend(${'$'}input: StickerInput!) { stickerSend(input: ${'$'}input) { id } }", """{"data":{"stickerSend":{"id":"s1"}}}""")
+        val recursive = RecursiveInput(next = GraphQLNullable.Value(RecursiveInput(next = GraphQLNullable.Null)), choice = GraphQLNullable.Value(RecursiveChoice.Next(RecursiveChoice.Value("leaf"))))
+        val input = StickerInput(name = "tree", tags = emptyList(), pinned = false, owner = OwnerInput(id = "7"), recursive = GraphQLNullable.Value(recursive))
+        withTimeout(5000) { Operations.stickerSend(input) }
+        val expected = """{"input":{"name":"tree","tags":[],"pinned":false,"owner":{"id":"7"},"recursive":{"next":{"next":null},"choice":{"next":{"value":"leaf"}}}}}"""
         assertEquals(parseJson(expected), parseJson(transport.calls.first { it.operationName == "StickerSend" }.variablesJson))
     }
 

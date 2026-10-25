@@ -1,7 +1,7 @@
 public enum GraphQLNullable<Wrapped: Encodable & Sendable & Equatable>: Sendable, Equatable {
   case omitted
   case null
-  case value(Wrapped)
+  indirect case value(Wrapped)
 }
 
 public extension KeyedEncodingContainer {

@@ -289,8 +289,9 @@ public struct StickerInput: Encodable, Sendable, Equatable {
     public let pinned: Bool
     public let owner: OwnerInput
     public let helpers: GraphQLNullable<[OwnerInput]>
+    public let recursive: GraphQLNullable<RecursiveInput>
 
-    public init(name: String, mood: GraphQLNullable<Mood> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, pinned: Bool, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted) {
+    public init(name: String, mood: GraphQLNullable<Mood> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, pinned: Bool, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted, recursive: GraphQLNullable<RecursiveInput> = .omitted) {
         self.name = name
         self.mood = mood
         self.tags = tags
@@ -299,6 +300,7 @@ public struct StickerInput: Encodable, Sendable, Equatable {
         self.pinned = pinned
         self.owner = owner
         self.helpers = helpers
+        self.recursive = recursive
     }
 
     enum CodingKeys: String, CodingKey {
@@ -310,6 +312,7 @@ public struct StickerInput: Encodable, Sendable, Equatable {
         case pinned
         case owner
         case helpers
+        case recursive
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -322,6 +325,7 @@ public struct StickerInput: Encodable, Sendable, Equatable {
         try container.encode(pinned, forKey: .pinned)
         try container.encode(owner, forKey: .owner)
         try container.encode(helpers, forKey: .helpers)
+        try container.encode(recursive, forKey: .recursive)
     }
 }
 
@@ -346,7 +350,7 @@ public struct MomentInput: Encodable, Sendable, Equatable {
     }
 }
 
-public enum StickerPropsInput: Encodable, Sendable, Equatable {
+public indirect enum StickerPropsInput: Encodable, Sendable, Equatable {
     case text(StickerTextInput)
     case emoji(StickerEmojiInput)
     case tags([String])
@@ -385,6 +389,27 @@ public struct OwnerInput: Encodable, Sendable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(nickname, forKey: .nickname)
+    }
+}
+
+public struct RecursiveInput: Encodable, Sendable, Equatable {
+    public let next: GraphQLNullable<RecursiveInput>
+    public let choice: GraphQLNullable<RecursiveChoice>
+
+    public init(next: GraphQLNullable<RecursiveInput> = .omitted, choice: GraphQLNullable<RecursiveChoice> = .omitted) {
+        self.next = next
+        self.choice = choice
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case next
+        case choice
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(next, forKey: .next)
+        try container.encode(choice, forKey: .choice)
     }
 }
 
@@ -448,6 +473,24 @@ public struct StickerEmojiInput: Encodable, Sendable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(code, forKey: .code)
         try container.encode(kind, forKey: .kind)
+    }
+}
+
+public indirect enum RecursiveChoice: Encodable, Sendable, Equatable {
+    case next(RecursiveChoice)
+    case value(String)
+
+    enum CodingKeys: String, CodingKey {
+        case next
+        case value
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .next(let value): try container.encode(value, forKey: .next)
+        case .value(let value): try container.encode(value, forKey: .value)
+        }
     }
 }
 

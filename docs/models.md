@@ -883,7 +883,7 @@ Standalone operations require named documents when `--schema` is set. The check 
 
 `dblayer-gen --schema schema.graphql swift models/*.dbl` checks the models as above and also writes the input objects. The same flag does both, so the schema file must satisfy the check.
 
-A schema input object with `@oneOf` sets exactly one field, so it is an enum and not a struct. The case holds the value of its field. Both platforms send one key.
+A schema input object with `@oneOf` sets exactly one field, so it is an enum and not a struct. The case holds the value of its field. Both platforms send one key. Recursive input objects and recursive choices preserve nested values on both platforms.
 
 ```swift
 let props: StickerPropsInput = .emoji(StickerEmojiInput(code: "fire"))   // {"emoji":{"code":"fire"}}

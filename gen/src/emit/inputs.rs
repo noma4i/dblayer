@@ -45,7 +45,7 @@ fn case_name(field: &InputField) -> String {
 }
 
 fn emit_swift_one_of(out: &mut String, input: &InputObject) {
-    writeln!(out, "public enum {}: Encodable, Sendable, Equatable {{", input.name).unwrap();
+    writeln!(out, "public indirect enum {}: Encodable, Sendable, Equatable {{", input.name).unwrap();
     for field in &input.fields { writeln!(out, "    case {}({})", field.name, payload(field, true)).unwrap(); }
     writeln!(out, "\n    enum CodingKeys: String, CodingKey {{").unwrap();
     for field in &input.fields { writeln!(out, "        case {}", field.name).unwrap(); }

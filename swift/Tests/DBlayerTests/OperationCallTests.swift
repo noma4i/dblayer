@@ -62,6 +62,18 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func recursiveInputsPreserveNestedValues() async throws {
+    let transport = try await Self.openOperationRig("StickerSend", document: "mutation StickerSend($input: StickerInput!) { stickerSend(input: $input) { id } }", reply: #"{"data":{"stickerSend":{"id":"s1"}}}"#)
+    let recursive = RecursiveInput(next: .value(RecursiveInput(next: .null)), choice: .value(.next(.value("leaf"))))
+    let input = StickerInput(name: "tree", tags: [], pinned: false, owner: OwnerInput(id: "7"), recursive: .value(recursive))
+    _ = try await Operations.stickerSend(input: input)
+    let sent = try #require(transport.calls.first { $0.operationName == "StickerSend" }).variablesJson
+    let expected = #"{"input":{"name":"tree","tags":[],"pinned":false,"owner":{"id":"7"},"recursive":{"next":{"next":null},"choice":{"next":{"value":"leaf"}}}}}"#
+    #expect(try JSONValue.read(sent) == JSONValue.read(expected))
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func aResultWithListsObjectsAndRawJsonIsDecodedIntoGeneratedTypes() async throws {
     _ = try await Self.openOperationRig("Pricing", document: "query Pricing { pricing { rewards { id name price } videoIntro { enabled } tags spec } }", reply: #"{"data":{"pricing":{"rewards":[{"id":7,"name":"rose","price":5},{"id":"8","name":"ring"}],"videoIntro":{"enabled":true},"tags":["a","b"],"spec":{"k":[1,2]}}}}"#)
 
