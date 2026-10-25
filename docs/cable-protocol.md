@@ -193,6 +193,7 @@ The code-shape check is shared by error codes and closing reasons, so new server
 | `presenceSignal` | `apply` copies declared fields when `matches` accepts the event, `reset_after` resets the value |
 | `recordSignal` | The event creates a row of the memory model InteractionNotice without an HTTP read |
 
+After an event is applied, the core publishes a model event with the rows before and after. `via: :observed` rereads each observed read of the model once.
 `recordEvents` does not replace row fields. A matching `removes_on` kind removes the cached row without HTTP or a mutation.
 Other kinds use the HTTP reread through the encrypted client and the normal SQLite column write.
 Memory model notices get a UUID when the server sends no id. Their rows live in memory only and `expires_in` deletes them.

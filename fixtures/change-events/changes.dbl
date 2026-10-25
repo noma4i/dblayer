@@ -37,4 +37,5 @@ model Totals do
     query "CurrentTotals"
   end
   changed_by "COUNTERS", via: :current
+  changed_by "WALLET", via: :observed
 end

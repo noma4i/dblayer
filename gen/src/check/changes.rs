@@ -15,6 +15,13 @@ pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &
             if feeds.is_empty() {
                 report("changed_by requires a changes subscription".into());
             }
+            if change.observed {
+                if decl.removes_on.is_some() { report("removes_on cannot be combined with `via: :observed`".into()); }
+                if change.parameter.is_some() { report("`via: :observed` takes no parameter".into()); }
+                if !model.relations.iter().any(|relation| relation.remote.is_some()) { report("`via: :observed` requires a model with a remote read".into()); }
+                if seen.contains_key(change.area.as_str()) { report(format!("duplicate change area `{}`", change.area)); } else { seen.insert(&change.area, (false, node.file, decl.pos.line, decl.pos.column)); }
+                continue;
+            }
             let Some(relation) = model.relations.iter().find(|relation| relation.name == change.relation) else {
                 report(format!("unknown relation `{}`", change.relation));
                 continue;

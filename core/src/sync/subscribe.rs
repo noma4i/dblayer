@@ -139,22 +139,56 @@ impl Feed {
             let targets: Vec<_> = self.inner.db.shared.specs.values().flat_map(|spec| spec.changes.iter().filter(|read| read.area == area).map(|read| (spec.key.to_string(), read.clone()))).collect();
             if targets.is_empty() { locked(&self.status).rejected += 1; }
             for (model, read) in targets {
+                let Ok(row_id) = RowId::new(id) else {
+                    locked(&self.status).rejected += 1;
+                    continue;
+                };
+                let watched = self.inner.has_event_readers(&model);
+                let before = watched.then(|| self.inner.db.find(&model, &row_id));
                 if read.removes_on.iter().any(|removal| removal == kind) {
-                    let Ok(id) = RowId::new(id) else {
-                        locked(&self.status).rejected += 1;
-                        continue;
-                    };
-                    self.apply(vec![Pending { bucket: String::new(), id, node: Map::new(), generation: self.inner.db.generation() }], &model, EventEffect::Destroy).await;
+                    let removed = self.apply(vec![Pending { bucket: String::new(), id: row_id, node: Map::new(), generation: self.inner.db.generation() }], &model, EventEffect::Destroy).await;
+                    if let Some(before) = before {
+                        if !removed {
+                            self.inner.publish_model_gap(&model);
+                        } else if !self.inner.publish_rows(&model, area, kind, id, before, Ok(None)) {
+                            locked(&self.status).rejected += 1;
+                        }
+                    }
                     continue;
                 }
-                let result = self.reread(&model, &read.relation, read.parameter.as_deref(), Some(id)).await;
+                let result = if read.observed { self.reread_observed(&model).await } else { self.reread(&model, &read.relation, read.parameter.as_deref(), Some(id)).await };
                 match result {
-                    Ok(()) => locked(&self.status).applied += 1,
-                    Err(_) => locked(&self.status).rejected += 1,
+                    Ok(()) => {
+                        locked(&self.status).applied += 1;
+                        if let Some(before) = before {
+                            let after = self.inner.db.find(&model, &row_id);
+                            if !self.inner.publish_rows(&model, area, kind, id, before, after) { locked(&self.status).rejected += 1; }
+                        }
+                    }
+                    Err(_) => {
+                        locked(&self.status).rejected += 1;
+                        if before.is_some() { self.inner.publish_model_gap(&model); }
+                    }
                 }
             }
         }
         true
+    }
+
+    async fn reread_observed(&self, model: &str) -> Result<(), SyncError> {
+        let mut targets: BTreeMap<String, (String, Map<String, Value>)> = BTreeMap::new();
+        for entry in locked(&self.inner.watches).values().filter(|entry| entry.model == model) {
+            targets.insert(entry.key.clone(), (entry.relation.clone(), entry.params.clone()));
+        }
+        let mut failure = None;
+        for (relation, params) in targets.into_values() {
+            let outcome = match self.inner.resolve(model, &relation, &params) {
+                Ok(resolved) => self.inner.fetch(&resolved, None, true).await.map(|_| ()),
+                Err(error) => Err(error),
+            };
+            if let Err(error) = outcome { failure.get_or_insert(error); }
+        }
+        failure.map_or(Ok(()), Err)
     }
 
     async fn reread(&self, model: &str, name: &str, parameter: Option<&str>, id: Option<&str>) -> Result<(), SyncError> {
@@ -209,11 +243,11 @@ impl Feed {
         Some(Pending { bucket: self.def.event.bucket_key(id.as_str()), id, node, generation: self.inner.db.generation() })
     }
 
-    async fn apply(&self, mut items: Vec<Pending>, model: &str, effect: EventEffect) {
+    async fn apply(&self, mut items: Vec<Pending>, model: &str, effect: EventEffect) -> bool {
         let current = self.inner.db.generation();
         items.retain(|item| item.generation == current);
         if items.is_empty() {
-            return;
+            return false;
         }
         let applied = match self.try_apply(items, current, model, effect) {
             Ok((stale, held_files)) => self.inner.discard_files(held_files).await.map(|()| stale),
@@ -224,8 +258,12 @@ impl Feed {
                 for model in stale {
                     let _ = self.inner.reload_lists_of_absent_parent(&model).await;
                 }
+                true
             }
-            Err(_) => locked(&self.status).rejected += 1,
+            Err(_) => {
+                locked(&self.status).rejected += 1;
+                false
+            }
         }
     }
 
@@ -350,7 +388,7 @@ impl Feed {
                                 pending = debounce.coalesce(std::mem::take(&mut pending), item);
                                 deadline.get_or_insert_with(|| self.inner.clock.now() + debounce.interval);
                             }
-                            None => self.apply(vec![item], &self.def.model, self.def.effect).await,
+                            None => { self.apply(vec![item], &self.def.model, self.def.effect).await; }
                         }
                     }
                     Some(SubscriptionEvent::Failed(failure)) => {

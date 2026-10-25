@@ -4,6 +4,7 @@ mod lease;
 mod open_slot;
 mod opening;
 mod changes;
+mod model_events;
 mod cloud;
 #[cfg(test)]
 mod database_tests;
@@ -33,6 +34,7 @@ pub fn user_agent(application: Option<String>) -> String {
 pub use database::{Config, Database, EntityCensus, SubscriptionCensus, TestClock};
 pub use opening::{OpenDatabase, OpenOptions};
 pub use changes::LiveChanges;
+pub use model_events::{ModelEventFeed, WireModelEvent, WireModelEventItem};
 pub use cloud::{CloudLink, CloudStateListener};
 pub use crate::cloud::{CloudAccount, CloudBlob, CloudError, CloudIo, CloudPage, CloudState, MergeSource};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};

@@ -16,6 +16,8 @@ mod local_field;
 mod local_write;
 mod merge;
 mod lookup;
+#[cfg(test)]
+pub(crate) use lookup::FINDS;
 mod maintain;
 mod observe;
 mod open;

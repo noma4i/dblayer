@@ -61,7 +61,7 @@ fn feed_relation(name: &str, text_param: Option<&str>) -> RelationSpec {
 async fn open_viewer() -> (Arc<Database>, Arc<Recording>) {
     let mut moment = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     moment.relations.extend([feed_relation("feed", None), feed_relation("vibeFeed", Some("vibeId"))]);
-    moment.changes.push(ChangeRead { area: "MOMENT".into(), relation: "feed".into(), parameter: None, removes_on: vec![] });
+    moment.changes.push(ChangeRead { area: "MOMENT".into(), relation: "feed".into(), parameter: None, removes_on: vec![], observed: false });
     let mut notice = ModelSpec::new("ChangeNotice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     notice.storage = crate::schema::Storage::Memory;
     notice.change_feed = Some(ChangeFeed { subscription: "DblayerViewerChanges".into(), root: "viewerChanges.changes".into(), area: "area".into(), kind: "kind".into(), id: "entityId".into() });

@@ -22,6 +22,7 @@ mod load_owner_panic_tests;
 mod load_machine_oracle_tests;
 #[cfg(test)]
 mod load_wiring_tests;
+mod model_event;
 mod node;
 mod normalize;
 mod online;
@@ -48,6 +49,7 @@ pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
 pub use load_machine::{LoadError, LoadPhase, RelationState};
 pub use load_owner::RelationWatch;
 pub(crate) use load_machine::snapshot_phase;
+pub use model_event::{ModelEvent, ModelEventItem, ModelEvents};
 pub use resume::{ResumeReport, Watch};
 pub(crate) use resume::Failures;
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
@@ -132,6 +134,7 @@ pub(crate) struct Inner {
     pub next_watch: AtomicI64,
     pub lives: Mutex<HashMap<String, live::Live>>,
     pub subscription_failures: tokio::sync::broadcast::Sender<SubscriptionFailureNotice>,
+    pub(crate) model_events: Mutex<Vec<std::sync::Weak<model_event::EventQueue>>>,
     pub owner: Arc<load_owner::LoadOwner>,
     pub outbox_gate: tokio::sync::Mutex<()>,
     pub queue: Result<Arc<Mutex<crate::operation::OperationQueue>>, String>,
@@ -216,6 +219,7 @@ impl Sync {
             next_watch: AtomicI64::new(0),
             lives: Mutex::new(HashMap::new()),
             subscription_failures: tokio::sync::broadcast::channel(32).0,
+            model_events: Mutex::new(Vec::new()),
             owner,
             outbox_gate: tokio::sync::Mutex::new(()),
             queue,
@@ -306,6 +310,8 @@ mod resume_tests;
 mod run_tests;
 #[cfg(test)]
 mod subscribe_tests;
+#[cfg(test)]
+mod model_event_tests;
 #[cfg(test)]
 mod subscribe_clock_tests;
 #[cfg(test)]

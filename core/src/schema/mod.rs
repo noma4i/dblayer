@@ -994,6 +994,8 @@ pub struct ChangeRead {
     pub parameter: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removes_on: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub observed: bool,
 }
 
 fn is_reserved_name(name: &str) -> bool {

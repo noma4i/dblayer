@@ -153,3 +153,32 @@ fn local_updates_require_memory_storage_and_unique_subscription_names() {
         assert!(errors.iter().any(|error| error.message.contains(expected)), "{errors:?}");
     }
 }
+
+#[test]
+fn observed_rereads_need_a_remote_read_and_take_no_node_arguments() {
+    let model = |declaration: &str| format!("model Record do\n  attribute :title, :string\n  scope :read do\n    query \"Read\"\n  end\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  {declaration}\nend\n");
+    let models = check_source(&model("changed_by \"WALLET\", via: :observed")).unwrap();
+    let serialized = serde_json::to_value(&models[0]).unwrap();
+    assert_eq!(serialized["changes"][0]["observed"], true);
+    for (declaration, message) in [
+        ("changed_by \"WALLET\", via: :observed, removes_on: [\"GONE\"]", "removes_on cannot be combined with `via: :observed`"),
+        ("changed_by \"WALLET\", via: :observed, parameter: :kind", "`via: :observed` takes no parameter"),
+        ("changed_by \"WALLET\", via: :observed\n  changed_by \"WALLET\", via: :observed", "duplicate change area `WALLET`"),
+    ] {
+        let errors = check_source(&model(declaration)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(message)), "{declaration}: {errors:?}");
+    }
+    let local = "model Record do\n  attribute :title, :string\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  changed_by \"WALLET\", via: :observed\nend\n";
+    let errors = check_source(local).unwrap_err();
+    assert!(errors.iter().any(|error| error.message.contains("requires a model with a remote read")), "{errors:?}");
+}
+
+#[test]
+fn only_models_with_changed_by_get_an_events_stream() {
+    let source = "model Record do\n  attribute :title, :string\n  scope :read do\n    query \"Read\"\n  end\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  changed_by \"WALLET\", via: :observed\nend\n\nmodel Plain do\n  attribute :title, :string\nend\n";
+    let models = parse_models(source).unwrap();
+    let swift = crate::emit_swift(&models, &[], &Default::default());
+    let kotlin = crate::emit_kotlin(&models, &[], &Default::default());
+    assert_eq!(swift.matches("static var events: LiveStream<ModelEventItem<Self>>").count(), 1);
+    assert_eq!(kotlin.matches("val events: kotlinx.coroutines.flow.Flow<ModelEventItem<Record>>").count(), 1);
+}

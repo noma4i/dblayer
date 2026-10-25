@@ -78,8 +78,13 @@ impl Shared {
     }
 }
 
+#[cfg(test)]
+thread_local! { pub(crate) static FINDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
 impl Db {
     pub fn find(&self, model: &str, id: &RowId) -> Result<Option<Row>, DbError> {
+        #[cfg(test)]
+        FINDS.with(|finds| finds.set(finds.get() + 1));
         self.shared.spec(model)?;
         if let Some(row) = locked(&self.shared.cache).get(model, id.as_str()) {
             return Ok(Some(row));

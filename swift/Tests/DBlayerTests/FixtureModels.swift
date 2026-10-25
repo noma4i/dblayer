@@ -236,6 +236,7 @@ public struct Container: DBModel {
     public static let shareUrl = Column<Container, String?>("shareUrl")
     public static let isPublic = Column<Container, Bool?>("isPublic")
     public static let shelves = Column<Container, [ContainerShelf]?>("shelves")
+    public static var events: LiveStream<ModelEventItem<Self>> { watchEvents() }
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {

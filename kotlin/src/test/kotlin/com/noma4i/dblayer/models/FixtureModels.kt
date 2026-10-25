@@ -235,6 +235,7 @@ data class Container(
         val shareUrl = Column<Container, String?>("shareUrl")
         val isPublic = Column<Container, Boolean?>("isPublic")
         val shelves = Column<Container, List<ContainerShelf>?>("shelves")
+        val events: kotlinx.coroutines.flow.Flow<ModelEventItem<Container>> get() = modelEvents()
         fun find(id: String) = Query("Container", this).find(id)
         fun where(condition: Condition) = Query("Container", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Container", this, ids)

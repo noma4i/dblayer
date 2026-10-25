@@ -13,7 +13,7 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-fn change_feed() -> crate::schema::ChangeFeed {
+pub(super) fn change_feed() -> crate::schema::ChangeFeed {
     crate::schema::ChangeFeed { subscription: "Changes".into(), root: "recordEvents.changes".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() }
 }
 
@@ -182,7 +182,7 @@ async fn declared_removals_keep_created_and_updated_node_reads() {
 async fn change_ids_reread_registered_nodes_and_count_undeclared_areas() {
     let original = super::node_tests::node_rig();
     let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
-    specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(crate::schema::ChangeRead { area: "CHAT".into(), relation: "node".into(), parameter: None, removes_on: vec![] });
+    specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(crate::schema::ChangeRead { area: "CHAT".into(), relation: "node".into(), parameter: None, removes_on: vec![], observed: false });
     specs.iter_mut().find(|spec| spec.key.as_str() == "messages").unwrap().changes.push(serde_json::from_value(json!({"area":"CHAT", "relation":"transcode_status", "parameter":null, "removes_on":["DELETED"]})).unwrap());
     specs[0].change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
@@ -246,8 +246,8 @@ async fn a_shared_change_area_reads_each_declared_node_once() {
     let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
     for spec in &mut specs {
         let relation = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One)).unwrap().name.clone();
-        spec.changes.push(crate::schema::ChangeRead { area:"REACTION".into(), relation: relation.clone(), parameter:None, removes_on: vec![] });
-        spec.changes.push(crate::schema::ChangeRead { area:"MESSAGE".into(), relation, parameter:None, removes_on: vec!["DELETED".into(), "ACCESS_REVOKED".into()] });
+        spec.changes.push(crate::schema::ChangeRead { area:"REACTION".into(), relation: relation.clone(), parameter:None, removes_on: vec![], observed: false });
+        spec.changes.push(crate::schema::ChangeRead { area:"MESSAGE".into(), relation, parameter:None, removes_on: vec!["DELETED".into(), "ACCESS_REVOKED".into()], observed: false });
     }
     specs[0].change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());

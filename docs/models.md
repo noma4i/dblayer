@@ -642,6 +642,32 @@ Missing declarations, duplicate subscriptions and empty paths produce generator 
 
 A node read uses the declared change ID. The `via` scope declared with `node: :one` has 1 parameter.
 A singleton read needs no parameter: `changed_by "TOTALS", via: :current`.
+`via: :observed` rereads every observed read of the model, parameterized ones included, with the same reread that follows a reconnect. It takes no parameter and no `removes_on`, and the model needs a remote read. A read that nobody observes is not requested.
+
+```ruby
+model WalletTransaction do
+  scope :by_kind, kind: :enum do ... end
+  changed_by "WALLET", via: :observed
+end
+```
+
+Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them.
+
+```swift
+for await item in Message.events {
+  switch item {
+  case .event(let event): show(event.before, event.after)
+  case .missed(let count): resync(count)
+  case .failed(let error): report(error)
+  }
+}
+```
+
+```kotlin
+Message.events.collect { item -> when (item) { is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Missed -> resync(item.count); is ModelEventItem.Failed -> report(item.error) } }
+```
+
+The queue of a reader holds 256 events. A reader that is slower reads `missed` with the number of dropped events, and never delays the next event of other readers. A failed row read publishes no event and raises the rejected count of the subscription. A failure of the stream itself arrives as the last item `failed`. Cancelling the stream releases the shared subscription after `live_linger`. The stream needs no notice model.
 Area and removal values are strings that belong to the application.
 An area can repeat for node reads of several models. Each receiver follows its own declaration.
 `removes_on` requires a `via` scope declared with `node: :one`, whatever its name. Matching kinds remove rows. Other kinds reread them.

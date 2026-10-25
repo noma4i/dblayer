@@ -59,6 +59,32 @@ extension DBModel {
     try await DB.database.nodes(model: modelName, relation: relation, rowIds: ids).map(decode)
   }
 
+  public static func watchEvents() -> LiveStream<ModelEventItem<Self>> {
+    let feed: ModelEventFeed
+    do { feed = try DB.database.modelEvents(model: modelName) } catch {
+      let failure = Once(ModelEventItem<Self>.failed(error))
+      return LiveStream(receive: { failure.take() }, cancel: {})
+    }
+    return LiveStream(receive: {
+      let item: WireModelEventItem?
+      do { item = try await feed.next() } catch {
+        feed.cancel()
+        return .failed(error)
+      }
+      switch item {
+      case .none: return nil
+      case .some(.missed(let count)): return .missed(count)
+      case .some(.event(let wire)):
+        do {
+          return .event(ModelEvent(area: wire.area, kind: wire.kind, id: wire.id, before: try wire.before.map(decode), after: try wire.after.map(decode)))
+        } catch {
+          feed.cancel()
+          return .failed(error)
+        }
+      }
+    }, cancel: { feed.cancel() })
+  }
+
   static func decode(_ row: WireRow) throws -> Self {
     guard row.layout == wireLayout else { throw DbError.Invalid(detail: "the generated \(modelName) does not match the library: layout \(wireLayout) against \(row.layout)") }
     return try Self(wire: row)
@@ -74,4 +100,25 @@ public struct ActionAnswer<Model: DBModel, Answer: Decodable & Sendable>: Sendab
   @concurrent public func answer() async throws -> Answer {
     try JSONDecoder().decode(Answer.self, from: Data(try await DB.database.answer(model: Model.modelName, operation: operation).utf8))
   }
+}
+
+public struct ModelEvent<Model: DBModel>: Sendable {
+  public let area: String
+  public let kind: String
+  public let id: String
+  public let before: Model?
+  public let after: Model?
+}
+
+public enum ModelEventItem<Model: DBModel>: Sendable {
+  case event(ModelEvent<Model>)
+  case missed(UInt64)
+  case failed(any Error)
+}
+
+final class Once<Value: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: Value?
+  init(_ value: Value) { self.value = value }
+  func take() -> Value? { lock.withLock { defer { value = nil }; return value } }
 }

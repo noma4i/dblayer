@@ -5,6 +5,7 @@
 ### Added
 - `preload` in a `.dbl` scope loads the scope after open, sign-in, reset and network return.
 - `RetryProgress` follows encrypted HTTP calls that wait for a retry: `changes` on Swift and `flow` on Kotlin deliver `RetrySnapshot(activeCalls, lastAttempt)`. Pass one object as `retries` to `open` and `serverConfig`.
+- `Model.events` streams declared change events with the row before and after on Swift and Kotlin; a full queue reports `missed` with the dropped count. `changed_by ..., via: :observed` rereads every observed read of the model.
 - `Query.related(Association)` reads typed related rows on Swift and Kotlin; `Model.Relations` lists links.
 - Stale observed windows reload when the app returns to the foreground or the network returns.
 - `UploadOperations` declares upload operations once in `DB.open` on Swift and `DBlayer.open` on Kotlin.

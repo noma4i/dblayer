@@ -528,6 +528,7 @@ The encrypted event carries identifiers. `changed_by` selects the HTTP reread, a
 Events of the plain transport with a full row save that row directly. `insert_on: [:event, :response]` adds such a row to loaded selections that match its `where` columns, and does the same for rows from operation responses (`upsert`), including cached rows absent from matching loaded windows. Existing members keep their places.
 A scope with a parameter that has no `where` stores the server response as it was and does not accept event rows.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
+`via: :observed` uses this reread for each event. Each event also reaches `Model.events` with the row before and after the reread, see [Models](models.md).
 
 `refresh(replace: true)` replaces the whole list with the response (unconfirmed records still stay). It is meant for small lists where the server is the only authority.
 

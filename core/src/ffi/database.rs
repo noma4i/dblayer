@@ -181,7 +181,7 @@ impl Database {
 
     pub(super) fn hold(&self, lease: Arc<OpenLease>) { let _ = self.lease.set(lease); }
 
-    fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {
+    pub(super) fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {
         self.wires.get(model).ok_or_else(|| DbError::Invalid { detail: format!("model {model} is not registered") })
     }
 }

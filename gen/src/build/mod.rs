@@ -89,6 +89,7 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
         relation: change.via.clone(),
         parameter: change.parameter.clone(),
         removes_on: change.removes_on.clone().unwrap_or_default(),
+        observed: change.via == "observed",
     }).collect();
     model.actions = node.operations.iter().map(|operation| build_operation(operation, &node.name)).collect();
     if model.field("id").is_none() {

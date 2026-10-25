@@ -87,7 +87,7 @@ impl Inner {
         self.db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| (spec.key.to_string(), feed.clone())))
     }
 
-    fn acquire_changes(self: &std::sync::Arc<Self>) -> Option<String> {
+    pub(crate) fn acquire_changes(self: &std::sync::Arc<Self>) -> Option<String> {
         let (model, feed) = self.change_feed()?;
         Some(self.acquire_one(&model, UpdatesSpec { apply: None, subscription: feed.subscription, deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }, None))
     }
