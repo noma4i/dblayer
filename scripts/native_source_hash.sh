@@ -27,7 +27,9 @@ kind="${args[0]:-}"
 fingerprint() {
   git ls-files -z --cached --others --exclude-standard -- core/src core/Cargo.toml core/uniffi.toml gen Cargo.toml Cargo.lock .cargo \
     scripts/build_ios.sh scripts/build_kotlin.sh scripts/build_bindgen.sh scripts/generate_kotlin_bindings.sh scripts/native_source_hash.sh \
-    | xargs -0 shasum -a 256
+    | while IFS= read -r -d '' source; do
+        if [ -f "$source" ]; then printf '%s\0' "$source"; fi
+      done | xargs -0 shasum -a 256 || return
   printf 'arg %s\n' ${args[@]+"${args[@]}"}
   rustc -Vv 2>&1 || true
   cargo -V 2>&1 || true
