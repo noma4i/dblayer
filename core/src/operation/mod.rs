@@ -9,6 +9,8 @@ mod table;
 
 pub use fsck::*;
 pub(crate) use machine::OperationEvent;
+#[cfg(test)]
+pub(crate) use machine::OperationFacts;
 pub use outbox::*;
 pub(crate) use queue::{OperationQueue, OperationQueues, QueueOperation};
 pub use quarantine::*;

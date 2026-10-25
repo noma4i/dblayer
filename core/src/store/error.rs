@@ -43,6 +43,7 @@ impl StoreError {
                     | rusqlite::ErrorCode::DatabaseLocked
                     | rusqlite::ErrorCode::ReadOnly
             ),
+            StoreError::Sqlite(rusqlite::Error::ToSqlConversionFailure(_)) => false,
             StoreError::Sqlite(_) => true,
             _ => false,
         }

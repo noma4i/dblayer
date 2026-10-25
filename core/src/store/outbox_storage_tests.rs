@@ -164,6 +164,9 @@ fn a_field_that_is_not_json_fails_the_commit_and_stores_nothing() {
     assert!(store.commit(commit).is_err());
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NOT NULL"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op_error"), 0);
+    let failure = OperationFailure { kind: FailureKind::Rejected, message: "refused".into(), extensions: None };
+    send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure }]);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NOT NULL"), 1, "the store still applies a valid commit");
 }
 
 #[test]
