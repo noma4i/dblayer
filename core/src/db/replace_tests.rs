@@ -246,3 +246,14 @@ fn ordering_all_new_rows_scales_linearly_with_the_row_count() {
     let (small, large) = (touches_to_replace_with_new_rows(500), touches_to_replace_with_new_rows(2000));
     assert!(large <= small * 6, "{small} touches for 500 rows, {large} for 2000");
 }
+
+#[test]
+fn replacing_a_list_on_a_disk_database_plans_off_the_writer() {
+    let directory = tempfile::tempdir().unwrap();
+    let db = Db::open(&directory.path().join("db.sqlite"), all_specs(), None).unwrap();
+    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
+    let before = db.shared.store.counters();
+    db.replace(&request("recent", Coverage::Complete), rows(&[("m1", "one"), ("m2", "two")])).unwrap();
+    let after = db.shared.store.counters();
+    assert_eq!((after.plans_off_writer - before.plans_off_writer, after.plans_under_writer - before.plans_under_writer), (1, 0));
+}
