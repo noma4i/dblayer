@@ -31,9 +31,9 @@ mode, root, swift_json, kotlin_xml, allowlist, reasons = sys.argv[1:7]
 kotlin_dir = f"{root}/kotlin/src/main/kotlin/com/noma4i/dblayer"
 missed = collections.defaultdict(list)
 swift_dir = Path(root) / "swift/Sources/DBlayer"
-swift_sources = set((swift_dir / "Network").glob("*.swift")) | {swift_dir / "UrlSessionTransport.swift"}
+swift_sources = set((swift_dir / "Network").glob("*.swift")) | {swift_dir / "UrlSessionTransport.swift", swift_dir / "UrlSessionCable.swift"}
 swift_sources.discard(swift_dir / "Network/GraphQLOperationKind.swift")
-kotlin_sources = set(Path(kotlin_dir).glob("*Encrypted*.kt")) | {Path(kotlin_dir) / "TransportFailure.kt"}
+kotlin_sources = set(Path(kotlin_dir).glob("*Encrypted*.kt")) | {Path(kotlin_dir) / "TransportFailure.kt", Path(kotlin_dir) / "Transports.kt"}
 seen = set()
 
 TYPE = re.compile(r"^(?:[a-z@A-Z]+ )*(?:class|struct|enum|actor|extension|object|interface)\s+([A-Za-z0-9_.]+)")

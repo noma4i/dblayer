@@ -103,10 +103,12 @@ final class BootstrapListener: @unchecked Sendable {
   private var stopped = false
   var disconnected: Bool { lock.withLock { stopped } }
   private let holdBody: Bool
+  private let holdHeaders: Bool
   private let responseStatus: String?
-  init(responseStatus: String? = nil, holdBody: Bool = false) throws {
+  init(responseStatus: String? = nil, holdBody: Bool = false, holdHeaders: Bool = false) throws {
     self.responseStatus = responseStatus
     self.holdBody = holdBody
+    self.holdHeaders = holdHeaders
     listener = try NWListener(using: .tcp, on: .any)
   }
   func start() async throws -> URL {
@@ -128,18 +130,25 @@ final class BootstrapListener: @unchecked Sendable {
         let length = header.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }.flatMap { Int($0.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
         if text[end.upperBound...].utf8.count < length { receive(connection, data); return }
         lock.withLock { received.append(text) }
+        if holdHeaders {
+          watchDisconnect(connection)
+          return
+        }
         if holdBody {
           connection.send(content: Data("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n".utf8), completion: .contentProcessed { _ in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, done, error in
-              self.lock.withLock { self.stopped = done || error != nil }
-              connection.cancel()
-            }
+            self.watchDisconnect(connection)
           })
           return
         }
         let status = responseStatus ?? (requests.count == 1 ? "302 Found\r\nLocation: /redirect" : "200 OK")
         connection.send(content: Data("HTTP/1.1 \(status)\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbusy".utf8), completion: .contentProcessed { _ in connection.cancel() })
       } else if !done { receive(connection, data) }
+    }
+  }
+  private func watchDisconnect(_ connection: NWConnection) {
+    connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, done, error in
+      self.lock.withLock { self.stopped = done || error != nil }
+      connection.cancel()
     }
   }
   deinit { listener.cancel() }

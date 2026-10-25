@@ -3,6 +3,54 @@ import Testing
 @testable import DBlayer
 
 struct UrlSessionCableTests {
+  @Test(arguments: ["missing-origin", "wrong-scheme", "missing-path"])
+  func invalidOriginsAndMissingPathsAreTyped(kind: String) async throws {
+    let origin = kind == "missing-origin" ? nil : URL(string: kind == "wrong-scheme" ? "ftp://example.test" : "https://example.test")
+    let cable = UrlSessionCable(origin: origin, cablePath: kind == "missing-path" ? nil : "/api/cable") { _ in
+      Issue.record("invalid cable configuration created a socket")
+      return Socket()
+    }
+    do {
+      _ = try await cable.open()
+      Issue.record("invalid cable configuration opened a socket")
+    } catch let error as DbError {
+      guard case .Invalid = error else {
+        Issue.record("expected Invalid for cable configuration, got \(error)")
+        return
+      }
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func cancelledHandshakeClosesTheNativeConnection() async throws {
+    let server = try BootstrapListener(holdHeaders: true)
+    defer { server.listener.cancel() }
+    let origin = try await server.start()
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let transport = UrlSessionTransport(endpoint: origin, session: session, cablePath: "/api/cable")
+    let lease = RecordingLease(noHandle: .init())
+    let outcome = AsyncStream<String>.makeStream()
+    let task = Task {
+      do {
+        try await transport.openCable(lease: lease)
+        outcome.continuation.yield("opened")
+      } catch let error as DbError {
+        outcome.continuation.yield(TransportFailureTests.shape(error))
+      } catch {
+        outcome.continuation.yield("untyped")
+      }
+    }
+    await eventually("cable handshake request", timeout: .seconds(2)) { server.requests.count == 1 }
+    task.cancel()
+    let finished = Cursor(outcome.stream)
+    #expect(await finished.next("cancelled handshake outcome", timeout: .seconds(2)) == "Interrupted")
+    await eventually("cancelled handshake disconnected", timeout: .seconds(2)) { server.disconnected }
+    #expect(lease.token == nil)
+    session.invalidateAndCancel()
+    await task.value
+  }
+
   final class Socket: CableWebSocket, @unchecked Sendable {
     private let lock = NSLock()
     var closeCode: URLSessionWebSocketTask.CloseCode = .invalid

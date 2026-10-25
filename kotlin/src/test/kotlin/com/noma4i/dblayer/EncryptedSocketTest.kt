@@ -3,11 +3,15 @@ package com.noma4i.dblayer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withTimeout
+import okhttp3.OkHttpClient
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import okio.ByteString.Companion.encodeUtf8
 import org.junit.Assert.*
 import org.junit.Test
@@ -15,6 +19,43 @@ import org.junit.Test
 @org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
 @org.robolectric.annotation.Config(sdk = [35])
 class EncryptedSocketTest {
+    @Test
+    fun invalidOriginsAndMissingPathsAreTyped() = bounded {
+        for ((origin, path) in listOf("ftp://example.test/" to "/api/cable", "https://example.test/" to null)) {
+            val error = runCatching {
+                OkHttpTransport(origin, cablePath = path).openedCable()
+            }.exceptionOrNull()
+            assertTrue("invalid cable configuration must report its type", error is DbException.Invalid)
+        }
+    }
+
+    @Test
+    fun cancellationDuringHandshakeCancelsTheNativeCall() = bounded {
+        MockWebServer().use { server ->
+            val cancelled = CompletableDeferred<Boolean>()
+            val client = OkHttpClient.Builder().addInterceptor { chain ->
+                try {
+                    chain.proceed(chain.request())
+                } finally {
+                    cancelled.complete(chain.call().isCanceled())
+                }
+            }.build()
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+            val transport = OkHttpTransport(server.url("/").toString(), client = client, cablePath = "/api/cable")
+            val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.openedCable() }
+            try {
+                assertEquals("/api/cable", server.takeRequest().path)
+                pending.cancelAndJoin()
+                assertTrue(withTimeout(2000) { cancelled.await() })
+            } finally {
+                pending.cancelAndJoin()
+                client.dispatcher.cancelAll()
+                client.connectionPool.evictAll()
+                client.dispatcher.executorService.shutdown()
+            }
+        }
+    }
+
     @Test
     fun exchangesTextOnTheConfiguredPathWithoutLegacyAuthentication() = bounded {
             MockWebServer().use { server ->
@@ -47,15 +88,19 @@ class EncryptedSocketTest {
     @Test
     fun retainsRemoteCloseCodeAndReason() = bounded {
         MockWebServer().use { server ->
+            val idle = CompletableDeferred<Unit>()
+            val client = OkHttpClient()
+            client.dispatcher.idleCallback = Runnable { idle.complete(Unit) }
             server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     webSocket.close(4401, "UNAUTHENTICATED")
                 }
             }))
-            val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
+            val transport = OkHttpTransport(server.url("/").toString(), client = client, cablePath = "/api/cable")
             val token = transport.openedCable()
             assertEquals(EncryptedSocketEvent.Closed(4401u, "UNAUTHENTICATED"), transport.cableNext(token))
             assertNull(transport.cableNext(token))
+            withTimeout(2000) { idle.await() }
             transport.cableClose(token)
         }
     }

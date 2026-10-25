@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.ResponseBody.Companion.asResponseBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import okio.Buffer
 import okio.ForwardingSource
 import okio.buffer
@@ -54,12 +55,48 @@ class TransportThreadTest {
 
     @Test
     fun theHttpTransportReadsTheResponseBodyOffTheCallerThread() = bounded {
+      for (mutation in listOf(false, true)) {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"7"}}"""))
         val transport = OkHttpTransport(server.url("/graphql").toString(), client = client)
 
-        val text = withContext(caller) { transport.query(TransportRequest("query { probe { id } }", "Probe", "{}")) }
+        val request = TransportRequest(if (mutation) "mutation Probe { probe { id } }" else "query Probe { probe { id } }", "Probe", """{"id":"7"}""")
+        val text = withContext(caller) { if (mutation) transport.mutate(request) else transport.query(request) }
 
         assertEquals("""{"data":{"id":"7"}}""", text)
         assertBodyReadOffTheCaller()
+        val sent = server.takeRequest()
+        assertEquals("POST", sent.method)
+        val body = parseJson(sent.body.readUtf8()) as kotlinx.serialization.json.JsonObject
+        assertEquals(kotlinx.serialization.json.JsonPrimitive(request.document), body["query"])
+        assertEquals(parseJson(request.variablesJson), body["variables"])
+      }
+    }
+
+    private class CancelledProgress(private val cancelled: Boolean) : ByteProgress(NoHandle) {
+        override fun sent(bytes: ULong) {}
+        override fun isCancelled() = cancelled
+    }
+
+    @Test
+    fun lostConnectionsAndCancelledUploadsReachTheCoreAsTypedFailures() = bounded {
+        val cases = listOf(
+            Triple("query", false, DbException.Network::class.java),
+            Triple("mutation", false, DbException.Interrupted::class.java),
+            Triple("put", false, DbException.Network::class.java),
+            Triple("put", true, DbException.Interrupted::class.java),
+        )
+        for ((operation, cancelled, expected) in cases) {
+            server.enqueue(MockResponse().setSocketPolicy(if (operation == "put" && cancelled) SocketPolicy.NO_RESPONSE else SocketPolicy.DISCONNECT_AT_START))
+            val transport = OkHttpTransport(server.url("/graphql").toString(), client = OkHttpClient.Builder().retryOnConnectionFailure(false).build())
+            val request = TransportRequest("query Probe { probe { id } }", "Probe", "{}")
+            val error = runCatching {
+                when (operation) {
+                    "query" -> transport.query(request)
+                    "mutation" -> transport.mutate(request)
+                    else -> transport.put(server.url("/upload").toString(), emptyMap(), byteArrayOf(1, 2), CancelledProgress(cancelled))
+                }
+            }.exceptionOrNull()
+            assertEquals("$operation cancelled=$cancelled", expected, error?.javaClass)
+        }
     }
 }

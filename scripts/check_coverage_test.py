@@ -10,26 +10,30 @@ import unittest
 class CoverageTests(unittest.TestCase):
     def test_reports_account_for_current_transport_sources(self):
         script = Path(__file__).with_name("check_coverage.sh")
+        paths = {
+            "swift": ["swift/Sources/DBlayer/Network/TransportFailure.swift",
+                      "swift/Sources/DBlayer/Network/UrlSessionEncryptedHttp.swift",
+                      "swift/Sources/DBlayer/UrlSessionTransport.swift",
+                      "swift/Sources/DBlayer/UrlSessionCable.swift"],
+            "kotlin": ["kotlin/src/main/kotlin/com/noma4i/dblayer/OkHttpEncryptedSocket.kt",
+                       "kotlin/src/main/kotlin/com/noma4i/dblayer/OkHttpEncryptedHttp.kt",
+                       "kotlin/src/main/kotlin/com/noma4i/dblayer/TransportFailure.kt",
+                       "kotlin/src/main/kotlin/com/noma4i/dblayer/Transports.kt"],
+        }
         cases = [
-            ("covered", None, None, 0),
-            ("covered continuation with an untaken branch", "swift", "continuation", 0),
-            ("missing Swift", "swift", "missing", 1),
-            ("missing Kotlin", "kotlin", "missing", 1),
-            ("empty Swift", "swift", "empty", 1),
-            ("empty Kotlin", "kotlin", "empty", 1),
-            ("uncovered Swift", "swift", "uncovered", 1),
-            ("uncovered Kotlin", "kotlin", "uncovered", 1),
+            ("covered", None, None, None, 0),
+            ("covered continuation with an untaken branch", "swift", "continuation", None, 0),
+            ("empty Swift", "swift", "empty", None, 1),
+            ("empty Kotlin", "kotlin", "empty", None, 1),
         ]
+        cases.extend((f"{defect} {name}", language, defect, name, 1)
+                     for language, names in paths.items()
+                     for name in names
+                     for defect in ("missing", "uncovered"))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "scripts").mkdir()
             shutil.copyfile(script, root / "scripts/check_coverage.sh")
-            paths = {
-                "swift": ["swift/Sources/DBlayer/Network/TransportFailure.swift",
-                          "swift/Sources/DBlayer/UrlSessionTransport.swift"],
-                "kotlin": ["kotlin/src/main/kotlin/com/noma4i/dblayer/OkHttpEncryptedSocket.kt",
-                           "kotlin/src/main/kotlin/com/noma4i/dblayer/TransportFailure.kt"],
-            }
             for names in paths.values():
                 for name in names:
                     target = root / name
@@ -39,18 +43,18 @@ class CoverageTests(unittest.TestCase):
                 "enum GraphQLOperationKind { case query, mutation }\n")
             allowlist = root / "allowlist"
             allowlist.write_text("")
-            for label, platform, defect, expected in cases:
+            for label, platform, defect, target, expected in cases:
                 with self.subTest(case=label):
                     reports = {}
                     for language, names in paths.items():
                         reports[language] = [(name, 1) for name in names]
                         if platform == language:
                             if defect == "missing":
-                                reports[language].pop()
+                                reports[language] = [(name, count) for name, count in reports[language] if name != target]
                             elif defect == "empty":
                                 reports[language] = []
                             elif defect == "uncovered":
-                                reports[language][0] = (names[0], 0)
+                                reports[language] = [(name, 0 if name == target else count) for name, count in reports[language]]
                     swift = root / "swift.json"
                     swift.write_text(json.dumps({"data": [{"files": [
                         {"filename": str(root / name),

@@ -78,7 +78,7 @@ Typical scenarios to cover:
 | Network code has executable coverage for every source file | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
 | Coverage rejects missing reports and unexecuted lines on both platforms | `python3 -I scripts/check_coverage_test.py` |
 
-Coverage includes Swift network sources and `UrlSessionTransport.swift`, plus Kotlin encrypted HTTP, sockets and transport errors. Missing executable coverage for any included file fails the check. Unexecuted lines require an entry in `scripts/coverage_allowlist.txt`. The Swift tests use atomic profile counters to preserve increments from concurrent execution.
+Coverage includes Swift network sources, `UrlSessionTransport.swift` and `UrlSessionCable.swift`. Kotlin includes encrypted HTTP, sockets, `Transports.kt` and `TransportFailure.kt`. Missing executable coverage for any included file fails the check. Unexecuted lines require an entry in `scripts/coverage_allowlist.txt`. The Swift tests use atomic profile counters to preserve increments from concurrent execution.
 
 `GraphQLOperationKind.swift` declares enum cases without executable statements and is excluded from line coverage.
 
@@ -109,6 +109,7 @@ Test conventions:
 - Core member tests own window isolation, page accumulation, freshness and retained totals. Platform member tests check arguments and typed snapshots.
 - Core node tests own freshness, partial merges, response order and missing entries. Platform node tests check IDs, force, declared variables and typed results.
 - Core upload tests check source ownership, failed admission cleanup and progress delivery. Tests await an observed state, never a revision change after a call returns.
+- Core observation tests own read limits, pending entity ids and combined window expansions. Platform tests check typed delivery and cancellation through the bridge.
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.
 - Tests count work (reads, calls, commits) instead of measuring time.
 

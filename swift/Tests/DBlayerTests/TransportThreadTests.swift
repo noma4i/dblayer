@@ -4,16 +4,23 @@ import Testing
 
 @Suite(.serialized)
 struct TransportThreadTests {
-  @Test @MainActor
-  func urlSessionTransportLoadsOffTheCallerThread() async throws {
+  @Test(arguments: [false, true]) @MainActor
+  func urlSessionTransportLoadsOffTheCallerThread(mutation: Bool) async throws {
     let url = try #require(URL(string: "https://example.test/"))
     let session = ThreadProbeProtocol.session()
     defer { session.invalidateAndCancel() }
     ThreadProbeProtocol.reset()
     let transport = UrlSessionTransport(endpoint: url, headers: { [:] }, session: session)
 
-    _ = try await transport.query(request: TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: "{}"))
+    let request = TransportRequest(document: mutation ? "mutation Ping { ping }" : "query Ping { ping }", operationName: "Ping", variablesJson: "{}")
+    let reply: String
+    if mutation {
+      reply = try await transport.mutate(request: request)
+    } else {
+      reply = try await transport.query(request: request)
+    }
 
+    #expect(reply == #"{"data":{"ping":"pong"}}"#)
     #expect(ThreadProbeProtocol.loadedOnMain == [false])
   }
 }
