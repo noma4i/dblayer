@@ -145,6 +145,7 @@ impl FakeServer {
         self.lock().calm = calm;
     }
 
+    #[cfg(test)]
     pub fn hold_blob_replies(&self, by: Duration) {
         self.lock().blob_hold = by;
     }
