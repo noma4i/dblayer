@@ -20,7 +20,7 @@ impl Inner {
     pub(crate) async fn flush_pending(self: &std::sync::Arc<Self>) -> Result<FlushReport, SyncError> {
         let report = self.flush().await?;
         self.start_uploads()?;
-        self.arm_wake();
+        self.arm_wake()?;
         Ok(report)
     }
 }

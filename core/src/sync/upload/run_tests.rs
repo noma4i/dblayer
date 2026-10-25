@@ -5,6 +5,37 @@ use super::upload_tests::{blob, created, file, input, rid, single_replies, small
 use crate::transport::PutReply;
 use crate::upload::{UploadConfig, UploadStage};
 
+#[tokio::test(start_paused = true)]
+async fn queued_files_start_in_order_without_waiting_tasks() {
+    let rig = upload_rig(small());
+    rig.sync.set_online(false);
+    let source = file(b"abcdef");
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+    {
+        let stored = rig.db.shared.store.lock();
+        let connection = &stored.connection;
+        let input = crate::operation::read_item_value(connection, seq, 0, "input").unwrap();
+        for position in 1..4 {
+            crate::operation::write_upload(connection, seq, position, &UploadState::queued()).unwrap();
+            connection.execute("UPDATE op_item SET file_id = (SELECT file_id FROM op_item WHERE seq = ?1 AND position = 0) WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position]).unwrap();
+            crate::operation::write_item_value(connection, seq, position, "input", input.as_ref()).unwrap();
+        }
+    }
+    rig.sync.inner.start_uploads().unwrap();
+    let running: Vec<_> = locked(&rig.sync.inner.uploads).active.keys().copied().collect();
+    assert_eq!(running, vec![(seq, 0)], "only the first file may start before a file slot is free");
+    rig.transport.respond_with(|request| match request.operation_name.as_str() {
+        "CreateBlob" => Some(blob()),
+        "CreateMoment" => Some(created("m9")),
+        _ => None,
+    });
+    rig.sync.set_online(true);
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.put_calls().len(), 4);
+    assert_eq!(rig.transport.parallel_puts_peak(), 1);
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1);
+}
+
 #[test]
 fn cancellation_does_not_wait_for_queued_file_io() {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().max_blocking_threads(1).build().unwrap();
@@ -20,7 +51,7 @@ fn cancellation_does_not_wait_for_queued_file_io() {
         });
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let mut changes = rig.db.outbox_changes();
-        rig.sync.inner.spawn_run(seq, 0, Mode::Transfer);
+        rig.sync.inner.spawn_run(seq, 0, Mode::Transfer).unwrap();
         crate::sync::rig::await_outbox(&mut changes, || rig.db.upload_info("moments", &rid("m1")).unwrap().is_some_and(|upload| upload.status == UploadStatus::Preparing)).await;
         let cancelled = tokio::time::timeout(Duration::from_secs(1), rig.sync.cancel_upload("moments", &rid("m1"))).await;
         release_tx.send(()).unwrap();
@@ -43,13 +74,11 @@ async fn a_final_mutation_does_not_hold_a_file_permit() {
             UploadState { transferred: true, signed_id: Some("sid".into()), blob_id: Some("b1".into()), ..UploadState::queued() }
         } else { UploadState::queued() };
         let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), state).unwrap();
-        let permits = locked(&rig.sync.inner.uploads).permits.clone();
-        let held = if transferred { Some(permits.acquire_owned().await.unwrap()) } else { None };
-        rig.sync.inner.spawn_run(seq, 0, Mode::Transfer);
+        if transferred { locked(&rig.sync.inner.uploads).active_files = 1; }
+        rig.sync.inner.spawn_run(seq, 0, Mode::Transfer).unwrap();
         rig.transport.await_calls("CreateMoment", 1).await;
         assert_eq!(rig.transport.call_count("CreateMoment"), 1, "transferred={transferred}");
-        drop(held);
-        assert_eq!(locked(&rig.sync.inner.uploads).permits.available_permits(), 1);
+        assert_eq!(locked(&rig.sync.inner.uploads).active_files, usize::from(transferred));
         rig.sync.wait_uploads().await;
     }
 }
@@ -61,10 +90,10 @@ async fn only_one_attempt_can_send_and_settle_the_same_upload() {
     let source = file(b"abcdef");
     let state = UploadState { transferred: true, signed_id: Some("sid".into()), blob_id: Some("b1".into()), ..UploadState::queued() };
     let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), state).unwrap();
-    let (run, token, permits) = rig.sync.inner.register(seq, 0).unwrap();
+    let (run, token) = rig.sync.inner.register(seq, 0).unwrap();
     tokio::join!(
-        super::run::drive(rig.sync.inner.clone(), seq, 0, run, token.clone(), permits.clone(), Mode::Transfer, None),
-        super::run::drive(rig.sync.inner.clone(), seq, 0, run, token, permits, Mode::Transfer, None)
+        super::run::drive(rig.sync.inner.clone(), seq, 0, run, token.clone(), Mode::Transfer, None),
+        super::run::drive(rig.sync.inner.clone(), seq, 0, run, token, Mode::Transfer, None)
     );
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     assert!(rig.db.outbox().unwrap().is_empty());

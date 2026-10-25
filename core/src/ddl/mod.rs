@@ -72,7 +72,7 @@ END",
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 34] = [
+const CORE_STATEMENTS: [&str; 35] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -172,6 +172,7 @@ const CORE_STATEMENTS: [&str; 34] = [
   PRIMARY KEY (seq, item_position, part, node)
 ) STRICT, WITHOUT ROWID",
     "CREATE INDEX IF NOT EXISTS op_prior_row ON op_value (name, text, seq, parent) WHERE item_position = -1 AND part = 'prior'",
+    "CREATE INDEX IF NOT EXISTS op_reference_text ON op_value (text, seq) WHERE text IS NOT NULL",
     "CREATE TABLE IF NOT EXISTS row_sync (
   model TEXT NOT NULL,
   row_id TEXT NOT NULL,

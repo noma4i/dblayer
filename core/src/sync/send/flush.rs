@@ -1,14 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ops::Bound::{Excluded, Unbounded};
 
 use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::commit::{CommitEnvelope, CommitResult, EntityOp, EnvelopeFault, FileOp, OperationStatus, OperationTransition, WriteOrigin};
-use crate::db::{read_outbox, DbError, OutboxOperation, Prior};
+use crate::db::{DbError, OutboxOperation, Prior};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
-use crate::operation::{
-    quarantine_add, ready, transport_verdict, Operation, OutboxEntry as GateEntry, OutboxQueue, QuarantineReason, TransportVerdict,
-};
+use crate::operation::{quarantine_add, Operation, QuarantineReason};
 use crate::schema::{ActionDeclaration, OnFailure, RemoteShape};
 use crate::store::{PlanCommitError, Reader, StoreError};
 use crate::syncstate::{FailureKind, OperationFailure};
@@ -94,11 +93,6 @@ fn answer_kind_matches(kind: &str, value: &Value) -> bool {
     }
 }
 
-fn row_of(entry: &OutboxOperation) -> Option<RowRef> {
-    let (model, _) = Operation::split_action_key(&entry.operation.action_key)?;
-    Some(RowRef::new(ModelKey::new(&model), entry.operation.row_ids.first()?.clone()))
-}
-
 fn delivery_of(result: Result<Response, TransportError>, replayable: bool) -> Delivery {
     let retryable = result.as_ref().err().is_some_and(|error| RetryClass::of_error(error) != RetryClass::Fatal);
     match result {
@@ -138,13 +132,15 @@ impl Inner {
     pub(crate) async fn flush(&self) -> Result<FlushReport, SyncError> {
         let _serial = self.outbox_gate.lock().await;
         let mut report = FlushReport::default();
-        let mut attempted = HashSet::new();
-        while let Some(entry) = self.next_ready(&mut attempted, &mut report)? {
-            attempted.insert(entry.operation.id.0);
+        locked(self.operation_queue()?).begin_pass();
+        let mut cursor = i64::MIN;
+        while let Some(entry) = self.next_ready(&mut cursor, &mut report)? {
+            locked(self.operation_queue()?).attempted(entry.operation.id.0);
             let result = self.send(&entry, None).await?;
             self.record_outcome(&entry, &result);
             report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key.clone(), result });
         }
+        locked(self.operation_queue()?).begin_pass();
         Ok(report)
     }
 
@@ -154,37 +150,41 @@ impl Inner {
         locked(&self.outcomes).keep(entry.operation.id.0, &model, rows, result);
     }
 
-    fn next_ready(&self, attempted: &mut HashSet<i64>, report: &mut FlushReport) -> Result<Option<OutboxOperation>, SyncError> {
-        let entries = self.db.outbox()?;
-        let queue = OutboxQueue::new(entries.iter().map(|entry| entry.operation.clone()).collect());
-        let gate: Vec<GateEntry> = entries
-            .iter()
-            .map(|entry| GateEntry::new(entry.operation.id.0, entry.operation.status, entry.operation.transport_started))
-            .collect();
-        for sequence in ready(&gate) {
-            if attempted.contains(&sequence) {
+    pub(crate) fn operation_queue(&self) -> Result<&std::sync::Arc<std::sync::Mutex<crate::operation::OperationQueue>>, SyncError> {
+        self.queue.as_ref().map_err(|error| SyncError::Store(error.clone()))
+    }
+
+    pub(crate) fn outbox_operation(&self, seq: i64) -> Result<Option<OutboxOperation>, SyncError> {
+        let entry = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, seq)?))?;
+        locked(&self.db.shared.counters).outbox_rows_loaded += usize::from(entry.is_some());
+        Ok(entry)
+    }
+
+    fn next_ready(&self, cursor: &mut i64, report: &mut FlushReport) -> Result<Option<OutboxOperation>, SyncError> {
+        loop {
+            let next = {
+                let queue = locked(self.operation_queue()?);
+                queue.pending.range((Excluded(*cursor), Unbounded)).next().and_then(|seq| queue.entries.get(seq)).map(|entry| {
+                    let (held, blocked) = queue.blocked_before(&entry.operation);
+                    (entry.operation.clone(), held, blocked)
+                })
+            };
+            let Some((operation, held_back, blocked)) = next else { return Ok(None) };
+            let sequence = operation.id.0;
+            *cursor = sequence;
+            locked(&self.counters).outbox_candidates += 1;
+            let waiting = if held_back { None } else { self.waiting_reason(&operation) };
+            if waiting.is_none() && !held_back && !blocked {
+                if let Some(entry) = self.outbox_operation(sequence)? { return Ok(Some(entry)); }
                 continue;
             }
-            let Some(entry) = entries.iter().find(|entry| entry.operation.id.0 == sequence) else { continue };
-            if entry.operation.upload.is_some() {
-                continue;
-            }
-            let row = row_of(entry);
-            let held_back = row.as_ref().is_some_and(|row| queue.is_held_before(row, sequence, attempted));
-            let blocked = held_back || row.as_ref().is_some_and(|row| queue.is_blocked_before(row, sequence));
-            let gate_entry = gate.iter().find(|candidate| candidate.sequence == sequence);
-            let waiting = if held_back { None } else { self.waiting_reason(&entry.operation) };
-            if waiting.is_none() && transport_verdict(gate_entry, false, blocked) == TransportVerdict::Send {
-                return Ok(Some(entry.clone()));
-            }
-            attempted.insert(sequence);
+            locked(self.operation_queue()?).attempted(sequence);
             report.operations.push(SentOperation {
                 sequence,
-                action_key: entry.operation.action_key.clone(),
+                action_key: operation.action_key,
                 result: SendResult::Skipped(waiting.unwrap_or(SkipReason::BlockedByHead)),
             });
         }
-        Ok(None)
     }
 
     fn waiting_reason(&self, operation: &Operation) -> Option<SkipReason> {
@@ -494,7 +494,8 @@ impl Inner {
         for _ in 0..SETTLE_ATTEMPTS {
             let lands_rows = generation == sending.generation;
             committed = self.commit(generation, |reader| {
-                let outbox = if temp.is_some() || !replacements.is_empty() { read_outbox(reader)? } else { Vec::new() };
+                let ids: BTreeSet<_> = temp.iter().chain(replacements.iter().map(|(temp, _)| temp)).map(ToString::to_string).collect();
+                let outbox = crate::operation::referencing_sequences(reader.connection(), &ids).map_err(StoreError::from)?.into_iter().filter_map(|seq| OutboxOperation::read(reader, seq).transpose()).collect::<Result<Vec<_>, _>>()?;
                 let mut drops = 0;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
                 envelope.entity_ops = response_ops(&self.db, reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;

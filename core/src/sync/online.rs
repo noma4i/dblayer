@@ -26,13 +26,18 @@ impl Sync {
 }
 
 impl Inner {
-    pub(crate) fn arm_wake(self: &Arc<Self>) {
-        let due = self.db.outbox().ok().and_then(|entries| entries.iter().filter_map(|entry| self.retry_due(&entry.operation)).min());
+    pub(crate) fn arm_wake(self: &Arc<Self>) -> Result<(), super::SyncError> {
+        let due = {
+            let queue = self.operation_queue()?;
+            let queue = locked(queue);
+            queue.retrying.iter().filter_map(|seq| queue.entries.get(seq)).filter_map(|entry| self.retry_due(&entry.operation)).min()
+        };
         let wake = due.filter(|_| self.connectivity.is_online()).map(|due| due.saturating_sub(self.clock.now()).max(Duration::from_millis(1)));
         let task = wake.and_then(|wait| self.spawn_flush(wait));
         if let Some(old) = std::mem::replace(&mut *locked(&self.wake), task) {
             old.abort();
         }
+        Ok(())
     }
 
     pub(crate) fn spawn_flush(self: &Arc<Self>, wait: Duration) -> Option<tokio::task::AbortHandle> {

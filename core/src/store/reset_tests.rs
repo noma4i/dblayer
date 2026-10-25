@@ -139,7 +139,7 @@ fn resets_advance_the_revision_and_tell_the_hook() {
     let seen: Arc<Mutex<Seen>> = Arc::default();
     let sink = seen.clone();
     store.set_hook(Box::new(move |event| {
-        if let StoreEvent::Reset { revision, models } = event {
+        if let StoreEvent::Reset { revision, models, .. } = event {
             sink.lock().unwrap().push((revision, models));
         }
     }));

@@ -116,6 +116,7 @@ pub(crate) struct Inner {
     pub subscription_failures: tokio::sync::broadcast::Sender<SubscriptionFailureNotice>,
     pub owner: Arc<load_owner::LoadOwner>,
     pub outbox_gate: tokio::sync::Mutex<()>,
+    pub queue: Result<Arc<Mutex<crate::operation::OperationQueue>>, String>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub connectivity: Arc<Connectivity>,
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
@@ -165,6 +166,7 @@ impl Drop for Lifetime {
 impl Sync {
     pub fn new(db: Db, transport: Arc<dyn Transport>, clock: Arc<dyn Clock>, config: SyncConfig) -> Self {
         db.set_clock(clock.clone());
+        let queue = db.operation_queue().map_err(|error| error.to_string());
         let max_files = config.upload.max_files;
         let (stop, stopped) = watch::channel(());
         let owner = Arc::new(load_owner::LoadOwner::default());
@@ -193,6 +195,7 @@ impl Sync {
             subscription_failures: tokio::sync::broadcast::channel(32).0,
             owner,
             outbox_gate: tokio::sync::Mutex::new(()),
+            queue,
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             connectivity,
             wake: Mutex::new(None),

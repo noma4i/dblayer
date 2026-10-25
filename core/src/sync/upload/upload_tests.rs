@@ -821,7 +821,7 @@ async fn inv_op_09_a_retry_that_lands_while_the_old_run_is_ending_still_starts_t
     single_replies(&rig);
     let source = file(b"abcdef");
     let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
-    let (run, _, _) = rig.sync.inner.register(seq, 0).unwrap();
+    let (run, _) = rig.sync.inner.register(seq, 0).unwrap();
     rig.sync.inner.start_uploads().unwrap();
     rig.sync.inner.finish_run(seq, 0, run);
     rig.sync.wait_uploads().await;

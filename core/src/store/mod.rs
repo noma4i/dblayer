@@ -88,12 +88,12 @@ impl Inner {
     }
 }
 
-pub enum StoreEvent<'a> {
+pub(crate) enum StoreEvent<'a> {
     Committed(&'a crate::commit::CommitResult),
-    Reset { revision: i64, models: Option<Vec<String>> },
+    Reset { revision: i64, models: Option<Vec<String>>, operations: Vec<crate::operation::QueueOperation> },
 }
 
-pub type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
+pub(crate) type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
 
 pub struct Store {
     inner: Mutex<Inner>,
@@ -154,7 +154,7 @@ impl Store {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    pub fn set_hook(&self, hook: StoreHook) {
+    pub(crate) fn set_hook(&self, hook: StoreHook) {
         let _ = self.hook.set(hook);
     }
 

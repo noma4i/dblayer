@@ -13,6 +13,25 @@ fn update_texts(rig: &Rig) -> Vec<String> {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_flush_reads_the_queue_once_and_visits_each_candidate_once() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "plain"));
+    let count = 8;
+    for number in 0..count {
+        rig.db.update("moments", &RowId::new("m1").unwrap(), params(json!({"text": number.to_string()}))).unwrap();
+    }
+    rig.transport.respond_with(|request| Some(Reply::data(json!({"updateMoment": {"id": request.variables["id"], "text": request.variables["text"], "userId": null}}))));
+    let before = rig.db.counters();
+    rig.sync.flush().await.unwrap();
+    let after = rig.db.counters();
+    let scans = after.outbox_reads - before.outbox_reads;
+    let rows = after.outbox_rows_loaded - before.outbox_rows_loaded;
+    let candidates = rig.sync.counters().outbox_candidates;
+    assert!(scans <= 1 && rows <= count * 3 && candidates <= count, "scans={scans}, rows={rows}, candidates={candidates}, operations={count}");
+    assert_eq!(update_texts(&rig), (0..count).map(|number| number.to_string()).collect::<Vec<_>>());
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_create_that_is_retried_during_a_pass_does_not_let_its_later_updates_overtake_the_earlier_ones() {
     let rig = rig();
     put(&rig, "moments", moment("m9", "plain"));

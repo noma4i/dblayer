@@ -265,9 +265,10 @@ impl Store {
         retire_operations(&transaction, Some(&names), None)?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
+        let operations = crate::operation::read_queue(&transaction)?;
         transaction.commit()?;
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
-        self.announce(StoreEvent::Reset { revision, models: Some(names) });
+        self.announce(StoreEvent::Reset { revision, models: Some(names), operations });
         Ok(())
     }
 
@@ -283,9 +284,10 @@ impl Store {
         manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner))?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
+        let operations = crate::operation::read_queue(&transaction)?;
         transaction.commit()?;
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
-        self.announce(StoreEvent::Reset { revision, models: None });
+        self.announce(StoreEvent::Reset { revision, models: None, operations });
         Ok(())
     }
 

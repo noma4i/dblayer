@@ -78,12 +78,41 @@ pub(crate) fn read_operation(connection: &Connection, seq: i64) -> rusqlite::Res
     Ok(Some(operation))
 }
 
+pub(crate) fn read_queue_operation(connection: &Connection, seq: i64) -> rusqlite::Result<Option<super::QueueOperation>> {
+    let Some(operation) = read_operation(connection, seq)? else { return Ok(None) };
+    let uploading = connection.query_row("SELECT EXISTS (SELECT 1 FROM op_item WHERE seq = ?1)", [seq], |row| row.get(0))?;
+    Ok(Some(super::QueueOperation { operation, uploading }))
+}
+
+pub(crate) fn read_queue(connection: &Connection) -> rusqlite::Result<Vec<super::QueueOperation>> {
+    let sql = format!("SELECT {OPERATION_COLUMNS}, EXISTS (SELECT 1 FROM op_item WHERE op_item.seq = op.seq) FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq");
+    let mut rows_of = read_all_rows(connection)?;
+    let mut statement = connection.prepare(&sql)?;
+    let mut found = Vec::new();
+    for row in statement.query_map([], |row| Ok((operation_at(row)?, row.get::<_, bool>(14)?)))? {
+        if let (Some(mut operation), uploading) = row? {
+            operation.row_ids = rows_of.remove(&operation.id.0).unwrap_or_default();
+            found.push(super::QueueOperation { operation, uploading });
+        }
+    }
+    Ok(found)
+}
+
 pub(crate) fn row_operation_sequences(connection: &Connection, keys: &BTreeSet<(String, String)>) -> rusqlite::Result<BTreeSet<i64>> {
     let sql = format!("SELECT seq FROM op WHERE seq IN (SELECT seq FROM op_row WHERE row_id = ?2 UNION SELECT seq FROM op WHERE temp_id = ?2) AND substr(action_key, 1, instr(action_key, ':') - 1) = ?1 AND status IN {OPEN_STATUSES}");
     let mut statement = connection.prepare_cached(&sql)?;
     let mut sequences = BTreeSet::new();
     for (model, id) in keys {
         sequences.extend(statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?);
+    }
+    Ok(sequences)
+}
+
+pub(crate) fn referencing_sequences(connection: &Connection, ids: &BTreeSet<String>) -> rusqlite::Result<BTreeSet<i64>> {
+    let mut statement = connection.prepare_cached("SELECT seq FROM op_row WHERE row_id = ?1 UNION SELECT seq FROM op_value WHERE text = ?1")?;
+    let mut sequences = BTreeSet::new();
+    for id in ids {
+        sequences.extend(statement.query_map([id], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?);
     }
     Ok(sequences)
 }

@@ -13,14 +13,14 @@ mod settle_tests;
 #[cfg(test)]
 mod source_tests;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::commit::{CommitEnvelope, OperationRecord, OperationStatus, OperationTransition, WriteOrigin};
-use crate::db::{read_outbox, OutboxOperation};
+use crate::db::OutboxOperation;
 use crate::identity::RowId;
 use crate::operation::Operation;
 use crate::transport::CancelToken;
@@ -35,10 +35,17 @@ struct ActiveRun {
     run: u64,
     token: CancelToken,
     done: watch::Sender<bool>,
+    file_slot: bool,
+}
+
+struct ReadyRun {
+    resumed: Option<Result<crate::transport::Response, crate::transport::TransportError>>,
 }
 
 pub(crate) struct UploadRuns {
-    permits: Arc<Semaphore>,
+    max_files: usize,
+    active_files: usize,
+    ready: BTreeMap<(i64, i64), ReadyRun>,
     active: HashMap<(i64, i64), ActiveRun>,
     next_run: u64,
     tasks: JoinSet<()>,
@@ -49,8 +56,6 @@ pub(crate) struct UploadResume {
     seq: i64,
     position: i64,
     run: u64,
-    token: CancelToken,
-    permits: Arc<Semaphore>,
 }
 
 impl Drop for UploadResume {
@@ -61,7 +66,7 @@ impl Drop for UploadResume {
 
 impl UploadRuns {
     pub(crate) fn new(max_files: usize) -> Self {
-        Self { permits: Arc::new(Semaphore::new(max_files.max(1))), active: HashMap::new(), next_run: 0, tasks: JoinSet::new() }
+        Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: HashMap::new(), next_run: 0, tasks: JoinSet::new() }
     }
 }
 
@@ -75,28 +80,51 @@ fn upload_entry(entries: Vec<OutboxOperation>, model: &str, id: &RowId) -> Optio
 
 impl Inner {
     pub(crate) fn start_uploads(self: &Arc<Self>) -> Result<(), SyncError> {
-        let items = self.upload_items()?;
-        for entry in self.db.outbox()? {
-            let seq = entry.operation.id.0;
-            for (&(owner, position), state) in &items {
-                if owner != seq { continue; }
-                match entry.operation.status {
-                    OperationStatus::Pending if state.phase == UploadStatus::Cancelled => self.spawn_run(seq, position, Mode::Cancel),
-                    OperationStatus::Pending if state.phase == UploadStatus::Failed && state.upload_id.is_some() && !state.all_parts_confirmed() => self.spawn_run(seq, position, Mode::Orphan),
-                    OperationStatus::Pending if !entry.operation.transport_started && !self.is_waiting(&entry.operation) && !matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled) => self.spawn_run(seq, position, Mode::Transfer),
-                    OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() && (state.phase == UploadStatus::Cancelled || !state.all_parts_confirmed()) && !crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()) => {
-                        let mode = if state.phase == UploadStatus::Cancelled { Mode::Cancel } else { Mode::Orphan };
-                        self.spawn_run(seq, position, mode);
-                    }
-                    _ => {}
-                }
+        let sequences = {
+            let mut queue = locked(self.operation_queue()?);
+            let mut changed = std::mem::take(&mut queue.dirty_uploads);
+            changed.extend(queue.retrying.iter().filter(|seq| queue.entries.get(seq).is_some_and(|entry| entry.uploading && !self.is_waiting(&entry.operation))));
+            changed
+        };
+        for seq in sequences { self.refresh_upload(seq)?; }
+        self.drain_uploads();
+        Ok(())
+    }
+
+    fn refresh_upload(self: &Arc<Self>, seq: i64) -> Result<(), SyncError> {
+        let operation = locked(self.operation_queue()?).entries.get(&seq).map(|entry| entry.operation.clone());
+        let items = self.operation_uploads(seq)?;
+        let mut ready = Vec::new();
+        if let Some(operation) = operation {
+            for ((_, position), state) in items {
+                let mode = match operation.status {
+                    OperationStatus::Pending if state.phase == UploadStatus::Cancelled => Some(Mode::Cancel),
+                    OperationStatus::Pending if state.phase == UploadStatus::Failed && state.upload_id.is_some() && !state.all_parts_confirmed() => Some(Mode::Orphan),
+                    OperationStatus::Pending if !operation.transport_started && !self.is_waiting(&operation) && !matches!(state.phase, UploadStatus::Failed | UploadStatus::Cancelled) => Some(if state.is_transferred() { Mode::Mutation } else { Mode::Transfer }),
+                    OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() && (state.phase == UploadStatus::Cancelled || !state.all_parts_confirmed()) && !crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()) => Some(if state.phase == UploadStatus::Cancelled { Mode::Cancel } else { Mode::Orphan }),
+                    _ => None,
+                };
+                if let Some(mode) = mode { ready.push((position, mode)); }
+            }
+        }
+        let mut runs = locked(&self.uploads);
+        let keys: Vec<_> = runs.ready.range((seq, i64::MIN)..=(seq, i64::MAX)).map(|(key, _)| *key).collect();
+        let mut previous: BTreeMap<_, _> = keys.into_iter().filter_map(|key| runs.ready.remove(&key).map(|run| (key, run))).collect();
+        for (position, mode) in ready {
+            let key = (seq, position);
+            if runs.active.contains_key(&key) { continue; }
+            let pending = previous.remove(&key).unwrap_or(ReadyRun { resumed: None });
+            if matches!(mode, Mode::Transfer) {
+                runs.ready.insert(key, pending);
+            } else {
+                self.launch_run(&mut runs, seq, position, mode, pending.resumed);
             }
         }
         Ok(())
     }
 
-    pub(crate) fn upload_items(&self) -> Result<HashMap<(i64, i64), UploadState>, SyncError> {
-        Ok(self.db.shared.read(&[], |reader| Ok(crate::operation::read_upload_items(reader.connection())?))?)
+    pub(crate) fn operation_uploads(&self, seq: i64) -> Result<HashMap<(i64, i64), UploadState>, SyncError> {
+        Ok(self.db.shared.read(&[], |reader| Ok(crate::operation::read_operation_uploads(reader.connection(), seq)?))?)
     }
 
     pub(crate) fn begin_upload(&self, generation: crate::identity::Generation, model: &str, id: &RowId, input: &UploadInput, state: UploadState) -> Result<i64, SyncError> {
@@ -118,7 +146,7 @@ impl Inner {
         self.db.preparing_uploads(model, generation, |files, generation| {
             let item = files.prepare(model, id.clone(), uuid::Uuid::new_v4().to_string(), input.clone(), state)?;
             let committed = self.commit(generation, |reader| {
-                if upload_entry(read_outbox(reader)?, model, id).is_some() {
+                if upload_entry(OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?, model, id).is_some() {
                     return Err(SyncError::Params(format!("{model} {id} already has an upload")));
                 }
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
@@ -136,50 +164,97 @@ impl Inner {
     fn finish_run(self: &Arc<Self>, seq: i64, position: i64, run: u64) {
         {
             let mut runs = locked(&self.uploads);
-            if runs.active.get(&(seq, position)).is_some_and(|active| active.run == run) {
-                if let Some(active) = runs.active.remove(&(seq, position)) {
-                    active.done.send_replace(true);
-                }
+            if runs.active.get(&(seq, position)).is_none_or(|active| active.run != run) { return; }
+            let Some(active) = runs.active.remove(&(seq, position)) else { return };
+            runs.active_files -= usize::from(active.file_slot);
+            active.done.send_replace(true);
+        }
+        let retry = (|| -> Result<(), SyncError> {
+            let retried = locked(self.operation_queue()?).entries.get(&seq).is_some_and(|entry| entry.uploading && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation));
+            if !retried { return Ok(()); }
+            let unfinished = self.operation_uploads(seq)?.remove(&(seq, position)).is_some_and(|state| !state.is_transferred() && !matches!(state.phase, UploadStatus::Failed | UploadStatus::Cancelled));
+            if unfinished { locked(&self.uploads).ready.entry((seq, position)).or_insert(ReadyRun { resumed: None }); }
+            Ok(())
+        })();
+        if let Err(error) = retry {
+            self.fail_upload(seq, error);
+        }
+        self.drain_uploads();
+    }
+
+    #[cfg(test)]
+    fn spawn_run(self: &Arc<Self>, seq: i64, position: i64, mode: Mode) -> Result<(), SyncError> {
+        let transferred = self.operation_uploads(seq)?.remove(&(seq, position)).is_some_and(|state| state.is_transferred());
+        let mode = if matches!(mode, Mode::Transfer) && transferred { Mode::Mutation } else { mode };
+        {
+            let mut runs = locked(&self.uploads);
+            if runs.active.contains_key(&(seq, position)) { return Ok(()); }
+            if matches!(mode, Mode::Transfer) {
+                runs.ready.insert((seq, position), ReadyRun { resumed: None });
+            } else {
+                self.launch_run(&mut runs, seq, position, mode, None);
             }
         }
-        let retried = self.db.outbox().ok().into_iter().flatten().any(|entry| {
-            entry.operation.id.0 == seq && entry.operation.upload.is_some() && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation)
-        });
-        let unfinished = self.upload_items().ok().and_then(|mut items| items.remove(&(seq, position))).is_some_and(|state| !state.is_transferred() && !matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled));
-        if retried && unfinished {
-            self.spawn_run(seq, position, Mode::Transfer);
+        self.drain_uploads();
+        Ok(())
+    }
+
+    fn drain_uploads(self: &Arc<Self>) {
+        let mut runs = locked(&self.uploads);
+        while runs.active_files < runs.max_files {
+            let Some(((seq, position), pending)) = runs.ready.pop_first() else { break };
+            if runs.active.contains_key(&(seq, position)) { continue; }
+            self.launch_run(&mut runs, seq, position, Mode::Transfer, pending.resumed);
         }
     }
 
-    fn spawn_run(self: &Arc<Self>, seq: i64, position: i64, mode: Mode) {
-        let Some((run, token, permits)) = self.register(seq, position) else { return };
+    fn launch_run(self: &Arc<Self>, runs: &mut UploadRuns, seq: i64, position: i64, mode: Mode, resumed: Option<Result<crate::transport::Response, crate::transport::TransportError>>) {
+        while runs.tasks.try_join_next().is_some() {}
+        let (run, token) = runs.register(seq, position, matches!(mode, Mode::Transfer));
         let inner = self.clone();
-        locked(&self.uploads).tasks.spawn(self.until_closed(async move {
-            run::drive(inner.clone(), seq, position, run, token, permits, mode, None).await;
+        runs.tasks.spawn(self.until_closed(async move {
+            run::drive(inner.clone(), seq, position, run, token, mode, resumed).await;
             inner.finish_run(seq, position, run);
         }));
     }
 
-    fn register(&self, seq: i64, position: i64) -> Option<(u64, CancelToken, Arc<Semaphore>)> {
+    fn fail_upload(&self, seq: i64, error: SyncError) {
+        let generation = self.db.generation();
+        let _ = self.commit(generation, |_| {
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
+            envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Unrecognized, error.to_string()) });
+            Ok(Some(envelope))
+        });
+    }
+
+    pub(super) fn release_file_slot(self: &Arc<Self>, seq: i64, position: i64, run: u64) {
+        {
+            let mut runs = locked(&self.uploads);
+            if let Some(active) = runs.active.get_mut(&(seq, position)).filter(|active| active.run == run && active.file_slot) {
+                active.file_slot = false;
+                runs.active_files -= 1;
+            }
+        }
+        self.drain_uploads();
+    }
+
+    fn register(&self, seq: i64, position: i64) -> Option<(u64, CancelToken)> {
         let mut runs = locked(&self.uploads);
         if runs.active.contains_key(&(seq, position)) {
             return None;
         }
-        runs.next_run += 1;
-        let run = runs.next_run;
-        let token = CancelToken::new();
-        runs.active.insert((seq, position), ActiveRun { run, token: token.clone(), done: watch::channel(false).0 });
-        Some((run, token, runs.permits.clone()))
+        runs.ready.remove(&(seq, position));
+        Some(runs.register(seq, position, false))
     }
 
     pub(crate) async fn claim_upload_resume(self: &Arc<Self>, owner: &crate::transport::RequestOwner) -> Result<Option<UploadResume>, SyncError> {
         loop {
-            let mut items: Vec<_> = self.upload_items()?.into_iter().filter(|(key, state)| key.0 == owner.seq && (key.1 == owner.item_position || owner.item_position == -1 && state.stage == crate::upload::UploadStage::Mutation)).collect();
+            let mut items: Vec<_> = self.operation_uploads(owner.seq)?.into_iter().filter(|(key, state)| key.1 == owner.item_position || owner.item_position == -1 && state.stage == crate::upload::UploadStage::Mutation).collect();
             items.sort_by_key(|(key, _)| *key);
             let Some(((seq, position), state)) = items.into_iter().next() else { return Ok(None) };
             if crate::operation::enum_text(&state.stage).as_deref() != Some(&owner.stage) { return Ok(None); }
-            if let Some((run, token, permits)) = self.register(seq, position) {
-                return Ok(Some(UploadResume { inner: self.clone(), seq, position, run, token, permits }));
+            if let Some((run, _)) = self.register(seq, position) {
+                return Ok(Some(UploadResume { inner: self.clone(), seq, position, run }));
             }
             let waiting = locked(&self.uploads).active.get(&(seq, position)).map(|active| active.done.subscribe());
             if let Some(mut done) = waiting {
@@ -190,12 +265,28 @@ impl Inner {
 
     pub(crate) async fn resume_upload(self: &Arc<Self>, owner: UploadResume, result: Result<crate::transport::Response, crate::transport::TransportError>) {
         let seq = owner.seq;
-        let mode = self.upload_items().ok().and_then(|mut items| items.remove(&(seq, owner.position))).map_or(Mode::Transfer, |state| match (state.stage, state.phase) {
+        let state = match self.operation_uploads(seq) {
+            Ok(mut items) => items.remove(&(seq, owner.position)),
+            Err(error) => { self.fail_upload(seq, error); return; }
+        };
+        let Some(state) = state else { return };
+        let mode = match (state.stage, state.phase) {
                 (crate::upload::UploadStage::Abort, crate::upload::UploadStatus::Cancelled) => Mode::Cancel,
                 (crate::upload::UploadStage::Abort, _) => Mode::Orphan,
+                _ if state.is_transferred() => Mode::Mutation,
                 _ => Mode::Transfer,
-            });
-        run::drive(self.clone(), seq, owner.position, owner.run, owner.token.clone(), owner.permits.clone(), mode, Some(result)).await;
+            };
+        {
+            let mut runs = locked(&self.uploads);
+            if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) { return; }
+            if let Some(active) = runs.active.remove(&(seq, owner.position)) { active.done.send_replace(true); }
+            if matches!(mode, Mode::Transfer) {
+                runs.ready.insert((seq, owner.position), ReadyRun { resumed: Some(result) });
+            } else {
+                self.launch_run(&mut runs, seq, owner.position, mode, Some(result));
+            }
+        }
+        self.drain_uploads();
     }
 }
 
@@ -218,7 +309,7 @@ impl Sync {
         let (model, id) = (model.to_string(), id.clone());
         tokio::task::spawn_blocking(move || {
             let seq = inner.begin_upload(generation, &model, &id, &input, UploadState::queued())?;
-            inner.spawn_run(seq, 0, Mode::Transfer);
+            inner.start_uploads()?;
             Ok(seq)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
@@ -229,14 +320,14 @@ impl Sync {
         let model = model.to_string();
         tokio::task::spawn_blocking(move || {
             let id = inner.db.create_held(generation, &model, values, input, UploadState::queued())?;
-            let entry = upload_entry(inner.db.outbox()?, &model, &id).ok_or(SyncError::Cancelled)?;
-            inner.spawn_run(entry.operation.id.0, 0, Mode::Transfer);
+            inner.start_uploads()?;
             Ok(id)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
     pub async fn cancel_upload(&self, model: &str, id: &RowId) -> Result<bool, SyncError> {
-        let Some(entry) = upload_entry(self.inner.db.outbox()?, model, id) else { return Ok(false) };
+        let entries = self.inner.db.shared.read(&[], |reader| Ok(OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?))?;
+        let Some(entry) = upload_entry(entries, model, id) else { return Ok(false) };
         let seq = entry.operation.id.0;
         let batched = self.inner.db.spec(model)?.actions.iter().any(|action| action.batch.is_some() && entry.operation.action_key == Operation::action_key(model, &action.name));
         if entry.operation.transport_started {
@@ -249,8 +340,8 @@ impl Sync {
         let running: Vec<_> = locked(&self.inner.uploads).active.iter().filter(|(key, _)| key.0 == seq && position.is_none_or(|position| key.1 == position)).map(|(_, active)| (active.token.clone(), active.done.subscribe())).collect();
         for (token, _) in &running { token.cancel(); }
         if running.is_empty() {
-            for ((owner, item), _) in self.inner.upload_items()? {
-                if owner == seq && position.is_none_or(|position| item == position) { self.run_inline(seq, item, Mode::Cancel).await; }
+            for ((_, item), _) in self.inner.operation_uploads(seq)? {
+                if position.is_none_or(|position| item == position) { self.run_inline(seq, item, Mode::Cancel).await; }
             }
         } else {
             for (_, mut done) in running { let _ = done.wait_for(|finished| *finished).await; }
@@ -276,9 +367,20 @@ impl Sync {
     }
 
     async fn run_inline(&self, seq: i64, position: i64, mode: Mode) {
-        let Some((run, token, permits)) = self.inner.register(seq, position) else { return };
-        run::drive(self.inner.clone(), seq, position, run, token, permits, mode, None).await;
+        let Some((run, token)) = self.inner.register(seq, position) else { return };
+        run::drive(self.inner.clone(), seq, position, run, token, mode, None).await;
         self.inner.finish_run(seq, position, run);
+    }
+}
+
+impl UploadRuns {
+    fn register(&mut self, seq: i64, position: i64, file_slot: bool) -> (u64, CancelToken) {
+        self.next_run += 1;
+        let run = self.next_run;
+        let token = CancelToken::new();
+        self.active_files += usize::from(file_slot);
+        self.active.insert((seq, position), ActiveRun { run, token: token.clone(), done: watch::channel(false).0, file_slot });
+        (run, token)
     }
 }
 

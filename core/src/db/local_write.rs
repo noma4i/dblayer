@@ -367,7 +367,21 @@ impl Db {
     }
 
     pub fn outbox(&self) -> Result<Vec<OutboxOperation>, DbError> {
-        self.shared.read(&[], |reader| Ok(read_outbox(reader)?))
+        let entries = self.shared.read(&[], |reader| Ok(read_outbox(reader)?))?;
+        let mut counters = super::open::locked(&self.shared.counters);
+        counters.outbox_reads += 1;
+        counters.outbox_rows_loaded += entries.len();
+        Ok(entries)
+    }
+
+    pub(crate) fn operation_queue(&self) -> Result<std::sync::Arc<std::sync::Mutex<crate::operation::OperationQueue>>, DbError> {
+        let stored = self.shared.store.lock();
+        let entries = crate::operation::read_queue(&stored.connection).map_err(StoreError::from)?;
+        let queue = self.shared.operation_queues.subscribe(&entries);
+        let mut counters = super::open::locked(&self.shared.counters);
+        counters.outbox_reads += 1;
+        counters.outbox_rows_loaded += entries.len();
+        Ok(queue)
     }
 
     fn commit_local_optional(

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -322,6 +322,7 @@ pub struct CommitResult {
     pub scopes: BTreeSet<ScopeRef>,
     pub members: BTreeSet<RowRef>,
     pub operations: BTreeSet<i64>,
+    pub(crate) queue_operations: BTreeMap<i64, Option<crate::operation::QueueOperation>>,
     pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
     pub cloud_logged: bool,
@@ -336,6 +337,7 @@ impl CommitResult {
             scopes: BTreeSet::new(),
             members: BTreeSet::new(),
             operations: BTreeSet::new(),
+            queue_operations: BTreeMap::new(),
             replaced: Vec::new(),
             unknown_operation_acks: 0,
             cloud_logged: false,

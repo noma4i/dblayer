@@ -23,12 +23,13 @@ fn erase_item(connection: &Connection, seq: i64, position: i64) -> Result<(), St
     Ok(())
 }
 
-pub(super) fn separate_items(connection: &Connection, seq: i64, action: &str, mutation: &str, now: i64) -> Result<(), StoreError> {
+pub(super) fn separate_items(connection: &Connection, seq: i64, action: &str, mutation: &str, now: i64) -> Result<Vec<i64>, StoreError> {
     let common = read_value(connection, seq, "input")?.unwrap_or(Value::Null);
     let prior = read_value(connection, seq, "prior")?.unwrap_or(Value::Null);
     let states = read_operation_uploads(connection, seq)?;
     let mut statement = connection.prepare("SELECT position, row_id, client_key, file_id, source_error FROM op_item WHERE seq = ?1 ORDER BY position")?;
     let items = statement.query_map([seq], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut sequences = Vec::new();
     for (position, row, key, file, error) in items {
         let value = read_item_value(connection, seq, position, "input")?.unwrap_or(Value::Null);
         let mut input: UploadInput = serde_json::from_value(value).map_err(|error| StoreError::from(std::io::Error::other(error)))?;
@@ -42,6 +43,7 @@ pub(super) fn separate_items(connection: &Connection, seq: i64, action: &str, mu
             input: Value::Object(variables), transport_started: false, base_revision: None, created_at: now, dedupe_key: None, rollback, upload: None,
         };
         let next = super::apply::begin_operation(connection, &record)?;
+        sequences.push(next);
         let state = states.get(&(seq, position)).ok_or_else(|| StoreError::from(std::io::Error::other("upload state is missing")))?;
         erase_item(connection, seq, position)?;
         write_upload(connection, next, 0, state)?;
@@ -50,5 +52,5 @@ pub(super) fn separate_items(connection: &Connection, seq: i64, action: &str, mu
         write_item_value(connection, next, 0, "input", Some(&value))?;
     }
     delete_operation(connection, seq)?;
-    Ok(())
+    Ok(sequences)
 }

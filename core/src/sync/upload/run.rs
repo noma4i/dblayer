@@ -2,7 +2,6 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
-use tokio::sync::Semaphore;
 
 use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
 use crate::operation::Operation;
@@ -19,6 +18,7 @@ use super::steps::{text, StepError, Stop, EXPIRED_MESSAGE};
 #[derive(Clone, Copy)]
 pub(super) enum Mode {
     Transfer,
+    Mutation,
     Orphan,
     Cancel,
 }
@@ -58,7 +58,7 @@ pub(super) fn stop_of(error: StepError) -> Stop {
     }
 }
 
-pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, permits: Arc<Semaphore>, mode: Mode, resumed: Option<Result<Response, TransportError>>) {
+pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: Mode, resumed: Option<Result<Response, TransportError>>) {
     let generation = inner.db.generation();
     let runner = match Runner::load(inner.clone(), seq, position, run, token, matches!(mode, Mode::Transfer)) {
         Ok(Some(runner)) => runner,
@@ -76,7 +76,7 @@ pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, 
     let runner = Arc::new(runner);
     *locked(&runner.resumed) = resumed;
     match mode {
-        Mode::Transfer => runner.transfer(permits).await,
+        Mode::Transfer | Mode::Mutation => runner.transfer().await,
         Mode::Orphan => runner.abort_remote().await,
         Mode::Cancel => runner.cancelled().await,
     }
@@ -84,9 +84,9 @@ pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, 
 
 impl Runner {
     fn load(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, transfer: bool) -> Result<Option<Self>, super::super::SyncError> {
-        let Some(entry) = inner.db.outbox()?.into_iter().find(|entry| entry.operation.id.0 == seq) else { return Ok(None) };
+        let Some(entry) = inner.outbox_operation(seq)? else { return Ok(None) };
         let (model, _) = Operation::split_action_key(&entry.operation.action_key).ok_or_else(|| super::super::SyncError::Malformed("the upload action key is invalid".into()))?;
-        let Some(state) = inner.upload_items()?.remove(&(seq, position)) else { return Ok(None) };
+        let Some(state) = inner.operation_uploads(seq)?.remove(&(seq, position)) else { return Ok(None) };
         let needs_file = transfer && !state.is_transferred();
         let (mut input, file, source_error, file_id) = inner.db.shared.read(&[], |reader| {
             let connection = reader.connection();
@@ -163,12 +163,13 @@ impl Runner {
         locked(&self.progress)
     }
 
-    async fn transfer(self: &Arc<Self>, permits: Arc<Semaphore>) {
+    async fn transfer(self: &Arc<Self>) {
         let transferred = tokio::select! {
             biased;
             () = self.token.cancelled() => Err(Stop::Cancelled),
-            result = self.transfer_file(permits) => result,
+            result = self.transfer_file() => result,
         };
+        self.inner.release_file_slot(self.seq, self.position, self.run);
         let result = match transferred {
             Ok(()) => self.mutation().await,
             Err(stop) => Err(stop),
@@ -181,18 +182,13 @@ impl Runner {
         }
     }
 
-    async fn transfer_file(self: &Arc<Self>, permits: Arc<Semaphore>) -> Result<(), Stop> {
+    async fn transfer_file(self: &Arc<Self>) -> Result<(), Stop> {
         if self.snapshot().is_transferred() {
             return Ok(());
         }
         if let Some(error) = &self.source_error {
             return Err(Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))));
         }
-        let permit = tokio::select! {
-            permit = permits.acquire_owned() => permit.ok(),
-            () = self.token.cancelled() => None,
-        };
-        let Some(_permit) = permit else { return Err(Stop::Cancelled) };
         self.save(|state| {
             state.phase = UploadStatus::Preparing;
             state.stage = UploadStage::Prepare;
@@ -290,7 +286,7 @@ impl Runner {
 
     async fn mutation(self: &Arc<Self>) -> Result<(), Stop> {
         self.await_online().await?;
-        let items = self.inner.upload_items().map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+        let items = self.inner.operation_uploads(self.seq).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
         if items.iter().any(|(key, state)| key.0 == self.seq && !state.is_transferred()) {
             return Ok(());
         }
@@ -304,7 +300,7 @@ impl Runner {
         if self.token.is_cancelled() {
             return Err(Stop::Cancelled);
         }
-        let Some(entry) = self.inner.db.outbox().ok().and_then(|entries| entries.into_iter().find(|entry| entry.operation.id.0 == self.seq)) else {
+        let Some(entry) = self.inner.outbox_operation(self.seq).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))? else {
             return Err(Stop::Superseded);
         };
         let spec = self.inner.db.spec(&self.model).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;

@@ -566,6 +566,25 @@ pub(crate) fn apply_envelope(
         result.revision = Some(revision);
         result.rows = changes.changes;
         result.replaced = replaced;
+        let mut progress_only: BTreeSet<_> = envelope.operation_transitions.iter().filter_map(|transition| match transition {
+            OperationTransition::Progress { seq, state, .. } if state.phase != crate::upload::UploadStatus::Queued => Some(*seq),
+            _ => None,
+        }).collect();
+        for transition in &envelope.operation_transitions {
+            let seq = match transition {
+                OperationTransition::Begin(record) | OperationTransition::BeginUpload { record, .. } => record.seq,
+                OperationTransition::Progress { seq, state, .. } if state.phase == crate::upload::UploadStatus::Queued => Some(*seq),
+                OperationTransition::Progress { .. } => None,
+                OperationTransition::RemoveUploadItem { seq, .. } | OperationTransition::SeparateUploads { seq, .. }
+                | OperationTransition::Close { seq, .. } | OperationTransition::Fail { seq, .. }
+                | OperationTransition::Start { seq } | OperationTransition::Postpone { seq, .. }
+                | OperationTransition::Retry { seq } | OperationTransition::Remove { seq, .. } => Some(*seq),
+            };
+            if let Some(seq) = seq { progress_only.remove(&seq); }
+        }
+        for seq in result.operations.iter().filter(|seq| !progress_only.contains(seq)) {
+            result.queue_operations.insert(*seq, crate::operation::read_queue_operation(connection, *seq)?);
+        }
         if tombstoned {
             prune_tombstones(connection, now_ms, &TombstoneRetention::DEFAULT)?;
         }
@@ -798,7 +817,7 @@ fn apply_transitions(
             OperationTransition::SeparateUploads { seq, single_action, single_mutation } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 if connection.query_row("SELECT EXISTS (SELECT 1 FROM op WHERE seq = ?1 AND transport_started = 0 AND status = 'pending')", [seq], |row| row.get::<_, bool>(0))? {
-                    super::upload::separate_items(connection, *seq, single_action, single_mutation, now_ms)?;
+                    result.operations.extend(super::upload::separate_items(connection, *seq, single_action, single_mutation, now_ms)?);
                     result.operations.insert(*seq);
                     wrote = true;
                 }

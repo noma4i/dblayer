@@ -26,6 +26,9 @@ pub struct Counters {
     pub sql_under_owner: usize,
     pub query_reads_failed: usize,
     pub owner_panics: usize,
+    pub outbox_reads: usize,
+    pub outbox_rows_loaded: usize,
+    pub outbox_candidates: usize,
 }
 
 impl Counters {
@@ -71,6 +74,9 @@ impl Add for Counters {
             sql_under_owner: self.sql_under_owner + other.sql_under_owner,
             query_reads_failed: self.query_reads_failed + other.query_reads_failed,
             owner_panics: self.owner_panics + other.owner_panics,
+            outbox_reads: self.outbox_reads + other.outbox_reads,
+            outbox_rows_loaded: self.outbox_rows_loaded + other.outbox_rows_loaded,
+            outbox_candidates: self.outbox_candidates + other.outbox_candidates,
         }
     }
 }

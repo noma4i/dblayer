@@ -51,6 +51,10 @@ Resumed transfers read the owned disk file directly. A rejected admission remove
 Uploads require server models. Local and memory models reject admission without creating records or files.
 A database reset rejects upload admission queued before that reset.
 Transfer metadata reads, MD5 calculation and byte-range reads run in the blocking pool. Cancellation returns without waiting for queued file work.
+
+Waiting files are ordered by operation sequence and item position. A transfer reserves its file slot before its task starts. The slot covers preparation and transfer retries, and is released before the final content mutation. Abort and content mutation tasks do not consume file slots.
+
+Synchronization reads outgoing operation metadata once at startup. Commits update affected entries, and sending reads inputs for the selected operation. Upload progress does not reload the outgoing queue.
 Running checksum and range reads check cancellation between 1 MiB chunks.
 Each file has an `op_item` row. Multipart parts and saved requests include the item position.
 The database format changes with these tables. Opening an incompatible database clears it through the existing recreation policy.

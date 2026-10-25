@@ -46,6 +46,7 @@ pub(crate) struct Shared {
     pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
+    pub operation_queues: Arc<crate::operation::OperationQueues>,
     pub cloud_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub connectivity: Arc<crate::transport::Connectivity>,
     pub reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>,
@@ -196,9 +197,10 @@ impl Db {
         let dispatch = Arc::new(Dispatch::new());
         let reads = ReadPool::new(dispatch.clone());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
+        let operation_queues = Arc::new(crate::operation::OperationQueues::default());
         let cloud_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let reset_listeners = Arc::new(Mutex::new(Vec::new()));
-        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone(), cloud_changes.clone(), reset_listeners.clone()));
+        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone(), operation_queues.clone(), cloud_changes.clone(), reset_listeners.clone()));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -212,6 +214,7 @@ impl Db {
             reads: reads.clone(),
             dispatch: dispatch.clone(),
             outbox_changes,
+            operation_queues,
             cloud_changes,
             connectivity: crate::transport::Connectivity::new(true),
             reset_listeners,
@@ -273,9 +276,10 @@ impl Db {
     }
 }
 
-fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>, outbox_changes: Arc<tokio::sync::watch::Sender<u64>>, cloud_changes: Arc<tokio::sync::watch::Sender<u64>>, reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>) -> crate::store::StoreHook {
+fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>, outbox_changes: Arc<tokio::sync::watch::Sender<u64>>, operation_queues: Arc<crate::operation::OperationQueues>, cloud_changes: Arc<tokio::sync::watch::Sender<u64>>, reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>) -> crate::store::StoreHook {
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
+            operation_queues.changed(&result.queue_operations);
             {
                 let mut cache = locked(&cache);
                 if let Some(revision) = result.revision {
@@ -308,7 +312,8 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
             ephemeral.nudge();
             dispatch.push(Event::of_commit(result));
         }
-        StoreEvent::Reset { revision, models } => {
+        StoreEvent::Reset { revision, models, operations } => {
+            operation_queues.reset(&operations);
             {
                 let mut cache = locked(&cache);
                 cache.committed(revision);
