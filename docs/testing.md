@@ -106,6 +106,8 @@ Test conventions:
 - Keep one test per requirement at the lowest level that identifies its failure. Combine similar cases in a table.
 - Core stable-order tests own confirmed-row placement. Platform `LandsTests` and `LandsTest` check additional returned rows through the bridge.
 - Core edge tests own connection isolation and value replacement. Platform edge tests check typed reads, nullable fields, aliases and enums.
+- Core member tests own window isolation, page accumulation, freshness and retained totals. Platform member tests check arguments and typed snapshots.
+- Core node tests own freshness, partial merges, response order and missing entries. Platform node tests check IDs, force, declared variables and typed results.
 - Core upload tests check source ownership, failed admission cleanup and progress delivery. Tests await an observed state, never a revision change after a call returns.
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.
 - Tests count work (reads, calls, commits) instead of measuring time.
