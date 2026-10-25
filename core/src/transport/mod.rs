@@ -32,8 +32,8 @@ pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryClass, RetryListener};
 pub use session_code::SessionCode;
 pub use subscription::{
-    Subscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionFault,
-    SubscriptionHandle, SubscriptionOutcome, SubscriptionRetry,
+    Subscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind,
+    SubscriptionHandle,
 };
 
 #[async_trait]

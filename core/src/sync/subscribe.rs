@@ -12,8 +12,8 @@ use crate::pacing::{Backoff, Debounce, RetryPolicy};
 use crate::store::PlanCommitError;
 use crate::syncstate::operation_keys;
 use crate::transport::{
-    EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFault,
-    SubscriptionRetry, SubscriptionFailure, TransportError,
+    EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFailure,
+    TransportError,
 };
 use crate::value::read_id;
 
@@ -21,6 +21,9 @@ use super::error::SyncError;
 use super::extract::root_value;
 use super::normalize::normalize_nodes;
 use super::{locked, Inner, Sync};
+
+mod machine;
+use machine::{Event, Lifecycle, Step};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventEffect {
@@ -312,31 +315,34 @@ impl Feed {
         Ok((stale, held_files))
     }
 
-    async fn pump(&self, connection: &mut Subscription, retry: &mut SubscriptionRetry) -> Option<SubscriptionFailureKind> {
+    fn publish(&self, lifecycle: &Lifecycle) {
+        let mut status = locked(&self.status);
+        status.degraded = lifecycle.degraded();
+        status.stopped = lifecycle.stopped();
+    }
+
+    async fn pump(&self, connection: &mut Subscription, lifecycle: &mut Lifecycle) -> SubscriptionFailureKind {
         let debounce = self.def.event.debounce_interval.map(|interval| Debounce::new(interval, |item: &Pending| item.bucket.clone()));
         let mut pending: Vec<Pending> = Vec::new();
         let mut deadline: Option<Duration> = None;
-        let mut ready = false;
         loop {
             let wait = deadline.unwrap_or_default().saturating_sub(self.inner.clock.now());
             tokio::select! {
                 event = connection.next() => match event {
                     None => {
                         self.apply(std::mem::take(&mut pending), &self.def.model, self.def.effect).await;
-                        return None;
+                        return SubscriptionFailureKind::Transport;
                     }
                     Some(SubscriptionEvent::Ready) => {
-                        if ready {
+                        lifecycle.handle(Event::Ready);
+                        if lifecycle.take_reload() {
                             let models: Vec<_> = self.inner.db.shared.specs.values().filter(|spec| !spec.changes.is_empty() || spec.key.as_str() == self.def.model).map(|spec| spec.key.to_string()).collect();
                             for model in models { self.inner.reload_watched(&model, None, false).await; }
                         }
-                        ready = true;
                     }
                     Some(SubscriptionEvent::Next(response)) => {
-                        if ready {
-                            *retry = retry.confirmed();
-                            locked(&self.status).degraded = false;
-                        }
+                        lifecycle.handle(Event::Next);
+                        self.publish(lifecycle);
                         if self.apply_event(&response).await || self.invalidation(&response).await { continue; }
                         let Some(item) = self.parse(&response) else { continue };
                         match &debounce {
@@ -350,7 +356,7 @@ impl Feed {
                     Some(SubscriptionEvent::Failed(failure)) => {
                         self.notify_failure(&failure);
                         self.apply(std::mem::take(&mut pending), &self.def.model, self.def.effect).await;
-                        return Some(failure.kind);
+                        return failure.kind;
                     }
                 },
                 _ = self.inner.clock.sleep(wait), if deadline.is_some() => {
@@ -361,22 +367,11 @@ impl Feed {
         }
     }
 
-    fn register_failure(&self, retry: &mut SubscriptionRetry, fault: SubscriptionFault) -> Option<Duration> {
-        let outcome = retry.record_failure(fault);
-        *retry = outcome.state;
-        let mut status = locked(&self.status);
-        status.degraded |= outcome.reports_degraded;
-        if fault == SubscriptionFault::Transient {
-            return Some(self.backoff.delay(retry.attempts.saturating_sub(1)));
-        }
-        status.stopped = true;
-        None
-    }
-
     async fn run(self, request: GraphQLRequest, first: Option<Result<Subscription, TransportError>>) {
-        let mut retry = SubscriptionRetry::default();
+        let mut lifecycle = Lifecycle::new(self.backoff);
         let mut opened = first;
         loop {
+            lifecycle.handle(Event::Resumed);
             let attempt = match opened.take() {
                 Some(attempt) => attempt,
                 None => match self.inner.open_subscription(request.clone()).await {
@@ -384,8 +379,8 @@ impl Feed {
                     None => return,
                 },
             };
-            let mut connection = match attempt {
-                Ok(connection) => {
+            let kind = match attempt {
+                Ok(mut connection) => {
                     let reconnected = {
                         let mut status = locked(&self.status);
                         status.connects += 1;
@@ -394,29 +389,24 @@ impl Feed {
                     if reconnected {
                         self.inner.reload_watched(&self.def.model, None, false).await;
                     }
-                    connection
+                    lifecycle.handle(Event::Connected);
+                    self.pump(&mut connection, &mut lifecycle).await
                 }
                 Err(error) => {
                     let failure = SubscriptionFailure::from_error(error);
-                    let fault = failure.kind.fault();
-                    if fault == SubscriptionFault::Transient && !self.inner.connectivity.is_online() { continue; }
-                    self.notify_failure(&failure);
-                    let Some(delay) = self.register_failure(&mut retry, fault) else { return };
-                    self.inner.connectivity.wait(self.inner.clock.as_ref(), delay).await;
-                    continue;
+                    if failure.kind != SubscriptionFailureKind::Transport || self.inner.connectivity.is_online() {
+                        self.notify_failure(&failure);
+                    }
+                    failure.kind
                 }
             };
-            let fault = self.pump(&mut connection, &mut retry).await.map_or(SubscriptionFault::Transient, SubscriptionFailureKind::fault);
-            drop(connection);
-            if fault != SubscriptionFault::Transient {
-                self.register_failure(&mut retry, fault);
-                return;
+            lifecycle.handle(Event::Lost { kind, online: self.inner.connectivity.is_online() });
+            self.publish(&lifecycle);
+            match lifecycle.step() {
+                Step::Stop => return,
+                Step::Wait(delay) => self.inner.connectivity.wait(self.inner.clock.as_ref(), delay).await,
+                Step::Open => {}
             }
-            if !self.inner.connectivity.is_online() {
-                continue;
-            }
-            let Some(delay) = self.register_failure(&mut retry, fault) else { return };
-            self.inner.connectivity.wait(self.inner.clock.as_ref(), delay).await;
         }
     }
 }

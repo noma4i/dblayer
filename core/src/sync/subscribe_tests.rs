@@ -493,13 +493,16 @@ async fn offline_subscription_waits_without_spending_attempts_and_reconnects_onl
 async fn repeated_transport_failures_stay_degraded_until_next_after_ready() {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
-    for _ in 0..4 {
+    for failures in 1..=4 {
         rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
         tokio::time::sleep(Duration::from_secs(40)).await;
+        assert_eq!(subscription.status().degraded, failures == 4, "after {failures} failures");
     }
     assert_eq!(rig.transport.call_count("MomentChanged"), 5);
-    assert!(subscription.status().degraded);
     assert!(!subscription.status().stopped);
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "before ready"})));
+    rig.transport.await_consumed("MomentChanged").await;
+    assert!(subscription.status().degraded);
     rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
     rig.transport.await_consumed("MomentChanged").await;
     assert!(subscription.status().degraded);

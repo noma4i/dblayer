@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -33,16 +32,6 @@ pub enum SubscriptionFailureKind {
     Transport,
     Graphql,
     Internal,
-}
-
-impl SubscriptionFailureKind {
-    pub fn fault(self) -> SubscriptionFault {
-        match self {
-            SubscriptionFailureKind::Transport => SubscriptionFault::Transient,
-            SubscriptionFailureKind::Graphql => SubscriptionFault::Graphql,
-            SubscriptionFailureKind::Internal => SubscriptionFault::Internal,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,52 +150,5 @@ impl Subscription {
 impl Drop for Subscription {
     fn drop(&mut self) {
         self.handle.cancel();
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SubscriptionFault {
-    Transient,
-    Graphql,
-    Internal,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubscriptionRetry {
-    pub transient_limit: u32,
-    pub attempts: u32,
-    pub reported_faults: HashSet<SubscriptionFault>,
-}
-
-impl Default for SubscriptionRetry {
-    fn default() -> Self {
-        Self { transient_limit: 4, attempts: 0, reported_faults: HashSet::new() }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubscriptionOutcome {
-    pub state: SubscriptionRetry,
-    pub reports_degraded: bool,
-}
-
-impl SubscriptionRetry {
-    pub fn record_failure(&self, fault: SubscriptionFault) -> SubscriptionOutcome {
-        let already_reported = self.reported_faults.contains(&fault);
-        let mut state = self.clone();
-        let reports_degraded = if fault == SubscriptionFault::Transient {
-            state.attempts += 1;
-            state.attempts == state.transient_limit && !already_reported
-        } else {
-            !already_reported
-        };
-        if reports_degraded {
-            state.reported_faults.insert(fault);
-        }
-        SubscriptionOutcome { state, reports_degraded }
-    }
-
-    pub fn confirmed(&self) -> SubscriptionRetry {
-        SubscriptionRetry { transient_limit: self.transient_limit, ..Default::default() }
     }
 }

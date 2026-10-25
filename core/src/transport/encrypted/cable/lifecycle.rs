@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use statig::prelude::*;
 use tokio::sync::mpsc;
 use crate::pacing::{Backoff, Clock, RetryPolicy};
-use crate::transport::{Connectivity, GraphQLRequest, SessionCode, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFault, SubscriptionRetry, TransportError};
+use crate::transport::{Connectivity, GraphQLRequest, SessionCode, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, TransportError};
 
 const SILENCE: Duration = Duration::from_secs(25);
 const PONG_WAIT: Duration = Duration::from_secs(20);
@@ -22,7 +22,7 @@ pub(super) struct Core {
     online: Arc<Connectivity>,
     last_traffic: Duration,
     ping_ts: u64,
-    retry: SubscriptionRetry,
+    attempts: u32,
     backoff: Backoff,
 }
 
@@ -41,12 +41,12 @@ impl Core {
     fn after_failure(&mut self) -> State {
         if self.entries.is_empty() { return State::idle(); }
         if !self.online.is_online() { return State::offline(); }
-        self.retry = self.retry.record_failure(SubscriptionFault::Transient).state;
-        State::backoff(self.clock.now() + self.backoff.delay(self.retry.attempts.saturating_sub(1)))
+        self.attempts += 1;
+        State::backoff(self.clock.now() + self.backoff.delay(self.attempts - 1))
     }
 
     fn heard(&mut self, confirms: bool) {
-        if confirms { self.retry = self.retry.confirmed(); }
+        if confirms { self.attempts = 0; }
         self.last_traffic = self.clock.now();
     }
 }
@@ -217,7 +217,7 @@ impl Lifecycle {
             clock,
             online,
             ping_ts: 0,
-            retry: SubscriptionRetry::default(),
+            attempts: 0,
             backoff: RetryPolicy::Subscription.backoff().randomized(),
         };
         let machine = Transitions.uninitialized_state_machine().init_with_context(&mut core);
