@@ -140,6 +140,8 @@ mod live_tests;
 #[cfg(test)]
 mod live_feed_tests;
 #[cfg(test)]
+mod resync_tests;
+#[cfg(test)]
 mod snapshot_tests;
 #[cfg(test)]
 mod stable_order_tests;

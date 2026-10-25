@@ -32,14 +32,21 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   private var undecodable = 0
   private var lastDecodeFailure: DbError?
   private var desynced = 0
+  private var copied = 0
 
   var decodedRows: Int { lock.withLock { decoded } }
   var undecodableRows: Int { lock.withLock { undecodable } }
   var desyncs: Int { lock.withLock { desynced } }
+  var copiedRows: Int { lock.withLock { copied } }
   var rows: [Model] { lock.withLock { current } }
 
   private var current: [Model] { missing == 0 ? loaded : slots.compactMap(\.row) }
   private var decodeFailure: DbError? { missing == 0 ? nil : lastDecodeFailure }
+  private func materialized() -> [Model] {
+    guard missing == 0 else { return [] }
+    copied += slots.count
+    return slots.compactMap(\.row)
+  }
   private var missingIds: [String] { missing == 0 ? [] : slots.filter { $0.row == nil }.map(\.id) }
 
   private static func invalid(_ error: Error) -> DbError {
@@ -65,7 +72,7 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
       if change.full {
         slots = carried.map(\.slot)
         missing = slots.reduce(0) { $0 + ($1.row == nil ? 1 : 0) }
-        loaded = missing == 0 ? slots.compactMap(\.row) : []
+        loaded = materialized()
         return ListApplied(rows: current, reordered: true, desynced: false, failure: decodeFailure, undecodable: missingIds)
       }
       let reordered = !change.removed.isEmpty || !change.placed.isEmpty || !change.replaced.isEmpty
@@ -76,9 +83,10 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
         return ListApplied(rows: current, reordered: reordered, desynced: true, failure: decodeFailure, undecodable: missingIds)
       }
       guard held, missing == 0, edits.count <= slots.count else {
-        loaded = missing == 0 ? slots.compactMap(\.row) : []
+        loaded = materialized()
         return ListApplied(rows: current, reordered: reordered, desynced: false, failure: decodeFailure, undecodable: missingIds)
       }
+      copied += loaded.count
       loaded.replay(edits)
       return ListApplied(rows: loaded, reordered: reordered, desynced: false, edits: edits)
     }
@@ -152,110 +160,71 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   }
 }
 
+struct ListHandle: Sendable {
+  let cancel: @Sendable () -> Void
+  let reportDesync: @Sendable () -> Void
+
+  init(cancel: @escaping @Sendable () -> Void, reportDesync: @escaping @Sendable () -> Void) {
+    self.cancel = cancel; self.reportDesync = reportDesync
+  }
+
+  init(_ subscription: LiveSubscription) {
+    self.init(cancel: { subscription.cancel() }, reportDesync: { subscription.reportDesync() })
+  }
+}
+
 final class ListSession<Model: DBModel, Value: Sendable>: @unchecked Sendable {
   private let lock = NSLock()
   private let feed = ListFeed<Model>()
-  private let open: @Sendable (QueryListener) throws -> @Sendable () -> Void
+  private let open: @Sendable (QueryListener) throws -> ListHandle
   private let emit: @Sendable (Value) -> Void
   private let map: @Sendable (ListApplied<Model>, LiveChange) -> Value
-  private let maxReopens: Int
-  private var cancelSubscription: (@Sendable () -> Void)?
+  private var handle: ListHandle?
   private var cancelled = false
-  private var stalled = false
-  private var generation = 0
-  private var reopens = 0
-  private var reopensInRow = 0
+  private var desyncPending = false
 
-  var reopened: Int { lock.withLock { reopens } }
   var desyncs: Int { feed.desyncs }
-  var isStalled: Bool { lock.withLock { stalled } }
 
   init(
-    maxReopens: Int = 2,
-    open: @escaping @Sendable (QueryListener) throws -> @Sendable () -> Void,
+    open: @escaping @Sendable (QueryListener) throws -> ListHandle,
     emit: @escaping @Sendable (Value) -> Void,
     map: @escaping @Sendable (ListApplied<Model>, LiveChange) -> Value
   ) {
-    self.maxReopens = maxReopens; self.open = open; self.emit = emit; self.map = map
+    self.open = open; self.emit = emit; self.map = map
   }
 
   func start() throws {
-    let current = lock.withLock { generation }
-    let made = try open(ChangeListener { [weak self] change in self?.receive(change, generation: current) })
-    let keep = lock.withLock { () -> Bool in
-      guard !cancelled, !stalled, generation == current else { return false }
-      cancelSubscription = made
-      return true
+    let made = try open(ChangeListener { [weak self] change in self?.receive(change) })
+    let pending = lock.withLock { () -> Bool? in
+      guard !cancelled else { return nil }
+      handle = made
+      return desyncPending
     }
-    if !keep { made() }
+    guard let pending else { made.cancel(); return }
+    if pending { made.reportDesync() }
   }
 
   func cancel() {
-    let current = lock.withLock { () -> (@Sendable () -> Void)? in
+    let current = lock.withLock { () -> ListHandle? in
       cancelled = true
-      defer { cancelSubscription = nil }
-      return cancelSubscription
+      defer { handle = nil }
+      return handle
     }
-    current?()
+    current?.cancel()
   }
 
-  private func receive(_ change: LiveChange, generation current: Int) {
-    guard lock.withLock({ !cancelled && !stalled && generation == current }) else { return }
+  private func receive(_ change: LiveChange) {
+    guard lock.withLock({ !cancelled }) else { return }
     let applied = feed.apply(change)
-    if applied.desynced { reopen(from: current); return }
-    if !change.full { lock.withLock { reopensInRow = 0 } }
-    emit(map(applied, change))
-  }
-
-  private enum Step {
-    case ignore
-    case stall
-    case restart((@Sendable () -> Void)?)
-  }
-
-  private func reopen(from current: Int) {
-    let step = lock.withLock { () -> Step in
-      guard !cancelled, !stalled, generation == current else { return .ignore }
-      guard reopensInRow < maxReopens else { return .stall }
-      generation += 1
-      reopens += 1
-      reopensInRow += 1
-      defer { cancelSubscription = nil }
-      return .restart(cancelSubscription)
-    }
-    switch step {
-    case .ignore: return
-    case .stall: stall("the list is out of sync with the database and a new subscription did not fix it")
-    case .restart(let old):
-      old?()
-      Task.detached(priority: .userInitiated) { [self] in await restart() }
-    }
-  }
-
-  private func restart() async {
-    while true {
-      do { try start(); return } catch {
-        let again = lock.withLock { () -> Bool in
-          guard !cancelled, !stalled, reopensInRow < maxReopens else { return false }
-          reopensInRow += 1
-          return true
-        }
-        if !again { stall("the subscription could not be opened again: \(error)"); return }
+    if applied.desynced {
+      let current = lock.withLock { () -> ListHandle? in
+        if handle == nil { desyncPending = true }
+        return handle
       }
+      current?.reportDesync()
+      return
     }
-  }
-
-  private func stall(_ reason: String) {
-    let current = lock.withLock { () -> (@Sendable () -> Void)? in
-      guard !cancelled, !stalled else { return nil }
-      stalled = true
-      defer { cancelSubscription = nil }
-      return cancelSubscription
-    }
-    current?()
-    decodeLog.error("List of \(Model.modelName, privacy: .public) stopped: \(reason, privacy: .public)")
-    let applied = ListApplied<Model>(rows: feed.rows, reordered: false, desynced: false, failure: .Invalid(detail: reason))
-    emit(map(applied, LiveChange(revision: 0, full: false, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: .Invalid(detail: reason), phase: .failed, errorKind: "invalid")))
+    emit(map(applied, change))
   }
 }
 

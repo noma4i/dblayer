@@ -308,6 +308,16 @@ impl ObserverHandle {
         self.subscriber.owes_delivery()
     }
 
+    /// Makes the next delivery to this observer the whole result again, as for an observer that has just joined. Holds no reference to the observer.
+    pub(crate) fn rejoiner(&self) -> impl Fn() + Send + Sync + 'static {
+        let (shared, group, id) = (self.shared.clone(), self.group.clone(), self.id);
+        move || {
+            if let Some(shared) = shared.upgrade() {
+                shared.command_observers(ObserverCommand::Rejoin { group: group.clone(), id });
+            }
+        }
+    }
+
     pub(crate) fn control(&self) -> ObserverControl {
         ObserverControl { shared: self.shared.clone(), group: self.group.clone(), id: self.id, subscriber: self.subscriber.clone() }
     }
@@ -340,6 +350,7 @@ pub(crate) enum ObserverCommand {
     Grow { group: String, before: usize, after: usize },
     Cancel { group: String, id: u64 },
     WantReach { group: String, id: u64, subscriber: Arc<Subscriber>, revision: i64 },
+    Rejoin { group: String, id: u64 },
 }
 
 impl ObserverHandle {
@@ -398,6 +409,14 @@ impl Shared {
                 ObserverCommand::WantReach { group: key, id, subscriber, revision } => {
                     observers.reach_waiting.push(ReachWait { key, id, subscriber, revision });
                     self.serve_reach(observers);
+                }
+                ObserverCommand::Rejoin { group: key, id } => {
+                    let Some(group) = observers.groups.get_mut(&key) else { continue };
+                    let Some(at) = group.subscribers.iter().position(|(member, _)| *member == id) else { continue };
+                    let member = group.subscribers.remove(at);
+                    member.1.restart_deliveries();
+                    group.facts.joining.push(member);
+                    self.pump(observers, &key);
                 }
                 ObserverCommand::Cancel { group: key, id } => {
                     observers.reach_waiting.retain(|wait| wait.id != id);

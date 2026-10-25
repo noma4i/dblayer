@@ -49,7 +49,7 @@ func listSource<Model: DBModel, Value: Sendable>(
   map: @escaping @Sendable (ListApplied<Model>, LiveChange) -> Value
 ) -> LiveSource<Value> {
   LiveSource(initial: initial, merge: merge) { emit in
-    let session = ListSession<Model, Value>(open: { listener in let subscription = try open(listener); return { subscription.cancel() } }, emit: emit, map: map)
+    let session = ListSession<Model, Value>(open: { listener in ListHandle(try open(listener)) }, emit: emit, map: map)
     try session.start()
     return { session.cancel() }
   }

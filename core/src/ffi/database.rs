@@ -253,6 +253,7 @@ impl Database {
             let wire = self.wire(query.model.as_str())?.clone();
             let sink = feed.clone();
             let window = self.db.observe_window_feed(query, WindowSpec::Tail { size: tail as usize }, move |item| intake(&sink, &wire, item))?;
+            feed.on_rejoin(Arc::new(window.rejoiner()));
             let failure = follow_failures(watch.as_mut(), feed);
             Ok(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None, failure, state: None })
         })
@@ -619,6 +620,7 @@ impl Database {
             (Some(_), Feed::Count(_)) => {}
             (_, item) => intake(&sink, &wire, item),
         })?;
+        feed.on_rejoin(Arc::new(observer.rejoiner()));
         let (load, state) = match tracked {
             Some((sync, relation, params)) => {
                 let control = observer.control();

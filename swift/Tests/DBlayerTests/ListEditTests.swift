@@ -51,6 +51,18 @@ struct ListEditTests {
   }
 
   @Test
+  func aFullDeliveryCopiesTheListOnceAndADeltaCopiesItOnceAtEverySize() {
+    let copies = [100, 1000].map { size -> [Int] in
+      let feed = ListFeed<Moment>()
+      _ = feed.apply(Self.change(full: true, size: size, rows: (0 ..< size).map { Self.moment(String(format: "m%05d", $0)) }))
+      let afterFull = feed.copiedRows
+      _ = feed.apply(Self.change(size: size, rows: [Self.moment("m00050", text: "edited")], indexes: [50]))
+      return [afterFull, feed.copiedRows - afterFull]
+    }
+    #expect(copies == [[100, 100], [1000, 1000]])
+  }
+
+  @Test
   func severalDeliveriesMergedReplayToTheFinalRowsWhateverTheyDidToOneId() throws {
     let steps: [(name: String, changes: [LiveChange])] = [
       ("update then move then remove", [

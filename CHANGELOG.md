@@ -21,6 +21,7 @@
 
 ### Changed
 - Swift `Model.retryAll()` and Kotlin top-level `retryAll()` are removed; use `DB.retryAll()` and `DBlayer.retryAll()`.
+- The core decides what happens after a list delivery does not fit the rows of a reader: one whole list on the same subscription, a failure after 2 refusals in a row. Swift and Kotlin only report the refusal; the subscription is no longer opened again.
 - `RetryListener` and `Database.setRetryListener` are removed; `serverConfig(retryListener:)` becomes `serverConfig(retries:)`. A call leaves the retry state on success, failure and cancel by itself.
 - Preserve typed errors in `Snapshot.error` and `LiveWindow.failure` on Swift and Kotlin.
 - A live query delivers again when only the GraphQL `extensions` of the same error change.

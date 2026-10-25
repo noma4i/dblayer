@@ -74,23 +74,19 @@ extension BridgeProbeTests {
     LiveChange(revision: 1, full: full, size: size, rows: rows, rowIndexes: indexes, removed: removed, placed: placed, replaced: [], renamed: renamed, count: nil, error: error)
   }
 
-  fileprivate static func session(
-    maxReopens: Int = 2, opens: @escaping @Sendable (Int) throws -> Void = { _ in }
-  ) -> (session: ListSession<Moment, Snapshot<Moment>>, listeners: Cursor<AsyncStream<QueryListener>>, values: Cursor<AsyncStream<Snapshot<Moment>>>) {
+  fileprivate static func session() -> (session: ListSession<Moment, Snapshot<Moment>>, listeners: Cursor<AsyncStream<QueryListener>>, values: Cursor<AsyncStream<Snapshot<Moment>>>, reports: Cursor<AsyncStream<Void>>) {
     let (listeners, openings) = AsyncStream<QueryListener>.makeStream()
     let (values, sink) = AsyncStream<Snapshot<Moment>>.makeStream()
-    let count = OpenCounter()
+    let (reports, reported) = AsyncStream<Void>.makeStream()
     let session = ListSession<Moment, Snapshot<Moment>>(
-      maxReopens: maxReopens,
       open: { listener in
-        try opens(count.next())
         openings.yield(listener)
-        return {}
+        return ListHandle(cancel: {}, reportDesync: { reported.yield() })
       },
       emit: { sink.yield($0) },
       map: { applied, _ in Snapshot(rows: applied.rows, replaced: [:], reordered: applied.reordered, error: applied.failure) }
     )
-    return (session, Cursor(listeners), Cursor(values))
+    return (session, Cursor(listeners), Cursor(values), Cursor(reports))
   }
 
   @Test
@@ -106,21 +102,21 @@ extension BridgeProbeTests {
   }
 
   @Test
-  func inv_observe_15_aDeliveryThatDoesNotFitOpensTheSubscriptionAgainForTheWholeList() async throws {
+  func inv_observe_15_aDeliveryThatDoesNotFitIsReportedToTheCoreAndTheWholeListItSendsIsShown() async throws {
     let rig = Self.session()
     try rig.session.start()
-    let first = try #require(await rig.listeners.next("the first subscription"))
-    first.changed(change: Self.wire(full: true, size: 2, rows: ["a", "b"].map(Self.moment)))
+    let listener = try #require(await rig.listeners.next("the subscription"))
+    listener.changed(change: Self.wire(full: true, size: 2, rows: ["a", "b"].map(Self.moment)))
     #expect(await rig.values.next("the first list")?.rows.map(\.id) == ["a", "b"])
-    first.changed(change: Self.wire(size: 3, placed: [Placement(id: "zz", index: 0)]))
-    let second = try #require(await rig.listeners.next("the second subscription"))
-    second.changed(change: Self.wire(full: true, size: 3, rows: ["a", "b", "c"].map(Self.moment)))
+    listener.changed(change: Self.wire(size: 3, placed: [Placement(id: "zz", index: 0)]))
+    #expect(await rig.reports.next("the report to the core") != nil)
+    listener.changed(change: Self.wire(full: true, size: 3, rows: ["a", "b", "c"].map(Self.moment)))
     #expect(await rig.values.next("the whole list")?.rows.map(\.id) == ["a", "b", "c"])
-    #expect(rig.session.desyncs == 1 && rig.session.reopened == 1)
+    #expect(rig.session.desyncs == 1)
   }
 
   @Test
-  func inv_observe_15_aRowThatDoesNotDecodeKeepsItsSlotAndNeverReopensTheSubscription() async throws {
+  func inv_observe_15_aRowThatDoesNotDecodeKeepsItsSlotAndNeverReportsADesync() async throws {
     let rig = Self.session()
     try rig.session.start()
     let listener = try #require(await rig.listeners.next("the subscription"))
@@ -130,7 +126,7 @@ extension BridgeProbeTests {
       listener.changed(change: Self.wire(size: 3, rows: [Self.moment("c")], indexes: [2]))
       #expect(await rig.values.next("the update \(step)")?.rows.map(\.id) == ["a", "c"])
     }
-    #expect(rig.session.reopened == 0 && rig.session.desyncs == 0)
+    #expect(rig.session.desyncs == 0)
   }
 
   @Test
@@ -159,7 +155,7 @@ extension BridgeProbeTests {
           listener.changed(change: change)
           if held { gate.wait() }
         })
-        return { subscription.cancel() }
+        return ListHandle(subscription)
       },
       emit: { sink.yield($0) },
       map: { applied, change in Snapshot(rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered) }
@@ -173,44 +169,6 @@ extension BridgeProbeTests {
     let replaced = await snapshots.first("the snapshot that names the replaced id") { $0.replaced["m77"] != nil }?.replaced["m77"]
     #expect(replaced == local.id)
     session.cancel()
-  }
-
-  struct DesyncScenario: Sendable, CustomTestStringConvertible {
-    let name: String
-    let rounds: Int
-    let goodDeltaFirst: Bool
-    let reopenFails: Bool
-    let stalls: Bool
-    let reopened: Int?
-    var testDescription: String { name }
-  }
-
-  @Test(arguments: [
-    DesyncScenario(name: "keeps desyncing", rounds: 3, goodDeltaFirst: false, reopenFails: false, stalls: true, reopened: 2),
-    DesyncScenario(name: "a good delta resets the count", rounds: 3, goodDeltaFirst: true, reopenFails: false, stalls: false, reopened: 3),
-    DesyncScenario(name: "the reopen cannot open", rounds: 1, goodDeltaFirst: false, reopenFails: true, stalls: true, reopened: nil),
-  ])
-  func inv_observe_15_aDesyncedSubscriptionOpensAgainUntilItStallsAndSaysWhy(_ scenario: DesyncScenario) async throws {
-    let rig = scenario.reopenFails ? Self.session(opens: { number in if number > 0 { throw URLError(.cannotConnectToHost) } }) : Self.session()
-    try rig.session.start()
-    var current = try #require(await rig.listeners.next("the first subscription"))
-    for round in 0 ..< scenario.rounds {
-      current.changed(change: Self.wire(full: true, size: 1, rows: [Self.moment("a")]))
-      #expect(await rig.values.next("the list of round \(round)")?.rows.map(\.id) == ["a"])
-      if scenario.goodDeltaFirst {
-        current.changed(change: Self.wire(size: 1, rows: [Self.moment("a")], indexes: [0]))
-        #expect(await rig.values.next("the good delta of round \(round)")?.rows.map(\.id) == ["a"])
-      }
-      current.changed(change: Self.wire(size: 2, placed: [Placement(id: "zz", index: 0)]))
-      if scenario.stalls && round == scenario.rounds - 1 {
-        let stopped = await rig.values.next("the failure")
-        #expect(stopped?.error != nil && stopped?.rows.map(\.id) == ["a"])
-      } else {
-        current = try #require(await rig.listeners.next("the subscription after round \(round)"))
-      }
-    }
-    #expect(rig.session.isStalled == scenario.stalls)
-    if let reopened = scenario.reopened { #expect(rig.session.reopened == reopened) }
   }
 }
 

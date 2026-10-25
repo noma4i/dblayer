@@ -155,6 +155,10 @@ impl WindowHandle {
     pub fn expand_after(&self, rows: usize) {
         self.observer.grow(0, rows);
     }
+
+    pub(crate) fn rejoiner(&self) -> impl Fn() + Send + Sync + 'static {
+        self.observer.rejoiner()
+    }
 }
 
 fn lean(record: RankedRow, descending: &[bool]) -> Result<(Arc<OrderKey>, Arc<Entry>), DbError> {

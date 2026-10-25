@@ -446,7 +446,7 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   func start(deliver: @escaping @Sendable (Int64, Model?) -> Void, unopened: @escaping @Sendable () -> Void, failed: @escaping @Sendable (String) -> Void) {
     Task.detached(priority: .userInitiated) { [self] in
       let made = ListSession<Model, (Int64, Model?)>(
-        open: { [query] listener in let subscription = try DB.database.liveQuery(queryJson: query.json, listener: listener); return { subscription.cancel() } },
+        open: { [query] listener in ListHandle(try DB.database.liveQuery(queryJson: query.json, listener: listener)) },
         emit: { value in
           self.lock.withLock { self.count += 1 }
           deliver(value.0, value.1)

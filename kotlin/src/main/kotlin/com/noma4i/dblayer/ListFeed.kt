@@ -1,14 +1,9 @@
 package com.noma4i.dblayer
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.serialization.ExperimentalSerializationApi
 import java.util.concurrent.atomic.AtomicInteger
 
 private val decodeLog = java.util.logging.Logger.getLogger("DBlayer")
-private val reopening = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 internal class ListState<Model>(
     val rows: List<Model>,
@@ -155,76 +150,43 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
     }
 }
 
+internal class ListHandle(val cancel: () -> Unit, val reportDesync: () -> Unit) {
+    constructor(subscription: LiveSubscription) : this({ subscription.cancel() }, { subscription.reportDesync() })
+}
+
 internal class ListSession<Model : DBModel, Value>(
     decoder: ModelDecoder<Model>,
-    private val open: (QueryListener) -> () -> Unit,
+    private val open: (QueryListener) -> ListHandle,
     private val emit: (Value) -> Unit,
     private val map: (ListState<Model>, LiveChange) -> Value,
-    private val maxReopens: Int = 2,
 ) {
     private val feed = ListFeed(decoder)
-    private var cancelSubscription: (() -> Unit)? = null
+    private var handle: ListHandle? = null
     private var cancelled = false
-    private var stalled = false
-    private var generation = 0
-    private var reopensInRow = 0
-    private val reopens = AtomicInteger()
+    private var desyncPending = false
 
-    val reopened: Int get() = reopens.get()
     val desyncs: Int get() = feed.desyncs
-    val isStalled: Boolean get() = synchronized(this) { stalled }
 
     fun start() {
-        val current = synchronized(this) { generation }
-        val made = open(ChangeListener { receive(it, current) })
-        val keep = synchronized(this) { if (cancelled || stalled || generation != current) false else { cancelSubscription = made; true } }
-        if (!keep) made()
+        val made = open(ChangeListener { receive(it) })
+        val pending = synchronized(this) { if (cancelled) null else { handle = made; desyncPending } }
+        if (pending == null) made.cancel() else if (pending) made.reportDesync()
     }
 
     fun cancel() {
-        val current = synchronized(this) { cancelled = true; cancelSubscription.also { cancelSubscription = null } }
-        current?.invoke()
+        val current = synchronized(this) { cancelled = true; handle.also { handle = null } }
+        current?.cancel?.invoke()
     }
 
-    private fun receive(change: LiveChange, current: Int) {
-        if (synchronized(this) { cancelled || stalled || generation != current }) return
+    private fun receive(change: LiveChange) {
+        if (synchronized(this) { cancelled }) return
         val applied = feed.apply(change)
-        if (applied.desynced) { reopen(current); return }
-        if (!change.full) synchronized(this) { reopensInRow = 0 }
+        if (applied.desynced) {
+            val current = synchronized(this) { handle.also { if (it == null) desyncPending = true } }
+            current?.reportDesync?.invoke()
+            return
+        }
         emit(map(applied, change))
-    }
-
-    private fun reopen(current: Int) {
-        var old: (() -> Unit)? = null
-        var stall = false
-        synchronized(this) {
-            if (cancelled || stalled || generation != current) return
-            if (reopensInRow >= maxReopens) stall = true else {
-                generation++
-                reopens.incrementAndGet()
-                reopensInRow++
-                old = cancelSubscription
-                cancelSubscription = null
-            }
-        }
-        if (stall) { stall("the list is out of sync with the database and a new subscription did not fix it"); return }
-        old?.invoke()
-        reopening.launch { restart() }
-    }
-
-    private fun restart() {
-        while (true) {
-            val failure = runCatching { start() }.exceptionOrNull() ?: return
-            val again = synchronized(this) { if (cancelled || stalled || reopensInRow >= maxReopens) false else { reopensInRow++; true } }
-            if (!again) { stall("the subscription could not be opened again: $failure"); return }
-        }
-    }
-
-    private fun stall(reason: String) {
-        val current = synchronized(this) { if (cancelled || stalled) return; stalled = true; cancelSubscription.also { cancelSubscription = null } }
-        current?.invoke()
-        decodeLog.severe("List stopped: $reason")
-        emit(map(ListState(feed.rows, false, failure = DbException.Invalid(reason)), LiveChange(0L, false, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, DbException.Invalid(reason), phase = LivePhase.FAILED, errorKind = "invalid")))
     }
 }
 
@@ -235,7 +197,7 @@ internal fun <Model : DBModel, Value> listSource(
     open: (QueryListener) -> LiveSubscription,
     map: (ListState<Model>, LiveChange) -> Value,
 ): LiveSource<Value> = LiveSource(initial, merge) { emit ->
-    val session = ListSession(decoder, { listener -> val subscription = open(listener); val cancel: () -> Unit = { subscription.cancel() }; cancel }, emit, map)
+    val session = ListSession(decoder, { listener -> ListHandle(open(listener)) }, emit, map)
     session.start()
     val cancel: () -> Unit = { session.cancel() }
     cancel

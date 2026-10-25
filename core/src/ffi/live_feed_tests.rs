@@ -314,3 +314,75 @@ pub(super) fn folded(changes: &[LiveChange]) -> Vec<(Option<LivePhase>, Vec<Stri
         })
         .collect()
 }
+
+struct Strict {
+    tape: Mutex<Vec<LiveChange>>,
+    feed: std::sync::OnceLock<Arc<LiveFeed>>,
+}
+
+impl QueryListener for Strict {
+    fn changed(&self, change: LiveChange) {
+        let refused = !change.full && change.rows.iter().any(|row| row.id.starts_with("bad"));
+        self.tape.lock().unwrap().push(change);
+        if refused {
+            self.feed.get().unwrap().resync();
+        }
+    }
+}
+
+fn strict() -> (Arc<LiveFeed>, Arc<Strict>, Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = Arc::new(Strict { tape: Mutex::new(Vec::new()), feed: std::sync::OnceLock::new() });
+    let feed = LiveFeed::new(listener.clone());
+    listener.feed.set(feed.clone()).ok();
+    let rejoins = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = rejoins.clone();
+    feed.on_rejoin(Arc::new(move || { counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }));
+    feed.rows(rows(1, 2));
+    (feed, listener, rejoins)
+}
+
+fn delta(revision: i64, id: &str, size: u32) -> LiveChange {
+    LiveChange { size, rows: vec![wire_row(id.into())], row_indexes: vec![0], placed: vec![super::live::Placement { id: id.into(), index: 0 }], ..LiveChange::empty(revision) }
+}
+
+fn shapes(listener: &Strict) -> Vec<&'static str> {
+    listener.tape.lock().unwrap().iter().map(|change| match (change.full, change.error.is_some()) {
+        (true, _) => "whole",
+        (false, true) => "failed",
+        (false, false) => "delta",
+    }).collect()
+}
+
+#[test]
+fn a_refused_delta_asks_the_observer_for_the_whole_list_and_drops_deltas_until_it_arrives() {
+    let (feed, listener, rejoins) = strict();
+    feed.rows(delta(2, "bad1", 3));
+    assert_eq!(rejoins.load(std::sync::atomic::Ordering::SeqCst), 1);
+    feed.rows(delta(3, "ok1", 4));
+    assert_eq!(shapes(&listener), ["whole", "delta"], "a delta for a list the reader no longer holds is not delivered");
+    feed.rows(rows(4, 4));
+    assert_eq!(shapes(&listener), ["whole", "delta", "whole"]);
+    assert_eq!(listener.tape.lock().unwrap().last().unwrap().size, 4);
+}
+
+#[test]
+fn refusals_in_a_row_stop_the_list_with_an_error_and_a_good_delta_resets_the_count() {
+    let (feed, listener, rejoins) = strict();
+    let refused = |revision: i64, id: &str| { feed.rows(delta(revision, id, 3)); feed.rows(rows(revision, 3)); };
+    refused(2, "bad1");
+    refused(3, "bad2");
+    feed.rows(delta(4, "ok1", 3));
+    refused(5, "bad3");
+    refused(6, "bad4");
+    assert_eq!(shapes(&listener), ["whole", "delta", "whole", "delta", "whole", "delta", "delta", "whole", "delta", "whole"], "a good delta in between resets the count");
+    assert_eq!(rejoins.load(std::sync::atomic::Ordering::SeqCst), 4);
+    feed.rows(delta(7, "bad5", 3));
+    let shapes = shapes(&listener);
+    assert_eq!(&shapes[shapes.len() - 2..], ["delta", "failed"]);
+    assert_eq!(rejoins.load(std::sync::atomic::Ordering::SeqCst), 4, "the stopped feed asks for nothing more");
+    let stopped = listener.tape.lock().unwrap().last().cloned().unwrap();
+    assert!(matches!(&stopped.error, Some(DbError::Invalid { .. })) && stopped.phase == Some(LivePhase::Failed) && stopped.error_kind.as_deref() == Some("invalid"));
+    assert_eq!(stopped.size, 3);
+    feed.rows(rows(8, 3));
+    assert_eq!(listener.tape.lock().unwrap().last().unwrap().error_kind.as_deref(), Some("invalid"), "a stopped list delivers nothing more");
+}

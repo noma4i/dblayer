@@ -9,6 +9,8 @@ use crate::sync::{snapshot_phase, LoadError, LoadPhase, RelationState};
 use super::live::{LiveChange, LivePhase, LiveWindowEdge, QueryListener};
 use super::DbError;
 
+const MAX_RESYNCS_IN_ROW: u32 = 2;
+
 fn gate_open(relation: &RelationState, rows_at: i64) -> bool {
     relation.revision <= rows_at
 }
@@ -52,6 +54,10 @@ struct FeedState {
     draining: bool,
     ended: bool,
     targets_only: bool,
+    rejoin: Option<Arc<dyn Fn() + Send + Sync>>,
+    awaiting_whole: bool,
+    resyncs_in_row: u32,
+    reported: bool,
 }
 
 pub(super) struct LiveFeed {
@@ -109,12 +115,20 @@ impl LiveFeed {
             draining: false,
             ended: false,
             targets_only: false,
+            rejoin: None,
+            awaiting_whole: false,
+            resyncs_in_row: 0,
+            reported: false,
         };
         Arc::new(Self { state: Mutex::new(state), listener, latest: watch::channel(None).0, readiness: watch::channel(Readiness::Waiting).0 })
     }
 
     pub(super) fn rows(&self, part: LiveChange) {
         let mut state = held(&self.state);
+        if state.awaiting_whole && !part.full {
+            return;
+        }
+        state.awaiting_whole = false;
         state.opened = true;
         state.read_error = None;
         state.rows_at = state.rows_at.max(part.revision);
@@ -162,6 +176,11 @@ impl LiveFeed {
         held(&self.state).reach_request = Some(ask);
     }
 
+    /// Sets how to make the observer deliver the whole result again.
+    pub(super) fn on_rejoin(&self, rejoin: Arc<dyn Fn() + Send + Sync>) {
+        held(&self.state).rejoin = Some(rejoin);
+    }
+
     pub(super) fn show_targets_only(&self) {
         held(&self.state).targets_only = true;
     }
@@ -199,6 +218,41 @@ impl LiveFeed {
         state.shown = None;
         state.ready_pending = true;
         self.deliver(state, change);
+    }
+
+    /// The wrapper could not apply the delivery it was just given. The observer sends the whole list again, and the feed stops with a failure once that did not help twice in a row. Returns true when the feed stopped.
+    pub(super) fn resync(&self) -> bool {
+        let mut state = held(&self.state);
+        state.reported = true;
+        if state.ended {
+            return true;
+        }
+        if state.awaiting_whole {
+            return false;
+        }
+        let Some(rejoin) = state.rejoin.clone().filter(|_| state.resyncs_in_row < MAX_RESYNCS_IN_ROW) else {
+            let detail = "the list is out of sync with the database and a new snapshot did not fix it".to_string();
+            let basis = state.queue.back().cloned().or_else(|| self.latest.borrow().clone()).unwrap_or_else(|| LiveChange::empty(state.rows_at.max(0)));
+            let mut change = LiveChange { size: state.size, window: basis.window.clone(), count: basis.count, error: Some(DbError::Invalid { detail }), error_kind: Some("invalid".to_string()), ..LiveChange::empty(basis.revision) };
+            change.carry_state(&basis);
+            change.phase = Some(LivePhase::Failed);
+            change.error_kind = Some("invalid".to_string());
+            state.seq += 1;
+            change.seq = state.seq;
+            state.queue.clear();
+            state.shown = None;
+            state.ended = true;
+            state.ready_pending = true;
+            self.readiness.send_replace(Readiness::Ended);
+            self.deliver(state, change);
+            return true;
+        };
+        state.resyncs_in_row += 1;
+        state.awaiting_whole = true;
+        state.queue.clear();
+        drop(state);
+        rejoin();
+        false
     }
 
     pub(super) fn end(&self) {
@@ -290,10 +344,15 @@ impl LiveFeed {
                 self.settle_ready(&mut state);
                 return;
             };
+            state.reported = false;
             drop(state);
             self.latest.send_replace(Some(next.clone()));
+            let delta = !next.full;
             let _ = catch_unwind(AssertUnwindSafe(|| self.listener.changed(next)));
             state = held(&self.state);
+            if delta && !state.reported {
+                state.resyncs_in_row = 0;
+            }
         }
     }
 }

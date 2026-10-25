@@ -350,7 +350,7 @@ internal class SingletonFeed<Model : DBModel>(
         val database = try { DBlayer.database } catch (_: IllegalStateException) { unopened(this); return }
         val made = ListSession<Model, Pair<Long, Model?>>(
             decoder,
-            { listener -> val subscription = database.liveQuery(query.json, listener); val cancel: () -> Unit = { subscription.cancel() }; cancel },
+            { listener -> ListHandle(database.liveQuery(query.json, listener)) },
             { value -> count.incrementAndGet(); deliver(this, value.first, value.second) },
             { applied, change -> change.revision to applied.rows.firstOrNull() },
         )

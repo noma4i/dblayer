@@ -89,38 +89,35 @@ class ListDeltaTest {
     }
 
     @Test
-    fun inv_observe_15_a_delivery_that_does_not_fit_opens_the_subscription_again_for_the_whole_list() {
-        val listeners = java.util.concurrent.LinkedBlockingQueue<QueryListener>()
-        val values = java.util.concurrent.LinkedBlockingQueue<List<String>>()
-        val session = ListSession<Moment, List<String>>(Moment, { listener -> listeners.put(listener); val cancel: () -> Unit = {}; cancel }, { values.put(it) }, { applied, _ -> applied.rows.map { it.id } })
-        session.start()
-        val first = listeners.poll(5, java.util.concurrent.TimeUnit.SECONDS)!!
-        first.changed(change(size = 2, full = true, rows = listOf(moment("a", "1"), moment("b", "2"))))
-        assertEquals(listOf("a", "b"), values.poll(5, java.util.concurrent.TimeUnit.SECONDS))
-        first.changed(change(size = 3, placed = listOf(Placement("zz", 0u))))
-        val second = listeners.poll(5, java.util.concurrent.TimeUnit.SECONDS)!!
-        second.changed(change(size = 3, full = true, rows = listOf(moment("a", "1"), moment("b", "2"), moment("c", "3"))))
-        assertEquals(listOf("a", "b", "c"), values.poll(5, java.util.concurrent.TimeUnit.SECONDS))
-        assertEquals(1, session.desyncs)
-        assertEquals(1, session.reopened)
+    fun inv_observe_15_a_delivery_that_does_not_fit_is_reported_to_the_core_and_the_whole_list_it_sends_is_shown() {
+        val rig = Rig()
+        rig.session.start()
+        val listener = poll(rig.listeners) as QueryListener
+        listener.changed(change(size = 2, full = true, rows = listOf(moment("a", "1"), moment("b", "2"))))
+        assertEquals(listOf("a", "b"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
+        listener.changed(change(size = 3, placed = listOf(Placement("zz", 0u))))
+        assertEquals(1, rig.reports.get())
+        listener.changed(change(size = 3, full = true, rows = listOf(moment("a", "1"), moment("b", "2"), moment("c", "3"))))
+        assertEquals(listOf("a", "b", "c"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
+        assertEquals(1, rig.session.desyncs)
     }
 
     private fun poll(queue: java.util.concurrent.LinkedBlockingQueue<*>) = queue.poll(10, java.util.concurrent.TimeUnit.SECONDS)
 
-    private class Rig(opens: (Int) -> Unit = {}) {
+    private class Rig {
         val listeners = java.util.concurrent.LinkedBlockingQueue<QueryListener>()
         val values = java.util.concurrent.LinkedBlockingQueue<Snapshot<Moment>>()
-        private val count = AtomicInteger()
+        val reports = AtomicInteger()
         val session = ListSession<Moment, Snapshot<Moment>>(
             Moment,
-            { listener -> opens(count.getAndIncrement()); listeners.put(listener); val cancel: () -> Unit = {}; cancel },
+            { listener -> listeners.put(listener); ListHandle({}, { reports.incrementAndGet() }) },
             { values.put(it) },
             { applied, _ -> Snapshot(applied.rows, emptyMap(), applied.reordered, error = applied.failure) },
         )
     }
 
     @Test
-    fun inv_observe_15_a_row_that_does_not_decode_keeps_its_slot_and_never_reopens_the_subscription() {
+    fun inv_observe_15_a_row_that_does_not_decode_keeps_its_slot_and_never_reports_a_desync() {
         val rig = Rig()
         rig.session.start()
         val listener = poll(rig.listeners) as QueryListener
@@ -130,7 +127,7 @@ class ListDeltaTest {
             listener.changed(change(size = 3, rows = listOf(moment("c", "3")), indexes = listOf(2u)))
             assertEquals(listOf("a", "c"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
         }
-        assertEquals(0, rig.session.reopened)
+        assertEquals(0, rig.reports.get())
         assertEquals(0, rig.session.desyncs)
     }
 
@@ -161,8 +158,7 @@ class ListDeltaTest {
                     listener.changed(change)
                     if (held) gate.await(30, java.util.concurrent.TimeUnit.SECONDS)
                 })
-                val cancel: () -> Unit = { subscription.cancel() }
-                cancel
+                ListHandle(subscription)
             },
             { values.put(it) },
             { applied, change -> Snapshot(applied.rows, change.replacedIds(), applied.reordered) },
@@ -176,39 +172,5 @@ class ListDeltaTest {
         repeat(5) { if (found == null) (poll(values) as Snapshot<*>?)?.let { if (it.replaced.containsKey("m77")) found = it } }
         assertEquals(local.id, found?.replaced?.get("m77"))
         session.cancel()
-    }
-
-    private data class DesyncScenario(val name: String, val rounds: Int, val goodDeltaFirst: Boolean, val reopenFails: Boolean, val stalls: Boolean, val reopened: Int?)
-
-    @Test
-    fun inv_observe_15_a_desynced_subscription_opens_again_until_it_stalls_and_says_why() {
-        val scenarios = listOf(
-            DesyncScenario("keeps desyncing", 3, false, false, true, 2),
-            DesyncScenario("a good delta resets the count", 3, true, false, false, 3),
-            DesyncScenario("the reopen cannot open", 1, false, true, true, null),
-        )
-        for (scenario in scenarios) {
-            val rig = if (scenario.reopenFails) Rig { number -> if (number > 0) throw java.io.IOException("offline") } else Rig()
-            rig.session.start()
-            var current = poll(rig.listeners) as QueryListener
-            repeat(scenario.rounds) { round ->
-                current.changed(change(size = 1, full = true, rows = listOf(moment("a", "1"))))
-                assertEquals(scenario.name, listOf("a"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
-                if (scenario.goodDeltaFirst) {
-                    current.changed(change(size = 1, rows = listOf(moment("a", "1")), indexes = listOf(0u)))
-                    assertEquals(scenario.name, listOf("a"), (poll(rig.values) as Snapshot<*>).rows.map { (it as Moment).id })
-                }
-                current.changed(change(size = 2, placed = listOf(Placement("zz", 0u))))
-                if (scenario.stalls && round == scenario.rounds - 1) {
-                    val stopped = poll(rig.values) as Snapshot<*>
-                    assertEquals(scenario.name, true, stopped.error != null)
-                    assertEquals(scenario.name, listOf("a"), stopped.rows.map { (it as Moment).id })
-                } else {
-                    current = poll(rig.listeners) as QueryListener
-                }
-            }
-            assertEquals(scenario.name, scenario.stalls, rig.session.isStalled)
-            scenario.reopened?.let { assertEquals(scenario.name, it, rig.session.reopened) }
-        }
     }
 }

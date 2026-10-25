@@ -41,6 +41,7 @@ pub(crate) struct Mailbox {
     unmergeable: bool,
     scheduled: bool,
     delivered: Option<Arc<Version>>,
+    restarted: bool,
     reached: i64,
     told_reached: i64,
     failure: Option<String>,
@@ -104,7 +105,15 @@ impl Mailbox {
         }
     }
 
+    /// Forgets what was delivered and what waits, so that the next delivery is the whole result.
+    pub(crate) fn restart(&mut self) {
+        self.delivered = None;
+        self.restarted = true;
+        self.drop_pending();
+    }
+
     pub(crate) fn take(&mut self) -> Option<Taken> {
+        self.restarted = false;
         let latest = self.latest.take()?;
         Some(Taken {
             latest,
@@ -230,6 +239,10 @@ impl Subscriber {
         held(&self.mailbox).pause();
     }
 
+    pub(crate) fn restart_deliveries(&self) {
+        held(&self.mailbox).restart();
+    }
+
     pub(crate) fn resume(self: &Arc<Self>, executor: &Arc<Executor>) {
         let needs_run = held(&self.mailbox).resume();
         if needs_run {
@@ -306,7 +319,10 @@ impl Subscriber {
             }
             if let Some(mut taken) = taken {
                 self.deliver(&mut taken);
-                held(&self.mailbox).delivered = Some(taken.latest);
+                let mut mailbox = held(&self.mailbox);
+                if !mailbox.restarted {
+                    mailbox.delivered = Some(taken.latest);
+                }
             }
             if let Listener::Feed(call) = &self.listener {
                 for feed in tail.reached.map(Feed::Reached).into_iter().chain(tail.failure.map(Feed::Failed)) {
