@@ -53,7 +53,7 @@ class ListDeltaTest {
     private fun wire(row: Moment, cells: List<Cell>? = null) = WireRow(
         row.id, 1L, 1uL, Moment.layout,
         cells ?: listOf(Cell.Text(row.uuid), Cell.Null, Cell.Text(row.text ?: ""), Cell.Bool(false), Cell.Keyed(emptyList()), Cell.Null, Cell.Text(row.createdAt)),
-        WireSync(WireSyncState.SYNCED, emptyList(), emptyList(), null, 0u, 0L), null,
+        WireSync(WireSyncState.SYNCED, emptyList(), emptyList(), null, 0u, 0L), emptyList(),
     )
 
     private fun change(
@@ -170,7 +170,7 @@ class ListDeltaTest {
         session.start()
         assertEquals(true, (poll(values) as Snapshot<*>).rows.isEmpty())
         val local = Moment.create(text = "hello", media = null)
-        withTimeout(5000) { local.settled() }
+        withTimeout(5000) { local.settled(null) }
         gate.countDown()
         var found: Snapshot<*>? = null
         repeat(5) { if (found == null) (poll(values) as Snapshot<*>?)?.let { if (it.replaced.containsKey("m77")) found = it } }

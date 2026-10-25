@@ -77,7 +77,7 @@ end
 fn swift_models_can_be_built_directly_with_defaults_for_sync_state() {
     let models = parse_models("model Moment do\n  attribute :uuid, :string\n  attribute :text, :string, null: true\n  attribute :liked, :bool, default: false\n  attribute :count, :int, default: 3\nend\n").unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("public init(id: String, uuid: String, text: String? = nil, liked: Bool = false, count: Int = 3, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil)"), "{swift}");
+    assert!(swift.contains("public init(id: String, uuid: String, text: String? = nil, liked: Bool = false, count: Int = 3, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:])"), "{swift}");
     assert!(swift.contains("self.liked = liked"), "{swift}");
 }
 

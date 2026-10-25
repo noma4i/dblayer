@@ -82,6 +82,6 @@ class ListChangeTest {
     }
     private fun wire(id: String) = WireRow(id, 1L, 1uL, Moment.layout,
         listOf(Cell.Text(id), Cell.Null, Cell.Text(id), Cell.Bool(false), Cell.Keyed(emptyList()), Cell.Null, Cell.Text("x")),
-        WireSync(WireSyncState.SYNCED, emptyList(), emptyList(), null, 0u, 0L), null)
+        WireSync(WireSyncState.SYNCED, emptyList(), emptyList(), null, 0u, 0L), emptyList())
 
 }

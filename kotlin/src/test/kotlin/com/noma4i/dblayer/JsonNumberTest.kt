@@ -16,7 +16,7 @@ class JsonNumberTest {
         val variables = JsonObject(mapOf("value" to JsonPrimitive(Double.POSITIVE_INFINITY)))
         val invalid = listOf<() -> Unit>(
             { Query("Moment", Moment, relation = "feed", params = variables).json },
-            { UploadRequest("unused", "CreateMoment", variables = variables).json },
+            { UploadRequest("unused", variables = variables).wire() },
             { parseJsonObject("null") },
             { parseJsonObject("[]") },
         )

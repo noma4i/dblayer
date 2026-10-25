@@ -19,7 +19,7 @@ extension BridgeProbeTests {
       let value: Moment
       var id: String { value.id }
       var sync: SyncInfo { value.sync }
-      var upload: UploadInfo? { value.upload }
+      var uploads: [String: UploadInfo] { value.uploads }
       init(wire: WireRow) throws { Self.decodes.add(); value = try Moment(wire: wire) }
     }
 
@@ -84,7 +84,7 @@ extension BridgeProbeTests {
     static func wire(_ id: String) -> WireRow {
       WireRow(id: id, revision: 1, estimatedBytes: 1, layout: Moment.wireLayout,
         cells: [.text(value: id), .null, .text(value: id), .bool(value: false), .keyed(entries: []), .null, .text(value: "x")],
-        sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), upload: nil)
+        sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), uploads: [])
     }
   }
 }

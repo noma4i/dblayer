@@ -1,48 +1,31 @@
 package com.noma4i.dblayer
 
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
-/** A local file sent to storage, then one content mutation that carries the stored blob as `signedId`. */
+/** A local file sent to storage, then the content mutation of the declared upload action, which carries the stored blob as `signedId`. */
 data class UploadRequest(
     val path: String,
-    val mutation: String,
     val createBlob: String? = null,
     val multipart: Multipart? = null,
     val name: String? = null,
     val mime: String? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
 ) {
-    data class Multipart(val initiate: String, val presign: String, val complete: String, val abort: String)
+    data class Multipart(val initiate: String, val presign: String, val complete: String, val abort: String) {
+        internal fun wire() = WireMultipart(initiate, presign, complete, abort)
+    }
 
-    internal val json: String
-        get() = buildJsonObject {
-            put("path", path)
-            put("name", name?.let(::JsonPrimitive) ?: JsonNull)
-            put("mime", mime?.let(::JsonPrimitive) ?: JsonNull)
-            put("variables", variables)
-            put("steps", buildJsonObject {
-                put("single", createBlob?.let { buildJsonObject { put("create", it) } } ?: JsonNull)
-                put("multipart", multipart?.let { buildJsonObject { put("init", it.initiate); put("presign", it.presign); put("complete", it.complete); put("abort", it.abort) } } ?: JsonNull)
-                put("mutation", mutation)
-                put("signed_id_variable", "signedId")
-                put("blob_id_variable", JsonNull)
-            })
-        }.jsonText()
+    internal fun wire() = WireUploadRequest(path, name, mime, variables.jsonText(), createBlob, multipart?.wire())
 }
 
-/** Creates the record locally at once and sends its file in the background. A failed upload leaves the record failed: `retry()` sends again, `discard()` removes it. */
-suspend fun <Model : DBModel> uploadCreate(modelName: String, values: JsonObject, request: UploadRequest, decoder: ModelDecoder<Model>): Model =
-    decoder.read(DBlayer.database.uploadCreate(modelName, values.jsonText(), request.json))
+/** Creates the record locally at once and sends its file in the background through the declared upload [action]. A failed upload leaves the record failed: `retry(action)` sends again, `discard(action)` removes it. */
+suspend fun <Model : DBModel> uploadCreate(modelName: String, action: String, values: JsonObject, request: UploadRequest, decoder: ModelDecoder<Model>): Model =
+    offCaller { decoder.read(DBlayer.database.uploadCreate(modelName, action, values.jsonText(), request.wire())) }
 
-/** Sends the file of an existing record, then runs the content mutation. */
-suspend fun DBModel.upload(request: UploadRequest) { DBlayer.database.upload(modelName, id, request.json) }
+/** Sends the file of an existing record through the declared upload [action], then runs its content mutation. */
+suspend fun DBModel.upload(action: String, request: UploadRequest) { offCaller { DBlayer.database.upload(modelName, id, action, request.wire()) } }
 
-suspend fun DBModel.cancelUpload(): Boolean = DBlayer.database.cancelUpload(modelName, id)
+suspend fun DBModel.cancelUpload(action: String): Boolean = offCaller { DBlayer.database.cancelUpload(modelName, id, action) }
 
 data class UploadItem(
     val values: JsonObject,
@@ -51,14 +34,7 @@ data class UploadItem(
     val mime: String? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
 ) {
-    internal val value: JsonObject
-        get() = buildJsonObject {
-            put("values", values)
-            put("path", path)
-            put("name", name?.let(::JsonPrimitive) ?: JsonNull)
-            put("mime", mime?.let(::JsonPrimitive) ?: JsonNull)
-            put("variables", variables)
-        }
+    internal fun wire() = WireUploadItem(values.jsonText(), path, name, mime, variables.jsonText())
 }
 
 data class UploadBatchRequest(
@@ -67,19 +43,8 @@ data class UploadBatchRequest(
     val multipart: UploadRequest.Multipart? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
 ) {
-    internal val json: String
-        get() = buildJsonObject {
-            put("operation", operation)
-            put("variables", variables)
-            put("steps", buildJsonObject {
-                put("single", createBlob?.let { buildJsonObject { put("create", it) } } ?: JsonNull)
-                put("multipart", multipart?.let { buildJsonObject { put("init", it.initiate); put("presign", it.presign); put("complete", it.complete); put("abort", it.abort) } } ?: JsonNull)
-                put("mutation", "")
-                put("signed_id_variable", "signedId")
-                put("blob_id_variable", JsonNull)
-            })
-        }.jsonText()
+    internal fun wire() = WireUploadBatch(operation, variables.jsonText(), createBlob, multipart?.wire())
 }
 
 suspend fun <Model : DBModel> ModelDecoder<Model>.uploadCreate(items: List<UploadItem>, request: UploadBatchRequest): List<Model> =
-    DBlayer.database.uploadCreateBatch(modelName, JsonArray(items.map { it.value }).jsonText(), request.json).map { read(it) }
+    offCaller { DBlayer.database.uploadCreateBatch(modelName, items.map { it.wire() }, request.wire()).map { read(it) } }

@@ -13,7 +13,7 @@ class ListEditTest {
     private fun wire(row: Moment, cells: List<Cell>? = null) = WireRow(
         row.id, 1L, 1uL, Moment.layout,
         cells ?: listOf(Cell.Text(row.uuid), Cell.Null, Cell.Text(row.text ?: ""), Cell.Bool(false), Cell.Keyed(emptyList()), Cell.Null, Cell.Text(row.createdAt)),
-        WireSync(WireSyncState.SYNCED, emptyList(), emptyList(), null, 0u, 0L), null,
+        WireSync(WireSyncState.SYNCED, emptyList(), emptyList(), null, 0u, 0L), emptyList(),
     )
 
     private fun change(

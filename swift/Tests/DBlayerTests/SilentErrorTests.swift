@@ -21,7 +21,7 @@ struct SilentErrorTests {
   nonisolated static func wire(_ id: String) -> WireRow {
     WireRow(id: id, revision: 1, estimatedBytes: 1, layout: Moment.wireLayout,
       cells: [.text(value: id), .null, .text(value: id), .bool(value: false), .keyed(entries: []), .null, .text(value: "x")],
-      sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), upload: nil)
+      sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), uploads: [])
   }
 
   nonisolated static func full(_ rows: [WireRow]) -> LiveChange {

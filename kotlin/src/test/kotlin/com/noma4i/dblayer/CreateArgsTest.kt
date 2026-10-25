@@ -16,7 +16,7 @@ class CreateArgsTest {
         DBlayer.database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt } }"}]""")
 
         val local = Record.create(containerId = "c", authorId = "u1", text = "hi", attachedUserId = "42", signedId = "blob-1")
-        withTimeout(5000) { local.settled() }
+        withTimeout(5000) { local.settled(null) }
         val sent = transport.calls.first { it.operationName == "CreateRecord" }.variablesJson
         assertTrue("variables sent: $sent", sent.contains("\"signedId\":\"blob-1\"") && sent.contains("\"attachedUserId\":42"))
         assertEquals("hi", Record.find(withTimeout(5000) { local.confirmedId() }).current()?.text)

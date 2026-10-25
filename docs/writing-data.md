@@ -87,19 +87,19 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`, `
 
 A created row joins, at the front, the list of every remote scope whose parameters it carries and that has no constant variable filter, so a live list shows it at once. A scope without parameters takes a created row only when it declares `insert_on: [:create]` (`scope :owned, insert_on: [:create] do ... end`): the list maps to a server query whose scope the client cannot evaluate, so the author says that every row this device creates belongs to it. A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
 
-`settled()` waits until the server has answered every queued change of a record and throws on a refusal, which is how a screen shows a save error for an optimistic `update`:
+`settled(action)` waits until the server has answered every queued change of a record and throws on a refusal, which is how a screen shows a save error for an optimistic `update`:
 
 ```swift
 try await user.update(name: name)
-try await user.settled()
+try await user.settled(action: nil)
 ```
 
 ```kotlin
 user.update(name = name)
-user.settled()
+user.settled(null)
 ```
 
-A refusal is kept until `settled()` or `confirmedId()` reads it, even when the server answered before you called them, and each refusal is reported once. Kept refusals live in memory: after a restart the row state (`failed`, `needsAttention`) is what remains. At most 2048 unread refusals are kept, the oldest is dropped past that and counted in the core counter `lost_outcomes`.
+A refusal is kept until `settled(action)` or `confirmedId()` reads it, even when the server answered before you called them, and each refusal is reported once. Kept refusals live in memory: after a restart the row state (`failed`, `needsAttention`) is what remains. At most 2048 unread refusals are kept, the oldest is dropped past that and counted in the core counter `lost_outcomes`.
 
 To wait for the server id, for example to open the screen of the record you just created, call `confirmedId()`. It returns the real id once the queued `create` is answered and throws if the server refuses it or the device is offline:
 
@@ -136,26 +136,26 @@ This rule is the same for Swift and Kotlin, including the final upload mutation.
 [Batch uploads](files.md#create-several-records-with-uploads) create several local records in one operation and submit one ordered list after every remaining file finishes.
 Their `match_by` attributes match each server record to its temporary record, independently of response order.
 With `on_failure: :keep`, the errors `IN_PROGRESS` and `DUPLICATE_CLIENT_KEY` keep the row in `failed`.
-`retry()` and `retryAll()` repeat the stored key. A response with a server row confirms success.
+`retry(action)` and `retryAll()` repeat the stored key. A response with a server row confirms success.
 The server defines how long it keeps the result. After that period, the key no longer guarantees a repeated successful response.
 
 - If the network is unreachable before the transfer starts (no connection, connection refused, offline), the record stays `pending` and is sent again by itself with a growing pause, up to 40 attempts. Offline spends no attempts: the change waits for `setOnline(true)`. `on_failure: :rollback` applies only to confirmed server refusals, while 40 undelivered attempts always retain `failed` and the edit.
 - If the connection breaks after the transfer started, or no readable answer arrives, the record is marked `deliveryUnknown` and is never sent again by itself, because the server may have applied it.
 - A server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for you.
-- A destroyed record disappears at once. If the destroy fails for good (a refusal or 40 unreached attempts), the record comes back with `state = failed` and the error, like a kept update. `retry()` hides it again and sends the destroy, `discard()` keeps the record and drops the destroy. `discard()` also takes back changes that are still `pending`, and refuses with `InFlight` while one of the changes is being sent. `on_failure: :keep` is not allowed on `destroy`.
-- A `failed` or `deliveryUnknown` record is sent again only by `retry()`, or rolled back by `discard()` ([sync state](sync-state.md)). `retryAll()` does it for every such record.
+- A destroyed record disappears at once. If the destroy fails for good (a refusal or 40 unreached attempts), the record comes back with `state = failed` and the error, like a kept update. `retry(action)` hides it again and sends the destroy, `discard(action)` keeps the record and drops the destroy. `discard(action)` also takes back changes that are still `pending`, and refuses with `InFlight` while one of the changes is being sent. `on_failure: :keep` is not allowed on `destroy`.
+- A `failed` or `deliveryUnknown` record is sent again only by `retry(action)`, or rolled back by `discard(action)` ([sync state](sync-state.md)). `retryAll()` does it for every such record.
 - Responses that cannot be understood are moved to quarantine instead of being lost.
 - The queue lives in the database and every queued write is durable, so pending writes survive restarts and are sent when the queue next runs. A write that was `sending` when the app stopped is `deliveryUnknown` after the restart.
 
 ```swift
-try await message.retry()      // send the same change again
-try await message.discard()    // roll the change back and drop it
+try await message.retry(action: nil)      // send the same change again
+try await message.discard(action: nil)    // roll the change back and drop it
 try await sync.retryAll()      // send every failed and deliveryUnknown change again
 ```
 
 ```kotlin
-message.retry()      // send the same change again
-message.discard()    // roll the change back and drop it
+message.retry(null)      // send the same change again
+message.discard(null)    // roll the change back and drop it
 sync.retryAll()      // send every failed and deliveryUnknown change again
 ```
 

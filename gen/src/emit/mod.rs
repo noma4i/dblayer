@@ -247,18 +247,18 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    public let {}: {}", identifier(&field.name, true), field_type(field, true)).unwrap();
         }
-        writeln!(out, "    public let sync: SyncInfo\n    public let upload: UploadInfo?\n").unwrap();
+        writeln!(out, "    public let sync: SyncInfo\n    public let uploads: [String: UploadInfo]\n").unwrap();
         let fields: Vec<&FieldSpec> = model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)).collect();
         let params: Vec<String> = fields.iter().map(|field| {
             let default = swift_default(field).map(|value| format!(" = {value}")).unwrap_or_default();
             format!("{}: {}{}", identifier(&field.name, true), field_type(field, true), default)
-        }).chain(["sync: SyncInfo = SyncInfo()".to_string(), "upload: UploadInfo? = nil".to_string()]).collect();
+        }).chain(["sync: SyncInfo = SyncInfo()".to_string(), "uploads: [String: UploadInfo] = [:]".to_string()]).collect();
         writeln!(out, "    public init({}) {{", params.join(", ")).unwrap();
-        for field in fields.iter().map(|field| field.name.as_str()).chain(["sync", "upload"]) { let field = identifier(field, true); writeln!(out, "        self.{field} = {field}").unwrap(); }
+        for field in fields.iter().map(|field| field.name.as_str()).chain(["sync", "uploads"]) { let field = identifier(field, true); writeln!(out, "        self.{field} = {field}").unwrap(); }
         out.push_str("    }\n\n");
         writeln!(out, "    public static let wireLayout = \"{}\"\n\n    public init(wire row: WireRow) throws {{\n        let r = CellReader(row.cells)\n        self.id = row.id", wire::layout_of(models, model)).unwrap();
         for (at, field) in wire::wired(model).into_iter().enumerate() { writeln!(out, "        self.{} = {}", identifier(&field.name, true), wire::read_swift(field, at)).unwrap(); }
-        out.push_str("        self.sync = SyncInfo(wire: row.sync)\n        self.upload = row.upload.map(UploadInfo.init(wire:))\n    }\n\n");
+        out.push_str("        self.sync = SyncInfo(wire: row.sync)\n        self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })\n    }\n\n");
         for field in &model.fields {
             if field.name != "id" { writeln!(out, "    public static let {} = Column<{class}, {}>(\"{}\")", identifier(&field.name, true), column_type(field, true), field.name).unwrap(); }
         }
@@ -374,7 +374,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    {}val {}: {}{},", if field.name == "id" { "override " } else { "" }, identifier(&field.name, false), field_type(field, false), if field.nullable || field.optional { " = null" } else { "" }).unwrap();
         }
-        writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val upload: UploadInfo? = null\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val layout = \"{}\"\n        override val modelName = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                upload = row.upload?.let {{ UploadInfo.of(it) }},\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", identifier(&field.name, false), wire::read_kotlin(field, at))).collect::<String>()).unwrap();
+        writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val uploads: Map<String, UploadInfo> = emptyMap()\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val layout = \"{}\"\n        override val modelName = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                uploads = row.uploads.associate {{ it.action to UploadInfo.of(it.upload) }},\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", identifier(&field.name, false), wire::read_kotlin(field, at))).collect::<String>()).unwrap();
         for field in model.fields.iter().filter(|field| field.name != "id") { writeln!(out, "        val {} = Column<{class}, {}>(\"{}\")", identifier(&field.name, false), column_type(field, false), field.name).unwrap(); }
         writeln!(out, "        fun find(id: String) = Query(\"{class}\", this).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", this).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", this, ids)\n        fun entity(id: String) = entityOf(\"{class}\", this, id)").unwrap();
         for relation in &model.relations {

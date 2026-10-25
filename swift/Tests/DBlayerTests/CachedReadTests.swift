@@ -11,7 +11,7 @@ extension BridgeProbeTests {
       static let wireLayout = Moment.wireLayout
       var id: String { "" }
       var sync: SyncInfo { SyncInfo() }
-      var upload: UploadInfo? { nil }
+      var uploads: [String: UploadInfo] { [:] }
       init(wire: WireRow) throws { throw Unreadable() }
     }
 

@@ -19,7 +19,7 @@ data class Clip(
     override val id: String,
     val title: String? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val upload: UploadInfo? = null
+    override val uploads: Map<String, UploadInfo> = emptyMap()
 ) : DBModel {
     override val modelName get() = "Clip"
     companion object : ModelDecoder<Clip> {
@@ -31,7 +31,7 @@ data class Clip(
                 id = row.id,
                 title = r.opt(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
-                upload = row.upload?.let { UploadInfo.of(it) },
+                uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
             )
         }
 
@@ -63,7 +63,7 @@ data class Inbox(
     override val id: String,
     val title: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val upload: UploadInfo? = null
+    override val uploads: Map<String, UploadInfo> = emptyMap()
 ) : DBModel {
     override val modelName get() = "Inbox"
     companion object : ModelDecoder<Inbox> {
@@ -75,7 +75,7 @@ data class Inbox(
                 id = row.id,
                 title = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
-                upload = row.upload?.let { UploadInfo.of(it) },
+                uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
             )
         }
 
@@ -108,7 +108,7 @@ data class Roster(
     override val id: String,
     val title: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val upload: UploadInfo? = null
+    override val uploads: Map<String, UploadInfo> = emptyMap()
 ) : DBModel {
     override val modelName get() = "Roster"
     companion object : ModelDecoder<Roster> {
@@ -120,7 +120,7 @@ data class Roster(
                 id = row.id,
                 title = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
-                upload = row.upload?.let { UploadInfo.of(it) },
+                uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
             )
         }
 

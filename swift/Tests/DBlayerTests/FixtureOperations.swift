@@ -6,13 +6,13 @@ public struct Clip: DBModel {
     public let id: String
     public let title: String?
     public let sync: SyncInfo
-    public let upload: UploadInfo?
+    public let uploads: [String: UploadInfo]
 
-    public init(id: String, title: String? = nil, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil) {
+    public init(id: String, title: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
         self.id = id
         self.title = title
         self.sync = sync
-        self.upload = upload
+        self.uploads = uploads
     }
 
     public static let wireLayout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
@@ -22,7 +22,7 @@ public struct Clip: DBModel {
         self.id = row.id
         self.title = try r.opt(0, \.asText)
         self.sync = SyncInfo(wire: row.sync)
-        self.upload = row.upload.map(UploadInfo.init(wire:))
+        self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
     }
 
     public static let title = Column<Clip, String?>("title")
@@ -50,13 +50,13 @@ public struct Inbox: DBModel {
     public let id: String
     public let title: String
     public let sync: SyncInfo
-    public let upload: UploadInfo?
+    public let uploads: [String: UploadInfo]
 
-    public init(id: String, title: String, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil) {
+    public init(id: String, title: String, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
         self.id = id
         self.title = title
         self.sync = sync
-        self.upload = upload
+        self.uploads = uploads
     }
 
     public static let wireLayout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
@@ -66,7 +66,7 @@ public struct Inbox: DBModel {
         self.id = row.id
         self.title = try r.req(0, \.asText)
         self.sync = SyncInfo(wire: row.sync)
-        self.upload = row.upload.map(UploadInfo.init(wire:))
+        self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
     }
 
     public static let title = Column<Inbox, String>("title")
@@ -93,13 +93,13 @@ public struct Roster: DBModel {
     public let id: String
     public let title: String
     public let sync: SyncInfo
-    public let upload: UploadInfo?
+    public let uploads: [String: UploadInfo]
 
-    public init(id: String, title: String, sync: SyncInfo = SyncInfo(), upload: UploadInfo? = nil) {
+    public init(id: String, title: String, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
         self.id = id
         self.title = title
         self.sync = sync
-        self.upload = upload
+        self.uploads = uploads
     }
 
     public static let wireLayout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
@@ -109,7 +109,7 @@ public struct Roster: DBModel {
         self.id = row.id
         self.title = try r.req(0, \.asText)
         self.sync = SyncInfo(wire: row.sync)
-        self.upload = row.upload.map(UploadInfo.init(wire:))
+        self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
     }
 
     public static let title = Column<Roster, String>("title")

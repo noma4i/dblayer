@@ -61,15 +61,15 @@ interface DBModel {
     val id: String
     val modelName: String
     val sync: SyncInfo
-    val upload: UploadInfo?
+    val uploads: Map<String, UploadInfo>
 }
 
 val DBModel.needsAttention: Boolean get() = sync.state == SyncState.Failed || sync.state == SyncState.DeliveryUnknown
 val DBModel.canRetry: Boolean get() = needsAttention
 val DBModel.errorMessage: String? get() = sync.error?.message
 
-suspend fun DBModel.retry(): ULong = offCaller { DBlayer.database.retry(modelName, id) }
-suspend fun DBModel.discard() { offCaller { DBlayer.database.discard(modelName, id) } }
+suspend fun DBModel.retry(action: String?): ULong = offCaller { DBlayer.database.retry(modelName, id, action) }
+suspend fun DBModel.discard(action: String?) { offCaller { DBlayer.database.discard(modelName, id, action) } }
 suspend fun retryAll(): ULong = offCaller { DBlayer.database.retryAll() }
 
 suspend fun DBModel.destroy() { offCaller { DBlayer.database.destroy(modelName, id) } }
@@ -77,8 +77,8 @@ suspend fun DBModel.destroy() { offCaller { DBlayer.database.destroy(modelName, 
 /** Writes a field the server never sends. `JsonNull` clears it. */
 suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement) { offCaller { DBlayer.database.setLocal(modelName, id, path, value.jsonText()) } }
 
-/** Waits until the server has answered every queued change of the record, throws on a refusal or when offline. */
-suspend fun DBModel.settled() { offCaller { DBlayer.database.settled(modelName, id) } }
+/** Waits until the server has answered the queued changes of the record, or of the declared `action` when given, throws on a refusal or when offline. */
+suspend fun DBModel.settled(action: String?) { offCaller { DBlayer.database.settled(modelName, id, action) } }
 
 /** The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline. */
 suspend fun DBModel.confirmedId(): String = offCaller { DBlayer.database.confirmed(modelName, id) }

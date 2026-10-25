@@ -181,7 +181,7 @@ struct BridgeProbeTests {
 
     let local = try await Moment.create(text: "hello", media: nil)
     #expect(local.id.hasPrefix("temp"))
-    try await local.settled()
+    try await local.settled(action: nil)
     let real = try await local.confirmedId()
     #expect(real == "m77")
   }
@@ -194,7 +194,7 @@ struct BridgeProbeTests {
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt } }"}]"#)
 
     let local = try await Record.create(containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1")
-    try await local.settled()
+    try await local.settled(action: nil)
     let sent = transport.calls.first { $0.operationName == "CreateRecord" }?.variablesJson ?? ""
     #expect(sent.contains(#""signedId":"blob-1""#) && sent.contains(#""attachedUserId":42"#), "variables sent: \(sent)")
     #expect(try await Record.find(local.confirmedId()).current()?.text == "hi")
@@ -246,10 +246,10 @@ struct BridgeProbeTests {
     let file = FileManager.default.temporaryDirectory.appending(path: "clip-\(UUID().uuidString).mp4")
     try Data("abcdef".utf8).write(to: file)
 
-    let local = try await Moment.create(values: ["text": .string("hello")], uploading: UploadRequest(path: file.path, mutation: "CreateMoment", createBlob: "CreateBlob", variables: ["text": .string("hello")]))
+    let local = try await Moment.create(values: ["text": .string("hello")], action: "upload_clip", uploading: UploadRequest(path: file.path, createBlob: "CreateBlob", variables: ["text": .string("hello")]))
 
     #expect(local.id.hasPrefix("temp"))
-    #expect(local.upload != nil)
+    #expect(local.uploads["upload_clip"] != nil)
     #expect(try await local.confirmedId() == "m77")
     let sent = transport.calls.first { $0.operationName == "CreateMoment" }
     #expect(sent?.variablesJson.contains("\"signedId\":\"sid\"") == true)
@@ -291,7 +291,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id uuid likedByMe media createdAt } }"}]"#)
     let local = try await Moment.create(text: "hello", media: nil)
-    try await local.settled()
+    try await local.settled(action: nil)
     let moment = try #require(await Moment.find(try await local.confirmedId()).current())
 
     transport.enqueue("LikeMoment", reply: #"{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}"#)
@@ -300,8 +300,8 @@ struct BridgeProbeTests {
     await eventually("the refused like rolls back") { (try? await Moment.find(moment.id).current())??.likedByMe == false }
     #expect(try await Moment.find(moment.id).current()?.likedByMe == false)
 
-    await #expect(throws: (any Error).self) { try await liked.settled() }
-    try await liked.settled()
+    await #expect(throws: (any Error).self) { try await liked.settled(action: nil) }
+    try await liked.settled(action: nil)
   }
 
   private func openWithAMoment(_ transport: MockTransport) async throws -> Moment {
@@ -309,7 +309,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment($momentId: ID!) { shareMoment(momentId: $momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]"#)
     let local = try await Moment.create(text: "hello", media: nil)
-    try await local.settled()
+    try await local.settled(action: nil)
     return try #require(await Moment.find(try await local.confirmedId()).current())
   }
 

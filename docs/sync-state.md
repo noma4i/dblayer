@@ -10,10 +10,11 @@ Every record knows whether the server has seen it. The state is live like everyt
 | `sync.actions` | actions waiting for the server, in order (`create`, `update`, `destroy`, custom actions) |
 | `sync.dirtyFields` | fields changed locally and not yet confirmed |
 | `sync.error` | the last error (`kind`, `message` and optional GraphQL `extensions`) when the state is `failed` or `deliveryUnknown` |
-| `sync.attempts` | how many times sending was tried since the last `retry()` |
+| `sync.attempts` | how many times sending was tried since the last `retry(action)` |
 | `sync.since` | when the record entered this state |
+| `uploads` | one entry per declared upload action with its status, stage, bytes and error, empty when nothing is uploading |
 | `needsAttention` | the state is `failed` or `deliveryUnknown` |
-| `canRetry` | same as `needsAttention`: `retry()` can run |
+| `canRetry` | same as `needsAttention`: `retry(action)` can run |
 | `errorMessage` | `sync.error?.message` |
 
 | State | When |
@@ -40,7 +41,7 @@ struct MomentRow: View {
       Text(moment.text)
       if moment.sync.state == .pending || moment.sync.state == .sending { ProgressView() }
       if moment.sync.state == .failed || moment.sync.state == .deliveryUnknown {
-        Button("Retry") { Task { try await moment.retry() } }
+        Button("Retry") { Task { try await moment.retry(action: nil) } }
       }
     }
   }
@@ -54,7 +55,7 @@ fun MomentRow(moment: Moment) {
     Text(moment.text)
     if (moment.sync.state == SyncState.Pending || moment.sync.state == SyncState.Sending) CircularProgressIndicator()
     if (moment.sync.state == SyncState.Failed || moment.sync.state == SyncState.DeliveryUnknown) {
-      Button(onClick = { scope.launch { moment.retry() } }) { Text("Retry") }
+      Button(onClick = { scope.launch { moment.retry(null) } }) { Text("Retry") }
     }
   }
 }
@@ -80,7 +81,7 @@ Moment.failed          // records waiting for a decision
 
 Use them for an "unsent" banner, a retry-all button or a badge with the number of pending changes. `sync` is a reserved name: a model cannot have a field called `sync`.
 
-`retry()` and `retryAll()` suspend, return the number of reset operations or upload items, and throw errors to the caller.
+`retry(action)` and `retryAll()` suspend, return the number of reset operations or upload items, and throw errors to the caller.
 
 ## How a mutation is sent
 
@@ -98,7 +99,7 @@ retryAll()
 
 Later changes to the same record wait behind it.
 - Offline (`setOnline(false)`): the change waits and spends no attempts. When `setOnline(true)` is called, waiting changes are sent by themselves.
-- A plain transfer started without a confirmed answer, or the app stopped while sending: the record enters `deliveryUnknown` and waits for `retry()`.
+- A plain transfer started without a confirmed answer, or the app stopped while sending: the record enters `deliveryUnknown` and waits for `retry(action)`.
 - Encrypted requests with saved Pending repeat temporary failures using the saved identity. See [Retries](server-sync.md#retries).
 
 The pause uses Clock and the stored attempt count, so restarting preserves the count.
@@ -111,7 +112,7 @@ Temporary GraphQL codes keep optimistic changes pending on both transports.
 | The server permanently refuses | `failed` with `on_failure: :keep`, otherwise gone | with `:rollback` the change is rolled back in one commit and the error is reported |
 | A temporary GraphQL code, HTTP 408 or HTTP 429 | `pending` until the outbox budget is exhausted | the optimistic edit remains and sending resumes after a pause |
 | Unreachable before the transfer starts | `pending`, then `failed` after 40 attempts | retains the edit and encrypted Pending owner for retry or discard |
-| The action names a mutation that is not registered in `open(operations:)` | `failed` whatever `on_failure` says, error `operation <name> is not registered` | nothing is sent, the record keeps its change, register the operation and call `retry()` |
+| The action names a mutation that is not registered in `open(operations:)` | `failed` whatever `on_failure` says, error `operation <name> is not registered` | nothing is sent, the record keeps its change, register the operation and call `retry(action)` |
 | No answer after a plain transfer started, including HTTP 5xx | `deliveryUnknown` | the record keeps its edit because the server may have applied it |
 | Temporary encrypted HTTP failure with saved Pending | `pending` until the outbox budget is exhausted | the next attempt uses the saved request identity |
 
@@ -138,21 +139,21 @@ operation :like do
 end
 ```
 
-`destroy` has no `on_failure`: the record is hidden at once, and if the destroy fails for good (a refusal or 40 unreached attempts) the record comes back with its files and list positions, `state = failed` and the error, attempts and time in `sync`. `retry()` hides the record again and sends the destroy. `discard()` keeps the record and drops the destroy. Declaring `on_failure` on `destroy` is an error.
+`destroy` has no `on_failure`: the record is hidden at once, and if the destroy fails for good (a refusal or 40 unreached attempts) the record comes back with its files and list positions, `state = failed` and the error, attempts and time in `sync`. `retry(action)` hides the record again and sends the destroy. `discard(action)` keeps the record and drops the destroy. Declaring `on_failure` on `destroy` is an error.
 
 A record in `failed` or `deliveryUnknown` has two gestures:
 
 ```swift
-try await message.retry()     // back to pending, attempts reset, sent again
-try await message.discard()   // roll back the local change and drop it from the queue
+try await message.retry(action: nil)     // back to pending, attempts reset, sent again
+try await message.discard(action: nil)   // roll back the local change and drop it from the queue
 ```
 
 ```kotlin
-message.retry()     // back to pending, attempts reset, sent again
-message.discard()   // roll back the local change and drop it from the queue
+message.retry(null)     // back to pending, attempts reset, sent again
+message.discard(null)   // roll back the local change and drop it from the queue
 ```
 
-Later changes to the same record wait behind a `failed` or `deliveryUnknown` change and are sent after `retry()`. Other records are not blocked. `discard()` of a created record also drops the changes queued on it.
+Later changes to the same record wait behind a `failed` or `deliveryUnknown` change and are sent after `retry(action)`. Other records are not blocked. `discard(action)` of a created record also drops the changes queued on it.
 
 ## Online and offline
 
@@ -184,4 +185,4 @@ A whole list refreshes with `refresh()`. The load phase of the relation (`LoadPh
 
 ## Uploads
 
-A file upload is a pending operation of its record. While it runs, `record.sync.state` is `pending` or `sending`, and `record.upload` adds the stage, the sent bytes and the fraction. `retry()` and `discard()` work the same way. See [Files](files.md#uploads).
+A file upload is a pending operation of its record. While it runs, `record.sync.state` is `pending` or `sending`, and `record.uploads[action]` adds the stage, the sent bytes and the fraction. `retry(action)` and `discard(action)` work the same way. See [Files](files.md#uploads).

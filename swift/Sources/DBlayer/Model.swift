@@ -6,7 +6,7 @@ public protocol DBModel: Sendable, Identifiable, Hashable {
   init(wire: WireRow) throws
   var id: String { get }
   var sync: SyncInfo { get }
-  var upload: UploadInfo? { get }
+  var uploads: [String: UploadInfo] { get }
 }
 
 extension DBModel {
@@ -39,13 +39,13 @@ extension DBModel {
     try await DB.database.setEphemeral(model: Self.modelName, rowId: id, valuesJson: JSONValue.object(values).text)
   }
   @concurrent public func destroy() async throws { try await DB.database.destroy(model: Self.modelName, rowId: id) }
-  /// Waits until the server has answered every queued change of the record, throws on a refusal or when offline.
-  @concurrent public func settled() async throws { try await DB.database.settled(model: Self.modelName, rowId: id) }
+  /// Waits until the server has answered the queued changes of the record, or of the declared `action` when given, throws on a refusal or when offline.
+  @concurrent public func settled(action: String?) async throws { try await DB.database.settled(model: Self.modelName, rowId: id, action: action) }
   /// The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline.
   @concurrent public func confirmedId() async throws -> String { try await DB.database.confirmed(model: Self.modelName, rowId: id) }
 
-  @discardableResult @concurrent public func retry() async throws -> UInt64 { try await DB.database.retry(model: Self.modelName, rowId: id) }
-  @concurrent public func discard() async throws { try await DB.database.discard(model: Self.modelName, rowId: id) }
+  @discardableResult @concurrent public func retry(action: String?) async throws -> UInt64 { try await DB.database.retry(model: Self.modelName, rowId: id, action: action) }
+  @concurrent public func discard(action: String?) async throws { try await DB.database.discard(model: Self.modelName, rowId: id, action: action) }
   @discardableResult @concurrent public static func retryAll() async throws -> UInt64 { try await DB.database.retryAll() }
 
   public func related<Target: DBModel>(_ name: String, as _: Target.Type) -> LiveSource<[Target]> {

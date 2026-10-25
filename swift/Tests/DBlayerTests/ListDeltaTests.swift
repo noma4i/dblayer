@@ -61,7 +61,7 @@ extension BridgeProbeTests {
 
   fileprivate static func moment(_ id: String) -> WireRow {
     let cells: [Cell] = [.text(value: id), .null, .text(value: id), .bool(value: false), .keyed(entries: []), .null, .text(value: "x")]
-    return WireRow(id: id, revision: 1, estimatedBytes: 1, layout: Moment.wireLayout, cells: cells, sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), upload: nil)
+    return WireRow(id: id, revision: 1, estimatedBytes: 1, layout: Moment.wireLayout, cells: cells, sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), uploads: [])
   }
 
   fileprivate static func brokenMoment(_ id: String) -> WireRow {
@@ -168,7 +168,7 @@ extension BridgeProbeTests {
     let snapshots = Cursor(values)
     #expect(await snapshots.next("the empty list")?.rows.isEmpty == true)
     let local = try await Moment.create(text: "hello", media: nil)
-    try await local.settled()
+    try await local.settled(action: nil)
     gate.signal()
     let replaced = await snapshots.first("the snapshot that names the replaced id") { $0.replaced["m77"] != nil }?.replaced["m77"]
     #expect(replaced == local.id)

@@ -11,7 +11,7 @@ private let sessionCodes: [SessionCode] = [
 private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#
 
 private final class RefusedRetry: Database, @unchecked Sendable {
-  override func retry(model: String, rowId: String) async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
+  override func retry(model: String, rowId: String, action: String?) async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
   override func retryAll() async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
 }
 
@@ -22,7 +22,7 @@ extension BridgeProbeTests {
     defer { DB.current = real }
     let row = try await Moment.create(text: "saved")
     DB.current = RefusedRetry(noHandle: .init())
-    await #expect(throws: DbError.self) { try await row.retry() }
+    await #expect(throws: DbError.self) { try await row.retry(action: nil) }
     await #expect(throws: DbError.self) { try await Moment.retryAll() }
   }
   @MainActor
@@ -65,7 +65,7 @@ extension BridgeProbeTests {
     transport.enqueue("CreateMoment", failure: failure)
     let local = try await Moment.create(text: "hello", media: nil)
     do {
-      try await local.settled()
+      try await local.settled(action: nil)
       Issue.record("\(code): settled did not throw")
     } catch {
       #expect(sealedCode(error, "settled \(code)") == code)

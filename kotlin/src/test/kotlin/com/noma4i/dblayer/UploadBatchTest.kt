@@ -27,7 +27,7 @@ class UploadBatchTest {
             val items = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
             val rows = Asset.uploadCreate(items, UploadBatchRequest(operation = "create_files", createBlob = "CreateBlob"))
             assertEquals(2, rows.size)
-            assertTrue(rows.all { it.id.startsWith("temp-") && it.sync.state == SyncState.Sending && it.upload != null })
+            assertTrue(rows.all { it.id.startsWith("temp-") && it.sync.state == SyncState.Sending && it.uploads.isNotEmpty() })
             assertTrue(source.delete())
             repeat(2) { transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}""") }
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a1","clientKey":"key-1","size":2},{"id":"a0","clientKey":"key-0","size":2}]}}}""")

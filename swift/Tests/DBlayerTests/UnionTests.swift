@@ -132,7 +132,7 @@ extension BridgeProbeTests {
 
     let local = try await Record.create(containerId: "c", authorId: "u1", text: "hi")
     #expect(local.attachment == nil)
-    try await local.settled()
+    try await local.settled(action: nil)
     #expect(try await Record.find(local.confirmedId()).current()?.attachment == .moment(MomentAttachment(momentId: "m9", caption: "look")))
   }
 }

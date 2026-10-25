@@ -182,7 +182,7 @@ class BridgeProbeTest {
 
         val local = Moment.create(text = "hello", media = null)
         assertEquals(true, local.id.startsWith("temp"))
-        withTimeout(5000) { local.settled() }
+        withTimeout(5000) { local.settled(null) }
         assertEquals("m77", withTimeout(5000) { local.confirmedId() })
     }
 
@@ -213,11 +213,11 @@ class BridgeProbeTest {
         val file = java.io.File.createTempFile("clip", ".mp4").apply { writeText("abcdef") }
 
         val values = kotlinx.serialization.json.buildJsonObject { put("text", kotlinx.serialization.json.JsonPrimitive("hello")) }
-        val request = UploadRequest(file.path, "CreateMoment", createBlob = "CreateBlob", variables = values)
-        val local = uploadCreate("Moment", values, request, Moment)
+        val request = UploadRequest(file.path, createBlob = "CreateBlob", variables = values)
+        val local = uploadCreate("Moment", "upload_clip", values, request, Moment)
 
         assertEquals(true, local.id.startsWith("temp"))
-        assertEquals(true, local.upload != null)
+        assertEquals(true, local.uploads["upload_clip"] != null)
         assertEquals("m77", withTimeout(5000) { local.confirmedId() })
         val sent = transport.calls.filter { it.operationName == "CreateMoment" }
         assertEquals(1, sent.size)

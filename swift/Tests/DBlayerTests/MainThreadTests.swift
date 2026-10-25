@@ -23,7 +23,7 @@ struct ProbeRow: DBModel {
   let key: String
   var id: String { MainThreadReads.shared.touch(); return key }
   let sync = SyncInfo()
-  let upload: UploadInfo? = nil
+  let uploads: [String: UploadInfo] = [:]
 
   init(key: String) { self.key = key }
   init(wire: WireRow) throws { key = wire.id }
@@ -35,7 +35,7 @@ struct CachedProbe: DBModel {
   static let reads = MainThreadReads()
   let id: String
   let sync = SyncInfo()
-  let upload: UploadInfo? = nil
+  let uploads: [String: UploadInfo] = [:]
 
   init(wire: WireRow) throws { id = wire.id; Self.reads.touch() }
 }
@@ -149,7 +149,7 @@ struct PreparedRow: DBModel {
   let prepared: DispatchSemaphore
   var id: String { if !Thread.isMainThread { prepared.signal() }; return key }
   let sync = SyncInfo()
-  let upload: UploadInfo? = nil
+  let uploads: [String: UploadInfo] = [:]
 
   init(key: String, prepared: DispatchSemaphore) { self.key = key; self.prepared = prepared }
   init(wire: WireRow) throws { key = wire.id; prepared = DispatchSemaphore(value: 0) }
@@ -178,7 +178,7 @@ struct ListUpdatesReleaseTests {
     let token: Token?
     var id: String { key }
     let sync = SyncInfo()
-    let upload: UploadInfo? = nil
+    let uploads: [String: UploadInfo] = [:]
 
     init(key: String, token: Token? = nil) { self.key = key; self.token = token }
     init(wire: WireRow) throws { key = wire.id; token = nil }

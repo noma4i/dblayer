@@ -11,7 +11,7 @@ extension BridgeProbeTests {
     let database = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: schema, transport: transport)
     try database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]"#)
     let row = try await database.create(model: "Record", valuesJson: "{}", argsJson: "{}")
-    try await database.settled(model: "Record", rowId: row.id)
+    try await database.settled(model: "Record", rowId: row.id, action: nil)
     try await database.warm(queryJson: #"{"model":"Record"}"#)
     #expect(try database.peekRow(model: "Record", rowId: "r2")?.id == "r2")
   }

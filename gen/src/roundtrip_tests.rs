@@ -83,7 +83,7 @@ fn inv_row_09_inv_dsl_01_every_accepted_model_survives_create_find_observe_updat
         db.update(model, &row.id, values.iter().filter(|(name, _)| **name == key).map(|(name, value)| (name.clone(), value.clone())).collect()).unwrap_or_else(|error| panic!("{context}: {error}"));
         db.destroy(model, &row.id).unwrap_or_else(|error| panic!("{context}: {error}"));
         assert!(db.find(model, &row.id).unwrap().is_none(), "{context}: destroyed row is still readable");
-        db.discard(model, &RowId::new(row.id.as_str()).unwrap()).unwrap_or_else(|error| panic!("{context}: {error}"));
+        db.discard(model, &RowId::new(row.id.as_str()).unwrap(), None).unwrap_or_else(|error| panic!("{context}: {error}"));
         assert!(db.find(model, &row.id).unwrap().is_none(), "{context}: discarding a created row left it");
     }
     assert!(accepted >= 100, "only {accepted} of 200 generated models were accepted");

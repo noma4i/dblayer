@@ -51,6 +51,11 @@ model Moment do
   operation :update do
     mutation "UpdateMoment"
   end
+  operation :upload_clip, upload: true do
+    mutation "CreateMoment"
+    optimistic false
+    response from: "createMoment"
+  end
   operation :destroy do
     mutation "DeleteMoment"
   end

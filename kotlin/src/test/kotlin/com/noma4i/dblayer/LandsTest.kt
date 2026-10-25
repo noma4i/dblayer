@@ -12,7 +12,7 @@ class LandsTest {
         val database = openDatabase(Config(null, null, 64u), schema, transport)
         database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]""")
         val row = database.create("Record", "{}", "{}")
-        database.settled("Record", row.id)
+        database.settled("Record", row.id, null)
         database.warm("""{"model":"Record"}""")
         assertEquals("r2", database.peekRow("Record", "r2")?.id)
     }

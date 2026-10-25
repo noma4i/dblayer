@@ -10,7 +10,7 @@ final class ListEditSink: @unchecked Sendable {
 struct ListEditTests {
   static func moment(_ id: String, text: String? = nil) -> WireRow {
     let cells: [Cell] = [.text(value: id), .null, .text(value: text ?? id), .bool(value: false), .keyed(entries: []), .null, .text(value: "x")]
-    return WireRow(id: id, revision: 1, estimatedBytes: 1, layout: Moment.wireLayout, cells: cells, sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), upload: nil)
+    return WireRow(id: id, revision: 1, estimatedBytes: 1, layout: Moment.wireLayout, cells: cells, sync: WireSync(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0), uploads: [])
   }
 
   static func change(

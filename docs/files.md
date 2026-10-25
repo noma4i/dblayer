@@ -61,45 +61,43 @@ Running checksum and range reads check cancellation between 1 MiB chunks.
 Each file has an `op_item` row. Multipart parts and saved requests include the item position.
 The database format changes with these tables. Opening an incompatible database clears it through the existing recreation policy.
 
-The steps are operations you registered by name. Each upload names the ones it uses.
+An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action again while it is open is refused. The steps are operations you registered by name. Each upload names the ones it uses.
 
 ```swift
-let steps = UploadSteps(mutation: "CreateMoment")
-    .single(create: "CreateBlob")
-    .multipart(init: "InitMultipart", presign: "PresignParts", complete: "CompleteMultipart", abort: "AbortMultipart")
-try await sync.upload(moment, path: url.path, steps: steps, variables: ["text": "hello"])
-moment.upload?.status       // .uploading
-moment.upload?.fraction     // 0.42
-await sync.cancelUpload(moment)
+let request = UploadRequest(path: url.path, createBlob: "CreateBlob", multipart: .init(initiate: "InitMultipart", presign: "PresignParts", complete: "CompleteMultipart", abort: "AbortMultipart"), variables: ["text": .string("hello")])
+try await moment.upload(action: "upload_clip", request)
+moment.uploads["upload_clip"]?.status       // .uploading
+moment.uploads["upload_clip"]?.percent      // 42.0
+try await moment.cancelUpload(action: "upload_clip")
 ```
 
 ```kotlin
-val steps = UploadSteps(mutation = "CreateMoment")
-    .single(create = "CreateBlob")
-    .multipart(init = "InitMultipart", presign = "PresignParts", complete = "CompleteMultipart", abort = "AbortMultipart")
-sync.upload(moment, path = file.path, steps = steps, variables = mapOf("text" to "hello"))
-moment.upload?.status       // Uploading
-moment.upload?.fraction     // 0.42
-sync.cancelUpload(moment)
+val request = UploadRequest(path = file.path, createBlob = "CreateBlob", multipart = UploadRequest.Multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart"), variables = variables)
+moment.upload("upload_clip", request)
+moment.uploads["upload_clip"]?.status       // Uploading
+moment.uploads["upload_clip"]?.percent      // 42.0
+moment.cancelUpload("upload_clip")
 ```
+
+`retry`, `discard` and `settled` take an `action`. Pass `null` for the whole record, or a declared action for only its operations and uploads. An action the model does not declare is refused. Preparing the request and calling the library run off the caller thread.
 
 ### Create with an upload
 
-A record that does not exist yet can be created together with its upload. The record appears at once with a temporary id and its `upload` state. No create operation is queued: after the file is stored, the content mutation creates the record on the server and its id replaces the temporary one. A failed upload leaves the record failed, `retry()` sends again and `discard()` removes it.
+A record that does not exist yet can be created together with its upload. The record appears at once with a temporary id and its `uploads[action]` state. No create operation is queued: after the file is stored, the content mutation creates the record on the server and its id replaces the temporary one. A failed upload leaves the record failed, `retry(action)` sends again and `discard(action)` removes it.
 
 Declare a named operation for each content mutation, with `upload MutationName` and its record `root`. Uploads use the same response normalization as other actions. Create and update uploads can have different nested roots on the same model.
 
 ```swift
-let request = UploadRequest(path: url.path, mutation: "CreateMoment", createBlob: "CreateBlob", variables: ["text": .string("hello")])
-let moment = try await Moment.create(values: ["text": .string("hello")], uploading: request)
-moment.upload?.fraction     // 0.42
+let request = UploadRequest(path: url.path, createBlob: "CreateBlob", variables: ["text": .string("hello")])
+let moment = try await Moment.create(values: ["text": .string("hello")], action: "upload_clip", uploading: request)
+moment.uploads["upload_clip"]?.percent      // 42.0
 try await moment.confirmedId()
 ```
 
 ```kotlin
-val request = UploadRequest(path = file.path, mutation = "CreateMoment", createBlob = "CreateBlob", variables = variables)
-val moment = uploadCreate("Moment", values, request, Moment)
-moment.upload?.percent      // 42.0
+val request = UploadRequest(path = file.path, createBlob = "CreateBlob", variables = variables)
+val moment = uploadCreate("Moment", "upload_clip", values, request, Moment)
+moment.uploads["upload_clip"]?.percent      // 42.0
 moment.confirmedId()
 ```
 
@@ -115,7 +113,7 @@ An individual file failure leaves other transfers running and delays the final m
 Retrying a failed file preserves completed transfers.
 Discarding a record removes it from the operation and recalculates the remaining count.
 Below the declared minimum, the remaining records use the declared single-record mutation.
-An optional `renumber:` option of `batch` rewrites the remaining records' position and size in that same commit after `discard()` or `cancelUpload()`.
+An optional `renumber:` option of `batch` rewrites the remaining records' position and size in that same commit after `discard(action)` or `cancelUpload(action)`.
 The same commit updates saved mutation variables declared by `batch input:`, including values used after reopening the cache.
 Positions follow the original item order, starting at the required `start: 0` or `start: 1`.
 Below the declared minimum, these fields stay unchanged and the application decides how to represent a single record.
@@ -156,7 +154,7 @@ let records = try await Asset.uploadCreate(
   items: files.map { UploadItem(values: $0.values, path: $0.path) },
   request: UploadBatchRequest(operation: "create_files", createBlob: "CreateBlob")
 )
-try await records[1].discard()
+try await records[1].discard(action: "create_files")
 ```
 
 ```kotlin
@@ -164,12 +162,12 @@ val records = Asset.uploadCreate(
     items = files.map { UploadItem(values = it.values, path = it.path) },
     request = UploadBatchRequest(operation = "create_files", createBlob = "CreateBlob"),
 )
-records[1].discard()
+records[1].discard("create_files")
 ```
 
 Each returned record has a temporary id, local file preview, `Sending` state, and independent upload progress.
 Use item `variables` for additional input object fields and request `variables` for shared mutation arguments.
-`cancelUpload()` removes only the selected transfer and keeps its local record.
+`cancelUpload(action)` removes only the selected transfer and keeps its local record.
 Offline cancellation and restart use the same stored file and multipart state as a single upload.
 
 ### Typed variables of the content mutation
@@ -187,14 +185,14 @@ end
 
 ```swift
 let widgets = [MomentWidgetInput(kind: .emoji, props: .emoji(MomentEmojiInput(code: "fire")))]
-let request = UploadRequest(path: url.path, mutation: "MomentCreateFile", createBlob: "CreateBlob", variables: try Moment.createFileVariables(widgets: widgets))
-let moment = try await Moment.create(values: ["text": .string("hello")], uploading: request)
+let request = UploadRequest(path: url.path, createBlob: "CreateBlob", variables: try Moment.createFileVariables(widgets: widgets))
+let moment = try await Moment.create(values: ["text": .string("hello")], action: "create_file", uploading: request)
 ```
 
 ```kotlin
 val widgets = listOf(MomentWidgetInput(kind = WidgetKind.Emoji, props = MomentWidgetProps.Emoji(MomentEmojiInput(code = "fire"))))
-val request = UploadRequest(path = file.path, mutation = "MomentCreateFile", createBlob = "CreateBlob", variables = Moment.createFileVariables(widgets = widgets))
-val moment = uploadCreate("Moment", values, request, Moment)
+val request = UploadRequest(path = file.path, createBlob = "CreateBlob", variables = Moment.createFileVariables(widgets = widgets))
+val moment = uploadCreate("Moment", "create_file", values, request, Moment)
 ```
 
 ### Scenarios
@@ -222,7 +220,7 @@ The final content mutation does not hold a file permit.
 
 ### State
 
-`record.upload` is `nil` when nothing is running. It changes through the same live reads as `record.sync`, so observers get a new row for every state or progress change.
+`record.uploads` is empty when nothing is running, otherwise it holds one entry per declared upload action. It changes through the same live reads as `record.sync`, so observers get a new row for every state or progress change.
 
 | Field | Meaning |
 | ----- | ------- |
@@ -241,15 +239,15 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 
 - Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts.
 - Each step and multipart part stores its retry count and next retry time. Restarting preserves both. A successful step removes its retry record.
-- An explicit `retry()` after failure clears saved retry counts and times, giving unfinished steps a fresh budget.
+- An explicit `retry(action)` after failure clears saved retry counts and times, giving unfinished steps a fresh budget.
 - A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
 - A `403` renews the single-upload url or affected part url after backoff. The renewal uses that PUT step's retry budget. Urls older than the presign lifetime are requested again for unfinished parts.
 - The final content mutation uses the [outbox retry policy](server-sync.md#retries), including its saved budget and encrypted request identity.
 - Retrying the content mutation preserves confirmed file transfers.
 - The grant, including `signedId`, `blobId`, URL and headers, is stored before PUT. A separate flag records confirmed transfer.
-- A restarted unfinished PUT uses its saved grant. `retry()` after a failed or unknown content mutation skips confirmed transfers.
+- A restarted unfinished PUT uses its saved grant. `retry(action)` after a failed or unknown content mutation skips confirmed transfers.
 - A multipart failure calls `abort` only while parts remain unconfirmed. After all parts are confirmed, a failed `complete` preserves their ETags and upload id.
-- `retry()` and `discard()` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.
+- `retry(action)` and `discard(action)` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.
 - Offline cancellation returns without a network call and keeps the multipart upload id. After `setOnline(true)`, the saved cancellation aborts the multipart and removes the operation.
 - After the content mutation starts, cancelling a single upload returns `false` immediately. Cancelling a batch member returns `InFlight`.
 - One record has one upload at a time.

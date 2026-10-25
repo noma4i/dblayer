@@ -150,7 +150,7 @@ class UnionTest {
 
         val local = Record.create(containerId = "c", authorId = "u1", text = "hi")
         assertNull(local.attachment)
-        withTimeout(5000) { local.settled() }
+        withTimeout(5000) { local.settled(null) }
         assertEquals(RecordAttachment.Moment(MomentAttachment(momentId = "m9", caption = "look")), attachmentOf(withTimeout(5000) { local.confirmedId() }))
     }
 }

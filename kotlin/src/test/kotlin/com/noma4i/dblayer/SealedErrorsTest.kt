@@ -10,7 +10,7 @@ import org.junit.Test
 
 class SealedErrorsTest {
     private class RefusedRetry : Database(NoHandle) {
-        override suspend fun retry(model: String, rowId: String): ULong = throw DbException.Invalid("retry refused")
+        override suspend fun retry(model: String, rowId: String, action: String?): ULong = throw DbException.Invalid("retry refused")
         override suspend fun retryAll(): ULong = throw DbException.Invalid("retry refused")
     }
 
@@ -20,7 +20,7 @@ class SealedErrorsTest {
         val real = DBlayer.database
         DBlayer.database = RefusedRetry()
         try {
-            org.junit.Assert.assertTrue(runCatching { row.retry() }.exceptionOrNull() is DbException.Invalid)
+            org.junit.Assert.assertTrue(runCatching { row.retry(null) }.exceptionOrNull() is DbException.Invalid)
             org.junit.Assert.assertTrue(runCatching { retryAll() }.exceptionOrNull() is DbException.Invalid)
         } finally {
             DBlayer.database = real
@@ -55,7 +55,7 @@ class SealedErrorsTest {
 
             transport.enqueue("CreateMoment", failure)
             val local = Moment.create(text = "hello", media = null)
-            assertEquals(code, codeOf(runCatching { withTimeout(5000) { local.settled() } }.exceptionOrNull(), "settled $code"))
+            assertEquals(code, codeOf(runCatching { withTimeout(5000) { local.settled(null) } }.exceptionOrNull(), "settled $code"))
         }
     }
 

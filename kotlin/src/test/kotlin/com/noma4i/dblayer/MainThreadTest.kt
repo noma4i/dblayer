@@ -1,5 +1,6 @@
 package com.noma4i.dblayer
 
+import com.noma4i.dblayer.models.Asset
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.MomentInput
 import com.noma4i.dblayer.models.Operations
@@ -101,6 +102,20 @@ class MainThreadTest {
         val widget = WidgetInput(kind = WidgetKind.Emoji, settings = SettingsInput(itemProps = recording("emoji")))
 
         withContext(main) { Operations.momentCreate(MomentInput(file = "s1", widgets = GraphQLNullable.Value(listOf(widget)))) }
+
+        assertEquals(setOf("prepare"), stages())
+        assertEquals(0, onMain("prepare"))
+    }
+
+    @Test
+    fun uploads_prepare_their_request_off_the_caller_thread() = bounded {
+        reopen(Config(null, null, 64u), modelsJSON, null)
+        val moment = Moment.create(text = "a")
+        val request = UploadRequest("/nonexistent", createBlob = "CreateBlob", variables = recording("v"))
+
+        runCatching { withContext(main) { moment.upload("upload_clip", request) } }
+        runCatching { withContext(main) { uploadCreate("Moment", "upload_clip", recording("v"), request, Moment) } }
+        runCatching { withContext(main) { Asset.uploadCreate(listOf(UploadItem(recording("v"), "/nonexistent")), UploadBatchRequest("create_files")) } }
 
         assertEquals(setOf("prepare"), stages())
         assertEquals(0, onMain("prepare"))

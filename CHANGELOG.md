@@ -32,6 +32,10 @@
 - Upload files are written to the cache and removed on the blocking pool, never on an async executor.
 - Removing files after a confirmed destroy or a server destroy event runs on the blocking pool.
 - Uploads are identified by their declared upload action (`model:upload:action`): `upload`, `uploadCreate` and `cancelUpload` take the action, a record can hold one upload per action, and an undeclared action admits nothing.
+- Swift and Kotlin pass upload requests as typed records; `UploadRequest` no longer carries the content mutation, it comes from the declared upload action, and an upload action without a mutation is refused.
+- Swift `upload`, `create(uploading:)` and `cancelUpload` and Kotlin `upload`, `uploadCreate` and `cancelUpload` take the declared upload action and run off the caller thread.
+- `retry`, `discard` and `settled` on Swift and Kotlin take a required `action` that is `nil`/`null` for the whole record.
+- A model exposes `uploads[action]` instead of `upload`.
 - A record reports its uploads in `SyncInfo.uploads`, one entry per declared action, stored in the `sync_upload` table; `SyncInfo.actions` lists ordinary operations only. The single `upload` property of a record is removed.
 - `retry`, `discard` and `settled` take an optional declared action: none selects the whole record, an action selects only its operations or uploads, and an unknown action is refused.
 - Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns. A failed batch item is removed on its own and its siblings stay.
