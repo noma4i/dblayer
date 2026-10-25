@@ -29,6 +29,9 @@
 - Cancelling a subscription and expanding a window never wait for the observer registry: a busy registry takes the request later.
 - A refresh deferred by the read limit or a running read keeps its touched rows and reads only those, instead of re-reading the whole list.
 - Connecting a live query to a remote relation no longer waits for the storage writer: the stored window state is read on a blocking task and the first value is held until it arrives.
+- Upload files are written to the cache and removed on the blocking pool, never on an async executor.
+- Removing files after a confirmed destroy or a server destroy event runs on the blocking pool.
+- Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns.
 
 ### Fixed
 - Explicit null stays distinct from an absent field after reopening the database.
@@ -49,6 +52,9 @@
 - A failed multipart `complete` keeps confirmed parts and the upload id.
 - A database reset rejects upload admission queued before the reset.
 - Bundled SQLite respects the macOS 14 deployment target.
+- Dropping `Sync` no longer cancels queued upload file cleanup.
+- Discarding or rolling back an upload keeps its multipart abort until the server answers, with or without confirmed parts.
+- A finished or committed upload never records a multipart abort.
 
 ### Removed
 - Swift `JSONValue.parse`.

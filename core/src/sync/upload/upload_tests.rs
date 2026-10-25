@@ -1025,3 +1025,29 @@ async fn upload_housekeeping_runs_at_the_first_flush_and_when_coming_online_neve
     assert!(rig.db.outbox().unwrap().is_empty(), "online transition");
     assert_eq!(rig.transport.call_count("AbortMultipart"), 2);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_finished_multipart_upload_never_records_an_abort() {
+    let rig = upload_rig(small());
+    multipart_replies(&rig);
+    rig.transport.enqueue("CreateMoment", created("m9"));
+    let source = file(TWELVE);
+    rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert!(rig.db.outbox().unwrap().is_empty());
+    assert_eq!((orphan_count(&rig), rig.transport.call_count("AbortMultipart")), (0, 0));
+    rig.sync.inner.upload_housekeeping().await;
+    assert_eq!(rig.transport.call_count("AbortMultipart"), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn committing_an_upload_whose_multipart_id_is_still_stored_never_records_an_abort() {
+    let rig = upload_rig(small());
+    let source = file(TWELVE);
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(confirmed_parts())).unwrap();
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Response, rig.db.generation());
+    envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::Committed });
+    rig.db.shared.store.commit(envelope).unwrap();
+    assert!(rig.db.outbox().unwrap().is_empty());
+    assert_eq!(orphan_count(&rig), 0);
+}

@@ -882,6 +882,9 @@ fn apply_transitions(
                 }
                 synced.extend(op_keys_of(connection, *seq)?);
                 if status.is_terminal() {
+                    if *status == OperationStatus::RolledBack {
+                        crate::operation::record_orphan_uploads(connection, *seq, None)?;
+                    }
                     delete_operation(connection, *seq)?;
                 } else {
                     set_open_status(connection, *seq, *status, None, now_ms)?;
@@ -956,6 +959,9 @@ fn apply_transitions(
                     Some(status) => connection.query_row("SELECT EXISTS (SELECT 1 FROM op WHERE seq = ?1 AND status = ?2)", params![seq, status.as_sql()], |row| row.get(0))?,
                     None => true,
                 };
+                if matches {
+                    crate::operation::record_orphan_uploads(connection, *seq, None)?;
+                }
                 let removed = if matches { delete_operation(connection, *seq)? } else { 0 };
                 if removed == 0 {
                     result.unknown_operation_acks += 1;
