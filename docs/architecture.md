@@ -66,6 +66,8 @@ Typed members keep their columns when another member contains unrestricted data.
 
 A file the build does not recognise is dropped and created again when the database opens, so there is no migration. Row data, search, outbox and caches all use typed columns.
 
+A reset records its complete model list in one transaction before clearing data. An interrupted reset resumes from that complete list when the database opens.
+
 | Table | Holds |
 | ----- | ----- |
 | `row_<model>` | One row per record: id, revision, birth revision, one typed column per scalar and enum field, `rev__<field>` revision columns, `<field>__present` flags of typed objects |

@@ -2,32 +2,42 @@ use serde_json::Value;
 
 use crate::db::{Db, DbError};
 use crate::ddl::table_name;
+use crate::identity::Generation;
 
 use super::{journal, record_stamped, CloudChange, MergeSource, Hlc};
 
 impl Db {
-    pub fn cloud_replica(&self) -> Result<String, DbError> {
-        Ok(journal::replica(&self.shared.store.lock().connection)?)
+    pub fn cloud_replica(&self, generation: Generation) -> Result<String, DbError> {
+        let inner = self.shared.store.lock();
+        inner.ensure_generation(generation)?;
+        Ok(journal::replica(&inner.connection)?)
     }
 
-    pub fn cloud_observe(&self, seen: &Hlc) -> Result<(), DbError> {
-        Ok(journal::observe(&self.shared.store.lock().connection, seen)?)
+    pub fn cloud_observe(&self, generation: Generation, seen: &Hlc) -> Result<(), DbError> {
+        let inner = self.shared.store.lock();
+        inner.ensure_generation(generation)?;
+        Ok(journal::observe(&inner.connection, seen)?)
     }
 
     pub fn cloud_pending(&self) -> Result<u64, DbError> {
         Ok(journal::pending(&self.shared.store.lock().connection)?)
     }
 
-    pub fn cloud_cursor(&self) -> Result<Option<Vec<u8>>, DbError> {
-        Ok(journal::cursor(&self.shared.store.lock().connection)?)
-    }
-
-    pub fn cloud_batch(&self, limit: u32) -> Result<Vec<(i64, CloudChange)>, DbError> {
-        Ok(journal::batch(&self.shared.store.lock().connection, limit)?)
-    }
-
-    pub fn cloud_ack(&self, seqs: &[i64]) -> Result<(), DbError> {
+    pub fn cloud_cursor(&self, generation: Generation) -> Result<Option<Vec<u8>>, DbError> {
         let inner = self.shared.store.lock();
+        inner.ensure_generation(generation)?;
+        Ok(journal::cursor(&inner.connection)?)
+    }
+
+    pub fn cloud_batch(&self, generation: Generation, limit: u32) -> Result<Vec<(i64, CloudChange)>, DbError> {
+        let inner = self.shared.store.lock();
+        inner.ensure_generation(generation)?;
+        Ok(journal::batch(&inner.connection, limit)?)
+    }
+
+    pub fn cloud_ack(&self, generation: Generation, seqs: &[i64]) -> Result<(), DbError> {
+        let inner = self.shared.store.lock();
+        inner.ensure_generation(generation)?;
         let transaction = inner.connection.unchecked_transaction()?;
         journal::ack(&transaction, seqs)?;
         Ok(transaction.commit()?)
@@ -37,8 +47,9 @@ impl Db {
         self.shared.cloud_changes.subscribe()
     }
 
-    pub fn cloud_unstamped(&self) -> Result<Vec<(String, String)>, DbError> {
+    pub fn cloud_unstamped(&self, generation: Generation) -> Result<Vec<(String, String)>, DbError> {
         let inner = self.shared.store.lock();
+        inner.ensure_generation(generation)?;
         let mut found = Vec::new();
         for spec in self.shared.specs.values().filter(|spec| spec.is_local() && !spec.cloud.is_empty()) {
             let sql = format!(
@@ -52,26 +63,22 @@ impl Db {
         Ok(found)
     }
 
-    pub fn cloud_stamp_unstamped(&self, source: MergeSource) -> Result<(), DbError> {
-        let unstamped = self.cloud_unstamped()?;
-        let mut rows = Vec::new();
-        for (model, id) in unstamped {
-            if let Some(row) = self.shared.read(&[model.as_str()], |reader| Ok(reader.point(&model, &id)?))? {
-                rows.push((model, id, row));
-            }
-        }
+    pub fn cloud_stamp_rows(&self, generation: Generation, rows: &[(String, String)], source: MergeSource) -> Result<(), DbError> {
         let inner = self.shared.store.lock();
+        inner.ensure_generation(generation)?;
         let now_ms = inner.now_ms();
         let transaction = inner.connection.unchecked_transaction()?;
         let replica = journal::replica(&transaction)?;
-        for (model, id, row) in rows {
-            let spec = self.shared.spec(&model)?;
+        let reader = crate::store::Reader::new(&transaction, &inner.models);
+        for (model, id) in rows {
+            let Some(row) = reader.point(model, id)? else { continue };
+            let spec = self.shared.spec(model)?;
             for name in &spec.cloud {
                 let stamp = match source {
                     MergeSource::UseLocal => journal::next_stamp(&transaction, now_ms)?,
                     MergeSource::UseCloud => Hlc::new(0, 0, &replica),
                 };
-                record_stamped(&transaction, &model, &id, name, &stamp, &row.get(name).cloned().unwrap_or(Value::Null))?;
+                record_stamped(&transaction, model, id, name, &stamp, &row.get(name).cloned().unwrap_or(Value::Null))?;
             }
         }
         transaction.commit()?;

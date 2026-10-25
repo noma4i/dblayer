@@ -11,6 +11,7 @@ mod wire;
 pub(crate) use book::{record_local, record_stamped, write_book, LocalEdit};
 pub use book::{CloudApplied, CloudBook};
 pub use io::{CloudAccount, CloudBlob, CloudChange, CloudError, CloudIo, CloudPage};
+pub(crate) use journal::row_fields;
 pub use run::Cloud;
 pub use stamp::{outranks, Hlc};
 pub use state::{CloudState, MergeSource};

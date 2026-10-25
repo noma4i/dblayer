@@ -90,7 +90,7 @@ async fn inv_cloud_10_offline_does_not_spend_attempts_and_a_signed_out_account_a
 
 #[tokio::test]
 async fn inv_cloud_11_rows_without_stamps_wait_for_a_source_choice() {
-    for (source, local_wins) in [(MergeSource::UseLocal, true), (MergeSource::UseCloud, false)] {
+    for (source, local_wins, edit_during_pull) in [(MergeSource::UseLocal, true, false), (MergeSource::UseLocal, true, true), (MergeSource::UseCloud, false, false)] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.db");
         let fake = FakeCloud::new();
@@ -106,10 +106,19 @@ async fn inv_cloud_11_rows_without_stamps_wait_for_a_source_choice() {
         a.cloud.sync_now().await.unwrap();
         assert_eq!(a.cloud.state(), CloudState::NeedsInitialMerge { rows: 1 });
         assert_eq!(fake.calls(), calls, "no cloud call before the choice");
+        if edit_during_pull {
+            let db = a.db.clone();
+            let edited = std::sync::atomic::AtomicBool::new(false);
+            fake.before_pull_reply(move || {
+                if !edited.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    db.update("notes", &RowId::new("n1").unwrap(), obj(json!({"title": "edited"}))).unwrap();
+                }
+            });
+        }
         a.cloud.resolve_initial_merge(source).await.unwrap();
         a.cloud.sync_now().await.unwrap();
         remote.cloud.sync_now().await.unwrap();
-        let want = if local_wins { "local" } else { "remote" };
+        let want = if !local_wins { "remote" } else if edit_during_pull { "edited" } else { "local" };
         assert_eq!(title_of(&a, "n1").as_deref(), Some(want), "{source:?} on the first device");
         assert_eq!(title_of(&remote, "n1").as_deref(), Some(want), "{source:?} on the second device");
         assert_eq!(a.cloud.state(), CloudState::Idle);

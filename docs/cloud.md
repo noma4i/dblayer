@@ -97,7 +97,14 @@ Failures retry with the shared backoff and wait for connectivity. `Throttled` wa
 
 ## First connection
 
+A full database reset clears local cloud values, stamps, delete marks, pending changes, replica identity and the pull cursor. Remote cloud data remains unchanged.
+Cloud replies retain the database generation captured before their request. A reset rejects replies from the previous generation before they write rows or synchronization state.
+
 Rows written while `cloud` was listed carry stamps from the first write, so a new device merges by attribute with no extra step. Rows that exist without stamps (a model that gained `cloud` after it held data) stop the sync in `NeedsInitialMerge`. The app calls `resolveInitialMerge` with `UseLocal` to make those rows win, or `UseCloud` to let any cloud value win. Equal values need no choice.
+
+The choice applies to rows selected when the call starts. `UseLocal` reads their latest values after fetching remote clocks, preserving edits made during that fetch.
+
+Cloud values received before a server row are kept until the row arrives. Explicit pending local values take priority and enter the outgoing journal when applied.
 
 ## Limits
 

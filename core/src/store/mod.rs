@@ -65,6 +65,13 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
+    pub(crate) fn ensure_generation(&self, generation: Generation) -> Result<(), StoreError> {
+        if generation != self.generation {
+            return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration));
+        }
+        Ok(())
+    }
+
     pub(crate) fn now_ms(&self) -> i64 {
         i64::try_from(self.clock.now().as_millis()).unwrap_or(i64::MAX)
     }

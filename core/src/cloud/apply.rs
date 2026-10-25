@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
 use crate::db::{Db, DbError};
-use crate::identity::{ModelKey, RowId};
+use crate::identity::{Generation, ModelKey, RowId};
 use crate::store::Reader;
 
 use super::{journal, outranks, CloudApplied, CloudBook, CloudChange, Hlc};
@@ -44,8 +44,7 @@ impl Db {
         Ok(())
     }
 
-    pub(crate) fn apply_cloud_page(&self, own: &str, changes: &[CloudChange], cursor: &[u8]) -> Result<(), DbError> {
-        let generation = self.generation();
+    pub(crate) fn apply_cloud_page(&self, generation: Generation, own: &str, changes: &[CloudChange], cursor: &[u8]) -> Result<(), DbError> {
         let now_ms = self.shared.store.lock().now_ms();
         self.commit_following(generation, |reader| {
             let connection = reader.connection();

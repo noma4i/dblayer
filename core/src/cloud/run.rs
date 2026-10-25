@@ -68,12 +68,15 @@ impl Cloud {
     }
 
     pub async fn resolve_initial_merge(&self, source: MergeSource) -> Result<(), CloudError> {
+        let _turn = self.inner.pass.lock().await;
+        let generation = self.inner.db.generation();
+        let rows = self.inner.db.cloud_unstamped(generation)?;
         if source == MergeSource::UseLocal {
             let mut cursor = None;
             loop {
                 let page = self.inner.io.pull(cursor, BATCH).await?;
                 for change in &decode(&page)? {
-                    self.inner.db.cloud_observe(&Hlc::new(change.clock_ms, change.clock_count, &change.replica))?;
+                    self.inner.db.cloud_observe(generation, &Hlc::new(change.clock_ms, change.clock_count, &change.replica))?;
                 }
                 if !page.more {
                     break;
@@ -81,7 +84,7 @@ impl Cloud {
                 cursor = Some(page.cursor);
             }
         }
-        self.inner.db.cloud_stamp_unstamped(source)?;
+        self.inner.db.cloud_stamp_rows(generation, &rows, source)?;
         self.inner.wake.notify_one();
         Ok(())
     }
@@ -174,7 +177,8 @@ impl Inner {
 
     async fn pass(&self, pull: bool) -> Result<(), CloudError> {
         let _turn = self.pass.lock().await;
-        let unstamped = self.db.cloud_unstamped()?;
+        let generation = self.db.generation();
+        let unstamped = self.db.cloud_unstamped(generation)?;
         if !unstamped.is_empty() {
             self.state.send_replace(CloudState::NeedsInitialMerge { rows: unstamped.len() as u64 });
             return Ok(());
@@ -185,21 +189,21 @@ impl Inner {
             CloudAccount::Restricted => return Err(CloudError::Rejected { detail: "the cloud account is restricted".into() }),
         }
         self.state.send_replace(CloudState::Syncing);
-        let own = self.db.cloud_replica()?;
+        let own = self.db.cloud_replica(generation)?;
         loop {
             loop {
-                let batch = self.db.cloud_batch(BATCH)?;
+                let batch = self.db.cloud_batch(generation, BATCH)?;
                 if batch.is_empty() {
                     break;
                 }
                 let (seqs, changes): (Vec<i64>, Vec<_>) = batch.into_iter().unzip();
                 self.io.push(changes.iter().map(CloudChange::blob).collect()).await?;
-                self.db.cloud_ack(&seqs)?;
+                self.db.cloud_ack(generation, &seqs)?;
             }
-            if pull || self.db.cloud_cursor()?.is_none() {
+            if pull || self.db.cloud_cursor(generation)?.is_none() {
                 loop {
-                    let page = self.io.pull(self.db.cloud_cursor()?, BATCH).await?;
-                    self.db.apply_cloud_page(&own, &decode(&page)?, &page.cursor)?;
+                    let page = self.io.pull(self.db.cloud_cursor(generation)?, BATCH).await?;
+                    self.db.apply_cloud_page(generation, &own, &decode(&page)?, &page.cursor)?;
                     if !page.more {
                         break;
                     }

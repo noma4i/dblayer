@@ -28,11 +28,13 @@ fn like_pattern(prefix: &str) -> String {
 }
 
 pub(crate) fn write_intent(connection: &Connection, mode: &str, models: &[String], now: i64) -> Result<(), StoreError> {
-    clear_intent(connection)?;
-    connection.execute("INSERT INTO reset_intent (id, mode, started_at) VALUES (1, ?1, ?2)", params![mode, now])?;
+    let transaction = connection.unchecked_transaction()?;
+    clear_intent(&transaction)?;
+    transaction.execute("INSERT INTO reset_intent (id, mode, started_at) VALUES (1, ?1, ?2)", params![mode, now])?;
     for (pos, model) in models.iter().enumerate() {
-        connection.execute("INSERT INTO reset_intent_model (pos, model) VALUES (?1, ?2)", params![pos as i64, model])?;
+        transaction.execute("INSERT INTO reset_intent_model (pos, model) VALUES (?1, ?2)", params![pos as i64, model])?;
     }
+    transaction.commit()?;
     Ok(())
 }
 
@@ -113,6 +115,10 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
         }
     }
     connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM query_window; DELETE FROM local_pending;")?;
+    connection.execute_batch(
+        "DELETE FROM cloud_field_node; DELETE FROM cloud_field; DELETE FROM cloud_row; \
+         DELETE FROM cloud_log_node; DELETE FROM cloud_log; DELETE FROM cloud_cursor; DELETE FROM cloud_replica;",
+    )?;
     clear_sync(connection, None)?;
     clear_all(connection)?;
     Ok(())

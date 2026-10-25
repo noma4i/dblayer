@@ -4,6 +4,22 @@ use serde_json::json;
 
 use crate::identity::ScopeKey;
 
+#[test]
+fn inv_reset_01_intent_never_persists_a_partial_model_list() {
+    for rejected in 0..3 {
+        let (store, _) = booted_store();
+        let inner = store.lock();
+        inner.connection.execute_batch(&format!(
+            "CREATE TEMP TRIGGER reject_intent BEFORE INSERT ON reset_intent_model WHEN NEW.pos = {rejected} BEGIN SELECT RAISE(ABORT, 'injected intent failure'); END"
+        )).unwrap();
+        let models = vec!["messages".into(), "items".into(), "third".into()];
+        assert!(super::reset::write_intent(&inner.connection, "cache_only", &models, 1).is_err());
+        assert_eq!(super::reset::pending_intent(&inner.connection).unwrap(), None, "failure at model {rejected}");
+        let count: i64 = inner.connection.query_row("SELECT COUNT(*) FROM reset_intent_model", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0, "failure at model {rejected}");
+    }
+}
+
 fn seed_two_models(store: &Store) {
     store
         .commit(envelope(

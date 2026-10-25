@@ -56,9 +56,7 @@ impl Store {
     ) -> Result<CommitResult, PlanCommitError<E>> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        if generation != inner.generation {
-            return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration).into());
-        }
+        inner.ensure_generation(generation)?;
         let now_ms = inner.now_ms();
         let envelope = {
             let reader = Reader::new(&inner.connection, &inner.models);
@@ -181,19 +179,21 @@ fn visible_scope_ops(operations: &[ScopeOp], hidden: &HiddenRows) -> Vec<ScopeOp
         .collect()
 }
 
-fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, row: &mut Map<String, Value>) -> Result<(), StoreError> {
+fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, row: &mut Map<String, Value>) -> Result<BTreeSet<String>, StoreError> {
     let owner = texts(&[model.as_str(), id]);
     let pending = read_trees(connection, "local_pending", &["model", "row_id", "path"], "model = ?1 AND row_id = ?2", &owner)?;
     if pending.is_empty() {
-        return Ok(());
+        return Ok(BTreeSet::new());
     }
+    let mut fields = BTreeSet::new();
     for (key, value) in pending {
         if let Some(slot) = key.last().and_then(|path| match path { rusqlite::types::Value::Text(path) => info.spec.local_slot(path), _ => None }) {
+            fields.insert(slot.field.name.clone());
             slot.write(row, value);
         }
     }
     delete_trees(connection, "local_pending", "model = ?1 AND row_id = ?2", &owner)?;
-    Ok(())
+    Ok(fields)
 }
 
 fn without_nulls(row: &Map<String, Value>) -> Map<String, Value> {
@@ -227,7 +227,7 @@ fn apply_upsert(
     info: &ModelInfo,
     model: &ModelKey,
     row: &Map<String, Value>,
-    keeps_local: bool,
+    envelope: &CommitEnvelope,
     revision: i64,
     hidden: &HiddenRows,
     prefetched: &mut Prefetched,
@@ -245,10 +245,22 @@ fn apply_upsert(
     let old_row = existing.as_ref().map(|stored| &stored.row);
     let mut next = without_nulls(row);
     canonicalize(info, &mut next);
-    if keeps_local && info.spec.has_local() {
+    let mut pending = BTreeSet::new();
+    if !envelope.writes_local && info.spec.has_local() {
         match old_row {
             Some(old) => info.spec.keep_local(old, &mut next),
-            None => take_pending(connection, info, model, &id, &mut next)?,
+            None => {
+                if envelope.origin != WriteOrigin::Optimistic && !info.spec.cloud.is_empty() {
+                    for (name, _, value) in crate::cloud::row_fields(connection, model.as_str(), &id)? {
+                        if info.spec.cloud.contains(&name) {
+                            if let Some(slot) = info.spec.local_slot(&name) {
+                                slot.write(&mut next, value);
+                            }
+                        }
+                    }
+                }
+                pending = take_pending(connection, info, model, &id, &mut next)?;
+            }
         }
     }
     let row = &next;
@@ -278,6 +290,7 @@ fn apply_upsert(
             .spec
             .cloud
             .iter()
+            .filter(|name| envelope.origin == WriteOrigin::Optimistic || pending.contains(*name))
             .filter(|name| kind == RowChangeKind::Inserted || changed.contains(*name))
             .map(|name| (name.clone(), row.get(name).cloned().unwrap_or(Value::Null)))
             .collect();
@@ -453,7 +466,7 @@ pub(crate) fn apply_envelope(
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                apply_upsert(connection, info, model, row, !envelope.writes_local, revision, &hidden, &mut prefetched, &mut changes, &mut moves)?;
+                apply_upsert(connection, info, model, row, envelope, revision, &hidden, &mut prefetched, &mut changes, &mut moves)?;
             }
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
@@ -471,7 +484,7 @@ pub(crate) fn apply_envelope(
                     tombstoned = true;
                 }
                 if removed > 0 {
-                    if info.spec.is_local() && !info.spec.cloud.is_empty() && *reason == DestroyReason::Local {
+                    if envelope.origin == WriteOrigin::Optimistic && info.spec.is_local() && !info.spec.cloud.is_empty() && *reason == DestroyReason::Local {
                         cloud_deletes.push((model.to_string(), id.as_str().to_string()));
                     }
                     changes.push(model, id.as_str(), RowChangeKind::Destroyed, BTreeSet::new());
@@ -485,7 +498,7 @@ pub(crate) fn apply_envelope(
         }
     }
 
-    if envelope.origin == WriteOrigin::Optimistic && (!changes.edits.is_empty() || !cloud_deletes.is_empty()) {
+    if !changes.edits.is_empty() || !cloud_deletes.is_empty() {
         result.cloud_logged = record_local(connection, &changes.edits, &cloud_deletes, now_ms)?;
         wrote |= result.cloud_logged;
     }

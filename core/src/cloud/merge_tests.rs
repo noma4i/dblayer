@@ -129,7 +129,7 @@ fn inv_cloud_04_any_delivery_order_and_repeats_give_the_same_rows() {
             }
             let db = Db::open_in_memory(specs(), None).unwrap();
             for part in shuffled.chunks(3) {
-                db.apply_cloud_page(&db.cloud_replica().unwrap(), part, &[1]).unwrap();
+                db.apply_cloud_page(db.generation(), &db.cloud_replica(db.generation()).unwrap(), part, &[1]).unwrap();
             }
             let view: Vec<_> = ["n1", "n2"]
                 .iter()

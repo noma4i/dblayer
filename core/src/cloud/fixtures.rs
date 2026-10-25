@@ -23,6 +23,7 @@ struct Inner {
     push_failures: VecDeque<(CloudError, bool)>,
     account: Option<CloudAccount>,
     hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    pull_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     page: Option<usize>,
 }
 
@@ -65,6 +66,10 @@ impl FakeCloud {
         locked(&self.inner).hook = Some(Arc::new(hook));
     }
 
+    pub fn before_pull_reply(&self, hook: impl Fn() + Send + Sync + 'static) {
+        locked(&self.inner).pull_hook = Some(Arc::new(hook));
+    }
+
     pub fn set_page(&self, size: usize) {
         locked(&self.inner).page = Some(size);
     }
@@ -84,7 +89,13 @@ impl CloudIo for FakeCloud {
         let from = cursor.and_then(|bytes| <[u8; 8]>::try_from(bytes).ok()).map_or(0, |bytes| u64::from_le_bytes(bytes) as usize);
         let size = inner.page.unwrap_or(limit as usize).min(limit as usize);
         let to = (from + size).min(inner.log.len());
-        Ok(CloudPage { blobs: inner.log[from..to].to_vec(), cursor: (to as u64).to_le_bytes().to_vec(), more: to < inner.log.len() })
+        let page = CloudPage { blobs: inner.log[from..to].to_vec(), cursor: (to as u64).to_le_bytes().to_vec(), more: to < inner.log.len() };
+        let hook = inner.pull_hook.clone();
+        drop(inner);
+        if let Some(hook) = hook {
+            hook();
+        }
+        Ok(page)
     }
 
     async fn push(&self, blobs: Vec<CloudBlob>) -> Result<(), CloudError> {
@@ -185,10 +196,6 @@ impl WatchedClock {
 
     pub fn advance(&self, by: Duration) {
         self.inner.advance(by);
-    }
-
-    pub fn started(&self) -> usize {
-        locked(&self.sleeps).started
     }
 
     pub fn polls(&self) -> usize {
