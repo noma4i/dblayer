@@ -89,7 +89,7 @@ fn scratch_dir() -> tempfile::TempDir {
 
 fn runtime(threads: usize) -> Runtime {
     if threads <= 1 {
-        Builder::new_current_thread().enable_time().start_paused(true).build().expect("runtime")
+        Builder::new_current_thread().max_blocking_threads(1).enable_time().start_paused(true).build().expect("runtime")
     } else {
         Builder::new_multi_thread().worker_threads(threads).enable_time().build().expect("runtime")
     }
@@ -214,7 +214,29 @@ async fn worker_loop(id: usize, config: StressConfig, world: Arc<World>, progres
             check::lists(&world.rig.db, &world.findings);
             check::cache(&world.rig.db, &world.universe, &world.findings);
         }
-        tokio::task::yield_now().await;
+        if config.threads <= 1 {
+            settle_blocking(|| format!("{} {:?} {}", world.server.received(), world.rig.db.revision_seq(), outbox_line(&world))).await;
+        } else {
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+async fn settle_blocking(observe: impl Fn() -> String) {
+    let mut last = observe();
+    let mut unchanged = 0;
+    while unchanged < 2 {
+        let _ = tokio::task::spawn_blocking(|| ()).await;
+        for _ in 0..3 {
+            tokio::task::yield_now().await;
+        }
+        let now = observe();
+        if now == last {
+            unchanged += 1;
+        } else {
+            unchanged = 0;
+            last = now;
+        }
     }
 }
 
