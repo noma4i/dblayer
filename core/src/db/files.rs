@@ -71,11 +71,13 @@ impl Db {
         });
         match committed {
             Ok(_) => {
-                self.shared.files.discard(&replaced.into_iter().collect::<Vec<_>>());
+                self.shared.files.discard(&replaced.into_iter().collect::<Vec<_>>()).map_err(io_fault)?;
                 Ok(descriptor)
             }
             Err(error) => {
-                self.shared.files.discard(&[descriptor.id]);
+                if let Err(cleanup) = self.shared.files.discard(&[descriptor.id]) {
+                    return Err(io_fault(std::io::Error::other(format!("{}; file cleanup: {cleanup}", plan_fault(error)))));
+                }
                 Err(plan_fault(error))
             }
         }
@@ -134,7 +136,7 @@ impl Db {
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
-        self.shared.files.discard(&removed.into_iter().collect::<Vec<_>>());
+        self.shared.files.discard(&removed.into_iter().collect::<Vec<_>>()).map_err(io_fault)?;
         Ok(!result.is_noop())
     }
 }

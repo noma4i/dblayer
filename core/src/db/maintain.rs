@@ -50,15 +50,15 @@ impl Db {
         let live_ids: HashSet<&str> = live.iter().map(|reference| reference.id.as_str()).collect();
         let directory_ids: HashSet<&str> =
             live.iter().filter(|reference| reference.location == Location::Directory).map(|reference| reference.id.as_str()).collect();
-        for name in self.shared.files.directory_entries() {
+        for name in self.shared.files.directory_entries().map_err(super::files::io_fault)? {
             if is_partial(&name) || !directory_ids.contains(name.as_str()) {
-                self.shared.files.remove_directory_entry(&name);
+                self.shared.files.remove_directory_entry(&name).map_err(super::files::io_fault)?;
                 removed += 1;
             }
         }
-        for name in self.shared.files.cache_entries() {
+        for name in self.shared.files.cache_entries().map_err(super::files::io_fault)? {
             if !live_ids.contains(name.as_str()) {
-                self.shared.files.remove_cache_entry(&name);
+                self.shared.files.remove_cache_entry(&name).map_err(super::files::io_fault)?;
                 removed += 1;
             }
         }
@@ -77,7 +77,7 @@ impl Db {
         }
         self.commit_following(generation, |_| Ok::<_, DbError>(Some(envelope))).map_err(plan_fault)?;
         let ids: Vec<String> = references.iter().map(|reference| reference.id.clone()).collect();
-        self.shared.files.discard(&ids);
+        self.shared.files.discard(&ids).map_err(super::files::io_fault)?;
         Ok(())
     }
 }

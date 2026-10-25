@@ -13,7 +13,7 @@ fn write_stores_bytes_under_the_id_and_leaves_no_partial_file() {
     let path = directories.write("f1", b"hello").unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"hello");
     assert_eq!(directories.read("f1").unwrap(), b"hello");
-    assert_eq!(directories.directory_entries(), vec!["f1"]);
+    assert_eq!(directories.directory_entries().unwrap(), vec!["f1"]);
 }
 
 #[test]
@@ -51,15 +51,15 @@ fn discard_removes_directory_files_and_cache_entries() {
     directories.write("f1", b"a").unwrap();
     let cached = directories.materialize("f1", "a.bin", b"a").unwrap();
     directories.write("f2", b"b").unwrap();
-    directories.discard(&["f1".to_string(), "missing".to_string()]);
-    assert_eq!(directories.directory_entries(), vec!["f2"]);
+    directories.discard(&["f1".to_string(), "missing".to_string()]).unwrap();
+    assert_eq!(directories.directory_entries().unwrap(), vec!["f2"]);
     assert!(!cached.exists());
-    assert!(directories.cache_entries().is_empty());
+    assert!(directories.cache_entries().unwrap().is_empty());
 }
 
 #[test]
 fn entries_lists_nothing_before_the_directories_exist() {
     let (_root, directories) = beside_database();
-    assert!(directories.directory_entries().is_empty());
-    assert!(directories.cache_entries().is_empty());
+    assert!(directories.directory_entries().unwrap().is_empty());
+    assert!(directories.cache_entries().unwrap().is_empty());
 }

@@ -35,7 +35,8 @@ You do not decide where bytes live. Small files are kept inside the database, la
 - Every file call is asynchronous (`async` in Swift, `suspend` in Kotlin) and does its disk work off the caller thread, so it is safe to call from the main thread.
 - The row holds a description of the file; observers see a new row revision when the file changes.
 - `attach` replaces the old file and updates the row in one commit. If the commit fails, no file remains.
-- Destroying a row removes its files. Orphans left by crashes are cleaned by maintenance.
+- Destroying a row removes its files. Maintenance removes files left by crashes.
+- File operations report cleanup errors. A committed row change remains committed when subsequent disk cleanup fails.
 - A temporary row keeps its file when the row gets its server id.
 - A `:file` attribute cannot be indexed.
 

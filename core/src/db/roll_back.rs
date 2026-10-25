@@ -239,7 +239,7 @@ impl Db {
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
-        self.shared.files.discard(&discarded);
+        self.shared.files.discard(&discarded).map_err(super::files::io_fault)?;
         Ok(result)
     }
 }

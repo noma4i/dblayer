@@ -23,11 +23,17 @@ fn ignore_missing(result: io::Result<()>) -> io::Result<()> {
     }
 }
 
-fn names(directory: &Path) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(directory) else { return Vec::new() };
-    let mut names: Vec<String> = entries.flatten().filter_map(|entry| entry.file_name().into_string().ok()).collect();
+fn names(directory: &Path) -> io::Result<Vec<String>> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut names = entries.map(|entry| {
+        entry?.file_name().into_string().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid file name"))
+    }).collect::<io::Result<Vec<_>>>()?;
     names.sort();
-    names
+    Ok(names)
 }
 
 impl FileDirectories {
@@ -75,31 +81,33 @@ impl FileDirectories {
         Ok(target)
     }
 
-    pub(crate) fn discard(&self, ids: &[String]) {
+    pub(crate) fn discard(&self, ids: &[String]) -> io::Result<()> {
         for id in ids {
             if let Some(path) = self.path(id) {
-                let _ = ignore_missing(fs::remove_file(path));
+                ignore_missing(fs::remove_file(path))?;
             }
-            let _ = ignore_missing(fs::remove_dir_all(self.cache.join(id)));
+            ignore_missing(fs::remove_dir_all(self.cache.join(id)))?;
         }
+        Ok(())
     }
 
-    pub(crate) fn directory_entries(&self) -> Vec<String> {
-        self.directory.as_deref().map(names).unwrap_or_default()
+    pub(crate) fn directory_entries(&self) -> io::Result<Vec<String>> {
+        self.directory.as_deref().map(names).unwrap_or_else(|| Ok(Vec::new()))
     }
 
-    pub(crate) fn cache_entries(&self) -> Vec<String> {
+    pub(crate) fn cache_entries(&self) -> io::Result<Vec<String>> {
         names(&self.cache)
     }
 
-    pub(crate) fn remove_directory_entry(&self, name: &str) {
+    pub(crate) fn remove_directory_entry(&self, name: &str) -> io::Result<()> {
         if let Some(directory) = &self.directory {
-            let _ = ignore_missing(fs::remove_file(directory.join(name)));
+            ignore_missing(fs::remove_file(directory.join(name)))?;
         }
+        Ok(())
     }
 
-    pub(crate) fn remove_cache_entry(&self, name: &str) {
-        let _ = ignore_missing(fs::remove_dir_all(self.cache.join(name)));
+    pub(crate) fn remove_cache_entry(&self, name: &str) -> io::Result<()> {
+        ignore_missing(fs::remove_dir_all(self.cache.join(name)))
     }
 }
 

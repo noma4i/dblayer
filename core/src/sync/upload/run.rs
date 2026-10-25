@@ -44,7 +44,7 @@ impl Drop for Runner {
             let missing = self.inner.db.shared.read(&[], |reader| {
                 Ok(!reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM file WHERE id = ?1)", [id], |row| row.get::<_, bool>(0))?)
             });
-            if missing.is_ok_and(|missing| missing) { self.inner.db.shared.files.discard(std::slice::from_ref(id)); }
+            if missing.is_ok_and(|missing| missing) { let _ = self.inner.db.shared.files.discard(std::slice::from_ref(id)); }
         }
     }
 }

@@ -90,7 +90,7 @@ async fn a_confirmed_destroy_removes_the_files_of_the_row_and_its_children() {
     rig.db.destroy("moments", &rid("m1")).unwrap();
     rig.sync.flush().await.unwrap();
     assert_eq!(file_rows(&rig), 0);
-    assert!(rig.db.shared.files.directory_entries().is_empty());
+    assert!(rig.db.shared.files.directory_entries().unwrap().is_empty());
 }
 
 fn with_notes() -> Vec<ModelSpec> {

@@ -297,7 +297,7 @@ impl Feed {
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
         };
-        db.shared.files.discard(&held_files);
+        db.shared.files.discard(&held_files).map_err(crate::store::StoreError::from)?;
         for id in &announced {
             db.set_ephemeral(model, id, self.def.set.clone())?;
         }

@@ -114,7 +114,7 @@ fn attaching_again_replaces_the_file_and_its_leftovers() {
     assert!(first.id != second.id && small.id != second.id);
     assert_eq!(count_files(&db), 1);
     assert_eq!(db.file("moments", &rid("m1"), "media").unwrap().unwrap().id, second.id);
-    assert_eq!(db.shared.files.directory_entries(), vec![second.id.clone()]);
+    assert_eq!(db.shared.files.directory_entries().unwrap(), vec![second.id.clone()]);
     assert!(!cached.exists());
     assert_eq!(std::fs::read_dir(root.path().join("42.sqlite.files")).unwrap().count(), 1);
 }
@@ -140,7 +140,7 @@ fn detach_clears_the_description_the_bytes_and_the_directory_file() {
     assert_eq!(db.read("moments", &rid("m1"), "media").unwrap(), None);
     assert_eq!(media(&db, "m1"), None);
     assert_eq!(count_files(&db), 0);
-    assert!(db.shared.files.directory_entries().is_empty());
+    assert!(db.shared.files.directory_entries().unwrap().is_empty());
     assert!(!db.detach("moments", &rid("m1"), "media").unwrap());
 }
 
@@ -157,7 +157,7 @@ fn destroying_a_row_hides_its_files_and_those_of_cascaded_children_but_keeps_the
         assert_eq!(db.read(model, &rid(id), "media").unwrap(), None);
     }
     assert_eq!(count_files(&db), 4);
-    assert_eq!(db.shared.files.directory_entries().len(), 3);
+    assert_eq!(db.shared.files.directory_entries().unwrap().len(), 3);
     db.sweep_files().unwrap();
     assert_eq!(count_files(&db), 4);
 }
@@ -173,7 +173,7 @@ fn failed_attach_leaves_neither_a_file_nor_a_description() {
     assert_eq!(db.file("moments", &rid("m1"), "media").unwrap(), Some(before.clone()));
     assert_eq!(db.file("moments", &rid("m1"), "cover").unwrap(), None);
     assert_eq!(count_files(&db), 1);
-    assert_eq!(db.shared.files.directory_entries(), vec![before.id]);
+    assert_eq!(db.shared.files.directory_entries().unwrap(), vec![before.id]);
 }
 
 #[test]
@@ -204,6 +204,25 @@ fn temp_row_files_follow_the_row_to_its_real_id() {
 }
 
 #[test]
+fn inv_file_10_sweep_reports_directory_and_removal_failures() {
+    for (suffix, listing) in [("files", true), ("cache", true), ("files", false), ("cache", false)] {
+        let (root, db) = on_disk();
+        let directory = root.path().join(format!("42.sqlite.{suffix}"));
+        if listing {
+            std::fs::write(&directory, b"not a directory").unwrap();
+        } else {
+            std::fs::create_dir_all(&directory).unwrap();
+            if suffix == "files" {
+                std::fs::create_dir(directory.join("stray")).unwrap();
+            } else {
+                std::fs::write(directory.join("stray"), b"not a directory").unwrap();
+            }
+        }
+        assert!(db.sweep_files().is_err(), "{suffix} listing={listing} reported success");
+    }
+}
+
+#[test]
 fn maintain_removes_files_of_vanished_rows_and_unreferenced_fields() {
     let (_root, db) = on_disk();
     seed_tree(&db);
@@ -214,13 +233,13 @@ fn maintain_removes_files_of_vanished_rows_and_unreferenced_fields() {
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: rid("m1"), reason: DestroyReason::Server });
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m2"), row: obj(json!({"id": "m2", "userId": "u2", "text": "two", "media": null, "cover": kept.to_value()})) });
     db.land(envelope).unwrap();
-    assert_eq!(db.shared.files.directory_entries().len(), 3);
+    assert_eq!(db.shared.files.directory_entries().unwrap().len(), 3);
     db.maintain(&[]).unwrap();
-    assert_eq!(db.shared.files.directory_entries(), vec![kept.id.clone()]);
+    assert_eq!(db.shared.files.directory_entries().unwrap(), vec![kept.id.clone()]);
     assert_eq!(count_files(&db), 1);
     assert!(db.read("moments", &rid("m2"), "media").unwrap().is_none());
     assert_eq!(db.read("moments", &rid("m2"), "cover").unwrap().unwrap().len(), 300 * 1024);
-    assert!(!db.shared.files.directory_entries().contains(&gone.id) && !db.shared.files.directory_entries().contains(&overwritten.id));
+    assert!(!db.shared.files.directory_entries().unwrap().contains(&gone.id) && !db.shared.files.directory_entries().unwrap().contains(&overwritten.id));
 }
 
 #[test]
@@ -235,8 +254,8 @@ fn maintain_removes_stray_directory_files_partial_writes_and_stale_cache() {
     std::fs::write(directory.join("half.part"), b"x").unwrap();
     db.shared.files.materialize("stale", "x.bin", b"x").unwrap();
     db.sweep_files().unwrap();
-    assert_eq!(db.shared.files.directory_entries(), vec![kept.id]);
-    assert_eq!(db.shared.files.cache_entries(), vec![small.id]);
+    assert_eq!(db.shared.files.directory_entries().unwrap(), vec![kept.id]);
+    assert_eq!(db.shared.files.cache_entries().unwrap(), vec![small.id]);
     assert!(live_cache.exists());
 }
 
@@ -248,6 +267,6 @@ fn logout_style_wipe_leaves_no_files_behind() {
     db.shared.store.reset_incompatible().unwrap();
     assert_eq!(count_files(&db), 0);
     db.sweep_files().unwrap();
-    assert!(db.shared.files.directory_entries().is_empty());
+    assert!(db.shared.files.directory_entries().unwrap().is_empty());
     assert!(root.path().join("42.sqlite").exists());
 }
