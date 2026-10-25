@@ -70,7 +70,7 @@ A reset records its complete model list in one transaction before clearing data.
 
 Row identity includes the model and id. Pending writes, recovery and temporary-id replacement keep records of different models separate, even with identical ids.
 
-List changes reserve destination order keys together. Removed members release their keys before additions, regardless of their position in the submitted changes.
+The store assigns list order keys while it writes. Removed members release their keys before additions, regardless of position. A requested key that another member holds moves to the next free key, so concurrent writers and rows joining one list in a single commit never collide.
 
 | Table | Holds |
 | ----- | ----- |

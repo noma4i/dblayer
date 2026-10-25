@@ -255,14 +255,14 @@ impl<'a> Reader<'a> {
         Ok(self.connection.query_row("SELECT MAX(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", params![model, scope_key], |row| row.get(0))?)
     }
 
-    pub fn free_order_key(&self, model: &str, scope_key: &str, row_id: &str, wanted: &str, taken: &HashSet<String>, vacated: &HashSet<String>) -> Result<String, StoreError> {
+    pub fn free_order_key(&self, model: &str, scope_key: &str, row_id: &str, wanted: &str, taken: &HashSet<String>) -> Result<String, StoreError> {
         let mut key = wanted.to_string();
         loop {
             let holder: Option<String> = self
                 .connection
                 .query_row("SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND order_key = ?3", params![model, scope_key, key], |row| row.get(0))
                 .optional()?;
-            if holder.as_deref().is_none_or(|holder| holder == row_id || vacated.contains(holder)) && !taken.contains(&key) {
+            if holder.as_deref().is_none_or(|holder| holder == row_id) && !taken.contains(&key) {
                 return Ok(key);
             }
             let upper: Option<String> = self

@@ -233,6 +233,7 @@ fn apply_upsert(
     prefetched: &mut Prefetched,
     result: &mut RowChanges,
     moves: &mut Vec<ScopeOp>,
+    heads: &mut Vec<(ScopeRef, crate::identity::RowId)>,
 ) -> Result<(), StoreError> {
     let Some(id) = row.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_string) else { return Ok(()) };
     if hidden.contains(&(model.to_string(), id.clone())) {
@@ -283,7 +284,7 @@ fn apply_upsert(
         reindex(connection, info, &id, row)?;
     }
     if let Some(old) = old_row {
-        moves.extend(membership_moves(connection, info, model, &id, old, row)?);
+        membership_moves(info, model, &id, old, row, moves, heads);
     }
     if !info.spec.cloud.is_empty() {
         let fields: BTreeMap<String, Value> = info
@@ -400,29 +401,31 @@ pub(crate) fn remove_row(connection: &Connection, info: &ModelInfo, id: &str) ->
     Ok(connection.execute(&format!("DELETE FROM {} WHERE id = ?1", info.table), params![id])?)
 }
 
-fn membership_moves(
-    connection: &Connection,
-    info: &ModelInfo,
-    model: &ModelKey,
-    id: &str,
-    old: &Map<String, Value>,
-    new: &Map<String, Value>,
-) -> Result<Vec<ScopeOp>, StoreError> {
+fn membership_moves(info: &ModelInfo, model: &ModelKey, id: &str, old: &Map<String, Value>, new: &Map<String, Value>, moves: &mut Vec<ScopeOp>, heads: &mut Vec<(ScopeRef, crate::identity::RowId)>) {
     let before = info.spec.list_scopes(old);
     let after = info.spec.list_scopes(new);
-    let Ok(row) = crate::identity::RowId::new(id) else { return Ok(Vec::new()) };
-    let mut operations: Vec<ScopeOp> = before
-        .iter()
-        .filter(|key| !after.contains(key))
-        .map(|key| ScopeOp::Detach { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone() })
-        .collect();
-    for key in after.iter().filter(|key| !before.contains(key)) {
-        let first: Option<String> = connection
-            .query_row("SELECT MIN(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", params![model.as_str(), key.as_str()], |found| found.get(0))?;
+    let Ok(row) = crate::identity::RowId::new(id) else { return };
+    moves.extend(
+        before.iter().filter(|key| !after.contains(key)).map(|key| ScopeOp::Detach { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone() }),
+    );
+    heads.extend(after.iter().filter(|key| !before.contains(key)).map(|key| (ScopeRef::new(model.clone(), key.clone()), row.clone())));
+}
+
+fn join_heads(
+    connection: &Connection,
+    models: &BTreeMap<String, ModelInfo>,
+    heads: &[(ScopeRef, crate::identity::RowId)],
+    scopes: &mut BTreeSet<ScopeRef>,
+    members: &mut BTreeSet<RowRef>,
+) -> Result<bool, StoreError> {
+    let mut wrote = false;
+    for (scope, row) in heads {
+        let first = Reader::new(connection, models).scope_first_key(scope.model.as_str(), scope.key.as_str())?;
         let order_key = crate::value::fractional_between(None, first.as_deref()).map_err(|error| StoreError::Constraint(error.to_string()))?;
-        operations.push(ScopeOp::Append { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone(), order_key });
+        let append = ScopeOp::Append { scope: scope.clone(), row: row.clone(), order_key };
+        wrote |= apply_scope_ops(connection, models, std::slice::from_ref(&append), scopes, members)?;
     }
-    Ok(operations)
+    Ok(wrote)
 }
 
 #[derive(Default)]
@@ -458,6 +461,7 @@ pub(crate) fn apply_envelope(
     let mut files_changed = false;
     let mut changes = RowChanges::default();
     let mut moves: Vec<ScopeOp> = Vec::new();
+    let mut heads: Vec<(ScopeRef, crate::identity::RowId)> = Vec::new();
     let mut destroyed: Vec<Destroyed> = Vec::new();
     let mut cloud_deletes: Vec<(String, String)> = Vec::new();
     let mut replaced: Vec<(RowRef, crate::identity::RowId)> = Vec::new();
@@ -470,7 +474,7 @@ pub(crate) fn apply_envelope(
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                apply_upsert(connection, info, model, row, envelope, revision, &hidden, &mut prefetched, &mut changes, &mut moves)?;
+                apply_upsert(connection, info, model, row, envelope, revision, &hidden, &mut prefetched, &mut changes, &mut moves, &mut heads)?;
             }
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
@@ -550,6 +554,7 @@ pub(crate) fn apply_envelope(
         &visible
     };
     wrote |= apply_scope_ops(connection, models, &moves, &mut result.scopes, &mut result.members)?;
+    wrote |= join_heads(connection, models, &heads, &mut result.scopes, &mut result.members)?;
     wrote |= apply_scope_ops(connection, models, scope_ops, &mut result.scopes, &mut result.members)?;
     let renamed: Vec<RowChange> = replaced
         .iter()
@@ -687,11 +692,14 @@ fn apply_scope_ops(
         info.spec.stable_order(&scope.key).map(|fields| (info, fields))
     };
     let mut wrote = false;
+    let reader = Reader::new(connection, models);
+    let mut claimed: HashMap<ScopeRef, HashSet<String>> = HashMap::new();
     for operation in operations {
-        if let ScopeOp::Move { scope, row, .. } = operation {
+        if let ScopeOp::Move { scope, row, order_key } = operation {
             if stable_fields(scope).is_some() {
                 continue;
             }
+            claimed.entry(scope.clone()).or_default().insert(order_key.clone());
             connection.execute(
                 "UPDATE scope_member SET order_key = ?1 WHERE model = ?2 AND scope_key = ?3 AND row_id = ?4",
                 params![format!("~parked~{}", row.as_str()), scope.model.as_str(), scope.key.as_str(), row.as_str()],
@@ -710,12 +718,17 @@ fn apply_scope_ops(
                 }
                 usize::from(joined.joined)
             }
-            (ScopeOp::Append { scope, row, order_key }, None) => connection.execute(
-                "INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES (?1, ?2, ?3, ?4) \
-                 ON CONFLICT (model, scope_key, row_id) DO UPDATE SET order_key = excluded.order_key \
-                 WHERE order_key IS NOT excluded.order_key",
-                params![scope.model.as_str(), scope.key.as_str(), row.as_str(), order_key],
-            )?,
+            (ScopeOp::Append { scope, row, order_key }, None) => {
+                let none = HashSet::new();
+                let wanted = claimed.get(scope).unwrap_or(&none);
+                let order_key = reader.free_order_key(scope.model.as_str(), scope.key.as_str(), row.as_str(), order_key, wanted)?;
+                connection.execute(
+                    "INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES (?1, ?2, ?3, ?4) \
+                     ON CONFLICT (model, scope_key, row_id) DO UPDATE SET order_key = excluded.order_key \
+                     WHERE order_key IS NOT excluded.order_key",
+                    params![scope.model.as_str(), scope.key.as_str(), row.as_str(), order_key],
+                )?
+            }
             (ScopeOp::Move { scope, row, order_key }, None) => connection.execute(
                 "UPDATE scope_member SET order_key = ?1 WHERE model = ?2 AND scope_key = ?3 AND row_id = ?4",
                 params![order_key, scope.model.as_str(), scope.key.as_str(), row.as_str()],

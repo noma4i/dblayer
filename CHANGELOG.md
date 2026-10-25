@@ -31,6 +31,7 @@
 - Fields named like SQL keywords work in storage, indexes, filters and updates.
 - Generated APIs and GraphQL inputs escape Swift and Kotlin keywords and keep serialized keys.
 - List changes reserve order keys together, so removals release keys before additions.
+- Rows that join one list in a single commit, and appends planned from a stale snapshot, receive distinct order keys instead of failing the commit.
 - Kotlin GraphQL subscriptions end when the server closes the WebSocket.
 - Recovery and temporary-id replacement keep records of different models with equal ids separate.
 - Interrupted database resets resume from the complete recorded model list.

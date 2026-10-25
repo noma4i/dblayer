@@ -5,6 +5,8 @@ use crate::commit::{
     RowChangeKind, ScopeOp, WriteOrigin,
 };
 use serde_json::json;
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn commit(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> crate::commit::CommitResult {
     store.commit(envelope(store, entity_ops, scope_ops)).unwrap()
@@ -645,4 +647,76 @@ fn an_update_does_not_touch_the_columns_of_unchanged_fields() {
     );
     commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "b2"}))], vec![]);
     assert_eq!(text(&store, "SELECT group_concat(column_name) FROM touched"), Some("body".into()));
+}
+
+fn listed_messages_store() -> Store {
+    let mut spec = messages_spec();
+    let mut thread = crate::schema::RelationSpec::new("thread", &["chatId"]);
+    thread.remote = Some(crate::schema::RemoteSpec {
+        shape: crate::schema::RemoteShape::Single,
+        operation: "Thread".into(),
+        stale_time: "1.minute".into(),
+        empty_stale_time: None,
+        selects_page_info: false,
+        page_size: None,
+        variables: Default::default(),
+        root: None,
+        total_from: None,
+    });
+    spec.relations.push(thread);
+    let (store, _) = booted_store();
+    store.boot(&[spec, items_spec()], None).unwrap();
+    store
+}
+
+#[test]
+fn rows_joining_one_list_in_one_envelope_get_distinct_order_keys() {
+    let store = listed_messages_store();
+    commit(&store, vec![upsert("messages", message("m1", "c0")), upsert("messages", message("m2", "c0")), upsert("messages", message("m3", "c1"))], vec![]);
+    commit(&store, vec![upsert("messages", message("m1", "c1")), upsert("messages", message("m2", "c1"))], vec![]);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 2);
+    assert_eq!(count(&store, "SELECT COUNT(DISTINCT order_key) FROM scope_member"), 2);
+}
+
+#[test]
+fn appends_built_from_one_stale_snapshot_get_distinct_order_keys() {
+    let (store, _) = booted_store();
+    let thread = scope("messages", "thread");
+    commit(&store, vec![], vec![append(&thread, "m1", "a0")]);
+    commit(&store, vec![], vec![append(&thread, "m2", "a0"), append(&thread, "m3", "a0")]);
+    let members = store.scope_members("messages", thread.key.as_str()).unwrap();
+    assert_eq!(members.len(), 3);
+    assert_eq!(members.iter().map(|member| member.1.clone()).collect::<HashSet<_>>().len(), 3);
+}
+
+#[test]
+fn append_takes_the_key_a_move_in_the_same_envelope_vacates() {
+    let (store, _) = booted_store();
+    let thread = scope("messages", "thread");
+    commit(&store, vec![], vec![append(&thread, "m1", "a0"), append(&thread, "m2", "a1")]);
+    commit(&store, vec![], vec![append(&thread, "m3", "a0"), ScopeOp::Move { scope: thread.clone(), row: id("m1"), order_key: "a2".into() }]);
+    assert_eq!(
+        store.scope_members("messages", thread.key.as_str()).unwrap(),
+        vec![("m3".into(), "a0".into()), ("m2".into(), "a1".into()), ("m1".into(), "a2".into())]
+    );
+}
+
+static HEAD_LOOKUPS: AtomicUsize = AtomicUsize::new(0);
+
+fn count_head_lookups(event: rusqlite::trace::TraceEvent<'_>) {
+    if let rusqlite::trace::TraceEvent::Stmt(_, sql) = event {
+        if sql.contains("SELECT MIN(order_key)") {
+            HEAD_LOOKUPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+#[test]
+fn joining_a_list_costs_one_head_lookup_per_row() {
+    let store = listed_messages_store();
+    let rows = |chat: &str| -> Vec<EntityOp> { (0..40).map(|index| upsert("messages", message(&format!("m{index}"), chat))).collect() };
+    commit(&store, rows("c0"), vec![]);
+    store.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_head_lookups));
+    commit(&store, rows("c1"), vec![]);
+    assert_eq!(HEAD_LOOKUPS.load(Ordering::SeqCst), 40);
 }

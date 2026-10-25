@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use crate::commit::{CommitEnvelope, CommitResult, EntityOp, OperationTransition, ScopeOp, WriteOrigin};
+use crate::commit::{CommitEnvelope, CommitResult, EntityOp, OperationTransition, WriteOrigin};
 use crate::identity::Generation;
 use crate::store::{PlanCommitError, Reader};
 
@@ -50,29 +50,6 @@ impl Db {
                     _ => continue,
                 };
                 record.rollback = record.rollback.take().map(|prior| super::prior::Prior::with_edits(prior, reader, &followed.edits)).transpose().map_err(DbError::from)?;
-            }
-            let mut taken: HashMap<_, HashSet<String>> = HashMap::new();
-            let mut vacated: HashMap<_, HashSet<String>> = HashMap::new();
-            for op in &envelope.scope_ops {
-                match op {
-                    ScopeOp::Move { scope, row, order_key } => {
-                        taken.entry(scope.clone()).or_default().insert(order_key.clone());
-                        vacated.entry(scope.clone()).or_default().insert(row.to_string());
-                    }
-                    ScopeOp::Detach { scope, row } => {
-                        vacated.entry(scope.clone()).or_default().insert(row.to_string());
-                    }
-                    ScopeOp::Append { .. } => {}
-                }
-            }
-            for op in &mut envelope.scope_ops {
-                if let ScopeOp::Append { scope, row, order_key } = op {
-                    if self.shared.spec(scope.model.as_str())?.stable_order(&scope.key).is_some() { continue; }
-                    let claimed = taken.entry(scope.clone()).or_default();
-                    let freed = vacated.entry(scope.clone()).or_default();
-                    *order_key = reader.free_order_key(scope.model.as_str(), scope.key.as_str(), row.as_str(), order_key, claimed, freed).map_err(DbError::from)?;
-                    claimed.insert(order_key.clone());
-                }
             }
             Ok(Some(envelope))
         })?;
