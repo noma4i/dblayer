@@ -133,7 +133,14 @@ impl Worker {
 
     fn own_rows(&self, world: &World) -> Vec<Row> {
         let prefix = format!("w{}:", self.id);
-        let mut rows: Vec<Row> = world.rig.db.query(&Query::new("moments")).unwrap_or_default().into_iter().filter(|row| row.text("text").is_some_and(|text| text.starts_with(&prefix))).collect();
+        let rows = match world.rig.db.query(&Query::new("moments")) {
+            Ok(rows) => rows,
+            Err(error) => {
+                world.findings.report("workload-read", error.to_string());
+                return Vec::new();
+            }
+        };
+        let mut rows: Vec<Row> = rows.into_iter().filter(|row| row.text("text").is_some_and(|text| text.starts_with(&prefix))).collect();
         rows.sort_by_key(|row| (row.text("text").map(str::to_string), row.is_local()));
         rows
     }

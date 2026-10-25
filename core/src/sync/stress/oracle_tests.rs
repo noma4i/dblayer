@@ -2,6 +2,21 @@ use super::*;
 use workload::Op;
 
 #[tokio::test]
+async fn inv_stress_01_oracle_reports_unreadable_rows() {
+    for check in [oracle::settled_client, oracle::reloaded_client] {
+        let transport = MockTransport::new();
+        let findings = Findings::default();
+        let server = FakeServer::install(&transport, 7, findings.clone());
+        let rig = rig_on(Db::open_in_memory(specs(), None).unwrap(), transport, SyncConfig::default());
+        let scratch = scratch_dir();
+        let world = World::new(rig, server, findings.clone(), Universe::default(), Aliases::default(), scratch.path().to_path_buf());
+        world.rig.db.execute_for_test("DROP TABLE row_moments");
+        check(&world);
+        assert!(findings.all().iter().any(|entry| entry.starts_with("[oracle-read]") && entry.contains("row_moments")), "{:?}", findings.all());
+    }
+}
+
+#[tokio::test]
 async fn rows_removed_by_an_authoritative_replace_are_not_missing() {
     let transport = MockTransport::new();
     let findings = Findings::default();

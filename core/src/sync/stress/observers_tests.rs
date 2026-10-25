@@ -7,6 +7,21 @@ use crate::syncstate::SyncInfo;
 use super::findings::Findings;
 use super::observers::check_step;
 
+#[tokio::test]
+async fn inv_stress_01_observers_report_unreadable_lists_counts_and_rows() {
+    let rig = crate::sync::rig::rig();
+    let findings = Findings::default();
+    let watchers = super::observers::Watchers::attach(
+        &rig.db, &findings, &Default::default(), &Default::default(), &["m1".into()], super::scope_of(&rig.db, "feed"),
+    );
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
+    rig.db.execute_for_test("DROP TABLE row_moments");
+    watchers.finish(&rig.db, &findings);
+    for name in ["all moments", "moment count", "moment m1"] {
+        assert!(findings.all().iter().any(|entry| entry.starts_with("[observer-read]") && entry.contains(name)), "{name}: {:?}", findings.all());
+    }
+}
+
 fn row(id: &str, revision: i64) -> Arc<Record> {
     Arc::new(Record { id: RowId::new(id).unwrap(), revision, data: Default::default(), sync: SyncInfo::default(), ephemeral: 0 })
 }

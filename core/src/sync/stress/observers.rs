@@ -122,35 +122,40 @@ impl Watcher {
         }
     }
 
-    fn fresh(&self, db: &Db) -> Vec<(String, i64)> {
-        match &self.target {
-            Target::Rows(query) => db.query(query).unwrap_or_default().iter().map(|row| (row.id.to_string(), row.revision)).collect(),
-            Target::Row(model, id) => db.find(model, id).ok().flatten().iter().map(|row| (row.id.to_string(), row.revision)).collect(),
-            Target::Count(_) => Vec::new(),
-        }
-    }
-
     fn finish(&self, db: &Db, findings: &Findings) -> u64 {
         if let Target::Count(query) = &self.target {
             let tape = self.count.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let fresh = db.count(query).unwrap_or(-1);
+            let fresh = match db.count(query) {
+                Ok(count) => count,
+                Err(error) => {
+                    findings.report("observer-read", format!("{}: {error}", self.name));
+                    return tape.seen;
+                }
+            };
             if tape.last.map(|change| change.count) != Some(fresh) && !(tape.last.is_none() && fresh == 0) {
                 findings.report("observer-final", format!("{}: last count {:?} differs from the fresh count {fresh}", self.name, tape.last.map(|change| change.count)));
             }
             return tape.seen;
         }
         let tape = self.rows.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let fresh = self.fresh(db);
+        let fresh_rows = match &self.target {
+            Target::Rows(query) => db.query(query),
+            Target::Row(model, id) => db.find(model, id).map(|row| row.into_iter().collect()),
+            Target::Count(_) => unreachable!(),
+        };
+        let fresh_rows = match fresh_rows {
+            Ok(rows) => rows,
+            Err(error) => {
+                findings.report("observer-read", format!("{}: {error}", self.name));
+                return tape.seen;
+            }
+        };
+        let fresh: Vec<_> = fresh_rows.iter().map(|row| (row.id.to_string(), row.revision)).collect();
         let last = tape.last.as_ref().map(entries).unwrap_or_default();
         if last != fresh {
             findings.report("observer-final", format!("{}: last delivered state {last:?} differs from the fresh read {fresh:?}", self.name));
             return tape.seen;
         }
-        let fresh_rows = match &self.target {
-            Target::Rows(query) => db.query(query).unwrap_or_default(),
-            Target::Row(model, id) => db.find(model, id).ok().flatten().into_iter().collect(),
-            Target::Count(_) => Vec::new(),
-        };
         let delivered = tape.last.as_ref().map(|change| change.rows.clone()).unwrap_or_default();
         if let Some((fresh, seen)) = fresh_rows.iter().zip(&delivered).find(|(fresh, seen)| **fresh != **seen) {
             findings.report("observer-final", format!("{}: delivered {seen:?} differs from fresh {fresh:?}", self.name));

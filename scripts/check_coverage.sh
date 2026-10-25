@@ -25,10 +25,16 @@ done
 exec python3 -I - "$mode" "$root" "$swift_json" "$kotlin_xml" "$allowlist" "$reasons" <<'PY'
 import collections, json, re, sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 mode, root, swift_json, kotlin_xml, allowlist, reasons = sys.argv[1:7]
 kotlin_dir = f"{root}/kotlin/src/main/kotlin/com/noma4i/dblayer"
 missed = collections.defaultdict(list)
+swift_dir = Path(root) / "swift/Sources/DBlayer"
+swift_sources = set((swift_dir / "Network").glob("*.swift")) | {swift_dir / "UrlSessionTransport.swift"}
+swift_sources.discard(swift_dir / "Network/GraphQLOperationKind.swift")
+kotlin_sources = set(Path(kotlin_dir).glob("*Encrypted*.kt")) | {Path(kotlin_dir) / "TransportFailure.kt"}
+seen = set()
 
 TYPE = re.compile(r"^(?:[a-z@A-Z]+ )*(?:class|struct|enum|actor|extension|object|interface)\s+([A-Za-z0-9_.]+)")
 FUNCTION = re.compile(r"^\s+(?:[a-z@A-Z()]+ )*(?:func|fun)\s+([A-Za-z0-9_`]+)|^\s+(?:public |private |internal )?(init)\(")
@@ -54,16 +60,19 @@ def add(short, path, number):
 
 report = json.load(open(swift_json))["data"][0]
 for entry in report["files"]:
-    name = entry["filename"]
-    if "/swift/Sources/DBlayer/Network/" not in name:
+    name = str(Path(entry["filename"]).resolve())
+    if Path(name) not in swift_sources:
         continue
+    if any(segment[3] for segment in entry["segments"]):
+        seen.add(Path(name))
     starting = collections.defaultdict(list)
     for line, _, count, has_count, is_entry, is_gap in entry["segments"]:
         starting[line].append((count, has_count, is_entry, is_gap))
     wrapped = None
     for number in range(1, max(starting, default=0) + 1):
         entries = [count for count, has_count, is_entry, is_gap in starting.get(number, []) if has_count and is_entry and not is_gap]
-        line_count = max(entries) if entries else wrapped
+        counts = entries + ([wrapped] if wrapped is not None else [])
+        line_count = max(counts) if counts else None
         if line_count == 0:
             add(name.split("/Sources/DBlayer/")[1], name, number)
         if starting.get(number):
@@ -71,12 +80,23 @@ for entry in report["files"]:
             wrapped = last[0] if last[1] else None
 
 for package in ET.parse(kotlin_xml).getroot().iter("package"):
+    if package.get("name") != "com/noma4i/dblayer":
+        continue
     for source in package.iter("sourcefile"):
-        if source.get("name") not in ("Cable.kt", "CableProtocol.kt"):
+        path = Path(kotlin_dir) / source.get("name")
+        if path not in kotlin_sources:
             continue
+        if any(int(line.get("ci")) + int(line.get("mi")) > 0 for line in source.iter("line")):
+            seen.add(path)
         for line in source.iter("line"):
             if int(line.get("ci")) == 0 and int(line.get("mi")) > 0:
                 add(source.get("name"), f"{kotlin_dir}/{source.get('name')}", int(line.get("nr")))
+
+missing = (swift_sources | kotlin_sources) - seen
+if missing:
+    for path in sorted(missing):
+        print(f"check_coverage: no executable coverage: {path.relative_to(root)}", file=sys.stderr)
+    sys.exit(1)
 
 if mode == "--write-baseline":
     rules = []

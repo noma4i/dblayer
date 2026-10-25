@@ -75,9 +75,12 @@ Typical scenarios to cover:
 | Docs reference real paths | `bash scripts/check_docs.sh` |
 | No test waits without a bound or pauses for a time (`Task.sleep`, `Thread.sleep`, `delay(`) outside the wait helpers | `bash scripts/check_waits.sh` |
 | No code swallows an error with `try?` or `runCatching {...}.getOrNull()` outside `scripts/silent_allowlist.txt` | `bash scripts/check_silent.sh` |
-| No cable line that no test runs | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
+| Network code has executable coverage for every source file | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
+| Coverage rejects missing reports and unexecuted lines on both platforms | `python3 -I scripts/check_coverage_test.py` |
 
-The coverage reports cost time: the Swift lane with coverage takes about the same as without, the Kotlin lane roughly doubles because of the coverage report task. The rule covers the cable code only. The Swift lane counts with atomic profile counters, because plain counters lose increments when suites run in parallel and report an executed line as never run.
+Coverage includes Swift network sources and `UrlSessionTransport.swift`, plus Kotlin encrypted HTTP, sockets and transport errors. Missing executable coverage for any included file fails the check. Unexecuted lines require an entry in `scripts/coverage_allowlist.txt`. The Swift tests use atomic profile counters to preserve increments from concurrent execution.
+
+`GraphQLOperationKind.swift` declares enum cases without executable statements and is excluded from line coverage.
 
 The R8 check uses the generated Kotlin bindings. Run `bash scripts/build_kotlin.sh --host` first when running it separately.
 It builds a minimal Android release application with minification enabled and the package's consumer rules.
@@ -98,12 +101,14 @@ Test conventions:
 - The step timer of `run_bounded` freezes the process tree (`SIGSTOP`) before it lists the descendants, so a step that spawns a child at the moment of expiry cannot leave it running. The self test of this (`inv_check_05_a_step_past_its_limit_leaves_no_process`) lets the limit expire at once and the child appear between the listing and the kill.
 - Tests are never embedded in source files. A module is a directory with `mod.rs`, and the tests of `x.rs` are in `x_tests.rs` next to it.
 - Every behavior test is written first and seen failing.
+- Rust tests own storage, synchronization and ordering rules. Swift and Kotlin tests check typed calls, decoding, callbacks and platform APIs.
+- Keep one test per requirement at the lowest level that identifies its failure. Combine similar cases in a table.
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.
 - Tests count work (reads, calls, commits) instead of measuring time.
 
 ## Stress stand
 
-A separate program runs random operations from several threads against one database. A fake server delays, refuses and repeats answers, goes offline and sends late events. The `features` step in `scripts/check_dblayer.sh` compiles all core targets with all features, including the stress tests. Run this step separately with `bash scripts/check_dblayer.sh --only features`. Run the stress tests with `cargo test -p dblayer --features stress sync::stress`. Race runs and Clippy remain manual checks.
+A separate program runs random operations from several threads against one database. A fake server delays, refuses and repeats answers, goes offline and sends late events. The `features` step in `scripts/check_dblayer.sh` compiles all core targets with all features. The `cargo-test-stress` step tests the stress checks, including injected read failures. Run these tests separately with `cargo test -p dblayer --features stress sync::stress`. Race runs and Clippy remain manual checks.
 
 ```sh
 cargo run -p dblayer --features stress --bin stress -- --seed 7 --threads 4 --seconds 20

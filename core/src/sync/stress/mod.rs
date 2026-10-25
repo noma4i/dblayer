@@ -148,12 +148,18 @@ pub fn minimize(config: &StressConfig, failing: &StressReport) -> Option<u64> {
 }
 
 fn rows_line(world: &World) -> String {
-    let rows = world.rig.db.query(&crate::query::Query::new("moments")).unwrap_or_default();
+    let rows = match world.rig.db.query(&crate::query::Query::new("moments")) {
+        Ok(rows) => rows,
+        Err(error) => return format!("rows read failed: {error}"),
+    };
     rows.iter().map(|row| format!("{}={}", row.id.to_string().chars().take(9).collect::<String>(), row.text("text").unwrap_or_default())).collect::<Vec<_>>().join(" ")
 }
 
 fn outbox_line(world: &World) -> String {
-    let entries = world.rig.db.outbox().unwrap_or_default();
+    let entries = match world.rig.db.outbox() {
+        Ok(entries) => entries,
+        Err(error) => return format!("outbox read failed: {error}"),
+    };
     entries
         .iter()
         .map(|entry| {
@@ -167,16 +173,16 @@ fn outbox_line(world: &World) -> String {
 
 fn dump(world: &World, progress: &Progress) -> String {
     let db = &world.rig.db;
-    let queue: Vec<String> = db
-        .outbox()
-        .unwrap_or_default()
-        .iter()
+    let queue: Vec<String> = match db.outbox() {
+        Ok(entries) => entries.iter()
         .map(|entry| {
             let operation = &entry.operation;
             let upload = operation.upload.as_ref().map_or(String::new(), |state| format!(" upload {:?} {:?} retries {} sent {}/{}", state.phase, state.stage, state.attempts(), state.sent_bytes, state.total_bytes));
             format!("  seq {} {} {:?} rows {:?} temp {:?} attempts {} started {}{upload}", operation.id.0, operation.action_key, operation.status, operation.row_ids, operation.temp_id, operation.attempts, operation.transport_started)
         })
-        .collect();
+        .collect(),
+        Err(error) => vec![format!("outbox read failed: {error}")],
+    };
     format!("{}\noutbox ({} open):\n{}\ncounters {:?}\nobservers {:?}\nserver requests {}", progress.summary(), queue.len(), queue.join("\n"), db.counters(), db.observer_census(), world.server.received())
 }
 

@@ -7,8 +7,14 @@ use crate::query::Query;
 use super::server::issue_of;
 use super::world::World;
 
-fn client_rows(world: &World) -> BTreeMap<String, Row> {
-    world.rig.db.query(&Query::new("moments")).unwrap_or_default().into_iter().map(|row| (row.id.to_string(), row)).collect()
+fn client_rows(world: &World) -> Option<BTreeMap<String, Row>> {
+    match world.rig.db.query(&Query::new("moments")) {
+        Ok(rows) => Some(rows.into_iter().map(|row| (row.id.to_string(), row)).collect()),
+        Err(error) => {
+            world.findings.report("oracle-read", error.to_string());
+            None
+        }
+    }
 }
 
 fn liked(row: &Row) -> bool {
@@ -33,7 +39,7 @@ pub fn lost_writes(world: &World) {
 
 pub fn settled_client(world: &World) {
     let server = world.server.state();
-    let client = client_rows(world);
+    let Some(client) = client_rows(world) else { return };
     let reset = world.moments_reset.load(Ordering::SeqCst);
     for (id, row) in &client {
         if row.is_local() {
@@ -61,7 +67,7 @@ pub fn settled_client(world: &World) {
 
 pub fn reloaded_client(world: &World) {
     let server = world.server.state();
-    let client = client_rows(world);
+    let Some(client) = client_rows(world) else { return };
     for (id, (text, server_liked)) in &server {
         match client.get(id) {
             None => world.findings.report("reload-missing", format!("server row {id} {text} is not stored after a complete reload")),
@@ -74,7 +80,8 @@ pub fn reloaded_client(world: &World) {
 }
 
 pub fn digest(world: &World) -> String {
-    let client: Vec<String> = client_rows(world).values().map(|row| format!("{}|{}", row.text("text").unwrap_or_default(), liked(row))).collect();
+    let Some(rows) = client_rows(world) else { return "client read failed, see oracle-read".into() };
+    let client: Vec<String> = rows.values().map(|row| format!("{}|{}", row.text("text").unwrap_or_default(), liked(row))).collect();
     let mut client = client;
     client.sort();
     let server: Vec<String> = world.server.state().values().map(|(text, liked)| format!("{text}|{liked}")).collect();
