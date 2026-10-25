@@ -61,11 +61,15 @@ impl RowCache {
     }
 
     pub(crate) fn put(&mut self, model: &str, row: Row, snapshot_revision: i64) {
+        let bytes = row_bytes(model, &row);
+        self.put_sized(model, row, bytes, snapshot_revision);
+    }
+
+    pub(crate) fn put_sized(&mut self, model: &str, row: Row, bytes: usize, snapshot_revision: i64) {
         if snapshot_revision < self.committed_revision {
             return;
         }
         let key = (model.to_string(), row.id.to_string());
-        let bytes = row_bytes(model, &row);
         if bytes > MAX_ESTIMATED_BYTES {
             self.evict(model, row.id.as_str());
             return;

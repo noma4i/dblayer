@@ -44,6 +44,8 @@ pub(crate) struct Shared {
     pub observers: Mutex<Observers>,
     pub observer_commands: Mutex<Vec<super::observe::ObserverCommand>>,
     pub warm: Mutex<Warm>,
+    #[cfg(test)]
+    pub row_build_hook: Mutex<Option<std::sync::Arc<dyn Fn(&str) + Send + Sync>>>,
     pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
@@ -229,6 +231,8 @@ impl Db {
             observers: Mutex::new(Observers::default()),
             observer_commands: Mutex::new(Vec::new()),
             warm: Mutex::new(Warm::default()),
+            #[cfg(test)]
+            row_build_hook: Mutex::new(None),
             counters: Arc::new(Mutex::new(Counters::default())),
             executor: Executor::new(dispatch.progress.clone()),
             reads: reads.clone(),

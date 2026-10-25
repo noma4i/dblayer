@@ -23,17 +23,27 @@ impl Shared {
         let stored = reader.stored_rows(model, ids)?;
         let mut syncs = read_sync(reader.connection(), model, ids).map_err(StoreError::from)?;
         let spec = self.spec(model)?;
-        let overlay = (!spec.ephemeral.is_empty()).then(|| self.ephemeral.lock());
-        let mut cache = locked(&self.cache);
-        let mut loaded = HashMap::with_capacity(stored.len());
-        for (id, record) in stored {
-            let mut data = record.row;
-            let ephemeral = overlay.as_ref().map_or(0, |state| state.overlay(spec, &id, &mut data));
-            let row: Row = Arc::new(Record { id: record.id, revision: record.revision, data, sync: syncs.remove(&id).unwrap_or_default(), ephemeral });
-            cache.put(model, row.clone(), snapshot_revision);
-            loaded.insert(id, row);
+        let mut built: Vec<(String, Row)> = Vec::with_capacity(stored.len());
+        {
+            let overlay = (!spec.ephemeral.is_empty()).then(|| self.ephemeral.lock());
+            for (id, record) in stored {
+                let mut data = record.row;
+                let ephemeral = overlay.as_ref().map_or(0, |state| state.overlay(spec, &id, &mut data));
+                #[cfg(test)]
+                if let Some(hook) = locked(&self.row_build_hook).clone() {
+                    hook(&id);
+                }
+                built.push((id.clone(), Arc::new(Record { id: record.id, revision: record.revision, data, sync: syncs.remove(&id).unwrap_or_default(), ephemeral })));
+            }
         }
-        Ok(loaded)
+        let sized: Vec<(Row, usize)> = built.iter().map(|(_, row)| (row.clone(), super::cache::row_bytes(model, row))).collect();
+        {
+            let mut cache = locked(&self.cache);
+            for (row, bytes) in sized {
+                cache.put_sized(model, row, bytes, snapshot_revision);
+            }
+        }
+        Ok(built.into_iter().collect())
     }
 
     pub(crate) fn rows_for_keys(&self, reader: &Reader<'_>, model: &str, keys: &[RowKey]) -> Result<Vec<Row>, DbError> {

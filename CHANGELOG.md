@@ -26,6 +26,7 @@
 - Kotlin entity readers no longer wait while a delivery applies.
 - Landing server data and replacing a list on a disk database plan their commit outside the writer and plan again under the writer only when another commit landed first.
 - Upload, run, load, refresh, load-more and warm calls parse their JSON arguments and convert results on the library executor, not on the caller thread.
+- Loading rows builds them and sizes them outside the row cache lock, so cached reads are not held back by a large load.
 - Cancelling a subscription and expanding a window never wait for the observer registry: a busy registry takes the request later.
 - A refresh deferred by the read limit or a running read keeps its touched rows and reads only those, instead of re-reading the whole list.
 - Connecting a live query to a remote relation no longer waits for the storage writer: the stored window state is read on a blocking task and the first value is held until it arrives.

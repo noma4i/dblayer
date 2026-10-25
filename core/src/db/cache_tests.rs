@@ -80,3 +80,39 @@ fn evict_removes_one_row_and_counts_it() {
     assert!(cache.get("moments", "u1").is_some());
     assert_eq!(cache.counters().cache_evictions, 1);
 }
+
+#[test]
+fn a_row_being_prepared_does_not_hold_the_cache_against_another_reader() {
+    use crate::db::fixtures::*;
+    let db = booted();
+    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
+    put(&db, "users", json!({"id": "u2", "name": "Bob"}));
+    assert!(db.find("users", &RowId::new("u1").unwrap()).unwrap().is_some());
+    locked(&db.shared.cache).evict("users", "u2");
+    let (entered, hold) = (std::sync::mpsc::channel::<()>(), std::sync::mpsc::channel::<()>());
+    let release = std::sync::Mutex::new(hold.1);
+    *locked(&db.shared.row_build_hook) = Some(Arc::new(move |id: &str| {
+        if id == "u2" {
+            let _ = entered.0.send(());
+            let _ = release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(5));
+        }
+    }));
+    let loader = {
+        let db = db.clone();
+        std::thread::spawn(move || db.find("users", &RowId::new("u2").unwrap()).unwrap())
+    };
+    entered.1.recv_timeout(std::time::Duration::from_secs(5)).expect("the loader reached the row build");
+    let (done, finished) = std::sync::mpsc::channel();
+    let reader = {
+        let db = db.clone();
+        std::thread::spawn(move || {
+            let hit = db.peek_row("users", &RowId::new("u1").unwrap()).is_some();
+            let _ = done.send(hit);
+        })
+    };
+    let answered = finished.recv_timeout(std::time::Duration::from_secs(2));
+    let _ = hold.0.send(());
+    reader.join().unwrap();
+    assert!(loader.join().unwrap().is_some());
+    assert_eq!(answered, Ok(true), "a ready row was unreachable while another row was being prepared");
+}
