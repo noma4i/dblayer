@@ -31,6 +31,8 @@ pub enum SyncError {
     Store(String),
     #[error("load was cancelled")]
     Cancelled,
+    #[error("loading all of {relation} of {model} stopped early: {reason}")]
+    Incomplete { model: String, relation: String, reason: String },
 }
 
 impl From<DbError> for SyncError {

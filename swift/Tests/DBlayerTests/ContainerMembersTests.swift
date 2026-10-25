@@ -34,4 +34,25 @@ extension BridgeProbeTests {
       .object(["containerId": .string("c1"), "first": .integer(30), "after": .string("a0")]),
     ])
   }
+
+  @Test
+  func loadAllReadsEveryPageAndForceRestartsTheList() async throws {
+    let transport = MockTransport()
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    transport.enqueue("ContainerMembers", reply: membersPage("a0", hasNext: true))
+    transport.enqueue("ContainerMembers", reply: membersPage("a1", hasNext: false))
+    transport.enqueue("ContainerMembers", reply: membersPage("a2", hasNext: false))
+
+    let members = try User.containerMembers("c1")
+    try await members.loadAll()
+    try await members.loadAll(force: true)
+    let calls = transport.calls.filter { $0.operationName == "ContainerMembers" }
+    let variables = try calls.map { try JSONDecoder().decode(JSONValue.self, from: Data($0.variablesJson.utf8)) }
+    #expect(variables == [
+      .object(["containerId": .string("c1"), "first": .integer(30)]),
+      .object(["containerId": .string("c1"), "first": .integer(30), "after": .string("a0")]),
+      .object(["containerId": .string("c1"), "first": .integer(30)]),
+    ])
+  }
 }

@@ -5,6 +5,7 @@ mod invalidate;
 mod land;
 mod live;
 mod load;
+mod load_all;
 mod load_machine;
 mod load_owner;
 #[cfg(test)]
@@ -244,6 +245,8 @@ mod land_tests;
 mod thread_window_tests;
 #[cfg(test)]
 pub(crate) mod stable_order;
+#[cfg(test)]
+mod load_all_tests;
 #[cfg(test)]
 mod load_more_tests;
 #[cfg(test)]

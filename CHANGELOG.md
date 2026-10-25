@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `Query.loadAll(force:)` reads every page of a related list to its confirmed end, on Swift and Kotlin.
 - Generated GraphQL inputs support recursive input objects and `@oneOf` choices.
 - Kotlin `JsonElement.jsonText()` serializes JSON with the library settings.
 - Kotlin `offCaller` runs a block off the caller thread, for generated code.

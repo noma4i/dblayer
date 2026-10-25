@@ -42,4 +42,24 @@ class ContainerMembersTest {
             calls.map { Json.parseToJsonElement(it.variablesJson) },
         )
     }
+
+    @Test
+    fun loadAllReadsEveryPageAndForceRestartsTheList() = bounded {
+        val transport = MockTransport()
+        reopen(Config(null, null, 64u), modelsJSON, transport)
+        val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
+        DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
+        transport.enqueue("ContainerMembers", page("a0", true))
+        transport.enqueue("ContainerMembers", page("a1", false))
+        transport.enqueue("ContainerMembers", page("a2", false))
+
+        val members = User.containerMembers("c1")
+        members.loadAll()
+        members.loadAll(force = true)
+        val calls = transport.calls.filter { it.operationName == "ContainerMembers" }
+        assertEquals(
+            listOf("""{"containerId":"c1","first":30}""", """{"containerId":"c1","first":30,"after":"a0"}""", """{"containerId":"c1","first":30}""").map { Json.parseToJsonElement(it) },
+            calls.map { Json.parseToJsonElement(it.variablesJson) },
+        )
+    }
 }

@@ -53,11 +53,12 @@ pub struct LoadOutcome {
     pub dropped: usize,
     pub has_next: bool,
     pub attempts: u32,
+    pub kept_error: Option<SyncError>,
 }
 
 impl LoadOutcome {
     fn of(status: LoadStatus) -> Self {
-        Self { status, rows: 0, dropped: 0, has_next: false, attempts: 0 }
+        Self { status, rows: 0, dropped: 0, has_next: false, attempts: 0, kept_error: None }
     }
 }
 
@@ -196,13 +197,17 @@ impl Inner {
         locked(&self.flights).coalescing.in_flight().iter().any(|key| key.starts_with(&prefix))
     }
 
-    pub(crate) async fn fetch_after_flights(&self, resolved: &Resolved<'_>) -> FlightResult {
+    pub(super) async fn flights_settled(&self, resolved: &Resolved<'_>) {
         let paged = format!("{}|", resolved.window_key);
         loop {
             let pending = locked(&self.flights).waiting.iter().find(|(key, _)| **key == resolved.window_key || key.starts_with(&paged)).map(|(_, receiver)| receiver.clone());
             let Some(mut receiver) = pending else { break };
             let _ = receiver.wait_for(Option::is_some).await;
         }
+    }
+
+    pub(crate) async fn fetch_after_flights(&self, resolved: &Resolved<'_>) -> FlightResult {
+        self.flights_settled(resolved).await;
         self.fetch(resolved, None, true).await
     }
 
@@ -247,7 +252,7 @@ impl Inner {
                         }
                         Executed::Kept(error) => {
                             ticket.failed(LoadError::of(&error));
-                            Ok(LoadOutcome::of(LoadStatus::KeptStale))
+                            Ok(LoadOutcome { kept_error: Some(error), ..LoadOutcome::of(LoadStatus::KeptStale) })
                         }
                         Executed::Failed(error) => {
                             ticket.failed(LoadError::of(&error));
@@ -319,7 +324,7 @@ impl Inner {
             attempt,
         };
         Ok(match self.land(landing)? {
-            Landed::Applied { rows, invalid, revision } => Executed::Landed(LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts }, revision),
+            Landed::Applied { rows, invalid, revision } => Executed::Landed(LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts, kept_error: None }, revision),
             Landed::Discarded(reason) => Executed::Landed(LoadOutcome { attempts, ..LoadOutcome::of(LoadStatus::Discarded(reason)) }, 0),
         })
     }

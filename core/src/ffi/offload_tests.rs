@@ -43,6 +43,7 @@ fn json_calls() -> Vec<(&'static str, Call)> {
         ("load", Box::new(move |db, bad| Box::pin(async move { db.load(moment(), "feed".into(), bad).await }))),
         ("refresh", Box::new(move |db, bad| Box::pin(async move { db.refresh(moment(), "feed".into(), bad).await }))),
         ("load_more", Box::new(move |db, bad| Box::pin(async move { db.load_more(moment(), "feed".into(), bad).await.map(drop) }))),
+        ("load_all", Box::new(move |db, bad| Box::pin(async move { db.load_all(moment(), "feed".into(), bad, false).await }))),
         ("warm", Box::new(move |db, bad| Box::pin(async move { db.warm(bad).await }))),
         ("edge_values", Box::new(move |db, bad| Box::pin(async move { db.edge_values(moment(), "feed".into(), bad, vec!["r1".into()]).await.map(drop) }))),
         ("peek_query", Box::new(move |db, bad| Box::pin(async move { db.peek_query(bad).await.map(drop) }))),

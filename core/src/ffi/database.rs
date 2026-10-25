@@ -340,6 +340,14 @@ impl Database {
         .await?;
         Ok(())
     }
+    pub async fn load_all(&self, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
+        let sync = self.sync()?.clone();
+        cancellable(async move {
+            let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
+            Ok::<_, DbError>(sync.load_all(&model, &relation, &params, LoadOptions { force }).await?)
+        })
+        .await?
+    }
     pub async fn load_more(&self, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         let sync = self.sync()?.clone();
         let outcome = on_executor(async move {
