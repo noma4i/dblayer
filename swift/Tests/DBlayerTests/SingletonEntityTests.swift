@@ -13,7 +13,7 @@ extension BridgeProbeTests {
     #expect(try DB.subscriptionCensus().observedQueries == 0)
     try await Self.login(transport, "1", "Ann")
     try await User.profile.warm()
-    let cached = try User.profile.cached()
+    let cached = try await User.profile.cached()
     let rows = try #require(cached).value
     #expect(rows.map(\.id) == ["1"])
     #expect(rows.first?.name == "Ann")

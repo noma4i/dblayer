@@ -121,7 +121,7 @@ end
     assert_eq!(action.root.as_deref(), Some("containerMute.container"));
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("public func mute(mute: Bool) async throws -> Self"));
+    assert!(swift.contains("@concurrent public func mute(mute: Bool) async throws -> Self"));
     assert!(swift.contains("values[\"muted\"] = try JSONValue.encode(mute)"));
     assert!(swift.contains("args: [\"mute\": try JSONValue.encode(mute)]"));
     assert!(kotlin.contains("suspend fun mute(mute: Boolean): Container"));
@@ -143,7 +143,7 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("public static func create(name: String? = nil, unreadCount: Int) async throws -> Self"));
+    assert!(swift.contains("@concurrent public static func create(name: String? = nil, unreadCount: Int) async throws -> Self"));
     assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long): Container"));
 }
 
@@ -197,7 +197,7 @@ fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
-    assert!(swift.contains("public static func create(text: String)") && swift.contains("public func update(text: String? = nil)"), "{swift}");
+    assert!(swift.contains("@concurrent public static func create(text: String)") && swift.contains("@concurrent public func update(text: String? = nil)"), "{swift}");
     assert!(kotlin.contains("suspend fun create(text: String)") && kotlin.contains("suspend fun update(text: String? = null)"), "{kotlin}");
 }
 

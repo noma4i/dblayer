@@ -44,8 +44,8 @@ class SilentErrorTest {
         }
         val query = Query("Moment", failing)
         query.warm()
-        assertThrows(DbException::class.java) { query.cached() }
-        assertThrows(DbException::class.java) { query.cachedRow(row.id) }
+        assertTrue(runCatching { query.cached() }.exceptionOrNull() is DbException)
+        assertTrue(runCatching { query.cachedRow(row.id) }.exceptionOrNull() is DbException)
     } }
 
     @Test

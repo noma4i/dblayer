@@ -97,14 +97,14 @@ public struct Query<Model: DBModel>: Sendable {
     listSource(initial: nil, open: { listener in try DB.database.liveFind(model: Model.modelName, rowId: id, listener: listener) }) { (applied: ListApplied<Model>, _) in applied.rows.first }
   }
 
-  /// The rows of this query from memory, or nil when the query is not warm. It throws when the cache read or the decode of a row fails. It reads no database file, so it is safe on the main thread. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows.
-  public func cached() throws -> Cached<[Model]>? {
+  /// The rows of this query from memory, or nil when the query is not warm. It throws when the cache read or the decode of a row fails. It reads no database file, and the copy and the decode of the rows run off the thread of the caller. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows.
+  @concurrent public func cached() async throws -> Cached<[Model]>? {
     guard let change = try DB.database.peekQuery(queryJson: json) else { return nil }
     return Cached(value: try change.rows.map { try Model.decode($0) }, revision: change.revision)
   }
 
   /// One row from the row cache, or nil when it is not cached. It throws when the cache read or the decode fails. Nil does not mean that the row does not exist.
-  public func cachedRow(_ id: String) throws -> Model? {
+  @concurrent public func cachedRow(_ id: String) async throws -> Model? {
     guard let row = try DB.database.peekRow(model: Model.modelName, rowId: id) else { return nil }
     return try Model.decode(row)
   }

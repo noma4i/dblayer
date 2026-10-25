@@ -5,6 +5,7 @@
 ### Added
 - Generated GraphQL inputs support recursive input objects and `@oneOf` choices.
 - Kotlin `JsonElement.jsonText()` serializes JSON with the library settings.
+- Kotlin `offCaller` runs a block on `Dispatchers.Default`. Generated code uses it.
 
 ### Changed
 - Swift query conditions, `JSONValue.encode`, `JSONValue.text` and `JSONValue.tagged` throw on serialization failure.
@@ -18,6 +19,9 @@
 - Observation reads queued, running or awaiting application are limited to two.
 - Kotlin calls to the database prepare their JSON and read their answers on `Dispatchers.Default`, not on the caller thread. Swift marks them `@concurrent`.
 - `LiveList` and `LiveWindow` build `ids` off the main thread on both platforms.
+- Generated `create`, `update`, `set`, action and node calls prepare JSON and decode rows off the caller thread: Kotlin through `offCaller`, Swift through `@concurrent`.
+- `Query.cached()` and `Query.cachedRow()` are `async` in Swift and `suspend` in Kotlin, and they decode their rows off the caller thread.
+- Kotlin entity deliveries are applied after the registry lock is released, and a closed entity ignores later values.
 
 ### Fixed
 - Explicit null stays distinct from an absent field after reopening the database.

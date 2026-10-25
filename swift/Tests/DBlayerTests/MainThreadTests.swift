@@ -29,6 +29,17 @@ struct ProbeRow: DBModel {
   init(wire: WireRow) throws { key = wire.id }
 }
 
+struct CachedProbe: DBModel {
+  static let modelName = "Moment"
+  static let wireLayout = Moment.wireLayout
+  static let reads = MainThreadReads()
+  let id: String
+  let sync = SyncInfo()
+  let upload: UploadInfo? = nil
+
+  init(wire: WireRow) throws { id = wire.id; Self.reads.touch() }
+}
+
 struct ProbeAnswer: Decodable, Sendable {
   static let reads = MainThreadReads()
   init(from _: Decoder) throws { Self.reads.touch() }
@@ -47,6 +58,24 @@ extension BridgeProbeTests {
 
     let reads = ProbeAnswer.reads.counts
     #expect(reads.all == 1, "the probe saw the decode")
+    #expect(reads.main == 0)
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aWarmQueryDecodesItsCachedRowsOffTheCallerThread() async throws {
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    for index in 0 ..< 2 { _ = try await Moment.create(text: "t\(index)") }
+    let query = Query<CachedProbe>().order(Order(field: "text", direction: "asc"))
+    try await query.warm()
+
+    let cached = try await query.cached()
+    let row = try await query.cachedRow(try #require(cached).value[0].id)
+
+    #expect(cached?.value.count == 2)
+    #expect(row != nil)
+    let reads = CachedProbe.reads.counts
+    #expect(reads.all == 3)
     #expect(reads.main == 0)
   }
 }

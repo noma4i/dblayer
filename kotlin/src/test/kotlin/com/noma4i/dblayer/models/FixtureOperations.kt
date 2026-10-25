@@ -43,18 +43,18 @@ data class Clip(
         fun createFileVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
             if (widgets != null) put("widgets", jsonValue(widgets))
         }
-        suspend fun create(title: String? = null): Clip {
+        suspend fun create(title: String? = null): Clip = offCaller {
             val values = buildJsonObject {
                 title?.let { put("title", jsonValue(it)) }
             }
-            return read(DBlayer.database.create("Clip", values.jsonText(), "{}"))
+            read(DBlayer.database.create("Clip", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted): Clip {
+    suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted): Clip = offCaller {
         val values = buildJsonObject {
             put("title", title)
         }
-        return Clip.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Clip.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -88,18 +88,18 @@ data class Inbox(
             var built = Query("Inbox", this, relation = "shelf", params = buildJsonObject { put("list", jsonValue(list)) })
             return built
         }
-        suspend fun create(title: String): Inbox {
+        suspend fun create(title: String): Inbox = offCaller {
             val values = buildJsonObject {
                 put("title", jsonValue(title))
             }
-            return read(DBlayer.database.create("Inbox", values.jsonText(), "{}"))
+            read(DBlayer.database.create("Inbox", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null): Inbox {
+    suspend fun update(title: String? = null): Inbox = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
         }
-        return Inbox.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Inbox.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -133,18 +133,18 @@ data class Roster(
             var built = Query("Roster", this, relation = "container_members", params = buildJsonObject { put("containerId", jsonValue(containerId)); put("order", jsonValue(order)) })
             return built
         }
-        suspend fun create(title: String): Roster {
+        suspend fun create(title: String): Roster = offCaller {
             val values = buildJsonObject {
                 put("title", jsonValue(title))
             }
-            return read(DBlayer.database.create("Roster", values.jsonText(), "{}"))
+            read(DBlayer.database.create("Roster", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null): Roster {
+    suspend fun update(title: String? = null): Roster = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
         }
-        return Roster.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Roster.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
 }
 

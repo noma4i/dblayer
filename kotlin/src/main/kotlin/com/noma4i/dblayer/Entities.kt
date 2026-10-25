@@ -29,7 +29,7 @@ internal class EntityCell<Model : DBModel> {
 
     @Synchronized
     fun accept(next: Model?, incoming: Long, bytes: ULong = 0uL) {
-        if (incoming < revision) return
+        if (incoming < revision || phase.value == EntityPhase.Closed) return
         revision = incoming
         this.bytes = bytes
         stale = false
@@ -209,11 +209,16 @@ class Entities<Model : DBModel> internal constructor(
     internal val retainedCount: Int get() = synchronized(lock) { kept.count(modelName, now()) }
     internal val liveCount: Int get() = synchronized(lock) { live.size }
 
-    internal fun apply(delivery: EntityDeliveryRows<Model>) = synchronized(lock) {
-        delivery.rows.forEach { (model, bytes) -> live[model.id]?.takeIf { it.get() != null }?.cell?.accept(model, delivery.revision, bytes) }
-        delivery.removed.forEach { id -> live[id]?.takeIf { it.get() != null }?.cell?.accept(null, delivery.revision) }
-        delivery.failure?.let { message -> live.values.forEach { ref -> if (ref.get() != null) ref.cell.fail(message) } }
-        delivery.failedIds.forEach { (id, message) -> live[id]?.takeIf { it.get() != null }?.cell?.fail(message) }
+    internal fun apply(delivery: EntityDeliveryRows<Model>) {
+        val writes = ArrayList<() -> Unit>()
+        synchronized(lock) {
+            fun liveCell(id: String) = live[id]?.takeIf { it.get() != null }?.cell
+            delivery.rows.forEach { (model, bytes) -> liveCell(model.id)?.let { writes += { it.accept(model, delivery.revision, bytes) } } }
+            delivery.removed.forEach { id -> liveCell(id)?.let { writes += { it.accept(null, delivery.revision) } } }
+            delivery.failure?.let { message -> live.values.forEach { ref -> if (ref.get() != null) writes += { ref.cell.fail(message) } } }
+            delivery.failedIds.forEach { (id, message) -> liveCell(id)?.let { writes += { it.fail(message) } } }
+        }
+        writes.forEach { it() }
     }
 
     private fun collected(ref: LiveRef<Model>) = synchronized(lock) {

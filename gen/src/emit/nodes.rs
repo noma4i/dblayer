@@ -11,7 +11,7 @@ pub(super) fn swift_node(out: &mut String, method: &str, relation: &RelationSpec
 pub(super) fn kotlin_node(out: &mut String, class: &str, method: &str, relation: &RelationSpec, kind: NodeRead) {
     let relation = &relation.name;
     match kind {
-        NodeRead::One => out.push_str(&format!("        suspend fun {method}(id: String, force: Boolean = false): {class}? = DBlayer.database.node(\"{class}\", \"{relation}\", id, force)?.let {{ read(it) }}\n")),
-        NodeRead::Many => out.push_str(&format!("        suspend fun {method}(ids: List<String>): List<{class}> = DBlayer.database.nodes(\"{class}\", \"{relation}\", ids).map {{ read(it) }}\n")),
+        NodeRead::One => out.push_str(&format!("        suspend fun {method}(id: String, force: Boolean = false): {class}? = offCaller {{ DBlayer.database.node(\"{class}\", \"{relation}\", id, force)?.let {{ read(it) }} }}\n")),
+        NodeRead::Many => out.push_str(&format!("        suspend fun {method}(ids: List<String>): List<{class}> = offCaller {{ DBlayer.database.nodes(\"{class}\", \"{relation}\", ids).map {{ read(it) }} }}\n")),
     }
 }

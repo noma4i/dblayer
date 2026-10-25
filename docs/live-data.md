@@ -85,13 +85,13 @@ val group by Group.find(groupId).collectAsLive()
 
 ## Reading before the first delivery
 
-A new subscription delivers its first rows from a library thread, so a screen that has to show cached rows at once cannot wait for it. `cached()` answers from memory, without reading the database file, so it is safe on the main thread. It gives `nil` (Swift) or `null` (Kotlin) when the query is not warm. That means "not in memory", never "no rows".
+A new subscription delivers its first rows from a library thread, so a screen that has to show cached rows at once cannot wait for it. `cached()` answers from memory, without reading the database file. The copy and the decode of the rows run off the caller thread, so you await it and the main thread never does that work. It gives `nil` (Swift) or `null` (Kotlin) when the query is not warm. That means "not in memory", never "no rows".
 
 ```swift
 let list = Moment.recent
-if let cached = try list.cached() { show(cached.value, revision: cached.revision) }   // rows and revision, or nil
+if let cached = try await list.cached() { show(cached.value, revision: cached.revision) }   // rows and revision, or nil
 try await list.warm()                    // read once, keep in memory
-let row = try list.cachedRow(id)           // one row from the row cache, or nil
+let row = try await list.cachedRow(id)     // one row from the row cache, or nil
 ```
 
 ```kotlin

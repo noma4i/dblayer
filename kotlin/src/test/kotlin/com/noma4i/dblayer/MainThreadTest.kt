@@ -34,6 +34,14 @@ class MainThreadTest {
 
     private fun stages() = touched.map { it.first }.toSet()
 
+    private fun recording(key: String): JsonObject {
+        val inner = mapOf<String, JsonElement>(key to JsonPrimitive(1))
+        return JsonObject(object : Map<String, JsonElement> by inner {
+            override val entries get() = inner.entries.also { touch("prepare") }
+            override val size get() = inner.size.also { touch("prepare") }
+        })
+    }
+
     private fun onMain(stage: String) = touched.count { it.first == stage && it.second === mainThread }
 
     private class Probe(val moment: Moment, val touch: () -> Unit) : DBModel by moment {
@@ -46,11 +54,7 @@ class MainThreadTest {
         transport.enqueue("QrCodeCreate", """{"data":{"qrCodeCreate":{"url":"https://q"}}}""")
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"QrCodeCreate","document":"mutation QrCodeCreate(${'$'}input: CreateQrCodeInput!) { qrCodeCreate(input: ${'$'}input) { url } }"}]""")
-        val inner = mapOf<String, JsonElement>("input" to JsonPrimitive(1))
-        val variables = JsonObject(object : Map<String, JsonElement> by inner {
-            override val entries get() = inner.entries.also { touch("prepare") }
-            override val size get() = inner.size.also { touch("prepare") }
-        })
+        val variables = recording("input")
         val answer = object : KSerializer<String> {
             override val descriptor = PrimitiveSerialDescriptor("probe", PrimitiveKind.STRING)
             override fun serialize(encoder: Encoder, value: String) = throw UnsupportedOperationException()
@@ -66,6 +70,39 @@ class MainThreadTest {
         assertEquals(setOf("prepare", "decode"), stages())
         assertEquals(0, onMain("prepare"))
         assertEquals(0, onMain("decode"))
+    }
+
+    @Test
+    fun generated_create_and_update_prepare_their_json_off_the_caller_thread() = bounded {
+        reopen(Config(null, null, 64u), modelsJSON, null)
+        val media = recording("media")
+
+        val created = withContext(main) { Moment.create(text = "a", media = media) }
+        withContext(main) { created.update(text = GraphQLNullable.Value("b"), media = media) }
+
+        assertEquals(setOf("prepare"), stages())
+        assertEquals(0, onMain("prepare"))
+    }
+
+    @Test
+    fun a_warm_query_decodes_its_cached_rows_off_the_caller_thread() = bounded {
+        reopen(Config(null, null, 64u), modelsJSON, null)
+        repeat(2) { Moment.create(text = "t%05d".format(it)) }
+        val decoder = object : ModelDecoder<Probe> {
+            override val modelName = Moment.modelName
+            override val layout = Moment.layout
+            override fun decode(row: WireRow) = Probe(Moment.decode(row)) {}.also { touch("cached") }
+        }
+        val query = Query("Moment", decoder).order(Order("text", "asc"))
+        query.warm()
+
+        val cached = withContext(main) { query.cached() }
+        val row = withContext(main) { query.cachedRow(cached!!.value.first().moment.id) }
+
+        assertEquals(2, cached?.value?.size)
+        assertEquals("t00000", row?.moment?.text)
+        assertEquals(setOf("cached"), stages())
+        assertEquals(0, onMain("cached"))
     }
 
     @Test

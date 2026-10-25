@@ -21,8 +21,8 @@ extension BridgeProbeTests {
       let moment = try await Moment.create(text: "m")
       let query = Query<UnreadableMoment>()
       try await query.warm()
-      #expect(throws: UnreadableMoment.Unreadable.self) { try query.cached() }
-      #expect(throws: UnreadableMoment.Unreadable.self) { try query.cachedRow(moment.id) }
+      await #expect(throws: UnreadableMoment.Unreadable.self) { try await query.cached() }
+      await #expect(throws: UnreadableMoment.Unreadable.self) { try await query.cachedRow(moment.id) }
     }
   }
 }

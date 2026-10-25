@@ -33,12 +33,12 @@ public struct Clip: DBModel {
         if let value = widgets { variables["widgets"] = try JSONValue.encode(value) }
         return variables
     }
-    public static func create(title: String? = nil) async throws -> Self {
+    @concurrent public static func create(title: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await create(values: values)
     }
-    public func update(title: String?? = nil) async throws -> Self {
+    @concurrent public func update(title: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await update(values: values)
@@ -76,12 +76,12 @@ public struct Inbox: DBModel {
         let built = Query<Self>(relation: "shelf", params: ["list": try JSONValue.encode(list)])
         return built
     }
-    public static func create(title: String) async throws -> Self {
+    @concurrent public static func create(title: String) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["title"] = try JSONValue.encode(title)
         return try await create(values: values)
     }
-    public func update(title: String? = nil) async throws -> Self {
+    @concurrent public func update(title: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await update(values: values)
@@ -119,12 +119,12 @@ public struct Roster: DBModel {
         let built = Query<Self>(relation: "container_members", params: ["containerId": try JSONValue.encode(containerId), "order": try JSONValue.encode(order)])
         return built
     }
-    public static func create(title: String) async throws -> Self {
+    @concurrent public static func create(title: String) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["title"] = try JSONValue.encode(title)
         return try await create(values: values)
     }
-    public func update(title: String? = nil) async throws -> Self {
+    @concurrent public func update(title: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await update(values: values)
