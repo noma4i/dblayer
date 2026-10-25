@@ -105,6 +105,7 @@ Test conventions:
 - Kotlin network tests use Robolectric because the Android OkHttp artifact requires Android APIs, including logging.
 - Keep one test per requirement at the lowest level that identifies its failure. Combine similar cases in a table.
 - Core stable-order tests own confirmed-row placement. Platform `LandsTests` and `LandsTest` check additional returned rows through the bridge.
+- Core edge tests own connection isolation and value replacement. Platform edge tests check typed reads, nullable fields, aliases and enums.
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.
 - Tests count work (reads, calls, commits) instead of measuring time.
 
