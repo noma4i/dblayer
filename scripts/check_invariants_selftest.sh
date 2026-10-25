@@ -158,30 +158,38 @@ expect_red_step_killed() {
 
 inv_check_05_a_step_past_its_limit_leaves_no_process() {
   local code=0 pid=""
+  mkfifo "$work/go" "$work/born"
   cat > "$work/subject.sh" <<'SUBJECT'
 set -m
-until [ -e "$1/go" ]; do sleep 0.02; done
+exec 3<> "$1/go"
+read -r -u 3 _
 sleep 601.7 &
-echo $! > "$1/pid-sleep"
+echo $! > "$1/born"
 wait
 SUBJECT
   (
     sleep() { if [ "$1" = 7777 ]; then return 0; fi; command sleep "$@"; }
+    # The first list of descendants is taken before the subject forks. The fork happens right after it, as in a
+    # process that was still running when the stop signal was sent, and its child leaves the group (set -m).
     pgrep() {
-      local found tries=0
+      local found
       found="$(command pgrep "$@")"
-      touch "$work/go"
-      while [ ! -s "$work/pid-sleep" ] && [ "$(command ps -o state= -p "$2" | tr -d ' ')" != T ] && [ "$tries" -lt 200 ]; do
-        command sleep 0.02
-        tries=$((tries + 1))
-      done
+      if [ ! -e "$work/listed" ]; then
+        : > "$work/listed"
+        exec 4<> "$work/born"
+        kill -CONT -- "-$2" 2> /dev/null || true
+        echo go > "$work/go"
+        read -r -t 30 -u 4 pid < /dev/null || true
+        echo "$pid" > "$work/pid-sleep"
+      fi
       [ -z "$found" ] || echo "$found"
     }
     run_bounded 7777 selftest bash "$work/subject.sh" "$work" 2> /dev/null
   ) || code=$?
   [ -s "$work/pid-sleep" ] && read -r pid < "$work/pid-sleep"
   expect_red_step_killed "$code" "$pid"
-  /bin/rm -f "$work/pid-sleep" "$work/go"
+  [ -z "$pid" ] || kill -KILL "$pid" 2> /dev/null || true
+  /bin/rm -f "$work/pid-sleep" "$work/go" "$work/born" "$work/listed"
 }
 
 inv_check_05_the_wait_for_a_build_slot_is_not_test_time() {
