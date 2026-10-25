@@ -92,7 +92,7 @@ impl From<crate::sync::SyncError> for DbError {
 impl From<serde_json::Error> for DbError {
     fn from(error: serde_json::Error) -> Self {
         #[cfg(test)]
-        offload_tests::note_parse_failure();
+        offload_tests::note_parse_failure(&error);
         Self::Invalid { detail: error.to_string() }
     }
 }
