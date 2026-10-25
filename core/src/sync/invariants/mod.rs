@@ -32,3 +32,9 @@ mod spec_fixtures;
 mod temp_destroy_tests;
 #[cfg(test)]
 mod window_tests;
+#[cfg(test)]
+mod not_found_tests;
+#[cfg(test)]
+mod unreadable_tests;
+#[cfg(test)]
+mod answer_shape_tests;

@@ -352,6 +352,7 @@ impl Inner {
         let rejected = exhausted || matches!(delivery, Delivery::Rejected(..));
         let result = match delivery {
             Delivery::Response(response) => self.settle_response(sending, operation, response).await?,
+            Delivery::Rejected(failure, _) if sending.action == "destroy" && failure.extensions.as_ref().and_then(|fields| fields.code.as_deref()) == Some("NOT_FOUND") => self.land_response(sending, operation, Value::Null).await?,
             Delivery::Rejected(failure, _) => self.refuse(sending, failure, keep).await?,
             Delivery::Unreached(failure) if deferred => {
                 self.postpone(sending, failure)?
@@ -458,6 +459,22 @@ impl Inner {
 
     pub(super) async fn settle_response(&self, sending: &Sending<'_>, operation: &OperationDef, response: Response) -> Result<SendResult, SyncError> {
         let data = response.data.unwrap_or(Value::Null);
+        let declared = self.db.spec(&sending.model)?.actions.iter().find(|declared| declared.name == sending.action).cloned();
+        let root = declared.as_ref().and_then(|declared| declared.root.as_deref()).unwrap_or(&operation.root_path);
+        let landed = declared.iter().flat_map(|declared| &declared.lands).any(|landing| root_value(&data, &landing.root).is_some_and(|value| value.is_object() || value.is_array()));
+        let readable = landed
+            || match root_value(&data, root) {
+                None | Some(Value::String(_)) => false,
+                Some(Value::Null) => sending.action == "destroy",
+                Some(_) => true,
+            };
+        if !readable {
+            return self.quarantine(sending, &data);
+        }
+        self.land_response(sending, operation, data).await
+    }
+
+    async fn land_response(&self, sending: &Sending<'_>, operation: &OperationDef, data: Value) -> Result<SendResult, SyncError> {
         let entry = sending.entry;
         let temp = entry.operation.temp_id.clone();
         let spec = self.db.spec(&sending.model)?;

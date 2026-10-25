@@ -34,7 +34,7 @@ fn rig_with_pending_update() -> Rig {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_reset_during_a_slow_answer_leaves_no_operation_stuck_in_sending() {
+async fn inv_op_13_a_reset_during_a_slow_answer_leaves_no_operation_stuck_in_sending() {
     let rig = rig_with_pending_update();
     flush_while_resetting(&rig, Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})).after(Duration::from_secs(5))).await;
     let stuck: Vec<_> = rig.db.outbox().unwrap().into_iter().filter(|entry| entry.operation.status == OperationStatus::Pending && entry.operation.transport_started).collect();

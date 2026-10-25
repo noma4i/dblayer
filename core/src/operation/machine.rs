@@ -39,9 +39,6 @@ impl OperationFlow {
                 (OperationStatus::Committed, _) => State::committed(),
                 (OperationStatus::RolledBack, _) => State::rolled_back(),
             }),
-            OperationEvent::Fail(OperationStatus::Failed) => Transition(State::failed()),
-            OperationEvent::Fail(OperationStatus::DeliveryUnknown) => Transition(State::delivery_unknown()),
-            OperationEvent::Close(OperationStatus::Committed) => Transition(State::committed()),
             OperationEvent::Close(OperationStatus::RolledBack) => Transition(State::rolled_back()),
             _ => {
                 context.refused = true;
@@ -69,6 +66,9 @@ impl OperationFlow {
                 context.facts.transport_started = false;
                 Transition(State::idle())
             }
+            OperationEvent::Fail(OperationStatus::Failed) => Transition(State::failed()),
+            OperationEvent::Fail(OperationStatus::DeliveryUnknown) => Transition(State::delivery_unknown()),
+            OperationEvent::Close(OperationStatus::Committed) => Transition(State::committed()),
             OperationEvent::Recover => Transition(State::delivery_unknown()),
             _ => Super,
         }

@@ -57,7 +57,7 @@ fn rolling_back_a_destroy_restores_the_cascade() {
 }
 
 #[test]
-fn rolling_back_an_older_update_keeps_a_newer_edit() {
+fn inv_rollback_03_rolling_back_an_older_update_keeps_a_newer_edit() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "A"}));
     db.update("moments", &rid("m1"), obj(json!({"text": "B"}))).unwrap();
@@ -68,7 +68,7 @@ fn rolling_back_an_older_update_keeps_a_newer_edit() {
 }
 
 #[test]
-fn rolling_back_every_update_restores_the_original_in_either_order() {
+fn inv_rollback_02_rolling_back_every_update_restores_the_original_in_either_order() {
     for oldest_first in [true, false] {
         let db = booted();
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "A"}));

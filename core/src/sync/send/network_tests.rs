@@ -73,7 +73,7 @@ async fn interrupted_transfer_is_delivery_unknown_and_never_resent_by_itself() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn offline_flag_holds_the_mutation_without_a_call_or_an_attempt_and_online_sends_it() {
+async fn inv_op_17_offline_flag_holds_the_mutation_without_a_call_or_an_attempt_and_online_sends_it() {
     let rig = rig();
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
@@ -131,7 +131,7 @@ async fn forty_unreached_attempts_leave_a_kept_update_failed() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn forty_unreached_attempts_bring_a_destroyed_record_back_as_failed() {
+async fn inv_op_08_forty_unreached_attempts_bring_a_destroyed_record_back_as_failed() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.destroy("moments", &rid("m1")).unwrap();

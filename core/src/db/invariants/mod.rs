@@ -22,3 +22,5 @@ mod write_tests;
 mod snapshot_tests;
 #[cfg(test)]
 mod work_tests;
+#[cfg(test)]
+mod cut_tests;

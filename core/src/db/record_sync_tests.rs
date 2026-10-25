@@ -168,7 +168,7 @@ fn retry_does_nothing_for_a_record_without_stuck_operations() {
 }
 
 #[test]
-fn restart_turns_an_interrupted_send_into_delivery_unknown_and_repairs_row_sync() {
+fn inv_op_07_restart_turns_an_interrupted_send_into_delivery_unknown_and_repairs_row_sync() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
     {

@@ -5,6 +5,7 @@ use super::fixtures::*;
 use super::spec_fixtures::*;
 use crate::commit::{CommitEnvelope, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::ModelKey;
+use crate::operation::OperationStatus;
 use crate::syncstate::SyncState;
 use crate::transport::Reply;
 
@@ -54,4 +55,23 @@ async fn inv_rollback_05_inv_file_03_a_refused_destroy_after_a_sweep_and_a_resta
     assert!(rig.db.file("moments", &rid("m1"), "media").unwrap().is_some());
     assert_eq!(feed_members(&rig), 1);
     assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().state, SyncState::Failed);
+}
+
+#[tokio::test(start_paused = true)]
+async fn inv_op_03_an_operation_started_before_a_restart_is_not_sent_again_until_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("3.sqlite");
+    let rig = open_rig(&path);
+    rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    start(&rig.db, rig.db.outbox().unwrap()[0].operation.id.0);
+    drop(rig);
+
+    let rig = open_rig(&path);
+    rig.transport.enqueue("CreateMoment", created("m77", "hello"));
+    rig.sync.flush().await.unwrap();
+    let held = rig.db.outbox().unwrap().remove(0).operation;
+    assert_eq!((rig.transport.call_count("CreateMoment"), held.status), (0, OperationStatus::DeliveryUnknown));
+    rig.db.retry("moments", &held.row_ids[0], None).unwrap();
+    rig.sync.flush().await.unwrap();
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1);
 }

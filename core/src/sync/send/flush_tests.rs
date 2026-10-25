@@ -75,7 +75,7 @@ async fn create_success_swaps_the_temp_id_for_the_real_one_and_observers_see_it(
 }
 
 #[tokio::test(start_paused = true)]
-async fn rejected_update_restores_the_row_and_reports_the_error() {
+async fn inv_op_15_rejected_update_restores_the_row_and_reports_the_error() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
@@ -200,7 +200,7 @@ async fn interrupted_request_is_delivery_unknown_and_blocks_the_row() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn concurrent_flushes_send_each_operation_once() {
+async fn inv_op_03_concurrent_flushes_send_each_operation_once() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();

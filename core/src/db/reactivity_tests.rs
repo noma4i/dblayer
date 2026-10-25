@@ -143,7 +143,7 @@ fn observe_count_delivers_only_when_the_count_changes() {
 }
 
 #[test]
-fn a_temp_id_swap_arrives_as_replaced() {
+fn inv_id_04_a_temp_id_swap_arrives_as_replaced() {
     let db = booted();
     let temp = db.create("moments", obj(json!({"text": "new"}))).unwrap();
     let (log, callback) = recorder();
