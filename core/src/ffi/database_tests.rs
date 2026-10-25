@@ -20,7 +20,7 @@ impl Transport for Plain {
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn subscribe(&self, _: TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) { unreachable!() }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
 struct Unused;
@@ -33,7 +33,7 @@ impl CredentialStore for Unused {
 
 #[async_trait::async_trait]
 impl EncryptedHttp for Unused {
-    async fn post(&self, _: String, _: String) -> Result<EncryptedReply, DbError> { unreachable!() }
+    async fn post(&self, _: String, _: String, _: bool) -> Result<EncryptedReply, DbError> { unreachable!() }
 }
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }

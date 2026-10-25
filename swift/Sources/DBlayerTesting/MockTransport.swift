@@ -85,8 +85,8 @@ public final class MockTransport: Transport, @unchecked Sendable {
     }
   }
 
-  public func put(url: String, headers: [String: String], bytes: Data, progress: ByteProgress) async throws -> PutReply {
-    progress.sent(bytes: UInt64(bytes.count))
+  public func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
+    progress.sent(bytes: file.length)
     return PutReply(status: 200, etag: nil)
   }
 

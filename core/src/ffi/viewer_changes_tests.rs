@@ -37,7 +37,7 @@ impl Transport for Recording {
         Ok(())
     }
     fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
+    async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
 struct Silent;

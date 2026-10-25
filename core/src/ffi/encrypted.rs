@@ -13,7 +13,7 @@ pub struct EncryptedReply { pub status: u16, pub body: String }
 #[uniffi::export(rust, foreign)]
 #[async_trait]
 pub trait EncryptedHttp: Send + Sync {
-    async fn post(&self, path: String, body: String) -> Result<EncryptedReply, DbError>;
+    async fn post(&self, path: String, body: String, upload: bool) -> Result<EncryptedReply, DbError>;
 }
 
 #[uniffi::export(rust, foreign)]
@@ -27,8 +27,8 @@ struct ForeignHttp(Arc<dyn EncryptedHttp>);
 
 #[async_trait]
 impl core::HttpExchange for ForeignHttp {
-    async fn post(&self, path: &str, body: String) -> Result<core::HttpReply, core::TransportError> {
-        let reply = self.0.post(path.to_string(), body).await.map_err(transport_error)?;
+    async fn post(&self, path: &str, body: String, upload: bool) -> Result<core::HttpReply, core::TransportError> {
+        let reply = self.0.post(path.to_string(), body, upload).await.map_err(transport_error)?;
         Ok(core::HttpReply { status: reply.status, body: reply.body })
     }
 

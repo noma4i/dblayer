@@ -454,6 +454,19 @@ impl Database {
         on_executor(async move { sync.resume().await }).await?;
         Ok(())
     }
+    pub fn put_tasks(&self, tasks: Vec<crate::transport::PutTask>) {
+        if let Some(sync) = &self.sync { sync.put_tasks(tasks); }
+    }
+    pub async fn resume_uploads(&self) -> Result<(), DbError> {
+        let Some(sync) = self.sync.clone() else { return Ok(()) };
+        on_executor(async move { sync.resume_uploads().await }).await?;
+        Ok(())
+    }
+    pub async fn resume_uploads_for(&self, tags: Vec<String>) -> Result<(), DbError> {
+        let Some(sync) = self.sync.clone() else { return Ok(()) };
+        on_executor(async move { sync.resume_uploads_for(tags).await }).await?;
+        Ok(())
+    }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone(), online: self.db.connectivity() })) }
     pub async fn upload(&self, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<(), DbError> {

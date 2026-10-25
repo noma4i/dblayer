@@ -617,7 +617,7 @@ pub(crate) fn apply_envelope(
             let seq = match transition {
                 OperationTransition::Begin(record) | OperationTransition::BeginUpload { record, .. } => record.seq,
                 OperationTransition::Progress { seq, state, .. } if state.phase == crate::upload::UploadStatus::Queued => Some(*seq),
-                OperationTransition::Progress { .. } => None,
+                OperationTransition::Progress { .. } | OperationTransition::BackgroundRefused { .. } => None,
                 OperationTransition::RemoveUploadItem { seq, .. } | OperationTransition::SeparateUploads { seq, .. }
                 | OperationTransition::Close { seq, .. } | OperationTransition::Fail { seq, .. }
                 | OperationTransition::Start { seq } | OperationTransition::Postpone { seq, .. }
@@ -944,8 +944,22 @@ fn apply_transitions(
                 result.operations.insert(*seq);
                 wrote = true;
             }
+            OperationTransition::BackgroundRefused { seq, item_position, detail } => {
+                synced.extend(op_keys_of(connection, *seq)?);
+                let saved = connection.execute(
+                    "UPDATE op_item SET background_refused = ?3 WHERE seq = ?1 AND position = ?2 AND phase NOT IN ('failed', 'cancelled')",
+                    params![seq, item_position, detail],
+                )?;
+                if saved == 0 {
+                    result.unknown_operation_acks += 1;
+                    continue;
+                }
+                result.operations.insert(*seq);
+                wrote = true;
+            }
             OperationTransition::Retry { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
+                connection.execute("UPDATE op_item SET background_refused = NULL WHERE seq = ?1", params![seq])?;
                 let retried = connection.execute(
                     &format!("UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error_kind = NULL, error_message = NULL, since = ?2 WHERE seq = ?1 AND {}", operation_guard(OperationEvent::Retry)?),
                     params![seq, now_ms],

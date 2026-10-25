@@ -130,6 +130,10 @@ impl FileDirectories {
         fs::read(path)
     }
 
+    pub(crate) fn range_path(&self, tag: &str) -> PathBuf {
+        self.cache.join("ranges").join(tag)
+    }
+
     pub(crate) fn cache_target(&self, id: &str, name: &str) -> PathBuf {
         let leaf = Path::new(name).file_name().and_then(|leaf| leaf.to_str()).filter(|leaf| !leaf.is_empty()).unwrap_or("file");
         self.cache.join(id).join(leaf)

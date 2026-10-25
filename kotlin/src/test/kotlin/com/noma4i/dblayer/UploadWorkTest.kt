@@ -1,0 +1,101 @@
+package com.noma4i.dblayer
+
+import android.app.job.JobScheduler
+import com.noma4i.dblayer.models.Asset
+import com.noma4i.dblayer.models.modelsJSON
+import java.nio.file.Files
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.robolectric.Robolectric
+import org.robolectric.Shadows.shadowOf
+
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk = [35])
+class UploadWorkTest {
+    private val notification = UploadNotification("Uploading", "Files are on their way", 1)
+
+    @Test
+    fun theApiLevelPicksTheUserInitiatedJobFromApi34AndTheForegroundServiceBelow() {
+        assertEquals(UploadMode.ForegroundService, uploadMode(33))
+        assertEquals(UploadMode.UserInitiatedJob, uploadMode(34))
+        assertEquals(UploadMode.UserInitiatedJob, uploadMode(36))
+    }
+
+    @Test
+    fun theJobIsUserInitiatedNeedsANetworkAndIsNotPersisted() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        assertNull(UploadJobService.schedule(context))
+        val job = context.getSystemService(JobScheduler::class.java).allPendingJobs.single()
+        assertTrue(job.isUserInitiated)
+        assertTrue(job.networkType != android.app.job.JobInfo.NETWORK_TYPE_NONE)
+        assertTrue(!job.isPersisted)
+        assertNull("a pending job is kept instead of replaced", UploadJobService.schedule(context))
+        assertEquals(1, context.getSystemService(JobScheduler::class.java).allPendingJobs.size)
+    }
+
+    @Test
+    fun onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob() = bounded {
+        MockWebServer().use { server ->
+            repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
+            server.start()
+            val transport = OkHttpTransport(server.url("/graphql").toString())
+            UploadNetwork.started(null, 1u)
+            try {
+                assertEquals("""{"data":{}}""", transport.query(TransportRequest("query Probe { id }", "Probe", "{}", false)))
+                refused { transport.query(TransportRequest("mutation Probe { id }", "Probe", "{}", true)) }
+                refused { OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e", true) }
+            } finally {
+                UploadNetwork.ended(1u)
+            }
+            assertEquals("""{"data":{}}""", transport.mutate(TransportRequest("mutation Probe { id }", "Probe", "{}", true)))
+        }
+    }
+
+    private suspend fun refused(block: suspend () -> Unit) {
+        val failure = runCatching { block() }.exceptionOrNull()
+        assertTrue("expected a network failure, got $failure", failure is DbException.Network)
+    }
+
+    @Test
+    fun aRefusedBackgroundStartIsKeptOnTheAcceptedBatchOnly() = bounded {
+        val directory = Files.createTempDirectory("accepted").toFile()
+        try {
+            val source = java.io.File(directory, "image.png").apply { writeText("image") }
+            val database = reopen(Config(null, null, 32u), modelsJSON, MockTransport(), operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""", uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            database.setOnline(false)
+            var starts = 0
+            database.setUploadAcceptedSink(UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> if (starts++ == 0) "the app was not visible" else null }))
+            fun batch(keys: IntRange) = keys.map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
+            val rows = Asset.uploadCreate(batch(0..1), UploadBatchRequest(operation = "create_files"))
+            val other = Asset.uploadCreate(batch(8..9), UploadBatchRequest(operation = "create_files"))
+            eventually("every member of the refused batch shows the reason") {
+                rows.all { Asset.find(it.id).current()?.uploads?.values?.singleOrNull()?.error?.message?.contains("the app was not visible") == true }
+            }
+            assertNull(Asset.find(other.first().id).current()!!.uploads.values.single().error)
+        } finally {
+            DBlayer.close()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun theUploadServiceShowsItsNotificationBeforeOpenFinishedAndStopsWhenNothingIsUnfinished() = bounded {
+        DBlayer.close()
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        UploadNotifications.store(context, notification)
+        val controller = Robolectric.buildService(UploadService::class.java).create()
+        controller.startCommand(0, 1)
+        assertNotNull("the foreground notification is shown before open ran", shadowOf(controller.get()).lastForegroundNotification)
+        assertTrue(!shadowOf(controller.get()).isStoppedBySelf)
+        DBlayer.open(context, transport = MockTransport(), modelsJson = modelsJSON, uploadNotification = notification)
+        eventually("the service stops by itself when no upload is unfinished") { shadowOf(controller.get()).isStoppedBySelf }
+        DBlayer.close()
+    }
+}

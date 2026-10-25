@@ -20,8 +20,8 @@ private final class SessionSubscriptions: Transport, @unchecked Sendable {
     try await mock.subscribe(request: request, sink: sink)
   }
   func unsubscribe(token: String) { mock.unsubscribe(token: token) }
-  func put(url: String, headers: [String: String], bytes: Data, progress: ByteProgress) async throws -> PutReply {
-    try await mock.put(url: url, headers: headers, bytes: bytes, progress: progress)
+  func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
+    try await mock.put(url: url, headers: headers, file: file, tag: tag, progress: progress)
   }
 }
 

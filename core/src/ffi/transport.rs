@@ -14,11 +14,12 @@ pub struct TransportRequest {
     pub document: String,
     pub operation_name: String,
     pub variables_json: String,
+    pub upload: bool,
 }
 
 impl From<core::GraphQLRequest> for TransportRequest {
     fn from(request: core::GraphQLRequest) -> Self {
-        Self { document: request.document, operation_name: request.operation_name, variables_json: request.variables.to_string() }
+        Self { document: request.document, operation_name: request.operation_name, variables_json: request.variables.to_string(), upload: request.upload }
     }
 }
 
@@ -33,7 +34,7 @@ pub trait Transport: Send + Sync {
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError>;
     async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<(), DbError>;
     fn unsubscribe(&self, token: String);
-    async fn put(&self, url: String, headers: HashMap<String, String>, bytes: Vec<u8>, progress: Arc<ByteProgress>) -> Result<PutReply, DbError>;
+    async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, tag: String, progress: Arc<ByteProgress>) -> Result<PutReply, DbError>;
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -238,7 +239,7 @@ impl core::Transport for ForeignTransport {
     }
     async fn put(&self, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
-        let reply = self.0.put(request.url, request.headers.into_iter().collect(), request.body, progress).await.map_err(transport_error)?;
+        let reply = self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.tag, progress).await.map_err(transport_error)?;
         Ok(core::PutResponse { status: reply.status, etag: reply.etag })
     }
 }

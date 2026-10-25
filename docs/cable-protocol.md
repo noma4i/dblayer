@@ -151,7 +151,7 @@ try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: mo
 ```
 
 ```kotlin
-DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJson = modelsJson)
+DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJson = modelsJson, uploadNotification = notification)
 ```
 
 ## Subscriptions

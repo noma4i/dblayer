@@ -34,7 +34,7 @@ class OkHttpTransport(
             headers().forEach { (field, value) -> header(field, value) }
         }.build().withUserAgent()
         return try {
-            client.newCall(http).exchange { response ->
+            (if (request.upload) UploadNetwork.route(client) else client).newCall(http).exchange { response ->
                 val text = response.body.string()
                 if (response.code !in 200..299) throw DbException.Http(response.code.toUShort(), text)
                 text
@@ -104,28 +104,33 @@ class OkHttpTransport(
         sockets.remove(token)?.close(1000, null)
     }
 
-    override suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray, progress: ByteProgress): PutReply =
-        putBytes(client, url, headers, bytes, progress)
+    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, tag: String, progress: ByteProgress): PutReply =
+        putFile(client, url, headers, file, progress, routed = true)
 }
 
-internal suspend fun putBytes(client: OkHttpClient, url: String, headers: Map<String, String>, bytes: ByteArray, progress: ByteProgress): PutReply {
+internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<String, String>, file: PutFile, progress: ByteProgress, routed: Boolean = false): PutReply {
     val body = object : okhttp3.RequestBody() {
         override fun contentType() = null
-        override fun contentLength() = bytes.size.toLong()
+        override fun contentLength() = file.length.toLong()
         override fun writeTo(sink: okio.BufferedSink) {
-            var sent = 0
-            while (sent < bytes.size) {
-                if (progress.isCancelled()) throw java.io.IOException("cancelled")
-                val chunk = minOf(64 * 1024, bytes.size - sent)
-                sink.write(bytes, sent, chunk)
-                sent += chunk
-                progress.sent(sent.toULong())
+            java.io.RandomAccessFile(file.path, "r").use { input ->
+                input.seek(file.offset.toLong())
+                val buffer = ByteArray(64 * 1024)
+                var sent = 0L
+                while (sent < file.length.toLong()) {
+                    if (progress.isCancelled()) throw java.io.IOException("cancelled")
+                    val read = input.read(buffer, 0, minOf(buffer.size.toLong(), file.length.toLong() - sent).toInt())
+                    if (read < 0) throw java.io.EOFException("the upload file is shorter than ${file.length} bytes")
+                    sink.write(buffer, 0, read)
+                    sent += read
+                    progress.sent(sent.toULong())
+                }
             }
         }
     }
     val request = Request.Builder().url(url).put(body).apply { headers.forEach { (field, value) -> header(field, value) } }.build().withUserAgent()
     return try {
-        client.newCall(request).exchange { PutReply(it.code.toUShort(), it.header("ETag")) }
+        (if (routed) UploadNetwork.route(client) else client).newCall(request).exchange { PutReply(it.code.toUShort(), it.header("ETag")) }
     } catch (error: java.io.IOException) {
         if (progress.isCancelled()) throw DbException.Interrupted(error.message ?: "cancelled")
         throw DbException.Network(error.message ?: error.toString())

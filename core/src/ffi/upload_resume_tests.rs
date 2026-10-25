@@ -19,7 +19,7 @@ impl Transport for Bytes {
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         Ok(PutReply { status: 200, etag: Some("part".into()) })
     }
 }

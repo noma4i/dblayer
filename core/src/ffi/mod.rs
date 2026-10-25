@@ -19,6 +19,7 @@ mod related_tests;
 mod retention;
 mod state;
 mod transport;
+mod upload_accepted;
 pub mod upload_wire;
 pub mod wire;
 
@@ -45,7 +46,9 @@ pub use entity_machine::{EntityMachine, EntityStage, EntityVerdict};
 pub use live::{LiveChange, LoadMoreResult, LivePhase, LiveSubscription, QueryListener};
 pub use retention::{RetentionChange, RetentionPool};
 pub use state::StateSubscription;
+pub use upload_accepted::{UploadAcceptedSink, WireAcceptedUpload, WireRoundStep, WireUploadAccepted};
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
+pub use crate::transport::{PutFile, PutTask, PutTaskState};
 pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]

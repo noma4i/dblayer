@@ -26,7 +26,7 @@ pub use fetch::{FetchAttempt, FetchError, FetchReport};
 #[cfg(any(test, feature = "stress"))]
 pub use mock::{CallKind, MockTransport, PutReply, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
-pub use put::{ByteSink, PutRequest, PutResponse};
+pub use put::{ByteSink, PutFile, PutRequest, PutResponse, PutTask, PutTaskState};
 pub use request::{GraphQLError, GraphQLRequest, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryAttempt, RetryClass, RetryCalls, RetrySnapshot};

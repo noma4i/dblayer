@@ -9,10 +9,6 @@ import org.junit.Test
 @org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
 @org.robolectric.annotation.Config(sdk = [35])
 class UserAgentTest {
-    private class Progress : ByteProgress(NoHandle) {
-        override fun sent(bytes: ULong) {}
-        override fun isCancelled() = false
-    }
 
     private class Sink : SubscriptionSink(NoHandle) {
         @Volatile var token: String? = null
@@ -25,7 +21,7 @@ class UserAgentTest {
     @Test
     fun everyRequestIdentifiesTheLibrary() = bounded {
         val failures = mutableListOf<String>()
-        for (path in listOf("encrypted", "graphql", "put", "encryptedSocket", "graphqlSocket")) {
+        for (path in listOf("encrypted", "graphql", "encryptedSocket", "graphqlSocket")) {
             for (application in listOf(null, "Example/3")) {
                 MockWebServer().use { server ->
                     server.enqueue(MockResponse().setResponseCode(400).setBody("busy"))
@@ -34,11 +30,10 @@ class UserAgentTest {
                     val headers = application?.let { mapOf("uSeR-aGeNt" to it) } ?: emptyMap()
                     val client = OkHttpClient()
                     val transport = OkHttpTransport(origin, { headers }, client, cablePath = "/api/cable")
-                    val operation = TransportRequest("query Probe { id }", "Probe", "{}")
+                    val operation = TransportRequest("query Probe { id }", "Probe", "{}", false)
                     when (path) {
-                        "encrypted" -> OkHttpEncryptedHttp(origin, client).post("/api/session", "jwe")
+                        "encrypted" -> OkHttpEncryptedHttp(origin, client).post("/api/session", "jwe", false)
                         "graphql" -> runCatching { transport.query(operation) }
-                        "put" -> transport.put(origin, headers, byteArrayOf(1, 2), Progress())
                         "encryptedSocket" -> runCatching { transport.openCable(RecordingLease()) }
                         "graphqlSocket" -> {
                             val sink = Sink()
@@ -49,7 +44,7 @@ class UserAgentTest {
                         else -> error("unexpected request kind")
                     }
                     val request = server.takeRequest()
-                    val supportsHeaders = path in listOf("graphql", "put", "graphqlSocket", "encryptedSocket")
+                    val supportsHeaders = path in listOf("graphql", "graphqlSocket", "encryptedSocket")
                     val expected = listOf(userAgent(if (supportsHeaders) application else null))
                     if (request.headers.values("User-Agent") != expected) failures.add("$path application=$application expected=$expected actual=${request.headers.values("User-Agent")}")
                     client.connectionPool.evictAll()

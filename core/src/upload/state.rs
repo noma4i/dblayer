@@ -81,6 +81,8 @@ pub struct UploadState {
     pub failed_at: Option<u64>,
     pub headers: Vec<(String, String)>,
     pub error: Option<OperationFailure>,
+    #[serde(default)]
+    pub background_refused: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +121,7 @@ impl UploadState {
             failed_at: None,
             headers: Vec::new(),
             error: None,
+            background_refused: None,
         }
     }
 

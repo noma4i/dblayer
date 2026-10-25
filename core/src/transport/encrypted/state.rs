@@ -15,6 +15,7 @@ pub struct Pending {
     pub path: String,
     pub body: String,
     pub owner: Option<crate::transport::RequestOwner>,
+    pub upload: bool,
 }
 
 pub fn session(connection: &Connection) -> rusqlite::Result<Option<Session>> {
@@ -38,7 +39,7 @@ pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Resu
 
 pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
     connection
-        .query_row("SELECT credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage FROM encrypted_pending WHERE id = 1", [], |row| {
+        .query_row("SELECT credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage, upload FROM encrypted_pending WHERE id = 1", [], |row| {
             Ok(Pending {
                 credential_digest: row.get(0)?,
                 request_id: row.get(1)?,
@@ -50,6 +51,7 @@ pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
                     (Some(seq), Some(item_position), Some(stage)) => Some(crate::transport::RequestOwner { seq, item_position, stage }),
                     _ => None,
                 },
+                upload: row.get::<_, i64>(9)? != 0,
             })
         })
         .optional()
@@ -57,8 +59,8 @@ pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
 
 pub fn store_pending(connection: &Connection, pending: &Pending) -> rusqlite::Result<()> {
     connection.execute(
-        "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![pending.credential_digest, pending.request_id, pending.response_key, pending.sequence, pending.path, pending.body, pending.owner.as_ref().map(|owner| owner.seq), pending.owner.as_ref().map(|owner| owner.item_position), pending.owner.as_ref().map(|owner| &owner.stage)],
+        "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage, upload) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![pending.credential_digest, pending.request_id, pending.response_key, pending.sequence, pending.path, pending.body, pending.owner.as_ref().map(|owner| owner.seq), pending.owner.as_ref().map(|owner| owner.item_position), pending.owner.as_ref().map(|owner| &owner.stage), i64::from(pending.upload)],
     )?;
     Ok(())
 }

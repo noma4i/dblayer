@@ -120,6 +120,7 @@ const CORE_STATEMENTS: [&str; 40] = [
   put_url TEXT,
   url_issued_at INTEGER,
   failed_at INTEGER,
+  background_refused TEXT,
   PRIMARY KEY (seq, position)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS op_item_retry (
@@ -302,7 +303,8 @@ const CORE_STATEMENTS: [&str; 40] = [
   body TEXT NOT NULL,
   owner_seq INTEGER,
   item_position INTEGER,
-  stage TEXT
+  stage TEXT,
+  upload INTEGER NOT NULL DEFAULT 0
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS file (
   id TEXT PRIMARY KEY NOT NULL,

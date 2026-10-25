@@ -171,6 +171,7 @@ pub fn upload_at(row: &Row<'_>, first: usize) -> Result<Option<UploadState>> {
         failed_at: row.get::<_, Option<i64>>(first + 16)?.map(|time| time as u64),
         headers: Vec::new(),
         error: failure_at(row, first + 17)?,
+        background_refused: None,
     }))
 }
 
@@ -185,12 +186,13 @@ pub(crate) fn read_operation_uploads(connection: &Connection, seq: i64) -> Resul
 fn upload_items(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i64, i64), UploadState>> {
     let mut parts = read_parts(connection, seq)?;
     let filter = if seq.is_some() { "WHERE seq = ?1" } else { "" };
-    let mut statement = connection.prepare(&format!("SELECT seq, position, {UPLOAD_COLUMNS} FROM op_item {filter} ORDER BY seq, position"))?;
+    let mut statement = connection.prepare(&format!("SELECT seq, position, {UPLOAD_COLUMNS}, background_refused FROM op_item {filter} ORDER BY seq, position"))?;
     let mut found = HashMap::new();
     let mut extensions = item_extensions(connection, seq)?;
-    for item in statement.query_map(rusqlite::params_from_iter(seq), |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, upload_at(row, 2)?)))? {
-        let (seq, position, state) = item?;
+    for item in statement.query_map(rusqlite::params_from_iter(seq), |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, upload_at(row, 2)?, row.get::<_, Option<String>>(2 + UPLOAD_COLUMNS.split(", ").count())?)))? {
+        let (seq, position, state, refused) = item?;
         if let Some(mut state) = state {
+            state.background_refused = refused;
             attach_extensions(&mut state.error, extensions.remove(&(seq, position)));
             let mut headers = connection.prepare_cached("SELECT name, value FROM op_item_header WHERE seq = ?1 AND position = ?2 ORDER BY name")?;
             state.headers = headers.query_map(params![seq, position], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>>>()?;

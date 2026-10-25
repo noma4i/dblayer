@@ -102,7 +102,7 @@ struct SubscribeRequestTests {
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
     let transport = UrlSessionTransport(endpoint: URL(string: "http://127.0.0.1:9")!, headers: { [:] }, session: session)
-    let request = TransportRequest(document: "subscription S { id }", operationName: "S", variablesJson: "{broken")
+    let request = TransportRequest(document: "subscription S { id }", operationName: "S", variablesJson: "{broken", upload: false)
     await #expect(throws: (any Error).self) { try await transport.subscribe(request: request, sink: IdleSink(noHandle: .init())) }
     #expect(transport.openSocketCount == 0)
   }

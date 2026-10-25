@@ -43,7 +43,7 @@ impl super::Transport for FakeSocket {
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn subscribe(&self, _: super::TransportRequest, _: std::sync::Arc<super::SubscriptionSink>) -> Result<(), super::DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) { unreachable!() }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: std::sync::Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: std::sync::Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
 }
 
 #[tokio::test]
@@ -116,7 +116,7 @@ impl super::Transport for Ordered {
         script(sink).await
     }
     fn unsubscribe(&self, token: String) { self.say(format!("unsubscribe:{token}")); }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
 }
 
 fn boxed(work: impl Future<Output = Result<(), super::DbError>> + Send + 'static) -> Pin<Box<dyn Future<Output = Result<(), super::DbError>> + Send>> { Box::pin(work) }

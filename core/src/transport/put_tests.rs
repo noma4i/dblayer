@@ -5,10 +5,13 @@ use super::*;
 
 fn request(url: &str, body: &[u8], cancel: &CancelToken, ticks: &Arc<Mutex<Vec<u64>>>) -> PutRequest {
     let sink = ticks.clone();
+    let path = std::env::temp_dir().join(format!("put-test-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&path, body).unwrap();
     PutRequest {
         url: url.to_string(),
         headers: vec![("content-type".to_string(), "video/mp4".to_string())],
-        body: body.to_vec(),
+        file: PutFile { path: path.to_string_lossy().into_owned(), offset: 0, length: body.len() as u64 },
+        tag: "1.0.1".to_string(),
         cancel: cancel.clone(),
         sent: Arc::new(move |bytes| sink.lock().unwrap().push(bytes)),
     }

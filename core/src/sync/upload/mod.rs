@@ -15,6 +15,8 @@ mod settle_tests;
 mod admission_tests;
 #[cfg(test)]
 mod source_tests;
+#[cfg(test)]
+mod background_tests;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -28,6 +30,8 @@ use crate::db::OutboxOperation;
 use crate::identity::RowId;
 use crate::operation::Operation;
 use crate::transport::CancelToken;
+use crate::transport::PutTask;
+use crate::transport::PutTaskState;
 use crate::upload::{RunMode, UploadFile, UploadInput, UploadOperations, UploadState};
 
 use super::error::SyncError;
@@ -52,6 +56,7 @@ pub(crate) struct UploadRuns {
     active: HashMap<(i64, i64), ActiveRun>,
     next_run: u64,
     tasks: JoinSet<()>,
+    adopted: HashMap<String, watch::Sender<PutTaskState>>,
 }
 
 async fn survives_panic(work: impl std::future::Future<Output = ()>) -> bool {
@@ -86,7 +91,7 @@ impl Drop for UploadResume {
 
 impl UploadRuns {
     pub(crate) fn new(max_files: usize) -> Self {
-        Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: HashMap::new(), next_run: 0, tasks: JoinSet::new() }
+        Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: HashMap::new(), next_run: 0, tasks: JoinSet::new(), adopted: HashMap::new() }
     }
 }
 
@@ -195,9 +200,19 @@ impl Inner {
         locked(&self.uploads).active.get(&(seq, position)).is_some_and(|active| active.run == run)
     }
 
+    pub(super) fn adopted_put(&self, tag: &str) -> Option<watch::Receiver<PutTaskState>> {
+        locked(&self.uploads).adopted.get(tag).map(watch::Sender::subscribe)
+    }
+
+    pub(super) fn forget_put(&self, tag: &str) {
+        locked(&self.uploads).adopted.remove(tag);
+    }
+
     fn finish_run(self: &Arc<Self>, seq: i64, position: i64, run: u64) {
         {
             let mut runs = locked(&self.uploads);
+            let prefix = format!("{seq}.{position}.");
+            runs.adopted.retain(|tag, _| !tag.starts_with(&prefix));
             if runs.active.get(&(seq, position)).is_none_or(|active| active.run != run) { return; }
             let Some(active) = runs.active.remove(&(seq, position)) else { return };
             runs.active_files -= usize::from(active.file_slot);
@@ -336,6 +351,39 @@ impl Inner {
 }
 
 impl Sync {
+    pub async fn resume_uploads(&self) -> Result<(), SyncError> {
+        self.inner.start_uploads()?;
+        self.wait_uploads().await;
+        Ok(())
+    }
+
+    pub async fn resume_uploads_for(&self, tags: Vec<String>) -> Result<(), SyncError> {
+        let keys: std::collections::HashSet<(i64, i64)> = tags.iter().filter_map(|tag| {
+            let mut parts = tag.split('.');
+            Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+        }).collect();
+        self.inner.start_uploads()?;
+        loop {
+            let waiting: Vec<_> = locked(&self.inner.uploads).active.iter().filter(|(key, _)| keys.contains(*key)).map(|(_, active)| active.done.subscribe()).collect();
+            if waiting.is_empty() {
+                return Ok(());
+            }
+            for mut done in waiting {
+                let _ = done.wait_for(|finished| *finished).await;
+            }
+        }
+    }
+
+    pub fn put_tasks(&self, tasks: Vec<PutTask>) {
+        let mut runs = locked(&self.inner.uploads);
+        for task in tasks {
+            match runs.adopted.get(&task.tag) {
+                Some(sender) => { sender.send_replace(task.state); }
+                None => { runs.adopted.insert(task.tag, watch::channel(task.state).0); }
+            }
+        }
+    }
+
     pub fn check_uploads(&self) -> Result<(), SyncError> {
         if self.inner.config.uploads.is_some() { self.inner.upload_operations()?; }
         Ok(())
@@ -349,6 +397,7 @@ impl Sync {
             let ids = inner.db.create_upload_batch(generation, &model, items, input, inner.upload_operations()?)?;
             let rows = ids.iter().map(|id| inner.db.find(&model, id)?.ok_or_else(|| crate::db::DbError::NotFound { model: model.clone(), id: id.to_string() })).collect::<Result<Vec<_>, _>>()?;
             inner.start_uploads()?;
+            inner.db.report_upload_accepted(&model, inner.db.accepted_items(&ids)?);
             Ok(rows)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
@@ -360,6 +409,7 @@ impl Sync {
         tokio::task::spawn_blocking(move || {
             let seq = inner.begin_upload(generation, &model, &id, &action, &file, UploadState::queued())?;
             inner.start_uploads()?;
+            inner.db.report_upload_accepted(&model, vec![crate::db::AcceptedUpload { seq, position: 0 }]);
             Ok(seq)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
@@ -372,6 +422,7 @@ impl Sync {
             let input = inner.upload_input(&model, &action, file)?;
             let id = inner.db.create_held(generation, &model, &action, values, input, UploadState::queued())?;
             inner.start_uploads()?;
+            inner.db.report_upload_accepted(&model, inner.db.accepted_items(std::slice::from_ref(&id))?);
             Ok(id)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }

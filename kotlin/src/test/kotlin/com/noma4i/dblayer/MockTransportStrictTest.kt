@@ -9,7 +9,7 @@ import org.junit.Test
 import org.junit.runner.JUnitCore
 
 class MockTransportStrictTest {
-    private val request = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""")
+    private val request = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", false)
 
     private fun outcome(transport: MockTransport): Throwable? = bounded {
         try { transport.query(request); null } catch (error: Throwable) { error }

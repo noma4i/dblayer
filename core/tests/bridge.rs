@@ -63,7 +63,7 @@ impl Transport for Recorder {
     }
     async fn subscribe(&self, _: dblayer::ffi::TransportRequest, _: Arc<dblayer::ffi::SubscriptionSink>) -> Result<(), dblayer::ffi::DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<dblayer::ffi::ByteProgress>) -> Result<dblayer::ffi::PutReply, dblayer::ffi::DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: dblayer::ffi::PutFile, _: String, _: Arc<dblayer::ffi::ByteProgress>) -> Result<dblayer::ffi::PutReply, dblayer::ffi::DbError> { unreachable!() }
 }
 
 #[tokio::test]

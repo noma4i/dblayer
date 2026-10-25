@@ -282,7 +282,8 @@ impl Inner {
             let mut variables = entry.input.as_object().cloned().ok_or_else(|| SyncError::Malformed("upload variables must be an object".into()))?;
             variables.insert(batch.items.clone(), Value::Array(items));
             let variables = super::variables::upload_variables(declaration, Value::Object(variables), &entry.operation.client_mutation_id);
-            let request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+            let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+            request.upload = true;
             self.commit(sending.generation, |_| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
                 for ((seq, position), state) in &states {
@@ -311,7 +312,8 @@ impl Inner {
                 }
             }
         };
-        let request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+        let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+        request.upload = entry.operation.upload.is_some();
         if let Some(mut state) = entry.operation.upload.clone() {
             state.apply(crate::upload::UploadEvent::MutationBegan { request: crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() } }).map_err(|error| SyncError::Malformed(error.to_string()))?;
             self.commit(sending.generation, |_| {

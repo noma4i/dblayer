@@ -18,7 +18,7 @@ private enum PathProbe: GraphQLOperation {
 private final class RefusingHttp: EncryptedHttp, Sendable {
   let posts: AsyncStream<Void>.Continuation
   init(_ posts: AsyncStream<Void>.Continuation) { self.posts = posts }
-  func post(path: String, body: String) async throws -> EncryptedReply {
+  func post(path: String, body: String, upload: Bool) async throws -> EncryptedReply {
     posts.yield()
     throw DbError.Invalid(detail: "unexpected HTTP request")
   }

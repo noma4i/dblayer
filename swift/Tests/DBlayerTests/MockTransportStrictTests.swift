@@ -8,7 +8,7 @@ private final class SilentListener: QueryListener, @unchecked Sendable {
 }
 
 struct MockTransportStrictTests {
-  private let request = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":2}"#)
+  private let request = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":2}"#, upload: false)
 
   @Test
   func aCallWithoutAReplyFailsNamingTheOperationAndVariables() async {

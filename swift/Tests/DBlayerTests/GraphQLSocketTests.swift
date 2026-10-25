@@ -150,7 +150,7 @@ struct GraphQLSocketTests {
     let transport = UrlSessionTransport(endpoint: origin, session: session)
     let sink = GraphQLSignals(noHandle: .init())
     let events = Cursor(sink.events.stream)
-    try await transport.subscribe(request: TransportRequest(document: "subscription Probe { id }", operationName: "Probe", variablesJson: "{}"), sink: sink)
+    try await transport.subscribe(request: TransportRequest(document: "subscription Probe { id }", operationName: "Probe", variablesJson: "{}", upload: false), sink: sink)
     defer { if let token = sink.token { transport.unsubscribe(token: token) } }
     #expect(await events.next("GraphQL ready", timeout: .seconds(2)) == "ready")
     #expect(await events.next("remote close", timeout: .seconds(2)) == "closed")
@@ -167,7 +167,7 @@ struct GraphQLSocketTests {
     let sink = GraphQLSignals(noHandle: .init())
     let events = Cursor(sink.events.stream)
     let received = Cursor(server.received.stream)
-    try await transport.subscribe(request: TransportRequest(document: "subscription Probe($id: ID!) { node(id: $id) { id } }", operationName: "Probe", variablesJson: #"{"id":"7"}"#), sink: sink)
+    try await transport.subscribe(request: TransportRequest(document: "subscription Probe($id: ID!) { node(id: $id) { id } }", operationName: "Probe", variablesJson: #"{"id":"7"}"#, upload: false), sink: sink)
     defer { if let token = sink.token { transport.unsubscribe(token: token) } }
     let initial = try JSONSerialization.jsonObject(with: Data(try #require(await received.next("connection init", timeout: .seconds(2))).utf8)) as? [String: Any]
     #expect((initial?["payload"] as? [String: String])?["Authorization"] == "Bearer probe")

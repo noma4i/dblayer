@@ -59,6 +59,8 @@ pub(crate) struct Shared {
     pub reads: Arc<ReadPool>,
     pub files: FileDirectories,
     pub files_gate: Mutex<()>,
+    pub upload_accepted: Mutex<Option<super::upload_accepted::UploadAcceptedCallback>>,
+    pub upload_round: Mutex<super::upload_round::UploadRound>,
     pub expiry_gate: Mutex<()>,
     #[cfg(test)]
     pub panic_key: Mutex<Option<String>>,
@@ -247,6 +249,8 @@ impl Db {
             ephemeral: ephemeral.clone(),
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
             files_gate: Mutex::new(()),
+            upload_accepted: Mutex::new(None),
+            upload_round: Mutex::new(super::upload_round::UploadRound::default()),
             expiry_gate: Mutex::new(()),
             #[cfg(test)]
             panic_key: Mutex::new(None),

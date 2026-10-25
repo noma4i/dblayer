@@ -16,11 +16,12 @@ pub struct GraphQLRequest {
     pub operation_name: String,
     pub variables: Value,
     pub owner: Option<RequestOwner>,
+    pub upload: bool,
 }
 
 impl GraphQLRequest {
     pub fn new(document: impl Into<String>, operation_name: impl Into<String>, variables: Value) -> Self {
-        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None }
+        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None, upload: false }
     }
 }
 

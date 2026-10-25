@@ -679,7 +679,7 @@ try DB.listen()
 ```
 
 ```kotlin
-DBlayer.open(context, endpoint = endpoint, modelsJson = modelsJSON, operations = listOf(RecordEvents))
+DBlayer.open(context, endpoint = endpoint, modelsJson = modelsJSON, operations = listOf(RecordEvents), uploadNotification = notification)
 DBlayer.listen()
 ```
 

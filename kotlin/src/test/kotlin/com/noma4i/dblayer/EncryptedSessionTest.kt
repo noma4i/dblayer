@@ -14,7 +14,7 @@ private const val SERVER_PIN = "fab4f816eb33917161942684230405ae47ad4df5b456bd97
 private class RecordedHttp(private val status: UShort) : EncryptedHttp {
     val posts = CopyOnWriteArrayList<Pair<String, String>>()
 
-    override suspend fun post(path: String, body: String): EncryptedReply {
+    override suspend fun post(path: String, body: String, upload: Boolean): EncryptedReply {
         posts.add(path to body)
         return EncryptedReply(status, "")
     }
@@ -76,7 +76,7 @@ class EncryptedSessionTest {
             server.enqueue(MockResponse().setResponseCode(503).setBody("busy"))
             server.start()
 
-            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e")
+            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e", false)
 
             assertEquals(503.toUShort() to "busy", reply.status to reply.body)
             val request = server.takeRequest()
@@ -95,7 +95,7 @@ class EncryptedSessionTest {
         val origin = server.url("/").toString().trimEnd('/')
         server.shutdown()
 
-        failsWith<DbException.Network> { OkHttpEncryptedHttp(origin).post("/api/logout", "x") }
+        failsWith<DbException.Network> { OkHttpEncryptedHttp(origin).post("/api/logout", "x", false) }
     }
 
     @Test

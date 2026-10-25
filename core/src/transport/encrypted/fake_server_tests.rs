@@ -307,7 +307,7 @@ impl FakeServer {
 #[async_trait]
 impl HttpExchange for FakeServer {
 
-    async fn post(&self, path: &str, body: String) -> Result<HttpReply, TransportError> {
+    async fn post(&self, path: &str, body: String, _: bool) -> Result<HttpReply, TransportError> {
         if let Some(hook) = self.on_request.lock().unwrap().as_ref() {
             hook();
         }

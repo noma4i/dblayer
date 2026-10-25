@@ -15,17 +15,34 @@ pub async fn file_len(path: &Path, cancel: &CancelToken) -> io::Result<u64> {
     }).await
 }
 
-pub async fn read_range(path: &Path, offset: u64, length: u64, cancel: &CancelToken) -> io::Result<Vec<u8>> {
+pub async fn copy_range(path: &Path, offset: u64, length: u64, target: &Path, cancel: &CancelToken) -> io::Result<()> {
+    let target = target.to_path_buf();
     read_source(path, cancel, move |path, cancel| {
         #[cfg(test)] super::source_tests::record_read(path, "range");
+        if std::fs::metadata(&target).is_ok_and(|stored| stored.len() == length) {
+            return Ok(());
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let mut file = File::open(path)?;
         file.seek(SeekFrom::Start(offset))?;
-        let mut bytes = vec![0; usize::try_from(length).map_err(|_| io::ErrorKind::InvalidInput)?];
-        for chunk in bytes.chunks_mut(CHUNK) {
+        let mut partial_name = target.as_os_str().to_os_string();
+        partial_name.push(".partial");
+        let partial = std::path::PathBuf::from(partial_name);
+        let mut output = File::create(&partial)?;
+        let mut buffer = vec![0; CHUNK];
+        let mut left = length;
+        while left > 0 {
             check_cancelled(cancel)?;
-            file.read_exact(chunk)?;
+            let chunk = &mut buffer[..usize::try_from(left.min(CHUNK as u64)).map_err(|_| io::ErrorKind::InvalidInput)?];
+            if let Err(error) = file.read_exact(chunk).and_then(|()| io::Write::write_all(&mut output, chunk)) {
+                let _ = std::fs::remove_file(&partial);
+                return Err(error);
+            }
+            left -= chunk.len() as u64;
         }
-        Ok(bytes)
+        std::fs::rename(&partial, &target)
     }).await
 }
 

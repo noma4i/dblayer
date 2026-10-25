@@ -25,6 +25,7 @@ pub struct RecordedCall {
     pub kind: CallKind,
     pub operation_name: String,
     pub variables: Value,
+    pub upload: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +73,7 @@ pub struct RecordedPut {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    pub tag: String,
 }
 
 #[derive(Debug, Clone)]
@@ -265,6 +267,7 @@ impl MockTransport {
             kind,
             operation_name: request.operation_name.clone(),
             variables: request.variables.clone(),
+            upload: request.upload,
         });
         self.wake.notify_waiters();
     }
@@ -292,10 +295,17 @@ impl MockTransport {
 
 impl MockTransport {
     async fn transfer(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
-        let length = request.body.len() as u64;
+        let length = request.file.length;
+        let body = std::fs::File::open(&request.file.path).and_then(|mut file| {
+            use std::io::{Read, Seek, SeekFrom};
+            file.seek(SeekFrom::Start(request.file.offset))?;
+            let mut body = Vec::new();
+            file.take(length).read_to_end(&mut body)?;
+            Ok(body)
+        }).map_err(|error| TransportError::Network(error.to_string()))?;
         let reply = {
             let mut state = self.lock();
-            state.put_calls.push(RecordedPut { url: request.url.clone(), headers: request.headers.clone(), body: request.body.clone() });
+            state.put_calls.push(RecordedPut { url: request.url.clone(), headers: request.headers.clone(), body, tag: request.tag.clone() });
             state.puts_running += 1;
             state.puts_peak = state.puts_peak.max(state.puts_running);
             self.wake.notify_waiters();

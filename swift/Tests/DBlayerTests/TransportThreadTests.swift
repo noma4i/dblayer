@@ -12,7 +12,7 @@ struct TransportThreadTests {
     ThreadProbeProtocol.reset()
     let transport = UrlSessionTransport(endpoint: url, headers: { [:] }, session: session)
 
-    let request = TransportRequest(document: mutation ? "mutation Ping { ping }" : "query Ping { ping }", operationName: "Ping", variablesJson: "{}")
+    let request = TransportRequest(document: mutation ? "mutation Ping { ping }" : "query Ping { ping }", operationName: "Ping", variablesJson: "{}", upload: false)
     let reply: String
     if mutation {
       reply = try await transport.mutate(request: request)

@@ -92,13 +92,13 @@ impl Transport for EncryptedTransport {
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let stored = graphql_body(&request, true);
         if self.client.pending_call()?.is_some_and(|(path, body)| path == self.client.config.endpoints.graphql && body == stored) {
-            return response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, stored, request.owner).await?);
+            return response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, stored, request.owner, request.upload).await?);
         }
-        let response = response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, graphql_body(&request, false), request.owner.clone()).await?)?;
+        let response = response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, graphql_body(&request, false), request.owner.clone(), request.upload).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner.clone()).await?)
+        response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner.clone(), request.upload).await?)
     }
 
     async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> {

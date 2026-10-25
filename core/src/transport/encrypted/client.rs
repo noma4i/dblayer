@@ -128,7 +128,7 @@ impl EncryptedClient {
             let request_id = uuid::Uuid::new_v4().to_string();
             let response_key = random_token();
             let token = self.request_token(None, &request_id, &response_key, &operation.path, &body)?;
-            let result = self.post(&operation.path, token, &request_id, &response_key).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
+            let result = self.post(&operation.path, token, &request_id, &response_key, false).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
             match result { Ok(answer) => return Ok(answer), Err(error) => retry.failed(error).await? }
         }
     }
@@ -160,10 +160,10 @@ impl EncryptedClient {
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
-        self.mutate_owned(path, body, None).await
+        self.mutate_owned(path, body, None, false).await
     }
 
-    pub(crate) async fn mutate_owned(&self, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>) -> Result<Answer, TransportError> {
+    pub(crate) async fn mutate_owned(&self, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, upload: bool) -> Result<Answer, TransportError> {
         check_path(path)?;
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
@@ -183,6 +183,7 @@ impl EncryptedClient {
                     path: path.to_string(),
                     body: body.to_string(),
                     owner,
+                    upload,
                 };
                 self.pending_token(&credential, &pending)?;
                 self.with_connection(|connection| state::store_pending(connection, &pending))?;
@@ -250,7 +251,7 @@ impl EncryptedClient {
       loop {
         self.online.online().await;
         let token = self.pending_token(&self.credential()?, &pending)?;
-        let answer = match self.post(&pending.path, token, &pending.request_id, &pending.response_key).await {
+        let answer = match self.post(&pending.path, token, &pending.request_id, &pending.response_key, pending.upload).await {
             Err(error) if permanently_refused(&error) => {
                 self.with_connection(state::drop_pending)?;
                 return Err(error);
@@ -297,7 +298,7 @@ impl EncryptedClient {
         loop {
             self.online.online().await;
             let token = self.request_token(Some(RequestSession { credential: credential.into(), sequence }), request_id, response_key, path, body)?;
-            let result = self.post(path, token, request_id, response_key).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
+            let result = self.post(path, token, request_id, response_key, false).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
             match result { Ok(answer) => return Ok(answer), Err(error) => retry.failed(error).await? }
         }
     }
@@ -320,8 +321,8 @@ impl EncryptedClient {
         Ok(token)
     }
 
-    async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str) -> Result<Answer, TransportError> {
-        let reply = self.http.post(path, token).await?;
+    async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, upload: bool) -> Result<Answer, TransportError> {
+        let reply = self.http.post(path, token, upload).await?;
         if reply.status != 200 {
             return Err(TransportError::Http { status: reply.status, body: reply.body });
         }

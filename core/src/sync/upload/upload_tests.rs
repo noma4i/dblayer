@@ -118,7 +118,7 @@ fn variables(rig: &Rig, operation: &str) -> Vec<Value> {
     rig.transport.calls().into_iter().filter(|call| call.operation_name == operation).map(|call| call.variables).collect()
 }
 
-fn upload_of(rig: &Rig, id: &str) -> Option<crate::upload::UploadInfo> {
+pub(super) fn upload_of(rig: &Rig, id: &str) -> Option<crate::upload::UploadInfo> {
     rig.db.sync_info("moments", &rid(id)).unwrap().uploads.get("upload").cloned()
 }
 

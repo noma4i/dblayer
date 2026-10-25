@@ -14,7 +14,7 @@ struct Fault {
 
 #[async_trait::async_trait]
 impl HttpExchange for Fault {
-    async fn post(&self, path: &str, token: String) -> Result<HttpReply, TransportError> {
+    async fn post(&self, path: &str, token: String, _: bool) -> Result<HttpReply, TransportError> {
         let request = decrypt_request(&token).unwrap();
         let first = {
             let mut seen = self.seen.lock().unwrap();
@@ -32,7 +32,7 @@ impl HttpExchange for Fault {
             if let Some(error) = self.error.lock().unwrap().take() { return error; }
         }
         if request.get("credential").is_none() { return Ok(HttpReply { status: 200, body: seal_response(&request, None, json!({"ok": true})) }); }
-        self.server.post(path, token).await
+        self.server.post(path, token, false).await
     }
 }
 
@@ -88,7 +88,7 @@ async fn audit_durable_upload_owns_the_failed_http_attempt() {
     let (client, http, db) = rig(error, code);
     http.server.clone().with_sequence(&client.credential().unwrap(), 0);
     let owner = crate::transport::RequestOwner { seq: 1, item_position: 0, stage: "create".into() };
-    let mut call = Box::pin(client.mutate_owned("/api/graphql", json!({}), Some(owner)));
+    let mut call = Box::pin(client.mutate_owned("/api/graphql", json!({}), Some(owner), false));
     assert!(matches!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(_))), "durable owner must receive the failure before another HTTP attempt");
     drop(call);
     assert_eq!(http.seen.lock().unwrap().len(), 1);

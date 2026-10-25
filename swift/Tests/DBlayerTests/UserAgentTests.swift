@@ -1,3 +1,4 @@
+import DBlayerTesting
 import Foundation
 import Testing
 @testable import DBlayer
@@ -18,7 +19,7 @@ private final class AgentSink: SubscriptionSink, @unchecked Sendable {
 }
 
 struct UserAgentTests {
-  @Test(arguments: ["encrypted", "graphql", "put", "encryptedSocket", "graphqlSocket"], [nil, "Example/3"] as [String?])
+  @Test(arguments: ["encrypted", "graphql", "encryptedSocket", "graphqlSocket"], [nil, "Example/3"] as [String?])
   func everyRequestIdentifiesTheLibrary(path: String, application: String?) async throws {
     let server = try BootstrapListener(responseStatus: "400 Bad Request")
     defer { server.listener.cancel() }
@@ -27,14 +28,12 @@ struct UserAgentTests {
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
     let transport = UrlSessionTransport(endpoint: origin, headers: { headers }, session: session, cablePath: "/api/cable")
-    let operation = TransportRequest(document: "query Probe { id }", operationName: "Probe", variablesJson: "{}")
+    let operation = TransportRequest(document: "query Probe { id }", operationName: "Probe", variablesJson: "{}", upload: false)
     switch path {
     case "encrypted":
-      _ = try await UrlSessionEncryptedHttp(origin: origin, session: session).post(path: "/api/session", body: "jwe")
+      _ = try await UrlSessionEncryptedHttp(origin: origin, session: session).post(path: "/api/session", body: "jwe", upload: false)
     case "graphql":
       _ = try? await transport.query(request: operation)
-    case "put":
-      _ = try await transport.put(url: origin.absoluteString, headers: headers, bytes: Data([1, 2]), progress: AgentProgress(noHandle: .init()))
     case "encryptedSocket":
       _ = try? await transport.openCable(lease: RecordingLease(noHandle: .init()))
     case "graphqlSocket":
@@ -46,9 +45,20 @@ struct UserAgentTests {
     }
     let request = try #require(server.requests.first)
     let agents = request.components(separatedBy: "\r\n").dropFirst().prefix(while: { !$0.isEmpty }).filter { $0.lowercased().hasPrefix("user-agent:") }.map { $0.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)[1].trimmingCharacters(in: .whitespaces) }
-    let supportsHeaders = ["graphql", "put", "graphqlSocket", "encryptedSocket"].contains(path)
+    let supportsHeaders = ["graphql", "graphqlSocket", "encryptedSocket"].contains(path)
     #expect(agents == [userAgent(application: supportsHeaders ? application : nil)])
   }
 
-
+  @Test(arguments: [nil, "Example/3"] as [String?])
+  func aBackgroundUploadRequestIdentifiesTheLibrary(application: String?) async throws {
+    let scripted = ScriptedUploadTasks()
+    let headers = application.map { ["uSeR-aGeNt": $0] } ?? [:]
+    let transport = UrlSessionTransport(endpoint: URL(fileURLWithPath: "/unused"), headers: { headers }, uploads: scripted)
+    let upload = Task { try await transport.put(url: "https://storage.test/part", headers: headers, file: PutFile(path: "/tmp/part", offset: 0, length: 2), tag: "1.0.1", progress: AgentProgress(noHandle: .init())) }
+    await eventually("the task starts") { !scripted.startedTasks.isEmpty }
+    scripted.finish(tag: "1.0.1", etag: nil)
+    _ = try await upload.value
+    let sent = try #require(scripted.startedTasks.first).request.value(forHTTPHeaderField: "User-Agent")
+    #expect(sent == userAgent(application: application))
+  }
 }

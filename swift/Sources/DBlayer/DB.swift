@@ -11,6 +11,7 @@ public enum DB {
     }
   }
   private static let opener = OpenDatabase()
+  static let wake = BackgroundWake()
 
   /// Ends the session: clears the stored data. Entities that readers hold become empty and receive the next session's rows.
   @MainActor public static func logout() async throws {
@@ -22,6 +23,7 @@ public enum DB {
   @MainActor public static func close() {
     EntityRegistries.closeAll()
     ForegroundEvents.shared.stop()
+    wake.detach()
     current?.shutdown()
     current = nil
   }
@@ -69,6 +71,18 @@ public enum DB {
     reachability.start(sink)
     ForegroundEvents.shared.start { sink.enterForeground() }
     current = opened
+    attachUploads(selectedTransport, to: opened)
+  }
+
+  /// The one line the app adds to `application(_:handleEventsForBackgroundURLSession:completionHandler:)`.
+  public static func handleBackgroundSession(identifier: String, completion: @escaping @Sendable () -> Void) {
+    wake.handle(identifier: identifier, completion: completion)
+  }
+
+  static func attachUploads(_ transport: Transport?, to database: Database) {
+    let uploads = transport as? UrlSessionTransport
+    uploads?.connectUploads { database.putTasks(tasks: $0) }
+    wake.attach(uploads: uploads, database: database)
   }
 
   @_spi(Testing) public static func openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations? = nil, clock: TestClock) async throws -> Database {

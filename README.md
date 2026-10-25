@@ -154,6 +154,7 @@ DBlayer.open(
   context,
   encrypted = EncryptedConfig("https://api.example.com", serverKey, serverPin, endpoints, protocolLabel, cablePurpose, cableChannel),
   credentials = AppCredentials(context), modelsJson = modelsJSON, path = path,
+  uploadNotification = UploadNotification("Uploading", "Your files are on their way", R.drawable.ic_upload),
 )
 DBlayer.database.sessionCall("otp", """{"phone":"+61400000000"}""")
 ```

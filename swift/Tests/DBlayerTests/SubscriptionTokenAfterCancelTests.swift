@@ -71,8 +71,8 @@ private final class OrderedSubscribe: Transport, @unchecked Sendable {
     lock.withLock { revoked.append(token) }
     mock.unsubscribe(token: token)
   }
-  func put(url: String, headers: [String: String], bytes: Data, progress: ByteProgress) async throws -> PutReply {
-    try await mock.put(url: url, headers: headers, bytes: bytes, progress: progress)
+  func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
+    try await mock.put(url: url, headers: headers, file: file, tag: tag, progress: progress)
   }
 }
 

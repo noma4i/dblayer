@@ -47,7 +47,7 @@ pub fn fold_entries(entries: &[SyncEntry]) -> Option<SyncInfo> {
         .filter_map(|entry| {
             let action = entry.action.strip_prefix("upload:")?;
             let state = entry.upload.as_ref()?;
-            Some((action.to_string(), UploadInfo::of(entry.status, entry.transport_started, state, waiting, entry.error.clone())))
+            Some((action.to_string(), UploadInfo::of(entry.status, entry.transport_started, state, waiting, entry.error.clone().or_else(|| state.background_refused.as_ref().map(|detail| OperationFailure::new(crate::syncstate::FailureKind::Unrecognized, format!("background transfer was not started: {detail}")))))))
         })
         .collect();
     Some(SyncInfo {

@@ -33,7 +33,7 @@ pub struct HttpReply {
 
 #[async_trait]
 pub trait HttpExchange: Send + Sync {
-    async fn post(&self, path: &str, body: String) -> Result<HttpReply, TransportError>;
+    async fn post(&self, path: &str, body: String, upload: bool) -> Result<HttpReply, TransportError>;
 }
 
 pub trait CredentialSlot: Send + Sync {

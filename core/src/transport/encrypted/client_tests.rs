@@ -95,7 +95,7 @@ async fn a_sessionless_call_does_not_wait_for_an_inflight_mutation() {
     struct Waiting;
     #[async_trait::async_trait]
     impl HttpExchange for Waiting {
-        async fn post(&self, path: &str, _: String) -> Result<HttpReply, TransportError> {
+        async fn post(&self, path: &str, _: String, _: bool) -> Result<HttpReply, TransportError> {
             if path == "/api/ticket" { return Ok(HttpReply { status: 400, body: String::new() }); }
             std::future::pending().await
         }

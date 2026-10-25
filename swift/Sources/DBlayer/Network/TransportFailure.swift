@@ -3,6 +3,8 @@ import Foundation
 enum TransportFailure {
   static func classifySubscription(_ error: Error) -> DbError { classify(error, kind: .query) }
 
+  static func ofStoredTask(detail: String) -> DbError { .Network(detail: detail) }
+
   static func classifySocket(_ error: Error) -> DbError {
     if let error = error as? DbError { return error }
     return classify(error, kind: .query)

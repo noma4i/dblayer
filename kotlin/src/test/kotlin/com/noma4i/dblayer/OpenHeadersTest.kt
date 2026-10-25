@@ -23,7 +23,7 @@ class OpenHeadersTest {
                 override val document = "query HeaderProbe { __typename }"
             }
             val token = java.util.concurrent.atomic.AtomicReference("first")
-            DBlayer.open(org.robolectric.RuntimeEnvironment.getApplication(), endpoint = server.url("/").toString(), headers = { mapOf("X-Token" to token.get()) }, modelsJson = modelsJSON, operations = listOf(operation))
+            DBlayer.open(org.robolectric.RuntimeEnvironment.getApplication(), endpoint = server.url("/").toString(), headers = { mapOf("X-Token" to token.get()) }, modelsJson = modelsJSON, operations = listOf(operation), uploadNotification = UploadNotification("Uploading", "Files are on their way", 1))
 
             val context = org.robolectric.RuntimeEnvironment.getApplication()
             val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager

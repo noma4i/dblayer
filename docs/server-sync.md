@@ -24,7 +24,7 @@ try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(ses
 ```
 
 ```kotlin
-DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to "Bearer ${session.token}") }, modelsJson = modelsJson, operations = GraphQLOperations.all)
+DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to "Bearer ${session.token}") }, modelsJson = modelsJson, operations = GraphQLOperations.all, uploadNotification = notification)
 ```
 
 `endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
@@ -110,6 +110,7 @@ DBlayer.open(
     transport = OkHttpTransport(origin, cablePath = endpoints.cable),
     modelsJson = modelsJSON,
     path = path,
+    uploadNotification = notification,
     http = OkHttpEncryptedHttp(origin),
 )
 val database = DBlayer.database
@@ -401,7 +402,7 @@ try await DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledS
 ```
 
 ```kotlin
-DBlayer.open(context, encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel), credentials = AppCredentials(context), modelsJson = modelsJson)
+DBlayer.open(context, encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel), credentials = AppCredentials(context), modelsJson = modelsJson, uploadNotification = notification)
 ```
 
 Tests can pass their own transport and HTTP replies. A test that opens cable must also implement the 4 WebSocket calls.
@@ -411,7 +412,7 @@ try await DB.open(encrypted: encrypted, credentials: credentials, transport: tes
 ```
 
 ```kotlin
-DBlayer.open(context, encrypted = encrypted, credentials = credentials, transport = testTransport, modelsJson = modelsJson, http = testHttp)
+DBlayer.open(context, encrypted = encrypted, credentials = credentials, transport = testTransport, modelsJson = modelsJson, http = testHttp, uploadNotification = notification)
 ```
 
 Rules of the session:
@@ -894,7 +895,7 @@ val encrypted = EncryptedConfig(
     protocolLabel, cablePurpose, cableChannel
 )
 val config = DBlayer.serverConfig(context, encrypted, AppPlatform.ANDROID, appVersion)
-DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJson = modelsJson)
+DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJson = modelsJson, uploadNotification = notification)
 ```
 
 `DBlayer.open` and `DBlayer.serverConfig` require Android Context first. Swift calls keep their argument lists.

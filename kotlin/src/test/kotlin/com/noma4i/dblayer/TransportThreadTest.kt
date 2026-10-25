@@ -59,7 +59,7 @@ class TransportThreadTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"7"}}"""))
         val transport = OkHttpTransport(server.url("/graphql").toString(), client = client)
 
-        val request = TransportRequest(if (mutation) "mutation Probe { probe { id } }" else "query Probe { probe { id } }", "Probe", """{"id":"7"}""")
+        val request = TransportRequest(if (mutation) "mutation Probe { probe { id } }" else "query Probe { probe { id } }", "Probe", """{"id":"7"}""", false)
         val text = withContext(caller) { if (mutation) transport.mutate(request) else transport.query(request) }
 
         assertEquals("""{"data":{"id":"7"}}""", text)
@@ -88,12 +88,12 @@ class TransportThreadTest {
         for ((operation, cancelled, expected) in cases) {
             server.enqueue(MockResponse().setSocketPolicy(if (operation == "put" && cancelled) SocketPolicy.NO_RESPONSE else SocketPolicy.DISCONNECT_AT_START))
             val transport = OkHttpTransport(server.url("/graphql").toString(), client = OkHttpClient.Builder().retryOnConnectionFailure(false).build())
-            val request = TransportRequest("query Probe { probe { id } }", "Probe", "{}")
+            val request = TransportRequest("query Probe { probe { id } }", "Probe", "{}", false)
             val error = runCatching {
                 when (operation) {
                     "query" -> transport.query(request)
                     "mutation" -> transport.mutate(request)
-                    else -> transport.put(server.url("/upload").toString(), emptyMap(), byteArrayOf(1, 2), CancelledProgress(cancelled))
+                    else -> transport.put(server.url("/upload").toString(), emptyMap(), PutFile(java.io.File.createTempFile("thread", ".bin").apply { writeBytes(byteArrayOf(1, 2)); deleteOnExit() }.path, 0u, 2u), "1.0.1", CancelledProgress(cancelled))
                 }
             }.exceptionOrNull()
             assertEquals("$operation cancelled=$cancelled", expected, error?.javaClass)

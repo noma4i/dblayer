@@ -41,7 +41,7 @@ async fn upload_file_reads_do_not_run_on_the_async_executor() {
     rig.sync.flush().await.unwrap();
     rig.sync.wait_uploads().await;
     let reads = READS.get().unwrap().lock().unwrap().remove(&path).unwrap();
-    assert_eq!(reads.iter().map(|(operation, _)| *operation).collect::<Vec<_>>(), ["metadata", "checksum", "range"]);
+    assert_eq!(reads.iter().map(|(operation, _)| *operation).collect::<Vec<_>>(), ["metadata", "checksum"]);
     assert!(reads.iter().all(|(_, thread)| *thread != executor), "file reads used the executor {executor:?}: {reads:?}");
     assert_eq!(rig.transport.put_calls()[0].body, bytes);
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -58,9 +58,17 @@ async fn ranges_preserve_offsets_and_reject_truncation() {
     let file = file_with(b"0123456789");
     let cancel = crate::transport::CancelToken::new();
     assert_eq!(file_len(file.path(), &cancel).await.unwrap(), 10);
-    assert_eq!(read_range(file.path(), 3, 4, &cancel).await.unwrap(), b"3456");
-    assert_eq!(read_range(file.path(), 8, 2, &cancel).await.unwrap(), b"89");
-    assert!(read_range(file.path(), 8, 5, &cancel).await.is_err());
+    let directory = tempfile::tempdir().unwrap();
+    let copied = |name: &str, offset, length| {
+        let target = directory.path().join(name);
+        let cancel = cancel.clone();
+        let source = file.path().to_path_buf();
+        async move { copy_range(&source, offset, length, &target, &cancel).await.map(|()| std::fs::read(&target).unwrap()) }
+    };
+    assert_eq!(copied("a", 3, 4).await.unwrap(), b"3456");
+    assert_eq!(copied("b", 8, 2).await.unwrap(), b"89");
+    assert!(copied("c", 8, 5).await.is_err());
+    assert!(!directory.path().join("c").exists() && !directory.path().join("c.partial").exists());
 }
 
 #[tokio::test]

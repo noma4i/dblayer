@@ -1,6 +1,7 @@
 package com.noma4i.dblayer
 
 import android.content.Context
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -12,6 +13,11 @@ object DBlayer {
     private val opening = Mutex()
     private val opener = OpenDatabase()
     private var opened: Database? = null
+    private var ready = CompletableDeferred<Database>()
+
+    internal suspend fun awaitDatabase(): Database = ready.await()
+
+    internal fun openedDatabase(): Database? = opened
 
     /** Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`. */
     fun listen() = database.listen()
@@ -34,6 +40,7 @@ object DBlayer {
         ForegroundEvents.stop()
         opened?.shutdown()
         opened = null
+        ready = CompletableDeferred()
     }
 
     /** The live subscriptions of the database: observed queries and subscriptions, for probes of how many a screen opens. */
@@ -77,7 +84,33 @@ object DBlayer {
         uploads: UploadOperations? = null,
         http: EncryptedHttp? = null,
         retries: RetryProgress? = null,
+        uploadNotification: UploadNotification,
     ) = opening.withLock {
+        try {
+            openLocked(context, endpoint, headers, encrypted, credentials, transport, modelsJson, path, operations, uploads, http, retries, uploadNotification)
+        } catch (error: Throwable) {
+            ready.completeExceptionally(error)
+            ready = CompletableDeferred()
+            throw error
+        }
+    }
+
+    private suspend fun openLocked(
+        context: Context,
+        endpoint: String?,
+        headers: () -> Map<String, String>,
+        encrypted: EncryptedConfig?,
+        credentials: CredentialStore?,
+        transport: Transport?,
+        modelsJson: String,
+        path: String?,
+        operations: List<GraphQLOperation>,
+        uploads: UploadOperations?,
+        http: EncryptedHttp?,
+        retries: RetryProgress?,
+        uploadNotification: UploadNotification,
+    ) {
+        UploadNotifications.store(context, uploadNotification)
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
         val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire())
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers, cablePath = encrypted?.endpoints?.cable) }
@@ -86,7 +119,9 @@ object DBlayer {
         val sink = made.onlineSink()
         Reachability.connect(sink)
         ForegroundEvents.start(sink)
+        made.setUploadAcceptedSink(UploadAcceptedStart(context.applicationContext, made))
         database = made
+        ready.complete(made)
     }
 
     internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations?, clock: TestClock): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, uploads?.wire(), clock) }

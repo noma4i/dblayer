@@ -16,7 +16,7 @@ pub use progress::TransferProgress;
 pub(crate) use machine::{RunMode, UploadEvent};
 #[cfg(test)]
 pub(crate) use machine::Refused;
-pub use source::{file_len, md5_base64, read_range};
+pub use source::{copy_range, file_len, md5_base64};
 pub use state::{UploadInfo, UploadPart, UploadRequest, UploadRetry, UploadScenario, UploadStage, UploadState, UploadStatus, WaitReason};
 
 #[cfg(test)]

@@ -4,8 +4,8 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::syncstate::{FailureKind, OperationFailure};
-use crate::transport::{GraphQLRequest, PutRequest, ResponseOutcome, RetryClass, TransportError};
-use crate::upload::{read_range, UploadEvent, UploadStage};
+use crate::transport::{GraphQLRequest, PutFile, PutRequest, PutResponse, PutTaskState, ResponseOutcome, RetryClass, TransportError};
+use crate::upload::{copy_range, UploadEvent, UploadStage};
 
 use super::super::extract::root_value;
 use super::super::locked;
@@ -68,6 +68,7 @@ impl Runner {
         };
         locked(&self.inner.counters).record_transport_call();
         let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+        request.upload = true;
         request.owner = Some(crate::transport::RequestOwner { seq: self.seq, item_position: self.position, stage: crate::operation::enum_text(&self.snapshot().stage).unwrap_or_default() });
         self.remember(&request)?;
         let resumed = locked(&self.resumed).take();
@@ -120,24 +121,68 @@ impl Runner {
         length: u64,
         part: u32,
     ) -> Result<Option<String>, StepError> {
-        let body = read_range(std::path::Path::new(&self.input.path), offset, length, &self.token).await
-            .map_err(|error| fatal(FailureKind::Rejected, format!("source file is unreadable: {error}")))?;
+        let tag = format!("{}.{}.{}", self.seq, self.position, part);
+        let response = match self.adopted_put(&tag).await {
+            Some(adopted) => adopted,
+            None => self.send_put(url, headers, offset, length, part, tag).await,
+        };
+        match response {
+            Err(error) => Err(error),
+            Ok(response) if !(200..300).contains(&response.status) => {
+                Err(step_error(TransportError::Http { status: response.status, body: String::new() }, self.token.is_cancelled()))
+            }
+            Ok(response) => Ok(response.etag),
+        }
+    }
+
+    async fn send_put(self: &Arc<Self>, url: &str, headers: &[(String, String)], offset: u64, length: u64, part: u32, tag: String) -> Result<PutResponse, StepError> {
+        let whole = offset == 0 && length == self.snapshot().total_bytes;
+        let file = if whole {
+            PutFile { path: self.input.path.clone(), offset, length }
+        } else {
+            let target = self.inner.db.shared.files.range_path(&tag);
+            copy_range(std::path::Path::new(&self.input.path), offset, length, &target, &self.token).await
+                .map_err(|error| fatal(FailureKind::Rejected, format!("source file is unreadable: {error}")))?;
+            PutFile { path: target.to_string_lossy().into_owned(), offset: 0, length }
+        };
         locked(&self.inner.counters).record_transport_call();
         let runner = self.clone();
         let request = PutRequest {
             url: url.to_string(),
             headers: headers.to_vec(),
-            body,
+            file: file.clone(),
+            tag,
             cancel: self.token.clone(),
             sent: Arc::new(move |bytes| runner.report(part, bytes)),
         };
-        match crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.put_timeout, self.inner.transport.put(request)).await {
+        let sent = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.put_timeout, self.inner.transport.put(request)).await;
+        if !whole {
+            let _ = std::fs::remove_file(&file.path);
+        }
+        match sent {
             Err(_) => Err(StepError::Retry(OperationFailure::new(FailureKind::Network, "put timed out"))),
-            Ok(Err(error)) => Err(step_error(error, self.token.is_cancelled())),
-            Ok(Ok(response)) if !(200..300).contains(&response.status) => {
-                Err(step_error(TransportError::Http { status: response.status, body: String::new() }, self.token.is_cancelled()))
+            Ok(outcome) => outcome.map_err(|error| step_error(error, self.token.is_cancelled())),
+        }
+    }
+
+    async fn adopted_put(&self, tag: &str) -> Option<Result<PutResponse, StepError>> {
+        let mut states = self.inner.adopted_put(tag)?;
+        loop {
+            let state = states.borrow_and_update().clone();
+            match state {
+                PutTaskState::Finished { status, etag } => {
+                    self.inner.forget_put(tag);
+                    return Some(Ok(PutResponse { status, etag }));
+                }
+                PutTaskState::Failed { detail } => {
+                    self.inner.forget_put(tag);
+                    return Some(Err(StepError::Retry(OperationFailure::new(FailureKind::Network, detail))));
+                }
+                PutTaskState::Running => tokio::select! {
+                    changed = states.changed() => if changed.is_err() { return None },
+                    () = self.token.cancelled() => return Some(Err(StepError::Cancelled)),
+                },
             }
-            Ok(Ok(response)) => Ok(response.etag),
         }
     }
 

@@ -142,6 +142,7 @@ pub enum OperationTransition {
     Retry { seq: i64 },
     Postpone { seq: i64, failure: OperationFailure },
     Progress { seq: i64, item_position: i64, state: UploadState },
+    BackgroundRefused { seq: i64, item_position: i64, detail: String },
     Remove { seq: i64, expected: Option<OperationStatus> },
 }
 

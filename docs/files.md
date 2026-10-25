@@ -81,13 +81,37 @@ DBlayer.open(context, endpoint = endpoint, modelsJson = models,
     operations = listOf(MomentCreateFile, CreateBlob, InitMultipart, PresignParts, CompleteMultipart, AbortMultipart),
     uploads = UploadOperations(
         createBlob = UploadOperation("CreateBlob", rootPath = "uploadCreate.directUpload"),
-        multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart"))))
+        multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart"))),
+    uploadNotification = notification)
 val request = UploadRequest(path = file.path, variables = variables)
 moment.upload("upload_clip", request)
 moment.uploads["upload_clip"]?.status       // Uploading
 moment.uploads["upload_clip"]?.percent      // 42.0
 moment.cancelUpload("upload_clip")
 ```
+
+### Background transfer
+
+Uploads keep running while the app is not visible. The library does this, the app adds one line.
+
+On iOS the files go through a background `URLSession`. Pass the system call to the library in the `AppDelegate`:
+
+```swift
+func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+    DB.handleBackgroundSession(identifier: identifier, completion: completionHandler)
+}
+```
+
+The completion waits only for the uploads whose tasks reported in this launch. Other unfinished uploads do not hold it.
+
+On Android the app gives the text and the small icon of the notification to `open`:
+
+```kotlin
+val notification = UploadNotification("Uploading", "Your files are on their way", R.drawable.ic_upload)
+DBlayer.open(context, endpoint = endpoint, modelsJson = models, uploadNotification = notification)
+```
+
+API 34 and later run one user-initiated job with a network requirement. API 33 runs a sticky `dataSync` foreground task that starts its notification before `open` finishes. The library does not use WorkManager. A job or foreground task never repeats a transfer: retries follow the upload `Backoff` of the core. When the system refuses the start, the reason appears in the `error` of the accepted upload and nothing else changes. Upload requests (the file `PUT`, the steps and the content mutation) use the network of the job, all other requests use the default route. A restart or a force stop continues at the next `open`.
 
 `retry`, `discard` and `settled` take an `action`. Pass `null` for the whole record, or a declared action for only its operations and uploads. An action the model does not declare is refused. Preparing the request and calling the library run off the caller thread.
 

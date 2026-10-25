@@ -8,8 +8,11 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   private let lock = NSLock()
   private var sockets: [String: URLSessionWebSocketTask] = [:]
   var openSocketCount: Int { lock.withLock { sockets.count } }
+  private let uploadSource: UploadTaskSource
+  private lazy var uploadTasks = BackgroundPuts(source: uploadSource)
 
-  public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared, cablePath: String? = nil) {
+  public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared, cablePath: String? = nil, uploads: UploadTaskSource? = nil) {
+    self.uploadSource = uploads ?? BackgroundUploadSession()
     self.endpoint = endpoint
     self.headers = headers
     self.session = session
@@ -99,27 +102,13 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     lock.withLock { sockets.removeValue(forKey: token) }?.cancel(with: .normalClosure, reason: nil)
   }
 
-  public func put(url: String, headers: [String: String], bytes: Data, progress: ByteProgress) async throws -> PutReply {
-    guard let target = URL(string: url) else { throw DbError.Invalid(detail: "bad upload url") }
-    var urlRequest = URLRequest(url: target)
-    urlRequest.httpMethod = "PUT"
-    headers.forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
-    urlRequest.setUserAgent()
-    let watcher = UploadWatcher(progress)
-    do {
-      let (_, response) = try await session.upload(for: urlRequest, from: bytes, delegate: watcher)
-      let http = response as? HTTPURLResponse
-      return PutReply(status: UInt16(http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"))
-    } catch { throw TransportFailure.classifySocket(error) }
+  public func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
+    try await uploadTasks.put(url: url, headers: headers, file: file, tag: tag, progress: progress)
   }
-}
 
-private final class UploadWatcher: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-  let progress: ByteProgress
-  init(_ progress: ByteProgress) { self.progress = progress }
+  public var uploadSessionIdentifier: String { uploadSource.identifier }
 
-  func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-    progress.sent(bytes: UInt64(totalBytesSent))
-    if progress.isCancelled() { task.cancel() }
-  }
+  func connectUploads(_ sink: @escaping ([PutTask]) -> Void) { uploadTasks.connect(sink) }
+  func uploadEventsFinished() async { await uploadTasks.eventsFinished() }
+  func uploadDeliveredTags() -> [String] { uploadTasks.deliveredTags() }
 }
