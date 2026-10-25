@@ -82,9 +82,9 @@ impl Inner {
                 if owner != seq { continue; }
                 match entry.operation.status {
                     OperationStatus::Pending if state.phase == UploadStatus::Cancelled => self.spawn_run(seq, position, Mode::Cancel),
-                    OperationStatus::Pending if state.phase == UploadStatus::Failed && state.upload_id.is_some() => self.spawn_run(seq, position, Mode::Orphan),
+                    OperationStatus::Pending if state.phase == UploadStatus::Failed && state.upload_id.is_some() && !state.all_parts_confirmed() => self.spawn_run(seq, position, Mode::Orphan),
                     OperationStatus::Pending if !entry.operation.transport_started && !self.is_waiting(&entry.operation) && !matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled) => self.spawn_run(seq, position, Mode::Transfer),
-                    OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() && !crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()) => {
+                    OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() && (state.phase == UploadStatus::Cancelled || !state.all_parts_confirmed()) && !crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()) => {
                         let mode = if state.phase == UploadStatus::Cancelled { Mode::Cancel } else { Mode::Orphan };
                         self.spawn_run(seq, position, mode);
                     }
@@ -223,7 +223,10 @@ impl Sync {
         let Some(entry) = upload_entry(self.inner.db.outbox()?, model, id) else { return Ok(false) };
         let seq = entry.operation.id.0;
         let batched = self.inner.db.spec(model)?.actions.iter().any(|action| action.batch.is_some() && entry.operation.action_key == Operation::action_key(model, &action.name));
-        if batched && entry.operation.transport_started { return Err(crate::db::DbError::InFlight { model: model.into(), id: id.to_string() }.into()); }
+        if entry.operation.transport_started {
+            if batched { return Err(crate::db::DbError::InFlight { model: model.into(), id: id.to_string() }.into()); }
+            return Ok(false);
+        }
         let position = if batched {
             Some(self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get::<_, i64>(0))?))?)
         } else { None };

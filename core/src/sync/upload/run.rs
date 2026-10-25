@@ -333,7 +333,8 @@ impl Runner {
     async fn failed(&self, failure: OperationFailure) {
         let batch = self.inner.db.spec(&self.model).is_ok_and(|spec| spec.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&self.input.steps.mutation)));
         let stage = self.snapshot().stage;
-        if self.snapshot().upload_id.is_some() && !self.has_pending_request() {
+        let snapshot = self.snapshot();
+        if snapshot.upload_id.is_some() && !snapshot.all_parts_confirmed() && !self.has_pending_request() {
             let _ = self.save(|state| state.stage = UploadStage::Abort);
             self.abort_remote().await;
         }

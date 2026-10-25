@@ -189,7 +189,7 @@ val moment = uploadCreate("Moment", values, request, Moment)
 | Scenario | Steps |
 | -------- | ----- |
 | single (smaller than the threshold) | `create` returns url, headers, `signedId`, `blobId`, then one PUT of the file. The answer may sit at a dotted path (`uploadCreate.directUpload`) and `headers` may be an object, a list or a JSON string |
-| multipart (threshold or larger) | `init` receives `filename`, `contentType`, `byteSize` and the base64 MD5 `checksum` and returns `key` and `uploadId`, `presign` returns one url per part, parts go out by PUT, `complete` receives the part numbers with their ETags and returns `signedId` and `blobId`, `abort` runs when the upload fails |
+| multipart (threshold or larger) | `init` receives filename, contentType, byteSize and checksum, and returns `key` and `uploadId`. `presign` returns part URLs. PUT confirms parts. `complete` exchanges their ETags for `signedId` and `blobId` |
 | content mutation | runs once with the original variables plus `signedId` (and `blobId` when the steps name a variable for it, the typed `UploadRequest` sends only `signedId`) |
 
 The file is read in ranges: a single upload in one range up to the 10 MB threshold, a multipart upload in parts of 5 MB. The checksum is base64 MD5, the MIME type comes from the file extension unless you pass one.
@@ -235,7 +235,8 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 - Retrying the content mutation preserves confirmed file transfers.
 - The grant, including `signedId`, `blobId`, URL and headers, is stored before PUT. A separate flag records confirmed transfer.
 - A restarted unfinished PUT uses its saved grant. `retry()` after a failed or unknown content mutation skips confirmed transfers.
-- A failed multipart upload calls `abort` and clears its parts. After a restart a stored multipart continues from its finished parts, and an upload that failed with an unfinished `abort` is aborted again.
+- A multipart failure calls `abort` only while parts remain unconfirmed. After all parts are confirmed, a failed `complete` preserves their ETags and upload id.
 - `retry()` and `discard()` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.
 - Offline cancellation returns without a network call and keeps the multipart upload id. After `setOnline(true)`, the saved cancellation aborts the multipart and removes the operation.
+- After the content mutation starts, cancelling a single upload returns `false` immediately. Cancelling a batch member returns `InFlight`.
 - One record has one upload at a time.

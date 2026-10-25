@@ -112,6 +112,55 @@ fn stored_state(rig: &Rig) -> UploadState {
 const TWELVE: &[u8] = b"0123456789ab";
 
 #[tokio::test(start_paused = true)]
+async fn inv_upload_16_complete_failure_keeps_parts_through_queue_restart_and_retry() {
+    let rig = upload_rig(small());
+    rig.transport.enqueue("InitMultipart", init());
+    rig.transport.enqueue("PresignParts", presign(&[(1, "https://s3/p1"), (2, "https://s3/p2"), (3, "https://s3/p3")]));
+    rig.transport.enqueue("CompleteMultipart", Reply::fail(TransportError::Http { status: 422, body: "rejected".into() }));
+    rig.transport.enqueue("CompleteMultipart", complete());
+    rig.transport.enqueue("AbortMultipart", abort());
+    let source = file(TWELVE);
+    rig.sync.upload("moments", &rid("m1"), input(&source)).await.unwrap();
+    rig.sync.wait_uploads().await;
+    let failed = stored_state(&rig);
+    assert_eq!(failed.upload_id.as_deref(), Some("u1"));
+    assert_eq!((failed.stage, failed.parts.len(), failed.confirmed_bytes), (UploadStage::Complete, 3, 12));
+    rig.sync.flush().await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("AbortMultipart"), 0);
+    rig.transport.enqueue("CreateMoment", created("m9"));
+    rig.sync.retry("moments", &rid("m1")).await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("CompleteMultipart"), 2);
+    assert_eq!(rig.transport.call_count("InitMultipart"), 1);
+    assert_eq!(rig.transport.call_count("PresignParts"), 1);
+    assert_eq!(rig.transport.put_calls().len(), 3);
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1, "outbox after complete retry: {:?}", rig.db.outbox().unwrap());
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn inv_upload_17_cancel_after_mutation_start_returns_false_without_waiting() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    let rig = upload_rig(small());
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue("CreateMoment", created("m9").after(Duration::from_secs(1)));
+    let source = file(b"abcdef");
+    let id = rid("m1");
+    rig.sync.upload("moments", &id, input(&source)).await.unwrap();
+    rig.transport.await_calls("CreateMoment", 1).await;
+    assert!(rig.db.outbox().unwrap()[0].operation.transport_started);
+    let mut cancel = Box::pin(rig.sync.cancel_upload("moments", &id));
+    assert!(matches!(cancel.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Ok(false))));
+    drop(cancel);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    rig.sync.wait_uploads().await;
+    assert_eq!(text_of(&rig, "moments", "m9"), Some("clip".into()));
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn http_put_failure_does_not_confirm_transfer() {
     use crate::transport::{Transport, GraphQLRequest, Response, Subscription, PutRequest, PutResponse};
     struct HttpStatus(crate::transport::MockTransport, u16);
