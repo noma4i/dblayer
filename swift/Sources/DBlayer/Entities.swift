@@ -23,6 +23,7 @@ public final class Entity<Model: DBModel> {
   @ObservationIgnored private var bytes: UInt64 = 0
   @ObservationIgnored private let registry: Entities<Model>
   @ObservationIgnored private let isSingleton: Bool
+  @ObservationIgnored private let readers = EntityReaders<Model>()
 
   fileprivate init(id: String, seed: Retained<Model>?, registry: Entities<Model>) {
     self.id = id
@@ -50,7 +51,7 @@ public final class Entity<Model: DBModel> {
     self.bytes = bytes
     isStale = false
     phase = next == nil ? .absent : .present
-    if next != value { value = next }
+    if next != value { value = next; readers.put(next) }
     if isSingleton, id != (next?.id ?? "") { id = next?.id ?? "" }
   }
 
@@ -64,10 +65,11 @@ public final class Entity<Model: DBModel> {
     value = nil
     revision = Int64.min
     isStale = false
+    readers.closeAll()
   }
 
   fileprivate func detach() {
-    value = nil
+    if value != nil { value = nil; readers.put(nil) }
     guard isSingleton else { return }
     phase = .opening
     id = ""
@@ -75,9 +77,52 @@ public final class Entity<Model: DBModel> {
     isStale = false
   }
 
+  /// The value now, then each newer one. A reader that falls behind gets the newest value only. The stream keeps this entity alive until it ends, is cancelled or is dropped, and ends when the database closes. Read `phase` for the reason a value is missing.
+  public func changes() -> LiveStream<Model?> {
+    guard phase != .closed else { return .ended }
+    let latest = Latest<Model?>(merge: nil)
+    latest.put(value)
+    let key = readers.add(latest)
+    let attachment = Attachment { [readers, entity = self] in
+      readers.remove(key)
+      withExtendedLifetime(entity) {}
+    }
+    readers.bind(key, attachment)
+    return LiveStream(latest: latest, attachment: attachment)
+  }
+
   isolated deinit {
     guard !isSingleton, phase != .closed else { return }
     registry.released(id: id, value: value, revision: revision, bytes: bytes)
+  }
+}
+
+final class EntityReaders<Model: DBModel>: @unchecked Sendable {
+  private struct Reader {
+    let latest: Latest<Model?>
+    weak var attachment: Attachment?
+  }
+
+  private let lock = NSLock()
+  private var readers: [Int: Reader] = [:]
+  private var next = 0
+
+  func add(_ latest: Latest<Model?>) -> Int {
+    lock.withLock { next += 1; readers[next] = Reader(latest: latest); return next }
+  }
+
+  func bind(_ key: Int, _ attachment: Attachment) { lock.withLock { readers[key]?.attachment = attachment } }
+
+  func remove(_ key: Int) { lock.withLock { readers[key] = nil } }
+
+  func put(_ value: Model?) {
+    let current = lock.withLock { readers.values.map(\.latest) }
+    current.forEach { $0.put(value) }
+  }
+
+  func closeAll() {
+    let current = lock.withLock { () -> [Reader] in defer { readers = [:] }; return Array(readers.values) }
+    current.forEach { $0.latest.close(); $0.attachment?.cancel() }
   }
 }
 
@@ -197,7 +242,7 @@ public final class Entities<Model: DBModel> {
   }
 
   /// The database closed. Every entity that is still held becomes closed and the registry starts empty.
-  fileprivate func close() {
+  func close() {
     live.values.forEach { $0.entity?.close() }
     live = [:]
     steps = [:]

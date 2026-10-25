@@ -1,5 +1,7 @@
 package com.noma4i.dblayer
 
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.lang.ref.ReferenceQueue
@@ -57,14 +59,22 @@ internal class EntityCell<Model : DBModel> {
     }
 }
 
+/** The collector of a flow holds the flow, so collecting it keeps the entity reachable. */
+@OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+private class HeldState<T>(private val owner: Any, private val inner: StateFlow<T>) : StateFlow<T> {
+    override val value: T get() = inner.value
+    override val replayCache: List<T> get() = inner.replayCache
+    override suspend fun collect(collector: FlowCollector<T>): Nothing = inner.collect(collector)
+}
+
 /** The live value of one record. The library keeps it current while the object is reachable and lets go of the record when it is not. */
 class Entity<Model : DBModel> internal constructor(private val fixedId: String?, internal val cell: EntityCell<Model>) {
     /** The id of the record. A singleton has no id until its row has loaded. */
     val id: String get() = fixedId ?: cell.value.value?.id.orEmpty()
     /** The newest value, null while none has arrived or when the record does not exist. */
-    val value: StateFlow<Model?> get() = cell.value
+    val value: StateFlow<Model?> = HeldState(this, cell.value)
     val isStale: Boolean get() = cell.stale
-    val phase: StateFlow<EntityPhase> get() = cell.phase
+    val phase: StateFlow<EntityPhase> = HeldState(this, cell.phase)
     /** True after the database closed. A closed entity never receives a value again. */
     val isClosed: Boolean get() = cell.phase.value == EntityPhase.Closed
 }

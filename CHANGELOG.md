@@ -7,8 +7,10 @@
 - Generated GraphQL inputs support recursive input objects and `@oneOf` choices.
 - Kotlin `JsonElement.jsonText()` serializes JSON with the library settings.
 - Kotlin `offCaller` runs a block off the caller thread, for generated code.
+- Swift `Entity.changes()` streams the value of an entity, current value then updates, and holds the entity while it is read.
 
 ### Changed
+- Kotlin `Entity.value` keeps the entity reachable while it is collected.
 - Swift query conditions, `JSONValue.encode`, `JSONValue.text` and `JSONValue.tagged` throw on serialization failure.
 - Generated Swift parameterized scopes and upload variable builders throw on serialization failure.
 - Kotlin `parseJsonObject` throws when the body is not a JSON object.

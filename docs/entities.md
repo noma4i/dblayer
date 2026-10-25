@@ -18,6 +18,14 @@ val name by author.value.collectAsState()
 
 `value` is the newest known state of the record. The first reader receives a cached row immediately when it is in memory. A second reader of a live id receives the same object and opens no new subscription.
 
+To read the changes of an entity in code, not in a view, use `changes()` in Swift and collect `value` in Kotlin. Both hold the entity while they read, so no other reference is needed.
+
+```swift
+for await value in User.entity(id).changes() { render(value) }   // current value first, then each newer one
+```
+
+The Swift stream gives the current value, then updates. A reader that falls behind gets only the newest value. Many readers of one entity open no new subscription. Cancelling or dropping one stream leaves the others. The stream ends when the database closes. A `nil` value means the record is absent or not loaded: `phase` tells which, and carries a read error.
+
 Every entity has a `phase`: `opening` until the core answers, then `present` or `absent`. `failed(error)` keeps the last value and tells that the core could not lease the id, read the row or decode it on this build. `closed` follows `DB.close()`. Entity creation reads only memory. It never reads SQLite synchronously. A cache miss stays empty until the first delivery, even if the record exists on disk.
 Cached and retained values have `isStale` set until a fresh delivery arrives. An older cached row never replaces a newer live or retained value.
 A row that arrives after its entity reaches the entity. When the core cannot read the record for a lease, it counts the failure, keeps the id and reads it again on the next commit or the next lease of that id. `DBlayer.entityCensus()` and `DB.entityCensus()` show the facts told, the deliveries skipped as not newer, and the failed reads. `DBlayer.entityLeaseFailures()` and `DB.entityLeaseFailures()` count the lease calls that the platform registry could not hand to the core and the rows that failed to decode for an entity. Both write a line to the library log.
