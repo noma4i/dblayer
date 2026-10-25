@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `DB.sessionCall` and `DBlayer.sessionCall` send a declared session operation with an `Encodable` / `@Serializable` body and decode the answer. `sessionResume`, `sessionReset` and `retryAll` move to `DB` and `DBlayer`. `Model.retry(id:action:)` (Kotlin `ModelDecoder.retry(id, action)`) retries a record by id.
 - `preload` in a `.dbl` scope loads the scope after open, sign-in, reset and network return.
 - `RetryProgress` follows encrypted HTTP calls that wait for a retry: `changes` on Swift and `flow` on Kotlin deliver `RetrySnapshot(activeCalls, lastAttempt)`. Pass one object as `retries` to `open` and `serverConfig`.
 - `Model.events` streams declared change events with the row before and after on Swift and Kotlin; a full queue reports `missed` with the dropped count. `changed_by ..., via: :observed` rereads every observed read of the model.
@@ -19,6 +20,7 @@
 - Swift `Entity.changes()` streams the value of an entity, current value then updates, and holds the entity while it is read.
 
 ### Changed
+- Swift `Model.retryAll()` and Kotlin top-level `retryAll()` are removed; use `DB.retryAll()` and `DBlayer.retryAll()`.
 - `RetryListener` and `Database.setRetryListener` are removed; `serverConfig(retryListener:)` becomes `serverConfig(retries:)`. A call leaves the retry state on success, failure and cancel by itself.
 - Preserve typed errors in `Snapshot.error` and `LiveWindow.failure` on Swift and Kotlin.
 - A live query delivers again when only the GraphQL `extensions` of the same error change.

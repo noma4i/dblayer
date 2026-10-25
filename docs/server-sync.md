@@ -96,9 +96,8 @@ try await DB.open(
   path: path,
   http: UrlSessionEncryptedHttp(origin: origin)
 )
-let database = try DB.database
-_ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
-let answer = try await database.sessionCall(operation: "confirm", bodyJson: #"{"code":"123456"}"#)
+try await DB.sessionCall("otp", body: PhoneBody(phone: "+61400000000"))
+let answer = try await DB.sessionCall("confirm", body: CodeBody(code: "123456"), as: SignedIn.self)
 ```
 
 ```kotlin
@@ -113,12 +112,11 @@ DBlayer.open(
     uploadNotification = notification,
     http = OkHttpEncryptedHttp(origin),
 )
-val database = DBlayer.database
-database.sessionCall("otp", """{"phone":"+61400000000"}""")
-val answer = database.sessionCall("confirm", """{"code":"123456"}""")
+DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
+val answer: SignedIn = DBlayer.sessionCall("confirm", CodeBody("123456"))
 ```
 
-`sessionCall` sends a configured operation and returns the answer body as JSON text. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`.
+`sessionCall` encodes an `Encodable` (`@Serializable` in Kotlin) body, sends a configured operation and decodes the answer into the type you name. Without an answer type it returns nothing (`sessionSend` in Kotlin). `sessionResume` decodes the resume answer the same way and returns `nil` / `null` when there is nothing to resume. `sessionReset()` drops the stored session. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`.
 
 Each `EncryptedSessionOperation` declares `path` and `sessionless`. This replaces the former path string on both platforms.
 For `sessionless: true`, the request contains exactly `audience`, `kid`, `method`, `path`, `requestId`, `issuedAt`, `responseKey`, and `body`.
@@ -216,9 +214,9 @@ A direct `run` mutation has no queued owner, so `sessionResume()` returns its an
 do {
   try await Moment.feed.load()
 } catch DbError.Session(let code, _) where code == .unauthenticated {
-  try DB.database.sessionReset()
-  _ = try await DB.database.sessionCall(operation: "social", bodyJson: signInJson)
-  try await DB.database.retryAll()
+  try DB.sessionReset()
+  try await DB.sessionCall("social", body: signIn)
+  try await DB.retryAll()
 }
 ```
 
@@ -227,9 +225,9 @@ try {
     Moment.feed.load()
 } catch (error: DbException.Session) {
     if (error.code == SessionCode.UNAUTHENTICATED) {
-        DBlayer.database.sessionReset()
-        DBlayer.database.sessionCall("social", signInJson)
-        DBlayer.database.retryAll()
+        DBlayer.sessionReset()
+        DBlayer.sessionCall("social", signIn)
+        DBlayer.retryAll()
     }
 }
 ```

@@ -71,8 +71,9 @@ val DBModel.canRetry: Boolean get() = needsAttention
 val DBModel.errorMessage: String? get() = sync.error?.message
 
 suspend fun DBModel.retry(action: String?): ULong = offCaller { DBlayer.database.retry(modelName, id, action) }
+/** Sends the queued changes of the record with [id] again, without holding an instance. */
+suspend fun <Model : DBModel> ModelDecoder<Model>.retry(id: String, action: String?): ULong = offCaller { DBlayer.database.retry(modelName, id, action) }
 suspend fun DBModel.discard(action: String?) { offCaller { DBlayer.database.discard(modelName, id, action) } }
-suspend fun retryAll(): ULong = offCaller { DBlayer.database.retryAll() }
 
 suspend fun DBModel.destroy() { offCaller { DBlayer.database.destroy(modelName, id) } }
 

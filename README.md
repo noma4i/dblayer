@@ -146,7 +146,7 @@ try await DB.open(
   encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
   credentials: AppCredentials(), modelsJSON: modelsJSON, path: path
 )
-_ = try await DB.database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
+try await DB.sessionCall("otp", body: PhoneBody(phone: "+61400000000"))
 ```
 
 ```kotlin
@@ -156,7 +156,7 @@ DBlayer.open(
   credentials = AppCredentials(context), modelsJson = modelsJSON, path = path,
   uploadNotification = UploadNotification("Uploading", "Your files are on their way", R.drawable.ic_upload),
 )
-DBlayer.database.sessionCall("otp", """{"phone":"+61400000000"}""")
+DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
 ```
 
 Await `DB.open` in Swift or call suspend `DBlayer.open` from a Kotlin coroutine.

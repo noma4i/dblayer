@@ -58,6 +58,30 @@ public enum DB {
     _ = try await database.run(operation: operation, variablesJson: JSONValue.object(variables).text)
   }
 
+  /// Sends a session operation declared in the encrypted config and decodes its answer. A refusal throws the typed error.
+  @concurrent public static func sessionCall<Body: Encodable & Sendable, Answer: Decodable & Sendable>(_ operation: String, body: Body, as _: Answer.Type) async throws -> Answer {
+    try JSONDecoder().decode(Answer.self, from: Data(try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body)).utf8))
+  }
+
+  @concurrent public static func sessionCall<Body: Encodable & Sendable>(_ operation: String, body: Body) async throws {
+    _ = try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body))
+  }
+
+  /// Restores the stored session. Returns the answer of the resume call, or `nil` when there is nothing to resume.
+  @concurrent public static func sessionResume<Answer: Decodable & Sendable>(as _: Answer.Type) async throws -> Answer? {
+    try await database.sessionResume().map { try JSONDecoder().decode(Answer.self, from: Data($0.utf8)) }
+  }
+
+  /// Drops the stored session and its credential, so the next sign-in starts clean.
+  public static func sessionReset() throws { try database.sessionReset() }
+
+  /// Sends every failed and delivery-unknown change again. Returns the number of reset operations or upload items.
+  @discardableResult @concurrent public static func retryAll() async throws -> UInt64 { try await database.retryAll() }
+
+  private static func sessionBodyText<Body: Encodable>(_ body: Body) throws -> String {
+    String(decoding: try JSONEncoder().encode(body), as: UTF8.self)
+  }
+
   public static func serverConfig(encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> ServerConfig {
     try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retries: retries, connectivity: reachability.start())
   }

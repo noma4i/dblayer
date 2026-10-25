@@ -3,6 +3,8 @@ package com.noma4i.dblayer
 import android.content.Context
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -33,6 +35,25 @@ object DBlayer {
         offCaller { database.logout() }
         EntityRegistries.resetAll()
     }
+
+    /** Sends every failed and delivery-unknown change again. Returns the number of reset operations or upload items. */
+    suspend fun retryAll(): ULong = offCaller { database.retryAll() }
+
+    /** Sends a session operation declared in the encrypted config and decodes its answer. A refusal throws the typed error. */
+    suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
+        offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
+
+    /** Sends a session operation and ignores its answer body. */
+    suspend inline fun <reified Body> sessionSend(operation: String, body: Body) {
+        offCaller { database.sessionCall(operation, dbJson.encodeToString(body)) }
+    }
+
+    /** Restores the stored session. Returns the answer of the resume call, or `null` when there is nothing to resume. */
+    suspend inline fun <reified Answer> sessionResume(): Answer? =
+        offCaller { database.sessionResume()?.let { dbJson.decodeFromString<Answer>(it) } }
+
+    /** Drops the stored session and its credential, so the next sign-in starts clean. */
+    fun sessionReset() = database.sessionReset()
 
     /** Closes the database. Every entity becomes closed, and `open` may open the database again. Meant for tests and the end of the process. */
     fun close() {

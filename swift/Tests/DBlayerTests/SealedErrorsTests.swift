@@ -23,7 +23,7 @@ extension BridgeProbeTests {
     let row = try await Moment.create(text: "saved")
     DB.current = RefusedRetry(noHandle: .init())
     await #expect(throws: DbError.self) { try await row.retry(action: nil) }
-    await #expect(throws: DbError.self) { try await Moment.retryAll() }
+    await #expect(throws: DbError.self) { try await DB.retryAll() }
   }
   @MainActor
   private func openSealedRig(_ transport: MockTransport) async throws {

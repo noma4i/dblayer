@@ -21,7 +21,7 @@ class SealedErrorsTest {
         DBlayer.database = RefusedRetry()
         try {
             org.junit.Assert.assertTrue(runCatching { row.retry(null) }.exceptionOrNull() is DbException.Invalid)
-            org.junit.Assert.assertTrue(runCatching { retryAll() }.exceptionOrNull() is DbException.Invalid)
+            org.junit.Assert.assertTrue(runCatching { DBlayer.retryAll() }.exceptionOrNull() is DbException.Invalid)
         } finally {
             DBlayer.database = real
         }
