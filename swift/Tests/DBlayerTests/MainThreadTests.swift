@@ -108,13 +108,16 @@ struct MainThreadTests {
     }
     let take: () -> ListUpdate<PreparedRow>
     let shown: () -> Int
-    let published: (UInt64) -> Bool
+    let secondRevision = DispatchSemaphore(value: 0)
+    let observer: @Sendable (UInt64) -> Void = { if $0 >= 2 { secondRevision.signal() } }
     if kind == "list" {
       let list = LiveList<PreparedRow>(Query<PreparedRow>(), snapshots: source)
-      (take, shown, published) = ({ list.takeUpdate() }, { list.rows.count }, { list.updates.waitForPublication(of: $0, seconds: 5) })
+      list.updates.observePublications(observer)
+      (take, shown) = ({ list.takeUpdate() }, { list.rows.count })
     } else {
       let window = LiveWindow<PreparedRow>(Window<PreparedRow>(query: Query<PreparedRow>(), tail: 3), snapshots: source)
-      (take, shown, published) = ({ window.takeUpdate() }, { window.rows.count }, { window.updates.waitForPublication(of: $0, seconds: 5) })
+      window.updates.observePublications(observer)
+      (take, shown) = ({ window.takeUpdate() }, { window.rows.count })
     }
     await eventually("the subscription") { box.get() != nil }
     let rows = (0 ..< 3).map { PreparedRow(key: "r\($0)", prepared: prepared) }
@@ -126,7 +129,7 @@ struct MainThreadTests {
     let next = (0 ..< 3).map { PreparedRow(key: "r\($0)", prepared: nextPrepared) }
     box.get()?(Snapshot(rows: next, replaced: [:], reordered: true, edits: [.rewrite(2, next[2])], seq: 2))
     let preparedInTheBackground = block(on: nextPrepared, seconds: 5)
-    let publishedWhileBusy = published(2)
+    let publishedWhileBusy = block(on: secondRevision, seconds: 5)
     let update = take()
 
     #expect(preparedInTheBackground, "\(kind): the background stage prepared the delivery")
