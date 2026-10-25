@@ -11,15 +11,10 @@ fn rid(text: &str) -> RowId {
     RowId::new(text).unwrap()
 }
 
-async fn flush_while_resetting(rig: &Rig, reply: Reply) {
-    rig.transport.enqueue("UpdateMoment", reply);
-    reset_during_flush(rig).await;
-}
-
-async fn reset_during_flush(rig: &Rig) {
+async fn reset_during_flush(rig: &Rig, models: &[&str]) {
     let reset = async {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        rig.db.reset(&["moments"]).unwrap();
+        rig.db.reset(models).unwrap();
     };
     let (flushed, ()) = tokio::join!(rig.sync.flush(), reset);
     flushed.unwrap();
@@ -33,22 +28,28 @@ fn rig_with_pending_update() -> Rig {
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_op_13_an_answer_a_refusal_or_a_network_failure_after_a_reset_leaves_no_trace() {
+async fn inv_op_13_an_answer_a_refusal_or_a_network_failure_after_a_reset_leaves_no_trace_and_no_operation_in_flight() {
     let answers = [
-        Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})),
-        Reply::graphql_error("not allowed", "FORBIDDEN"),
-        Reply::fail(TransportError::Network("down".to_string())),
+        (Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})), 1),
+        (Reply::graphql_error("not allowed", "FORBIDDEN"), 1),
+        (Reply::fail(TransportError::Network("down".to_string())), 2),
     ];
-    for answer in answers {
-        let rig = rig_with_pending_update();
-        rig.transport.enqueue("UpdateMoment", answer.clone().after(Duration::from_secs(5)));
-        rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
-        reset_during_flush(&rig).await;
-        rig.clock.advance(Duration::from_secs(3600));
-        rig.sync.flush().await.unwrap();
-        assert!(rig.db.outbox().unwrap().is_empty(), "{answer:?}");
-        assert_eq!(text_of(&rig, "moments", "m1"), None, "{answer:?}");
-        assert_eq!(rig.transport.call_count("UpdateMoment"), 1, "{answer:?}");
+    for models in [&["moments"][..], &["vibes"][..]] {
+        for (answer, calls) in answers.clone() {
+            let rig = rig_with_pending_update();
+            rig.transport.enqueue("UpdateMoment", answer.clone().after(Duration::from_secs(5)));
+            rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
+            reset_during_flush(&rig, models).await;
+            let started = rig.db.outbox().unwrap().iter().filter(|entry| entry.operation.transport_started).count();
+            assert_eq!(started, 0, "{models:?} {answer:?}");
+            rig.clock.advance(Duration::from_secs(3600));
+            rig.sync.flush().await.unwrap();
+            assert!(rig.db.outbox().unwrap().is_empty(), "{models:?} {answer:?}");
+            let resurrected = models == ["moments"] && text_of(&rig, "moments", "m1").is_some();
+            assert!(!resurrected, "{models:?} {answer:?}");
+            let expected = if models == ["moments"] { 1 } else { calls };
+            assert_eq!(rig.transport.call_count("UpdateMoment"), expected, "{models:?} {answer:?}");
+        }
     }
 }
 
