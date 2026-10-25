@@ -177,8 +177,8 @@ impl Feed {
 
     async fn reread_observed(&self, model: &str) -> Result<(), SyncError> {
         let mut targets: BTreeMap<String, (String, Map<String, Value>)> = BTreeMap::new();
-        for entry in locked(&self.inner.watches).values().filter(|entry| entry.model == model) {
-            targets.insert(entry.key.clone(), (entry.relation.clone(), entry.params.clone()));
+        for entry in self.inner.db.observed_reads().into_iter().filter(|entry| entry.model == model) {
+            targets.insert(entry.key, (entry.relation, entry.params));
         }
         let mut failure = None;
         for (relation, params) in targets.into_values() {

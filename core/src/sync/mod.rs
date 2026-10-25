@@ -60,7 +60,6 @@ use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use serde_json::{Map, Value};
 use tokio::sync::watch;
 
 use crate::db::Db;
@@ -110,13 +109,6 @@ impl Default for JoinedLoads {
     fn default() -> Self { Self(watch::channel(0).0) }
 }
 
-pub(crate) struct WatchEntry {
-    pub model: String,
-    pub relation: String,
-    pub params: Map<String, Value>,
-    pub key: String,
-}
-
 pub(crate) struct Inner {
     stopped: watch::Receiver<()>,
     pub db: Db,
@@ -130,8 +122,6 @@ pub(crate) struct Inner {
     pub issued: AtomicI64,
     pub(crate) upload_housekeeping_due: std::sync::atomic::AtomicBool,
     pub(crate) upload_orphan_gate: tokio::sync::Mutex<()>,
-    pub watches: Mutex<HashMap<u64, WatchEntry>>,
-    pub next_watch: AtomicI64,
     pub lives: Mutex<HashMap<String, live::Live>>,
     pub subscription_failures: tokio::sync::broadcast::Sender<SubscriptionFailureNotice>,
     pub(crate) model_events: Mutex<Vec<std::sync::Weak<model_event::EventQueue>>>,
@@ -215,8 +205,6 @@ impl Sync {
             issued: AtomicI64::new(0),
             upload_housekeeping_due: std::sync::atomic::AtomicBool::new(true),
             upload_orphan_gate: tokio::sync::Mutex::new(()),
-            watches: Mutex::new(HashMap::new()),
-            next_watch: AtomicI64::new(0),
             lives: Mutex::new(HashMap::new()),
             subscription_failures: tokio::sync::broadcast::channel(32).0,
             model_events: Mutex::new(Vec::new()),

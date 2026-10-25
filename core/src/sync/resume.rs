@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
@@ -10,7 +9,7 @@ use tokio::task::JoinSet;
 
 use super::error::SyncError;
 use super::resume_machine::{Cause, ResumeEvent, ResumeMachine};
-use super::{locked, Inner, Sync, WatchEntry};
+use super::{locked, Inner, Sync};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResumeReport {
@@ -114,7 +113,7 @@ impl Drop for Runner {
 
 pub struct Watch {
     inner: Arc<Inner>,
-    id: Option<u64>,
+    _read: Option<crate::db::ObservedReadLease>,
     live: Vec<String>,
     failures: Option<tokio::sync::broadcast::Receiver<super::SubscriptionFailureNotice>>,
 }
@@ -139,7 +138,6 @@ pub(crate) struct Failures {
 
 impl Drop for Watch {
     fn drop(&mut self) {
-        if let Some(id) = self.id { locked(&self.inner.watches).remove(&id); }
         for key in &self.live {
             self.inner.release_live(key);
         }
@@ -150,16 +148,13 @@ impl Sync {
     pub fn watch(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Watch, SyncError> {
         let spec = self.inner.db.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| SyncError::UnknownRelation { model:model.into(), relation:relation.into() })?;
-        let id = if declared.remote.is_some() {
+        let read = if declared.remote.is_some() {
             let key = self.inner.resolve(model, relation, params)?.window_key;
-            let id = self.inner.next_watch.fetch_add(1, Ordering::SeqCst) as u64;
-            let entry = WatchEntry { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key };
-            locked(&self.inner.watches).insert(id, entry);
-            Some(id)
+            Some(self.inner.db.register_observed_read(crate::db::ObservedRead { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key }))
         } else { None };
         let failures = self.inner.subscription_failures.subscribe();
         let live = self.inner.acquire_live(model, relation, params);
-        Ok(Watch { inner: self.inner.clone(), id, live, failures: Some(failures) })
+        Ok(Watch { inner: self.inner.clone(), _read: read, live, failures: Some(failures) })
     }
 
     pub async fn resume(&self) -> Result<ResumeReport, SyncError> {
@@ -201,9 +196,9 @@ impl Inner {
         if cause == Cause::Explicit { self.transport.resume_subscriptions(); }
         self.restart_live(cause);
         let drain = self.config.resume;
-        let watched: BTreeMap<String, (String, String, Map<String, Value>)> = locked(&self.watches)
-            .values()
-            .map(|entry| (entry.key.clone(), (entry.model.clone(), entry.relation.clone(), entry.params.clone())))
+        let watched: BTreeMap<String, (String, String, Map<String, Value>)> = self.db.observed_reads()
+            .into_iter()
+            .map(|entry| (entry.key, (entry.model, entry.relation, entry.params)))
             .collect();
         let now_ms = self.now_ms();
         let stale_ms = i64::try_from(drain.stale_time.as_millis()).unwrap_or(i64::MAX);

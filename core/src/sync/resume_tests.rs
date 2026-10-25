@@ -261,6 +261,17 @@ async fn failed_reload_is_counted() {
     assert_eq!((report.loaded, report.failed), (0, 1));
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_dropped_watch_leaves_the_db_registry_and_resume_skips_it() {
+    let rig = rig();
+    let watch = rig.sync.watch("moments", "feed", &none()).unwrap();
+    assert_eq!(rig.db.observed_reads().len(), 1);
+    drop(watch);
+    assert!(rig.db.observed_reads().is_empty());
+    let report = within(rig.sync.resume()).await.unwrap();
+    assert_eq!((report.loaded, report.failed, rig.transport.call_count("MomentsFeed")), (0, 0, 0));
+}
+
 fn rig_list(ids: &[&str]) -> crate::transport::Reply {
     crate::transport::Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()}))
 }

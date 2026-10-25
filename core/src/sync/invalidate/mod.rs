@@ -6,14 +6,14 @@ use serde_json::{Map, Value};
 
 use super::error::SyncError;
 use super::load::{LoadOptions, LoadOutcome};
-use super::{locked, Inner, Sync};
+use super::{Inner, Sync};
 
 impl Inner {
     pub(crate) async fn reload_watched(&self, model: &str, relations: Option<&std::collections::BTreeSet<String>>, only_stale: bool) -> usize {
-        let targets: BTreeMap<String, (String, Map<String, Value>)> = locked(&self.watches)
-            .values()
+        let targets: BTreeMap<String, (String, Map<String, Value>)> = self.db.observed_reads()
+            .into_iter()
             .filter(|entry| entry.model == model && relations.is_none_or(|names| names.contains(&entry.relation)))
-            .map(|entry| (entry.key.clone(), (entry.relation.clone(), entry.params.clone())))
+            .map(|entry| (entry.key, (entry.relation, entry.params)))
             .collect();
         let mut reloaded = 0;
         for (key, (relation, params)) in targets {
