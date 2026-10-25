@@ -10,7 +10,7 @@ use super::status::{Operation, OperationId, OperationStatus};
 use crate::identity::{RowId, RowRef};
 
 pub(crate) const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
-const OPERATION_COLUMNS: &str = "seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_extensions, since, client_mutation_id";
+const OPERATION_COLUMNS: &str = "seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, since, client_mutation_id";
 
 #[cfg(test)]
 pub fn append_operation(connection: &Connection, operation: &mut Operation, input: &Value) -> rusqlite::Result<i64> {
@@ -47,6 +47,7 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
     let sql = format!("SELECT {OPERATION_COLUMNS} FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq");
     let mut rows_of = read_all_rows(connection)?;
     let mut uploads = read_uploads(connection)?;
+    let mut extensions = operation_extensions(connection, None)?;
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], operation_at)?;
     let mut operations = Vec::new();
@@ -54,6 +55,7 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
         if let Some(mut operation) = item? {
             operation.row_ids = rows_of.remove(&operation.id.0).unwrap_or_default();
             operation.upload = uploads.remove(&operation.id.0);
+            attach_extensions(&mut operation.error, extensions.remove(&operation.id.0));
             operations.push(operation);
         }
     }
@@ -67,7 +69,7 @@ fn operation_at(row: &Row<'_>) -> rusqlite::Result<Option<Operation>> {
         temp_id: row.get::<_, Option<String>>(3)?.as_deref().map(stored_row_id).transpose()?,
         transport_started: row.get::<_, i64>(4)? != 0,
         base_revision: row.get::<_, Option<i64>>(5)?.unwrap_or(0), created_at: row.get(6)?, dedupe_key: row.get(7)?,
-        attempts: row.get(8)?, error: failure_at(row, 9)?, since: row.get(12)?, upload: None, client_mutation_id: row.get(13)?,
+        attempts: row.get(8)?, error: failure_at(row, 9)?, since: row.get(11)?, upload: None, client_mutation_id: row.get(12)?,
     }))
 }
 
@@ -75,6 +77,7 @@ pub(crate) fn read_operation(connection: &Connection, seq: i64) -> rusqlite::Res
     let sql = format!("SELECT {OPERATION_COLUMNS} FROM op WHERE seq = ?1 AND status IN {OPEN_STATUSES}");
     let Some(mut operation) = connection.query_row(&sql, [seq], operation_at).optional()?.flatten() else { return Ok(None) };
     operation.row_ids = read_rows(connection, seq)?;
+    attach_extensions(&mut operation.error, operation_extensions(connection, Some(seq))?.remove(&seq));
     Ok(Some(operation))
 }
 
@@ -87,11 +90,13 @@ pub(crate) fn read_queue_operation(connection: &Connection, seq: i64) -> rusqlit
 pub(crate) fn read_queue(connection: &Connection) -> rusqlite::Result<Vec<super::QueueOperation>> {
     let sql = format!("SELECT {OPERATION_COLUMNS}, EXISTS (SELECT 1 FROM op_item WHERE op_item.seq = op.seq) FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq");
     let mut rows_of = read_all_rows(connection)?;
+    let mut extensions = operation_extensions(connection, None)?;
     let mut statement = connection.prepare(&sql)?;
     let mut found = Vec::new();
-    for row in statement.query_map([], |row| Ok((operation_at(row)?, row.get::<_, bool>(14)?)))? {
+    for row in statement.query_map([], |row| Ok((operation_at(row)?, row.get::<_, bool>(13)?)))? {
         if let (Some(mut operation), uploading) = row? {
             operation.row_ids = rows_of.remove(&operation.id.0).unwrap_or_default();
+            attach_extensions(&mut operation.error, extensions.remove(&operation.id.0));
             found.push(super::QueueOperation { operation, uploading });
         }
     }

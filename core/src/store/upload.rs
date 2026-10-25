@@ -15,7 +15,7 @@ pub(super) fn remove_item(connection: &Connection, seq: i64, position: i64) -> R
 }
 
 fn erase_item(connection: &Connection, seq: i64, position: i64) -> Result<(), StoreError> {
-    for table in ["op_value", "op_part"] {
+    for table in ["op_value", "op_error", "op_part"] {
         connection.execute(&format!("DELETE FROM {table} WHERE seq = ?1 AND item_position = ?2"), params![seq, position])?;
     }
     for table in ["op_item_header", "op_item_retry", "op_item"] {

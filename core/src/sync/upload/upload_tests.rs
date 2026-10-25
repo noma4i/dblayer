@@ -1086,11 +1086,11 @@ async fn one_unreadable_upload_does_not_lose_the_others_waiting_to_start() {
     let (first, second) = (file(b"first"), file(b"second"));
     rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&first), UploadState::queued()).unwrap();
     rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m2"), "upload", &input(&second), UploadState::queued()).unwrap();
-    rig.db.shared.store.lock().connection.execute("UPDATE op_item SET error_kind = 'network', error_message = 'x', error_extensions = '{bad' WHERE row_id = 'm1'", []).unwrap();
+    rig.db.shared.store.lock().connection.execute("INSERT INTO op_error (seq, item_position, node, parent, pos, name, kind, text) SELECT seq, position, 0, -1, 0, NULL, 4, 'bad' FROM op_item WHERE row_id = 'm1'", []).unwrap();
     assert!(rig.sync.inner.start_uploads().is_err());
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 1, "the readable upload must start in the same pass");
-    rig.db.shared.store.lock().connection.execute("UPDATE op_item SET error_kind = NULL, error_message = NULL, error_extensions = NULL WHERE row_id = 'm1'", []).unwrap();
+    rig.db.shared.store.lock().connection.execute("DELETE FROM op_error", []).unwrap();
     rig.sync.inner.start_uploads().unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 2, "the unreadable upload must be retried once it reads");

@@ -55,7 +55,7 @@ The generated model reads the cells by position and builds itself once per revis
 - **One way to change data.** Every change is a commit: one SQLite transaction, one revision. Caches, the queue and files change only inside commits.
 - **Live reads.** Observers depend on models, lists and rows. A commit wakes only observers whose dependencies it touched. A query for a set of ids depends on those rows and is found by a reverse index from row to query, so a commit costs work in proportion to the rows it touched and the queries that depend on the whole model, not to every query of the model. The rule is in [live data](live-data.md#what-a-query-depends-on).
 - **One live value per record.** A registry per model keeps one entity per id and one database observer for the whole model. The observer delivers only the rows that changed, see [entities](entities.md).
-- **Normalized storage.** No table holds JSON text or a blob. Scalars are columns, lists and arrays are child tables, and values without a declared shape are rows of a node table. The outbox keeps its row ids, input, prior values and upload parts in child tables, and its errors and upload progress in columns. Query windows keep their ids in a child table, quarantined payloads are node rows, a pending reset is stored in columns, and model fingerprints are hashes.
+- **Normalized storage.** No table holds JSON text or a blob. Scalars are columns, lists and arrays are child tables, and values without a declared shape are rows of a node table. The outbox keeps its row ids, input, prior values and upload parts in child tables, its error kind and message and upload progress in columns, and the error extensions of an operation, an upload item, a record's sync state and an upload in node tables (`op_error`, `sync_row_error`, `sync_upload_error`). Query windows keep their ids in a child table, quarantined payloads are node rows, a pending reset is stored in columns, and model fingerprints are hashes.
 
 Typed members keep their columns when another member contains unrestricted data. Only that unrestricted subtree uses a node table. Model fingerprints include generated table and index statements, so storage changes recreate the affected model tables on opening.
 - **Sync state is stored.** The state of every unconfirmed record lives in a small table written by the same commit that changes the queue, so it is cheap to read and to query.
@@ -79,8 +79,8 @@ The store assigns list order keys while it writes. Removed members release their
 | `row_<model>__value` | Values without a declared shape (`:json` and `:file`) as rows of a tree: parent, position, key, kind and the number or text |
 | `fts_row_<model>` | Full-text index of the fields selected by `search` |
 | `scope_member`, `tombstone`, `query_window` | List membership and order, deleted rows, page cursors, fetched page count and freshness |
-| `op`, `op_row`, `op_value`, `op_part` | The outbox: status and error columns, the rows of an operation, its input and prior values, the parts of an upload |
-| `row_sync`, `sync_action`, `sync_field` | The stored sync state of every unconfirmed record, with its actions and dirty fields |
+| `op`, `op_row`, `op_value`, `op_error`, `op_part` | The outbox: status, error kind and message columns, the rows of an operation, its input and prior values, the error extensions, the parts of an upload |
+| `row_sync`, `sync_row_error`, `sync_upload_error`, `sync_action`, `sync_field` | The stored sync state of every unconfirmed record, with its error extensions, actions and dirty fields |
 | `local_pending` | Values written to a local field before its row exists, as a tree of rows |
 | `file` | Small file bytes and file descriptors; larger files live in a directory next to the database |
 | `quarantine`, `quarantine_value` | Payloads the core refused, with the reason |

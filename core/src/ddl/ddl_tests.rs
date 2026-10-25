@@ -260,7 +260,6 @@ fn core_table_columns_match_spec() {
         "since",
         "error_kind",
         "error_message",
-        "error_extensions",
     ];
     assert_eq!(op_names, expected_op.into_iter().collect());
     assert!(!op["dedupe_key"].1 && !op["temp_id"].1 && !op["base_revision"].1 && !op["error_kind"].1);

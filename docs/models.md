@@ -61,7 +61,7 @@ Unknown values retain their original text, just like model enums.
 Only `errors[0].extensions` supplies these fields. Missing, null and non-string typed fields remain absent, even when later errors have values.
 `fields` contains every other entry as JSON text: `[String: String]` in Swift and `Map<String, String>` in Kotlin.
 Strings keep their JSON quotes, numbers keep their JSON representation, and objects, arrays, booleans and null retain their values.
-An error containing only these entries still has `extensions`. Stored operation errors retain the same entries after reopening the database.
+An error containing only these entries still has `extensions`. Stored operation errors retain the same entries after reopening the database, as node rows, not JSON text.
 Notes remain available separately. Transaction disposition describes the server decision, and does not change queue retry or rollback rules.
 
 ```swift

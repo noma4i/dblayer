@@ -11,7 +11,7 @@ use crate::cloud::{record_local, write_book, LocalEdit};
 use crate::commit::WriteOrigin;
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
-use crate::operation::{delete_operation, OperationEvent, failure_cells, read_rows, read_value, stored_row_id, write_rows, write_value};
+use crate::operation::{delete_operation, OperationEvent, failure_cells, write_operation_error, read_rows, read_value, stored_row_id, write_rows, write_value};
 use crate::syncstate::{operation_keys, recompute_sync_with, OperationFailure, SyncKey};
 
 use super::file_ops::{apply_file_ops, release_files};
@@ -921,15 +921,16 @@ fn apply_transitions(
             }
             OperationTransition::Postpone { seq, failure } => {
                 synced.extend(op_keys_of(connection, *seq)?);
-                let [kind, message, extensions] = failure_cells(Some(failure))?;
+                let [kind, message] = failure_cells(Some(failure));
                 let postponed = connection.execute(
-                    &format!("UPDATE op SET transport_started = 0, error_kind = ?2, error_message = ?3, since = ?4, error_extensions = ?5 WHERE seq = ?1 AND {}", operation_guard(OperationEvent::Postpone)?),
-                    params![seq, kind, message, now_ms, extensions],
+                    &format!("UPDATE op SET transport_started = 0, error_kind = ?2, error_message = ?3, since = ?4 WHERE seq = ?1 AND {}", operation_guard(OperationEvent::Postpone)?),
+                    params![seq, kind, message, now_ms],
                 )?;
                 if postponed == 0 {
                     result.unknown_operation_acks += 1;
                     continue;
                 }
+                write_operation_error(connection, *seq, Some(failure))?;
                 result.operations.insert(*seq);
                 wrote = true;
             }
@@ -946,7 +947,7 @@ fn apply_transitions(
             OperationTransition::Retry { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let retried = connection.execute(
-                    &format!("UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error_kind = NULL, error_message = NULL, error_extensions = NULL, since = ?2 WHERE seq = ?1 AND {}", operation_guard(OperationEvent::Retry)?),
+                    &format!("UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error_kind = NULL, error_message = NULL, since = ?2 WHERE seq = ?1 AND {}", operation_guard(OperationEvent::Retry)?),
                     params![seq, now_ms],
                 )?;
                 if retried == 0 {
@@ -954,6 +955,7 @@ fn apply_transitions(
                     continue;
                 }
                 connection.execute("DELETE FROM op_item_retry WHERE seq = ?1", [seq])?;
+                write_operation_error(connection, *seq, None)?;
                 result.operations.insert(*seq);
                 wrote = true;
             }
@@ -985,11 +987,15 @@ fn operation_guard(event: OperationEvent) -> Result<String, StoreError> {
 
 fn set_open_status(connection: &Connection, seq: i64, status: OperationStatus, error: &OperationFailure, now_ms: i64) -> Result<usize, StoreError> {
     let dedupe = if status == OperationStatus::Failed { ", dedupe_key = NULL" } else { "" };
-    let [kind, message, extensions] = failure_cells(Some(error))?;
-    Ok(connection.execute(
-        &format!("UPDATE op SET status = ?1, error_kind = ?2, error_message = ?3, since = ?4, error_extensions = ?6{dedupe} WHERE seq = ?5 AND {}", operation_guard(OperationEvent::Fail(status))?),
-        params![status.as_sql(), kind, message, now_ms, seq, extensions],
-    )?)
+    let [kind, message] = failure_cells(Some(error));
+    let changed = connection.execute(
+        &format!("UPDATE op SET status = ?1, error_kind = ?2, error_message = ?3, since = ?4{dedupe} WHERE seq = ?5 AND {}", operation_guard(OperationEvent::Fail(status))?),
+        params![status.as_sql(), kind, message, now_ms, seq],
+    )?;
+    if changed > 0 {
+        write_operation_error(connection, seq, Some(error))?;
+    }
+    Ok(changed)
 }
 
 pub(super) fn begin_operation(connection: &Connection, record: &OperationRecord) -> Result<i64, StoreError> {

@@ -72,7 +72,7 @@ END",
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 37] = [
+const CORE_STATEMENTS: [&str; 40] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -90,8 +90,7 @@ const CORE_STATEMENTS: [&str; 37] = [
   attempts INTEGER NOT NULL DEFAULT 0,
   since INTEGER NOT NULL,
   error_kind TEXT,
-  error_message TEXT,
-  error_extensions TEXT
+  error_message TEXT
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS op_item (
   seq INTEGER NOT NULL REFERENCES op(seq) ON DELETE CASCADE,
@@ -109,7 +108,6 @@ const CORE_STATEMENTS: [&str; 37] = [
   sent_bytes INTEGER NOT NULL,
   error_kind TEXT,
   error_message TEXT,
-  error_extensions TEXT,
   storage_key TEXT,
   upload_id TEXT,
   signed_id TEXT,
@@ -186,7 +184,6 @@ const CORE_STATEMENTS: [&str; 37] = [
   state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'failed', 'delivery_unknown')),
   error_kind TEXT,
   error_message TEXT,
-  error_extensions TEXT,
   attempts INTEGER NOT NULL,
   since INTEGER NOT NULL,
   PRIMARY KEY (model, row_id)
@@ -203,7 +200,6 @@ const CORE_STATEMENTS: [&str; 37] = [
   attempts INTEGER NOT NULL,
   error_kind TEXT,
   error_message TEXT,
-  error_extensions TEXT,
   PRIMARY KEY (model, row_id, action)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS sync_action (
@@ -224,6 +220,46 @@ const CORE_STATEMENTS: [&str; 37] = [
     "CREATE INDEX IF NOT EXISTS op_temp ON op (temp_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS op_open_dedupe ON op (action_key, dedupe_key)
   WHERE dedupe_key IS NOT NULL AND status IN ('pending', 'delivery_unknown')",
+    "CREATE TABLE IF NOT EXISTS op_error (
+  seq INTEGER NOT NULL,
+  item_position INTEGER NOT NULL,
+  node INTEGER NOT NULL,
+  parent INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT,
+  kind INTEGER NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (seq, item_position, node)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS sync_row_error (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  node INTEGER NOT NULL,
+  parent INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT,
+  kind INTEGER NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (model, row_id, node)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS sync_upload_error (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  node INTEGER NOT NULL,
+  parent INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT,
+  kind INTEGER NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (model, row_id, action, node)
+) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS quarantine (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   model TEXT,
