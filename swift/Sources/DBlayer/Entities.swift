@@ -80,7 +80,7 @@ public final class Entity<Model: DBModel> {
   }
 
   fileprivate func close() {
-    emptied(machine.close())
+    emptied(machine.databaseClosed())
     readers.closeAll()
   }
 

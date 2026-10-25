@@ -184,7 +184,7 @@ impl EntityMachine {
 
     pub fn unopened(&self, feed: u64) -> EntityVerdict { self.send(Event::Unopened { feed }) }
 
-    pub fn close(&self) -> EntityVerdict { self.send(Event::Close) }
+    pub fn database_closed(&self) -> EntityVerdict { self.send(Event::Close) }
 }
 
 #[cfg(test)]

@@ -35,7 +35,7 @@ fn a_seed_applies_only_while_newer_and_before_any_delivery() {
 fn a_closed_entity_ignores_every_later_event() {
     let machine = EntityMachine::new(false);
     machine.accept(1, true, None);
-    let closed = machine.close();
+    let closed = machine.database_closed();
     assert!(closed.cleared && closed.stage == EntityStage::Closed && closed.revision == i64::MIN);
     for verdict in [machine.accept(9, true, None), machine.seed(9), machine.fail("late".into(), None), machine.reset(), machine.unopened(1)] {
         assert!(!verdict.applied && !verdict.cleared && verdict.stage == EntityStage::Closed && verdict.revision == i64::MIN);
@@ -67,7 +67,7 @@ fn reset_and_close_differ_and_a_plain_entity_keeps_its_state_on_reset() {
     let feed = singleton.begin_feed().feed;
     singleton.accept(3, true, Some(feed));
     assert_eq!(singleton.reset().stage, EntityStage::Opening);
-    assert_eq!(singleton.close().stage, EntityStage::Closed);
+    assert_eq!(singleton.database_closed().stage, EntityStage::Closed);
     let plain = EntityMachine::new(false);
     plain.accept(3, true, None);
     let kept = plain.reset();
@@ -88,7 +88,7 @@ fn an_unopened_feed_closes_only_when_it_is_current() {
 fn a_feed_of_one_machine_changes_nothing_in_another() {
     let first = EntityMachine::new(true);
     let old = first.begin_feed().feed;
-    first.close();
+    first.database_closed();
     let second = EntityMachine::new(true);
     let current = second.begin_feed().feed;
     assert_ne!(old, current);

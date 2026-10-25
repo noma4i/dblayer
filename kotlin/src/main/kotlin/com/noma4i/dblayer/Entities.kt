@@ -77,7 +77,7 @@ internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
     }
 
     @Synchronized
-    fun close() = emptied(machine.close())
+    fun close() = emptied(machine.databaseClosed())
 
     @Synchronized
     fun unopened(feed: ULong): Boolean {
