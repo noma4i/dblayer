@@ -177,6 +177,11 @@ impl Store {
         self.lock().ready = true;
     }
 
+    #[cfg(test)]
+    pub fn writer_is_free(&self) -> bool {
+        self.inner.try_lock().is_ok()
+    }
+
     pub fn counters(&self) -> Counters {
         self.lock().counters.clone()
     }
@@ -186,14 +191,22 @@ impl Store {
         self.poison.lock().unwrap_or_else(|error| error.into_inner()).clone()
     }
 
-    pub fn read<T>(&self, required: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, StoreError>) -> Result<T, StoreError> {
-        let models = self.models.read().unwrap_or_else(|error| error.into_inner());
-        let memory = if required.is_empty() {
+    fn needs_writer(models: &std::collections::BTreeMap<String, ModelInfo>, required: &[&str]) -> bool {
+        if required.is_empty() {
             models.values().any(|model| model.spec.is_memory())
         } else {
             required.iter().any(|key| models.get(*key).is_some_and(|model| model.spec.is_memory()))
-        };
-        if let Some(readers) = self.readers.as_ref().filter(|_| !memory) {
+        }
+    }
+
+    fn reads_off_writer(&self) -> bool {
+        let models = self.models.read().unwrap_or_else(|error| error.into_inner());
+        self.readers.is_some() && !Self::needs_writer(&models, &[])
+    }
+
+    pub fn read<T>(&self, required: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, StoreError>) -> Result<T, StoreError> {
+        let models = self.models.read().unwrap_or_else(|error| error.into_inner());
+        if let Some(readers) = self.readers.as_ref().filter(|_| !Self::needs_writer(&models, required)) {
             let connection = readers.lease();
             if let Some(reason) = &*self.poison.lock().unwrap_or_else(|error| error.into_inner()) {
                 return Err(StoreError::Poisoned(reason.clone()));

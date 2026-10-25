@@ -41,8 +41,10 @@ impl<E> From<StoreError> for PlanCommitError<E> {
 
 impl Store {
     pub fn commit(&self, envelope: CommitEnvelope) -> Result<CommitResult, StoreError> {
-        let generation = envelope.generation;
-        match self.commit_with(generation, |_| Ok::<_, std::convert::Infallible>(Some(envelope))) {
+        let inner = self.lock();
+        inner.ensure_healthy()?;
+        inner.ensure_generation(envelope.generation)?;
+        match self.write_planned(inner, Ok::<_, std::convert::Infallible>(Some(envelope))) {
             Ok(result) => Ok(result),
             Err(PlanCommitError::Store(error)) => Err(error),
             Err(PlanCommitError::Plan(never)) => match never {},
@@ -54,14 +56,42 @@ impl Store {
         generation: Generation,
         plan: impl FnOnce(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<CommitResult, PlanCommitError<E>> {
-        let inner = self.lock();
+        let mut inner = self.lock();
         inner.ensure_healthy()?;
         inner.ensure_generation(generation)?;
-        let now_ms = inner.now_ms();
-        let envelope = {
-            let reader = Reader::new(&inner.connection, &inner.models);
-            plan(&reader).map_err(PlanCommitError::Plan)?
+        inner.counters.plans_under_writer += 1;
+        let planned = plan(&Reader::new(&inner.connection, &inner.models));
+        self.write_planned(inner, planned)
+    }
+
+    /// Plans on a read connection while the writer stays free, then writes when no commit landed in between. A commit in between makes the plan run again under the writer, so `plan` must only read and build from data it can build again.
+    pub fn commit_prepared<E>(
+        &self,
+        generation: Generation,
+        mut plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
+    ) -> Result<CommitResult, PlanCommitError<E>> {
+        if !self.reads_off_writer() {
+            return self.commit_with(generation, plan);
+        }
+        let prepared = self.read(&[], |reader| Ok((reader.revision_seq()?, plan(reader))))?;
+        let mut inner = self.lock();
+        inner.ensure_healthy()?;
+        inner.ensure_generation(generation)?;
+        inner.counters.plans_off_writer += 1;
+        let (revision, planned) = prepared;
+        let reader = Reader::new(&inner.connection, &inner.models);
+        let planned = if reader.revision_seq()? == revision {
+            planned
+        } else {
+            inner.counters.plans_under_writer += 1;
+            plan(&Reader::new(&inner.connection, &inner.models))
         };
+        self.write_planned(inner, planned)
+    }
+
+    fn write_planned<E>(&self, inner: std::sync::MutexGuard<'_, Inner>, planned: Result<Option<CommitEnvelope>, E>) -> Result<CommitResult, PlanCommitError<E>> {
+        let now_ms = inner.now_ms();
+        let envelope = planned.map_err(PlanCommitError::Plan)?;
         let Some(envelope) = envelope else {
             return Ok(CommitResult::noop(uuid::Uuid::new_v4()));
         };

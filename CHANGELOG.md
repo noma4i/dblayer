@@ -24,6 +24,7 @@
 - Generated writes, actions, node reads and operations run off the caller thread.
 - `Query.cached()` and `cachedRow()` are now `async` in Swift and `suspend` in Kotlin.
 - Kotlin entity readers no longer wait while a delivery applies.
+- Landing server data on a disk database plans its commit outside the writer and plans again under the writer only when another commit landed first.
 - Upload, run, load, refresh, load-more and warm calls parse their JSON arguments and convert results on the library executor, not on the caller thread.
 - Cancelling a subscription and expanding a window never wait for the observer registry: a busy registry takes the request later.
 - A refresh deferred by the read limit or a running read keeps its touched rows and reads only those, instead of re-reading the whole list.

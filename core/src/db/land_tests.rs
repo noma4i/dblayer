@@ -137,3 +137,12 @@ fn server_seconds_and_local_milliseconds_sort_compare_and_filter_by_time() {
     let after = Where::compare("createdAt", crate::query::CompareOp::Greater, json!("2026-01-03T00:00:05.500Z"));
     assert_eq!(ids(Query::new("messages").filtered(after).ordered(vec![Order::new("createdAt", SortDirection::Asc)])), ["a", "c"]);
 }
+
+#[test]
+fn landing_on_a_disk_database_plans_off_the_writer() {
+    let directory = tempfile::tempdir().unwrap();
+    let db = Db::open(&directory.path().join("db.sqlite"), all_specs(), None).unwrap();
+    db.land(upsert_envelope(&db, WriteOrigin::Event, "u1", "n")).unwrap();
+    let counters = db.shared.store.counters();
+    assert_eq!((counters.plans_off_writer, counters.plans_under_writer), (1, 0));
+}

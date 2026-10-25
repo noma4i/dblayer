@@ -29,6 +29,8 @@ pub struct Counters {
     pub outbox_reads: usize,
     pub outbox_rows_loaded: usize,
     pub outbox_candidates: usize,
+    pub plans_off_writer: usize,
+    pub plans_under_writer: usize,
 }
 
 impl Counters {
@@ -77,6 +79,8 @@ impl Add for Counters {
             outbox_reads: self.outbox_reads + other.outbox_reads,
             outbox_rows_loaded: self.outbox_rows_loaded + other.outbox_rows_loaded,
             outbox_candidates: self.outbox_candidates + other.outbox_candidates,
+            plans_off_writer: self.plans_off_writer + other.plans_off_writer,
+            plans_under_writer: self.plans_under_writer + other.plans_under_writer,
         }
     }
 }

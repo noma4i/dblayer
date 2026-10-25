@@ -720,3 +720,71 @@ fn joining_a_list_costs_one_head_lookup_per_row() {
     commit(&store, rows("c1"), vec![]);
     assert_eq!(HEAD_LOOKUPS.load(Ordering::SeqCst), 40);
 }
+
+fn disk_store() -> (Store, tempfile::TempDir) {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(&directory.path().join("a.sqlite")).unwrap();
+    store.boot(&[messages_spec(), items_spec()], None).unwrap();
+    store.mark_ready();
+    (store, directory)
+}
+
+fn planned(generation: crate::identity::Generation, entity_ops: Vec<EntityOp>) -> CommitEnvelope {
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
+    envelope.entity_ops = entity_ops;
+    envelope
+}
+
+const PLAN_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+#[test]
+fn planning_runs_without_the_writer_lock_on_a_disk_database() {
+    let (store, _directory) = disk_store();
+    let generation = store.generation();
+    let mut writer_was_free = Vec::new();
+    store
+        .commit_prepared(generation, |_| {
+            writer_was_free.push(store.writer_is_free());
+            Ok::<_, std::convert::Infallible>(Some(planned(generation, vec![upsert("messages", message("m1", "c1"))])))
+        })
+        .unwrap();
+    assert_eq!(writer_was_free, vec![true]);
+    let counters = store.counters();
+    assert_eq!((counters.plans_off_writer, counters.plans_under_writer), (1, 0));
+}
+
+#[test]
+fn a_commit_between_planning_and_writing_forces_one_replan_that_sees_it() {
+    let (store, _directory) = disk_store();
+    let generation = store.generation();
+    let store = std::sync::Arc::new(store);
+    let mut seen = Vec::new();
+    let mut rival_thread = None;
+    let mut rival_finished_in_time = Vec::new();
+    store
+        .commit_prepared(generation, |reader| {
+            let rows = count_messages(reader);
+            seen.push(rows);
+            if seen.len() == 1 {
+                let (done, finished) = std::sync::mpsc::channel();
+                let rival = store.clone();
+                rival_thread = Some(std::thread::spawn(move || {
+                    rival.commit(planned(generation, vec![upsert("messages", message("rival", "c1"))])).unwrap();
+                    let _ = done.send(());
+                }));
+                rival_finished_in_time.push(finished.recv_timeout(PLAN_WAIT).is_ok());
+            }
+            Ok::<_, std::convert::Infallible>(Some(planned(generation, vec![upsert("messages", message(&format!("after{rows}"), "c1"))])))
+        })
+        .unwrap();
+    rival_thread.unwrap().join().unwrap();
+    assert_eq!(rival_finished_in_time, vec![true], "the writer was free while planning");
+    assert_eq!(seen.len(), 2, "one optimistic plan and one replan");
+    assert_eq!(text(&store, "SELECT id FROM row_messages WHERE id LIKE 'after%'"), Some("after1".into()), "the replan saw the rival row");
+    let counters = store.counters();
+    assert_eq!((counters.plans_off_writer, counters.plans_under_writer), (1, 1));
+}
+
+fn count_messages(reader: &Reader<'_>) -> usize {
+    reader.connection().query_row("SELECT COUNT(*) FROM row_messages", [], |row| row.get::<_, i64>(0)).unwrap() as usize
+}
