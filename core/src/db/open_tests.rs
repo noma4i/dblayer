@@ -5,6 +5,7 @@ use crate::schema::{AssociationKind, AssociationSpec, DeclarationError};
 use crate::ddl::RecreateReason;
 use serde_json::json;
 use std::sync::Arc;
+use crate::test_wait::join_within;
 
 fn assert_send_sync<T: Send + Sync>() {}
 
@@ -70,7 +71,7 @@ fn concurrent_creates_all_land() {
             })
         })
         .collect();
-    workers.into_iter().for_each(|worker| worker.join().unwrap());
+    workers.into_iter().for_each(|worker| join_within(worker));
     assert_eq!(db.count(&crate::query::Query::new("moments")).unwrap(), 100);
     assert_eq!(db.outbox().unwrap().len(), 100);
 }

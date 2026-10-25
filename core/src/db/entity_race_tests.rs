@@ -6,6 +6,7 @@ use serde_json::json;
 use super::fixtures::*;
 use super::open::locked;
 use super::*;
+use crate::test_wait::recv_within;
 
 fn gated() -> (EntityLog, impl Fn(&EntityChange) + Send + Sync + 'static, mpsc::Sender<()>, mpsc::Receiver<()>) {
     let log: EntityLog = Arc::new(Mutex::new(Vec::new()));
@@ -18,7 +19,7 @@ fn gated() -> (EntityLog, impl Fn(&EntityChange) + Send + Sync + 'static, mpsc::
         sink.lock().unwrap().push(change.clone());
         if first {
             entered_tx.send(()).unwrap();
-            gate.lock().unwrap().recv().unwrap();
+            recv_within(&gate.lock().unwrap());
         }
     };
     (log, listener, open, entered)
@@ -32,7 +33,7 @@ fn inv_observe_19_a_retained_row_destroyed_while_the_listener_is_busy_is_told_as
     let (log, listener, open, entered) = gated();
     let observer = db.observe_entities("users", listener).unwrap();
     observer.retain(&[rid("a"), rid("b")]).unwrap();
-    entered.recv().unwrap();
+    recv_within(&entered);
     db.update("users", &rid("a"), obj(json!({"name": "edited"}))).unwrap();
     db.update("users", &rid("b"), obj(json!({"name": "seen"}))).unwrap();
     db.destroy("users", &rid("b")).unwrap();
@@ -147,7 +148,7 @@ fn inv_observe_19_a_row_is_never_in_rows_and_removed_of_one_delivery() {
     let (log, listener, open, entered) = gated();
     let observer = db.observe_entities("users", listener).unwrap();
     observer.retain(&[rid("a"), rid("b")]).unwrap();
-    entered.recv().unwrap();
+    recv_within(&entered);
     db.update("users", &rid("b"), obj(json!({"name": "seen"}))).unwrap();
     refresh(&db, "b");
     db.destroy("users", &rid("b")).unwrap();
@@ -167,7 +168,7 @@ fn inv_observe_19_an_absent_id_that_appears_while_busy_is_told_as_a_row_and_not_
     let (log, listener, open, entered) = gated();
     let observer = db.observe_entities("users", listener).unwrap();
     observer.retain(&[rid("a")]).unwrap();
-    entered.recv().unwrap();
+    recv_within(&entered);
     observer.retain(&[rid("late")]).unwrap();
     put_without_settle(&db, "users", json!({"id": "late", "name": "here"}));
     refresh(&db, "late");

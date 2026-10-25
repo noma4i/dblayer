@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use super::{CableLease, Config, Database, DbError, LiveChange, QueryListener, SubscriptionSink, Transport, TransportRequest};
 use crate::schema::{ChangeFeed, ChangeRead, Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
-use crate::test_wait::{yield_until, within};
+use crate::test_wait::{join_within, within, yield_until};
 
 pub(super) struct Recording {
     queries: AtomicUsize,
@@ -85,7 +85,7 @@ async fn switching_the_observed_list_from_a_foreign_thread_keeps_the_one_viewer_
     yield_until("the viewer changes live status settled", || live() == Some((1, true))).await;
     assert_eq!(transport.subscriptions("DblayerViewerChanges"), 1);
 
-    std::thread::spawn(move || feed.cancel()).join().unwrap();
+    join_within(std::thread::spawn(move || feed.cancel()));
     let vibe = database.live_query(r#"{"model":"Moment","relation":"vibeFeed","params":{"vibeId":"3"}}"#.into(), Arc::new(Silent));
     vibe.wait_for_initial_load().await.unwrap();
     yield_until("the viewer changes live status settled", || live() == Some((1, true))).await;

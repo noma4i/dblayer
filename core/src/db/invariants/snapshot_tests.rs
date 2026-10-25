@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::db::fixtures::*;
 use crate::db::open::locked;
 use crate::query::Query;
+use crate::test_wait::join_within;
 
 #[test]
 fn inv_ephemeral_09_a_read_of_two_models_shows_one_snapshot() {
@@ -34,7 +35,7 @@ fn inv_ephemeral_09_a_read_of_two_models_shows_one_snapshot() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments").including(&["author"]), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    write.lock().unwrap().take().expect("the hook started the write").join().unwrap();
+    join_within(write.lock().unwrap().take().expect("the hook started the write"));
     db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
     let first = &seen[0];

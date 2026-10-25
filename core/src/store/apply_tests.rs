@@ -8,6 +8,7 @@ use crate::syncstate::{FailureKind, OperationFailure};
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::test_wait::join_within;
 
 fn commit(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> crate::commit::CommitResult {
     store.commit(envelope(store, entity_ops, scope_ops)).unwrap()
@@ -829,7 +830,7 @@ fn commits_landing_during_planning_repeat_the_plan_off_the_writer_without_a_limi
             Ok::<_, std::convert::Infallible>(Some(planned(generation, vec![upsert("messages", message(&format!("after{rows}"), "c1"))])))
         })
         .unwrap();
-    rivals.into_iter().for_each(|rival| rival.join().unwrap());
+    rivals.into_iter().for_each(|rival| join_within(rival));
     assert_eq!(rival_finished_in_time, vec![true; RIVALS], "every rival commit finished while its victim was planning");
     assert_eq!(seen, (0..=RIVALS).collect::<Vec<_>>(), "each repeat saw one more rival row");
     assert!(writer_was_free.iter().all(|free| *free), "the writer was free during every plan");

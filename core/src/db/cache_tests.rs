@@ -4,6 +4,7 @@ use super::*;
 use crate::identity::RowId;
 use serde_json::{json, Map};
 use std::sync::Arc;
+use crate::test_wait::join_within;
 
 fn record(id: &str, revision: i64) -> Row {
     let mut data = Map::new();
@@ -112,7 +113,7 @@ fn a_row_being_prepared_does_not_hold_the_cache_against_another_reader() {
     };
     let answered = finished.recv_timeout(std::time::Duration::from_secs(2));
     let _ = hold.0.send(());
-    reader.join().unwrap();
-    assert!(loader.join().unwrap().is_some());
+    join_within(reader);
+    assert!(join_within(loader).is_some());
     assert_eq!(answered, Ok(true), "a ready row was unreachable while another row was being prepared");
 }

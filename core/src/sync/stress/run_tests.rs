@@ -9,6 +9,7 @@ use crate::transport::MockTransport;
 use crate::upload::{UploadFile, UploadOperations, UploadStatus};
 
 use super::{check, run, runtime, scratch_dir, settle_uploads, shrink, FakeServer, Findings, StressConfig};
+use crate::test_wait::{recv_or_closed, recv_within};
 
 #[test]
 fn finishing_a_run_keeps_another_runs_uploads() {
@@ -103,9 +104,9 @@ fn outcome_of_cancelling(stage: Stage, cancel: Cancel) -> String {
         let mut release_tx = Some(release_tx);
         let mut occupied = Some(tokio::task::spawn_blocking(move || {
             entered_tx.send(()).unwrap();
-            let _ = release_rx.recv();
+            let _ = recv_or_closed(&release_rx);
         }));
-        entered_rx.recv().unwrap();
+        recv_within(&entered_rx);
         let mut changes = rig.db.outbox_changes();
         let status = |wanted: UploadStatus| {
             let rig = &rig;

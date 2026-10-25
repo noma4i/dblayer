@@ -2,6 +2,7 @@ use std::future::Future;
 
 use super::failure_tests::rig;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
+use crate::test_wait::join_within;
 
 const MARKER_COLUMN: usize = 10_000;
 
@@ -52,13 +53,11 @@ async fn calls_with_json_arguments_parse_them_off_the_caller_thread() {
         let column = MARKER_COLUMN + index;
         let bad = format!("{{{}", " ".repeat(column - 1));
         let db = db.clone();
-        let (caller, outcome) = std::thread::spawn(move || {
+        let (caller, outcome) = join_within(std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
             let outcome = runtime.block_on(call(db, bad));
             (std::thread::current().id(), outcome)
-        })
-        .join()
-        .unwrap();
+        }));
         assert!(matches!(outcome, Err(super::DbError::Invalid { .. })), "{name} did not fail on the invalid JSON: {outcome:?}");
         match PARSE_FAILED_ON.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&column) {
             None => unobserved.push(name),
@@ -98,13 +97,11 @@ async fn calls_that_touch_files_run_their_work_off_the_caller_thread() {
     let mut unobserved = Vec::new();
     for (name, call) in file_calls() {
         let db = db.clone();
-        let caller = std::thread::spawn(move || {
+        let caller = join_within(std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
             runtime.block_on(call(db));
             std::thread::current().id()
-        })
-        .join()
-        .unwrap();
+        }));
         match BLOCKING_RAN_ON.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&caller) {
             None => unobserved.push(name),
             Some(ran_on) if ran_on == caller => on_caller.push(name),

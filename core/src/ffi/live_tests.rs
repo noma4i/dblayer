@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use super::{Cell, Config, Database, LiveChange, QueryListener, Transport};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
+use crate::test_wait::join_within;
 
 struct Tape(Mutex<Vec<LiveChange>>);
 
@@ -22,7 +23,7 @@ async fn inv_conc_06_live_connect_returns_while_storage_is_locked() {
         });
         let returned = received.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
         drop(writer);
-        let live = thread.join().unwrap();
+        let live = join_within(thread);
         database.db.await_revision(database.db.revision_seq().unwrap());
         assert!(returned, "live connect waited for storage, warmed={warmed}");
         assert_eq!(tape.0.lock().unwrap().last().unwrap().rows.len(), 1);

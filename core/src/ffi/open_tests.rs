@@ -2,6 +2,7 @@ use std::sync::{mpsc, Mutex};
 use std::thread::ThreadId;
 
 use super::{Config, Database};
+use crate::test_wait::{join_within, recv_within};
 
 struct PausedOpen {
     path: String,
@@ -26,7 +27,7 @@ unsafe extern "C" fn pause_statement(context: *mut std::ffi::c_void) -> i32 {
             let pause = slot.take().unwrap();
             drop(slot);
             pause.entered.send(std::thread::current().id()).unwrap();
-            pause.release.recv().unwrap();
+            recv_within(&pause.release);
         }
     }
     rusqlite::ffi::SQLITE_OK
@@ -54,11 +55,11 @@ fn opening_leaves_the_calling_thread_free_while_sqlite_is_busy() {
         free.send(pending).unwrap();
         if pending { super::database::executor().unwrap().block_on(opening).unwrap(); }
     });
-    let caller = caller_id.recv().unwrap();
+    let caller = recv_within(&caller_id);
     let worker = opened.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
     let free = if worker != caller { freed.recv_timeout(std::time::Duration::from_secs(10)).unwrap() } else { false };
     release.send(()).unwrap();
-    thread.join().unwrap();
+    join_within(thread);
     rusqlite::auto_extension::cancel_auto_extension(pause_open);
     assert_ne!(worker, caller, "SQLite opening ran on the calling thread");
     assert!(free, "the caller must return Pending while SQLite remains paused");

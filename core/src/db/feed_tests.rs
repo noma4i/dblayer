@@ -8,6 +8,7 @@ use super::watch::Subject;
 use super::window::WindowSpec;
 use crate::query::{Order, Query, Where};
 use crate::value::SortDirection;
+use crate::test_wait::join_within;
 
 type Tape = Arc<Mutex<Vec<String>>>;
 
@@ -221,7 +222,7 @@ fn resume_racing_with_commits_never_loses_the_wakeup() {
             })
         };
         observer.control().resume();
-        writer.join().unwrap();
+        join_within(writer);
         db.await_revision(db.revision_seq().unwrap());
         let last = told(&log).iter().rev().find(|tag| tag.starts_with("rows:")).cloned().unwrap_or_default();
         assert!(last.ends_with(":6"), "round {round}: the last delivery is the latest rows: {:?}", told(&log));

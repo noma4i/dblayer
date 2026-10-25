@@ -7,6 +7,7 @@ use crate::pacing::SystemClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::{CredentialSlot as CoreCredentials, HttpExchange, TransportError};
+use crate::test_wait::recv_within;
 
 pub(super) struct ThroughServer(pub(super) Arc<FakeServer>);
 
@@ -217,7 +218,7 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
         fn changed(&self, snapshot: RetrySnapshot) {
             self.deliveries.fetch_add(1, Ordering::SeqCst);
             let gate = self.gate.lock().unwrap().take();
-            if let Some(gate) = gate { gate.recv().unwrap(); }
+            if let Some(gate) = gate { recv_within(&gate); }
             self.seen.send_replace(Some(snapshot));
         }
     }

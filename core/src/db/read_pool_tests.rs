@@ -7,7 +7,7 @@ use super::watch::Subject;
 use super::window::WindowSpec;
 use crate::identity::{ModelKey, RowRef};
 use crate::query::Query;
-use crate::test_wait::spin_until;
+use crate::test_wait::{join_within, recv_or_closed, spin_until};
 
 #[test]
 fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() {
@@ -237,7 +237,7 @@ fn inv_observe_29_a_refresh_deferred_by_saturation_still_reads_only_the_touched_
     for _ in 0..2 {
         let gate = gate.clone();
         let run = Box::new(move |_: &super::open::Shared| {
-            let _ = gate.lock().unwrap().recv();
+            let _ = recv_or_closed(&gate.lock().unwrap());
             Ok(ReadRows::Skipped { revision: 0, epoch: 0 })
         });
         let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default() }, run };
@@ -271,7 +271,7 @@ fn inv_observe_29_refreshes_deferred_by_saturation_merge_their_touched_rows() {
     for _ in 0..2 {
         let gate = gate.clone();
         let run = Box::new(move |_: &super::open::Shared| {
-            let _ = gate.lock().unwrap().recv();
+            let _ = recv_or_closed(&gate.lock().unwrap());
             Ok(ReadRows::Skipped { revision: 0, epoch: 0 })
         });
         let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default() }, run };
@@ -291,25 +291,25 @@ fn inv_observe_29_refreshes_deferred_by_saturation_merge_their_touched_rows() {
 }
 
 fn returns_while_the_registry_is_held(call: impl FnOnce() + Send + 'static, db: &crate::db::Db) -> bool {
-    let (held, release) = (std::sync::Arc::new(std::sync::Barrier::new(2)), std::sync::Arc::new(std::sync::Barrier::new(2)));
+    let (held, release) = (std::sync::Arc::new(crate::test_wait::Rendezvous::new(2)), std::sync::Arc::new(crate::test_wait::Rendezvous::new(2)));
     let holder = {
         let (shared, held, release) = (db.shared.clone(), held.clone(), release.clone());
         std::thread::spawn(move || {
             let _registry = shared.observers();
-            held.wait();
-            release.wait();
+            held.meet();
+            release.meet();
         })
     };
-    held.wait();
+    held.meet();
     let (done, finished) = std::sync::mpsc::channel();
     let caller = std::thread::spawn(move || {
         call();
         let _ = done.send(());
     });
     let returned = finished.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
-    release.wait();
-    holder.join().unwrap();
-    caller.join().unwrap();
+    release.meet();
+    join_within(holder);
+    join_within(caller);
     returned
 }
 

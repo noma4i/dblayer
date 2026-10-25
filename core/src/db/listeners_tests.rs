@@ -2,6 +2,7 @@ use super::listeners::{Listener, Mailbox, Subscriber};
 use super::watch::{Body, Loaded, RowsBody, Version};
 use crate::identity::RowId;
 use std::sync::Arc;
+use crate::test_wait::join_within;
 
 fn version(revision: i64) -> Arc<Version> {
     Arc::new(Version { revision, epoch: 0, body: Body::Rows(RowsBody::new(Vec::new())) })
@@ -103,7 +104,7 @@ fn inv_observe_08_a_rows_call_that_passed_the_cancel_check_does_not_start_after_
     at_the_call.recv_timeout(WAIT).unwrap();
     subscriber.cancel();
     release.send(()).unwrap();
-    delivering.join().unwrap();
+    join_within(delivering);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert_eq!(db.counters().observer_calls, 0);
 }
@@ -124,7 +125,7 @@ fn inv_observe_08_an_entity_call_that_passed_the_cancel_check_does_not_start_aft
     at_the_call.recv_timeout(WAIT).unwrap();
     observer.subscriber.call_state.cancel();
     release.send(()).unwrap();
-    delivering.join().unwrap();
+    join_within(delivering);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert_eq!(db.counters().entity_facts_told, 0);
 }

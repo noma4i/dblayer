@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use crate::test_wait::join_within;
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -499,7 +500,7 @@ fn inv_observe_03_inv_observe_06_model_test_with_threads_ends_every_observer_on_
             std::thread::spawn(move || work(db, seed_value + thread))
         }).collect();
         for handle in handles {
-            handle.join().unwrap();
+            join_within(handle);
         }
         db.await_revision(db.revision_seq().unwrap());
         for (query, log, _) in &logs {

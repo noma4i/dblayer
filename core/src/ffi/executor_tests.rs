@@ -1,5 +1,6 @@
 use super::database::{started, Starter};
 use super::DbError;
+use crate::test_wait::{join_within, recv_within};
 
 #[test]
 fn inv_panic_01_an_executor_that_cannot_start_is_an_error_and_a_later_start_can_succeed() {
@@ -22,12 +23,12 @@ fn inv_panic_02_two_first_starts_build_one_runtime() {
         started(&SLOT, || {
             BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             building_tx.send(()).unwrap();
-            release.recv().unwrap();
+            recv_within(&release);
             tokio::runtime::Builder::new_multi_thread().worker_threads(1).build()
         })
         .map(|_| ())
     });
-    building.recv().unwrap();
+    recv_within(&building);
     let second = std::thread::spawn(move || {
         started(&SLOT, || {
             BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -37,7 +38,7 @@ fn inv_panic_02_two_first_starts_build_one_runtime() {
     });
     assert!(SLOT.cold_entries_reach(2, std::time::Duration::from_secs(10)), "the second start never reached the cold path while the first builder was held");
     release_tx.send(()).unwrap();
-    first.join().unwrap().unwrap();
-    second.join().unwrap().unwrap();
+    join_within(first).unwrap();
+    join_within(second).unwrap();
     assert_eq!(BUILDS.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

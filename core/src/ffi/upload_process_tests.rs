@@ -9,6 +9,7 @@ use crate::transport::encrypted::fake_server_tests::FakeServer;
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::HttpExchange;
 use crate::upload::{UploadFile, UploadOperations};
+use crate::test_wait::join_within;
 
 struct Remote(String);
 
@@ -115,7 +116,7 @@ fn upload_resume_survives_the_exit_of_the_sending_process() {
             .output().unwrap()
     }).collect();
     Remote(address).call(json!({"stop": true})).unwrap();
-    thread.join().unwrap();
+    join_within(thread);
     for result in results { assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout)); }
     assert_eq!(server.executed().iter().filter(|body| body["operationName"] == "CreateBlob").count(), 1);
 }

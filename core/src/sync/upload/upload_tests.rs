@@ -15,6 +15,7 @@ use crate::upload::{UploadConfig, UploadFile, UploadOperation, UploadOperations,
 
 use super::super::rig::*;
 use super::super::{OperationDef, SyncConfig};
+use crate::test_wait::join_within;
 
 pub(super) fn rid(text: &str) -> RowId {
     RowId::new(text).unwrap()
@@ -275,7 +276,7 @@ async fn wait_uploads_parks_while_resume_owns_the_upload() {
     assert_eq!(wakes.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     let active = locked(&rig.sync.inner.uploads).active.remove(&(seq, 0)).unwrap();
     active.done.send_replace(true);
-    thread.join().unwrap();
+    join_within(thread);
     rig.db.discard("moments", &rid("m1"), None).unwrap();
     drop(resume);
     assert_eq!(parked, Ok(true), "wait_uploads did not return Pending");
@@ -839,19 +840,19 @@ async fn inv_upload_01_parallel_uploads_for_one_record_leave_exactly_one_open() 
     for round in 0..30 {
         let id = rid(&format!("r{round}"));
         put(&rig, "moments", moment(id.as_str(), "x"));
-        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let barrier = Arc::new(crate::test_wait::Rendezvous::new(8));
         let accepted = (0..8)
             .map(|_| {
                 let (inner, id, barrier) = (rig.sync.inner.clone(), id.clone(), barrier.clone());
                 std::thread::spawn(move || {
                     let input = UploadFile::new("/nonexistent/file.bin");
-                    barrier.wait();
+                    barrier.meet();
                     inner.begin_upload(inner.db.generation(), "moments", &id, "upload", &input, UploadState::queued()).is_ok()
                 })
             })
             .collect::<Vec<_>>()
             .into_iter()
-            .map(|handle| handle.join().unwrap())
+            .map(|handle| join_within(handle))
             .filter(|accepted| *accepted)
             .count();
         assert_eq!(accepted, 1, "round {round}");

@@ -4,7 +4,7 @@ use super::load_machine::{LoadPhase, RelationState};
 use crate::transport::Reply;
 use serde_json::Map;
 use std::time::Duration;
-use crate::test_wait::within;
+use crate::test_wait::{join_within, within};
 
 fn none() -> Map<String, serde_json::Value> {
     Map::new()
@@ -126,17 +126,17 @@ async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_
 #[tokio::test]
 async fn watching_a_relation_state_does_not_wait_for_the_store_writer() {
     let rig = rig();
-    let held = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let release = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let held = std::sync::Arc::new(crate::test_wait::Rendezvous::new(2));
+    let release = std::sync::Arc::new(crate::test_wait::Rendezvous::new(2));
     let holder = {
         let (db, held, release) = (rig.db.clone(), held.clone(), release.clone());
         std::thread::spawn(move || {
             let _writer = db.shared.store.lock();
-            held.wait();
-            release.wait();
+            held.meet();
+            release.meet();
         })
     };
-    held.wait();
+    held.meet();
     let (sender, receiver) = std::sync::mpsc::channel();
     let caller = {
         let (sync, runtime) = (rig.sync.clone(), tokio::runtime::Handle::current());
@@ -149,8 +149,8 @@ async fn watching_a_relation_state_does_not_wait_for_the_store_writer() {
         })
     };
     let returned = receiver.recv_timeout(Duration::from_secs(2));
-    release.wait();
-    holder.join().unwrap();
-    caller.join().unwrap();
+    release.meet();
+    join_within(holder);
+    join_within(caller);
     assert!(returned.is_ok(), "relation_state waited for the store lock");
 }

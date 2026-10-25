@@ -2,6 +2,7 @@ use super::fixtures::*;
 use super::*;
 use std::sync::mpsc;
 use std::time::Duration;
+use crate::test_wait::{join_within, recv_within};
 
 fn written(store: &Arc<Store>, row_id: &str) {
     store.commit(envelope(store, vec![upsert("messages", message(row_id, "c1"))], vec![])).unwrap();
@@ -55,7 +56,7 @@ fn inv_conc_01_events_reach_the_hook_in_commit_order_while_an_earlier_hook_is_st
         };
         if first {
             entered.send(()).unwrap();
-            released.lock().unwrap().recv().unwrap();
+            recv_within(&released.lock().unwrap());
         }
     }));
     let earlier = store.clone();
@@ -66,8 +67,8 @@ fn inv_conc_01_events_reach_the_hook_in_commit_order_while_an_earlier_hook_is_st
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(revisions.lock().unwrap().len(), 1, "the later commit waits for the earlier hook");
     release.send(()).unwrap();
-    first.join().unwrap();
-    second.join().unwrap();
+    join_within(first);
+    join_within(second);
     let seen = revisions.lock().unwrap().clone();
     assert!(seen.len() == 2 && seen[0] < seen[1], "{seen:?}");
 }

@@ -13,7 +13,7 @@ run() {
 
 printf 'func a() async { await eventually("x") { true } }\n' > "$work/swift/Clean.swift"
 printf 'fun a() = bounded { 1 }\n' > "$work/kotlin/Clean.kt"
-printf 'async fn a() {\n    let event = within(rx.recv()).await;\n    spin_until("ready", || ready());\n    let deadline = Instant::now() + WAIT;\n    while !ready() && Instant::now() < deadline {\n        std::thread::yield_now();\n    }\n    assert!(rx.recv_timeout(WAIT).is_ok());\n}\n' > "$work/rust/clean_tests.rs"
+printf 'async fn a() {\n    let event = within(rx.recv()).await;\n    spin_until("ready", || ready());\n    let deadline = Instant::now() + WAIT;\n    while !ready() && Instant::now() < deadline {\n        std::thread::yield_now();\n    }\n    assert!(rx.recv_timeout(WAIT).is_ok());\n    let value = recv_within(&rx);\n    let _ = recv_or_closed(&rx);\n    join_within(handle);\n    gate.meet();\n}\n' > "$work/rust/clean_tests.rs"
 run || { echo "check_waits_test: a clean tree failed" >&2; exit 1; }
 
 expect_red() {
@@ -42,4 +42,9 @@ expect_red "$work/rust/bad_tests.rs" '    while let Some(done) = tasks.join_next
 expect_red "$work/rust/bad_tests.rs" '    while live() != Some(1) { tokio::task::yield_now().await; }'
 expect_red "$work/rust/bad_tests.rs" $'    while !ready() {\n        std::thread::sleep(Duration::from_millis(10));\n    }'
 expect_red "$work/rust/bad_tests.rs" '    assert!(rx.recv_timeout(WAIT).is_err());'
+expect_red "$work/rust/bad_tests.rs" '    let value = rx.recv().unwrap();'
+expect_red "$work/rust/bad_tests.rs" '    let _ = gate.lock().unwrap().recv();'
+expect_red "$work/rust/bad_tests.rs" '    handle.join().unwrap();'
+expect_red "$work/rust/bad_tests.rs" $'    let caller = std::thread::spawn(move || 1)\n        .join()\n        .unwrap();'
+expect_red "$work/rust/bad_tests.rs" '    barrier.wait();'
 echo "check_waits_test: ok"

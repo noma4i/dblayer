@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use super::SubscriptionSink;
 use crate::transport::{SubscriptionEvent, SubscriptionFailureKind};
-use crate::test_wait::within;
+use crate::test_wait::{recv_within, within};
 
 fn sink() -> (SubscriptionSink, mpsc::UnboundedReceiver<SubscriptionEvent>) {
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -143,7 +143,7 @@ fn opened_then_stuck() -> Script<super::SubscriptionSink> {
 fn opened_after_a_gate() -> (Script<super::SubscriptionSink>, std::sync::mpsc::Sender<()>) {
     let (go, gate) = std::sync::mpsc::channel::<()>();
     let script: Script<super::SubscriptionSink> = Box::new(move |sink| {
-        std::thread::spawn(move || { gate.recv().unwrap(); sink.opened("t1".into()).unwrap(); });
+        std::thread::spawn(move || { recv_within(&gate); sink.opened("t1".into()).unwrap(); });
         boxed(async { std::future::pending::<()>().await; Ok(()) })
     });
     (script, go)
@@ -194,7 +194,7 @@ async fn a_call_that_finishes_without_opened_fails_and_unsubscribes_a_late_token
     let (kept, sinks) = std::sync::mpsc::channel();
     let (transport, events) = ordered(Some(Box::new(move |sink| boxed(async move { kept.send(sink).unwrap(); Ok(()) }))), None);
     assert!(transport.subscribe(request()).await.is_err());
-    sinks.recv().unwrap().opened("late".into()).unwrap();
+    recv_within(&sinks).opened("late".into()).unwrap();
     assert_eq!(heard(&events), "unsubscribe:late");
 }
 
@@ -214,7 +214,7 @@ fn a_cable_token_opened_after_the_call_was_dropped_is_closed() {
     use crate::transport::Transport;
     let (go, gate) = std::sync::mpsc::channel::<()>();
     let script: Script<super::CableLease> = Box::new(move |lease| {
-        std::thread::spawn(move || { gate.recv().unwrap(); lease.opened("c1".into()).unwrap(); });
+        std::thread::spawn(move || { recv_within(&gate); lease.opened("c1".into()).unwrap(); });
         boxed(async { std::future::pending::<()>().await; Ok(()) })
     });
     let (transport, events) = ordered(None, Some(script));

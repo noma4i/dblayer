@@ -1,7 +1,64 @@
-use std::sync::mpsc::RecvTimeoutError;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::{Condvar, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 const SPIN_LIMIT: Duration = Duration::from_secs(10);
+const BLOCK_LIMIT: Duration = Duration::from_secs(30);
+
+#[track_caller]
+pub(crate) fn recv_within<T>(receiver: &Receiver<T>) -> T {
+    receiver.recv_timeout(BLOCK_LIMIT).unwrap_or_else(|error| panic!("nothing arrived: {error}"))
+}
+
+#[track_caller]
+pub(crate) fn recv_or_closed<T>(receiver: &Receiver<T>) -> Option<T> {
+    match receiver.recv_timeout(BLOCK_LIMIT) {
+        Ok(value) => Some(value),
+        Err(RecvTimeoutError::Disconnected) => None,
+        Err(RecvTimeoutError::Timeout) => panic!("nothing arrived and the sender is still alive"),
+    }
+}
+
+#[track_caller]
+pub(crate) fn join_within<T>(handle: JoinHandle<T>) -> T {
+    let deadline = Instant::now() + BLOCK_LIMIT;
+    while !handle.is_finished() {
+        assert!(Instant::now() < deadline, "the thread did not finish");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    handle.join().unwrap()
+}
+
+pub(crate) struct Rendezvous {
+    parties: usize,
+    state: Mutex<(usize, usize)>,
+    ready: Condvar,
+}
+
+impl Rendezvous {
+    pub(crate) fn new(parties: usize) -> Self {
+        Self { parties, state: Mutex::new((0, 0)), ready: Condvar::new() }
+    }
+
+    #[track_caller]
+    pub(crate) fn meet(&self) {
+        let mut state = self.state.lock().unwrap();
+        let round = state.1;
+        state.0 += 1;
+        if state.0 == self.parties {
+            *state = (0, round + 1);
+            self.ready.notify_all();
+            return;
+        }
+        let deadline = Instant::now() + BLOCK_LIMIT;
+        while state.1 == round {
+            let left = deadline.saturating_duration_since(Instant::now());
+            assert!(!left.is_zero(), "the other parties never met");
+            state = self.ready.wait_timeout(state, left).unwrap().0;
+        }
+    }
+}
 
 /// The limit runs on the wall clock: a paused test clock advances the moment the runtime idles, which would expire it before a real thread answers.
 pub(crate) async fn within<T>(work: impl std::future::Future<Output = T>) -> T {

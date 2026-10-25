@@ -3,6 +3,7 @@ use std::fs;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::thread::ThreadId;
+use crate::test_wait::join_within;
 
 type FileIo = HashMap<String, Vec<(&'static str, ThreadId)>>;
 static FILE_IO: OnceLock<Mutex<FileIo>> = OnceLock::new();
@@ -89,13 +90,13 @@ fn concurrent_materializations_of_one_file_all_succeed_with_the_same_bytes() {
     let directories = std::sync::Arc::new(directories);
     for round in 0..40 {
         let id = format!("f{round}");
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+        let barrier = std::sync::Arc::new(crate::test_wait::Rendezvous::new(6));
         let workers: Vec<_> = (0..6).map(|_| {
             let (directories, barrier, id) = (directories.clone(), barrier.clone(), id.clone());
-            std::thread::spawn(move || { barrier.wait(); directories.materialize(&id, "clip.mp4", b"abcdef") })
+            std::thread::spawn(move || { barrier.meet(); directories.materialize(&id, "clip.mp4", b"abcdef") })
         }).collect();
         for worker in workers {
-            let path = worker.join().unwrap().unwrap();
+            let path = join_within(worker).unwrap();
             assert_eq!(fs::read(path).unwrap(), b"abcdef", "round {round}");
         }
     }

@@ -2,6 +2,7 @@ use serde_json::json;
 
 use super::load::LoadOptions;
 use super::rig::*;
+use crate::test_wait::join_within;
 
 fn vibe(number: usize) -> serde_json::Map<String, serde_json::Value> {
     params(json!({"vibeId": format!("v{number}")}))
@@ -47,17 +48,17 @@ async fn inv_loadm_19_a_new_observer_of_a_window_whose_last_watch_drops_concurre
         let resolved = rig.sync.inner.resolve("moments", "vibe_feed", &vibe(number)).unwrap();
         let (window, target) = (resolved.window_key.clone(), resolved.target());
         let last = owner.observe(&window, target.clone(), None);
-        let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let gate = std::sync::Arc::new(crate::test_wait::Rendezvous::new(2));
         let dropper = {
             let gate = gate.clone();
             std::thread::spawn(move || {
-                gate.wait();
+                gate.meet();
                 drop(last);
             })
         };
-        gate.wait();
+        gate.meet();
         let fresh = owner.observe(&window, target.clone(), None);
-        dropper.join().unwrap();
+        join_within(dropper);
         owner.begin_flight(&window, target, false, None);
         assert_eq!(fresh.borrow().phase, super::load_machine::LoadPhase::Loading, "window {number} lost its observer");
     }

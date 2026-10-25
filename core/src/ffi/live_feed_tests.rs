@@ -5,6 +5,7 @@ use super::live_feed::LiveFeed;
 use super::{DbError, LiveChange};
 use crate::transport::GraphqlExtensions;
 use crate::sync::{LoadError, LoadPhase, RelationState};
+use crate::test_wait::join_within;
 
 struct Tape(Mutex<Vec<LiveChange>>);
 
@@ -266,7 +267,7 @@ fn inv_loadm_14_snapshots_from_many_threads_arrive_in_strictly_growing_order() {
         })
         .collect();
     for thread in threads {
-        thread.join().unwrap();
+        join_within(thread);
     }
     let changes = heard(&tape);
     assert!(changes.len() > 100);

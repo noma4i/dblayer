@@ -2,7 +2,7 @@
 """INV-WAIT-04 for Rust tests: a test never waits without a bound.
 
 Usage: check_waits_rust.py <dir>...  Prints one line per hit and exits 1 when there is any.
-Only test_wait.rs may poll: it owns within, spin_until and yield_until.
+Only test_wait.rs may poll or block: it owns within, spin_until, yield_until, recv_within, recv_or_closed, join_within and Rendezvous.
 """
 import re
 import sys
@@ -14,6 +14,11 @@ LOOP = re.compile(r"^\s*(?:while|loop)\b")
 POLL = re.compile(r"\byield_now\(|\bsleep\(")
 LIMIT = re.compile(r"Instant::now\(\)|\bdeadline\b|\bfor _ in\b|\b(?:within|timeout|spin_until|yield_until)\(")
 ABSENCE = re.compile(r"recv_timeout\([^)]*\)\s*\.is_err\(\)")
+BLOCKING = (
+    (re.compile(r"\.recv\(\)(?!\s*\.await)"), "a blocking recv without a bound (use recv_within or recv_or_closed)"),
+    (re.compile(r"\.join\(\)"), "a thread join without a bound (use join_within)"),
+    (re.compile(r"\.wait\(\)"), "a barrier wait without a bound (use Rendezvous::meet)"),
+)
 
 
 def is_test_file(path):
@@ -32,6 +37,9 @@ def hits(path):
             yield f"{where}: rust: a poll loop without a deadline (use spin_until or yield_until): {line.strip()}"
         if ABSENCE.search(line):
             yield f"{where}: rust: a timeout is no proof of absence (assert on the state): {line.strip()}"
+        for pattern, message in BLOCKING:
+            if pattern.search(line) and not BOUND.search(line):
+                yield f"{where}: rust: {message}: {line.strip()}"
 
 
 def main(roots):

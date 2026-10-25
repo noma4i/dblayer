@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use super::fixtures::*;
 use super::*;
+use crate::test_wait::join_within;
 
 #[test]
 fn inv_conc_07_disk_read_finishes_while_writer_has_uncommitted_changes() {
@@ -39,7 +40,7 @@ fn inv_conc_07_disk_read_finishes_while_writer_has_uncommitted_changes() {
     transaction.rollback().unwrap();
     drop(writer);
     for thread in threads {
-        thread.join().unwrap();
+        join_within(thread);
     }
     for result in results {
         assert_eq!(result.unwrap(), serde_json::json!("before"));
