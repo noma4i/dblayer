@@ -13,7 +13,9 @@ type Sticker { id: ID }
 input CreateQrCodeInput { kind: String!, size: Int }
 scalar DateTime
 enum Mood { HAPPY SAD }
-input StickerInput { name: String!, mood: Mood, tags: [String!]!, notes: [String], size: Int, pinned: Boolean!, owner: OwnerInput!, helpers: [OwnerInput!], recursive: RecursiveInput }
+input StickerInput { name: String!, mood: Mood, tags: [String!]!, notes: [String], size: Int, pinned: Boolean!, owner: OwnerInput!, helpers: [OwnerInput!], recursive: RecursiveInput, keywords: KeywordInput }
+input KeywordInput { default: String!, when: String!, class: String!, container: String!, encoder: String!, choices: [KeywordChoice!]! }
+input KeywordChoice @oneOf { default: String, when: String }
 input RecursiveInput { next: RecursiveInput, choice: RecursiveChoice }
 input RecursiveChoice @oneOf { next: RecursiveChoice, value: String }
 input OwnerInput { id: ID!, nickname: String }

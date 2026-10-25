@@ -1,5 +1,6 @@
 use std::fmt::Write;
 
+use crate::enums::identifier;
 use crate::schema_check::{InputField, InputObject, Ty, TyKind};
 
 fn element(name: &str, swift: bool) -> String {
@@ -46,11 +47,11 @@ fn case_name(field: &InputField) -> String {
 
 fn emit_swift_one_of(out: &mut String, input: &InputObject) {
     writeln!(out, "public indirect enum {}: Encodable, Sendable, Equatable {{", input.name).unwrap();
-    for field in &input.fields { writeln!(out, "    case {}({})", field.name, payload(field, true)).unwrap(); }
+    for field in &input.fields { writeln!(out, "    case {}({})", identifier(&field.name, true), payload(field, true)).unwrap(); }
     writeln!(out, "\n    enum CodingKeys: String, CodingKey {{").unwrap();
-    for field in &input.fields { writeln!(out, "        case {}", field.name).unwrap(); }
+    for field in &input.fields { writeln!(out, "        case {}", identifier(&field.name, true)).unwrap(); }
     writeln!(out, "    }}\n\n    public func encode(to encoder: any Encoder) throws {{\n        var container = encoder.container(keyedBy: CodingKeys.self)\n        switch self {{").unwrap();
-    for field in &input.fields { writeln!(out, "        case .{0}(let value): try container.encode(value, forKey: .{0})", field.name).unwrap(); }
+    for field in &input.fields { writeln!(out, "        case .{0}(let value): try container.encode(value, forKey: .{0})", identifier(&field.name, true)).unwrap(); }
     writeln!(out, "        }}\n    }}\n}}\n").unwrap();
 }
 
@@ -70,16 +71,17 @@ pub(super) fn emit_swift_inputs(out: &mut String, inputs: &[InputObject]) {
             continue;
         }
         writeln!(out, "public struct {}: Encodable, Sendable, Equatable {{", input.name).unwrap();
-        for field in &input.fields { writeln!(out, "    public let {}: {}", field.name, field_type(field, true)).unwrap(); }
-        let params = input.fields.iter().map(|field| format!("{}: {}{}", field.name, field_type(field, true), if field.ty.nullable { " = .omitted" } else if field.ty.has_default { " = nil" } else { "" })).collect::<Vec<_>>().join(", ");
+        for field in &input.fields { writeln!(out, "    public let {}: {}", identifier(&field.name, true), field_type(field, true)).unwrap(); }
+        let params = input.fields.iter().map(|field| format!("{}: {}{}", identifier(&field.name, true), field_type(field, true), if field.ty.nullable { " = .omitted" } else if field.ty.has_default { " = nil" } else { "" })).collect::<Vec<_>>().join(", ");
         writeln!(out, "\n    public init({params}) {{").unwrap();
-        for field in &input.fields { writeln!(out, "        self.{0} = {0}", field.name).unwrap(); }
+        for field in &input.fields { writeln!(out, "        self.{0} = {0}", identifier(&field.name, true)).unwrap(); }
         writeln!(out, "    }}\n\n    enum CodingKeys: String, CodingKey {{").unwrap();
-        for field in &input.fields { writeln!(out, "        case {}", field.name).unwrap(); }
+        for field in &input.fields { writeln!(out, "        case {}", identifier(&field.name, true)).unwrap(); }
         writeln!(out, "    }}\n\n    public func encode(to encoder: any Encoder) throws {{\n        var container = encoder.container(keyedBy: CodingKeys.self)").unwrap();
         for field in &input.fields {
             let method = if !field.ty.nullable && field.ty.has_default { "encodeIfPresent" } else { "encode" };
-            writeln!(out, "        try container.{method}({}, forKey: .{})", field.name, field.name).unwrap();
+            let name = identifier(&field.name, true);
+            writeln!(out, "        try container.{method}(self.{name}, forKey: .{name})").unwrap();
         }
         writeln!(out, "    }}\n}}\n").unwrap();
     }
@@ -92,8 +94,9 @@ pub(super) fn emit_kotlin_inputs(out: &mut String, inputs: &[InputObject]) {
             continue;
         }
         let fields = input.fields.iter().map(|field| {
-            if field.ty.optional() { format!("@EncodeDefault(EncodeDefault.Mode.NEVER) val {}: {} = {}", field.name, field_type(field, false), if field.ty.nullable { "GraphQLNullable.Omitted" } else { "null" }) }
-            else { format!("val {}: {}", field.name, field_type(field, false)) }
+            let name = identifier(&field.name, false);
+            if field.ty.optional() { format!("@EncodeDefault(EncodeDefault.Mode.NEVER) val {name}: {} = {}", field_type(field, false), if field.ty.nullable { "GraphQLNullable.Omitted" } else { "null" }) }
+            else { format!("val {name}: {}", field_type(field, false)) }
         }).collect::<Vec<_>>().join(", ");
         writeln!(out, "@Immutable\n@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class {}({fields})\n", input.name).unwrap();
     }

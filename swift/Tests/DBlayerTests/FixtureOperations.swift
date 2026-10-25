@@ -274,9 +274,9 @@ public struct StickerWidgetInput: Encodable, Sendable, Equatable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(kind, forKey: .kind)
-        try container.encode(props, forKey: .props)
-        try container.encode(extras, forKey: .extras)
+        try container.encode(self.kind, forKey: .kind)
+        try container.encode(self.props, forKey: .props)
+        try container.encode(self.extras, forKey: .extras)
     }
 }
 
@@ -290,8 +290,9 @@ public struct StickerInput: Encodable, Sendable, Equatable {
     public let owner: OwnerInput
     public let helpers: GraphQLNullable<[OwnerInput]>
     public let recursive: GraphQLNullable<RecursiveInput>
+    public let keywords: GraphQLNullable<KeywordInput>
 
-    public init(name: String, mood: GraphQLNullable<Mood> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, pinned: Bool, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted, recursive: GraphQLNullable<RecursiveInput> = .omitted) {
+    public init(name: String, mood: GraphQLNullable<Mood> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, pinned: Bool, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted, recursive: GraphQLNullable<RecursiveInput> = .omitted, keywords: GraphQLNullable<KeywordInput> = .omitted) {
         self.name = name
         self.mood = mood
         self.tags = tags
@@ -301,6 +302,7 @@ public struct StickerInput: Encodable, Sendable, Equatable {
         self.owner = owner
         self.helpers = helpers
         self.recursive = recursive
+        self.keywords = keywords
     }
 
     enum CodingKeys: String, CodingKey {
@@ -313,19 +315,21 @@ public struct StickerInput: Encodable, Sendable, Equatable {
         case owner
         case helpers
         case recursive
+        case keywords
     }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(name, forKey: .name)
-        try container.encode(mood, forKey: .mood)
-        try container.encode(tags, forKey: .tags)
-        try container.encode(notes, forKey: .notes)
-        try container.encode(size, forKey: .size)
-        try container.encode(pinned, forKey: .pinned)
-        try container.encode(owner, forKey: .owner)
-        try container.encode(helpers, forKey: .helpers)
-        try container.encode(recursive, forKey: .recursive)
+        try container.encode(self.name, forKey: .name)
+        try container.encode(self.mood, forKey: .mood)
+        try container.encode(self.tags, forKey: .tags)
+        try container.encode(self.notes, forKey: .notes)
+        try container.encode(self.size, forKey: .size)
+        try container.encode(self.pinned, forKey: .pinned)
+        try container.encode(self.owner, forKey: .owner)
+        try container.encode(self.helpers, forKey: .helpers)
+        try container.encode(self.recursive, forKey: .recursive)
+        try container.encode(self.keywords, forKey: .keywords)
     }
 }
 
@@ -345,8 +349,8 @@ public struct MomentInput: Encodable, Sendable, Equatable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(file, forKey: .file)
-        try container.encode(widgets, forKey: .widgets)
+        try container.encode(self.file, forKey: .file)
+        try container.encode(self.widgets, forKey: .widgets)
     }
 }
 
@@ -387,8 +391,8 @@ public struct OwnerInput: Encodable, Sendable, Equatable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(nickname, forKey: .nickname)
+        try container.encode(self.id, forKey: .id)
+        try container.encode(self.nickname, forKey: .nickname)
     }
 }
 
@@ -408,8 +412,45 @@ public struct RecursiveInput: Encodable, Sendable, Equatable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(next, forKey: .next)
-        try container.encode(choice, forKey: .choice)
+        try container.encode(self.next, forKey: .next)
+        try container.encode(self.choice, forKey: .choice)
+    }
+}
+
+public struct KeywordInput: Encodable, Sendable, Equatable {
+    public let `default`: String
+    public let when: String
+    public let `class`: String
+    public let container: String
+    public let encoder: String
+    public let choices: [KeywordChoice]
+
+    public init(`default`: String, when: String, `class`: String, container: String, encoder: String, choices: [KeywordChoice]) {
+        self.`default` = `default`
+        self.when = when
+        self.`class` = `class`
+        self.container = container
+        self.encoder = encoder
+        self.choices = choices
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case `default`
+        case when
+        case `class`
+        case container
+        case encoder
+        case choices
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.`default`, forKey: .`default`)
+        try container.encode(self.when, forKey: .when)
+        try container.encode(self.`class`, forKey: .`class`)
+        try container.encode(self.container, forKey: .container)
+        try container.encode(self.encoder, forKey: .encoder)
+        try container.encode(self.choices, forKey: .choices)
     }
 }
 
@@ -429,8 +470,8 @@ public struct WidgetInput: Encodable, Sendable, Equatable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(kind, forKey: .kind)
-        try container.encode(settings, forKey: .settings)
+        try container.encode(self.kind, forKey: .kind)
+        try container.encode(self.settings, forKey: .settings)
     }
 }
 
@@ -450,8 +491,8 @@ public struct StickerTextInput: Encodable, Sendable, Equatable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(body, forKey: .body)
-        try container.encode(sizes, forKey: .sizes)
+        try container.encode(self.body, forKey: .body)
+        try container.encode(self.sizes, forKey: .sizes)
     }
 }
 
@@ -471,8 +512,8 @@ public struct StickerEmojiInput: Encodable, Sendable, Equatable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(code, forKey: .code)
-        try container.encode(kind, forKey: .kind)
+        try container.encode(self.code, forKey: .code)
+        try container.encode(self.kind, forKey: .kind)
     }
 }
 
@@ -494,6 +535,24 @@ public indirect enum RecursiveChoice: Encodable, Sendable, Equatable {
     }
 }
 
+public indirect enum KeywordChoice: Encodable, Sendable, Equatable {
+    case `default`(String)
+    case when(String)
+
+    enum CodingKeys: String, CodingKey {
+        case `default`
+        case when
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .`default`(let value): try container.encode(value, forKey: .`default`)
+        case .when(let value): try container.encode(value, forKey: .when)
+        }
+    }
+}
+
 public struct SettingsInput: Encodable, Sendable, Equatable {
     public let itemProps: JSONValue
     public let rotate: GraphQLNullable<Double>
@@ -510,8 +569,8 @@ public struct SettingsInput: Encodable, Sendable, Equatable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(itemProps, forKey: .itemProps)
-        try container.encode(rotate, forKey: .rotate)
+        try container.encode(self.itemProps, forKey: .itemProps)
+        try container.encode(self.rotate, forKey: .rotate)
     }
 }
 

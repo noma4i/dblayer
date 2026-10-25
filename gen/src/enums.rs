@@ -1,10 +1,19 @@
 use dblayer::schema::{FieldKind, FieldSpec, ModelSpec};
 
-const SWIFT_KEYWORDS: [&str; 24] = [
+const SWIFT_KEYWORDS: &[&str] = &[
     "as", "break", "case", "class", "continue", "default", "defer", "do", "else", "enum", "for", "func", "guard", "if", "import", "in", "is", "let", "return", "switch", "var", "where", "while", "extension",
+    "associatedtype", "catch", "deinit", "false", "fileprivate", "inout", "internal", "nil", "operator", "private", "protocol", "public", "rethrows", "self", "Self", "static", "struct", "subscript", "super", "throw", "throws", "true", "try", "typealias",
+];
+const KOTLIN_KEYWORDS: &[&str] = &[
+    "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in", "interface", "is", "null", "object", "package", "return", "super", "this", "throw", "true", "try", "typealias", "typeof", "val", "var", "when", "while",
 ];
 const SWIFT_REJECTED: [&str; 5] = ["self", "Type", "Protocol", "init", "unknown"];
 const KOTLIN_REJECTED: [&str; 2] = ["Unknown", "Companion"];
+
+pub(crate) fn identifier(name: &str, swift: bool) -> String {
+    let keywords = if swift { SWIFT_KEYWORDS } else { KOTLIN_KEYWORDS };
+    if keywords.contains(&name) { format!("`{name}`") } else { name.to_string() }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumDecl {
@@ -51,7 +60,7 @@ impl EnumDecl {
             .iter()
             .map(|value| {
                 let case = plain_case(value, swift);
-                if swift && SWIFT_KEYWORDS.contains(&case.as_str()) { format!("`{case}`") } else { case }
+                identifier(&case, swift)
             })
             .collect()
     }

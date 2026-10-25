@@ -893,7 +893,7 @@ let props: StickerPropsInput = .emoji(StickerEmojiInput(code: "fire"))   // {"em
 val props: StickerPropsInput = StickerPropsInput.Emoji(StickerEmojiInput(code = "fire"))   // {"emoji":{"code":"fire"}}
 ```
 
-The generator writes every input object that an operation names, and every input object those fields use, once each, after the models. A name that the schema does not have, a name that is neither an input object nor an enum, or an operation that names one without a schema file stops the run with code 1 and a message.
+The generator writes every input object that an operation names, and every input object those fields use, once each, after the models. Input fields that match Swift or Kotlin keywords use escaped identifiers and retain their original GraphQL keys. A name that the schema does not have, a name that is neither an input object nor an enum, or an operation that names one without a schema file stops the run with code 1 and a message.
 
 | Schema field | Swift | Kotlin |
 | ------------ | ----- | ------ |

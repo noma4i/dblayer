@@ -3,6 +3,8 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.Operations
 import com.noma4i.dblayer.models.MomentInput
 import com.noma4i.dblayer.models.OwnerInput
+import com.noma4i.dblayer.models.KeywordInput
+import com.noma4i.dblayer.models.KeywordChoice
 import com.noma4i.dblayer.models.RecursiveInput
 import com.noma4i.dblayer.models.RecursiveChoice
 import com.noma4i.dblayer.models.SettingsInput
@@ -74,6 +76,16 @@ class OperationCallTest {
         val input = StickerInput(name = "tree", tags = emptyList(), pinned = false, owner = OwnerInput(id = "7"), recursive = GraphQLNullable.Value(recursive))
         withTimeout(5000) { Operations.stickerSend(input) }
         val expected = """{"input":{"name":"tree","tags":[],"pinned":false,"owner":{"id":"7"},"recursive":{"next":{"next":null},"choice":{"next":{"value":"leaf"}}}}}"""
+        assertEquals(parseJson(expected), parseJson(transport.calls.first { it.operationName == "StickerSend" }.variablesJson))
+    }
+
+    @Test
+    fun inputNamesPreserveGraphQLKeys() = bounded {
+        val transport = rig("StickerSend", "mutation StickerSend(${'$'}input: StickerInput!) { stickerSend(input: ${'$'}input) { id } }", """{"data":{"stickerSend":{"id":"s1"}}}""")
+        val keywords = KeywordInput(default = "d", `when` = "w", `class` = "c", container = "box", encoder = "wire", choices = listOf(KeywordChoice.Default("a"), KeywordChoice.When("b")))
+        val input = StickerInput(name = "keys", tags = emptyList(), pinned = false, owner = OwnerInput(id = "7"), keywords = GraphQLNullable.Value(keywords))
+        withTimeout(5000) { Operations.stickerSend(input) }
+        val expected = """{"input":{"name":"keys","tags":[],"pinned":false,"owner":{"id":"7"},"keywords":{"default":"d","when":"w","class":"c","container":"box","encoder":"wire","choices":[{"default":"a"},{"when":"b"}]}}}"""
         assertEquals(parseJson(expected), parseJson(transport.calls.first { it.operationName == "StickerSend" }.variablesJson))
     }
 

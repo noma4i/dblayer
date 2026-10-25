@@ -74,6 +74,18 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func inputNamesPreserveGraphQLKeys() async throws {
+    let transport = try await Self.openOperationRig("StickerSend", document: "mutation StickerSend($input: StickerInput!) { stickerSend(input: $input) { id } }", reply: #"{"data":{"stickerSend":{"id":"s1"}}}"#)
+    let keywords = KeywordInput(default: "d", when: "w", class: "c", container: "box", encoder: "wire", choices: [.default("a"), .when("b")])
+    let input = StickerInput(name: "keys", tags: [], pinned: false, owner: OwnerInput(id: "7"), keywords: .value(keywords))
+    _ = try await Operations.stickerSend(input: input)
+    let sent = try #require(transport.calls.first { $0.operationName == "StickerSend" }).variablesJson
+    let expected = #"{"input":{"name":"keys","tags":[],"pinned":false,"owner":{"id":"7"},"keywords":{"default":"d","when":"w","class":"c","container":"box","encoder":"wire","choices":[{"default":"a"},{"when":"b"}]}}}"#
+    #expect(try JSONValue.read(sent) == JSONValue.read(expected))
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func aResultWithListsObjectsAndRawJsonIsDecodedIntoGeneratedTypes() async throws {
     _ = try await Self.openOperationRig("Pricing", document: "query Pricing { pricing { rewards { id name price } videoIntro { enabled } tags spec } }", reply: #"{"data":{"pricing":{"rewards":[{"id":7,"name":"rose","price":5},{"id":"8","name":"ring"}],"videoIntro":{"enabled":true},"tags":["a","b"],"spec":{"k":[1,2]}}}}"#)
 

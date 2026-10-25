@@ -232,7 +232,7 @@ data class StickerWidgetInput(val kind: WidgetKind, val props: StickerPropsInput
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Long> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val recursive: GraphQLNullable<RecursiveInput> = GraphQLNullable.Omitted)
+data class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Long> = GraphQLNullable.Omitted, val pinned: Boolean, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val recursive: GraphQLNullable<RecursiveInput> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val keywords: GraphQLNullable<KeywordInput> = GraphQLNullable.Omitted)
 
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
@@ -278,6 +278,11 @@ data class RecursiveInput(@EncodeDefault(EncodeDefault.Mode.NEVER) val next: Gra
 @Immutable
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
+data class KeywordInput(val default: String, val `when`: String, val `class`: String, val container: String, val encoder: String, val choices: List<KeywordChoice>)
+
+@Immutable
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
 data class WidgetInput(val kind: WidgetKind, val settings: SettingsInput)
 
 @Immutable
@@ -311,6 +316,29 @@ object RecursiveChoiceSerializer : KSerializer<RecursiveChoice> {
     }
 
     override fun deserialize(decoder: Decoder): RecursiveChoice = throw SerializationException("RecursiveChoice is only sent")
+}
+
+@Immutable
+@Serializable(with = KeywordChoiceSerializer::class)
+sealed interface KeywordChoice {
+    @Immutable
+    data class Default(val value: String) : KeywordChoice
+    @Immutable
+    data class When(val value: String) : KeywordChoice
+}
+
+object KeywordChoiceSerializer : KSerializer<KeywordChoice> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("KeywordChoice")
+
+    override fun serialize(encoder: Encoder, value: KeywordChoice) {
+        val (key, element) = when (value) {
+            is KeywordChoice.Default -> "default" to jsonValue(value.value)
+            is KeywordChoice.When -> "when" to jsonValue(value.value)
+        }
+        (encoder as JsonEncoder).encodeJsonElement(JsonObject(mapOf(key to element)))
+    }
+
+    override fun deserialize(decoder: Decoder): KeywordChoice = throw SerializationException("KeywordChoice is only sent")
 }
 
 @Immutable
