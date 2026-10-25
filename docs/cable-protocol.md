@@ -236,7 +236,7 @@ After sign-in, call `listen` or `resume` to clear the refusal and restart stoppe
 Each watched query receives one `LiveChange.error` with the typed session failure until that explicit restart.
 `SubscriptionStatus.failure` retains the typed subscription error. User-initiated configuration requests and queries remain available.
 `DbError` keeps socket close codes and GraphQL extensions. Kotlin exposes the same data through `DbException`.
-Swift `LiveChange.error`, `SubscriptionSink.failed` and `GraphQLSubscriptionEvent.errors` take `DbError`. Kotlin uses `DbException`.
+Swift `LiveChange.error` and `SubscriptionSink.failed` take `DbError`. Kotlin uses `DbException`.
 
 The fixtures `fixtures/change-events/subscriptions.json` hold the requests and responses of all 4 subscriptions.
 `fixtures/change-events/changes.dbl` shows the choice of HTTP reads. A fake socket checks the full exchange, the HTTP JWE and the row write.

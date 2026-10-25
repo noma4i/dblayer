@@ -16,7 +16,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - **Refresh on entry.** `LiveList` can force its initial request while keeping cached rows visible. Await that request without starting another one.
 - **Local first.** Data lives in SQLite. Reads never wait for the network, and writes are applied locally at once.
 - **Partial child updates.** Parent fields copied through `sets` keep their values when the child omits those fields. Explicit null clears them.
-- **Sync state on every record.** Each record knows if the server has seen it: `synced`, `pending`, `sending`, `failed` or `deliveryUnknown`, plus `isLocal` for records that still have a temporary id. Build spinners, retry buttons and unsent banners on it, and query by it.
+- **Sync state on every record.** Each record knows if the server has seen it: `synced`, `pending`, `sending`, `failed` or `deliveryUnknown`. Build spinners, retry buttons and unsent banners on it, and query by it.
 - **Offline writes.** Create, update and destroy are applied optimistically and queued. The queue survives restarts, is sent in order, rolled back on a final failure and replaces temporary ids with server ids.
 - **GraphQL without glue code.** Register your operations and point models at them. Responses of queries, mutations and subscription events are normalized into rows by one set of rules. Refetching after mutations, reconnects and app resume is automatic.
 - **Typed GraphQL inputs.** Generated Swift and Kotlin types support recursive inputs and one-of choices, preserving omitted fields and explicit nulls.
@@ -159,7 +159,7 @@ DBlayer.database.sessionCall("otp", """{"phone":"+61400000000"}""")
 ```
 
 Await `DB.open` in Swift or call suspend `DBlayer.open` from a Kotlin coroutine.
-Opening files, WAL and migrations runs on the library's worker pool.
+Opening files, WAL and format checks runs on the library's worker pool.
 Open the database once at app start. A second `open` while it is open throws, whatever its parameters. Failed opens allow retry.
 `AppCredentials` is app code that implements `CredentialStore` over the Keychain or the Keystore, see [server sync](docs/server-sync.md).
 

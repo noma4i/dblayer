@@ -12,8 +12,9 @@ Every record knows whether the server has seen it. The state is live like everyt
 | `sync.error` | the last error (`kind`, `message` and optional GraphQL `extensions`) when the state is `failed` or `deliveryUnknown` |
 | `sync.attempts` | how many times sending was tried since the last `retry()` |
 | `sync.since` | when the record entered this state |
-| `isLocal` | the record has a temporary id and the server does not know it yet |
-| `isSynced`, `isPending`, `isFailed` | shortcuts for the state |
+| `needsAttention` | the state is `failed` or `deliveryUnknown` |
+| `canRetry` | same as `needsAttention`: `retry()` can run |
+| `errorMessage` | `sync.error?.message` |
 
 | State | When |
 | ----- | ---- |
@@ -37,7 +38,7 @@ struct MomentRow: View {
   var body: some View {
     HStack {
       Text(moment.text)
-      if moment.isLocal { ProgressView() }
+      if moment.sync.state == .pending || moment.sync.state == .sending { ProgressView() }
       if moment.sync.state == .failed || moment.sync.state == .deliveryUnknown {
         Button("Retry") { Task { try await moment.retry() } }
       }
@@ -51,7 +52,7 @@ struct MomentRow: View {
 fun MomentRow(moment: Moment) {
   Row {
     Text(moment.text)
-    if (moment.isLocal) CircularProgressIndicator()
+    if (moment.sync.state == SyncState.Pending || moment.sync.state == SyncState.Sending) CircularProgressIndicator()
     if (moment.sync.state == SyncState.Failed || moment.sync.state == SyncState.DeliveryUnknown) {
       Button(onClick = { scope.launch { moment.retry() } }) { Text("Retry") }
     }

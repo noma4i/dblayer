@@ -273,15 +273,18 @@ val edits = group.takeEdits()
 if (edits != null) mirror.replay(edits) else mirror = group.rows.value.toMutableList()
 ```
 
-**UIKit and Android views.** Apply the diff to a diffable data source or a collection view. The diff already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:
+**UIKit and Android views.** Read `changes` and apply each `ListChange` to a diffable data source, a collection view or a `ListAdapter` (`dataSource` and `adapter` are app code). The change already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:
 
 ```swift
-let feed = Live(Moment.recent)
-feed.onChange { change in dataSource.apply(change.snapshot()) }
+for await change in try await Moment.where(Moment.userId == userId).changes.stream() {
+  if change.kind == .replaced { dataSource.reload(change.inserted.map(\.row)) } else { dataSource.applyDelta(change) }
+}
 ```
 
 ```kotlin
-Moment.recent.onChange { change -> change.dispatchTo(adapter) }   // RecyclerView ListAdapter
+Moment.where(Moment.userId eq userId).changes.collect { change ->
+    if (change.kind == ListChangeKind.Replaced) adapter.submitList(change.inserted.map { it.row }) else adapter.applyDelta(change)
+}   // RecyclerView ListAdapter
 ```
 
 **Jetpack Compose.** `collectAsLive()` returns Compose state that follows the live result. Rows, single records and counts work the same way:
