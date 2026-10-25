@@ -22,6 +22,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
@@ -49,8 +50,10 @@ class MainThreadTest {
 
     private fun onMain(stage: String) = touched.count { it.first == stage && it.second === mainThread }
 
-    private class Probe(val moment: Moment, val touch: () -> Unit) : DBModel by moment {
+    private class Probe(val moment: Moment, val compared: () -> Unit = {}, val touch: () -> Unit) : DBModel by moment {
         override val id: String get() { touch(); return moment.id }
+        override fun equals(other: Any?): Boolean { compared(); return other is Probe && other.moment == moment }
+        override fun hashCode() = moment.hashCode()
     }
 
     @Test
@@ -122,6 +125,32 @@ class MainThreadTest {
         assertEquals("t00000", row?.moment?.text)
         assertEquals(setOf("cached"), stages())
         assertEquals(0, onMain("cached"))
+    }
+
+    @Test
+    fun the_rows_a_live_list_publishes_cost_the_owner_thread_the_same_comparisons_at_any_size() = bounded {
+        reopen(Config(null, null, 128u), modelsJSON, null)
+        val created = List(40) { Moment.create(text = "t%05d".format(it)) }
+        fun decoder(stage: String) = object : ModelDecoder<Probe> {
+            override val modelName = Moment.modelName
+            override val layout = Moment.layout
+            override fun decode(row: WireRow) = Probe(Moment.decode(row), { touch(stage) }) {}
+        }
+        val scope = CoroutineScope(main)
+        try {
+            val small = LiveList(Query("Moment", decoder("small")).where(Condition.inList("id", created.take(4).map { JsonPrimitive(it.id) })).order(Order("text", "asc")), scope)
+            val large = LiveList(Query("Moment", decoder("large")).order(Order("text", "asc")), scope)
+            eventually("the first delivery") { small.rows.value.size == 4 && large.rows.value.size == 40 }
+
+            created[3].update(text = GraphQLNullable.Value("changed"))
+            eventually("the second delivery") { small.rows.value.any { it.moment.text == "changed" } && large.rows.value.any { it.moment.text == "changed" } }
+
+            assertEquals("comparisons on the owner thread: small ${onMain("small")}, large ${onMain("large")}", onMain("small"), onMain("large"))
+            val copy = large.rows.value.map { Probe(it.moment, { touch("control") }) {} }
+            assertTrue("the probe sees a comparison of rows", copy == large.rows.value && touched.any { it.first == "control" })
+        } finally {
+            scope.cancel()
+        }
     }
 
     @Test

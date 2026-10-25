@@ -15,7 +15,7 @@ fn generate(arguments: &[&str], sources: &[PathBuf]) -> String {
 }
 
 #[test]
-fn every_generated_swift_async_entry_leaves_the_caller_actor() {
+fn every_generated_swift_async_entry_is_declared_concurrent() {
     let schema = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/operations/schema.graphql");
     let models = generate(&["swift"], &fixtures(""));
     let operations = generate(&["--schema", schema.to_str().unwrap(), "swift"], &fixtures("operations"));
@@ -23,6 +23,6 @@ fn every_generated_swift_async_entry_leaves_the_caller_actor() {
         let entries: Vec<&str> = source.lines().filter(|line| line.contains(") async throws") && line.trim_start().starts_with(['p', '@'])).collect();
         assert!(entries.len() > 10, "{label}: the fixtures declare async entries, found {}", entries.len());
         let local: Vec<&&str> = entries.iter().filter(|line| !line.contains("@concurrent")).collect();
-        assert!(local.is_empty(), "{label}: async entries that run on the caller actor: {local:?}");
+        assert!(local.is_empty(), "{label}: async entries not declared @concurrent: {local:?}");
     }
 }

@@ -5,7 +5,7 @@
 ### Added
 - Generated GraphQL inputs support recursive input objects and `@oneOf` choices.
 - Kotlin `JsonElement.jsonText()` serializes JSON with the library settings.
-- Kotlin `offCaller` runs a block on `Dispatchers.Default`. Generated code uses it.
+- Kotlin `offCaller` runs a block off the caller thread, for generated code.
 
 ### Changed
 - Swift query conditions, `JSONValue.encode`, `JSONValue.text` and `JSONValue.tagged` throw on serialization failure.
@@ -17,11 +17,11 @@
 - Upload file reads and checksums run on blocking tasks and stop on cancellation.
 - Upload transfers reserve their file slot before starting and hold it through retries.
 - Observation reads queued, running or awaiting application are limited to two.
-- Kotlin calls to the database prepare their JSON and read their answers on `Dispatchers.Default`, not on the caller thread. Swift marks them `@concurrent`.
-- `LiveList` and `LiveWindow` build `ids` off the main thread on both platforms.
-- Generated `create`, `update`, `set`, action, node, edge-read and operation calls prepare JSON and decode rows off the caller thread: Kotlin through `offCaller`, Swift through `@concurrent`.
-- `Query.cached()` and `Query.cachedRow()` are `async` in Swift and `suspend` in Kotlin, and they decode their rows off the caller thread.
-- Kotlin entity deliveries are applied after the registry lock is released, and a closed entity ignores later values.
+- Database calls prepare JSON and decode answers off the caller thread on both platforms.
+- Live lists and windows build their ids off the main thread.
+- Generated writes, actions, node reads and operations run off the caller thread.
+- `Query.cached()` and `cachedRow()` are now `async` in Swift and `suspend` in Kotlin.
+- Kotlin entity readers no longer wait while a delivery applies.
 
 ### Fixed
 - Explicit null stays distinct from an absent field after reopening the database.
