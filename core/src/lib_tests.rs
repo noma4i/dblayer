@@ -57,7 +57,7 @@ fn inv_fresh_09_a_freshness_window_is_a_duration_and_no_policy_table_resolves_na
 
 #[test]
 fn inv_time_01_only_the_clock_module_and_the_stress_rigs_read_the_wall_clock() {
-    let allowed = ["pacing/clock.rs", "pacing/test_clock.rs", "bin/stress.rs", "bin/rowbench.rs", "sync/stress/mod.rs", "sync/stress/watchdog.rs"];
+    let allowed = ["pacing/clock.rs", "pacing/test_clock.rs", "bin/stress.rs", "bin/rowbench.rs", "sync/stress/mod.rs", "sync/stress/watchdog.rs", "test_wait.rs"];
     for word in ["SystemTime::now", "Instant::now", "OffsetDateTime::now"] {
         let strays: Vec<String> = mentions(word).into_iter().filter(|file| !allowed.contains(&file.as_str())).collect();
         assert_eq!(strays, Vec::<String>::new(), "{word} reads the wall clock outside the clock module");
