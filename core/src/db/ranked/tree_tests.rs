@@ -99,6 +99,8 @@ fn a_tree_stays_balanced_when_built_from_sorted_items_and_under_ascending_insert
     let mut grown = Tree::<Counted, u64>::default();
     for key in 0..1000 {
         grown = grown.with(Counted(key), key);
+        if key % 100 == 99 {
+            assert!(deepest_lookup(&grown, 0..=key) <= 18, "ascending inserts built a chain at {} items", key + 1);
+        }
     }
-    assert!(deepest_lookup(&grown, 0..1000) <= 18, "ascending inserts built a chain");
 }

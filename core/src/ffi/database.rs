@@ -30,17 +30,37 @@ pub(super) fn executor() -> Result<&'static Runtime, DbError> {
 pub(super) struct Starter {
     runtime: OnceLock<Runtime>,
     starting: Mutex<()>,
+    #[cfg(test)]
+    cold_entries: (Mutex<usize>, std::sync::Condvar),
 }
 
 impl Starter {
     pub(super) const fn new() -> Self {
-        Self { runtime: OnceLock::new(), starting: Mutex::new(()) }
+        Self {
+            runtime: OnceLock::new(),
+            starting: Mutex::new(()),
+            #[cfg(test)]
+            cold_entries: (Mutex::new(0), std::sync::Condvar::new()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn cold_entries_reach(&self, count: usize, within: std::time::Duration) -> bool {
+        let (entries, reached) = &self.cold_entries;
+        let guard = entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (guard, _) = reached.wait_timeout_while(guard, within, |entries| *entries < count).unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard >= count
     }
 }
 
 pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Runtime>) -> Result<&Runtime, DbError> {
     if let Some(runtime) = slot.runtime.get() {
         return Ok(runtime);
+    }
+    #[cfg(test)]
+    {
+        *slot.cold_entries.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
+        slot.cold_entries.1.notify_all();
     }
     let _starting = slot.starting.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(runtime) = slot.runtime.get() {

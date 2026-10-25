@@ -17,7 +17,6 @@ fn inv_panic_02_two_first_starts_build_one_runtime() {
     static SLOT: Starter = Starter::new();
     static BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let (building_tx, building) = std::sync::mpsc::channel();
-    let (entering_tx, entering) = std::sync::mpsc::channel();
     let (release_tx, release) = std::sync::mpsc::channel::<()>();
     let first = std::thread::spawn(move || {
         started(&SLOT, || {
@@ -30,14 +29,13 @@ fn inv_panic_02_two_first_starts_build_one_runtime() {
     });
     building.recv().unwrap();
     let second = std::thread::spawn(move || {
-        entering_tx.send(()).unwrap();
         started(&SLOT, || {
             BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             tokio::runtime::Builder::new_multi_thread().worker_threads(1).build()
         })
         .map(|_| ())
     });
-    entering.recv().unwrap();
+    assert!(SLOT.cold_entries_reach(2, std::time::Duration::from_secs(10)), "the second start never reached the cold path while the first builder was held");
     release_tx.send(()).unwrap();
     first.join().unwrap().unwrap();
     second.join().unwrap().unwrap();
