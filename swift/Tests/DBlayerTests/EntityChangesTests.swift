@@ -28,29 +28,39 @@ struct EntityChangesTests {
     #expect(removed != nil && removed! == nil)
   }
 
-  /// owner: one core observer for two readers, cancelling one keeps the other, ending all releases entity and lease
+  /// owner: one core observer for two readers, cancelling a reader that waits for its next value keeps the other, ending all releases entity and lease
   @Test
   func readersShareTheLeaseAndHoldTheEntity() async throws {
     let source = CountingSource()
     let events = Cursor(source.events)
     let registry = Entities<Moment>(source: source)
+    let (progress, progressSink) = AsyncStream<String>.makeStream()
+    let reports = Cursor(progress)
     weak var weakEntity: Entity<Moment>?
+    var first: LiveStream<Moment?>?
     var second: LiveStream<Moment?>?
-    let reader: Task<Void, Never>
     do {
       let entity = registry.entity("1")
       weakEntity = entity
-      let first = entity.changes()
+      first = entity.changes()
       second = entity.changes()
-      reader = Task { @MainActor in _ = await Cursor(first).next("a delivery that never comes") }
     }
+    let cancelFirst = first!.cancel
+    Task { @MainActor [first] in
+      let cursor = Cursor(first!)
+      _ = await cursor.next("the snapshot")
+      progressSink.yield("snapshot read")
+      progressSink.yield(await cursor.next("the value after cancel", timeout: .seconds(10)) == nil ? "ended" : "delivered")
+    }
+    first = nil
     try #require(weakEntity != nil)
     #expect(await events.next("the retain") == "retain 1")
-    reader.cancel()
-    await reader.value
+    #expect(await reports.next("the reader taking its snapshot") == "snapshot read")
+    cancelFirst()
     try #require(weakEntity != nil)
-
     registry.apply(delivery(1, [moment("1", "A")]))
+    #expect(await reports.next("the cancelled reader ending", timeout: .seconds(10)) == "ended")
+
     do {
       let cursor = Cursor(second!)
       #expect(await cursor.next("the delivery")??.text == "A")
