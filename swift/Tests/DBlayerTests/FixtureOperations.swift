@@ -28,19 +28,19 @@ public struct Clip: DBModel {
     public static let title = Column<Clip, String?>("title")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func createFileVariables(widgets: [StickerWidgetInput]? = nil) -> [String: JSONValue] {
+    public static func createFileVariables(widgets: [StickerWidgetInput]? = nil) throws -> [String: JSONValue] {
         var variables: [String: JSONValue] = [:]
-        if let value = widgets { variables["widgets"] = JSONValue.encode(value) }
+        if let value = widgets { variables["widgets"] = try JSONValue.encode(value) }
         return variables
     }
     public static func create(title: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        if let value = title { values["title"] = JSONValue.encode(value) }
+        if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await create(values: values)
     }
     public func update(title: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        if let value = title { values["title"] = JSONValue.encode(value) }
+        if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await update(values: values)
     }
 }
@@ -72,18 +72,18 @@ public struct Inbox: DBModel {
     public static let title = Column<Inbox, String>("title")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func shelf(list: ContainerShelfKind) -> Query<Self> {
-        let built = Query<Self>(relation: "shelf", params: ["list": JSONValue.encode(list)])
+    public static func shelf(list: ContainerShelfKind) throws -> Query<Self> {
+        let built = Query<Self>(relation: "shelf", params: ["list": try JSONValue.encode(list)])
         return built
     }
     public static func create(title: String) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        values["title"] = JSONValue.encode(title)
+        values["title"] = try JSONValue.encode(title)
         return try await create(values: values)
     }
     public func update(title: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        if let value = title { values["title"] = JSONValue.encode(value) }
+        if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await update(values: values)
     }
 }
@@ -115,18 +115,18 @@ public struct Roster: DBModel {
     public static let title = Column<Roster, String>("title")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static func containerMembers(_ containerId: String, order: ContainerMemberOrder = .joined) -> Query<Self> {
-        let built = Query<Self>(relation: "container_members", params: ["containerId": JSONValue.encode(containerId), "order": JSONValue.encode(order)])
+    public static func containerMembers(_ containerId: String, order: ContainerMemberOrder = .joined) throws -> Query<Self> {
+        let built = Query<Self>(relation: "container_members", params: ["containerId": try JSONValue.encode(containerId), "order": try JSONValue.encode(order)])
         return built
     }
     public static func create(title: String) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        values["title"] = JSONValue.encode(title)
+        values["title"] = try JSONValue.encode(title)
         return try await create(values: values)
     }
     public func update(title: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
-        if let value = title { values["title"] = JSONValue.encode(value) }
+        if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await update(values: values)
     }
 }
@@ -685,8 +685,8 @@ public struct ContainerMediaLoadResult: Codable, Sendable, Equatable {
 public enum Operations {
     public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {
         var variables: [String: JSONValue] = [:]
-        variables["kind"] = JSONValue.encode(kind)
-        if let value = size { variables["size"] = JSONValue.encode(value) }
+        variables["kind"] = try JSONValue.encode(kind)
+        if let value = size { variables["size"] = try JSONValue.encode(value) }
         return try await DB.run("QrCodeCreate", variables: ["input": JSONValue.object(variables)], as: QrCodeCreateResult.self)
     }
     public static func signOut() async throws {
@@ -695,7 +695,7 @@ public enum Operations {
     }
     public static func stickerSend(input: StickerInput) async throws -> StickerSendResult {
         var variables: [String: JSONValue] = [:]
-        variables["input"] = JSONValue.encode(input)
+        variables["input"] = try JSONValue.encode(input)
         return try await DB.run("StickerSend", variables: variables, as: StickerSendResult.self)
     }
     public static func pricingLoad() async throws -> PricingLoadResult {
@@ -704,24 +704,24 @@ public enum Operations {
     }
     public static func momentCreate(input: MomentInput) async throws -> MomentCreateResult {
         var variables: [String: JSONValue] = [:]
-        variables["input"] = JSONValue.encode(input)
+        variables["input"] = try JSONValue.encode(input)
         return try await DB.run("MomentCreate", variables: variables, as: MomentCreateResult.self)
     }
     public static func giphyLoad(type: String, limit: Int? = nil) async throws -> [GiphyLoadResult] {
         var variables: [String: JSONValue] = [:]
-        variables["type"] = JSONValue.encode(type)
-        if let value = limit { variables["limit"] = JSONValue.encode(value) }
+        variables["type"] = try JSONValue.encode(type)
+        if let value = limit { variables["limit"] = try JSONValue.encode(value) }
         return try await DB.run("Giphy", variables: variables, as: [GiphyLoadResult].self)
     }
     public static func widgetsSend(widgets: [StickerWidgetInput]? = nil) async throws -> WidgetsSendResult {
         var variables: [String: JSONValue] = [:]
-        if let value = widgets { variables["widgets"] = JSONValue.encode(value) }
+        if let value = widgets { variables["widgets"] = try JSONValue.encode(value) }
         return try await DB.run("WidgetsSend", variables: variables, as: WidgetsSendResult.self)
     }
     public static func containerMediaLoad(containerId: String, upToSequence: Int? = nil) async throws -> ContainerMediaLoadResult {
         var variables: [String: JSONValue] = [:]
-        variables["containerId"] = JSONValue.encode(containerId)
-        if let value = upToSequence { variables["upToSequence"] = JSONValue.encode(value) }
+        variables["containerId"] = try JSONValue.encode(containerId)
+        if let value = upToSequence { variables["upToSequence"] = try JSONValue.encode(value) }
         return try await DB.run("containerMedia", variables: variables, as: ContainerMediaLoadResult.self)
     }
 }

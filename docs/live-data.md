@@ -136,9 +136,9 @@ struct ProfileView: View {
   @Live var moments: [Moment]
   @Live var user: User?
 
-  init(userId: RowId) {
+  init(userId: RowId) throws {
     self.userId = userId
-    _moments = Live(Moment.where(Moment.userId == userId).order(Moment.createdAt.desc()))
+    _moments = Live(try Moment.where(Moment.userId == userId).order(Moment.createdAt.desc))
     _user    = Live(User.find(userId))
   }
 
@@ -170,7 +170,7 @@ A load that ends with an error reports `failed` when the list has no rows. A lis
 **Pages of a related list.** A list that lives under a node, such as the members of a group, pages with `loadMore()` and shows `hasMore` and `total` in its snapshot (each order of the list, `order: .ownerFirst`, has its own window) (`total` is nil when the connection has no `totalCount` and the scope has no `total from:`). See [node reads](models.md#node-reads). `loadMore()` returns `loaded(hasMore:)` when it fetched a page, `noMore` when the chain has no next page and `alreadyLoading` when another load of the same list was in flight: it never says `noMore` for a load that was only busy.
 
 ```swift
-let members = User.groupMembers(groupId, order: .ownerFirst)
+let members = try User.groupMembers(groupId, order: .ownerFirst)
 try await members.load()
 for await snapshot in try await members.snapshots.stream() { footer.isHidden = !snapshot.hasMore }
 try await members.loadMore()                       // .loaded(hasMore: true) while another page exists
@@ -185,7 +185,7 @@ members.loadMore()
 **Replaced ids.** A record created offline is shown under a temporary id until the server answers (or a row that matches it lands first, see `match_by` in [writing data](writing-data.md)). The delivery that swaps the ids tells it: `query.snapshots` yields the rows with `replaced`, a map from the real id to the temporary id that it replaced, and `LiveList` keeps the map of its last delivery. A list that animates insertions uses it to move the existing row instead of removing one and inserting another.
 
 ```swift
-let thread = LiveList(Note.thread(groupId))   // thread.rows, thread.replaced, thread.ids
+let thread = LiveList(try Note.thread(groupId))   // thread.rows, thread.replaced, thread.ids
 ```
 
 `ids` changes only when a delivery inserts, removes, moves or replaces a row, and not when a row is updated. A view that reads `ids` and gets each row from its [entity](entities.md) redraws on those deliveries only.
@@ -197,7 +197,7 @@ val thread = LiveList(Note.thread(groupId), viewModelScope)   // thread.rows, th
 **Edits.** A delivery also tells how the rows changed: `Snapshot.edits` is the ordered steps `rewrite(index, row)`, `insert(index, row)` and `remove(index, id)` from the rows of the previous delivery to the new rows. Each step carries the value of its own moment, so the steps of several deliveries replay in order (`rows.replay(edits)`) and the last write of an id wins. A slow reader gets the steps of the deliveries it missed joined in order. `LiveList.takeEdits()` returns the steps since the reader last took them and then counts the reader as up to date. A reader that mirrors the rows patches its mirror with the steps and reads only the changed rows. `edits` is nil, and the reader takes `rows` whole, for the first delivery, a whole list, a list that holds a row that did not decode, and a run of steps longer than the list. The library still looks up an id by scan for a replaced, removed or moved row, moves the tail of the array for an insert or remove in the middle, and copies the array once per delivery when a reader still holds the previous one.
 
 ```swift
-for await snapshot in Note.thread(groupId).snapshots {
+for await snapshot in try await Note.thread(groupId).snapshots.stream() {
   if let edits = snapshot.edits { mirror.replay(edits) } else { mirror = snapshot.rows }
 }
 ```
@@ -239,7 +239,7 @@ feed.loadMore()
 A screen that needs fresh history on every entry can set `refreshOnConnect`. The initial connection then forces 1 request, including when cached data is fresh. `waitForInitialLoad()` waits for that request and throws its error. It does not request again. Cached rows remain visible during loading and after failure. Ending the list cancels its wait without cancelling a request shared with other readers.
 
 ```swift
-let thread = LiveList(Note.thread(groupId), refreshOnConnect: true)
+let thread = LiveList(try Note.thread(groupId), refreshOnConnect: true)
 try await thread.waitForInitialLoad()
 ```
 
@@ -251,7 +251,7 @@ thread.waitForInitialLoad()
 **Windows.** A group shows its last rows, not its whole history. `query.window(tail: n)` keeps the last `n` rows of an ordered query in memory (the query has no limit, include or search). A relation that lists by a param column, such as `scope :thread, insert_on: [:event, :response]` with `where groupId: :groupId` and an `order`, is a valid query: its members are the rows the relation loaded or received. A relation without an `order` has no local sort and is refused with `NotWindowable`. A scope declared with `stable_order: true` (see [models](models.md#scopes)) lists its rows in the order they were shown: a confirmed message, an event that changes a `sequenceNumber` and a reloaded page do not move a row that is on screen. A row outside the window is not decoded and not held, and a change outside the window delivers nothing. `LiveWindow` is to `Window` what `LiveList` is to `Query`: it keeps the rows, `hasBefore`, `hasAfter` and `total`, and it has `takeEdits()` with the steps of [Edits](#in-your-ui) in window positions. `hasBefore` and `hasAfter` tell whether the database holds rows beyond each edge, and `total` is the number of rows of the query. The window follows the tail: a new last row enters and the oldest row of the window leaves. `expand(before:)` adds up to that many older rows from the database, `expand(after:)` adds newer rows, and neither adds a row that does not exist. The window ends with its owner. The library keeps the ids and sort keys of the whole query, not its rows. Windows over the same query share one set of sort keys when they open, so the second window reads no keys from the database. The window reads the local database only: it loads no page from the server yet.
 
 ```swift
-let thread = LiveWindow(Note.thread(groupId).window(tail: 50))   // rows keep their place when the server confirms a message
+let thread = LiveWindow(try Note.thread(groupId).window(tail: 50))   // rows keep their place when the server confirms a message
 ```
 
 ```kotlin
@@ -259,7 +259,7 @@ val thread = LiveWindow(Note.thread(groupId).window(tail = 50), viewModelScope)
 ```
 
 ```swift
-let group = LiveWindow(Note.where(Note.groupId == groupId).order(Note.createdAt.asc).window(tail: 50))
+let group = LiveWindow(try Note.where(Note.groupId == groupId).order(Note.createdAt.asc).window(tail: 50))
 if group.hasBefore { group.expand(before: 50) }                 // group.rows, group.total are observable
 if let edits = group.takeEdits() { mirror.replay(edits) } else { mirror = group.rows }
 ```
@@ -315,7 +315,7 @@ A live query that cannot start throws its error from `current()` and `stream()`.
 
 ```swift
 Moment.find(id)
-Moment.where(Moment.userId == id).order(Moment.createdAt.desc()).limit(20)
+try Moment.where(Moment.userId == id).order(Moment.createdAt.desc).limit(20)
 Moment.recent                       // a named scope
 moment.author                       // belongs_to
 moment.vibes                        // has_many
@@ -342,7 +342,7 @@ Fields listed by `search :text, :tags` use SQLite FTS5. The index changes in the
 ```swift
 Query<Moment>().search("hel")                          // finds "hello": the last word is a prefix
 Query<Moment>().search("hello wor", wholeWords: true)  // every word must match whole
-Query<Moment>().search("cats").where(Moment.userId == id).limit(20)
+try Query<Moment>().search("cats").where(Moment.userId == id).limit(20)
 ```
 
 ```kotlin

@@ -45,6 +45,8 @@ Android 13 (API 33) or newer.
 - [Testing](docs/testing.md)
 - [Architecture](docs/architecture.md)
 
+Core tests check shared behavior. Swift and Kotlin tests check bindings and platform APIs. The full check also rejects missing network coverage reports.
+
 ## How a model looks
 
 Models are described in `.dbl` files with a Rails-like syntax:
@@ -91,8 +93,11 @@ The generated bindings give you a live property. Declare the query, use the rows
 
 ```swift
 struct FeedView: View {
-  @Live(Moment.where(Moment.userId == me.id).order(Moment.createdAt.desc()).limit(20))
-  var moments
+  @Live var moments: [Moment]
+
+  init(userId: String) throws {
+    _moments = Live(try Moment.where(Moment.userId == userId).order(Moment.createdAt.desc).limit(20))
+  }
 
   var body: some View {
     List(moments) { MomentRow(moment: $0) }

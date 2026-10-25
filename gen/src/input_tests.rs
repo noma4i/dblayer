@@ -69,7 +69,7 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
         "    public init(name: String, mood: GraphQLNullable<Mood> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, scale: GraphQLNullable<Double> = .omitted, pinned: Bool, sentAt: GraphQLNullable<String> = .omitted, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted) {",
         "public struct OwnerInput: Encodable, Sendable, Equatable {",
         "public static func stickerSend(input: StickerInput) async throws -> StickerSendResult {",
-        "variables[\"input\"] = JSONValue.encode(input)",
+        "variables[\"input\"] = try JSONValue.encode(input)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }

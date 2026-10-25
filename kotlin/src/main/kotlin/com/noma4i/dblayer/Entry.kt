@@ -49,10 +49,10 @@ object DBlayer {
 
     /** Sends one registered operation that no model owns and decodes the value at its root field. The generated `Operations` calls use it. */
     suspend fun <Answer> run(operation: String, variables: JsonObject, serializer: KSerializer<Answer>): Answer =
-        dbJson.decodeFromString(serializer, database.run(operation, variables.toString()))
+        dbJson.decodeFromString(serializer, database.run(operation, variables.jsonText()))
 
     suspend fun run(operation: String, variables: JsonObject) {
-        database.run(operation, variables.toString())
+        database.run(operation, variables.jsonText())
     }
 
     /** The one database of the process. Set by `open`, empty again after `close`. */
@@ -76,7 +76,7 @@ object DBlayer {
         http: EncryptedHttp? = null,
     ) = opening.withLock {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        val options = OpenOptions(JsonArray(definitions).toString())
+        val options = OpenOptions(JsonArray(definitions).jsonText())
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers, cablePath = encrypted?.endpoints?.cable) }
         Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) })
@@ -88,7 +88,7 @@ object DBlayer {
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        if (transport != null) opened.registerOperations(JsonArray(definitions).toString())
+        if (transport != null) opened.registerOperations(JsonArray(definitions).jsonText())
         database = opened
     }
 }

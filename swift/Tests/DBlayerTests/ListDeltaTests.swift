@@ -11,7 +11,7 @@ extension BridgeProbeTests {
   }
 
   fileprivate static func watching(_ query: Query<Moment>, feed: ListFeed<Moment>) async throws -> LiveStream<[Moment]> {
-    let json = query.json
+    let json = try query.json
     let source = LiveSource<[Moment]>(initial: []) { emit in
       let subscription = try DB.database.liveQuery(queryJson: json, listener: ChangeListener { emit(feed.apply($0).rows) })
       return { subscription.cancel() }
@@ -150,7 +150,7 @@ extension BridgeProbeTests {
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let gate = DispatchSemaphore(value: 0)
     let deliveries = OpenCounter()
-    let json = Moment.recent.json
+    let json = try Moment.recent.json
     let (values, sink) = AsyncStream<Snapshot<Moment>>.makeStream()
     let session = ListSession<Moment, Snapshot<Moment>>(
       open: { listener in

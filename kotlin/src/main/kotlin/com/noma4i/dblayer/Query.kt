@@ -95,7 +95,7 @@ class Query<Model : DBModel>(
         if (orders.isNotEmpty()) put("order", JsonArray(orders.map { buildJsonObject { put("field", it.field); put("direction", it.direction) } }))
         limitCount?.let { put("limit", it) }
         relation?.let { put("relation", it); put("params", params) }
-    }.toString()
+    }.jsonText()
 
     val live: LiveSource<List<Model>>
         get() = listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveQuery(json, listener) }) { applied, _ -> applied.rows }
@@ -131,13 +131,13 @@ class Query<Model : DBModel>(
 
     /** The values that the connection of this relation carried on the edge of one row, or null when the row is not in the connection. It reads one row by key and never waits for a write. */
     fun edgeValues(id: String): JsonObject? =
-        (Json.parseToJsonElement(DBlayer.database.edgeValues(modelName, relation.orEmpty(), params.toString(), listOf(id))) as JsonObject)[id] as? JsonObject
+        (Json.parseToJsonElement(DBlayer.database.edgeValues(modelName, relation.orEmpty(), params.jsonText(), listOf(id))) as JsonObject)[id] as? JsonObject
 
     suspend fun readEdgeValues(id: String): JsonObject? = withContext(Dispatchers.IO) { edgeValues(id) }
 
-    suspend fun load() = DBlayer.database.load(modelName, relation.orEmpty(), params.toString())
-    suspend fun refresh() = DBlayer.database.refresh(modelName, relation.orEmpty(), params.toString())
-    suspend fun loadMore(): LoadMoreResult = DBlayer.database.loadMore(modelName, relation.orEmpty(), params.toString())
+    suspend fun load() = DBlayer.database.load(modelName, relation.orEmpty(), params.jsonText())
+    suspend fun refresh() = DBlayer.database.refresh(modelName, relation.orEmpty(), params.jsonText())
+    suspend fun loadMore(): LoadMoreResult = DBlayer.database.loadMore(modelName, relation.orEmpty(), params.jsonText())
 }
 
 data class Cached<Value>(val value: Value, val revision: Long)

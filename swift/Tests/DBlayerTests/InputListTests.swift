@@ -19,12 +19,12 @@ extension BridgeProbeTests {
 
     #expect(result.id == "w1")
     let sent = transport.calls.first { $0.operationName == "WidgetsSend" }?.variablesJson ?? ""
-    #expect(JSONValue.parse(sent) == JSONValue.parse(#"{"widgets":\#(Self.widgetsJSON)}"#), "variables sent: \(sent)")
+    #expect(try JSONValue.read(sent) == JSONValue.read(#"{"widgets":\#(Self.widgetsJSON)}"#), "variables sent: \(sent)")
   }
 
   @Test
-  func theUploadArgsOfAModelBecomeTypedVariables() {
-    #expect(Clip.createFileVariables(widgets: Self.widgets) == ["widgets": JSONValue.parse(Self.widgetsJSON)])
-    #expect(Clip.createFileVariables().isEmpty)
+  func theUploadArgsOfAModelBecomeTypedVariables() throws {
+    #expect(try Clip.createFileVariables(widgets: Self.widgets) == ["widgets": JSONValue.read(Self.widgetsJSON)])
+    #expect(try Clip.createFileVariables().isEmpty)
   }
 }

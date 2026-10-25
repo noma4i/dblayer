@@ -21,7 +21,7 @@ extension BridgeProbeTests {
     transport.enqueue("ContainerMembers", reply: membersPage("b", 0..<2, hasNext: false))
     transport.enqueue("ContainerMembers", reply: membersPage("a", 30..<45, hasNext: false))
 
-    let first = User.containerMembers("c1")
+    let first = try User.containerMembers("c1")
     try await first.load()
     try await User.containerMembers("c2").load()
     let counted = try await Cursor(await first.snapshots.stream()).first("the member count") { $0.total == 53 }

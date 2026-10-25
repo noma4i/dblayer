@@ -179,7 +179,7 @@ fn union_cell<'a>(field: &'a FieldSpec, value: &Value, types: &mut Types<'a>) ->
 }
 
 fn cell<'a>(field: &'a FieldSpec, value: Option<&Value>, types: &mut Types<'a>) -> Cell {
-    let Some(value) = value.filter(|value| !value.is_null()) else { return Cell::Null };
+    let Some(value) = value.filter(|value| field.nullable || !value.is_null()).or(field.default.as_ref()).filter(|value| !value.is_null()) else { return Cell::Null };
     match (&field.kind, field.app_type.as_deref()) {
         (FieldKind::Scalar { .. } | FieldKind::Enum { .. }, _) => scalar_cell(value),
         (FieldKind::List { .. }, _) => value.as_array().map_or(Cell::Null, |items| Cell::Seq { items: items.iter().map(scalar_cell).collect() }),

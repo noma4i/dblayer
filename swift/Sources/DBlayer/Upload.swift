@@ -22,7 +22,7 @@ public struct UploadRequest: Sendable {
   }
 
   var json: String {
-    JSONValue.object(["path": .string(path), "name": name.map(JSONValue.string) ?? .null, "mime": mime.map(JSONValue.string) ?? .null, "variables": .object(variables), "steps": Self.steps(mutation: mutation, createBlob: createBlob, multipart: multipart)]).text
+    get throws { try JSONValue.object(["path": .string(path), "name": name.map(JSONValue.string) ?? .null, "mime": mime.map(JSONValue.string) ?? .null, "variables": .object(variables), "steps": Self.steps(mutation: mutation, createBlob: createBlob, multipart: multipart)]).text }
   }
 
   static func steps(mutation: String, createBlob: String?, multipart: Multipart?) -> JSONValue {
@@ -59,8 +59,10 @@ public struct UploadBatchRequest: Sendable {
   }
 
   var json: String {
-    let steps = UploadRequest.steps(mutation: "", createBlob: createBlob, multipart: multipart)
-    return JSONValue.object(["operation": .string(operation), "steps": steps, "variables": .object(variables)]).text
+    get throws {
+      let steps = UploadRequest.steps(mutation: "", createBlob: createBlob, multipart: multipart)
+      return try JSONValue.object(["operation": .string(operation), "steps": steps, "variables": .object(variables)]).text
+    }
   }
 }
 

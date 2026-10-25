@@ -99,7 +99,7 @@ Case names come from the values: lowerCamel in Swift (`like`, `fooBar`, `` `defa
 Every enum has an `unknown` case that keeps the text. A value the declaration lacks is not an error on any path: a server row, a nested JSON value, an input, an argument and a result decode it into `unknown`, and writing it back sends the same text. The SQLite column stays text and is stored as it arrived, so a filter compares the text of the typed value.
 
 ```swift
-let loved = Vibe.where(Vibe.kind == .love)
+let loved = try Vibe.where(Vibe.kind == .love)
 let vibe = try await Vibe.create(momentId: "m", userId: "u", kind: .love)
 switch vibe.kind {
 case .like, .love, .laugh: break
@@ -159,6 +159,11 @@ scalar :Int64, as: :long
 Declare nested values with `attribute :name, NamedType do ... end`. Use `[NamedType]` for a list.
 An object generates a Swift `Codable`, `Sendable`, `Equatable` struct and a Kotlin serializable data class.
 Models decode from row cells. Both platforms use the same type and property names. Use generated values when creating or updating a model. Their serializers read and write canonical nested JSON. Server response paths are resolved in the core before storing rows. Do not write another struct, data class or decoder with the same fields.
+
+Serialization errors propagate to the caller. Non-finite numbers never become null or reach a request.
+Swift value encoding, typed comparisons, parameterized scopes and upload variable builders use `try`.
+Live sources serialize their query when opened and report errors through that opening operation.
+Kotlin JSON text uses `jsonText()`. `parseJsonObject` rejects non-object values.
 
 ```swift
 let reply = NoteReplyNode(body: "Hello", userId: "u1", user: NoteUserRef(id: "u1", fullName: "Ada"))
@@ -338,7 +343,7 @@ end
 
 ```swift
 @Live var online: [Presence]
-_online = Live(Presence.where(Presence.room == "lobby"))
+_online = Live(try Presence.where(Presence.room == "lobby"))
 ```
 
 ```kotlin
@@ -462,7 +467,7 @@ end
 ```
 
 ```swift
-Note.since("c1", afterSequence: 120)
+try Note.since("c1", afterSequence: 120)
 ```
 
 ```kotlin
@@ -485,8 +490,8 @@ end
 ```
 
 ```swift
-let primary = Group.list(list: .primary)
-let secondary = Group.list(list: .secondary)   // a premium group is a member of both windows
+let primary = try Group.list(list: .primary)
+let secondary = try Group.list(list: .secondary)   // a premium group is a member of both windows
 ```
 
 ```kotlin
@@ -735,8 +740,8 @@ query GroupMembers($groupId: ID!, $order: GroupMemberOrder = JOINED, $first: Int
 ```
 
 ```swift
-let members = LiveList(User.groupMembers(groupId))                      // JOINED, members.rows, members.snapshot.hasMore
-let owners = LiveList(User.groupMembers(groupId, order: .ownerFirst))   // its own window and cursor
+let members = LiveList(try User.groupMembers(groupId))                      // JOINED, members.rows, members.snapshot.hasMore
+let owners = LiveList(try User.groupMembers(groupId, order: .ownerFirst))   // its own window and cursor
 try await User.groupMembers(groupId).loadMore()                         // .loaded(hasMore: true) while another page exists
 ```
 

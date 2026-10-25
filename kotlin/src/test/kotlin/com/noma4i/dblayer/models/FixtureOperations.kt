@@ -47,14 +47,14 @@ data class Clip(
             val values = buildJsonObject {
                 title?.let { put("title", jsonValue(it)) }
             }
-            return read(DBlayer.database.create("Clip", values.toString(), "{}"))
+            return read(DBlayer.database.create("Clip", values.jsonText(), "{}"))
         }
     }
     suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted): Clip {
         val values = buildJsonObject {
             put("title", title)
         }
-        return Clip.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
+        return Clip.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -92,14 +92,14 @@ data class Inbox(
             val values = buildJsonObject {
                 put("title", jsonValue(title))
             }
-            return read(DBlayer.database.create("Inbox", values.toString(), "{}"))
+            return read(DBlayer.database.create("Inbox", values.jsonText(), "{}"))
         }
     }
     suspend fun update(title: String? = null): Inbox {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
         }
-        return Inbox.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
+        return Inbox.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -137,14 +137,14 @@ data class Roster(
             val values = buildJsonObject {
                 put("title", jsonValue(title))
             }
-            return read(DBlayer.database.create("Roster", values.toString(), "{}"))
+            return read(DBlayer.database.create("Roster", values.jsonText(), "{}"))
         }
     }
     suspend fun update(title: String? = null): Roster {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
         }
-        return Roster.read(DBlayer.database.update(modelName, id, values.toString(), "{}"))
+        return Roster.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
 }
 

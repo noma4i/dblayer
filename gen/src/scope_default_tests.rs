@@ -35,13 +35,13 @@ fn an_enum_scope_param_is_labeled_and_takes_its_default_only_when_one_is_declare
         (
             "with a default",
             MODEL.to_string(),
-            "public static func chatMembers(_ chatId: String, order: ChatMemberOrder = .joined) -> Query<Self> {",
+            "public static func chatMembers(_ chatId: String, order: ChatMemberOrder = .joined) throws -> Query<Self> {",
             "fun chatMembers(chatId: String, order: ChatMemberOrder = ChatMemberOrder.Joined): Query<User> {",
         ),
         (
             "without a default",
             MODEL.replace(", default: \"JOINED\"", ""),
-            "public static func chatMembers(_ chatId: String, order: ChatMemberOrder) -> Query<Self> {",
+            "public static func chatMembers(_ chatId: String, order: ChatMemberOrder) throws -> Query<Self> {",
             "fun chatMembers(chatId: String, order: ChatMemberOrder): Query<User> {",
         ),
     ];
@@ -52,7 +52,7 @@ fn an_enum_scope_param_is_labeled_and_takes_its_default_only_when_one_is_declare
         let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
         assert!(kotlin.contains(kotlin_signature), "{case}: {kotlin}");
         if case == "with a default" {
-            assert!(swift.contains("\"order\": JSONValue.encode(order)"), "{swift}");
+            assert!(swift.contains("\"order\": try JSONValue.encode(order)"), "{swift}");
         }
     }
 }

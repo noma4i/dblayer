@@ -35,6 +35,9 @@ end
 
 The generated constructors and decoders use these values. A nullable field reads its default when absent and remains null when explicitly null. A required field with a default uses it for absent or null input. A value with the wrong type gives a decoding error.
 
+Core applies defaults before sending cells. Swift and Kotlin decode those cells without substituting values for null.
+Explicit null remains distinct from an absent field after closing and reopening the database.
+
 ## JSON text in `:json` attributes
 
 Declare `attribute :payload, :json, parse: :json, null: true` when the response sends JSON inside a string.

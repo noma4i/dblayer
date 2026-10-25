@@ -43,8 +43,8 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
         let binding = if operation.args.is_empty() { "let" } else { "var" };
         writeln!(out, "    public static func {method}({params}) async throws{returns} {{\n        {binding} variables: [String: JSONValue] = [:]").unwrap();
         for (arg, kind) in &operation.args {
-            if kind.ends_with('?') { writeln!(out, "        if let value = {arg} {{ variables[\"{arg}\"] = JSONValue.encode(value) }}").unwrap(); }
-            else { writeln!(out, "        variables[\"{arg}\"] = JSONValue.encode({arg})").unwrap(); }
+            if kind.ends_with('?') { writeln!(out, "        if let value = {arg} {{ variables[\"{arg}\"] = try JSONValue.encode(value) }}").unwrap(); }
+            else { writeln!(out, "        variables[\"{arg}\"] = try JSONValue.encode({arg})").unwrap(); }
         }
         let sent = operation.wrap.as_ref().map_or("variables".to_string(), |wrap| format!("[\"{wrap}\": JSONValue.object(variables)]"));
         if operation.result.is_none() { writeln!(out, "        try await DB.run(\"{}\", variables: {sent})\n    }}", operation.operation).unwrap(); }

@@ -43,9 +43,9 @@ public struct Window<Model: DBModel>: Sendable {
 
   /// Delivers the rows of the window with `edits` in window positions, the edges and the total of the query. A row outside the window is not decoded.
   public var snapshots: LiveSource<Snapshot<Model>> {
-    let json = query.json, control = control
+    let query = query, control = control
     return listSource(initial: Snapshot(rows: [], replaced: [:], reordered: false), merge: { Snapshot.merging($0, $1) }, open: { listener in
-      let subscription = try DB.database.liveWindow(queryJson: json, tail: UInt32(clamping: control.size), listener: listener)
+      let subscription = try DB.database.liveWindow(queryJson: query.json, tail: UInt32(clamping: control.size), listener: listener)
       control.attach(subscription)
       return subscription
     }) { (applied: ListApplied<Model>, change) in

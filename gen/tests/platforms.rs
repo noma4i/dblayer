@@ -94,8 +94,8 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("static func search(_ query: String) -> Query<Self>"));
-    assert!(swift.contains("params: [\"query\": JSONValue.encode(query)]"));
+    assert!(swift.contains("static func search(_ query: String) throws -> Query<Self>"));
+    assert!(swift.contains("params: [\"query\": try JSONValue.encode(query)]"));
     assert!(!swift.contains("var query ="));
     assert!(kotlin.contains("fun search(query: String): Query<Hit>"));
     assert!(!kotlin.contains("var query ="));
@@ -122,8 +122,8 @@ end
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public func mute(mute: Bool) async throws -> Self"));
-    assert!(swift.contains("values[\"muted\"] = JSONValue.encode(mute)"));
-    assert!(swift.contains("args: [\"mute\": JSONValue.encode(mute)]"));
+    assert!(swift.contains("values[\"muted\"] = try JSONValue.encode(mute)"));
+    assert!(swift.contains("args: [\"mute\": try JSONValue.encode(mute)]"));
     assert!(kotlin.contains("suspend fun mute(mute: Boolean): Container"));
     assert!(kotlin.contains("\"muted\" to jsonValue(mute)"));
 }
@@ -209,11 +209,11 @@ fn models_and_nested_types_read_positional_cells_on_both_platforms() {
     for token in [
         "public init(wire row: WireRow) throws",
         "self.ownerId = try r.opt(0, \\.asId)",
-        "self.count = try r.opt(1, \\.asInt) ?? 2",
-        "self.tags = try r.listOpt(2, \\.asText) ?? []",
+        "self.count = try r.req(1, \\.asInt)",
+        "self.tags = try r.list(2, \\.asText)",
         "self.extra = try r.jsonOpt(3)",
         "self.size = try r.objOpt(4, MomentSize.init(cells:))",
-        "self.boxes = try r.arrOpt(5, MomentBox.init(cells:)) ?? []",
+        "self.boxes = try r.arr(5, MomentBox.init(cells:))",
         "public init(cells: [Cell]) throws",
     ] {
         assert!(swift.contains(token), "missing Swift {token}\n{swift}");
@@ -222,11 +222,11 @@ fn models_and_nested_types_read_positional_cells_on_both_platforms() {
         "companion object : ModelDecoder<Moment>",
         "override fun decode(row: WireRow): Moment",
         "ownerId = r.opt(0, Cell::asId)",
-        "count = r.opt(1, Cell::asInt) ?: 2L",
-        "tags = r.listOpt(2, Cell::asText) ?: listOf()",
+        "count = r.req(1, Cell::asInt)",
+        "tags = r.list(2, Cell::asText)",
         "extra = r.jsonOpt(3)",
         "size = r.objOpt(4) { MomentSize.fromCells(it) }",
-        "boxes = r.arrOpt(5) { MomentBox.fromCells(it) } ?: listOf()",
+        "boxes = r.arr(5) { MomentBox.fromCells(it) }",
         "fun fromCells(cells: List<Cell>)",
     ] {
         assert!(kotlin.contains(token), "missing Kotlin {token}\n{kotlin}");

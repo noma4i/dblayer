@@ -19,7 +19,7 @@ use super::rows::{column_value, fetch_stored, placeholders, Reader, StoredRow, C
 use super::search::{reindex, touches_search, unindex};
 use super::stable;
 use crate::nodes::{delete_trees, read_trees, texts, write_tree};
-use super::shape::{delete_tables, insert_children, member_values, normalize, normalize_leaf};
+use super::shape::{delete_tables, insert_children, member_values, normalize, normalize_leaf, null_marker};
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
@@ -196,8 +196,8 @@ fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id:
     Ok(fields)
 }
 
-fn without_nulls(row: &Map<String, Value>) -> Map<String, Value> {
-    row.iter().filter(|(_, value)| !value.is_null()).map(|(key, value)| (key.clone(), value.clone())).collect()
+fn without_nulls(info: &ModelInfo, row: &Map<String, Value>) -> Map<String, Value> {
+    row.iter().filter(|(key, value)| !value.is_null() || info.spec.field(key).is_some_and(|field| field.nullable && field.default.is_some())).map(|(key, value)| (key.clone(), value.clone())).collect()
 }
 
 type Prefetched = HashMap<(String, String), Option<StoredRow>>;
@@ -243,7 +243,7 @@ fn apply_upsert(
         None => fetch_stored(connection, info, std::slice::from_ref(&id), true)?.remove(&id),
     };
     let old_row = existing.as_ref().map(|stored| &stored.row);
-    let mut next = without_nulls(row);
+    let mut next = without_nulls(info, row);
     canonicalize(info, &mut next);
     let mut pending = BTreeSet::new();
     if !envelope.writes_local && info.spec.has_local() {
@@ -339,6 +339,10 @@ fn write_row(
             FieldPlan::Leaf { field, leaf } => {
                 names.push(leaf.column.clone());
                 values.push(column_value(leaf.ty, row.get(field)));
+                if let Some(column) = &leaf.null {
+                    names.push(column.name.clone());
+                    values.push(null_marker(row.get(field)));
+                }
             }
             FieldPlan::Typed { field, member, .. } => {
                 let mut columns = Vec::new();
@@ -378,7 +382,7 @@ fn write_row(
             if exists {
                 delete_trees(connection, table, "row_id = ?1 AND field = ?2", &owner)?;
             }
-            if let Some(value) = row.get(field).filter(|value| !value.is_null()) {
+            if let Some(value) = row.get(field) {
                 write_tree(connection, table, &["row_id", "field"], &owner, value)?;
             }
         }

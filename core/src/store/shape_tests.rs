@@ -43,6 +43,61 @@ fn store_with_gifts() -> Store {
     store
 }
 
+#[test]
+fn nullable_defaults_preserve_absence_null_and_values_after_reopen() {
+    let variants = vec![FieldSpec::variant("item", "Item", vec![FieldSpec::scalar("text", ScalarKind::Str)])];
+    let cases = [
+        (FieldSpec::scalar("value", ScalarKind::Str), json!("text")),
+        (FieldSpec::enumeration("value", &["text"]), json!("text")),
+        (FieldSpec::list("value", ScalarKind::Str), json!(["text"])),
+        (typed(FieldSpec::object("value"), "Value", vec![FieldSpec::scalar("text", ScalarKind::Str)]), json!({"text": "text"})),
+        (typed(FieldSpec::array("value"), "Value", vec![FieldSpec::scalar("text", ScalarKind::Str)]), json!([{"text": "text"}])),
+        (FieldSpec::raw("value"), json!({"text": "text"})),
+        (FieldSpec::union("value", "Choice", variants.clone()), json!({"__typename": "Item", "text": "text"})),
+        (FieldSpec::union_array("value", "Choice", variants), json!([{"__typename": "Item", "text": "text"}])),
+    ];
+    for (field, value) in cases {
+        for location in 0..5 {
+            let field = field.clone().nullable().with_default(value.clone());
+            let field = match location {
+                0 => field,
+                1 => typed(FieldSpec::object("meta"), "Meta", vec![field]),
+                2 => typed(FieldSpec::array("meta"), "Meta", vec![field]),
+                3 => FieldSpec::union("meta", "Meta", vec![FieldSpec::variant("item", "Item", vec![field])]),
+                _ => FieldSpec::union("meta", "Meta", vec![FieldSpec::variant("item", "Item", vec![])]).with_shared(vec![field]),
+            };
+            let spec = ModelSpec::new("gifts", vec![FieldSpec::scalar("id", ScalarKind::Id), field]);
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("values.sqlite");
+            for input in [None, Some(serde_json::Value::Null), Some(value.clone()), Some(serde_json::Value::Null)] {
+                let store = Store::open(&path).unwrap();
+                store.boot(std::slice::from_ref(&spec), None).unwrap();
+                store.mark_ready();
+                let mut fields = serde_json::Map::new();
+                if let Some(value) = &input { fields.insert("value".into(), value.clone()); }
+                let data = match location {
+                    0 => { fields.insert("id".into(), json!("g1")); json!(fields) }
+                    1 => json!({"id": "g1", "meta": fields}),
+                    2 => json!({"id": "g1", "meta": [fields]}),
+                    _ => { fields.insert("__typename".into(), json!("Item")); json!({"id": "g1", "meta": fields}) }
+                };
+                put(&store, data);
+                drop(store);
+                let store = Store::open(&path).unwrap();
+                store.boot(std::slice::from_ref(&spec), None).unwrap();
+                store.mark_ready();
+                let row = store.point("gifts", "g1").unwrap().unwrap();
+                let actual = match location {
+                    0 => row.get("value"),
+                    2 => row.get("meta").and_then(|value| value.get(0)).and_then(|value| value.get("value")),
+                    _ => row.get("meta").and_then(|value| value.get("value")),
+                };
+                assert_eq!(actual, input.as_ref(), "location={location}, field={:?}", spec.fields[1]);
+            }
+        }
+    }
+}
+
 fn put(store: &Store, value: serde_json::Value) {
     store.commit(envelope(store, vec![upsert("gifts", value)], vec![])).unwrap();
 }

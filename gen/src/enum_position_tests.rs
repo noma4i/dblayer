@@ -12,13 +12,13 @@ fn a_list_of_enum_values_is_typed_inside_nested_objects_union_variants_arrays_an
     for line in [
         "    public let tags: [MetaTag]\n",
         "tags = try container.decodeIfPresent([MetaTag].self, forKey: .tags) ?? [MetaTag.a]",
-        "tags = try r.listOpt(0, \\.asText)?.map(MetaTag.init(rawValue:)) ?? [MetaTag.a]",
+        "tags = try r.list(0, \\.asText).map(MetaTag.init(rawValue:))",
         "    public let tones: [CardTone]\n",
         "tones = try r.list(1, \\.asText).map(CardTone.init(rawValue:))",
         "    public let marks: [CardMark]?\n",
         "    public let states: [GhostState]\n",
         "states = try r.list(0, \\.asText).map(GhostState.init(rawValue:))",
-        "self.picked = try r.listOpt(4, \\.asText)?.map(ChatPicked.init(rawValue:)) ?? [ChatPicked.a]",
+        "self.picked = try r.list(4, \\.asText).map(ChatPicked.init(rawValue:))",
         "public enum MetaTag: Codable, Sendable, Hashable {",
         "public enum GhostState: Codable, Sendable, Hashable {",
     ] {
@@ -30,7 +30,7 @@ fn a_list_of_enum_values_is_typed_inside_nested_objects_union_variants_arrays_an
         "val tones: List<CardTone>,",
         "val marks: List<CardMark>? = null,",
         "val states: List<GhostState>,",
-        "picked = r.listOpt(4, Cell::asText)?.map { ChatPicked.of(it) } ?: listOf(ChatPicked.A),",
+        "picked = r.list(4, Cell::asText).map { ChatPicked.of(it) },",
         "sealed class CardTone(override val raw: String) : RawEnum {",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");

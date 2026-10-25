@@ -19,7 +19,7 @@ extension BridgeProbeTests.EnumTests {
   @Test @MainActor
   func aListOfEnumValuesWrittenAsTextsReadsBackTypedAndAnAbsentListReadsAsNil() async throws {
     let database = try await openShelves()
-    let typed = JSONValue.object(["title": .string("t"), "shelves": JSONValue.encode([ContainerShelf.secondary])])
+    let typed = JSONValue.object(["title": .string("t"), "shelves": try JSONValue.encode([ContainerShelf.secondary])])
     #expect(try Container.decode(try await database.create(model: "Container", valuesJson: typed.text, argsJson: "{}")).shelves == [.secondary])
     #expect(try Container.decode(try await database.create(model: "Container", valuesJson: #"{"title":"u"}"#, argsJson: "{}")).shelves == nil)
   }

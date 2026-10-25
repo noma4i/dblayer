@@ -4,7 +4,7 @@ use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection};
 use serde_json::{Map, Number, Value};
 
-use crate::ddl::{FieldPlan, Layout, Leaf, Member, Table, TableShape, Variant};
+use crate::ddl::{FieldPlan, Layout, Leaf, Member, NullColumn, Table, TableShape, Variant};
 use crate::value::{read_array, read_enum, read_scalar, ScalarKind};
 use crate::schema::{FieldKind, TYPENAME};
 
@@ -33,6 +33,7 @@ impl Store {
 }
 
 pub(crate) fn normalize_leaf(leaf: &Leaf, value: &Value) -> Option<Value> {
+    if leaf.null.is_some() && value.is_null() { return Some(Value::Null); }
     match (&leaf.scalar, &leaf.values) {
         (Some(kind), _) => read_scalar(value, *kind),
         (None, Some(_)) => read_enum(value).map(Value::String),
@@ -74,12 +75,12 @@ fn union_of(layout: &Layout, table: usize) -> Option<&Member> {
     }
 }
 
-/// The value as storage returns it: known members only, scalars read by their kind, nulls and wrong types removed.
 pub(crate) fn normalize(member: &Member, layout: &Layout, value: &Value) -> Option<Value> {
     normalize_with(member, layout, value, |source, key| source.get(key), false)
 }
 
 fn normalize_with(member: &Member, layout: &Layout, value: &Value, read: ReadValue, parse_text: bool) -> Option<Value> {
+    if member.null_column().is_some() && value.is_null() { return Some(Value::Null); }
     match member {
         Member::Leaf(leaf) => normalize_nested_leaf(leaf, value),
         Member::Raw { parse_json: true, .. } if parse_text => crate::value::read_json_text(value),
@@ -118,6 +119,14 @@ fn leaf_sql(leaf: &Leaf, value: Option<&Value>) -> SqlValue {
     column_value(leaf.ty, value)
 }
 
+pub(crate) fn null_marker(value: Option<&Value>) -> SqlValue {
+    if value.is_some_and(Value::is_null) { SqlValue::Integer(1) } else { SqlValue::Null }
+}
+
+fn marked_null(column: Option<&NullColumn>, cells: &Cells) -> bool {
+    column.is_some_and(|column| cells.get(column.pos) == Some(&SqlValue::Integer(1)))
+}
+
 pub(crate) fn member_values(member: &Member, value: Option<&Value>, out: &mut Vec<(String, SqlValue)>) {
     let present = |flag: bool| if flag { SqlValue::Integer(1) } else { SqlValue::Null };
     match member {
@@ -146,6 +155,7 @@ pub(crate) fn member_values(member: &Member, value: Option<&Value>, out: &mut Ve
         }
         Member::List { present: column, .. } | Member::Array { present: column, .. } | Member::UnionArray { present: column, .. } => out.push((column.clone(), present(value.is_some_and(Value::is_array)))),
     }
+    if let Some(column) = member.null_column() { out.push((column.name.clone(), null_marker(value))); }
 }
 
 pub(crate) fn delete_tables(connection: &Connection, layout: &Layout, tables: &[usize], row_id: &str) -> Result<(), StoreError> {
@@ -230,6 +240,7 @@ pub(crate) fn insert_children(
 }
 
 pub(crate) fn take_leaf(leaf: &Leaf, cells: &mut Cells) -> Option<Value> {
+    if marked_null(leaf.null.as_ref(), cells) { return Some(Value::Null); }
     match std::mem::replace(cells.get_mut(leaf.pos)?, SqlValue::Null) {
         SqlValue::Text(text) => Some(Value::String(text)),
         other => leaf_value(leaf, Some(&other)),
@@ -265,6 +276,7 @@ fn present(cells: &Cells, at: usize) -> bool {
 }
 
 pub(crate) fn assemble(member: &Member, layout: &Layout, cells: &Cells, tables: &[TableRows], owner: i64) -> Option<Value> {
+    if marked_null(member.null_column(), cells) { return Some(Value::Null); }
     match member {
         Member::Leaf(leaf) => leaf_value(leaf, cells.get(leaf.pos)),
         Member::Raw { table, .. } => tables[*table].nodes.get(&owner).cloned(),

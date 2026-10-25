@@ -3,7 +3,7 @@ model NestedSample, storage: :local do
   attribute :value, NestedValue, null: true do
     attribute :title, :string
     attribute :note, :string, optional: true
-    attribute :nullableDefault, :string, optional: true, default: "default"
+    attribute :nullableDefault, :string, null: true, default: "default"
     attribute :ownerId, :id, null: true, from: "owner_id"
     attribute :count, :int, default: 2
     attribute :ratio, :num, default: 1.5

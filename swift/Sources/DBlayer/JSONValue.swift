@@ -34,9 +34,8 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
     }
   }
 
-  public static func encode<T: Encodable>(_ value: T) -> JSONValue {
-    guard let data = try? JSONEncoder().encode(value), let decoded = try? JSONDecoder().decode(JSONValue.self, from: data) else { return .null }
-    return decoded
+  public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
+    try decode(JSONEncoder().encode(value))
   }
 
   public func jsonData() throws -> Data {
@@ -60,10 +59,6 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
     try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
   }
 
-  public static func parse(_ text: String) -> JSONValue {
-    (try? read(text)) ?? .null
-  }
-
   public var objectValue: [String: JSONValue] { if case .object(let value) = self { value } else { [:] } }
   public var intValue: Int? {
     switch self {
@@ -81,7 +76,7 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
   }
   public var boolValue: Bool? { if case .bool(let value) = self { value } else { nil } }
   public var stringValue: String? { if case .string(let value) = self { value } else { nil } }
-  public var text: String { String(decoding: (try? JSONEncoder().encode(self)) ?? Data("null".utf8), as: UTF8.self) }
+  public var text: String { get throws { String(decoding: try jsonData(), as: UTF8.self) } }
 }
 
 extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral, ExpressibleByFloatLiteral {

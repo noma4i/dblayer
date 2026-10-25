@@ -30,7 +30,7 @@ fn a_model_operation_takes_schema_enums_and_input_objects_as_typed_args() {
         "public func answerConnection(decision: ConnectionAction, note: NoteInput? = nil, status: ConnectionStatus) async throws -> Self {",
         "public enum ConnectionAction: Codable, Sendable, Hashable {",
         "public struct NoteInput",
-        "values[\"connectionStatus\"] = JSONValue.encode(status)",
+        "values[\"connectionStatus\"] = try JSONValue.encode(status)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }

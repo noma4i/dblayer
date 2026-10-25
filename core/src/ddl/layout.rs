@@ -4,6 +4,18 @@ use crate::value::ScalarKind;
 use super::{column_name, column_type, rev_column, table_name, ColumnType, SERVICE_COLUMNS};
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct NullColumn {
+    pub name: String,
+    pub pos: usize,
+}
+
+impl NullColumn {
+    fn of(field: &FieldSpec, base: &str) -> Option<Self> {
+        (field.nullable && field.default.is_some()).then(|| Self { name: format!("{base}__null"), pos: 0 })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Leaf {
     pub key: String,
     pub column: String,
@@ -12,6 +24,7 @@ pub struct Leaf {
     pub is_bool: bool,
     pub scalar: Option<ScalarKind>,
     pub values: Option<Vec<String>>,
+    pub null: Option<NullColumn>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,15 +36,22 @@ pub struct Variant {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Member {
     Leaf(Leaf),
-    Object { key: String, present: String, at: usize, members: Vec<Member> },
-    List { key: String, present: String, at: usize, table: usize },
-    Array { key: String, present: String, at: usize, table: usize },
-    Raw { key: String, present: String, at: usize, table: usize, kind: FieldKind, parse_json: bool },
-    Union { key: String, present: String, at: usize, shared: Vec<Member>, variants: Vec<Variant> },
-    UnionArray { key: String, present: String, at: usize, table: usize },
+    Object { key: String, present: String, at: usize, members: Vec<Member>, null: Option<NullColumn> },
+    List { key: String, present: String, at: usize, table: usize, null: Option<NullColumn> },
+    Array { key: String, present: String, at: usize, table: usize, null: Option<NullColumn> },
+    Raw { key: String, present: String, at: usize, table: usize, kind: FieldKind, parse_json: bool, null: Option<NullColumn> },
+    Union { key: String, present: String, at: usize, shared: Vec<Member>, variants: Vec<Variant>, null: Option<NullColumn> },
+    UnionArray { key: String, present: String, at: usize, table: usize, null: Option<NullColumn> },
 }
 
 impl Member {
+    pub fn null_column(&self) -> Option<&NullColumn> {
+        match self {
+            Self::Leaf(leaf) => leaf.null.as_ref(),
+            Self::Object { null, .. } | Self::List { null, .. } | Self::Array { null, .. } | Self::Raw { null, .. } | Self::Union { null, .. } | Self::UnionArray { null, .. } => null.as_ref(),
+        }
+    }
+
     pub fn key(&self) -> &str {
         match self {
             Member::Leaf(leaf) => &leaf.key,
@@ -93,12 +113,13 @@ fn leaf(field: &FieldSpec, key: &str, column: &str) -> Option<Leaf> {
         FieldKind::Enum { values } => (None, Some(values.clone())),
         _ => (None, None),
     };
-    Some(Leaf { key: key.to_string(), column: column.to_string(), pos: 0, ty, is_bool: scalar == Some(ScalarKind::Bool), scalar, values })
+    Some(Leaf { key: key.to_string(), column: column.to_string(), pos: 0, ty, is_bool: scalar == Some(ScalarKind::Bool), scalar, values, null: NullColumn::of(field, column) })
 }
 
 impl Builder {
     fn member(&mut self, field: &FieldSpec, key: &str, base: &str, path: &str) -> Option<Member> {
         let present = format!("{base}__present");
+        let null = NullColumn::of(field, base);
         match &field.kind {
             FieldKind::Scalar { .. } | FieldKind::Enum { .. } => leaf(field, key, base).map(Member::Leaf),
             FieldKind::Object if field.app_type.is_some() => {
@@ -106,7 +127,7 @@ impl Builder {
                 for child in &field.fields {
                     members.push(self.member(child, child.from.as_deref().unwrap_or(&child.name), &format!("{base}__{}", column_name(&child.name)), &format!("{path}__{}", column_name(&child.name)))?);
                 }
-                Some(Member::Object { key: key.to_string(), present, at: 0, members })
+                Some(Member::Object { key: key.to_string(), present, at: 0, members, null })
             }
             FieldKind::Union if field.app_type.is_some() => {
                 let mut shared = Vec::new();
@@ -124,25 +145,25 @@ impl Builder {
                     }
                     variants.push(Variant { typename: variant.app_type.clone()?, members });
                 }
-                Some(Member::Union { key: key.to_string(), present: base.to_string(), at: 0, shared, variants })
+                Some(Member::Union { key: key.to_string(), present: base.to_string(), at: 0, shared, variants, null })
             }
             FieldKind::UnionArray if field.app_type.is_some() => {
                 let index = self.tables.len();
                 self.tables.push(Table { name: format!("{}__{path}", self.row_table), shape: TableShape::Elements(Vec::new()) });
-                let union = self.member(&FieldSpec { kind: FieldKind::Union, ..field.clone() }, "", "u", path)?;
+                let union = self.member(&FieldSpec { kind: FieldKind::Union, nullable: false, default: None, ..field.clone() }, "", "u", path)?;
                 self.tables[index].shape = TableShape::Elements(vec![union]);
-                Some(Member::UnionArray { key: key.to_string(), present, at: 0, table: index })
+                Some(Member::UnionArray { key: key.to_string(), present, at: 0, table: index, null })
             }
             FieldKind::List { element } => {
                 let value = leaf(&FieldSpec::scalar("value", *element), "value", "value")?;
                 self.tables.push(Table { name: format!("{}__{path}", self.row_table), shape: TableShape::Values(value) });
-                Some(Member::List { key: key.to_string(), present, at: 0, table: self.tables.len() - 1 })
+                Some(Member::List { key: key.to_string(), present, at: 0, table: self.tables.len() - 1, null })
             }
             FieldKind::Array if field.app_type.is_some() => {
                 let name = field.app_type.clone().unwrap_or_default();
                 if field.fields.is_empty() {
                     let table = self.stack.iter().rev().find(|(declared, _)| *declared == name)?.1;
-                    return Some(Member::Array { key: key.to_string(), present, at: 0, table });
+                    return Some(Member::Array { key: key.to_string(), present, at: 0, table, null });
                 }
                 let index = self.tables.len();
                 self.tables.push(Table { name: format!("{}__{path}", self.row_table), shape: TableShape::Elements(Vec::new()) });
@@ -154,12 +175,12 @@ impl Builder {
                 }
                 self.stack.pop();
                 self.tables[index].shape = TableShape::Elements(members);
-                Some(Member::Array { key: key.to_string(), present, at: 0, table: index })
+                Some(Member::Array { key: key.to_string(), present, at: 0, table: index, null })
             }
             FieldKind::Raw | FieldKind::Object | FieldKind::Array => {
                 let table = self.tables.len();
                 self.tables.push(Table { name: format!("{}__{path}", self.row_table), shape: TableShape::Nodes });
-                Some(Member::Raw { key: key.to_string(), present, at: 0, table, kind: field.kind.clone(), parse_json: field.parse_json })
+                Some(Member::Raw { key: key.to_string(), present, at: 0, table, kind: field.kind.clone(), parse_json: field.parse_json, null })
             }
             _ => None,
         }
@@ -193,6 +214,7 @@ pub fn layout(model: &ModelSpec) -> Layout {
             FieldPlan::Leaf { leaf, .. } => {
                 leaf.pos = next;
                 next += 1;
+                number_null(&mut leaf.null, &mut next);
             }
             FieldPlan::Typed { member, .. } => number(member, &mut next),
             FieldPlan::Rest { .. } => {}
@@ -208,7 +230,10 @@ pub fn layout(model: &ModelSpec) -> Layout {
     let mut layout = Layout { table: builder.row_table, fields, tables, value_table, row_columns: Vec::new(), revs: Vec::new(), select: String::new(), select_lean: String::new() };
     for plan in &layout.fields {
         match plan {
-            FieldPlan::Leaf { leaf, .. } => layout.row_columns.push((leaf.column.clone(), leaf.ty)),
+            FieldPlan::Leaf { leaf, .. } => {
+                layout.row_columns.push((leaf.column.clone(), leaf.ty));
+                append_null_column(leaf.null.as_ref(), &mut layout.row_columns);
+            }
             FieldPlan::Typed { member, .. } => member_columns(member, &mut layout.row_columns),
             FieldPlan::Rest { .. } => {}
         }
@@ -244,6 +269,22 @@ fn number(member: &mut Member, next: &mut usize) {
             *next += 1;
         }
     }
+    let null = match member {
+        Member::Leaf(leaf) => &mut leaf.null,
+        Member::Object { null, .. } | Member::List { null, .. } | Member::Array { null, .. } | Member::Raw { null, .. } | Member::Union { null, .. } | Member::UnionArray { null, .. } => null,
+    };
+    number_null(null, next);
+}
+
+fn number_null(null: &mut Option<NullColumn>, next: &mut usize) {
+    if let Some(column) = null {
+        column.pos = *next;
+        *next += 1;
+    }
+}
+
+fn append_null_column(null: Option<&NullColumn>, columns: &mut Vec<(String, ColumnType)>) {
+    if let Some(column) = null { columns.push((column.name.clone(), ColumnType::Integer)); }
 }
 
 pub fn table_widths(model: &ModelSpec) -> Vec<(String, usize)> {
@@ -280,6 +321,7 @@ pub fn member_columns(member: &Member, out: &mut Vec<(String, ColumnType)>) {
         }
         Member::List { present, .. } | Member::Array { present, .. } | Member::UnionArray { present, .. } | Member::Raw { present, .. } => out.push((present.clone(), ColumnType::Integer)),
     }
+    append_null_column(member.null_column(), out);
 }
 
 impl Layout {

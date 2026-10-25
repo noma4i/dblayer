@@ -42,8 +42,8 @@ fn typed_scope_params_are_int_and_bool_arguments_on_both_platforms() {
     assert_eq!(relation.scalar_types.len(), 2);
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
-        "public static func since(_ chatId: String, afterSequence: Int, includeGifts: Bool) -> Query<Self> {",
-        "params: [\"chatId\": JSONValue.encode(chatId), \"afterSequence\": JSONValue.encode(afterSequence), \"includeGifts\": JSONValue.encode(includeGifts)]",
+        "public static func since(_ chatId: String, afterSequence: Int, includeGifts: Bool) throws -> Query<Self> {",
+        "params: [\"chatId\": try JSONValue.encode(chatId), \"afterSequence\": try JSONValue.encode(afterSequence), \"includeGifts\": try JSONValue.encode(includeGifts)]",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }

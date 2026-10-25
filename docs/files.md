@@ -173,7 +173,7 @@ end
 
 ```swift
 let widgets = [MomentWidgetInput(kind: .emoji, props: .emoji(MomentEmojiInput(code: "fire")))]
-let request = UploadRequest(path: url.path, mutation: "MomentCreateFile", createBlob: "CreateBlob", variables: Moment.createFileVariables(widgets: widgets))
+let request = UploadRequest(path: url.path, mutation: "MomentCreateFile", createBlob: "CreateBlob", variables: try Moment.createFileVariables(widgets: widgets))
 let moment = try await Moment.create(values: ["text": .string("hello")], uploading: request)
 ```
 

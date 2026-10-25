@@ -1089,7 +1089,7 @@ impl ModelSpec {
             let value = field.read(input);
             if let Some(decoded) = value.as_ref().filter(|value| !value.is_null()).and_then(|value| decode(field, value)) {
                 normalized.insert(field.name.clone(), decoded);
-            } else if let Some(default) = field.default.as_ref().filter(|_| field.parse_json && value.is_none()) {
+            } else if let Some(default) = field.default.as_ref().filter(|_| value.is_none() && (field.parse_json || !field.optional)) {
                 normalized.insert(field.name.clone(), default.clone());
             } else if field.optional && value.is_none() {
                 continue;

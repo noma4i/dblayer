@@ -6,7 +6,7 @@ import Testing
 extension BridgeProbeTests {
   private static let tailDocument = "query tailSince($containerId: ID!, $afterSequence: Int, $pinned: Boolean, $first: Int, $after: String) { tailSince(containerId: $containerId, afterSequence: $afterSequence, pinned: $pinned, first: $first, after: $after) { edges { cursor node { id text } } pageInfo { hasNextPage endCursor } } }"
 
-  struct ParamCase: Sendable, CustomTestStringConvertible {
+  struct ParamCase {
     let name: String
     let relation: String?
     let params: [String: JSONValue]
@@ -17,10 +17,11 @@ extension BridgeProbeTests {
       params = query.params
       self.expected = expected
     }
-    var testDescription: String { name }
   }
 
-  static let paramCases: [ParamCase] = [
+  @Test
+  func aScopeParamIsSentAsItsJsonValue() throws {
+    let paramCases: [ParamCase] = try [
     ParamCase("an int and a bool", Tail.since("c1", afterSequence: 120, pinned: true), ["containerId": .string("c1"), "afterSequence": .integer(120), "pinned": .bool(true)]),
     ParamCase("another int", Tail.since("c1", afterSequence: 121, pinned: true), ["containerId": .string("c1"), "afterSequence": .integer(121), "pinned": .bool(true)]),
     ParamCase("a schema enum", Inbox.shelf(list: .primary), ["list": .string("PRIMARY")]),
@@ -31,10 +32,10 @@ extension BridgeProbeTests {
     ParamCase("an order the build lacks", Roster.containerMembers("c1", order: .unknown("LATER")), ["containerId": .string("c1"), "order": .string("LATER")]),
   ]
 
-  @Test(arguments: paramCases)
-  func aScopeParamIsSentAsItsJsonValue(_ item: ParamCase) {
-    #expect(item.relation != nil)
-    #expect(item.params == item.expected)
+    for item in paramCases {
+      #expect(item.relation != nil, Comment(rawValue: item.name))
+      #expect(item.params == item.expected, Comment(rawValue: item.name))
+    }
   }
 
   @MainActor
@@ -48,6 +49,6 @@ extension BridgeProbeTests {
     try await Tail.since("c1", afterSequence: 120, pinned: false).refresh()
 
     let sent = transport.calls.first { $0.operationName == "tailSince" }?.variablesJson ?? ""
-    #expect(JSONValue.parse(sent) == JSONValue.parse(#"{"containerId":"c1","afterSequence":120,"pinned":false,"first":50}"#), "variables sent: \(sent)")
+    #expect(try JSONValue.read(sent) == JSONValue.read(#"{"containerId":"c1","afterSequence":120,"pinned":false,"first":50}"#), "variables sent: \(sent)")
   }
 }

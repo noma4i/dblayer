@@ -14,7 +14,7 @@ fn a_list_of_enum_values_is_a_typed_list_on_both_platforms() {
         "self.lists = try r.list(1, \\.asText).map(ChatList.init(rawValue:))",
         "self.extras = try r.listOpt(2, \\.asText)?.map(ChatExtra.init(rawValue:))",
         "public static let lists = Column<Chat, [ChatList]>(\"lists\")",
-        "values[\"lists\"] = JSONValue.encode(lists)",
+        "values[\"lists\"] = try JSONValue.encode(lists)",
         "public enum ChatList: Codable, Sendable, Hashable {",
         "public enum ChatExtra: Codable, Sendable, Hashable {",
     ] {

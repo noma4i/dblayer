@@ -75,7 +75,7 @@ suspend fun retryAll(): ULong = DBlayer.database.retryAll()
 suspend fun DBModel.destroy() { DBlayer.database.destroy(modelName, id) }
 
 /** Writes a field the server never sends. `JsonNull` clears it. */
-suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement) { DBlayer.database.setLocal(modelName, id, path, value.toString()) }
+suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement) { DBlayer.database.setLocal(modelName, id, path, value.jsonText()) }
 
 /** Waits until the server has answered every queued change of the record, throws on a refusal or when offline. */
 suspend fun DBModel.settled() { DBlayer.database.settled(modelName, id) }
@@ -84,7 +84,7 @@ suspend fun DBModel.settled() { DBlayer.database.settled(modelName, id) }
 suspend fun DBModel.confirmedId(): String = DBlayer.database.confirmed(modelName, id)
 
 suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, decoder: ModelDecoder<Model>): Model =
-    decoder.read(DBlayer.database.act(modelName, id, action, values.toString(), args.toString()).row)
+    decoder.read(DBlayer.database.act(modelName, id, action, values.jsonText(), args.jsonText()).row)
 
 suspend fun <Model : DBModel, Answer> Model.actAnswering(
     action: String,
@@ -93,7 +93,7 @@ suspend fun <Model : DBModel, Answer> Model.actAnswering(
     decoder: ModelDecoder<Model>,
     answerSerializer: KSerializer<Answer>,
 ): ActionAnswer<Model, Answer> {
-    val queued = DBlayer.database.act(modelName, id, action, values.toString(), args.toString())
+    val queued = DBlayer.database.act(modelName, id, action, values.jsonText(), args.jsonText())
     return ActionAnswer(decoder.read(queued.row), queued.operation, answerSerializer)
 }
 

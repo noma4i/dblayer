@@ -37,16 +37,16 @@ public struct ListChange<Model: DBModel>: Sendable {
 }
 
 public struct QueryChanges<Model: DBModel>: Sendable {
-  let json: String
+  let query: Query<Model>
 
   public func stream() async throws -> LiveStream<ListChange<Model>> {
     guard !Task.isCancelled else { return .ended }
-    let queue = try await Task.detached { try DB.database.changes(queryJson: json) }.value
+    let queue = try await Task.detached { try DB.database.changes(queryJson: query.json) }.value
     guard !Task.isCancelled else { queue.cancel(); return .ended }
     return LiveStream(receive: { await queue.next().map { ListChange($0) } }, cancel: { queue.cancel() })
   }
 }
 
 extension Query {
-  public var changes: QueryChanges<Model> { QueryChanges(json: json) }
+  public var changes: QueryChanges<Model> { QueryChanges(query: self) }
 }

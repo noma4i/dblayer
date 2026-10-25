@@ -8,9 +8,6 @@ swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(String.self) { self = .string(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([JSONValue].self) { self = .array(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }	picks the variant of a JSON value
-swift/Sources/DBlayer/JSONValue.swift	guard let data = try? JSONEncoder().encode(value), let decoded = try? JSONDecoder().decode(JSONValue.self, from: data) else { return .null }	a JSONValue encodes except for a non-finite number, which renders as null
-swift/Sources/DBlayer/JSONValue.swift	(try? read(text)) ?? .null	parse is for text that the caller or the generator wrote, read throws
-swift/Sources/DBlayer/JSONValue.swift	public var text: String { String(decoding: (try? JSONEncoder().encode(self)) ?? Data("null".utf8), as: UTF8.self) }	a JSONValue encodes except for a non-finite number, which renders as null
 kotlin/src/main/kotlin/com/noma4i/dblayer/ListChange.kt	runCatching { IndexedRow(if (change.full) position else change.rowIndexes[position].toInt(), decoder.read(wire)) }	the decode error is kept in the failure of the ListChange
 kotlin/src/main/kotlin/com/noma4i/dblayer/Entities.kt	runCatching { decoder.read(row) to row.estimatedBytes }	the decode error goes to failedIds and the phase of the entity
 kotlin/src/main/kotlin/com/noma4i/dblayer/ListFeed.kt	val row = runCatching { decoder.read(wire) }	the decode error goes to the failure and the undecodable ids of the state

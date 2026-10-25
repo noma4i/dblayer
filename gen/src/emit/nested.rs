@@ -111,7 +111,7 @@ pub(super) fn emit_swift_type(out: &mut String, declaration: &FieldSpec, types: 
     out.push_str("    }\n");
     if cells {
         out.push_str("\n    public init(cells: [Cell]) throws {\n        let r = CellReader(cells)\n");
-        for (at, field) in fields.iter().enumerate() { writeln!(out, "        {} = {}", field.name, super::wire::read_swift(field, at, types)).unwrap(); }
+        for (at, field) in fields.iter().enumerate() { writeln!(out, "        {} = {}", field.name, super::wire::read_swift(field, at)).unwrap(); }
         out.push_str("    }\n");
     }
     out.push_str("}\n\n");
@@ -132,6 +132,6 @@ pub(super) fn emit_kotlin_type(out: &mut String, declaration: &FieldSpec, types:
     }
     out.push_str(") {\n    companion object {\n        fun fromCells(cells: List<Cell>): ");
     write!(out, "{} {{\n            val r = CellReader(cells)\n            return {}(\n", declaration.app_type.as_ref().unwrap(), declaration.app_type.as_ref().unwrap()).unwrap();
-    for (at, field) in declaration.fields.iter().enumerate() { writeln!(out, "                {} = {},", field.name, super::wire::read_kotlin(field, at, types)).unwrap(); }
+    for (at, field) in declaration.fields.iter().enumerate() { writeln!(out, "                {} = {},", field.name, super::wire::read_kotlin(field, at)).unwrap(); }
     out.push_str("            )\n        }\n    }\n}\n\n");
 }

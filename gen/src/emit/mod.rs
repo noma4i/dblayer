@@ -253,7 +253,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         for field in fields.iter().map(|field| field.name.as_str()).chain(["sync", "upload"]) { writeln!(out, "        self.{field} = {field}").unwrap(); }
         out.push_str("    }\n\n");
         writeln!(out, "    public static let wireLayout = \"{}\"\n\n    public init(wire row: WireRow) throws {{\n        let r = CellReader(row.cells)\n        self.id = row.id", wire::layout_of(models, model)).unwrap();
-        for (at, field) in wire::wired(model).into_iter().enumerate() { writeln!(out, "        self.{} = {}", field.name, wire::read_swift(field, at, &declared_types(models))).unwrap(); }
+        for (at, field) in wire::wired(model).into_iter().enumerate() { writeln!(out, "        self.{} = {}", field.name, wire::read_swift(field, at)).unwrap(); }
         out.push_str("        self.sync = SyncInfo(wire: row.sync)\n        self.upload = row.upload.map(UploadInfo.init(wire:))\n    }\n\n");
         for field in &model.fields {
             if field.name != "id" { writeln!(out, "    public static let {} = Column<{class}, {}>(\"{}\")", field.name, column_type(field, true), field.name).unwrap(); }
@@ -265,12 +265,12 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             if relation.by_columns.is_empty() && relation.text_params.is_empty() { writeln!(out, "    public static var {method}: Query<Self> {{").unwrap(); }
             else {
                 let params = relation.by_columns.iter().map(|key| format!("_ {key}: {}", model.field(key).map(|field| field_type(field, true)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| text_param(relation, key, &decls, true))).collect::<Vec<_>>().join(", ");
-                writeln!(out, "    public static func {method}({params}) -> Query<Self> {{").unwrap();
+                writeln!(out, "    public static func {method}({params}) throws -> Query<Self> {{").unwrap();
             }
-            let params = relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("\"{key}\": JSONValue.encode({key})")).collect::<Vec<_>>().join(", ");
+            let params = relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("\"{key}\": try JSONValue.encode({key})")).collect::<Vec<_>>().join(", ");
             writeln!(out, "        {} {built} = Query<Self>(relation: \"{}\", params: [{}])", if relation.remote.is_none() { "var" } else { "let" }, relation.name, if params.is_empty() { ":" } else { &params }).unwrap();
             if relation.remote.is_none() {
-                for key in &relation.by_columns { writeln!(out, "        {built} = {built}.where(Condition.equal(\"{key}\", JSONValue.encode({key})))").unwrap(); }
+                for key in &relation.by_columns { writeln!(out, "        {built} = {built}.where(Condition.equal(\"{key}\", try JSONValue.encode({key})))").unwrap(); }
                 if let Sort::Fields(fields) = &relation.sort {
                     for field in fields { writeln!(out, "        {built} = {built}.order(Order(field: \"{}\", direction: \"{}\"))", field.column, field.direction.name()).unwrap(); }
                 }
@@ -283,10 +283,10 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let upload_args = standard_args(model, &action.name);
             let method = name(&action.name);
             let params = upload_args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
-            writeln!(out, "    public static func {method}Variables({params}) -> [String: JSONValue] {{\n        var variables: [String: JSONValue] = [:]").unwrap();
+            writeln!(out, "    public static func {method}Variables({params}) throws -> [String: JSONValue] {{\n        var variables: [String: JSONValue] = [:]").unwrap();
             for (arg, kind) in &upload_args {
-                if kind.ends_with('?') { writeln!(out, "        if let value = {arg} {{ variables[\"{arg}\"] = JSONValue.encode(value) }}").unwrap(); }
-                else { writeln!(out, "        variables[\"{arg}\"] = JSONValue.encode({arg})").unwrap(); }
+                if kind.ends_with('?') { writeln!(out, "        if let value = {arg} {{ variables[\"{arg}\"] = try JSONValue.encode(value) }}").unwrap(); }
+                else { writeln!(out, "        variables[\"{arg}\"] = try JSONValue.encode({arg})").unwrap(); }
             }
             writeln!(out, "        return variables\n    }}").unwrap();
         }
@@ -303,25 +303,25 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         writeln!(out, "    public static func create({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
         if !create_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
         for field in &create_fields {
-            if field.nullable || field.optional || field.default.is_some() { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
-            else { writeln!(out, "        {values}[\"{}\"] = JSONValue.encode({})", field.name, field.name).unwrap(); }
+            if field.nullable || field.optional || field.default.is_some() { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
+            else { writeln!(out, "        {values}[\"{}\"] = try JSONValue.encode({})", field.name, field.name).unwrap(); }
         }
         for (name, kind) in &create_args {
-            if kind.ends_with('?') { writeln!(out, "        if let value = {name} {{ {args}[\"{name}\"] = JSONValue.encode(value) }}").unwrap(); }
-            else { writeln!(out, "        {args}[\"{name}\"] = JSONValue.encode({name})").unwrap(); }
+            if kind.ends_with('?') { writeln!(out, "        if let value = {name} {{ {args}[\"{name}\"] = try JSONValue.encode(value) }}").unwrap(); }
+            else { writeln!(out, "        {args}[\"{name}\"] = try JSONValue.encode({name})").unwrap(); }
         }
         writeln!(out, "        return try await create(values: {values}{})\n    }}", if create_args.is_empty() { String::new() } else { format!(", args: {args}") }).unwrap();
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| format!("{}: {}? = nil", field.name, field_type(field, true))).chain(update_args.iter().map(|(name, kind)| format!("{name}: {}? = nil", arg_type(kind, true)))).collect::<Vec<_>>().join(", ");
         writeln!(out, "    public func update({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
         if !update_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
-        for field in &fields { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
-        for (name, _) in &update_args { writeln!(out, "        if let value = {name} {{ {args}[\"{name}\"] = JSONValue.encode(value) }}").unwrap(); }
+        for field in &fields { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", field.name, field.name).unwrap(); }
+        for (name, _) in &update_args { writeln!(out, "        if let value = {name} {{ {args}[\"{name}\"] = try JSONValue.encode(value) }}").unwrap(); }
         writeln!(out, "        return try await update(values: {values}{})\n    }}", if update_args.is_empty() { String::new() } else { format!(", args: {args}") }).unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| format!("{}: {}? = nil", field.field.name, field_type(&field.field, true))).collect::<Vec<_>>().join(", ");
             writeln!(out, "    public func set({params}) async throws {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
-            for field in &model.ephemeral { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = JSONValue.encode(value) }}", field.field.name, field.field.name).unwrap(); }
+            for field in &model.ephemeral { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", field.field.name, field.field.name).unwrap(); }
             writeln!(out, "        try await set(values: {values})\n    }}").unwrap();
         }
         for association in &model.associations {
@@ -333,9 +333,9 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let returns = if action.result.is_empty() { "Self".to_string() } else { format!("ActionAnswer<Self, {}>", result_type(class, &action.name)) };
             writeln!(out, "    public func {}({params}) async throws -> {returns} {{", name(&action.name)).unwrap();
-            writeln!(out, "        {} {values} = JSONValue.parse(#\"{}\"#).objectValue", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
-            for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        {values}[\"{field}\"] = JSONValue.encode({arg})").unwrap(); } }
-            let args = action.args.keys().map(|arg| format!("\"{arg}\": JSONValue.encode({arg})")).collect::<Vec<_>>().join(", ");
+            writeln!(out, "        {} {values} = try JSONValue.read(#\"{}\"#).objectValue", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
+            for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        {values}[\"{field}\"] = try JSONValue.encode({arg})").unwrap(); } }
+            let args = action.args.keys().map(|arg| format!("\"{arg}\": try JSONValue.encode({arg})")).collect::<Vec<_>>().join(", ");
             writeln!(out, "        return try await {}(\"{}\", values: {values}, args: [{}])\n    }}", if action.result.is_empty() { "act" } else { "actAnswering" }, action.name, if args.is_empty() { ":" } else { &args }).unwrap();
         }
         out.push_str("}\n\n");
@@ -370,7 +370,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    {}val {}: {}{},", if field.name == "id" { "override " } else { "" }, field.name, field_type(field, false), if field.nullable || field.optional { " = null" } else { "" }).unwrap();
         }
-        writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val upload: UploadInfo? = null\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val layout = \"{}\"\n        override val modelName = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                upload = row.upload?.let {{ UploadInfo.of(it) }},\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", field.name, wire::read_kotlin(field, at, &declared_types(models)))).collect::<String>()).unwrap();
+        writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val upload: UploadInfo? = null\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val layout = \"{}\"\n        override val modelName = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                upload = row.upload?.let {{ UploadInfo.of(it) }},\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", field.name, wire::read_kotlin(field, at))).collect::<String>()).unwrap();
         for field in model.fields.iter().filter(|field| field.name != "id") { writeln!(out, "        val {} = Column<{class}, {}>(\"{}\")", field.name, column_type(field, false), field.name).unwrap(); }
         writeln!(out, "        fun find(id: String) = Query(\"{class}\", this).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", this).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", this, ids)\n        fun entity(id: String) = entityOf(\"{class}\", this, id)").unwrap();
         for relation in &model.relations {
@@ -425,7 +425,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             }
             out.push_str("            }\n");
         }
-        writeln!(out, "            return read(DBlayer.database.create(\"{class}\", {values}.toString(), {}))\n        }}\n    }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.toString()") }).unwrap();
+        writeln!(out, "            return read(DBlayer.database.create(\"{class}\", {values}.jsonText(), {}))\n        }}\n    }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| kotlin_patch_param(field)).chain(update_args.iter().map(|(name, kind)| format!("{name}: {}? = null", arg_type(kind, false)))).collect::<Vec<_>>().join(", ");
         writeln!(out, "    suspend fun update({params}): {class} {{\n        val {values} = buildJsonObject {{").unwrap();
@@ -436,12 +436,12 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             for (name, _) in &update_args { writeln!(out, "            {name}?.let {{ put(\"{name}\", jsonValue(it)) }}").unwrap(); }
             out.push_str("        }\n");
         }
-        writeln!(out, "        return {class}.read(DBlayer.database.update(modelName, id, {values}.toString(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.toString()") }).unwrap();
+        writeln!(out, "        return {class}.read(DBlayer.database.update(modelName, id, {values}.jsonText(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| kotlin_patch_param(&field.field)).collect::<Vec<_>>().join(", ");
             writeln!(out, "    suspend fun set({params}) {{\n        DBlayer.database.setEphemeral(modelName, id, buildJsonObject {{").unwrap();
             for field in &model.ephemeral { writeln!(out, "{}", kotlin_patch_put(&field.field)).unwrap(); }
-            out.push_str("        }.toString())\n    }\n");
+            out.push_str("        }.jsonText())\n    }\n");
         }
         for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
             let params = action.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");

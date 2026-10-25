@@ -378,7 +378,7 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
 /// The one relation subscription of a singleton. It belongs to one database and one reset: a replaced feed writes nothing.
 final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   private let lock = NSLock()
-  private let queryJson: String
+  private let query: Query<Model>
   private var session: ListSession<Model, (Int64, Model?)>?
   private var cancelled = false
   private var count = 0
@@ -386,12 +386,12 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   /// Deliveries made so far.
   var delivered: Int { lock.withLock { count } }
 
-  init(query: Query<Model>) { queryJson = query.json }
+  init(query: Query<Model>) { self.query = query }
 
   func start(deliver: @escaping @Sendable (Int64, Model?) -> Void, unopened: @escaping @Sendable () -> Void, failed: @escaping @Sendable (String) -> Void) {
     Task.detached(priority: .userInitiated) { [self] in
       let made = ListSession<Model, (Int64, Model?)>(
-        open: { [queryJson] listener in let subscription = try DB.database.liveQuery(queryJson: queryJson, listener: listener); return { subscription.cancel() } },
+        open: { [query] listener in let subscription = try DB.database.liveQuery(queryJson: query.json, listener: listener); return { subscription.cancel() } },
         emit: { value in
           self.lock.withLock { self.count += 1 }
           deliver(value.0, value.1)

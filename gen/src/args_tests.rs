@@ -46,7 +46,7 @@ fn the_generated_calls_take_the_args_after_the_fields() {
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     for expected in [
         "create(name: String, momentId: String? = nil, signedId: String) async throws -> Self",
-        "args[\"signedId\"] = JSONValue.encode(signedId)",
+        "args[\"signedId\"] = try JSONValue.encode(signedId)",
         "update(name: String? = nil, ownerId: String? = nil, signedId: String? = nil) async throws -> Self",
     ] {
         assert!(swift.contains(expected), "swift lacks {expected}");
@@ -66,5 +66,5 @@ fn a_model_without_args_emits_no_args_variable() {
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     assert!(!swift.contains("var args") && !swift.contains("args: args"), "swift keeps an unused args variable");
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
-    assert!(kotlin.contains("create(\"Sample\", values.toString(), \"{}\")") && kotlin.contains("update(modelName, id, values.toString(), \"{}\")"), "kotlin builds an empty args object");
+    assert!(kotlin.contains("create(\"Sample\", values.jsonText(), \"{}\")") && kotlin.contains("update(modelName, id, values.jsonText(), \"{}\")"), "kotlin builds an empty args object");
 }

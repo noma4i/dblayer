@@ -22,7 +22,7 @@ extension BridgeProbeTests {
 
     #expect(result.url == "https://q")
     let sent = transport.calls.first { $0.operationName == "QrCodeCreate" }?.variablesJson ?? ""
-    #expect(JSONValue.parse(sent) == JSONValue.parse(#"{"input":{"kind":"container","size":3}}"#), "variables sent: \(sent)")
+    #expect(try JSONValue.read(sent) == JSONValue.read(#"{"input":{"kind":"container","size":3}}"#), "variables sent: \(sent)")
   }
 
   @MainActor
@@ -57,7 +57,7 @@ extension BridgeProbeTests {
     #expect(result.id == "s1")
     let sent = transport.calls.first { $0.operationName == "StickerSend" }?.variablesJson ?? ""
     let expected = #"{"input":{"name":"wave","mood":null,"tags":["a","b"],"notes":["n",null],"pinned":true,"owner":{"id":"7"},"helpers":[{"id":"8","nickname":"ann"}]}}"#
-    #expect(JSONValue.parse(sent) == JSONValue.parse(expected), "variables sent: \(sent)")
+    #expect(try JSONValue.read(sent) == JSONValue.read(expected), "variables sent: \(sent)")
   }
 
   @MainActor
@@ -72,7 +72,7 @@ extension BridgeProbeTests {
     #expect(result.rewards?.last?.price == nil)
     #expect(result.videoIntro?.enabled == true)
     #expect(result.tags == ["a", "b"])
-    #expect(result.spec == JSONValue.parse(#"{"k":[1,2]}"#))
+    #expect(try result.spec == JSONValue.read(#"{"k":[1,2]}"#))
   }
 
   @MainActor
@@ -100,7 +100,7 @@ extension BridgeProbeTests {
     #expect(without.moment?.id == "9")
 
     let calls = transport.calls.filter { $0.operationName == "MomentCreate" }.map(\.variablesJson)
-    #expect(JSONValue.parse(calls[0]) == JSONValue.parse(#"{"input":{"file":"s1","widgets":[{"kind":"EMOJI","settings":{"itemProps":{"emoji":"fire","size":3,"tags":["a"]},"rotate":1.5}}]}}"#), "variables sent: \(calls[0])")
-    #expect(JSONValue.parse(calls[1]) == JSONValue.parse(#"{"input":{"file":"s2"}}"#), "variables sent: \(calls[1])")
+    #expect(try JSONValue.read(calls[0]) == JSONValue.read(#"{"input":{"file":"s1","widgets":[{"kind":"EMOJI","settings":{"itemProps":{"emoji":"fire","size":3,"tags":["a"]},"rotate":1.5}}]}}"#), "variables sent: \(calls[0])")
+    #expect(try JSONValue.read(calls[1]) == JSONValue.read(#"{"input":{"file":"s2"}}"#), "variables sent: \(calls[1])")
   }
 }

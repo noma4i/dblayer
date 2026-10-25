@@ -30,7 +30,7 @@ extension BridgeProbeTests {
       let values = fields["attachment"].map { JSONValue.object(["attachment": $0]) } ?? .object([:])
       let wire = try await database.create(model: "UnionSample", valuesJson: values.text, argsJson: "{}")
       let sample = try UnionSample.decode(wire)
-      let encoded = sample.attachment.map { JSONValue.encode($0) } ?? .null
+      let encoded = try sample.attachment.map { try JSONValue.encode($0) } ?? .null
       #expect(withoutNullKeys(encoded) == withoutNullKeys(fields["output"]!), Comment(rawValue: label))
       if let input = fields["attachment"], input != .null {
         let decoded = try JSONDecoder().decode(RecordAttachment.self, from: JSONEncoder().encode(input))
@@ -98,7 +98,7 @@ extension BridgeProbeTests {
     transport.enqueue("ContainerThread", reply: Self.threadReply(Self.nodes))
     _ = try await open(transport)
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerThread"), "document": .string(Self.threadDocument)])]).text)
-    let thread = Record.thread("c1")
+    let thread = try Record.thread("c1")
     try await thread.load()
 
     #expect(try await Record.find("m1").current()?.attachment == .reward(RewardAttachment(id: "g1", tier: "gold", status: "sent", tags: ["a"])))

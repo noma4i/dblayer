@@ -32,11 +32,11 @@ const SEND_MUTATION: &str = "mutation WidgetsSend($widgets: [WidgetInput!]) { wi
 #[test]
 fn an_operation_arg_takes_a_list_of_input_objects_in_every_nullability() {
     let cases = [
-        ("[:WidgetInput]", "widgets: [WidgetInput]", "widgets: List<WidgetInput>", "variables[\"widgets\"] = JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
-        ("[:WidgetInput]?", "widgets: [WidgetInput]? = nil", "widgets: List<WidgetInput>? = null", "if let value = widgets { variables[\"widgets\"] = JSONValue.encode(value) }", "if (widgets != null) variables[\"widgets\"] = jsonValue(widgets)"),
-        ("[:WidgetInput?]", "widgets: [WidgetInput?]", "widgets: List<WidgetInput?>", "variables[\"widgets\"] = JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
-        ("[:WidgetInput?]?", "widgets: [WidgetInput?]? = nil", "widgets: List<WidgetInput?>? = null", "if let value = widgets { variables[\"widgets\"] = JSONValue.encode(value) }", "if (widgets != null) variables[\"widgets\"] = jsonValue(widgets)"),
-        ("[:WidgetKind]", "widgets: [WidgetKind]", "widgets: List<WidgetKind>", "variables[\"widgets\"] = JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetInput]", "widgets: [WidgetInput]", "widgets: List<WidgetInput>", "variables[\"widgets\"] = try JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetInput]?", "widgets: [WidgetInput]? = nil", "widgets: List<WidgetInput>? = null", "if let value = widgets { variables[\"widgets\"] = try JSONValue.encode(value) }", "if (widgets != null) variables[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetInput?]", "widgets: [WidgetInput?]", "widgets: List<WidgetInput?>", "variables[\"widgets\"] = try JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetInput?]?", "widgets: [WidgetInput?]? = nil", "widgets: List<WidgetInput?>? = null", "if let value = widgets { variables[\"widgets\"] = try JSONValue.encode(value) }", "if (widgets != null) variables[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetKind]", "widgets: [WidgetKind]", "widgets: List<WidgetKind>", "variables[\"widgets\"] = try JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
     ];
     for (arg, swift_param, kotlin_param, swift_put, kotlin_put) in cases {
         let schema = SCHEMA.replace("widgetsSend(widgets: [WidgetInput!]): WidgetsSent", if arg.contains("WidgetKind") { "widgetsSend(widgets: [WidgetKind!]): WidgetsSent" } else { "widgetsSend(widgets: [WidgetInput!]): WidgetsSent" });
@@ -90,8 +90,8 @@ fn a_one_of_input_becomes_an_enum_with_one_case_per_field() {
 fn the_upload_args_of_a_model_become_a_typed_variables_builder_and_not_an_action_call() {
     let declared = compile(&upload("[:WidgetInput]?"), UPLOAD_MUTATION, SCHEMA).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
-    assert!(swift.contains("public static func createFileVariables(widgets: [WidgetInput]? = nil) -> [String: JSONValue] {"), "{swift}");
-    assert!(swift.contains("if let value = widgets { variables[\"widgets\"] = JSONValue.encode(value) }"), "{swift}");
+    assert!(swift.contains("public static func createFileVariables(widgets: [WidgetInput]? = nil) throws -> [String: JSONValue] {"), "{swift}");
+    assert!(swift.contains("if let value = widgets { variables[\"widgets\"] = try JSONValue.encode(value) }"), "{swift}");
     assert!(!swift.contains("func upload(") && !swift.contains("act(\"upload\""), "{swift}");
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     assert!(kotlin.contains("fun createFileVariables(widgets: List<WidgetInput>? = null): JsonObject = buildJsonObject {"), "{kotlin}");
@@ -147,7 +147,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     for line in [
         "widgets: [WidgetInput]? = nil",
         "public func decorate(widgets: [WidgetInput]) async throws -> Self {",
-        "\"widgets\": JSONValue.encode(widgets)",
+        "\"widgets\": try JSONValue.encode(widgets)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }

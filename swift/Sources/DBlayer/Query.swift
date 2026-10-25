@@ -33,14 +33,14 @@ public struct Column<Model: DBModel, Value: Encodable & Sendable>: Sendable {
   public var ascNullsLast: Order { Order(field: name, direction: "asc_nulls_last") }
   public var descNullsFirst: Order { Order(field: name, direction: "desc_nulls_first") }
   public var isNull: Condition { .isNull(name) }
-  public func `in`(_ values: [Value]) -> Condition { .inList(name, values.map(JSONValue.encode)) }
+  public func `in`(_ values: [Value]) throws -> Condition { .inList(name, try values.map(JSONValue.encode)) }
 
-  public static func == (column: Column, value: Value) -> Condition { .equal(column.name, .encode(value)) }
-  public static func != (column: Column, value: Value) -> Condition { .notEqual(column.name, .encode(value)) }
-  public static func < (column: Column, value: Value) -> Condition { .compare(column.name, "less", .encode(value)) }
-  public static func <= (column: Column, value: Value) -> Condition { .compare(column.name, "less_or_equal", .encode(value)) }
-  public static func > (column: Column, value: Value) -> Condition { .compare(column.name, "greater", .encode(value)) }
-  public static func >= (column: Column, value: Value) -> Condition { .compare(column.name, "greater_or_equal", .encode(value)) }
+  public static func == (column: Column, value: Value) throws -> Condition { .equal(column.name, try .encode(value)) }
+  public static func != (column: Column, value: Value) throws -> Condition { .notEqual(column.name, try .encode(value)) }
+  public static func < (column: Column, value: Value) throws -> Condition { .compare(column.name, "less", try .encode(value)) }
+  public static func <= (column: Column, value: Value) throws -> Condition { .compare(column.name, "less_or_equal", try .encode(value)) }
+  public static func > (column: Column, value: Value) throws -> Condition { .compare(column.name, "greater", try .encode(value)) }
+  public static func >= (column: Column, value: Value) throws -> Condition { .compare(column.name, "greater_or_equal", try .encode(value)) }
 }
 
 func listSource<Model: DBModel, Value: Sendable>(
@@ -78,17 +78,17 @@ public struct Query<Model: DBModel>: Sendable {
   public func window(tail rows: Int) -> Window<Model> { Window(query: self, tail: rows) }
 
   var json: String {
-    json(refreshOnConnect: false)
+    get throws { try json(refreshOnConnect: false) }
   }
 
-  private func json(refreshOnConnect: Bool) -> String {
+  private func json(refreshOnConnect: Bool) throws -> String {
     var object: [String: JSONValue] = ["model": .string(Model.modelName)]
     if refreshOnConnect { object["refreshOnConnect"] = .bool(true) }
     if let condition { object["where"] = condition.json }
     if !orders.isEmpty { object["order"] = .array(orders.map { .object(["field": .string($0.field), "direction": .string($0.direction)]) }) }
     if let limitCount { object["limit"] = .integer(Int64(limitCount)) }
     if let relation { object["relation"] = .string(relation); object["params"] = .object(params) }
-    return JSONValue.object(object).text
+    return try JSONValue.object(object).text
   }
 
   public var live: LiveSource<[Model]> { listSource(initial: [], open: { listener in try DB.database.liveQuery(queryJson: json, listener: listener) }) { (applied: ListApplied<Model>, _) in applied.rows } }
@@ -118,7 +118,7 @@ public struct Query<Model: DBModel>: Sendable {
   }
 
   public func readEdgeValues(of id: String) async throws -> [String: JSONValue]? {
-    let model = Model.modelName, relation = relation ?? "", params = JSONValue.object(params).text
+    let model = Model.modelName, relation = relation ?? "", params = try JSONValue.object(params).text
     return try await Task.detached(priority: .userInitiated) {
       try JSONValue.read(try DB.database.edgeValues(model: model, relation: relation, paramsJson: params, rowIds: [id])).objectValue[id]?.objectValue
     }.value

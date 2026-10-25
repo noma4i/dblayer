@@ -30,7 +30,7 @@ extension BridgeProbeTests {
     transport.enqueue("ContainerThread", reply: #"{"data":{"container":{"records":{"nodes":[\#(page.joined(separator: ","))],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: Self.stableOperations)
-    let thread = Record.thread("c1")
+    let thread = try Record.thread("c1")
     try await thread.load()
     let feed = ListFeed<Record>()
     let source = LiveSource<[Record]>(initial: []) { emit in

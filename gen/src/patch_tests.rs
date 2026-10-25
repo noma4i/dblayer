@@ -26,5 +26,5 @@ fn a_nullable_field_has_three_states_in_update_and_set_on_both_platforms() {
 fn an_integer_in_a_json_default_stays_an_integer_in_swift() {
     let declared = parse_all(&["model Prefs do\n  attribute :props, :json, default: { size: 3 }\nend\n"]).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
-    assert!(swift.contains("\"size\": .integer(3)"), "{swift}");
+    assert!(swift.contains("\"default\":{\"size\":3}"), "{swift}");
 }

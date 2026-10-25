@@ -1,4 +1,3 @@
-use super::nested::literal;
 use super::*;
 
 enum Shape<'a> {
@@ -33,18 +32,16 @@ fn shape(field: &FieldSpec) -> Shape<'_> {
     }
 }
 
-pub(super) fn read_swift(field: &FieldSpec, at: usize, types: &[&FieldSpec]) -> String {
-    let optional = is_nullable(field) || field.default.is_some();
+pub(super) fn read_swift(field: &FieldSpec, at: usize) -> String {
+    let optional = is_nullable(field);
     let (method, argument) = match shape(field) {
         Shape::Enum(name) => {
             let read = if optional { format!("r.opt({at}, \\.asText).map({name}.init(rawValue:))") } else { format!("{name}(rawValue: r.req({at}, \\.asText))") };
-            let fallback = field.default.as_ref().filter(|value| !value.is_null()).map(|value| format!(" ?? {}", literal(field, value, true, types))).unwrap_or_default();
-            return format!("try {read}{fallback}");
+            return format!("try {read}");
         }
         Shape::EnumList(name) => {
             let read = if optional { format!("r.listOpt({at}, \\.asText)?.map({name}.init(rawValue:))") } else { format!("r.list({at}, \\.asText).map({name}.init(rawValue:))") };
-            let fallback = field.default.as_ref().filter(|value| !value.is_null()).map(|value| format!(" ?? {}", literal(field, value, true, types))).unwrap_or_default();
-            return format!("try {read}{fallback}");
+            return format!("try {read}");
         }
         Shape::Scalar(convert) => ("", format!("\\.{convert}")),
         Shape::List(convert) => ("list", format!("\\.{convert}")),
@@ -60,12 +57,11 @@ pub(super) fn read_swift(field: &FieldSpec, at: usize, types: &[&FieldSpec]) -> 
         (other, false) => format!("{other}({at}, {argument})"),
         (other, true) => format!("{other}Opt({at}, {argument})"),
     };
-    let fallback = field.default.as_ref().filter(|value| !value.is_null()).map(|value| format!(" ?? {}", literal(field, value, true, types))).unwrap_or_default();
-    format!("try r.{call}{fallback}")
+    format!("try r.{call}")
 }
 
-pub(super) fn read_kotlin(field: &FieldSpec, at: usize, types: &[&FieldSpec]) -> String {
-    let optional = is_nullable(field) || field.default.is_some();
+pub(super) fn read_kotlin(field: &FieldSpec, at: usize) -> String {
+    let optional = is_nullable(field);
     let call = match (shape(field), optional) {
         (Shape::Enum(name), false) => format!("req({at}, Cell::asText).let {{ {name}.of(it) }}"),
         (Shape::Enum(name), true) => format!("opt({at}, Cell::asText)?.let {{ {name}.of(it) }}"),
@@ -82,8 +78,7 @@ pub(super) fn read_kotlin(field: &FieldSpec, at: usize, types: &[&FieldSpec]) ->
         (Shape::Json, false) => format!("json({at})"),
         (Shape::Json, true) => format!("jsonOpt({at})"),
     };
-    let fallback = field.default.as_ref().filter(|value| !value.is_null()).map(|value| format!(" ?: {}", literal(field, value, false, types))).unwrap_or_default();
-    format!("r.{call}{fallback}")
+    format!("r.{call}")
 }
 
 pub(super) fn wired<'a>(model: &'a ModelSpec) -> Vec<&'a FieldSpec> {

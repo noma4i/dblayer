@@ -32,12 +32,12 @@ data class UploadRequest(
                 put("signed_id_variable", "signedId")
                 put("blob_id_variable", JsonNull)
             })
-        }.toString()
+        }.jsonText()
 }
 
 /** Creates the record locally at once and sends its file in the background. A failed upload leaves the record failed: `retry()` sends again, `discard()` removes it. */
 suspend fun <Model : DBModel> uploadCreate(modelName: String, values: JsonObject, request: UploadRequest, decoder: ModelDecoder<Model>): Model =
-    decoder.read(DBlayer.database.uploadCreate(modelName, values.toString(), request.json))
+    decoder.read(DBlayer.database.uploadCreate(modelName, values.jsonText(), request.json))
 
 /** Sends the file of an existing record, then runs the content mutation. */
 suspend fun DBModel.upload(request: UploadRequest) { DBlayer.database.upload(modelName, id, request.json) }
@@ -78,8 +78,8 @@ data class UploadBatchRequest(
                 put("signed_id_variable", "signedId")
                 put("blob_id_variable", JsonNull)
             })
-        }.toString()
+        }.jsonText()
 }
 
 suspend fun <Model : DBModel> ModelDecoder<Model>.uploadCreate(items: List<UploadItem>, request: UploadBatchRequest): List<Model> =
-    DBlayer.database.uploadCreateBatch(modelName, JsonArray(items.map { it.value }).toString(), request.json).map { read(it) }
+    DBlayer.database.uploadCreateBatch(modelName, JsonArray(items.map { it.value }).jsonText(), request.json).map { read(it) }

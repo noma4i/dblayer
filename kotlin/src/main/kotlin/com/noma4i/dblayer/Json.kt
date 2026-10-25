@@ -24,9 +24,11 @@ val dbJson = Json {
 
 inline fun <reified Value> jsonValue(value: Value): JsonElement = dbJson.encodeToJsonElement(value)
 
+fun JsonElement.jsonText(): String = dbJson.encodeToString(JsonElement.serializer(), this)
+
 fun parseJson(text: String): JsonElement = dbJson.parseToJsonElement(text)
 
-fun parseJsonObject(text: String): JsonObject = parseJson(text) as? JsonObject ?: JsonObject(emptyMap())
+fun parseJsonObject(text: String): JsonObject = parseJson(text) as? JsonObject ?: throw SerializationException("JSON body is not an object")
 
 object IDText : KSerializer<String> {
     override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("IDText", PrimitiveKind.STRING)
