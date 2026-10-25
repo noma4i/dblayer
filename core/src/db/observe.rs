@@ -26,10 +26,50 @@ fn accumulate_growth(pending: &mut Option<(usize, usize)>, before: usize, after:
     growth.1 = growth.1.saturating_add(after);
 }
 
+enum Follow {
+    Full,
+    Step(Stepping),
+}
+
+impl Follow {
+    fn of(step: Option<Stepping>) -> Self {
+        step.map_or(Follow::Full, Follow::Step)
+    }
+
+    fn into_step(self) -> Option<Stepping> {
+        match self {
+            Follow::Full => None,
+            Follow::Step(step) => Some(step),
+        }
+    }
+
+    fn merge(self, later: Follow) -> Follow {
+        match (self, later) {
+            (Follow::Step(mut earlier), Follow::Step(later)) => {
+                earlier.touched.extend(later.touched);
+                earlier.reached = earlier.reached.zip(later.reached).map(|(earlier, later)| earlier.max(later));
+                earlier.horizon = earlier.horizon.max(later.horizon);
+                Follow::Step(earlier)
+            }
+            _ => Follow::Full,
+        }
+    }
+}
+
+impl GroupFacts {
+    fn follow(&mut self, step: Option<Stepping>) {
+        let next = Follow::of(step);
+        self.again = Some(match self.again.take() {
+            Some(pending) => pending.merge(next),
+            None => next,
+        });
+    }
+}
+
 #[derive(Default)]
 struct GroupFacts {
     reading: bool,
-    again: bool,
+    again: Option<Follow>,
     read_error: Option<DbError>,
     joining: Subscribers,
     growth: Option<(usize, usize)>,
@@ -59,6 +99,7 @@ struct Opening {
     seen: i64,
 }
 
+#[derive(Clone)]
 pub(crate) struct Stepping {
     touched: HashSet<String>,
     reached: Option<(i64, u64)>,
@@ -102,7 +143,7 @@ impl Observers {
     /// The revision that a group has read, or None while it still has work. Subscribers are told this revision, and `Db::await_revision` waits for it.
     fn mark(group: &Group) -> Option<i64> {
         let facts = &group.facts;
-        let idle = !facts.reading && facts.read_error.is_none() && !facts.again && facts.growth.is_none() && facts.joining.is_empty();
+        let idle = !facts.reading && facts.read_error.is_none() && facts.again.is_none() && facts.growth.is_none() && facts.joining.is_empty();
         idle.then(|| facts.seen.max(group.at))
     }
 
@@ -114,6 +155,16 @@ impl Observers {
         let opening = self.opening.values().all(|opening| opening.read_error.is_some() && !opening.reading && opening.waiting.iter().all(|(_, subscriber)| subscriber.idle()));
         let entities = self.entities.values().all(EntityGroup::idle);
         groups && opening && entities
+    }
+
+    #[cfg(test)]
+    pub(crate) fn groups_seen_through(&self, revision: i64) -> bool {
+        self.groups.values().all(|group| group.facts.seen >= revision)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn deferred_reads(&self) -> usize {
+        self.read_ready.len()
     }
 
     #[cfg(test)]
@@ -350,7 +401,7 @@ impl Shared {
     fn schedule(&self, observers: &mut Observers, due: Due) {
         let Some(group) = observers.groups.get_mut(&due.key) else { return };
         if group.facts.reading {
-            group.facts.again = true;
+            group.facts.follow(due.step);
             return;
         }
         self.issue_publish(observers, &due.key, due.step, None);
@@ -361,13 +412,14 @@ impl Shared {
         group.facts.reading = true;
         group.facts.read_error = None;
         let (subject, previous, token) = (group.subject.clone(), group.version.clone(), group.token);
+        let retained = step.clone();
         let target = ReadTarget::Publish { key: key.to_string(), token, previous: previous.clone(), grow };
         if !self.reads.submit(self, ReadJob { target, run: Box::new(move |shared| shared.read_publish(&subject, &previous, step, grow)) }) {
             group.facts.reading = false;
             if let Some(grow) = grow {
                 accumulate_growth(&mut group.facts.growth, grow.0, grow.1);
             } else {
-                group.facts.again = true;
+                group.facts.follow(retained);
             }
             observers.defer_read(key);
         }
@@ -420,8 +472,8 @@ impl Shared {
         if group.facts.reading || group.facts.read_error.is_some() {
             return;
         }
-        if std::mem::take(&mut group.facts.again) {
-            self.issue_publish(observers, key, None, None);
+        if let Some(follow) = group.facts.again.take() {
+            self.issue_publish(observers, key, follow.into_step(), None);
         } else if let Some(grow) = group.facts.growth.take() {
             let step = Stepping { touched: HashSet::new(), reached: None, horizon: group.version.position() };
             self.issue_publish(observers, key, Some(step), Some(grow));
@@ -506,7 +558,7 @@ impl Shared {
         self.tell_failure(&observers, key, &error);
         if let Some(group) = observers.groups.get_mut(key) {
             group.facts.reading = false;
-            group.facts.again = false;
+            group.facts.again = None;
             group.facts.read_error = Some(error);
         } else if let Some(opening) = observers.opening.get_mut(key) {
             opening.reading = false;
@@ -626,7 +678,7 @@ impl Shared {
         let Some(opening) = observers.opening.remove(key) else { return };
         let Evaluated { version, loaded } = evaluated;
         let version = Arc::new(version);
-        let facts = GroupFacts { again: opening.missed, growth: opening.growth, seen: opening.seen, ..GroupFacts::default() };
+        let facts = GroupFacts { again: opening.missed.then_some(Follow::Full), growth: opening.growth, seen: opening.seen, ..GroupFacts::default() };
         let token = observers.next();
         let group = Group { subject: opening.subject, deps: opening.deps, at: version.revision, epoch: version.epoch, token, version: version.clone(), subscribers: opening.waiting.clone(), facts };
         observers.add_group(key, group);
@@ -649,7 +701,9 @@ impl Db {
         let id = observers.next();
         if let Some(group) = observers.groups.get_mut(&key) {
             group.facts.joining.push((id, subscriber.clone()));
-            group.facts.again |= behind;
+            if behind {
+                group.facts.again = Some(Follow::Full);
+            }
         } else if let Some(opening) = observers.opening.get_mut(&key) {
             opening.waiting.push((id, subscriber.clone()));
         } else {

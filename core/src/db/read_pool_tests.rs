@@ -217,3 +217,80 @@ fn inv_observe_23_a_panic_while_applying_one_group_fails_that_group_and_leaves_t
     put(&db, "users", json!({"id": "u2", "name": "Bob"}));
     assert_eq!(calls(&users), [0, 1, 2]);
 }
+
+#[test]
+fn inv_observe_29_a_refresh_deferred_by_saturation_still_reads_only_the_touched_rows() {
+    use super::reads::{ReadJob, ReadRows, ReadTarget};
+    let db = booted();
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    for index in 0..500 {
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&format!("u{index:03}")), row: obj(json!({"id": format!("u{index:03}"), "name": "Ann"})) });
+    }
+    db.land(envelope).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let (log, callback) = recorder();
+    let _observer = db.observe(Query::new("users"), callback).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = std::sync::Arc::new(std::sync::Mutex::new(gate));
+    for _ in 0..2 {
+        let gate = gate.clone();
+        let run = Box::new(move |_: &super::open::Shared| {
+            let _ = gate.lock().unwrap().recv();
+            Ok(ReadRows::Skipped { revision: 0, epoch: 0 })
+        });
+        let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default() }, run };
+        assert!(db.shared.reads.submit(&db.shared, job));
+    }
+    let before = db.counters().rows_loaded;
+    db.update("users", &rid("u001"), obj(json!({"name": "latest"}))).unwrap();
+    while db.shared.observers().deferred_reads() == 0 {
+        std::thread::yield_now();
+    }
+    drop(release);
+    db.await_revision(db.revision_seq().unwrap());
+    let loaded = db.counters().rows_loaded - before;
+    assert_eq!(log.lock().unwrap().last().unwrap().rows.iter().find(|row| row.id.as_str() == "u001").unwrap().text("name"), Some("latest"));
+    assert!(loaded <= 1, "a deferred refresh of one touched row loaded {loaded} rows");
+}
+
+#[test]
+fn inv_observe_29_refreshes_deferred_by_saturation_merge_their_touched_rows() {
+    use super::reads::{ReadJob, ReadRows, ReadTarget};
+    let db = booted();
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    for index in 0..500 {
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&format!("u{index:03}")), row: obj(json!({"id": format!("u{index:03}"), "name": "Ann"})) });
+    }
+    db.land(envelope).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let (log, callback) = recorder();
+    let _observer = db.observe(Query::new("users"), callback).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = std::sync::Arc::new(std::sync::Mutex::new(gate));
+    for _ in 0..2 {
+        let gate = gate.clone();
+        let run = Box::new(move |_: &super::open::Shared| {
+            let _ = gate.lock().unwrap().recv();
+            Ok(ReadRows::Skipped { revision: 0, epoch: 0 })
+        });
+        let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default() }, run };
+        assert!(db.shared.reads.submit(&db.shared, job));
+    }
+    let before = db.counters().rows_loaded;
+    db.update("users", &rid("u001"), obj(json!({"name": "latest"}))).unwrap();
+    while db.shared.observers().deferred_reads() == 0 {
+        std::thread::yield_now();
+    }
+    db.update("users", &rid("u002"), obj(json!({"name": "second"}))).unwrap();
+    let revision = db.revision_seq().unwrap();
+    while !db.shared.observers().groups_seen_through(revision) {
+        std::thread::yield_now();
+    }
+    drop(release);
+    db.await_revision(db.revision_seq().unwrap());
+    let loaded = db.counters().rows_loaded - before;
+    assert_eq!(log.lock().unwrap().last().unwrap().rows.iter().find(|row| row.id.as_str() == "u001").unwrap().text("name"), Some("latest"));
+    assert!(loaded <= 2, "two deferred refreshes of one touched row each loaded {loaded} rows");
+}
