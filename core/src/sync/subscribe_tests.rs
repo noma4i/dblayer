@@ -67,9 +67,11 @@ async fn ready_then_failure_keeps_growing_backoff() {
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "healthy"})));
     rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
     rig.transport.await_cancellations("MomentChanged", 8).await;
-    tokio::time::advance(Duration::from_secs(1)).await;
-    rig.transport.await_calls("MomentChanged", 9).await;
-    assert_eq!(rig.transport.call_count("MomentChanged"), 9);
+    assert!(reconnects_within_first_backoff(&rig, 9).await, "a healthy Next did not reset the backoff");
+}
+
+async fn reconnects_within_first_backoff(rig: &Rig, call: usize) -> bool {
+    tokio::time::timeout(Duration::from_millis(1020), rig.transport.await_calls("MomentChanged", call)).await.is_ok()
 }
 
 #[tokio::test(start_paused = true)]
@@ -487,6 +489,9 @@ async fn offline_subscription_waits_without_spending_attempts_and_reconnects_onl
     rig.transport.await_calls("MomentChanged", 2).await;
     assert_eq!(rig.transport.call_count("MomentChanged"), 2);
     assert_eq!(subscription.status().connects, 2);
+    rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
+    rig.transport.await_cancellations("MomentChanged", 2).await;
+    assert!(reconnects_within_first_backoff(&rig, 3).await, "offline failures spent attempts");
 }
 
 #[tokio::test(start_paused = true)]
