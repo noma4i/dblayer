@@ -57,6 +57,7 @@
 - A finished or committed upload never records a multipart abort.
 - A panic inside an upload task fails that upload and frees its file slot, so queued uploads keep starting.
 - One unreadable upload no longer stops the other waiting uploads from starting.
+- Waiting for a record or for one queued action reads the in-memory queue and no longer loads every queued operation on each event.
 - Two uploads of one file no longer fail when they write the cache copy at the same time.
 - A failure while removing expired uploads or sending a recorded abort is reported by `flush` and retried at the next start or online event.
 

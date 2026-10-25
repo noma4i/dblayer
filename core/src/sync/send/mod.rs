@@ -39,14 +39,7 @@ impl Sync {
             if let Some(failure) = self.inner.db.find(model, row)?.filter(|row| row.sync.upload.as_ref().is_some_and(|upload| upload.status == crate::upload::UploadStatus::Failed)).and_then(|row| row.sync.error.clone()) {
                 return Err(outcomes::error_of(model, &SendResult::Rejected(failure), row.as_str()));
             }
-            Ok(self
-                .inner
-                .db
-                .outbox()?
-                .iter()
-                .filter(|entry| entry.operation.status == OperationStatus::Pending && crate::operation::Operation::split_action_key(&entry.operation.action_key).is_some_and(|(owner, _)| owner == model) && (entry.operation.row_ids.contains(row) || entry.operation.temp_id.as_ref() == Some(row)))
-                .map(|entry| entry.operation.id.0)
-                .collect())
+            Ok(locked(self.inner.operation_queue()?).pending_of(&crate::identity::RowRef::new(crate::identity::ModelKey::new(model), row.clone())))
         };
         let mut changes = self.inner.db.outbox_changes();
         let mut pending = waiting(id)?;
@@ -72,7 +65,7 @@ impl Sync {
 
     /// Waits until the queued action is answered and returns the declared `result` fields of its payload. Fails with the refusal. An answer is read once.
     pub async fn answer(&self, model: &str, operation: i64) -> Result<serde_json::Value, SyncError> {
-        let waiting = || -> Result<bool, SyncError> { Ok(self.inner.db.outbox()?.iter().any(|entry| entry.operation.status == OperationStatus::Pending && entry.operation.id.0 == operation)) };
+        let waiting = || -> Result<bool, SyncError> { Ok(locked(self.inner.operation_queue()?).entries.get(&operation).is_some_and(|entry| entry.operation.status == OperationStatus::Pending)) };
         let mut changes = self.inner.db.outbox_changes();
         while waiting()? {
             if !self.inner.connectivity.is_online() {
