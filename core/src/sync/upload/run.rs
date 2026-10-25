@@ -40,6 +40,7 @@ pub(super) struct Runner {
 
 impl Drop for Runner {
     fn drop(&mut self) {
+        self.token.cancel();
         if let Some(id) = &self.file_id {
             let missing = self.inner.db.shared.read(&[], |reader| {
                 Ok(!reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM file WHERE id = ?1)", [id], |row| row.get::<_, bool>(0))?)
@@ -163,7 +164,11 @@ impl Runner {
     }
 
     async fn transfer(self: &Arc<Self>, permits: Arc<Semaphore>) {
-        let transferred = self.transfer_file(permits).await;
+        let transferred = tokio::select! {
+            biased;
+            () = self.token.cancelled() => Err(Stop::Cancelled),
+            result = self.transfer_file(permits) => result,
+        };
         let result = match transferred {
             Ok(()) => self.mutation().await,
             Err(stop) => Err(stop),
@@ -193,7 +198,7 @@ impl Runner {
             state.stage = UploadStage::Prepare;
             state.error = None;
         })?;
-        let total = file_len(Path::new(&self.input.path))
+        let total = file_len(Path::new(&self.input.path), &self.token).await
             .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
         let stored = self.snapshot();
         if stored.upload_id.is_some() && stored.total_bytes != 0 && stored.total_bytes != total {
@@ -235,7 +240,7 @@ impl Runner {
             .single
             .clone()
             .ok_or_else(|| Stop::Failed(OperationFailure::new(FailureKind::Rejected, "the upload has no single-upload steps")))?;
-        let checksum = md5_base64(Path::new(&self.input.path))
+        let checksum = md5_base64(Path::new(&self.input.path), &self.token).await
             .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
         loop {
             if self.snapshot().put_url.is_none() {

@@ -25,7 +25,7 @@ impl Runner {
         let config = &self.inner.config.upload;
         if self.snapshot().upload_id.is_none() {
             self.save(|state| state.stage = UploadStage::Init)?;
-            let checksum = md5_base64(std::path::Path::new(&self.input.path))
+            let checksum = md5_base64(std::path::Path::new(&self.input.path), &self.token).await
                 .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
             let variables = json!({"filename": self.file_name(), "contentType": self.content_type(), "byteSize": total, "checksum": checksum});
             let data = self.retrying(UploadStage::Init, 0, || self.graphql(&steps.init, variables.clone(), true)).await?;

@@ -120,7 +120,7 @@ impl Runner {
         length: u64,
         part: u32,
     ) -> Result<Option<String>, StepError> {
-        let body = read_range(std::path::Path::new(&self.input.path), offset, length)
+        let body = read_range(std::path::Path::new(&self.input.path), offset, length, &self.token).await
             .map_err(|error| fatal(FailureKind::Rejected, format!("source file is unreadable: {error}")))?;
         locked(&self.inner.counters).record_transport_call();
         let runner = self.clone();

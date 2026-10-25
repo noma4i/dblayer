@@ -26,6 +26,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - **Encrypted cable primitives.** Rust `CableLink` authenticates the server pin, creates the encrypted hello and encrypts subscription frames with directional keys. See [cable protocol](docs/cable-protocol.md).
 - **Files built in.** A `file` field stores binary data. You never choose where bytes live: SQLite or disk.
 - **Owned upload sources.** Upload admission copies files before committing. Files above 256 KiB live beside the database and survive removal of the original.
+- **Background file reads.** Upload reads and checksums run off asynchronous executor threads. Cancellation does not wait for queued file work.
 - **Background delivery.** Observers receive updates from library threads. Disk reads use a bounded WAL connection pool beside the writer. Releasing synchronization stops its background work. See [threading](docs/threading.md).
 - **One core, two platforms.** All logic is Rust. Swift and Kotlin contain no business logic.
 - **Versioned cached rows.** Each row sent to Swift or Kotlin includes its stored revision, so readers can reject older values.

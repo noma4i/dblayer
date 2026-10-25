@@ -8,6 +8,7 @@ Live results arrive from library threads. Record writes run on background thread
 - Await `discard()` and `logout()` to finish removing queued changes or clearing account data before starting dependent work.
 - Opening a database is asynchronous (`await DB.open` in Swift, suspend `DBlayer.open` in Kotlin). Registering operations and starting live queries execute synchronously.
 - Calls that read or write files (`attach`, `file`, `read`, `url`, `detach`, `maintain`) run on a background thread of the library, never on the caller thread.
+- Upload metadata reads, checksums and byte-range reads use the blocking pool. Cancelling a transfer does not wait for queued file work.
 - `cached()` and `cachedRow` answer from memory and never wait for the database lock, so they are safe on the main thread. See [live data](live-data.md#reading-before-the-first-delivery).
 - The transports on both platforms do the whole network exchange, including reading the response body, off the caller thread: Kotlin on `Dispatchers.IO`, Swift through the async `URLSession` API. You can call them from the main thread.
 - Disk databases use WAL with 2 read-only connections and 1 writer. Each read holds a transaction across rows, nested values and synchronization metadata.
