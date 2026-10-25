@@ -122,6 +122,21 @@ step_selected() {
   return 1
 }
 
+keep_step_artifacts() {
+  local name="$1" path kept=0
+  declare -F step_artifacts > /dev/null || return 0
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ ! -e "$root/$path" ]; then
+      echo "check: step $name left no $path" | tee -a "$logdir/summary.txt" >&2
+    elif ! { mkdir -p "$logdir/$name.artifacts/$(dirname "$path")" && cp -R "$root/$path" "$logdir/$name.artifacts/$path"; }; then
+      echo "check: could not keep $path of step $name" | tee -a "$logdir/summary.txt" >&2
+      kept=1
+    fi
+  done < <(step_artifacts "$name")
+  return "$kept"
+}
+
 run_step() {
   local lane name limit paths command log start code waited
   IFS='|' read -r lane name limit paths command <<< "$1"
@@ -133,7 +148,8 @@ run_step() {
   [[ "$command" == *build-slot* ]] && outer=$((limit + ${CHECK_QUEUE_ALLOWANCE:-3600}))
   run_bounded "$outer" "$name" bash -c 'cd -- "$1" && shift && eval "$1"' _ "$root" "$command" > "$log" 2>&1 || code=$?
   waited="$(sed -n 's/.*got slot[0-9]* after \([0-9]*\)s.*/\1/p' "$log" | paste -sd+ - | bc 2> /dev/null)"
-  printf '%-8s %-20s %-8s %4ss (queue for a build slot %ss)\n' "$lane" "$name" "$([ "$code" -eq 0 ] && echo ok || echo "FAIL($code)")" "$((SECONDS - start))" "${waited:-0}"
+  keep_step_artifacts "$name" || [ "$code" -ne 0 ] || code=70
+  printf '%-8s %-20s %-8s %4ss (queue for a build slot %ss)\n' "$lane" "$name" "$([ "$code" -eq 0 ] && echo ok || echo "FAIL($code)")" "$((SECONDS - start))" "${waited:-0}" | tee -a "$logdir/summary.txt"
   grep -h 'native build skipped' "$log" | sed 's/^/    | /'
   if [ "$code" -ne 0 ]; then
     tail -25 "$log" | sed 's/^/    | /'
@@ -149,6 +165,16 @@ run_lane() {
     [ "$step_lane" = "$lane" ] || continue
     run_step "$line" || return 1
   done
+}
+
+open_run_logs() {
+  local base="$root/target/check-logs" sha
+  sha="$(git -C "$root" rev-parse --short HEAD 2> /dev/null || echo nogit)"
+  [ -z "$(git -C "$root" status --porcelain 2> /dev/null)" ] || sha="$sha-dirty"
+  mkdir -p "$base" || return 1
+  logdir="$(mktemp -d "$base/$(date -u +%Y%m%dT%H%M%SZ)-$sha-${only:-all}-XXXXXX")" || return 1
+  ln -sfn "$(basename "$logdir")" "$base/latest" || return 1
+  printf 'started %s\ntree %s\nsha %s\nlane %s\nfast %s\n' "$(date -u +%FT%TZ)" "$root" "$sha" "${only:-all}" "$fast" > "$logdir/run.txt"
 }
 
 # One check run per tree: two runs share target/ and kotlin/build and corrupt each other (a duplicate build_ios.sh, two Gradle test runs, doubled load).
@@ -192,8 +218,7 @@ run_checks() {
     return 0
   fi
   take_tree_lock || return 3
-  logdir="$root/target/check-logs"
-  mkdir -p "$logdir"
+  open_run_logs || { echo "check: cannot open a log directory under $root/target/check-logs" >&2; return 4; }
   local start=$SECONDS lanes=() ordered=() failed=0 cpu sampled before sampler cpu_children daemon
   sampled="$(mktemp)"
   CHECK_OWNER_ID="$(basename "$sampled" | tr -cd '[:alnum:]')"
@@ -223,6 +248,6 @@ run_checks() {
     END { for (pid in best) total += best[pid] - (pid in was ? was[pid] : 0); printf "%d", total }' "$sampled")"
   /bin/rm -f "$sampled" "$before"
   cpu=$((cpu_children + daemon))
-  echo "check: $([ "$failed" -eq 0 ] && echo ok || echo FAILED), at least $cpu CPU seconds, a lower bound from 1 s samples ($cpu_children in waited children, $daemon in daemons and processes below java), ${#selected[@]} steps selected, wall $((SECONDS - start)) s, load $(uptime | sed 's/.*averages*: //')"
+  echo "check: $([ "$failed" -eq 0 ] && echo ok || echo FAILED), at least $cpu CPU seconds, a lower bound from 1 s samples ($cpu_children in waited children, $daemon in daemons and processes below java), ${#selected[@]} steps selected, wall $((SECONDS - start)) s, load $(uptime | sed 's/.*averages*: //')" | tee -a "$logdir/summary.txt"
   return "$failed"
 }

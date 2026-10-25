@@ -22,6 +22,7 @@ steps=(
   "cheap|waits|120|*|bash scripts/check_waits.sh"
   "cheap|waits-selftest|120|*|bash scripts/check_waits_test.sh"
   "cheap|check-lock-selftest|120|*|bash scripts/check_lock_test.sh"
+  "cheap|check-logs-selftest|120|*|bash scripts/check_logs_test.sh"
   "cheap|silent|120|*|bash scripts/check_silent.sh"
   "cheap|silent-selftest|120|*|bash scripts/check_silent_test.sh"
   "cheap|coverage-selftest|120|*|python3 -I scripts/check_coverage_test.py"
@@ -40,4 +41,10 @@ steps=(
   "ship|ios-device-check|600|-|bash scripts/native_source_hash.sh --fresh target/ios-device-check.SOURCE_HASH ios-device-check aarch64-apple-ios || { $slot ios-check cargo check --manifest-path core/Cargo.toml --target aarch64-apple-ios && bash scripts/native_source_hash.sh ios-device-check aarch64-apple-ios > target/ios-device-check.SOURCE_HASH; }"
 )
 
-run_checks "$@"
+step_artifacts() {
+  case "$1" in
+    gradle-test) printf '%s\n' kotlin/build/test-results/testDebugUnitTest kotlin/build/reports/tests/testDebugUnitTest ;;
+  esac
+}
+
+[ "${BASH_SOURCE[0]}" != "$0" ] || run_checks "$@"
