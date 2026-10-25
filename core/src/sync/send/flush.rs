@@ -488,6 +488,7 @@ impl Inner {
             return self.quarantine(sending, &data);
         }
         self.keep_answer(spec, sending, operation, &data);
+        let mut kept = super::outcomes::KeptAnswer::new(&self.outcomes, entry.operation.id.0);
         let held = Prior::of(entry).map(|prior| prior.held_files()).unwrap_or_default();
         let mut generation = sending.generation;
         let mut committed = None;
@@ -531,6 +532,7 @@ impl Inner {
         if committed.is_none() {
             return Ok(SendResult::Discarded);
         }
+        kept.committed();
         if let (Some(temp), Some(real)) = (&temp, &real) {
             locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string());
         }

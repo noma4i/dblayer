@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use serde_json::{Map, Value};
 
@@ -30,6 +31,12 @@ impl Outcomes {
     #[cfg(test)]
     pub(crate) fn lost(&self) -> usize {
         self.lost
+    }
+
+    fn forget_answer(&mut self, sequence: i64) {
+        if self.unread.get(&sequence).is_some_and(|outcome| outcome.answer.is_some()) {
+            self.unread.remove(&sequence);
+        }
     }
 
     pub(crate) fn answered(&mut self, sequence: i64, model: &str, action_key: &str, rows: Vec<RowId>, answer: Value) {
@@ -76,6 +83,30 @@ impl Outcomes {
             Some(Outcome { result: SendResult::Committed, answer, .. }) => Ok(answer.unwrap_or_else(|| Value::Object(Map::new()))),
             Some(outcome) => Err(error_of(model, &outcome.result, &sequence.to_string())),
             None => Err(SyncError::Store(format!("{model} operation {sequence}: the answer is not kept"))),
+        }
+    }
+}
+
+pub(super) struct KeptAnswer<'a> {
+    outcomes: &'a Mutex<Outcomes>,
+    sequence: i64,
+    committed: bool,
+}
+
+impl<'a> KeptAnswer<'a> {
+    pub(super) fn new(outcomes: &'a Mutex<Outcomes>, sequence: i64) -> Self {
+        Self { outcomes, sequence, committed: false }
+    }
+
+    pub(super) fn committed(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for KeptAnswer<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            super::super::locked(self.outcomes).forget_answer(self.sequence);
         }
     }
 }

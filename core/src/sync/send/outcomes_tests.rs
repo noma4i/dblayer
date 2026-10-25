@@ -26,3 +26,17 @@ fn a_wrong_model_asking_for_an_answer_leaves_it_for_the_right_model() {
     assert!(outcomes.take("users", 5).is_err());
     assert!(matches!(outcomes.take("moments", 5), Err(crate::sync::SyncError::Graphql { .. })));
 }
+
+#[test]
+fn a_kept_answer_is_taken_back_unless_its_commit_is_confirmed() {
+    for (confirmed, kept) in [(false, false), (true, true)] {
+        let outcomes = std::sync::Mutex::new(Outcomes::default());
+        outcomes.lock().unwrap().answered(5, "moments", "moments:star", vec![rid("m1")], serde_json::json!({"copies": 3}));
+        let mut guard = super::outcomes::KeptAnswer::new(&outcomes, 5);
+        if confirmed {
+            guard.committed();
+        }
+        drop(guard);
+        assert_eq!(outcomes.lock().unwrap().take("moments", 5).is_ok(), kept, "confirmed {confirmed}");
+    }
+}
