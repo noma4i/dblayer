@@ -74,6 +74,10 @@ class CellReader(private val cells: List<Cell>) {
     fun jsonOpt(at: Int): JsonElement? = cell(at).let { if (it == Cell.Null) null else it.asJson() }
 
     fun json(at: Int): JsonElement = cell(at).asJson()
+
+    fun fileOpt(at: Int): FileInfo? = jsonOpt(at)?.let(FileInfo::of)
+
+    fun file(at: Int): FileInfo = required(fileOpt(at), at)
 }
 
 interface ModelDecoder<Model : DBModel> {

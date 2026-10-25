@@ -1094,7 +1094,7 @@ data class UnionSample(
 data class User(
     override val id: String,
     val name: String,
-    val avatar: JsonElement? = null,
+    val avatar: FileInfo? = null,
     val birthday: String? = null,
     val typing: Boolean,
     val mood: String? = null,
@@ -1110,7 +1110,7 @@ data class User(
             return User(
                 id = row.id,
                 name = r.req(0, Cell::asText),
-                avatar = r.jsonOpt(1),
+                avatar = r.fileOpt(1),
                 birthday = r.opt(2, Cell::asText),
                 typing = r.req(3, Cell::asBool),
                 mood = r.opt(4, Cell::asText),
@@ -1119,8 +1119,8 @@ data class User(
             )
         }
 
+        val avatar = FileField<User>("avatar")
         val name = Column<User, String>("name")
-        val avatar = Column<User, JsonElement?>("avatar")
         val birthday = Column<User, String?>("birthday")
         fun find(id: String) = Query("User", this).find(id)
         fun where(condition: Condition) = Query("User", this).where(condition)
@@ -1135,19 +1135,17 @@ data class User(
             return built
         }
         fun entity() = singletonEntityOf("User", this, profile)
-        suspend fun create(name: String, avatar: JsonElement? = null, birthday: String? = null): User = offCaller {
+        suspend fun create(name: String, birthday: String? = null): User = offCaller {
             val values = buildJsonObject {
                 put("name", jsonValue(name))
-                avatar?.let { put("avatar", jsonValue(it)) }
                 birthday?.let { put("birthday", jsonValue(it)) }
             }
             read(DBlayer.database.create("User", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(name: String? = null, avatar: GraphQLNullable<JsonElement> = GraphQLNullable.Omitted, birthday: GraphQLNullable<String> = GraphQLNullable.Omitted): User = offCaller {
+    suspend fun update(name: String? = null, birthday: GraphQLNullable<String> = GraphQLNullable.Omitted): User = offCaller {
         val values = buildJsonObject {
             name?.let { put("name", jsonValue(it)) }
-            put("avatar", avatar)
             put("birthday", birthday)
         }
         User.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))

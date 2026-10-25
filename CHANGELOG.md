@@ -21,12 +21,15 @@
 - Kotlin `JsonElement.jsonText()` serializes JSON with the library settings.
 - Swift `Entity.changes()` streams the current value of an entity, then its updates.
 - Stale observed windows reload when the app returns to the foreground or the network returns.
+- `attach`, `file`, `read`, `url` and `detach` on a record for each `:file` attribute.
+- `FileInfo` describes a stored file on Swift and Kotlin.
 
 ### Changed
 - `create` and `update` refuse an undeclared field or a wrongly typed value.
 - A row with a temporary id sorts before permanent rows of equal order.
 - The store hook runs after the writer lock is released.
 - `serverConfig(retryListener:)` becomes `serverConfig(retries:)`.
+- A `:file` attribute reads as `FileInfo?`, and `create` and `update` take no file parameter.
 - `takeEdits()` becomes `takeUpdate()`: rows, edits and revision from one delivery.
 - A delivery that does not fit the rows gives one whole list.
 - The subscription stops with a failure after two refusals in a row.

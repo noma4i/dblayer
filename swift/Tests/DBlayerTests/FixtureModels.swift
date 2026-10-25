@@ -1112,14 +1112,14 @@ public struct User: DBSingleton {
     public static let modelName = "User"
     public let id: String
     public let name: String
-    public let avatar: JSONValue?
+    public let avatar: FileInfo?
     public let birthday: String?
     public let typing: Bool
     public let mood: String?
     public let sync: SyncInfo
     public let uploads: [String: UploadInfo]
 
-    public init(id: String, name: String, avatar: JSONValue? = nil, birthday: String? = nil, typing: Bool = false, mood: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
+    public init(id: String, name: String, avatar: FileInfo? = nil, birthday: String? = nil, typing: Bool = false, mood: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
         self.id = id
         self.name = name
         self.avatar = avatar
@@ -1136,7 +1136,7 @@ public struct User: DBSingleton {
         let r = CellReader(row.cells)
         self.id = row.id
         self.name = try r.req(0, \.asText)
-        self.avatar = try r.jsonOpt(1)
+        self.avatar = try r.fileOpt(1)
         self.birthday = try r.opt(2, \.asText)
         self.typing = try r.req(3, \.asBool)
         self.mood = try r.opt(4, \.asText)
@@ -1144,8 +1144,8 @@ public struct User: DBSingleton {
         self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
     }
 
+    public enum Files: String, Sendable { case avatar }
     public static let name = Column<User, String>("name")
-    public static let avatar = Column<User, JSONValue?>("avatar")
     public static let birthday = Column<User, String?>("birthday")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
@@ -1158,17 +1158,15 @@ public struct User: DBSingleton {
         return built
     }
     public static var singleton: Query<Self> { profile }
-    @concurrent public static func create(name: String, avatar: JSONValue? = nil, birthday: String? = nil) async throws -> Self {
+    @concurrent public static func create(name: String, birthday: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["name"] = try JSONValue.encode(name)
-        if let value = avatar { values["avatar"] = try JSONValue.encode(value) }
         if let value = birthday { values["birthday"] = try JSONValue.encode(value) }
         return try await create(values: values)
     }
-    @concurrent public func update(name: String? = nil, avatar: JSONValue?? = nil, birthday: String?? = nil) async throws -> Self {
+    @concurrent public func update(name: String? = nil, birthday: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = name { values["name"] = try JSONValue.encode(value) }
-        if let value = avatar { values["avatar"] = try JSONValue.encode(value) }
         if let value = birthday { values["birthday"] = try JSONValue.encode(value) }
         return try await update(values: values)
     }

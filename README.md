@@ -112,6 +112,7 @@ struct FeedView: View {
 }
 
 let moment = try await Moment.create(text: "hello")   // optimistic, queued, synced
+try await moment.attach(.media, data: bytes, name: "a.png", mime: "image/png")   // typed file call
 ```
 
 ### Kotlin
@@ -124,6 +125,7 @@ fun FeedScreen(me: User) {
 }
 
 val moment = Moment.create(text = "hello")            // optimistic, queued, synced
+moment.attach(Moment.media, data = bytes, name = "a.png", mime = "image/png")   // typed file call
 ```
 
 ### Encrypted sign-in

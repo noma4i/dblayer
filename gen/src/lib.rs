@@ -274,3 +274,6 @@ mod raw_json_tests;
 
 #[cfg(test)]
 mod patch_tests;
+
+#[cfg(test)]
+mod file_field_tests;

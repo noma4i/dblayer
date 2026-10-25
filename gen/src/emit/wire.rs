@@ -8,6 +8,7 @@ enum Shape<'a> {
     Object(&'a str),
     Array(&'a str),
     Json,
+    File,
 }
 
 fn converter(kind: ScalarKind) -> &'static str {
@@ -28,6 +29,7 @@ fn shape(field: &FieldSpec) -> Shape<'_> {
         (FieldKind::List { element }, _) => Shape::List(converter(*element)),
         (FieldKind::Object | FieldKind::Union, Some(name)) => Shape::Object(name),
         (FieldKind::Array | FieldKind::UnionArray, Some(name)) => Shape::Array(name),
+        (FieldKind::File, _) => Shape::File,
         _ => Shape::Json,
     }
 }
@@ -48,12 +50,15 @@ pub(super) fn read_swift(field: &FieldSpec, at: usize) -> String {
         Shape::Object(name) => ("obj", format!("{name}.init(cells:)")),
         Shape::Array(name) => ("arr", format!("{name}.init(cells:)")),
         Shape::Json => ("json", String::new()),
+        Shape::File => ("file", String::new()),
     };
     let call = match (method, optional) {
         ("", false) => format!("req({at}, {argument})"),
         ("", true) => format!("opt({at}, {argument})"),
         ("json", false) => format!("json({at})"),
         ("json", true) => format!("jsonOpt({at})"),
+        ("file", false) => format!("file({at})"),
+        ("file", true) => format!("fileOpt({at})"),
         (other, false) => format!("{other}({at}, {argument})"),
         (other, true) => format!("{other}Opt({at}, {argument})"),
     };
@@ -77,6 +82,8 @@ pub(super) fn read_kotlin(field: &FieldSpec, at: usize) -> String {
         (Shape::Array(name), true) => format!("arrOpt({at}) {{ {name}.fromCells(it) }}"),
         (Shape::Json, false) => format!("json({at})"),
         (Shape::Json, true) => format!("jsonOpt({at})"),
+        (Shape::File, false) => format!("file({at})"),
+        (Shape::File, true) => format!("fileOpt({at})"),
     };
     format!("r.{call}")
 }

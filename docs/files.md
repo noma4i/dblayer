@@ -7,31 +7,32 @@ attribute :media, :file, null: true
 ```
 
 ```swift
-let info = try await moment.attach(.media, data: bytes, name: "a.png", mime: "image/png")
+let info = try await moment.attach(.media, data: bytes, name: "a.png", mime: "image/png")   // FileInfo
 let data = try await moment.read(.media)
 let url  = try await moment.url(.media)     // local file URL for a player or viewer
 try await moment.detach(.media)
 ```
 
 ```kotlin
-val info = moment.attach(Moment.media, data = bytes, name = "a.png", mime = "image/png")
+val info = moment.attach(Moment.media, data = bytes, name = "a.png", mime = "image/png")   // FileInfo
 val data = moment.read(Moment.media)
-val uri  = moment.uri(Moment.media)         // local file Uri for a player or viewer
+val uri  = moment.url(Moment.media)         // java.net.URI of a local file for a player or viewer
 moment.detach(Moment.media)
 ```
 
 | Call | Result |
 | ---- | ------ |
 | `attach` | stores the file and replaces the previous one for that row and field |
-| `file` | description: id, name, mime type, size, sha256 |
+| `file` | `FileInfo`: id, name, mime type, size, sha256 |
 | `read` | the bytes |
-| `url` (Swift) / `uri` (Kotlin) | a local file URL, created on demand |
+| `url` | a local file `URL` (Swift) or `java.net.URI` (Kotlin), created on demand |
 | `detach` | removes the file |
 
 You do not decide where bytes live. Small files are kept inside the database, large ones next to it, and the library may move them. The API has no paths to storage and no size thresholds.
 
 ## Rules
 
+- A `:file` attribute reads as `FileInfo?` on the record. `create` and `update` take no file parameter, `attach` is the only way to write one.
 - Every file call is asynchronous (`async` in Swift, `suspend` in Kotlin) and does its disk work off the caller thread, so it is safe to call from the main thread.
 - The row holds a description of the file; observers see a new row revision when the file changes.
 - `attach` replaces the old file and updates the row in one commit. If the commit fails, no file remains.

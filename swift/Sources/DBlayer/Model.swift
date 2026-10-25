@@ -1,6 +1,7 @@
 import Foundation
 
 public protocol DBModel: Sendable, Identifiable, Hashable {
+  associatedtype Files: RawRepresentable & Sendable = NoFiles where Files.RawValue == String
   static var modelName: String { get }
   static var wireLayout: String { get }
   init(wire: WireRow) throws
@@ -40,6 +41,17 @@ extension DBModel {
   @concurrent public func destroy() async throws { try await DB.database.destroy(model: Self.modelName, rowId: id) }
   /// Waits until the server has answered the queued changes of the record, or of the declared `action` when given, throws on a refusal or when offline.
   @concurrent public func settled(action: String?) async throws { try await DB.database.settled(model: Self.modelName, rowId: id, action: action) }
+  @concurrent public func attach(_ field: Files, data: Data, name: String, mime: String) async throws -> FileInfo {
+    try FileInfo.parse(try await DB.database.attach(model: Self.modelName, rowId: id, field: field.rawValue, bytes: data, name: name, mime: mime))
+  }
+  @concurrent public func file(_ field: Files) async throws -> FileInfo? {
+    try await DB.database.file(model: Self.modelName, rowId: id, field: field.rawValue).map(FileInfo.parse)
+  }
+  @concurrent public func read(_ field: Files) async throws -> Data? { try await DB.database.read(model: Self.modelName, rowId: id, field: field.rawValue) }
+  @concurrent public func url(_ field: Files) async throws -> URL? {
+    try await DB.database.url(model: Self.modelName, rowId: id, field: field.rawValue).map { URL(fileURLWithPath: $0) }
+  }
+  @discardableResult @concurrent public func detach(_ field: Files) async throws -> Bool { try await DB.database.detach(model: Self.modelName, rowId: id, field: field.rawValue) }
   @concurrent public func confirmedId() async throws -> String { try await DB.database.confirmed(model: Self.modelName, rowId: id) }
 
   @discardableResult @concurrent public func retry(action: String?) async throws -> UInt64 { try await Self.retry(id: id, action: action) }

@@ -97,4 +97,8 @@ public struct CellReader: Sendable {
   }
 
   public func json(_ at: Int) throws -> JSONValue { try cell(at).asJSON }
+
+  public func fileOpt(_ at: Int) throws -> FileInfo? { try jsonOpt(at).map(FileInfo.init(json:)) }
+
+  public func file(_ at: Int) throws -> FileInfo { try required(try fileOpt(at), at) }
 }
