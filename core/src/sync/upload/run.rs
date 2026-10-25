@@ -44,12 +44,12 @@ impl Drop for Runner {
     fn drop(&mut self) {
         self.token.cancel();
         let Some(id) = self.file_id.take() else { return };
-        let inner = self.inner.clone();
+        let shared = self.inner.db.shared.clone();
         let cleanup = move || {
-            let missing = inner.db.shared.read(&[], |reader| {
+            let missing = shared.read(&[], |reader| {
                 Ok(!reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM file WHERE id = ?1)", [&id], |row| row.get::<_, bool>(0))?)
             });
-            if missing.is_ok_and(|missing| missing) { let _ = inner.db.shared.files.discard(std::slice::from_ref(&id)); }
+            if missing.is_ok_and(|missing| missing) { let _ = shared.files.discard(std::slice::from_ref(&id)); }
         };
         self.inner.spawn_file_task(&self.runtime, cleanup);
     }

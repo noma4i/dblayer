@@ -51,6 +51,14 @@ pub(crate) struct UploadRuns {
     tasks: JoinSet<()>,
 }
 
+struct FileTask(Arc<watch::Sender<usize>>);
+
+impl Drop for FileTask {
+    fn drop(&mut self) {
+        self.0.send_modify(|pending| *pending -= 1);
+    }
+}
+
 pub(crate) struct UploadResume {
     inner: Arc<Inner>,
     seq: i64,
@@ -219,9 +227,17 @@ impl Inner {
     }
 
     fn spawn_file_task(&self, runtime: &tokio::runtime::Handle, task: impl FnOnce() + Send + 'static) {
-        let mut tasks = locked(&self.file_tasks);
-        while tasks.try_join_next().is_some() {}
-        tasks.spawn_blocking_on(task, runtime);
+        self.file_tasks.send_modify(|pending| *pending += 1);
+        let finished = FileTask(self.file_tasks.clone());
+        drop(runtime.spawn_blocking(move || { task(); drop(finished); }));
+    }
+
+    pub(crate) async fn discard_files(&self, ids: Vec<String>) -> Result<(), SyncError> {
+        if ids.is_empty() { return Ok(()); }
+        let (sent, received) = tokio::sync::oneshot::channel();
+        let shared = self.db.shared.clone();
+        self.spawn_file_task(&tokio::runtime::Handle::current(), move || { let _ = sent.send(shared.files.discard(&ids)); });
+        received.await.map_err(|_| SyncError::Cancelled)?.map_err(|error| crate::store::StoreError::from(error).into())
     }
 
     fn fail_upload(&self, seq: i64, error: SyncError) {
@@ -359,11 +375,10 @@ impl Sync {
         loop {
             let mut tasks = std::mem::take(&mut locked(&self.inner.uploads).tasks);
             while tasks.join_next().await.is_some() {}
-            let mut file_tasks = std::mem::take(&mut *locked(&self.inner.file_tasks));
-            while file_tasks.join_next().await.is_some() {}
+            let _ = self.inner.file_tasks.subscribe().wait_for(|pending| *pending == 0).await;
             let waiting = {
                 let runs = locked(&self.inner.uploads);
-                if runs.tasks.is_empty() && runs.active.is_empty() && locked(&self.inner.file_tasks).is_empty() {
+                if runs.tasks.is_empty() && runs.active.is_empty() && *self.inner.file_tasks.borrow() == 0 {
                     return;
                 }
                 runs.active.values().next().map(|active| active.done.subscribe())

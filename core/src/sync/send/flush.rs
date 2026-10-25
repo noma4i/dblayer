@@ -535,7 +535,7 @@ impl Inner {
             locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string());
         }
         for (temp, real) in replacements { locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string()); }
-        self.db.shared.files.discard(&held.iter().map(|file| file.id.clone()).collect::<Vec<_>>()).map_err(crate::store::StoreError::from)?;
+        self.discard_files(held.iter().map(|file| file.id.clone()).collect()).await?;
         self.keep_answer(sending, operation, &data);
         self.invalidate_after(&sending.model, &sending.action).await?;
         Ok(SendResult::Committed)

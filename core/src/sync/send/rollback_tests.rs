@@ -93,6 +93,49 @@ async fn a_confirmed_destroy_removes_the_files_of_the_row_and_its_children() {
     assert!(rig.db.shared.files.directory_entries().unwrap().is_empty());
 }
 
+fn held_file_id(rig: &Rig, row: &str) -> String {
+    rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT id FROM file WHERE row_id = ?1", [row], |found| found.get::<_, String>(0))?)).unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_confirmed_destroy_discards_held_files_off_the_async_executor() {
+    let (_root, rig) = on_disk();
+    seed_with_files(&rig);
+    let id = held_file_id(&rig, "v1");
+    crate::files::watch_file_io(&id);
+    rig.transport.enqueue("DeleteMoment", Reply::data(json!({"deleteMoment": {"id": "m1"}})));
+    rig.db.destroy("moments", &rid("m1")).unwrap();
+    let executor = std::thread::current().id();
+    rig.sync.flush().await.unwrap();
+    rig.sync.wait_uploads().await;
+    let events = crate::files::take_file_io(&id);
+    assert_eq!(events.iter().map(|(operation, _)| *operation).collect::<Vec<_>>(), ["discard"]);
+    assert!(events.iter().all(|(_, thread)| *thread != executor), "discard used executor {executor:?}: {events:?}");
+    assert!(rig.db.shared.files.directory_entries().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_server_destroy_event_discards_held_files_off_the_async_executor() {
+    use crate::sync::subscribe::{EventEffect, SubscriptionDef};
+    use crate::transport::{EventSpec, Response, SubscriptionEvent};
+    let (_root, rig) = on_disk();
+    rig.sync.register(OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+    seed_with_files(&rig);
+    let id = held_file_id(&rig, "v1");
+    crate::files::watch_file_io(&id);
+    rig.db.destroy("moments", &rid("m1")).unwrap();
+    let def = SubscriptionDef::new(EventSpec::new("moment_gone"), "MomentChanged", "moments", EventEffect::Destroy);
+    let _subscription = rig.sync.subscribe(def).await.unwrap();
+    let executor = std::thread::current().id();
+    rig.transport.emit("MomentChanged", SubscriptionEvent::Next(Response::data(json!({"momentChanged": {"id": "m1"}}))));
+    rig.transport.await_consumed("MomentChanged").await;
+    rig.sync.wait_uploads().await;
+    let events = crate::files::take_file_io(&id);
+    assert_eq!(events.iter().map(|(operation, _)| *operation).collect::<Vec<_>>(), ["discard"]);
+    assert!(events.iter().all(|(_, thread)| *thread != executor), "discard used executor {executor:?}: {events:?}");
+    assert!(rig.db.shared.files.directory_entries().unwrap().is_empty());
+}
+
 fn with_notes() -> Vec<ModelSpec> {
     let mut notes = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("momentId", ScalarKind::Id).indexed()]);
     notes.associations.push(AssociationSpec::new("moment", AssociationKind::BelongsTo, "moments", "momentId"));

@@ -211,3 +211,41 @@ fn a_runner_dropped_outside_its_runtime_removes_its_cache_file_on_the_blocking_p
     assert!(events.iter().all(|(_, thread)| *thread != caller), "file IO used the dropping thread: {events:?}");
     assert!(!path.exists());
 }
+
+#[test]
+fn queued_cleanup_survives_dropping_the_sync_that_queued_it() {
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).max_blocking_threads(1).enable_all().build().unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let root = tempfile::tempdir().unwrap();
+    let (rig, runner, path) = runtime.block_on(async {
+        let db = crate::db::Db::open(&root.path().join("42.sqlite"), crate::sync::rig::specs(), None).unwrap();
+        let rig = crate::sync::rig::rig_on(db, crate::transport::MockTransport::new(), crate::sync::SyncConfig { upload: small(), ..crate::sync::SyncConfig::default() });
+        crate::sync::rig::put(&rig, "moments", crate::sync::rig::moment("m1", "x"));
+        let source = file(b"inline");
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+        let runner = std::sync::Arc::new(super::run::Runner::load(rig.sync.inner.clone(), seq, 0, 0, crate::transport::CancelToken::new(), true).unwrap().unwrap());
+        assert!(runner.materialize().await.is_ok());
+        let path = std::path::PathBuf::from(&runner.input.path);
+        let generation = rig.db.generation();
+        rig.sync.inner.commit(generation, |_| {
+            let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Response, generation);
+            envelope.operation_transitions.push(crate::commit::OperationTransition::RemoveUploadItem { seq, position: 0, inputs: Vec::new() });
+            Ok(Some(envelope))
+        }).unwrap();
+        drop(tokio::task::spawn_blocking(move || { entered_tx.send(()).unwrap(); release_rx.recv_timeout(Duration::from_secs(10)).unwrap(); }));
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        (rig, runner, path)
+    });
+    assert!(path.exists());
+    drop(runner);
+    let inner = std::sync::Arc::downgrade(&rig.sync.inner);
+    drop(rig);
+    assert!(inner.upgrade().is_none(), "the sync stayed alive");
+    release_tx.send(()).unwrap();
+    for _ in 0..5000 {
+        if !path.exists() { break; }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(!path.exists(), "the queued cleanup was lost with the sync");
+}

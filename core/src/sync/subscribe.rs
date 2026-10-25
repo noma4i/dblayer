@@ -212,7 +212,11 @@ impl Feed {
         if items.is_empty() {
             return;
         }
-        match self.try_apply(items, current, model, effect) {
+        let applied = match self.try_apply(items, current, model, effect) {
+            Ok((stale, held_files)) => self.inner.discard_files(held_files).await.map(|()| stale),
+            Err(error) => Err(error),
+        };
+        match applied {
             Ok(stale) => {
                 for model in stale {
                     let _ = self.inner.reload_lists_of_absent_parent(&model).await;
@@ -222,7 +226,7 @@ impl Feed {
         }
     }
 
-    fn try_apply(&self, items: Vec<Pending>, generation: Generation, model: &str, effect: EventEffect) -> Result<Vec<String>, SyncError> {
+    fn try_apply(&self, items: Vec<Pending>, generation: Generation, model: &str, effect: EventEffect) -> Result<(Vec<String>, Vec<String>), SyncError> {
         let db = &self.inner.db;
         let spec = db.spec(model)?;
         let items = items.into_iter().map(|item| {
@@ -297,13 +301,12 @@ impl Feed {
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
         };
-        db.shared.files.discard(&held_files).map_err(crate::store::StoreError::from)?;
         for id in &announced {
             db.set_ephemeral(model, id, self.def.set.clone())?;
         }
         locked(&self.status).applied += count;
         let stale: Vec<String> = followed.absent.iter().map(ToString::to_string).collect();
-        Ok(stale)
+        Ok((stale, held_files))
     }
 
     async fn pump(&self, connection: &mut Subscription, retry: &mut SubscriptionRetry) -> Option<SubscriptionFailureKind> {
