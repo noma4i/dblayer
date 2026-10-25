@@ -4,8 +4,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 data class WindowEdges(val hasBefore: Boolean, val hasAfter: Boolean, val total: Long?) {
@@ -54,15 +52,18 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
     private var pending: List<ListEdit<Model>>? = null
 
     init {
-        scope.launch {
+        scope.launch(Dispatchers.Default) {
             try {
-                window.snapshots.flow.map { it to if (it.reordered) it.rows.map { row -> row.id } else null }.flowOn(Dispatchers.Default).collect { (snapshot, ids) ->
-                    synchronized(this@LiveWindow) { pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size) }
-                    mutableReplaced.value = snapshot.replaced
-                    mutableFailure.value = snapshot.error
-                    snapshot.window?.let { mutableEdges.value = it }
-                    mutableRows.value = snapshot.rows
-                    if (ids != null) mutableIds.value = ids
+                window.snapshots.flow.collect { snapshot ->
+                    val ids = if (snapshot.reordered) snapshot.rows.map { row -> row.id } else null
+                    synchronized(this@LiveWindow) {
+                        pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size)
+                        ids?.let { mutableIds.value = it }
+                        mutableReplaced.value = snapshot.replaced
+                        mutableFailure.value = snapshot.error
+                        snapshot.window?.let { mutableEdges.value = it }
+                        mutableRows.value = snapshot.rows
+                    }
                 }
             } catch (error: IllegalStateException) {
                 mutableFailure.value = error.message

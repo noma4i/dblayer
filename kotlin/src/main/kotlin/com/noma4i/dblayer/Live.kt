@@ -5,7 +5,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 
@@ -141,14 +140,17 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
         val snapshots = query.snapshots(refreshOnConnect) { result ->
             result.fold({ initialSubscription.complete(it) }, { initialSubscription.completeExceptionally(it) })
         }
-        scope.launch {
+        scope.launch(kotlinx.coroutines.Dispatchers.Default) {
             try {
-                snapshots.flow.map { it to if (it.reordered) it.rows.map { row -> row.id } else null }.flowOn(kotlinx.coroutines.Dispatchers.Default).collect { (snapshot, ids) ->
-                    synchronized(this@LiveList) { pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size) }
-                    mutableReplaced.value = snapshot.replaced
-                    mutableRows.value = snapshot.rows
-                    if (ids != null) mutableIds.value = ids
-                    mutableSnapshot.value = snapshot
+                snapshots.flow.collect { snapshot ->
+                    val ids = if (snapshot.reordered) snapshot.rows.map { row -> row.id } else null
+                    synchronized(this@LiveList) {
+                        pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size)
+                        ids?.let { mutableIds.value = it }
+                        mutableReplaced.value = snapshot.replaced
+                        mutableRows.value = snapshot.rows
+                        mutableSnapshot.value = snapshot
+                    }
                 }
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error

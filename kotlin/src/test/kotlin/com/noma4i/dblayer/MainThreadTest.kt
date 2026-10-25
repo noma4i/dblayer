@@ -128,7 +128,7 @@ class MainThreadTest {
     }
 
     @Test
-    fun the_rows_a_live_list_publishes_cost_the_owner_thread_the_same_comparisons_at_any_size() = bounded {
+    fun a_same_size_change_of_the_last_row_is_published_off_the_owner_thread_by_lists_and_windows() = bounded {
         reopen(Config(null, null, 128u), modelsJSON, null)
         val created = List(40) { Moment.create(text = "t%05d".format(it)) }
         fun decoder(stage: String) = object : ModelDecoder<Probe> {
@@ -138,16 +138,18 @@ class MainThreadTest {
         }
         val scope = CoroutineScope(main)
         try {
-            val small = LiveList(Query("Moment", decoder("small")).where(Condition.inList("id", created.take(4).map { JsonPrimitive(it.id) })).order(Order("text", "asc")), scope)
-            val large = LiveList(Query("Moment", decoder("large")).order(Order("text", "asc")), scope)
-            eventually("the first delivery") { small.rows.value.size == 4 && large.rows.value.size == 40 }
+            val ordered = { stage: String -> Query("Moment", decoder(stage)).order(Order("text", "asc")) }
+            val list = LiveList(ordered("list"), scope)
+            val window = LiveWindow(ordered("window").window(tail = 40), scope)
+            eventually("the first delivery") { list.rows.value.size == 40 && window.rows.value.size == 40 }
 
-            created[3].update(text = GraphQLNullable.Value("changed"))
-            eventually("the second delivery") { small.rows.value.any { it.moment.text == "changed" } && large.rows.value.any { it.moment.text == "changed" } }
+            created[39].update(text = GraphQLNullable.Value("t00039x"))
+            eventually("the second delivery") { list.rows.value.last().moment.text == "t00039x" && window.rows.value.last().moment.text == "t00039x" }
 
-            assertEquals("comparisons on the owner thread: small ${onMain("small")}, large ${onMain("large")}", onMain("small"), onMain("large"))
-            val copy = large.rows.value.map { Probe(it.moment, { touch("control") }) {} }
-            assertTrue("the probe sees a comparison of rows", copy == large.rows.value && touched.any { it.first == "control" })
+            for (stage in listOf("list", "window")) {
+                assertTrue("$stage: the delivery compared the changed row", touched.any { it.first == stage })
+                assertEquals("$stage: comparisons on the owner thread", 0, onMain(stage))
+            }
         } finally {
             scope.cancel()
         }

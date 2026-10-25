@@ -45,6 +45,15 @@ with tempfile.TemporaryDirectory() as directory:
     (fixture / "Cargo.toml").write_text("[profile.release]\nopt-level = 3\n")
     after = subprocess.check_output(["bash", str(script)], text=True)
     assert before != after, "Android SOURCE_HASH ignores the workspace release profile"
+    (fixture / "gen").mkdir()
+    (fixture / "gen/z.rs").write_text("added\n")
+    untracked = subprocess.check_output(["bash", str(script)], text=True)
+    subprocess.run(["git", "-C", directory, "add", "gen/z.rs"], check=True)
+    tracked = subprocess.check_output(["bash", str(script)], text=True)
+    assert untracked == tracked, "SOURCE_HASH changes when the same file becomes tracked"
+    (fixture / "gen/z.rs").write_text("changed\n")
+    changed = subprocess.check_output(["bash", str(script)], text=True)
+    assert changed != tracked, "SOURCE_HASH ignores a change of a tracked source"
 print("build modes: all target sets and invalid arguments passed")
 print("Android SOURCE_HASH includes the workspace release profile")
 PY

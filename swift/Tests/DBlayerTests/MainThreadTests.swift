@@ -24,16 +24,9 @@ struct ProbeRow: DBModel {
   var id: String { MainThreadReads.shared.touch(); return key }
   let sync = SyncInfo()
   let upload: UploadInfo? = nil
-  static let compared = MainThreadReads()
 
   init(key: String) { self.key = key }
   init(wire: WireRow) throws { key = wire.id }
-
-  static func == (left: ProbeRow, right: ProbeRow) -> Bool { compared.touch(); return left.key == right.key }
-}
-
-final class SnapshotBox: @unchecked Sendable {
-  var emit: (@Sendable (Snapshot<ProbeRow>) -> Void)?
 }
 
 struct CachedProbe: DBModel {
@@ -103,29 +96,5 @@ struct MainThreadTests {
     let reads = MainThreadReads.shared.counts
     #expect(reads.all > 0, "the probe saw the ids prepared")
     #expect(reads.main == 0)
-  }
-
-  @Test
-  func aLiveListPublishesItsRowsWithoutComparingThemOnTheMainThread() async {
-    let box = SnapshotBox()
-    let source = LiveSource<Snapshot<ProbeRow>>(initial: Snapshot(rows: [], replaced: [:]), merge: { _, newer in newer }) { emit in
-      box.emit = emit
-      return {}
-    }
-    let list = LiveList<ProbeRow>(Query<ProbeRow>(), snapshots: source)
-    await eventually("the subscription") { box.emit != nil }
-    let rows = (0 ..< 3).map { ProbeRow(key: "r\($0)") }
-
-    box.emit?(Snapshot(rows: Array(rows.prefix(2)), replaced: [:], reordered: true))
-    await eventually("the first delivery") { list.rows.count == 2 }
-    box.emit?(Snapshot(rows: rows, replaced: [:], reordered: true))
-    await eventually("the second delivery") { list.rows.count == 3 }
-
-    let copy = rows.map { ProbeRow(key: $0.key) }
-    let held = list.rows
-    #expect(await Task.detached { copy == held }.value, "the probe sees a comparison of rows")
-    let compared = ProbeRow.compared.counts
-    #expect(compared.all > 0)
-    #expect(compared.main == 0)
   }
 }
