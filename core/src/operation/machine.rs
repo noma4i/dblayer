@@ -149,9 +149,8 @@ impl OperationEvent {
             let accepted: Vec<bool> = [false, true].into_iter().filter(|started| OperationFacts { status, transport_started: *started }.next(self).is_some()).collect();
             match accepted.as_slice() {
                 [] => {}
-                [_, _] => clauses.push(format!("status = '{}'", status.as_sql())),
                 [started] => clauses.push(format!("(status = '{}' AND transport_started = {})", status.as_sql(), u8::from(*started))),
-                _ => unreachable!(),
+                _ => clauses.push(format!("status = '{}'", status.as_sql())),
             }
         }
         (!clauses.is_empty()).then(|| format!("({})", clauses.join(" OR ")))
