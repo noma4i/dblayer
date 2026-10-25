@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.8.0 - 2026-10-26
 
 ### Added
 - `DB.sessionCall` and `DBlayer.sessionCall` send a declared session operation and decode the answer.
