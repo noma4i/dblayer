@@ -6,9 +6,9 @@ import Testing
 private let cloudModels = #"[{"key":"Note","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}},{"name":"title","kind":{"type":"scalar","kind":"str"},"optional":true}],"storage":"local","cloud":["title"]}]"#
 private let zone = CKRecordZone.ID(zoneName: CloudKitRecords.zoneName, ownerName: CKCurrentUserDefaultName)
 
-private func titles(_ database: Database) async throws -> [String: String] {
-  let live = try database.liveQuery(queryJson: #"{"model":"Note"}"#, listener: ChangeListener { _ in })
-  let rows = try await live.current().rows
+private func titles(_ database: Database) async -> [String: String] {
+  let live = database.liveQuery(queryJson: #"{"model":"Note"}"#, listener: ChangeListener { _ in })
+  let rows = await live.current().rows
   return Dictionary(uniqueKeysWithValues: rows.compactMap { row in row.cells.compactMap { cell -> String? in if case .text(let value) = cell { return value } else { return nil } }.first.map { (row.id, $0) } })
 }
 
@@ -24,11 +24,11 @@ struct CloudKitConvergenceTests {
     try await firstLink.syncNow()
     try await secondLink.syncNow()
     let id = created.id
-    #expect(try await titles(second) == [id: "hello"])
+    #expect(await titles(second) == [id: "hello"])
     _ = try await second.update(model: "Note", rowId: id, patchJson: #"{"title":"edited"}"#, argsJson: "{}")
     try await secondLink.syncNow()
     try await firstLink.syncNow()
-    #expect(try await titles(first) == [id: "edited"])
+    #expect(await titles(first) == [id: "edited"])
     firstLink.stop()
     secondLink.stop()
   }

@@ -40,7 +40,7 @@ struct SubscriptionSessionTests {
     let database = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport)
     try database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     let listener = SessionChanges()
-    let live = try database.liveQuery(queryJson: #"{"model":"Notice","relation":"recent","params":{}}"#, listener: listener)
+    let live = database.liveQuery(queryJson: #"{"model":"Notice","relation":"recent","params":{}}"#, listener: listener)
     defer { live.cancel() }
     await eventually("notice subscription", timeout: .seconds(2)) { transport.subscribed }
     transport.fail()

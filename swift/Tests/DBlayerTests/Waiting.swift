@@ -23,7 +23,7 @@ func eventually(
 func parkUntilCancelled() async throws {
   try await Task.sleep(for: .seconds(3600))
 }
-final class Cursor<Sequence: AsyncSequence>: @unchecked Sendable where Sequence.Element: Sendable {
+final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Sendable where Sequence.Element: Sendable, Sequence.AsyncIterator: SendableMetatype {
   private var iterator: Sequence.AsyncIterator
 
   init(_ sequence: Sequence) {

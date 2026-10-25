@@ -185,7 +185,7 @@ struct EntityRegistryTests {
       emit(1)
       return { active.add(-1) }
     }
-    let after = Task { _ = try await Cursor(try await immediate.stream()).next("the first element") }
+    let after = Task { _ = await Cursor(try await immediate.stream()).next("the first element") }
     try await after.value
     await eventually("the attach cancelled afterwards is released", timeout: .seconds(5)) { active.value == 0 }
   }

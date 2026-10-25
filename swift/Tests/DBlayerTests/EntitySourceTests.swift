@@ -10,7 +10,7 @@ extension BridgeProbeTests {
     let delivered = Counter()
     var source: CoreEntitySource<Moment>? = CoreEntitySource()
     source?.deliver = { _ in delivered.add() }
-    weak var released = source
+    weak let released = source
     source?.retain([row.id])
     await eventually("the entity source delivers its row") { delivered.value > 0 }
     source = nil
