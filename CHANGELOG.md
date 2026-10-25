@@ -55,6 +55,10 @@
 - Dropping `Sync` no longer cancels queued upload file cleanup.
 - Discarding or rolling back an upload keeps its multipart abort until the server answers, with or without confirmed parts.
 - A finished or committed upload never records a multipart abort.
+- A panic inside an upload task fails that upload and frees its file slot, so queued uploads keep starting.
+- One unreadable upload no longer stops the other waiting uploads from starting.
+- Two uploads of one file no longer fail when they write the cache copy at the same time.
+- A failure while removing expired uploads or sending a recorded abort is reported by `flush` and retried at the next start or online event.
 
 ### Removed
 - Swift `JSONValue.parse`.

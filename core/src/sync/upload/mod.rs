@@ -52,6 +52,15 @@ pub(crate) struct UploadRuns {
     tasks: JoinSet<()>,
 }
 
+async fn survives_panic(work: impl std::future::Future<Output = ()>) -> bool {
+    let mut work = std::pin::pin!(work);
+    std::future::poll_fn(|cx| match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work.as_mut().poll(cx))) {
+        Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
+        Ok(std::task::Poll::Ready(())) => std::task::Poll::Ready(true),
+        Err(_) => std::task::Poll::Ready(false),
+    }).await
+}
+
 struct FileTask(Arc<watch::Sender<usize>>);
 
 impl Drop for FileTask {
@@ -95,9 +104,15 @@ impl Inner {
             changed.extend(queue.retrying.iter().filter(|seq| queue.entries.get(seq).is_some_and(|entry| entry.uploading && !self.is_waiting(&entry.operation))));
             changed
         };
-        for seq in sequences { self.refresh_upload(seq)?; }
+        let mut failure = None;
+        for seq in sequences {
+            if let Err(error) = self.refresh_upload(seq) {
+                if let Ok(queue) = self.operation_queue() { locked(queue).dirty_uploads.insert(seq); }
+                failure.get_or_insert(error);
+            }
+        }
         self.drain_uploads();
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 
     fn refresh_upload(self: &Arc<Self>, seq: i64) -> Result<(), SyncError> {
@@ -222,7 +237,9 @@ impl Inner {
         let (run, token) = runs.register(seq, position, matches!(mode, Mode::Transfer));
         let inner = self.clone();
         runs.tasks.spawn(self.until_closed(async move {
-            run::drive(inner.clone(), seq, position, run, token, mode, resumed).await;
+            if !survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed)).await {
+                inner.fail_upload(seq, SyncError::Store("the upload task panicked".into()));
+            }
             inner.finish_run(seq, position, run);
         }));
     }

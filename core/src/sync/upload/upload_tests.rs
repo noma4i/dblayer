@@ -952,8 +952,8 @@ async fn inv_upload_19_discarding_a_failed_multipart_aborts_it_once_with_or_with
         assert_eq!(rig.db.discard("moments", &rid("m1")).unwrap(), 1, "{name}");
         assert!(rig.db.outbox().unwrap().is_empty(), "{name}");
         assert_eq!(orphan_count(&rig), 1, "{name}: the abort must outlive the operation");
-        rig.sync.inner.upload_housekeeping().await;
-        rig.sync.inner.upload_housekeeping().await;
+        rig.sync.inner.upload_housekeeping().await.unwrap();
+        rig.sync.inner.upload_housekeeping().await.unwrap();
         assert_eq!(variables(&rig, "AbortMultipart"), [json!({"key": "k1", "uploadId": "u1"})], "{name}");
         assert_eq!(rig.transport.call_count("CompleteMultipart"), 0, "{name}");
         assert_eq!(orphan_count(&rig), 0, "{name}");
@@ -969,11 +969,11 @@ async fn an_orphaned_abort_waits_offline_and_is_sent_when_online() {
     fail_open_upload(&rig, seq);
     rig.db.discard("moments", &rid("m1")).unwrap();
     rig.sync.set_online(false);
-    rig.sync.inner.upload_housekeeping().await;
+    rig.sync.inner.upload_housekeeping().await.unwrap();
     assert_eq!((rig.transport.call_count("AbortMultipart"), orphan_count(&rig)), (0, 1));
     rig.sync.set_online(true);
     rig.sync.wait_uploads().await;
-    rig.sync.inner.upload_housekeeping().await;
+    rig.sync.inner.upload_housekeeping().await.unwrap();
     assert_eq!((rig.transport.call_count("AbortMultipart"), orphan_count(&rig)), (1, 0));
 }
 
@@ -986,10 +986,10 @@ async fn inv_upload_20_a_failed_upload_older_than_seven_days_is_aborted_and_remo
         let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(parts)).unwrap();
         fail_open_upload(&rig, seq);
         rig.clock.advance(Duration::from_secs(7 * 24 * 3600 - 3600));
-        rig.sync.inner.upload_housekeeping().await;
+        rig.sync.inner.upload_housekeeping().await.unwrap();
         assert_eq!((rig.db.outbox().unwrap().len(), rig.transport.call_count("AbortMultipart")), (1, 0), "{name}: not yet due");
         rig.clock.advance(Duration::from_secs(2 * 3600));
-        rig.sync.inner.upload_housekeeping().await;
+        rig.sync.inner.upload_housekeeping().await.unwrap();
         assert!(rig.db.outbox().unwrap().is_empty(), "{name}");
         assert_eq!(variables(&rig, "AbortMultipart"), [json!({"key": "k1", "uploadId": "u1"})], "{name}");
         assert_eq!(rig.transport.call_count("CompleteMultipart"), 0, "{name}");
@@ -1036,7 +1036,7 @@ async fn a_finished_multipart_upload_never_records_an_abort() {
     rig.sync.wait_uploads().await;
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!((orphan_count(&rig), rig.transport.call_count("AbortMultipart")), (0, 0));
-    rig.sync.inner.upload_housekeeping().await;
+    rig.sync.inner.upload_housekeeping().await.unwrap();
     assert_eq!(rig.transport.call_count("AbortMultipart"), 0);
 }
 
@@ -1050,4 +1050,60 @@ async fn committing_an_upload_whose_multipart_id_is_still_stored_never_records_a
     rig.db.shared.store.commit(envelope).unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(orphan_count(&rig), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_panicking_upload_task_releases_its_file_slot_and_fails_only_its_own_operation() {
+    let rig = upload_rig(small());
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = calls.clone();
+    rig.transport.respond_with(move |request| {
+        if request.operation_name == "CreateBlob" && seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 { panic!("transport bug"); }
+        None
+    });
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue("CreateMoment", created("m2"));
+    let (first, second) = (file(b"first"), file(b"second"));
+    rig.sync.upload("moments", &rid("m1"), input(&first)).await.unwrap();
+    rig.sync.upload("moments", &rid("m2"), input(&second)).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), rig.sync.wait_uploads()).await.expect("a panicked upload kept the only file slot");
+    assert_eq!(upload_of(&rig, "m1").map(|upload| upload.status), Some(UploadStatus::Failed));
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1);
+    assert_eq!(locked(&rig.sync.inner.uploads).active_files, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn one_unreadable_upload_does_not_lose_the_others_waiting_to_start() {
+    let rig = upload_rig(UploadConfig { max_files: 2, ..small() });
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue("CreateMoment", created("m2"));
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue("CreateMoment", created("m1"));
+    let (first, second) = (file(b"first"), file(b"second"));
+    rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&first), UploadState::queued()).unwrap();
+    rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m2"), &input(&second), UploadState::queued()).unwrap();
+    rig.db.shared.store.lock().connection.execute("UPDATE op_item SET error_kind = 'network', error_message = 'x', error_extensions = '{bad' WHERE row_id = 'm1'", []).unwrap();
+    assert!(rig.sync.inner.start_uploads().is_err());
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1, "the readable upload must start in the same pass");
+    rig.db.shared.store.lock().connection.execute("UPDATE op_item SET error_kind = NULL, error_message = NULL, error_extensions = NULL WHERE row_id = 'm1'", []).unwrap();
+    rig.sync.inner.start_uploads().unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("CreateMoment"), 2, "the unreadable upload must be retried once it reads");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_recorded_abort_that_cannot_be_sent_is_reported_and_retried_at_the_next_event() {
+    let rig = rig_with(SyncConfig { upload: small(), ..SyncConfig::default() });
+    put(&rig, "moments", moment("m1", "x"));
+    let source = file(TWELVE);
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
+    fail_open_upload(&rig, seq);
+    rig.db.discard("moments", &rid("m1")).unwrap();
+    assert!(rig.sync.inner.upload_housekeeping().await.is_err(), "the abort operation is not registered");
+    assert_eq!(orphan_count(&rig), 1);
+    rig.sync.register(OperationDef::new("AbortMultipart", "operation x { x }", "abortMultipart"));
+    rig.transport.enqueue("AbortMultipart", abort());
+    rig.sync.inner.upload_housekeeping().await.unwrap();
+    assert_eq!((rig.transport.call_count("AbortMultipart"), orphan_count(&rig)), (1, 0));
 }

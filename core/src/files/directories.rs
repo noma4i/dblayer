@@ -69,7 +69,7 @@ impl FileDirectories {
 
     pub(crate) fn write(&self, id: &str, bytes: &[u8]) -> io::Result<PathBuf> {
         let target = self.path(id).ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "no file directory"))?;
-        write_atomic(&target, bytes)?;
+        write_atomic(&target, &suffixed(&target, PART_SUFFIX), bytes)?;
         Ok(target)
     }
 
@@ -139,7 +139,9 @@ impl FileDirectories {
         #[cfg(test)] super::directories_tests::record_io(id, "materialize");
         let target = self.cache_target(id, name);
         if !target.exists() {
-            write_atomic(&target, bytes)?;
+            static WRITERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let writer = WRITERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            write_atomic(&target, &suffixed(&target, &format!(".{writer}{PART_SUFFIX}")), bytes)?;
         }
         Ok(target)
     }
@@ -180,16 +182,15 @@ pub(crate) fn is_partial(name: &str) -> bool {
     name.ends_with(PART_SUFFIX)
 }
 
-fn write_atomic(target: &Path, bytes: &[u8]) -> io::Result<()> {
+fn write_atomic(target: &Path, partial: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
     }
-    let partial = suffixed(target, PART_SUFFIX);
-    let mut file = File::create(&partial)?;
+    let mut file = File::create(partial)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
-    fs::rename(&partial, target)
+    fs::rename(partial, target)
 }
 
 impl Drop for FileDirectories {

@@ -17,7 +17,7 @@ impl Sync {
             self.inner.owner.submit(Event::Offline);
         }
         if online && !was_online {
-            self.inner.spawn_upload_housekeeping();
+            self.inner.spawn_upload_housekeeping(true);
             self.inner.spawn_flush(Duration::ZERO);
             for (target, kind) in self.inner.owner.online() {
                 self.inner.spawn_retry(target, kind);

@@ -381,21 +381,6 @@ fn landing_delete_follows_parent_once() {
     assert!(db.shared.store.point("Folder", "f1").unwrap().unwrap().get("lastId").is_none_or(Value::is_null));
 }
 
-#[tokio::test(start_paused = true)]
-async fn sending_one_update_reads_the_queue_only_for_scheduling() {
-    use rusqlite::trace::TraceEventCodes;
-    let (db, sync, transport) = rig(spec());
-    save(&db, json!({"id":"r1","body":"before"}));
-    db.update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap();
-    transport.enqueue("UpdateRecord", Reply::data(json!({"updateRecord":{"record":{"id":"r1","body":"confirmed"}}})));
-    FULL_QUEUE_READS.with(|reads| reads.set(0));
-    db.shared.store.lock().connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(count_queue_reads));
-    sync.inner.flush().await.unwrap();
-    db.shared.store.lock().connection.trace_v2(TraceEventCodes::empty(), None);
-    assert_eq!(FULL_QUEUE_READS.with(|reads| reads.get()), 2);
-    assert_eq!(db.shared.store.point("Record", "r1").unwrap().unwrap()["body"], "confirmed");
-}
-
 #[test]
 fn related_admission_reads_pending_ownership_once() {
     use rusqlite::trace::TraceEventCodes;

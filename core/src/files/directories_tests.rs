@@ -82,3 +82,21 @@ fn entries_lists_nothing_before_the_directories_exist() {
     assert!(directories.directory_entries().unwrap().is_empty());
     assert!(directories.cache_entries().unwrap().is_empty());
 }
+
+#[test]
+fn concurrent_materializations_of_one_file_all_succeed_with_the_same_bytes() {
+    let (_root, directories) = beside_database();
+    let directories = std::sync::Arc::new(directories);
+    for round in 0..40 {
+        let id = format!("f{round}");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+        let workers: Vec<_> = (0..6).map(|_| {
+            let (directories, barrier, id) = (directories.clone(), barrier.clone(), id.clone());
+            std::thread::spawn(move || { barrier.wait(); directories.materialize(&id, "clip.mp4", b"abcdef") })
+        }).collect();
+        for worker in workers {
+            let path = worker.join().unwrap().unwrap();
+            assert_eq!(fs::read(path).unwrap(), b"abcdef", "round {round}");
+        }
+    }
+}
