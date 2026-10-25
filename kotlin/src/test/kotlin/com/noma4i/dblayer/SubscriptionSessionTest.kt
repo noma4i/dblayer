@@ -3,7 +3,6 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.modelsJSON
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -27,8 +26,8 @@ class SubscriptionSessionTest {
         }
         val live = database.liveQuery("""{"model":"Notice","relation":"recent","params":{}}""", listener)
         try {
-            withTimeout(HANG_GUARD_MILLIS) { subscription.await() }.failed(DbException.Session(SessionCode.UNAUTHENTICATED, "session_unknown"))
-            withTimeout(HANG_GUARD_MILLIS) { delivered.await() }
+            awaitWithin("the transport subscribe call") { subscription.await() }.failed(DbException.Session(SessionCode.UNAUTHENTICATED, "session_unknown"))
+            awaitWithin("the typed session failure for the query listener") { delivered.await() }
             assertEquals(1, failures.size)
             val failure = failures.single() as DbException.Session
             assertEquals(SessionCode.UNAUTHENTICATED, failure.code)

@@ -21,3 +21,11 @@ suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, co
     }
 }
 fun eventuallyBlocking(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, condition: () -> Boolean) = bounded(timeoutMillis + HANG_GUARD_MILLIS) { eventually(what, timeoutMillis) { condition() } }
+suspend fun <T> awaitWithin(what: String, block: suspend () -> T): T = try {
+    withTimeout(HANG_GUARD_MILLIS) { block() }
+} catch (error: TimeoutCancellationException) {
+    throw AssertionError("$what did not happen within $HANG_GUARD_MILLIS ms\n${threadStacks()}", error)
+}
+private fun threadStacks(): String = Thread.getAllStackTraces().entries
+    .sortedBy { it.key.name }
+    .joinToString("\n") { (thread, frames) -> "\"${thread.name}\" ${thread.state}\n" + frames.joinToString("\n") { "    at $it" } }
