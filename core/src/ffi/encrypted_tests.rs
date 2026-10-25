@@ -66,7 +66,7 @@ pub(super) async fn cancel_on_retry(retries: &super::RetryProgress, call: impl s
     let mut waiting = retries.inner.watch();
     {
         let mut call = Box::pin(call);
-        let deadline = super::database::executor().unwrap().spawn(tokio::time::sleep(std::time::Duration::from_secs(10)));
+        let deadline = super::database::executor().unwrap().spawn(async { tokio::time::sleep(std::time::Duration::from_secs(10)).await });
         tokio::select! { _ = waiting.wait_for(|snapshot| snapshot.active_calls > 0) => {}, _ = &mut call => {}, _ = deadline => panic!("the retry was not observed") }
         assert!(waiting.borrow().active_calls > 0, "call completed before retry");
     }
