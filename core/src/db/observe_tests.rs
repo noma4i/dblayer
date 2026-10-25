@@ -217,7 +217,7 @@ fn late_subscriber_joins_the_shared_value_without_a_read() {
 }
 
 #[test]
-fn observer_may_read_and_write_the_database_from_its_callback() {
+fn inv_observe_09_observer_may_read_and_write_the_database_from_its_callback() {
     let db = booted();
     let seen = Arc::new(AtomicUsize::new(0));
     let handle = db.clone();
@@ -237,7 +237,7 @@ fn observer_may_read_and_write_the_database_from_its_callback() {
 }
 
 #[test]
-fn a_panicking_listener_does_not_stop_the_others() {
+fn inv_observe_09_a_panicking_listener_does_not_stop_the_others() {
     let db = booted();
     let _bad = db.observe(Query::new("moments"), |_| panic!("listener failed")).unwrap();
     let (log, callback) = recorder();

@@ -766,7 +766,7 @@ fn planned(generation: crate::identity::Generation, entity_ops: Vec<EntityOp>) -
 const PLAN_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[test]
-fn planning_runs_without_the_writer_lock_on_a_disk_database() {
+fn inv_conc_08_planning_runs_without_the_writer_lock_on_a_disk_database() {
     let (store, _directory) = disk_store();
     let generation = store.generation();
     let mut writer_was_free = Vec::new();
@@ -776,6 +776,26 @@ fn planning_runs_without_the_writer_lock_on_a_disk_database() {
             Ok::<_, std::convert::Infallible>(Some(planned(generation, vec![upsert("messages", message("m1", "c1"))])))
         })
         .unwrap();
+    assert_eq!(writer_was_free, vec![true]);
+    let counters = store.counters();
+    assert_eq!((counters.plans_off_writer, counters.plans_under_writer), (1, 0));
+}
+
+#[test]
+fn inv_conc_09_a_thousand_row_commit_is_planned_off_the_writer_and_written_as_one_commit() {
+    let (store, _directory) = disk_store();
+    let generation = store.generation();
+    let before = store.revision_seq().unwrap();
+    let mut writer_was_free = Vec::new();
+    store
+        .commit_prepared(generation, |_| {
+            writer_was_free.push(store.writer_is_free());
+            let rows = (0..1000).map(|number| upsert("messages", message(&format!("m{number}"), "c1"))).collect();
+            Ok::<_, std::convert::Infallible>(Some(planned(generation, rows)))
+        })
+        .unwrap();
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1000);
+    assert_eq!(store.revision_seq().unwrap() - before, 1, "one commit holds all 1000 rows");
     assert_eq!(writer_was_free, vec![true]);
     let counters = store.counters();
     assert_eq!((counters.plans_off_writer, counters.plans_under_writer), (1, 0));

@@ -5,7 +5,7 @@ use super::fixtures::*;
 use super::*;
 
 #[test]
-fn disk_read_finishes_while_writer_has_uncommitted_changes() {
+fn inv_conc_07_disk_read_finishes_while_writer_has_uncommitted_changes() {
     let directory = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(&directory.path().join("reads.sqlite")).unwrap());
     let mut presence = items_spec();

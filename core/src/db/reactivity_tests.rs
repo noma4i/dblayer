@@ -210,6 +210,59 @@ fn a_thousand_subscribers_cost_at_most_one_read_per_commit() {
 }
 
 #[test]
+fn inv_observe_13_commits_behind_a_busy_listener_arrive_as_one_delivery_that_holds_every_commit() {
+    let db = booted();
+    let (entered_sender, entered) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (told_sender, told) = mpsc::channel();
+    let slow_whole = Whole::default();
+    let deliveries: Arc<Mutex<Vec<Vec<(String, String)>>>> = Arc::default();
+    let sink = deliveries.clone();
+    let _slow = db
+        .observe(Query::new("moments"), move |change| {
+            let rows = slow_whole.of(change);
+            let first = {
+                let mut seen = sink.lock().unwrap();
+                seen.push(rows.iter().map(|row| (row.id.to_string(), row.text("text").unwrap_or_default().to_string())).collect());
+                seen.len() == 1
+            };
+            if first {
+                entered_sender.send(()).unwrap();
+                released.lock().unwrap().recv_timeout(WAIT).unwrap();
+            }
+            told_sender.send(change.revision).unwrap();
+        })
+        .unwrap();
+    entered.recv_timeout(WAIT).unwrap();
+    let (fast_sender, fast) = mpsc::channel();
+    let _fast = db.observe(Query::new("moments"), move |change| fast_sender.send(change.revision).unwrap()).unwrap();
+    let mut seed = Seed(0x5eed);
+    for _ in 0..100 {
+        let (id, row) = random_row(&mut seed, 14);
+        if seed.below(4) == 0 {
+            let _ = db.destroy("moments", &rid(&id));
+        } else {
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+            envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&id), row });
+            db.land(envelope).unwrap();
+        }
+    }
+    let last = db.revision_seq().unwrap();
+    while fast.recv_timeout(WAIT).unwrap() < last {}
+    release.send(()).unwrap();
+    while told.recv_timeout(WAIT).unwrap() < last {}
+    let seen = deliveries.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2, "the blocked call and one merged delivery for the 100 commits");
+    let mut expected: Vec<(String, String)> = db.query(&Query::new("moments")).unwrap().iter().map(|row| (row.id.to_string(), row.text("text").unwrap_or_default().to_string())).collect();
+    let mut merged = seen[1].clone();
+    expected.sort();
+    merged.sort();
+    assert!(!merged.is_empty());
+    assert_eq!(merged, expected, "the merged delivery equals a fresh query");
+}
+
+#[test]
 fn a_cancelled_subscription_gets_no_call_after_the_cancel_returns() {
     let db = booted();
     let calls_made = Arc::new(AtomicUsize::new(0));
@@ -239,7 +292,7 @@ fn a_cancelled_subscription_gets_no_call_after_the_cancel_returns() {
 }
 
 #[test]
-fn a_slow_listener_does_not_hold_back_the_others_and_gets_the_latest_state() {
+fn inv_observe_09_a_slow_listener_does_not_hold_back_the_others_and_gets_the_latest_state() {
     let db = booted();
     let (entered_sender, entered) = mpsc::channel();
     let (release, released) = mpsc::channel::<()>();

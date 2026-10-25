@@ -1,6 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::identity::{ModelKey, RowId};
@@ -105,7 +103,7 @@ struct Pending {
 }
 
 pub(crate) struct EntitySubscriber {
-    cancelled: AtomicBool,
+    pub(crate) call_state: super::listeners::CallState,
     pending: Mutex<Pending>,
     listener: Box<dyn Fn(&EntityChange) + Send + Sync>,
     counters: Arc<Mutex<Counters>>,
@@ -173,11 +171,15 @@ impl Runnable for EntitySubscriber {
                 let removed = std::mem::take(&mut pending.removed).into_iter().collect();
                 EntityChange { revision: std::mem::take(&mut pending.revision), rows, removed, failure: pending.failure.take() }
             };
-            if self.cancelled.load(Ordering::SeqCst) {
+            if self.call_state.is_cancelled() {
                 continue;
             }
-            let delivered = catch_unwind(AssertUnwindSafe(|| (self.listener)(&change)));
-            if delivered.is_ok() {
+            let mut returned = false;
+            if self.call_state.call(|| {
+                (self.listener)(&change);
+                returned = true;
+            }) && returned
+            {
                 let mut counters = locked(&self.counters);
                 counters.observer_calls += 1;
                 counters.entity_facts_told += change.rows.len() + change.removed.len();
@@ -189,7 +191,7 @@ impl Runnable for EntitySubscriber {
 pub struct EntityObserver {
     shared: Weak<Shared>,
     key: String,
-    subscriber: Arc<EntitySubscriber>,
+    pub(super) subscriber: Arc<EntitySubscriber>,
 }
 
 impl EntityObserver {
@@ -229,7 +231,7 @@ impl EntityObserver {
 
 impl Drop for EntityObserver {
     fn drop(&mut self) {
-        self.subscriber.cancelled.store(true, Ordering::SeqCst);
+        self.subscriber.call_state.cancel();
         let Some(shared) = self.shared.upgrade() else { return };
         shared.observers().remove_entities(&self.key);
     }
@@ -316,7 +318,7 @@ impl Drop for ReadFinished<'_> {
 impl Db {
     pub fn observe_entities(&self, model: &str, listener: impl Fn(&EntityChange) + Send + Sync + 'static) -> Result<EntityObserver, DbError> {
         self.shared.spec(model)?;
-        let subscriber = Arc::new(EntitySubscriber { cancelled: AtomicBool::new(false), pending: Mutex::new(Pending::default()), listener: Box::new(listener), counters: self.shared.counters.clone() });
+        let subscriber = Arc::new(EntitySubscriber { call_state: super::listeners::CallState::new(), pending: Mutex::new(Pending::default()), listener: Box::new(listener), counters: self.shared.counters.clone() });
         let key = self.shared.observers().add_entities(ModelKey::new(model), subscriber.clone());
         Ok(EntityObserver { shared: Arc::downgrade(&self.shared), key, subscriber })
     }

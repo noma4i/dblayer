@@ -394,6 +394,30 @@ async fn single_upload_creates_puts_and_sends_the_mutation_once() {
     assert_eq!(text_of(&rig, "moments", "m9"), Some("clip".to_string()));
 }
 
+async fn await_upload_finished(rig: &Rig) {
+    for _ in 0..5000 {
+        if rig.db.outbox().unwrap().is_empty() && locked(&rig.sync.inner.uploads).active.is_empty() { return; }
+        std::thread::sleep(Duration::from_millis(1));
+        tokio::task::yield_now().await;
+    }
+    panic!("the upload did not finish");
+}
+
+#[tokio::test(start_paused = true)]
+async fn inv_upload_12_finished_upload_tasks_are_reaped_by_the_next_launch_without_wait_uploads() {
+    const UPLOADS: usize = 40;
+    let rig = upload_rig(small());
+    for _ in 0..UPLOADS {
+        single_replies(&rig);
+        let source = file(b"abcdef");
+        rig.sync.upload("moments", &rid("m1"), "upload", input(&source)).await.unwrap();
+        await_upload_finished(&rig).await;
+    }
+    let runs = locked(&rig.sync.inner.uploads);
+    assert!(runs.tasks.len() <= 3, "{} finished tasks are held after {UPLOADS} uploads", runs.tasks.len());
+    assert!(runs.active.is_empty() && runs.ready.is_empty());
+}
+
 #[tokio::test(start_paused = true)]
 async fn observers_and_reads_see_the_upload_state_and_bytes_while_it_runs() {
     let rig = upload_rig(small());

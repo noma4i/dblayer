@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use crate::identity::RowId;
@@ -162,8 +162,51 @@ pub(crate) enum Listener {
     Feed(Box<dyn Fn(Feed) + Send + Sync>),
 }
 
+/// A listener call starts only while the subscription is live: starting a call and cancelling are atomic against each other.
+pub(crate) struct CallState {
+    state: AtomicU8,
+    #[cfg(test)]
+    pub(crate) before_enter: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl CallState {
+    const IDLE: u8 = 0;
+    const CALLING: u8 = 1;
+    const CANCELLED: u8 = 2;
+
+    pub(crate) fn new() -> Self {
+        Self {
+            state: AtomicU8::new(Self::IDLE),
+            #[cfg(test)]
+            before_enter: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.state.store(Self::CANCELLED, Ordering::SeqCst);
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.state.load(Ordering::SeqCst) == Self::CANCELLED
+    }
+
+    pub(crate) fn call(&self, listener: impl FnOnce()) -> bool {
+        #[cfg(test)]
+        if let Some(hook) = held(&self.before_enter).take() {
+            hook();
+        }
+        if self.state.compare_exchange(Self::IDLE, Self::CALLING, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            return false;
+        }
+        let outcome = catch_unwind(AssertUnwindSafe(listener));
+        let _ = self.state.compare_exchange(Self::CALLING, Self::IDLE, Ordering::SeqCst, Ordering::SeqCst);
+        drop(outcome);
+        true
+    }
+}
+
 pub(crate) struct Subscriber {
-    cancelled: AtomicBool,
+    pub(crate) call_state: CallState,
     mailbox: Mutex<Mailbox>,
     listener: Listener,
     counters: Arc<Mutex<Counters>>,
@@ -177,11 +220,11 @@ impl Runnable for Subscriber {
 
 impl Subscriber {
     pub(crate) fn new(listener: Listener, counters: Arc<Mutex<Counters>>) -> Arc<Self> {
-        Arc::new(Self { cancelled: AtomicBool::new(false), mailbox: Mutex::new(Mailbox::default()), listener, counters })
+        Arc::new(Self { call_state: CallState::new(), mailbox: Mutex::new(Mailbox::default()), listener, counters })
     }
 
     pub(crate) fn cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
+        self.call_state.cancel();
         held(&self.mailbox).forget_owed();
     }
 
@@ -257,7 +300,7 @@ impl Subscriber {
                 }
                 (taken, tail)
             };
-            if self.cancelled.load(Ordering::SeqCst) {
+            if self.call_state.is_cancelled() {
                 let mut mailbox = held(&self.mailbox);
                 mailbox.drop_pending();
                 mailbox.finish();
@@ -269,7 +312,7 @@ impl Subscriber {
             }
             if let Listener::Feed(call) = &self.listener {
                 for feed in tail.reached.map(Feed::Reached).into_iter().chain(tail.failure.map(Feed::Failed)) {
-                    let _ = catch_unwind(AssertUnwindSafe(|| call(feed)));
+                    self.call_state.call(|| call(feed));
                 }
             }
         }
@@ -301,13 +344,13 @@ impl Subscriber {
     pub(crate) fn deliver(&self, taken: &mut Taken) {
         let latest = taken.latest.clone();
         let outcome = match (&self.listener, &latest.body) {
-            (Listener::Rows(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| catch_unwind(AssertUnwindSafe(|| call(&change)))),
-            (Listener::Feed(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| catch_unwind(AssertUnwindSafe(|| call(Feed::Rows(change))))),
-            (Listener::Count(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| catch_unwind(AssertUnwindSafe(|| call(&change)))),
-            (Listener::Feed(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| catch_unwind(AssertUnwindSafe(|| call(Feed::Count(change))))),
+            (Listener::Rows(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| self.call_state.call(|| call(&change))),
+            (Listener::Feed(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| self.call_state.call(|| call(Feed::Rows(change)))),
+            (Listener::Count(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| self.call_state.call(|| call(&change))),
+            (Listener::Feed(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| self.call_state.call(|| call(Feed::Count(change)))),
             _ => None,
         };
-        if outcome.is_some() {
+        if outcome == Some(true) {
             locked(&self.counters).observer_calls += 1;
         }
     }

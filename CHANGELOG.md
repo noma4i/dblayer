@@ -41,6 +41,7 @@
 - `Database.peekQuery` and `Database.edgeValues` are `async`. `Query.edgeValues` and the generated `<scope>Edge` reads are `async` in Swift and `suspend` in Kotlin and do their work on the library executor.
 - Loading rows builds them and sizes them outside the row cache lock, so cached reads are not held back by a large load.
 - Cancelling a subscription and expanding a window never wait for the observer registry: a busy registry takes the request later.
+- A listener call never starts after the cancel of its subscription returns, also when the delivery thread had already passed the cancel check.
 - A refresh deferred by the read limit or a running read keeps its touched rows and reads only those, instead of re-reading the whole list.
 - Connecting a live query to a remote relation no longer waits for the storage writer: the stored window state is read on a blocking task and the query delivers its first snapshot, merged from everything that happened meanwhile, once the state is known.
 - A commit that touches none of a query's rows no longer notifies every live query: only queries whose relation state is ahead of their rows ask to be told.
