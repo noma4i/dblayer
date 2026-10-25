@@ -107,19 +107,19 @@ fn inv_panic_01_live_and_state_subscriptions_cancel_after_a_poisoned_lock() {
 async fn a_live_query_leaves_its_rows_to_peek_and_no_subscription() {
     let (db, ids) = with_rows(3).await;
     let query = r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#;
-    assert!(db.peek_query(query.into()).unwrap().is_none());
+    assert!(db.peek_query(query.into()).await.unwrap().is_none());
     let tape = Arc::new(Tape(Mutex::default()));
     let live = db.live_query(query.into(), tape.clone());
     db.db.await_revision(db.db.revision_seq().unwrap());
     live.cancel();
     drop(live);
-    let peeked = db.peek_query(query.into()).unwrap().unwrap();
+    let peeked = db.peek_query(query.into()).await.unwrap().unwrap();
     assert_eq!((peeked.rows.len(), peeked.full), (3, true));
     assert_eq!(peeked.revision, tape.0.lock().unwrap()[0].revision);
     assert_eq!((db.subscription_census().subscriptions, db.subscription_census().observed_queries), (0, 0));
     db.update("Moment".into(), ids[0].clone(), r#"{"text":"zz"}"#.into(), "{}".into()).await.unwrap();
     db.db.await_revision(db.db.revision_seq().unwrap());
-    let after = db.peek_query(query.into()).unwrap().unwrap();
+    let after = db.peek_query(query.into()).await.unwrap().unwrap();
     assert!(after.revision > peeked.revision);
     assert_eq!(after.rows[2].cells, vec![Cell::Text { value: "zz".into() }]);
 }

@@ -62,6 +62,14 @@ pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Futur
 }
 
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
+    #[cfg(test)]
+    let work = {
+        let caller = std::thread::current().id();
+        move || {
+            super::offload_tests::note_blocking_thread(caller);
+            work()
+        }
+    };
     executor()?.spawn_blocking(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }
 
@@ -165,15 +173,22 @@ impl Database {
         let wire = self.wire(&model)?;
         Ok(self.db.peek_row(&model, &id(&row_id)?).map(|row| wire.row(&row)))
     }
-    pub fn edge_values(&self, model: String, relation: String, params_json: String, row_ids: Vec<String>) -> Result<String, DbError> {
+    pub async fn edge_values(&self, model: String, relation: String, params_json: String, row_ids: Vec<String>) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
-        let params = serde_json::from_str(&params_json)?;
-        Ok(serde_json::to_string(&sync.edge_values(&model, &relation, &params, &row_ids)?)?)
+        blocking(move || {
+            let params = serde_json::from_str(&params_json)?;
+            Ok(serde_json::to_string(&sync.edge_values(&model, &relation, &params, &row_ids)?)?)
+        })
+        .await
     }
-    pub fn peek_query(&self, query_json: String) -> Result<Option<LiveChange>, DbError> {
-        let (query, _) = self.parsed_query(&query_json)?;
-        let wire = self.wire(query.model.as_str())?;
-        Ok(self.db.peek_query(&query).map(|peeked| LiveChange::whole(peeked.revision, peeked.rows.iter().map(|row| wire.row(row)).collect())))
+    pub async fn peek_query(&self, query_json: String) -> Result<Option<LiveChange>, DbError> {
+        let this = self.clone();
+        blocking(move || {
+            let (query, _) = this.parsed_query(&query_json)?;
+            let wire = this.wire(query.model.as_str())?;
+            Ok(this.db.peek_query(&query).map(|peeked| LiveChange::whole(peeked.revision, peeked.rows.iter().map(|row| wire.row(row)).collect())))
+        })
+        .await
     }
     pub async fn warm(&self, query_json: String) -> Result<(), DbError> {
         let this = self.clone();

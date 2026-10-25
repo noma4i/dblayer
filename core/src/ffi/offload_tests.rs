@@ -44,6 +44,8 @@ fn json_calls() -> Vec<(&'static str, Call)> {
         ("refresh", Box::new(move |db, bad| Box::pin(async move { db.refresh(moment(), "feed".into(), bad).await }))),
         ("load_more", Box::new(move |db, bad| Box::pin(async move { db.load_more(moment(), "feed".into(), bad).await.map(drop) }))),
         ("warm", Box::new(move |db, bad| Box::pin(async move { db.warm(bad).await }))),
+        ("edge_values", Box::new(move |db, bad| Box::pin(async move { db.edge_values(moment(), "feed".into(), bad, vec!["r1".into()]).await.map(drop) }))),
+        ("peek_query", Box::new(move |db, bad| Box::pin(async move { db.peek_query(bad).await.map(drop) }))),
     ]
 }
 
@@ -74,18 +76,47 @@ async fn calls_with_json_arguments_parse_them_off_the_caller_thread() {
     assert!(on_caller.is_empty(), "these calls parse JSON on the caller thread: {on_caller:?}");
 }
 
-#[tokio::test]
-async fn calls_that_touch_files_leave_the_caller_thread_before_any_work() {
-    let (db, _) = rig(Ok("{}")).await;
+static BLOCKING_RAN_ON: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::thread::ThreadId, std::thread::ThreadId>>> = std::sync::LazyLock::new(Default::default);
+
+/// Records, per calling thread, the thread that ran the blocking work. Each test call runs on its own thread, so the entry belongs to that call.
+pub(super) fn note_blocking_thread(caller: std::thread::ThreadId) {
+    BLOCKING_RAN_ON.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(caller, std::thread::current().id());
+}
+
+type FileCall = Box<dyn FnOnce(std::sync::Arc<super::Database>) -> std::pin::Pin<Box<dyn Future<Output = ()>>> + Send>;
+
+fn file_calls() -> Vec<(&'static str, FileCall)> {
     let ids = || ("Moment".to_string(), "r1".to_string(), "photo".to_string());
-    let calls: Vec<(&str, bool)> = vec![
-        ("attach", ready_on_first_poll({ let (m, r, f) = ids(); db.attach(m, r, f, vec![1], "n".into(), "image/png".into()) })),
-        ("file", ready_on_first_poll({ let (m, r, f) = ids(); db.file(m, r, f) })),
-        ("read", ready_on_first_poll({ let (m, r, f) = ids(); db.read(m, r, f) })),
-        ("url", ready_on_first_poll({ let (m, r, f) = ids(); db.url(m, r, f) })),
-        ("detach", ready_on_first_poll({ let (m, r, f) = ids(); db.detach(m, r, f) })),
-        ("maintain", ready_on_first_poll(db.maintain())),
-    ];
-    let on_caller: Vec<&str> = calls.iter().filter(|(_, ready)| *ready).map(|(name, _)| *name).collect();
-    assert!(on_caller.is_empty(), "these file calls run on the caller thread: {on_caller:?}");
+    vec![
+        ("attach", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.attach(m, r, f, vec![1], "n".into(), "image/png".into()).await; }))),
+        ("file", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.file(m, r, f).await; }))),
+        ("read", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.read(m, r, f).await; }))),
+        ("url", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.url(m, r, f).await; }))),
+        ("detach", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.detach(m, r, f).await; }))),
+        ("maintain", Box::new(move |db| Box::pin(async move { let _ = db.maintain().await; }))),
+    ]
+}
+
+#[tokio::test]
+async fn calls_that_touch_files_run_their_work_off_the_caller_thread() {
+    let (db, _) = rig(Ok("{}")).await;
+    let mut on_caller = Vec::new();
+    let mut unobserved = Vec::new();
+    for (name, call) in file_calls() {
+        let db = db.clone();
+        let caller = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            runtime.block_on(call(db));
+            std::thread::current().id()
+        })
+        .join()
+        .unwrap();
+        match BLOCKING_RAN_ON.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&caller) {
+            None => unobserved.push(name),
+            Some(ran_on) if ran_on == caller => on_caller.push(name),
+            Some(_) => {}
+        }
+    }
+    assert!(unobserved.is_empty(), "no blocking work was observed for these file calls: {unobserved:?}");
+    assert!(on_caller.is_empty(), "these file calls run their work on the caller thread: {on_caller:?}");
 }

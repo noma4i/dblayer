@@ -26,7 +26,7 @@ async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
     assert!(crate::db::locked(&queue.state).pending.len() <= CHANGE_QUEUE_LIMIT, "slow consumer queue exceeded the core limit");
     let replacement = queue.next().await.unwrap();
     assert!(replacement.full);
-    let current = database.peek_query(query.into()).unwrap().unwrap();
+    let current = database.peek_query(query.into()).await.unwrap().unwrap();
     assert_eq!(replacement.rows, current.rows);
     let mut expected = current.rows;
     let from = expected[0].id.clone();
