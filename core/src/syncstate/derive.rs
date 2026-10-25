@@ -1,4 +1,4 @@
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 
 use crate::upload::{UploadInfo, UploadState, UploadStatus, WaitReason};
 

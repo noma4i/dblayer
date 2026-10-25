@@ -1,5 +1,6 @@
 use rusqlite::OptionalExtension;
-use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
+use crate::commit::{CommitEnvelope, OperationTransition, WriteOrigin};
+use crate::operation::OperationStatus;
 use crate::identity::RowId;
 #[cfg(test)]
 use crate::syncstate::{read_sync, SyncInfo};

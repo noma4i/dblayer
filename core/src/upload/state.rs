@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use crate::syncstate::OperationFailure;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

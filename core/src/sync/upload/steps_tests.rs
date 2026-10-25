@@ -158,7 +158,8 @@ async fn manual_retry_refreshes_the_budget_and_success_removes_its_record() {
 
 #[tokio::test(start_paused = true)]
 async fn terminal_operations_delete_retry_records() {
-    use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
+    use crate::commit::{CommitEnvelope, OperationTransition, WriteOrigin};
+    use crate::operation::OperationStatus;
     for action in ["close", "discard", "cancel"] {
         let directory = tempfile::tempdir().unwrap();
         let rig = reopen(&directory.path().join("retry.sqlite"), 1);

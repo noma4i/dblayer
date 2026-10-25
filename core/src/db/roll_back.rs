@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationStatus, OperationTransition, ScopeOp, WriteOrigin};
+use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp, WriteOrigin};
+use crate::operation::OperationStatus;
 use crate::files::references_of_row;
 use crate::identity::{Generation, ModelKey, RowId};
 use crate::store::{Reader, StoreError};

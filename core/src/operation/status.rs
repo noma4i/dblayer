@@ -7,7 +7,42 @@ use crate::upload::UploadState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OperationId(pub i64);
 
-pub use crate::commit::OperationStatus;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStatus {
+    Pending,
+    Failed,
+    DeliveryUnknown,
+    Committed,
+    RolledBack,
+}
+
+impl OperationStatus {
+    pub fn as_sql(self) -> &'static str {
+        match self {
+            OperationStatus::Pending => "pending",
+            OperationStatus::Failed => "failed",
+            OperationStatus::DeliveryUnknown => "delivery_unknown",
+            OperationStatus::Committed => "committed",
+            OperationStatus::RolledBack => "rolledback",
+        }
+    }
+
+    pub fn from_sql(text: &str) -> Option<Self> {
+        match text {
+            "pending" => Some(OperationStatus::Pending),
+            "failed" => Some(OperationStatus::Failed),
+            "delivery_unknown" => Some(OperationStatus::DeliveryUnknown),
+            "committed" => Some(OperationStatus::Committed),
+            "rolledback" => Some(OperationStatus::RolledBack),
+            _ => None,
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(self, OperationStatus::Committed | OperationStatus::RolledBack)
+    }
+}
 
 pub fn is_open(status: OperationStatus) -> bool {
     !removes_row(status)

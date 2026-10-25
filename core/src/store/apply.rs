@@ -4,9 +4,9 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
 use crate::commit::{
-    CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition,
-    EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
+    CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
+use crate::operation::OperationStatus;
 use crate::cloud::{record_local, write_book, LocalEdit};
 use crate::commit::WriteOrigin;
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};

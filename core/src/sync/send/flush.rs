@@ -4,7 +4,8 @@ use std::ops::Bound::{Excluded, Unbounded};
 use rusqlite::Connection;
 use serde_json::Value;
 
-use crate::commit::{CommitEnvelope, CommitResult, EntityOp, EnvelopeFault, FileOp, OperationStatus, OperationTransition, WriteOrigin};
+use crate::commit::{CommitEnvelope, CommitResult, EntityOp, EnvelopeFault, FileOp, OperationTransition, WriteOrigin};
+use crate::operation::OperationStatus;
 use crate::db::{DbError, OutboxOperation, Prior};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::operation::{quarantine_add, Operation, QuarantineReason};

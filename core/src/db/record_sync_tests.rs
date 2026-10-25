@@ -2,7 +2,8 @@ use serde_json::json;
 
 use super::fixtures::*;
 use super::*;
-use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
+use crate::commit::{CommitEnvelope, OperationTransition, WriteOrigin};
+use crate::operation::OperationStatus;
 use crate::query::{Order, Query, Where};
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, RootShape};
 use crate::syncstate::{FailureKind, OperationFailure, SyncState};

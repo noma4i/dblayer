@@ -1,6 +1,7 @@
 use super::fixtures::*;
 use super::*;
-use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, ScopeOp, ScopeRef, WriteOrigin};
+use crate::commit::{CommitEnvelope, OperationTransition, ScopeOp, ScopeRef, WriteOrigin};
+use crate::operation::OperationStatus;
 use crate::identity::{ModelKey, ScopeKey};
 use crate::query::Query;
 use crate::syncstate::{FailureKind, OperationFailure};

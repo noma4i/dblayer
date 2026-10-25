@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use crate::identity::RowId;
 use crate::transport::{GraphqlExtensions, Reply, SessionCode, TransportError};
 

@@ -10,7 +10,7 @@ pub(crate) use flush::{Sending, FinalAttempts};
 pub(crate) use outcomes::Outcomes;
 pub use report::{FlushReport, SendResult, SentOperation, SkipReason};
 
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use crate::identity::RowId;
 
 use super::error::SyncError;

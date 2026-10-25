@@ -1,7 +1,8 @@
 use serde_json::json;
 
 use super::fixtures::*;
-use crate::commit::{OperationRecord, OperationStatus, OperationTransition};
+use crate::commit::{OperationRecord, OperationTransition};
+use crate::operation::OperationStatus;
 use crate::db::fixtures::*;
 use crate::db::Db;
 use crate::syncstate::{FailureKind, OperationFailure};

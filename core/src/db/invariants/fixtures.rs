@@ -1,4 +1,5 @@
-use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
+use crate::commit::{CommitEnvelope, OperationTransition, WriteOrigin};
+use crate::operation::OperationStatus;
 use crate::db::fixtures::rid;
 use crate::db::Db;
 use crate::syncstate::{FailureKind, OperationFailure, SyncState};

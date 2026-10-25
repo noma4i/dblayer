@@ -1,7 +1,7 @@
 use super::sealed_errors_tests::{session, signed_in};
 use super::session_guards_tests::Rig;
 use super::SessionCode;
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};

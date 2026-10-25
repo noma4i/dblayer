@@ -22,7 +22,8 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
-use crate::commit::{CommitEnvelope, OperationRecord, OperationStatus, OperationTransition, WriteOrigin};
+use crate::commit::{CommitEnvelope, OperationRecord, OperationTransition, WriteOrigin};
+use crate::operation::OperationStatus;
 use crate::db::OutboxOperation;
 use crate::identity::RowId;
 use crate::operation::Operation;

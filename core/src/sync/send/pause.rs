@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use crate::operation::Operation;
 use crate::pacing::Backoff;
 

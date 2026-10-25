@@ -1,6 +1,6 @@
 use super::fixtures::*;
 use super::*;
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use crate::schema::{AssociationKind, AssociationSpec, DeclarationError};
 use crate::ddl::RecreateReason;
 use serde_json::json;

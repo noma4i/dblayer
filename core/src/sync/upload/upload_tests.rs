@@ -5,7 +5,8 @@ use super::*;
 
 use serde_json::{json, Value};
 
-use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
+use crate::commit::{CommitEnvelope, OperationTransition, WriteOrigin};
+use crate::operation::OperationStatus;
 use crate::identity::RowId;
 use crate::pacing::Backoff;
 use crate::syncstate::{FailureKind, OperationFailure, SyncState};

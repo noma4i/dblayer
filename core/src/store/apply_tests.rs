@@ -1,9 +1,9 @@
 use super::fixtures::*;
 use super::*;
 use crate::commit::{
-    CommitEnvelope, DestroyReason, EntityOp, EnvelopeFault, OperationRecord, OperationStatus, OperationTransition,
-    RowChangeKind, ScopeOp, WriteOrigin,
+    CommitEnvelope, DestroyReason, EntityOp, EnvelopeFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, WriteOrigin,
 };
+use crate::operation::OperationStatus;
 use crate::syncstate::{FailureKind, OperationFailure};
 use serde_json::json;
 use std::collections::HashSet;

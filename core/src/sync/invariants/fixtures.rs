@@ -23,7 +23,7 @@ pub fn start(db: &crate::db::Db, seq: i64) {
     apply(db, crate::commit::OperationTransition::Start { seq });
 }
 
-pub fn fail(db: &crate::db::Db, seq: i64, status: crate::commit::OperationStatus) {
+pub fn fail(db: &crate::db::Db, seq: i64, status: crate::operation::OperationStatus) {
     let failure = crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, "no");
     apply(db, crate::commit::OperationTransition::Fail { seq, status, failure });
 }

@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use crate::identity::RowId;
 use crate::operation::{quarantine_counts, QuarantineReason};
 use crate::query::Query;

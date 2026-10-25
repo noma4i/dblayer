@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use crate::identity::RowId;
 use crate::pacing::Clock;
 use crate::syncstate::{FailureKind, SyncInfo, SyncState};

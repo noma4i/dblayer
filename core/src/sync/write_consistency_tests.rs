@@ -74,7 +74,7 @@ fn save(db: &Db, values: Value) {
 async fn stale_generation_preserves_the_undelivered_attempt_budget() {
     let mut failures = Vec::new();
     for action in ["create", "update", "destroy"] {
-    for (attempts, expected) in [(1, crate::commit::OperationStatus::Pending), (40, crate::commit::OperationStatus::Failed)] {
+    for (attempts, expected) in [(1, crate::operation::OperationStatus::Pending), (40, crate::operation::OperationStatus::Failed)] {
         let mut model = spec();
         if action != "update" {
             let mut declaration = ActionDeclaration::new(action, if action == "destroy" { RootShape::Destroy } else { RootShape::Upsert });
@@ -120,7 +120,7 @@ async fn stale_generation_preserves_the_undelivered_attempt_budget() {
             failures.push(format!("{action}/{attempts}: {:?}, expected {expected:?}", entry.operation.status));
         }
         assert_eq!(transport.call_count("UpdateRecord"), attempts as usize);
-        assert!(!(entry.operation.status == crate::commit::OperationStatus::Pending && entry.operation.transport_started));
+        assert!(!(entry.operation.status == crate::operation::OperationStatus::Pending && entry.operation.transport_started));
         let body = db.find("Record", &id).unwrap().map(|row| row.data["body"].clone());
         let expected_body = match (action, attempts) {
             ("destroy", 1) => None,

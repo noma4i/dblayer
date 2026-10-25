@@ -1,7 +1,8 @@
 use rusqlite::{params, Connection};
 use serde_json::Value;
 
-use crate::commit::{OperationRecord, OperationStatus};
+use crate::commit::{OperationRecord};
+use crate::operation::OperationStatus;
 use crate::identity::RowId;
 use crate::operation::{delete_operation, read_item_value, read_value, read_operation_uploads, write_item_value, write_upload};
 use crate::upload::UploadInput;

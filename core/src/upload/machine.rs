@@ -1,6 +1,6 @@
 use statig::prelude::*;
 
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use crate::syncstate::OperationFailure;
 
 use super::state::{UploadPart, UploadRequest, UploadRetry, UploadScenario, UploadStage, UploadState, UploadStatus};

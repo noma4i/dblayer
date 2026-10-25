@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, Row};
 
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 use crate::identity::RowId;
 use crate::operation::{attach_extensions, read_extensions, write_extensions, failure_at, failure_cells, info_at, info_cells, read_operation, read_operation_uploads, read_fields, row_operation_sequences, Operation, INFO_COLUMNS, OPEN_STATUSES};
 

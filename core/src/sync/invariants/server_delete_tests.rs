@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::super::rig::*;
 use super::fixtures::*;
-use crate::commit::OperationStatus;
+use crate::operation::OperationStatus;
 
 async fn server_destroys(rig: &Rig, id: &str) -> crate::sync::subscribe::EventSubscription {
     use crate::sync::subscribe::{EventEffect, SubscriptionDef};

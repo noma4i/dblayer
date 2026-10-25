@@ -4,8 +4,9 @@ use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
 
 use crate::commit::{
-    CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationStatus, OperationTransition, ScopeOp, ScopeRef, WriteOrigin,
+    CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef, WriteOrigin,
 };
+use crate::operation::OperationStatus;
 use crate::ddl::table_name;
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId, RowRef};

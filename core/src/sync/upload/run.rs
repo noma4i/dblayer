@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
-use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
+use crate::commit::{CommitEnvelope, OperationTransition, WriteOrigin};
+use crate::operation::OperationStatus;
 use crate::operation::Operation;
 use crate::syncstate::{FailureKind, OperationFailure};
 use crate::transport::{CancelToken, Response, TransportError};
