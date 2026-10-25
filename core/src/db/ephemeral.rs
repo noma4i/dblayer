@@ -145,6 +145,7 @@ impl State {
     pub(crate) fn take_due(&mut self) -> Due {
         let now = self.clock.now();
         let mut reset = BTreeSet::new();
+        let mut lapsed = BTreeSet::new();
         let mut expired = Vec::new();
         let due: Vec<_> = self.deadlines.iter().take_while(|(due, _, _)| *due <= now).cloned().collect();
         for entry @ (_, ref key, ref name) in &due {
@@ -157,11 +158,16 @@ impl State {
             self.deadlines.remove(entry);
             if let Some(slot) = self.rows.get_mut(key).and_then(|row| row.slots.remove(name)) {
                 if slot.value != slot.initial { reset.insert(key.clone()); }
+                lapsed.insert(key.clone());
             }
         }
+        reset.extend(lapsed.iter().filter(|key| self.rows.get(*key).is_some_and(|row| row.slots.is_empty() && row.epoch != 0)).cloned());
         for key in &reset {
             self.epoch += 1;
             if let Some(row) = self.rows.get_mut(key) { row.epoch = self.epoch; }
+        }
+        for key in &lapsed {
+            if self.rows.get(key).is_some_and(|row| row.slots.is_empty()) { self.rows.remove(key); }
         }
         Due { reset: reset.into_iter().collect(), expired }
     }
@@ -179,6 +185,11 @@ impl State {
             }
         }
         claimed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn held_rows(&self) -> usize {
+        self.rows.len()
     }
 
     fn next_due(&self) -> Option<Duration> {

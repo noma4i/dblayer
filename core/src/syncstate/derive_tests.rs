@@ -23,7 +23,7 @@ fn a_single_open_operation_gives_its_state_action_attempts_and_creation_time() {
 }
 
 #[test]
-fn failed_beats_delivery_unknown_beats_sending_beats_pending() {
+fn inv_sync_01_failed_beats_delivery_unknown_beats_sending_beats_pending() {
     let pending = entry("a", OperationStatus::Pending, false, 1);
     let sending = entry("b", OperationStatus::Pending, true, 2);
     let unknown = SyncEntry { error: failure("lost"), ..entry("c", OperationStatus::DeliveryUnknown, true, 3) };
@@ -37,10 +37,45 @@ fn failed_beats_delivery_unknown_beats_sending_beats_pending() {
 }
 
 #[test]
-fn dirty_fields_are_the_unique_union_in_queue_order() {
+fn inv_sync_01_dirty_fields_are_the_unique_union_in_queue_order() {
     let first = SyncEntry { fields: vec!["text".into(), "likes".into()], ..entry("update", OperationStatus::Pending, false, 1) };
     let second = SyncEntry { fields: vec!["likes".into(), "media".into()], ..entry("update", OperationStatus::Pending, false, 2) };
     assert_eq!(fold_entries(&[first, second]).unwrap().dirty_fields, ["text", "likes", "media"]);
+}
+
+#[test]
+fn inv_sync_01_inv_sync_04_random_sets_of_open_operations_fold_to_the_state_attempts_since_and_error_of_the_oracle() {
+    let rank = |entry: &SyncEntry| match (entry.status, entry.transport_started) {
+        (OperationStatus::Failed, _) => 0,
+        (OperationStatus::DeliveryUnknown, _) => 1,
+        (OperationStatus::Pending, true) => 2,
+        (OperationStatus::Pending, false) => 3,
+        (OperationStatus::Committed | OperationStatus::RolledBack, _) => 4,
+    };
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut next = move |bound: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % bound
+    };
+    for round in 0..2000 {
+        let entries: Vec<SyncEntry> = (0..next(6))
+            .map(|turn| {
+                let status = [OperationStatus::Pending, OperationStatus::Pending, OperationStatus::DeliveryUnknown, OperationStatus::Failed][next(4) as usize];
+                let started = next(2) == 1;
+                SyncEntry { attempts: next(5) as u32, error: failure(&format!("e{turn}")), ..entry(&format!("a{turn}"), status, started, 10 + turn as i64) }
+            })
+            .collect();
+        let Some(info) = fold_entries(&entries) else {
+            assert!(entries.is_empty(), "round {round}: open operations folded to nothing");
+            continue;
+        };
+        let best = entries.iter().map(&rank).min().unwrap();
+        let decisive = entries.iter().find(|entry| rank(entry) == best).unwrap();
+        let expected = [SyncState::Failed, SyncState::DeliveryUnknown, SyncState::Sending, SyncState::Pending][best];
+        assert_eq!((info.state, info.attempts, info.since, info.error.clone()), (expected, decisive.attempts, decisive.since, decisive.error.clone()), "round {round}: {entries:?}");
+    }
 }
 
 #[test]

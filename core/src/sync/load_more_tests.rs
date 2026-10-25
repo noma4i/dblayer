@@ -90,7 +90,7 @@ async fn next_page_uses_the_cursor_and_appends_in_server_order() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn no_next_page_means_no_transport_call() {
+async fn inv_fresh_06_no_next_page_means_no_transport_call() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -154,7 +154,7 @@ async fn load_more_on_unpaged_relation_is_an_error() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn second_load_more_during_flight_is_already_loading() {
+async fn inv_fresh_06_second_load_more_during_flight_is_already_loading() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], true, "c4").after(Duration::from_secs(3)));

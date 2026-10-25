@@ -42,22 +42,22 @@ async fn node_answered_after(wipe: fn(&Rig)) {
 }
 
 #[tokio::test(start_paused = true)]
-async fn nodes_answer_after_reset_all_lands_nothing() {
+async fn inv_fresh_03_nodes_answer_after_reset_all_lands_nothing() {
     nodes_answered_after(reset_everything).await;
 }
 
 #[tokio::test(start_paused = true)]
-async fn nodes_answer_after_a_cache_reset_lands_nothing() {
+async fn inv_fresh_03_nodes_answer_after_a_cache_reset_lands_nothing() {
     nodes_answered_after(reset_chats_cache).await;
 }
 
 #[tokio::test(start_paused = true)]
-async fn node_answer_after_reset_all_lands_nothing() {
+async fn inv_fresh_03_node_answer_after_reset_all_lands_nothing() {
     node_answered_after(reset_everything).await;
 }
 
 #[tokio::test(start_paused = true)]
-async fn node_answer_after_a_cache_reset_lands_nothing() {
+async fn inv_fresh_03_node_answer_after_a_cache_reset_lands_nothing() {
     node_answered_after(reset_chats_cache).await;
 }
 
@@ -73,7 +73,7 @@ async fn nodes_answer_in_the_same_generation_still_lands() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn next_page_answer_after_reset_all_lands_nothing() {
+async fn inv_fresh_03_next_page_answer_after_reset_all_lands_nothing() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], false, "c4").after(Duration::from_secs(5)));
@@ -88,7 +88,7 @@ async fn next_page_answer_after_reset_all_lands_nothing() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn resume_answer_after_reset_all_lands_nothing() {
+async fn inv_fresh_03_resume_answer_after_reset_all_lands_nothing() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m2"], false, "c2").after(Duration::from_secs(5)));

@@ -434,7 +434,7 @@ async fn follower_of_a_temp_row_moves_its_sync_state_to_the_real_id() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn kinds_follow_the_failure_class() {
+async fn inv_sync_04_kinds_follow_the_failure_class() {
     for (id, reply, state, kind) in [
         ("m1", Reply::fail(TransportError::Http { status: 502, body: "bad gateway".into() }), SyncState::DeliveryUnknown, FailureKind::Server),
         ("m2", Reply::graphql_error("busy", "SERVICE_UNAVAILABLE"), SyncState::Pending, FailureKind::Server),

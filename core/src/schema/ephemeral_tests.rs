@@ -30,13 +30,13 @@ fn a_valid_ephemeral_field_passes_and_stays_out_of_the_stored_row() {
 }
 
 #[test]
-fn reset_after_without_a_default_is_rejected() {
+fn inv_ephemeral_07_reset_after_without_a_default_is_rejected() {
     let spec = EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).nullable()).resetting_after("5.seconds");
     assert_eq!(with_ephemeral(spec).validate(&[]), Err(DeclarationError::ResetWithoutDefault("typing".into())));
 }
 
 #[test]
-fn a_field_without_default_or_null_is_rejected() {
+fn inv_ephemeral_07_a_field_without_default_or_null_is_rejected() {
     let spec = EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool));
     assert_eq!(with_ephemeral(spec).validate(&[]), Err(DeclarationError::EphemeralNeedsDefault("typing".into())));
     let nullable = EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).nullable());
@@ -44,13 +44,13 @@ fn a_field_without_default_or_null_is_rejected() {
 }
 
 #[test]
-fn an_ephemeral_file_is_rejected() {
+fn inv_ephemeral_07_an_ephemeral_file_is_rejected() {
     let spec = EphemeralSpec::new(FieldSpec::file("photo").nullable());
     assert_eq!(with_ephemeral(spec).validate(&[]), Err(DeclarationError::EphemeralFile("photo".into())));
 }
 
 #[test]
-fn an_indexed_ephemeral_field_is_rejected() {
+fn inv_ephemeral_07_an_indexed_ephemeral_field_is_rejected() {
     let spec = EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false)).indexed());
     assert_eq!(with_ephemeral(spec).validate(&[]), Err(DeclarationError::EphemeralIndexed("typing".into())));
     let composite = ModelSpec { indexes: vec![vec!["name".into(), "typing".into()]], ..with_ephemeral(typing()) };
@@ -72,7 +72,7 @@ fn a_reset_window_must_be_a_positive_duration() {
 }
 
 #[test]
-fn scopes_cannot_filter_or_sort_by_an_ephemeral_field() {
+fn inv_ephemeral_07_scopes_cannot_filter_or_sort_by_an_ephemeral_field() {
     let by = RelationSpec::new("typists", &["typing"]);
     assert_eq!(
         ModelSpec { relations: vec![by], ..with_ephemeral(typing()) }.validate(&[]),
@@ -105,7 +105,7 @@ fn expire_after_needs_a_memory_model_and_a_positive_duration() {
 }
 
 #[test]
-fn updates_set_must_name_ephemeral_fields() {
+fn inv_ephemeral_07_updates_set_must_name_ephemeral_fields() {
     let relation = |field: &str| {
         let remote = RemoteSpec {
             operation: "UserEvents".into(),

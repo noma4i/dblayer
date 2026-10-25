@@ -99,7 +99,7 @@ fn state_change_without_a_data_change_reaches_a_row_observer_as_updated() {
 }
 
 #[test]
-fn state_change_reaches_a_list_observer_and_a_scope_free_query() {
+fn inv_sync_02_state_change_reaches_a_list_observer_and_a_scope_free_query() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "two"}));
@@ -115,7 +115,7 @@ fn state_change_reaches_a_list_observer_and_a_scope_free_query() {
 }
 
 #[test]
-fn queries_filter_by_sync_state_and_count_matches_rows() {
+fn inv_sync_02_queries_filter_by_sync_state_and_count_matches_rows() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     let created = db.create("moments", obj(json!({"userId": "u1", "text": "new"}))).unwrap();

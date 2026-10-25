@@ -5,7 +5,7 @@ use super::upload_tests::{blob, created, file, input, rid, single_replies, small
 use crate::transport::PutReply;
 
 #[tokio::test(start_paused = true)]
-async fn a_step_answered_after_reset_all_sends_nothing_and_leaves_nothing() {
+async fn inv_fresh_03_a_step_answered_after_reset_all_sends_nothing_and_leaves_nothing() {
     let rig = upload_rig(small());
     rig.transport.enqueue("CreateBlob", blob().after(Duration::from_secs(5)));
     let source = file(b"abcdef");
@@ -19,7 +19,7 @@ async fn a_step_answered_after_reset_all_sends_nothing_and_leaves_nothing() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_mutation_answered_after_reset_all_does_not_bring_the_row_back() {
+async fn inv_fresh_03_the_mutation_answered_after_reset_all_does_not_bring_the_row_back() {
     let rig = upload_rig(small());
     rig.transport.enqueue("CreateBlob", blob());
     rig.transport.enqueue("CreateMoment", created("m9").after(Duration::from_secs(5)));

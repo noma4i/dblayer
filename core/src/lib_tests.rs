@@ -56,6 +56,17 @@ fn inv_fresh_09_a_freshness_window_is_a_duration_and_no_policy_table_resolves_na
 }
 
 #[test]
+fn inv_time_01_only_the_clock_module_and_the_stress_rigs_read_the_wall_clock() {
+    let allowed = ["pacing/clock.rs", "pacing/test_clock.rs", "bin/stress.rs", "bin/rowbench.rs", "sync/stress/mod.rs", "sync/stress/watchdog.rs"];
+    for word in ["SystemTime::now", "Instant::now", "OffsetDateTime::now"] {
+        let strays: Vec<String> = mentions(word).into_iter().filter(|file| !allowed.contains(&file.as_str())).collect();
+        assert_eq!(strays, Vec::<String>::new(), "{word} reads the wall clock outside the clock module");
+    }
+    let defaults: Vec<String> = mentions("SystemClock").into_iter().filter(|file| !["pacing/clock.rs", "pacing/mod.rs", "store/mod.rs", "db/ephemeral.rs", "ffi/database.rs", "ffi/encrypted.rs"].contains(&file.as_str())).collect();
+    assert_eq!(defaults, Vec::<String>::new(), "a path builds its own system clock instead of taking the one given at open");
+}
+
+#[test]
 fn user_agent_preserves_application_products() {
     let token = format!("DBlayer/{}", env!("CARGO_PKG_VERSION"));
     for (application, expected) in [(None, token.clone()), (Some(String::new()), token.clone()), (Some("Example/3".into()), format!("Example/3 {token}"))] {

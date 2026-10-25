@@ -28,7 +28,7 @@ fn column(rig: &Rig, field: &str) -> Option<String> {
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_event_07_an_event_held_in_the_debounce_window_does_not_create_a_row_after_a_reset() {
+async fn inv_event_07_inv_fresh_03_an_event_held_in_the_debounce_window_does_not_create_a_row_after_a_reset() {
     let rig = rig_with_events();
     let spec = EventSpec::new("moment_changed").debounced(Duration::from_millis(500)).merged_by_row();
     let _subscription = rig.sync.subscribe(upserts(spec)).await.unwrap();

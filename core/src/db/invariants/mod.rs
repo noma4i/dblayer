@@ -16,3 +16,7 @@ mod rollback_tests;
 mod stamp_tests;
 #[cfg(test)]
 mod write_tests;
+#[cfg(test)]
+mod snapshot_tests;
+#[cfg(test)]
+mod work_tests;

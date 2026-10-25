@@ -29,12 +29,12 @@ impl Shared {
             for (id, record) in stored {
                 let mut data = record.row;
                 let ephemeral = overlay.as_ref().map_or(0, |state| state.overlay(spec, &id, &mut data));
-                #[cfg(test)]
-                if let Some(hook) = locked(&self.row_build_hook).clone() {
-                    hook(&id);
-                }
                 built.push((id.clone(), Arc::new(Record { id: record.id, revision: record.revision, data, sync: syncs.remove(&id).unwrap_or_default(), ephemeral })));
             }
+        }
+        #[cfg(test)]
+        if let Some(hook) = locked(&self.row_build_hook).clone() {
+            built.iter().for_each(|(id, _)| hook(id));
         }
         let sized: Vec<(Row, usize)> = built.iter().map(|(_, row)| (row.clone(), super::cache::row_bytes(model, row))).collect();
         {

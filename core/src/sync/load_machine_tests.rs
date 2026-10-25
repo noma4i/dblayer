@@ -215,7 +215,7 @@ fn inv_loadm_08_online_retries_each_observed_window_that_failed_by_network_once(
 }
 
 #[test]
-fn inv_loadm_09_a_reset_discards_a_read_taken_before_it() {
+fn inv_loadm_09_inv_fresh_03_a_reset_discards_a_read_taken_before_it() {
     let mut machine = Machine::default();
     step(&mut machine, Event::Reset { epoch: 1, models: None });
     observe(&mut machine, stored(0, 5, true));

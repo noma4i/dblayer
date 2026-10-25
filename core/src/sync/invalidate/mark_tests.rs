@@ -31,7 +31,7 @@ fn history_reply(ids: &[&str]) -> Reply {
 }
 
 #[tokio::test(start_paused = true)]
-async fn created_moment_marks_the_open_feed_stale_and_the_next_load_reads_it() {
+async fn inv_fresh_10_created_moment_marks_the_open_feed_stale_and_the_next_load_reads_it() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     load(&rig, "feed").await;
@@ -71,7 +71,7 @@ async fn feed_without_an_open_window_is_not_touched() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn refetch_marks_only_the_named_relations() {
+async fn inv_fresh_10_refetch_marks_only_the_named_relations() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));

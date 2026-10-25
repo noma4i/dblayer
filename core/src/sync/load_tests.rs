@@ -40,7 +40,7 @@ async fn nested_author_lands_in_users() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn fresh_window_is_skipped_until_stale_time_passes() {
+async fn inv_fresh_01_fresh_window_is_skipped_until_stale_time_passes() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -89,7 +89,7 @@ async fn empty_result_uses_the_shorter_empty_window() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn parallel_identical_loads_share_one_transport_call() {
+async fn inv_fresh_01_parallel_identical_loads_share_one_transport_call() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2").after(Duration::from_secs(1)));
     let nothing = none();
@@ -126,7 +126,7 @@ async fn network_error_is_retried_with_delay() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn offline_load_makes_no_call_and_online_loads_again() {
+async fn inv_fresh_08_offline_load_makes_no_call_and_online_loads_again() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.set_online(false);
@@ -183,7 +183,7 @@ async fn server_code_is_retried_and_fatal_code_is_not() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn failed_refresh_keeps_stale_data_unless_forced() {
+async fn inv_fresh_05_failed_refresh_keeps_stale_data_unless_forced() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
@@ -197,7 +197,7 @@ async fn failed_refresh_keeps_stale_data_unless_forced() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn failed_first_load_without_window_is_an_error() {
+async fn inv_fresh_05_failed_first_load_without_window_is_an_error() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
     let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
@@ -239,7 +239,7 @@ async fn row_destroyed_during_flight_is_not_resurrected() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn response_after_a_reset_is_discarded() {
+async fn inv_fresh_03_response_after_a_reset_is_discarded() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1").after(Duration::from_secs(5)));
     let sync = rig.sync.clone();

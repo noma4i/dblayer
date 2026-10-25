@@ -91,7 +91,7 @@ fn rows_read_with_defaults_and_written_values_but_store_nothing() {
 }
 
 #[test]
-fn a_write_reaches_observers_as_an_updated_row_without_a_database_revision() {
+fn inv_ephemeral_04_a_write_reaches_observers_as_an_updated_row_without_a_database_revision() {
     let (db, _) = rig();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("people"), callback).unwrap();
@@ -124,7 +124,7 @@ fn row_observers_and_scope_observers_hear_the_write() {
 }
 
 #[test]
-fn the_value_returns_to_default_by_the_clock_and_observers_see_the_reset() {
+fn inv_ephemeral_02_the_value_returns_to_default_by_the_clock_and_observers_see_the_reset() {
     let (db, clock) = rig();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("people"), callback).unwrap();
@@ -145,7 +145,38 @@ fn the_value_returns_to_default_by_the_clock_and_observers_see_the_reset() {
 }
 
 #[test]
-fn a_write_restarts_the_timer() {
+fn inv_ephemeral_04_the_position_grows_with_every_write_and_reset_while_the_revision_stays() {
+    let (db, clock) = rig();
+    let epoch = |db: &Db| db.shared.ephemeral.lock().epoch;
+    let revision = db.revision_seq().unwrap();
+    let mut seen = vec![epoch(&db)];
+    typing(&db, true);
+    seen.push(epoch(&db));
+    typing(&db, false);
+    seen.push(epoch(&db));
+    typing(&db, true);
+    seen.push(epoch(&db));
+    clock.advance(seconds(6));
+    db.expire_ephemeral().unwrap();
+    seen.push(epoch(&db));
+    assert!(seen.windows(2).all(|pair| pair[0] < pair[1]), "epochs {seen:?}");
+    assert_eq!(db.revision_seq().unwrap(), revision);
+}
+
+#[test]
+fn inv_ephemeral_08_values_for_rows_that_never_arrive_leave_no_memory_behind() {
+    let (db, clock) = rig();
+    for turn in 0..50 {
+        db.set_ephemeral("people", &rid(&format!("ghost{turn}")), obj(json!({"typing": true}))).unwrap();
+    }
+    assert_eq!(db.shared.ephemeral.lock().held_rows(), 50);
+    clock.advance(seconds(6));
+    db.expire_ephemeral().unwrap();
+    assert_eq!(db.shared.ephemeral.lock().held_rows(), 0);
+}
+
+#[test]
+fn inv_ephemeral_02_a_write_restarts_the_timer() {
     let (db, clock) = rig();
     typing(&db, true);
     clock.advance(seconds(3));
@@ -172,7 +203,7 @@ fn writing_the_same_value_stays_silent() {
 }
 
 #[test]
-fn destroying_a_row_removes_its_values() {
+fn inv_ephemeral_06_destroying_a_row_removes_its_values() {
     let (db, _) = rig();
     typing(&db, true);
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
@@ -183,7 +214,7 @@ fn destroying_a_row_removes_its_values() {
 }
 
 #[test]
-fn reset_forgets_every_value() {
+fn inv_ephemeral_06_reset_forgets_every_value() {
     let (db, _) = rig();
     typing(&db, true);
     db.reset_all().unwrap();
@@ -202,7 +233,7 @@ fn bad_writes_are_rejected() {
 }
 
 #[test]
-fn ephemeral_fields_cannot_be_queried() {
+fn inv_ephemeral_07_ephemeral_fields_cannot_be_queried() {
     let (db, _) = rig();
     let query = Query::new("people").filtered(Where::equal("typing", json!(true)));
     assert!(matches!(db.query(&query), Err(DbError::Query(crate::query::QueryError::EphemeralField(_)))));
@@ -225,7 +256,7 @@ fn memory_models_read_and_observe_like_stored_ones_and_expire_by_the_clock() {
 }
 
 #[test]
-fn a_landing_after_the_due_scan_keeps_the_memory_row_alive() {
+fn inv_ephemeral_03_a_landing_after_the_due_scan_keeps_the_memory_row_alive() {
     let (db, clock) = rig();
     put(&db, "presence", json!({"id": "r1", "room": "lobby"}));
     clock.advance(seconds(31));
@@ -249,7 +280,7 @@ fn a_rewrite_keeps_a_memory_row_alive() {
 }
 
 #[test]
-fn values_and_memory_rows_do_not_survive_a_restart() {
+fn inv_ephemeral_01_values_and_memory_rows_do_not_survive_a_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
@@ -286,7 +317,7 @@ fn the_background_timer_resets_a_value_by_itself() {
 }
 
 #[test]
-fn a_value_for_a_missing_row_waits_for_the_row_and_still_resets_by_the_clock() {
+fn inv_ephemeral_06_a_value_for_a_missing_row_waits_for_the_row_and_still_resets_by_the_clock() {
     let (db, clock) = rig();
     db.set_ephemeral("people", &rid("late"), obj(json!({"typing": true}))).unwrap();
     clock.advance(seconds(2));
@@ -308,7 +339,7 @@ fn a_value_for_a_row_that_never_arrives_lapses_by_the_clock() {
 }
 
 #[test]
-fn an_ephemeral_change_of_an_included_row_updates_the_parent_observer() {
+fn inv_ephemeral_05_an_ephemeral_change_of_an_included_row_updates_the_parent_observer() {
     let mut notes = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("personId", ScalarKind::Id).indexed()]);
     notes.associations.push(AssociationSpec::new("author", AssociationKind::BelongsTo, "people", "personId"));
     let db = Db::open_in_memory(vec![people_spec(), notes], None).unwrap();

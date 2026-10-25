@@ -26,7 +26,7 @@ struct Window {
 }
 
 #[tokio::test(start_paused = true)]
-async fn resume_reloads_a_watched_window_that_is_stale_invalidated_or_never_loaded() {
+async fn inv_fresh_07_resume_reloads_a_watched_window_that_is_stale_invalidated_or_never_loaded() {
     let cases = [
         Window { name: "stale", loaded_before: true, watched: true, invalidated: false, idle_secs: 120, chunks: 1, loaded: 1, calls: 2 },
         Window { name: "recent", loaded_before: true, watched: true, invalidated: false, idle_secs: 30, chunks: 0, loaded: 0, calls: 1 },
@@ -240,7 +240,7 @@ async fn closing_cancels_the_run_an_event_started() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn windows_are_reloaded_in_chunks() {
+async fn inv_fresh_07_windows_are_reloaded_in_chunks() {
     let rig = rig_with(SyncConfig { resume: ResumeDrain::new(Duration::from_secs(60), 2), ..SyncConfig::default() });
     rig.transport.enqueue("MomentsByUser", rig_list(&["a"]));
     let mut watches = Vec::new();

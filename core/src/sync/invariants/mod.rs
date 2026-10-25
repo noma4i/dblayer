@@ -26,3 +26,5 @@ mod server_delete_tests;
 mod spec_fixtures;
 #[cfg(test)]
 mod temp_destroy_tests;
+#[cfg(test)]
+mod window_tests;
