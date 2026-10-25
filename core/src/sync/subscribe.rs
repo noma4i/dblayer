@@ -262,6 +262,7 @@ impl Feed {
             }
             Err(_) => {
                 locked(&self.status).rejected += 1;
+                let _ = self.reread_observed(model).await;
                 false
             }
         }

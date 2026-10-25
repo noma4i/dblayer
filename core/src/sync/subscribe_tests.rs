@@ -675,6 +675,28 @@ fn user_list(ids: &[&str]) -> crate::transport::Reply {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model() {
+    let directory = tempfile::tempdir().unwrap();
+    let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+    let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();
+    rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
+    rig.transport.enqueue("MomentsByUser", user_list(&["m1", "m2"]));
+    let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
+    rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
+    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    let shared = rig.db.shared.clone();
+    *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || {
+        let mut inner = shared.store.lock();
+        inner.generation = inner.generation.next();
+    }));
+    rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(subscription.status().rejected, 1);
+    assert_eq!((member_ids(&rig, "moments", "by_user", &params), rig.transport.call_count("MomentsByUser")), (vec!["m1".to_string(), "m2".to_string()], 2));
+}
+
+#[tokio::test(start_paused = true)]
 async fn inv_event_05_an_event_row_joins_the_loaded_list_that_declares_it_and_does_not_reload_it() {
     let rig = rig_with_subscription();
     let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();

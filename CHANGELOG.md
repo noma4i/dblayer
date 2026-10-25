@@ -73,6 +73,7 @@
 ### Fixed
 - A batch of server events no longer drops when two rows of it touch the same parent.
 - The answer of an action is ready when its operation turns committed.
+- A refused batch of server events reloads the observed lists of its model.
 - A session failure is no longer hidden by another subscription's failure.
 - A mutation answer that cannot be read keeps the operation open in delivery unknown instead of confirming it.
 - A destroy answered with `NOT_FOUND` closes as deleted instead of failing.
