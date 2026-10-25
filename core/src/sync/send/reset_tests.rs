@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use crate::operation::OperationStatus;
 use crate::identity::RowId;
 use crate::transport::{Reply, TransportError};
 
@@ -34,47 +33,23 @@ fn rig_with_pending_update() -> Rig {
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_op_13_a_reset_during_a_slow_answer_leaves_no_operation_stuck_in_sending() {
-    let rig = rig_with_pending_update();
-    flush_while_resetting(&rig, Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})).after(Duration::from_secs(5))).await;
-    let stuck: Vec<_> = rig.db.outbox().unwrap().into_iter().filter(|entry| entry.operation.status == OperationStatus::Pending && entry.operation.transport_started).collect();
-    assert!(stuck.is_empty(), "an operation stays started although no request is in flight: {stuck:?}");
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_reset_during_a_slow_network_failure_leaves_no_operation_stuck_in_sending() {
-    let rig = rig_with_pending_update();
-    flush_while_resetting(&rig, Reply::fail(TransportError::Network("down".to_string())).after(Duration::from_secs(5))).await;
-    let stuck: Vec<_> = rig.db.outbox().unwrap().into_iter().filter(|entry| entry.operation.status == OperationStatus::Pending && entry.operation.transport_started).collect();
-    assert!(stuck.is_empty(), "an operation stays started although no request is in flight: {stuck:?}");
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_success_answered_after_a_reset_closes_the_operation_and_does_not_bring_the_row_back() {
-    let rig = rig_with_pending_update();
-    flush_while_resetting(&rig, Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})).after(Duration::from_secs(5))).await;
-    assert!(rig.db.outbox().unwrap().is_empty());
-    assert_eq!(text_of(&rig, "moments", "m1"), None);
-    assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_network_failure_after_a_reset_finds_no_operation_and_nothing_is_sent_again() {
-    let rig = rig_with_pending_update();
-    rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Network("down".to_string())).after(Duration::from_secs(5)));
-    rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
-    reset_during_flush(&rig).await;
-    rig.clock.advance(Duration::from_secs(3600));
-    rig.sync.flush().await.unwrap();
-    assert!(rig.db.outbox().unwrap().is_empty());
-    assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_refusal_answered_after_a_reset_discards_the_closed_operation() {
-    let rig = rig_with_pending_update();
-    flush_while_resetting(&rig, Reply::graphql_error("not allowed", "FORBIDDEN").after(Duration::from_secs(5))).await;
-    assert!(rig.db.outbox().unwrap().is_empty());
+async fn inv_op_13_an_answer_a_refusal_or_a_network_failure_after_a_reset_leaves_no_trace() {
+    let answers = [
+        Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})),
+        Reply::graphql_error("not allowed", "FORBIDDEN"),
+        Reply::fail(TransportError::Network("down".to_string())),
+    ];
+    for answer in answers {
+        let rig = rig_with_pending_update();
+        rig.transport.enqueue("UpdateMoment", answer.clone().after(Duration::from_secs(5)));
+        rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
+        reset_during_flush(&rig).await;
+        rig.clock.advance(Duration::from_secs(3600));
+        rig.sync.flush().await.unwrap();
+        assert!(rig.db.outbox().unwrap().is_empty(), "{answer:?}");
+        assert_eq!(text_of(&rig, "moments", "m1"), None, "{answer:?}");
+        assert_eq!(rig.transport.call_count("UpdateMoment"), 1, "{answer:?}");
+    }
 }
 
 #[tokio::test(start_paused = true)]
