@@ -262,7 +262,9 @@ impl Feed {
             }
             Err(_) => {
                 locked(&self.status).rejected += 1;
-                let _ = self.reread_observed(model).await;
+                if self.reread_observed(model).await.is_err() {
+                    self.inner.publish_model_gap(model);
+                }
                 false
             }
         }

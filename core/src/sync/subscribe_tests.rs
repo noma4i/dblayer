@@ -675,25 +675,44 @@ fn user_list(ids: &[&str]) -> crate::transport::Reply {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model() {
-    let directory = tempfile::tempdir().unwrap();
-    let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());
-    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
-    let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();
-    rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
-    rig.transport.enqueue("MomentsByUser", user_list(&["m1", "m2"]));
-    let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
-    rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
-    let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
-    let shared = rig.db.shared.clone();
-    *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || {
-        let mut inner = shared.store.lock();
-        inner.generation = inner.generation.next();
-    }));
-    rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    assert_eq!(subscription.status().rejected, 1);
-    assert_eq!((member_ids(&rig, "moments", "by_user", &params), rig.transport.call_count("MomentsByUser")), (vec!["m1".to_string(), "m2".to_string()], 2));
+async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_a_gap_for_the_reader() {
+    for reread_fails in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut specs = specs();
+        let moments = specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap();
+        moments.changes.push(crate::schema::ChangeRead { area: "MOMENT".into(), relation: "by_user".into(), parameter: None, removes_on: Vec::new(), observed: false });
+        moments.change_feed = Some(change_feed());
+        let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
+        rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+        rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
+        let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();
+        rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
+        let reread = if reread_fails { crate::transport::Reply::fail(crate::transport::TransportError::Http { status: 422, body: "rejected".into() }) } else { user_list(&["m1", "m2"]) };
+        rig.transport.enqueue("MomentsByUser", reread);
+        let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
+        rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
+        let events = rig.sync.model_events("moments").unwrap();
+        rig.transport.await_calls("Changes", 1).await;
+        let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+        let shared = rig.db.shared.clone();
+        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || {
+            let mut inner = shared.store.lock();
+            inner.generation = inner.generation.next();
+        }));
+        rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let gap = tokio::time::timeout(Duration::from_secs(1), events.next()).await;
+        let members = member_ids(&rig, "moments", "by_user", &params);
+        assert_eq!(subscription.status().rejected, 1);
+        assert_eq!(rig.transport.call_count("MomentsByUser"), 2);
+        if reread_fails {
+            assert_eq!(members, ["m1"]);
+            assert!(matches!(gap, Ok(Some(super::ModelEventItem::Missed(1)))));
+        } else {
+            assert_eq!(members, ["m1", "m2"]);
+            assert!(gap.is_err());
+        }
+    }
 }
 
 #[tokio::test(start_paused = true)]
