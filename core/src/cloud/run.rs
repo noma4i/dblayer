@@ -7,6 +7,7 @@ use crate::db::{locked, Db, DbError};
 use crate::pacing::{Backoff, Clock};
 use crate::transport::Connectivity;
 
+use super::machine::{Phase, PhaseEvent};
 use super::{CloudAccount, CloudChange, CloudError, CloudIo, CloudPage, CloudState, MergeSource, Hlc};
 
 const BATCH: u32 = 100;
@@ -24,13 +25,14 @@ struct Inner {
     online: Arc<Connectivity>,
     wake: Notify,
     state: watch::Sender<CloudState>,
+    phase: Mutex<Phase>,
     pass: tokio::sync::Mutex<()>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
-enum Next {
-    Retry(Duration, bool),
-    Stop(CloudState),
+struct Failure {
+    error: CloudError,
+    retry: Option<(Duration, bool)>,
 }
 
 fn decode(page: &CloudPage) -> Result<Vec<CloudChange>, CloudError> {
@@ -52,7 +54,7 @@ impl Cloud {
     pub fn attach(db: &Db, io: Arc<dyn CloudIo>, clock: Arc<dyn Clock>) -> Cloud {
         let online = db.connectivity();
         let state = watch::channel(CloudState::Idle).0;
-        Cloud { inner: Arc::new(Inner { db: db.clone(), io, clock, online, wake: Notify::new(), state, pass: tokio::sync::Mutex::new(()), task: Mutex::new(None) }) }
+        Cloud { inner: Arc::new(Inner { db: db.clone(), io, clock, online, wake: Notify::new(), state, phase: Mutex::new(Phase::new()), pass: tokio::sync::Mutex::new(()), task: Mutex::new(None) }) }
     }
 
     pub fn state(&self) -> CloudState {
@@ -90,11 +92,7 @@ impl Cloud {
     }
 
     pub async fn sync_now(&self) -> Result<(), CloudError> {
-        let outcome = self.inner.pass(true).await;
-        if let Err(error) = &outcome {
-            self.inner.state.send_replace(Self::stopped(error));
-        }
-        outcome
+        self.inner.pass(true, None).await.map_err(|failure| failure.error)
     }
 
     pub fn start(&self) {
@@ -109,15 +107,6 @@ impl Cloud {
     pub fn stop(&self) {
         if let Some(task) = locked(&self.inner.task).take() {
             task.abort();
-        }
-    }
-
-    fn stopped(error: &CloudError) -> CloudState {
-        match error {
-            CloudError::Offline { .. } | CloudError::Unavailable { .. } | CloudError::Throttled { .. } => CloudState::Offline,
-            CloudError::NeedsAuthorization { .. } => CloudState::NeedsAuthorization,
-            CloudError::QuotaExceeded { .. } => CloudState::QuotaExceeded,
-            CloudError::Rejected { detail } => CloudState::Failed { detail: detail.clone() },
         }
     }
 }
@@ -145,42 +134,45 @@ impl Inner {
         let mut attempt = 0u32;
         loop {
             self.online.online().await;
-            let error = match self.pass(pull).await {
-                Ok(()) => return,
-                Err(error) => error,
-            };
-            match self.classify(&error, attempt) {
-                Next::Stop(state) => {
-                    self.state.send_replace(state);
-                    return;
-                }
-                Next::Retry(delay, spends) => {
-                    self.state.send_replace(CloudState::Offline);
-                    attempt += u32::from(spends);
-                    self.online.wait(self.clock.as_ref(), delay).await;
-                }
-            }
+            let Err(failure) = self.pass(pull, Some(attempt)).await else { return };
+            let Some((delay, spends)) = failure.retry else { return };
+            attempt += u32::from(spends);
+            self.online.wait(self.clock.as_ref(), delay).await;
         }
     }
 
-    fn classify(&self, error: &CloudError, attempt: u32) -> Next {
+    fn retry_of(error: &CloudError, attempt: u32) -> Option<(Duration, bool)> {
         let delay = RETRY.delay(attempt);
         match error {
-            CloudError::Offline { .. } => Next::Retry(delay, false),
-            CloudError::Unavailable { .. } if RETRY.allows(attempt + 1) => Next::Retry(delay, true),
-            CloudError::Throttled { retry_after_ms } if RETRY.allows(attempt + 1) => Next::Retry(delay.max(Duration::from_millis(*retry_after_ms)), true),
-            CloudError::Unavailable { detail } => Next::Stop(CloudState::Failed { detail: detail.clone() }),
-            CloudError::Throttled { .. } => Next::Stop(CloudState::Failed { detail: error.to_string() }),
-            other => Next::Stop(Cloud::stopped(other)),
+            CloudError::Offline { .. } => Some((delay, false)),
+            CloudError::Unavailable { .. } if RETRY.allows(attempt + 1) => Some((delay, true)),
+            CloudError::Throttled { retry_after_ms } if RETRY.allows(attempt + 1) => Some((delay.max(Duration::from_millis(*retry_after_ms)), true)),
+            _ => None,
         }
     }
 
-    async fn pass(&self, pull: bool) -> Result<(), CloudError> {
+    fn publish(&self, event: PhaseEvent) {
+        let mut phase = locked(&self.phase);
+        self.state.send_replace(phase.handle(&event));
+    }
+
+    async fn pass(&self, pull: bool, attempt: Option<u32>) -> Result<(), Failure> {
         let _turn = self.pass.lock().await;
+        let Err(error) = self.cycle(pull).await else { return Ok(()) };
+        let retry = attempt.and_then(|attempt| Self::retry_of(&error, attempt));
+        self.publish(match (&retry, attempt, &error) {
+            (Some(_), _, _) => PhaseEvent::Wait,
+            (None, Some(_), CloudError::Unavailable { .. } | CloudError::Throttled { .. }) => PhaseEvent::GaveUp(error.clone()),
+            _ => PhaseEvent::Stop(error.clone()),
+        });
+        Err(Failure { error, retry })
+    }
+
+    async fn cycle(&self, pull: bool) -> Result<(), CloudError> {
         let generation = self.db.generation();
         let unstamped = self.db.cloud_unstamped(generation)?;
         if !unstamped.is_empty() {
-            self.state.send_replace(CloudState::NeedsInitialMerge { rows: unstamped.len() as u64 });
+            self.publish(PhaseEvent::Merge { rows: unstamped.len() as u64 });
             return Ok(());
         }
         match self.io.account().await? {
@@ -188,7 +180,7 @@ impl Inner {
             CloudAccount::SignedOut | CloudAccount::NeedsConsent => return Err(CloudError::NeedsAuthorization { detail: "no cloud account is available".into() }),
             CloudAccount::Restricted => return Err(CloudError::Rejected { detail: "the cloud account is restricted".into() }),
         }
-        self.state.send_replace(CloudState::Syncing);
+        self.publish(PhaseEvent::Start);
         let own = self.db.cloud_replica(generation)?;
         loop {
             loop {
@@ -213,7 +205,7 @@ impl Inner {
                 break;
             }
         }
-        self.state.send_replace(CloudState::Idle);
+        self.publish(PhaseEvent::Done);
         Ok(())
     }
 }

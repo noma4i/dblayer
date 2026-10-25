@@ -3,6 +3,7 @@ mod book;
 mod db;
 mod io;
 mod journal;
+mod machine;
 mod run;
 mod state;
 mod stamp;
