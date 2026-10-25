@@ -7,7 +7,7 @@ base="${CHECK_SILENT_ROOT:-$root}"
 allow="${CHECK_SILENT_ALLOW:-$root/scripts/silent_allowlist.txt}"
 found=0
 seen="$(mktemp)"
-trap 'rm -f "$seen"' EXIT
+trap '/bin/rm -f "$seen"' EXIT
 
 listed() {
   awk -F'\t' -v p="$1" -v t="$2" '$1 == p && $2 == t { ok = 1 } END { exit !ok }' "$3"

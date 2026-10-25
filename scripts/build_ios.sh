@@ -34,7 +34,7 @@ for target in "${targets[@]}"; do
 done
 
 bash "$root/scripts/build_bindgen.sh"
-rm -rf "$build" "$bridge/DBlayerFFI.xcframework"
+/bin/rm -rf "$build" "$bridge/DBlayerFFI.xcframework"
 mkdir -p "$build/headers" "$bridge/Sources/DBlayer"
 
 (cd -- "$root/core" && "$root/target/debug/uniffi-bindgen" generate \

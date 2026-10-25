@@ -4,7 +4,7 @@ set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+trap '/bin/rm -rf "$work"' EXIT
 mkdir -p "$work/swift/Sources/DBlayer" "$work/kotlin/src/main/kotlin"
 : > "$work/allow.txt"
 

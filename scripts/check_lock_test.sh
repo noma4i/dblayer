@@ -5,7 +5,7 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d)"
 holder=
-trap 'echo go >&3; [ -z "$holder" ] || wait "$holder" 2> /dev/null; rm -rf "$work"' EXIT
+trap 'echo go >&3; [ -z "$holder" ] || wait "$holder" 2> /dev/null; /bin/rm -rf "$work"' EXIT
 mkdir -p "$work/tree/target"
 mkfifo "$work/up" "$work/go"
 exec 3<> "$work/go"
@@ -27,7 +27,7 @@ second_code=0
 bash "$root/scripts/check_lock_driver.sh" second > "$work/second.log" 2>&1 || second_code=$?
 [ "$second_code" -eq 0 ] && [ -e "$work/second-ran" ] || { echo "check_lock_test: the lock was not released when the run ended" >&2; exit 1; }
 
-rm -f "$work/second-ran"
+/bin/rm -f "$work/second-ran"
 mkdir "$work/tree/target/check.lock"
 echo 999999 > "$work/tree/target/check.lock/pid"
 bash "$root/scripts/check_lock_driver.sh" second > "$work/second.log" 2>&1 && [ -e "$work/second-ran" ] || { echo "check_lock_test: a lock of a dead run was not taken over" >&2; exit 1; }

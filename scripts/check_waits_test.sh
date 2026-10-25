@@ -4,7 +4,7 @@ set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+trap '/bin/rm -rf "$work"' EXIT
 mkdir -p "$work/swift" "$work/kotlin"
 
 run() {
@@ -22,7 +22,7 @@ expect_red() {
     echo "check_waits_test: not caught: $text" >&2
     exit 1
   fi
-  rm -f "$file"
+  /bin/rm -f "$file"
 }
 
 expect_red "$work/swift/Bad.swift" '  while list.replaced.isEmpty { await Task.yield() }'

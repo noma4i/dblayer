@@ -5,7 +5,7 @@ here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 work="$(mktemp -d)"
 sleep 601.7 &
 outsider=$!
-trap 'kill "$outsider" 2>/dev/null || true; wait "$outsider" 2>/dev/null || true; rm -rf "$work"' EXIT
+trap 'kill "$outsider" 2>/dev/null || true; wait "$outsider" 2>/dev/null || true; /bin/rm -rf "$work"' EXIT
 export CHECK_PROCESS_VIOLATION="$work/violation"
 pkill() {
   case " $* " in

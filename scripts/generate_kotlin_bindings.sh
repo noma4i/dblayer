@@ -28,7 +28,7 @@ done
 [ -d "$out" ] || { echo "$name: --out is not a directory: $out" >&2; exit 1; }
 
 global="$(mktemp)"
-trap 'rm -f "$global"' EXIT
+trap '/bin/rm -f "$global"' EXIT
 sed 's/^\[/[crates.dblayer./' "$config" > "$global"
 "$bindgen" generate --library "$library" --config "$global" --language kotlin --no-format --out-dir "$out"
 

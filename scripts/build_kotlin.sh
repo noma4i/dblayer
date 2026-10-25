@@ -49,7 +49,7 @@ fi
 if [ "$part" != --host ]; then
   arguments=()
   for abi in "${abis[@]}"; do arguments+=(-t "$abi"); done
-  rm -rf "$module/src/main/jniLibs"
+  /bin/rm -rf "$module/src/main/jniLibs"
   (cd -- "$root/core" && cargo ndk "${arguments[@]}" --platform 33 \
     -o "$module/src/main/jniLibs" build --release)
   for abi in "${abis[@]}"; do printf '%s\n' "$module/src/main/jniLibs/$abi/libdblayer.so"; done

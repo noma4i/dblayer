@@ -26,7 +26,7 @@ fi
 
 test_dirs="${TEST_DIRS:-core/src gen/src swift/Tests MediaLayer/Tests kotlin/src/test kotlin/ui/src/test scripts}"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+trap '/bin/rm -rf "$work"' EXIT
 
 awk -F'|' '/^\| INV-[A-Z]+-[0-9]+ \| (REQUIRED|UNBUILT|OPEN) \|/ {
   id = $2; status = $3; mutation = $8

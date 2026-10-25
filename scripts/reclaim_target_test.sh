@@ -3,7 +3,7 @@ set -euo pipefail
 
 script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/reclaim_target.sh"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+trap '/bin/rm -rf "$work"' EXIT
 
 printf '#!/bin/sh\nexit 0\n' > "$work/pgrep"
 printf '#!/bin/sh\necho cargo must not run >&2\nexit 9\n' > "$work/cargo"
