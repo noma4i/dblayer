@@ -2,10 +2,8 @@ package com.noma4i.dblayer
 
 import java.util.concurrent.atomic.AtomicReference
 
-/** The rows of a list with the edits since the last take, from one revision. `edits` is null when the rows cannot be reached by edits: replace the mirror with `rows`. Empty `edits` mean no change. `rows` never changes after it is returned. */
 class ListUpdate<Model>(val rows: List<Model>, val edits: List<ListEdit<Model>>?, val revision: ULong)
 
-/** The one owner of what a consumer takes: the publisher and the consumer swap one immutable bundle by compare-and-set, so neither waits for the other and no edit is lost or taken twice. */
 internal class ListUpdates<Model> {
     private class Bundle<Model>(val rows: List<Model>, val edits: List<ListEdit<Model>>?, val revision: ULong)
 

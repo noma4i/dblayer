@@ -163,7 +163,6 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     /** The ids that the last delivery of `rows` replaced: real id to temporary id. */
     val replaced: kotlinx.coroutines.flow.StateFlow<Map<String, String>> get() = mutableReplaced
 
-    /** The newest rows with the edits since the last call, from one revision. The call never waits for a delivery that is being published. */
     fun takeUpdate(): ListUpdate<Model> = updates.take()
 
     suspend fun refresh() = query.refresh()

@@ -69,17 +69,18 @@ public final class LiveWindow<Model: DBModel> {
   public private(set) var total: Int?
   public private(set) var failure: String?
   @ObservationIgnored private let window: Window<Model>
-  @ObservationIgnored private var pending: [ListEdit<Model>]?
-  @ObservationIgnored private var revision: UInt64 = 0
+  @ObservationIgnored private let updates = ListUpdates<Model>()
   @ObservationIgnored private var task: Task<Void, Never>?
 
   public init(_ window: Window<Model>) {
     self.window = window
+    let updates = updates
     task = Task.detached { [weak self] in
       let stream: LiveStream<Snapshot<Model>>
       do { stream = try await window.snapshots.stream() } catch { await self?.fail(error); return }
       for await snapshot in stream {
         let ids = snapshot.reordered ? snapshot.rows.map(\.id) : nil
+        updates.publish(snapshot)
         guard let self else { return }
         await self.show(snapshot, ids: ids)
       }
@@ -92,17 +93,11 @@ public final class LiveWindow<Model: DBModel> {
     replaced = snapshot.replaced
     if snapshot.error != failure { failure = snapshot.error }
     if let edges = snapshot.window { (hasBefore, hasAfter, total) = (edges.hasBefore, edges.hasAfter, edges.total) }
-    pending = ListEdit.composing(pending, snapshot.edits, within: snapshot.rows.count)
     rows = snapshot.rows
-    revision = snapshot.seq
     if let ids { self.ids = ids }
   }
 
-  /// The newest rows of the window with the edits since the last call, from one revision.
-  public func takeUpdate() -> ListUpdate<Model> {
-    defer { pending = [] }
-    return ListUpdate(rows: rows, edits: pending, revision: revision)
-  }
+  public func takeUpdate() -> ListUpdate<Model> { updates.take() }
 
   public func expand(before rows: Int) { window.expand(before: rows) }
   public func expand(after rows: Int) { window.expand(after: rows) }

@@ -97,4 +97,30 @@ struct MainThreadTests {
     #expect(reads.all > 0, "the probe saw the ids prepared")
     #expect(reads.main == 0)
   }
+
+  @Test
+  func aLiveListHasItsUpdateReadyWhileTheMainActorIsBusy() async {
+    let box = SnapshotBox()
+    let source = LiveSource<Snapshot<ProbeRow>>(initial: Snapshot(rows: [], replaced: [:]), merge: { _, newer in newer }) { emit in
+      box.emit = emit
+      return {}
+    }
+    let list = LiveList<ProbeRow>(Query<ProbeRow>(), snapshots: source)
+    await eventually("the subscription") { box.emit != nil }
+    let rows = (0 ..< 3).map { ProbeRow(key: "r\($0)") }
+    box.emit?(Snapshot(rows: rows, replaced: [:], reordered: true, seq: 1))
+    await eventually("the first delivery") { list.rows.count == 3 }
+    _ = list.takeUpdate()
+
+    box.emit?(Snapshot(rows: rows, replaced: [:], edits: [.rewrite(2, rows[2])], seq: 2))
+    usleep(500_000)
+
+    let update = list.takeUpdate()
+    #expect(update.revision == 2)
+    #expect(update.edits?.count == 1)
+  }
+}
+
+final class SnapshotBox: @unchecked Sendable {
+  var emit: (@Sendable (Snapshot<ProbeRow>) -> Void)?
 }

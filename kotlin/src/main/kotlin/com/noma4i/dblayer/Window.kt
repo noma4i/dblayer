@@ -74,7 +74,6 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
     val edges: StateFlow<WindowEdges> get() = mutableEdges
     val failure: StateFlow<String?> get() = mutableFailure
 
-    /** The newest rows of the window with the edits since the last call, from one revision. The call never waits for a delivery that is being published. */
     fun takeUpdate(): ListUpdate<Model> = updates.take()
 
     fun expand(before: Int = 0, after: Int = 0) = window.expand(before, after)

@@ -187,7 +187,7 @@ public final class LiveList<Model: DBModel> {
   /// The ids that the last delivery of `rows` replaced: real id to temporary id.
   public private(set) var replaced: [String: String] = [:]
   @ObservationIgnored private let query: Query<Model>
-  @ObservationIgnored private var pending: [ListEdit<Model>]?
+  @ObservationIgnored private let updates = ListUpdates<Model>()
   @ObservationIgnored private(set) var tasks: [Task<Void, Never>] = []
   @ObservationIgnored private var initialLoad: Task<Void, Error>?
 
@@ -207,6 +207,7 @@ public final class LiveList<Model: DBModel> {
 
   init(_ query: Query<Model>, snapshots: LiveSource<Snapshot<Model>>) {
     self.query = query
+    let updates = updates
     tasks = [
       Task.detached { [weak self] in
         let stream: LiveStream<Snapshot<Model>>
@@ -216,6 +217,7 @@ public final class LiveList<Model: DBModel> {
         }
         for await next in stream {
           let ids = next.reordered ? next.rows.map(\.id) : nil
+          updates.publish(next)
           guard let self else { return }
           await self.show(next, ids: ids)
         }
@@ -229,17 +231,12 @@ public final class LiveList<Model: DBModel> {
 
   private func show(_ next: Snapshot<Model>, ids: [String]?) {
     replaced = next.replaced
-    pending = ListEdit.composing(pending, next.edits, within: next.rows.count)
     rows = next.rows
     if let ids { self.ids = ids }
     snapshot = next
   }
 
-  /// The newest rows with the edits since the last call, from one revision.
-  public func takeUpdate() -> ListUpdate<Model> {
-    defer { pending = [] }
-    return ListUpdate(rows: rows, edits: pending, revision: snapshot.seq)
-  }
+  public func takeUpdate() -> ListUpdate<Model> { updates.take() }
 
   public func refresh() async throws { try await query.refresh() }
 
