@@ -227,3 +227,18 @@ fn resume_racing_with_commits_never_loses_the_wakeup() {
         assert!(last.ends_with(":6"), "round {round}: the last delivery is the latest rows: {:?}", told(&log));
     }
 }
+
+#[test]
+fn inv_observe_30_a_group_with_an_unread_commit_is_not_read_through_that_revision() {
+    let db = booted();
+    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
+    let (_, feed) = tape();
+    let _observer = db.observe_query_feed(Query::new("users"), false, false, feed).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let ahead = i64::MAX / 2;
+    let commit = || super::dispatch::Event { revision: ahead, models: [crate::identity::ModelKey::new("users")].into(), ..Default::default() };
+    let planned = db.shared.plan_refresh(&[commit()]);
+    assert!(!db.shared.observers().groups_read_through(ahead), "the group has not read the commit yet");
+    db.shared.run_refresh(&[commit()], planned);
+    db.await_revision(ahead);
+}

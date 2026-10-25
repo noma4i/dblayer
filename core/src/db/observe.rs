@@ -431,12 +431,20 @@ struct Due {
     step: Option<Stepping>,
 }
 
+pub(crate) struct Refresh {
+    due: Vec<Due>,
+    touched: Vec<(String, ModelKey, BTreeSet<RowId>)>,
+}
+
 impl Shared {
     pub(crate) fn refresh_groups(&self, batch: &[Event]) {
+        let planned = self.plan_refresh(batch);
+        self.run_refresh(batch, planned);
+    }
+
+    pub(crate) fn plan_refresh(&self, batch: &[Event]) -> Refresh {
         let (due, touched): (Vec<Due>, Vec<(String, ModelKey, BTreeSet<RowId>)>) = {
             let mut observers = self.observers();
-            let top = batch.iter().map(|event| event.revision).max().unwrap_or(0);
-            observers.top = observers.top.max(top);
             for opening in observers.opening.values_mut() {
                 opening.missed |= batch.iter().any(|event| opening.deps.hit(event));
             }
@@ -468,6 +476,11 @@ impl Shared {
                 .collect();
             (due, touched)
         };
+        Refresh { due, touched }
+    }
+
+    /// `top` rises only after every group the batch hit is scheduled: a group with an unread commit is not idle at that revision.
+    pub(crate) fn run_refresh(&self, batch: &[Event], Refresh { due, touched }: Refresh) {
         for (key, model, ids) in touched {
             self.contained(&key, || self.refresh_entities(&key, &model, ids));
         }
@@ -478,6 +491,7 @@ impl Shared {
             });
         }
         let mut observers = self.observers();
+        observers.top = observers.top.max(batch.iter().map(|event| event.revision).max().unwrap_or(0));
         self.serve_reach(&mut observers);
         let retry: Vec<String> = observers.opening.iter().filter(|(_, opening)| !opening.reading && opening.read_error.is_some()).map(|(key, _)| key.clone()).collect();
         for key in retry {
