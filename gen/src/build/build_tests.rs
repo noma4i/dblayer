@@ -71,17 +71,6 @@ fn a_search_line_marks_the_attribute_and_an_index_line_keeps_its_columns() {
 }
 
 #[test]
-fn inv_dsl_05_an_association_derives_its_model_and_key_from_its_name_and_a_foreign_key_needs_no_index_line() {
-    let models = check_source("model User do\n  has_many :moments\nend\n\nmodel Moment do\n  attribute :userId, :id\n  belongs_to :user\nend\n").unwrap();
-    let owner = &models[0].associations[0];
-    assert_eq!((owner.kind, owner.target.as_str(), owner.foreign_key.as_str()), (AssociationKind::HasMany, "Moment", "userId"));
-    let moment = &models[1];
-    let parent = &moment.associations[0];
-    assert_eq!((parent.kind, parent.target.as_str(), parent.foreign_key.as_str()), (AssociationKind::BelongsTo, "User", "userId"));
-    assert!(moment.indexes.contains(&vec!["userId".to_string()]) || moment.fields.iter().any(|field| field.name == "userId" && field.indexed));
-}
-
-#[test]
 fn associations_and_composite_index() {
     let model = check_source(
         "model Owner do\nend\n\nmodel Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  attribute :peers, [:id], default: []\n  index :ownerId, :createdAt\n  belongs_to :owner, class_name: Owner, foreign_key: :ownerId, touch: true\n  has_one :first, class_name: Sample, foreign_key: :ownerId, dependent: :destroy\n  references :peers, class_name: Owner\nend\n",

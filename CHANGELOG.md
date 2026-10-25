@@ -20,6 +20,7 @@
 - Swift `Entity.changes()` streams the value of an entity, current value then updates, and holds the entity while it is read.
 
 ### Changed
+- `create` and `update` refuse a field the model does not declare and a value that does not fit the type of its field. The call fails with the database error and writes nothing; before, the field was dropped and the value was stored as null or the default.
 - Swift `Model.retryAll()` and Kotlin top-level `retryAll()` are removed; use `DB.retryAll()` and `DBlayer.retryAll()`.
 - The core decides what happens after a list delivery does not fit the rows of a reader: one whole list on the same subscription, a failure after 2 refusals in a row. Swift and Kotlin only report the refusal; the subscription is no longer opened again.
 - `RetryListener` and `Database.setRetryListener` are removed; `serverConfig(retryListener:)` becomes `serverConfig(retries:)`. A call leaves the retry state on success, failure and cancel by itself.

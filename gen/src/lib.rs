@@ -195,6 +195,9 @@ mod roundtrip_tests;
 mod docs_tests;
 
 #[cfg(test)]
+mod short_form_tests;
+
+#[cfg(test)]
 mod nested_tests;
 
 #[cfg(test)]
