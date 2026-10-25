@@ -87,6 +87,8 @@ mod files_tests;
 #[cfg(test)]
 mod land_tests;
 #[cfg(test)]
+mod prepared_tests;
+#[cfg(test)]
 mod listeners_tests;
 #[cfg(test)]
 mod list_delta_tests;

@@ -215,7 +215,17 @@ pub struct CommitEnvelope {
     pub origin: WriteOrigin,
     pub generation: Generation,
     pub writes_local: bool,
+    pub pending_locals: Vec<PendingLocal>,
     pub cloud: Option<crate::cloud::CloudBook>,
+}
+
+/// A local value for a row that is not stored yet. It waits in `local_pending` and joins the row when it arrives.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingLocal {
+    pub model: String,
+    pub row_id: String,
+    pub path: String,
+    pub value: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -246,12 +256,13 @@ impl CommitEnvelope {
             origin,
             generation,
             writes_local: false,
+            pending_locals: Vec::new(),
             cloud: None,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.cloud.is_none()
+        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.pending_locals.is_empty() && self.cloud.is_none()
     }
 
     pub fn validate(&self, current: Generation) -> Result<(), EnvelopeFault> {

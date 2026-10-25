@@ -78,7 +78,7 @@ impl Drop for InFlight<'_> {
         let generation = self.generation;
         let _ = self.inner.commit(generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
-            envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure });
+            envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() });
             Ok(Some(envelope))
         });
     }
@@ -320,7 +320,7 @@ impl Inner {
             state.request = Some(crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() });
             self.commit(sending.generation, |_| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
-                envelope.operation_transitions.push(OperationTransition::Progress { seq: entry.operation.id.0, item_position: 0, state });
+                envelope.operation_transitions.push(OperationTransition::Progress { seq: entry.operation.id.0, item_position: 0, state: state.clone() });
                 Ok(Some(envelope))
             })?;
         }
@@ -407,7 +407,7 @@ impl Inner {
         let seq = sending.entry.operation.id.0;
         let committed = self.commit(sending.generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
-            envelope.operation_transitions.push(OperationTransition::Postpone { seq, failure });
+            envelope.operation_transitions.push(OperationTransition::Postpone { seq, failure: failure.clone() });
             Ok(Some(envelope))
         })?;
         Ok(if committed.is_some() { SendResult::Deferred } else { SendResult::Discarded })
@@ -419,6 +419,7 @@ impl Inner {
         let batch = spec.actions.iter().find(|action| action.name == sending.action).and_then(|action| action.batch.as_ref());
         let mut frozen = None;
         let committed = self.commit(sending.generation, |reader| {
+            frozen = None;
             let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
             if entry.operation.status != OperationStatus::Pending || entry.operation.transport_started || entry.operation.client_mutation_id != sending.entry.operation.client_mutation_id { return Ok(None); }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
@@ -594,7 +595,7 @@ impl Inner {
                     (envelope.entity_ops, envelope.scope_ops) = prior.reappearing();
                 }
             }
-            envelope.operation_transitions.push(OperationTransition::Fail { seq, status, failure });
+            envelope.operation_transitions.push(OperationTransition::Fail { seq, status, failure: failure.clone() });
             Ok(Some(envelope))
         })?;
         Ok(if committed.is_some() { result } else { SendResult::Discarded })
@@ -612,7 +613,7 @@ impl Inner {
     pub(crate) fn commit(
         &self,
         generation: Generation,
-        plan: impl FnOnce(&Reader<'_>) -> Result<Option<CommitEnvelope>, SyncError>,
+        plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, SyncError>,
     ) -> Result<Option<CommitResult>, SyncError> {
         match self.db.commit_following(generation, plan) {
             Ok(result) => Ok(Some(result)),

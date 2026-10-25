@@ -131,7 +131,7 @@ impl Runner {
         locked(&self.state).clone()
     }
 
-    pub(super) fn commit(&self, build: impl FnOnce(&mut CommitEnvelope)) -> Result<(), Stop> {
+    pub(super) fn commit(&self, mut build: impl FnMut(&mut CommitEnvelope)) -> Result<(), Stop> {
         let generation = self.inner.db.generation();
         let committed = self.inner.commit(generation, |reader| {
             if !self.inner.is_current(self.seq, self.position, self.run) {
@@ -155,7 +155,7 @@ impl Runner {
         let mut state = locked(&self.state);
         edit(&mut state);
         let snapshot = state.clone();
-        self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state: snapshot }))
+        self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state: snapshot.clone() }))
     }
 
     pub(super) fn report(&self, part: u32, bytes: u64) {
@@ -339,7 +339,7 @@ impl Runner {
         if let Err(error) = self.inner.send_owned(&sending, &operation, resumed, true).await {
             let failure = OperationFailure::new(FailureKind::Unrecognized, error.to_string());
             let _ = self.commit(|envelope| {
-                envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::DeliveryUnknown, failure })
+                envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() })
             });
         }
         self.inner.start_uploads().map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
@@ -386,8 +386,8 @@ impl Runner {
             state.clone()
         };
         let _ = self.commit(|envelope| {
-            envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state });
-            if !batch { envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure }); }
+            envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state: state.clone() });
+            if !batch { envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure: failure.clone() }); }
         });
     }
 
@@ -401,7 +401,7 @@ impl Runner {
         if self.snapshot().upload_id.is_some() {
             let failure = OperationFailure::new(FailureKind::Network, "the upload was cancelled but its remote parts are not aborted yet");
             if batch { let _ = self.save(|state| state.error = Some(failure)); return; }
-            let _ = self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure }));
+            let _ = self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure: failure.clone() }));
             return;
         }
         if batch {

@@ -182,6 +182,7 @@ impl Db {
         let spec = self.spec(model)?;
         let mut removed = false;
         self.commit_following(generation, |reader| {
+            removed = false;
             let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
             if let Some(still) = still { if !still(reader, &entry)? { return Ok(None); } }
             if entry.operation.transport_started && entry.operation.status == OperationStatus::Pending { return Err(DbError::InFlight { model: model.into(), id: id.to_string() }); }
@@ -239,6 +240,7 @@ impl Db {
     pub(crate) fn roll_back_if(&self, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
         let result = self.commit_following(generation, |reader| {
+                discarded = Vec::new();
                 let found = OutboxOperation::read(reader, seq)?;
                 let entry = match (found, still) {
                     (Some(entry), None) => entry,

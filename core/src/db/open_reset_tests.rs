@@ -7,7 +7,7 @@ use crate::schema::{FieldSpec, MergeRule, ModelSpec, PageDirection, Storage};
 use crate::store::{window_key, WindowRecord};
 use crate::value::ScalarKind;
 
-fn specs(changed_user: bool) -> Vec<ModelSpec> {
+pub(super) fn specs(changed_user: bool) -> Vec<ModelSpec> {
     let mut users = users_spec();
     if changed_user {
         users.fields.push(FieldSpec::scalar("avatar", ScalarKind::Str).optional());

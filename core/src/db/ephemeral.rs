@@ -292,10 +292,9 @@ impl Db {
             return Ok(0);
         }
         let generation = self.generation();
-        let mut destroyed = 0;
+        let claimed = self.shared.ephemeral.lock().claim_expired(candidates);
+        let destroyed = claimed.len();
         let committed = self.commit_following(generation, |reader| {
-            let claimed = self.shared.ephemeral.lock().claim_expired(candidates);
-            destroyed = claimed.len();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
             let mut targets: Vec<RowRef> = Vec::new();
             for (model, id) in &claimed {
@@ -309,7 +308,6 @@ impl Db {
             envelope.entity_ops = targets.into_iter().map(|target| EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Expired }).collect();
             Ok::<_, DbError>(Some(envelope))
         });
-        self.shared.ephemeral.lock().claim_expired(candidates);
         committed.map_err(plan_fault)?;
         Ok(destroyed)
     }

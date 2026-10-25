@@ -314,7 +314,7 @@ fn commit_with_plans_against_the_snapshot_of_the_same_transaction() {
     let (store, _) = booted_store();
     commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "a"}))], vec![]);
     let result = store
-        .commit_with(store.generation(), |reader| {
+        .commit_prepared(store.generation(), |reader| {
             let seen = reader.stored_row("messages", "m1").unwrap().unwrap();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Patch, store_generation());
             envelope.entity_ops = vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": format!("{}!", seen.row["body"].as_str().unwrap())}))];
@@ -332,9 +332,9 @@ fn store_generation() -> crate::identity::Generation {
 #[test]
 fn commit_with_plan_error_writes_nothing_and_none_is_a_noop() {
     let (store, _) = booted_store();
-    let failed = store.commit_with(store.generation(), |_| Err::<Option<CommitEnvelope>, _>("bad plan"));
+    let failed = store.commit_prepared(store.generation(), |_| Err::<Option<CommitEnvelope>, _>("bad plan"));
     assert!(matches!(failed, Err(PlanCommitError::Plan("bad plan"))));
-    let noop = store.commit_with(store.generation(), |_| Ok::<Option<CommitEnvelope>, ()>(None)).unwrap();
+    let noop = store.commit_prepared(store.generation(), |_| Ok::<Option<CommitEnvelope>, ()>(None)).unwrap();
     assert!(noop.is_noop());
     assert_eq!(store.revision_seq().unwrap(), 0);
 }
@@ -345,7 +345,7 @@ fn commit_with_rejects_stale_generation_before_planning() {
     let old = store.generation();
     store.reset_incompatible().unwrap();
     let mut planned = false;
-    let outcome = store.commit_with(old, |_| {
+    let outcome = store.commit_prepared(old, |_| {
         planned = true;
         Ok::<Option<CommitEnvelope>, ()>(None)
     });

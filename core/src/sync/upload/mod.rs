@@ -176,7 +176,7 @@ impl Inner {
                     return Err(SyncError::Params(format!("{model} {id} already has the upload {action}")));
                 }
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-                envelope.operation_transitions.push(OperationTransition::BeginUpload { record: record.clone(), items: vec![item] });
+                envelope.operation_transitions.push(OperationTransition::BeginUpload { record: record.clone(), items: vec![item.clone()] });
                 Ok(Some(envelope))
             })?;
             committed.and_then(|result| result.operations.into_iter().next()).ok_or(SyncError::Cancelled)

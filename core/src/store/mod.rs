@@ -106,6 +106,8 @@ pub struct Store {
     failing_entity_reads: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     pub(crate) require_unlocked_responses: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(crate) before_write: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Store {
@@ -130,6 +132,8 @@ impl Store {
             hook: OnceLock::new(),
             #[cfg(test)]
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            before_write: Mutex::new(None),
             recreated: None,
             #[cfg(test)]
             failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),

@@ -66,7 +66,7 @@ impl Db {
             row.insert(field.to_string(), descriptor.to_value());
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
             envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: id.clone(), row });
-            envelope.file_ops.push(FileOp::Put(record));
+            envelope.file_ops.push(FileOp::Put(record.clone()));
             Ok(Some(envelope))
         });
         match committed {
@@ -114,6 +114,7 @@ impl Db {
         let generation = self.generation();
         let mut removed: Option<String> = None;
         let result = self.commit_following(generation, |reader| {
+                removed = None;
                 let mut row = reader
                     .point(model, id.as_str())?
                     .ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;

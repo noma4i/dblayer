@@ -43,6 +43,7 @@ impl Db {
         let generation = self.generation();
         let mut retried = 0;
         self.commit_following(generation, |reader| {
+            retried = 0;
             let connection = reader.connection();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
             let uploads = match target {

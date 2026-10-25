@@ -218,7 +218,7 @@ impl Db {
                     envelope.scope_ops.extend(local_scope_ops(reader, spec, id, data)?);
                     envelope.entity_ops.push(EntityOp::Upsert { model: spec.key.clone(), id: id.clone(), row: data.clone() });
                 }
-                envelope.operation_transitions.push(OperationTransition::BeginUpload { record: record.clone(), items: files });
+                envelope.operation_transitions.push(OperationTransition::BeginUpload { record: record.clone(), items: files.clone() });
                 Ok(Some(envelope))
             }).map_err(plan_fault)?;
             Ok(ids)
@@ -400,11 +400,12 @@ impl Db {
         spec: &ModelSpec,
         queued: &mut Queued,
         generation: Option<crate::identity::Generation>,
-        build: impl FnOnce(&Reader<'_>, &mut WritePlan, &mut Queued) -> Result<Option<Vec<EntityOp>>, DbError>,
+        mut build: impl FnMut(&Reader<'_>, &mut WritePlan, &mut Queued) -> Result<Option<Vec<EntityOp>>, DbError>,
     ) -> Result<CommitResult, DbError> {
         let generation = generation.unwrap_or_else(|| self.generation());
         let created_at = self.shared.store.lock().now_ms();
         let result = self.commit_following(generation, |reader| {
+                queued.scope_ops.clear();
                 let mut plan = WritePlan::new();
                 let Some(touches) = build(reader, &mut plan, queued)? else { return Ok(None) };
                 let mut envelope: CommitEnvelope = plan.envelope(WriteOrigin::Optimistic, generation);

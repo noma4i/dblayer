@@ -51,7 +51,7 @@ impl Store {
         }
     }
 
-    pub fn commit_with<E>(
+    fn plan_under_writer<E>(
         &self,
         generation: Generation,
         plan: impl FnOnce(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
@@ -71,9 +71,14 @@ impl Store {
         mut plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<CommitResult, PlanCommitError<E>> {
         if !self.reads_off_writer() {
-            return self.commit_with(generation, plan);
+            return self.plan_under_writer(generation, plan);
         }
         let prepared = self.read(&[], |reader| Ok((reader.revision_seq()?, plan(reader))))?;
+        #[cfg(test)]
+        let hook = self.before_write.lock().unwrap_or_else(|error| error.into_inner()).take();
+        if let Some(hook) = hook {
+            hook();
+        }
         let mut inner = self.lock();
         inner.ensure_healthy()?;
         inner.ensure_generation(generation)?;
@@ -126,7 +131,7 @@ impl Store {
 fn attempt(inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
     let transaction = inner.connection.unchecked_transaction()?;
     let outcome = apply_envelope(&transaction, &inner.models, envelope, now_ms)?;
-    if outcome.is_noop() && envelope.window.is_none() {
+    if outcome.is_noop() && envelope.window.is_none() && envelope.pending_locals.is_empty() {
         transaction.rollback()?;
     } else {
         transaction.commit()?;
@@ -576,6 +581,9 @@ pub(crate) fn apply_envelope(
 
     files_changed |= apply_file_ops(connection, &envelope.file_ops)?;
     wrote |= files_changed;
+    for pending in &envelope.pending_locals {
+        save_pending(connection, &pending.model, &pending.row_id, &pending.path, &pending.value)?;
+    }
 
     let visible;
     let scope_ops: &[ScopeOp] = if hidden.is_empty() {

@@ -10,7 +10,7 @@ impl Db {
             return Err(DbError::OriginNotLandable(envelope.origin));
         }
         let generation = envelope.generation;
-        self.commit_following_prepared(generation, |_| Ok(Some(envelope.clone())))
+        self.commit_following(generation, |_| Ok(Some(envelope.clone())))
             .map_err(plan_fault)
     }
 }

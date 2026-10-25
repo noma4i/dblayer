@@ -246,7 +246,10 @@ impl Feed {
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut joins: Vec<ScopeOp> = Vec::new();
             let mut destroyed: BTreeSet<(String, String)> = BTreeSet::new();
-            for (item, normalized) in items {
+            count = 0;
+            announced.clear();
+            held_files.clear();
+            for (item, normalized) in &items {
                 let key = (model.to_string(), item.id.as_str().to_string());
                 if normalized.is_some() && !self.def.set.is_empty() {
                     announced.push(item.id.clone());
@@ -261,15 +264,15 @@ impl Feed {
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
                     let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();
                     touches.extend(db.touch_ops(reader, spec, &seen, &own)?);
-                    for (related_model, patch) in normalized.related {
-                        let Some(row) = db.admitted(reader, WriteOrigin::Event, None, None, related_model.as_str(), &patch, &mut 0)? else { continue };
+                    for (related_model, patch) in &normalized.related {
+                        let Some(row) = db.admitted(reader, WriteOrigin::Event, None, None, related_model.as_str(), patch, &mut 0)? else { continue };
                         let Some(id) = row.get("id").and_then(read_id) else { continue };
-                        operations.insert((related_model.to_string(), id.to_string()), EntityOp::Upsert { model: related_model, id, row });
+                        operations.insert((related_model.to_string(), id.to_string()), EntityOp::Upsert { model: related_model.clone(), id, row });
                     }
                     joins.extend(self.inner.joins_of(reader, model, &item.id, &row)?);
-                    operations.insert(key, EntityOp::Upsert { model: ModelKey::new(model), id: item.id, row });
+                    operations.insert(key, EntityOp::Upsert { model: ModelKey::new(model), id: item.id.clone(), row });
                 } else {
-                    let own = RowRef::new(ModelKey::new(model), item.id);
+                    let own = RowRef::new(ModelKey::new(model), item.id.clone());
                     for target in db.destroy_targets(reader, &own, WriteOrigin::Event)? {
                         destroyed.insert((target.model.to_string(), target.id.to_string()));
                         operations.insert((target.model.to_string(), target.id.to_string()), EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Server });

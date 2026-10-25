@@ -75,7 +75,7 @@ impl Db {
                 field: reference.field.clone(),
             });
         }
-        self.commit_following(generation, |_| Ok::<_, DbError>(Some(envelope))).map_err(plan_fault)?;
+        self.commit_following(generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
         let ids: Vec<String> = references.iter().map(|reference| reference.id.clone()).collect();
         self.shared.files.discard(&ids).map_err(super::files::io_fault)?;
         Ok(())

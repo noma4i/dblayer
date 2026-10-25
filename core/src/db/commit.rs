@@ -9,39 +9,16 @@ use super::open::Db;
 use super::parent_pointer::Followed;
 
 impl Db {
+    /// Plans on a read connection while the writer stays free and writes when no commit landed in between, otherwise plans again under the writer. `plan` runs once or twice and must only read and build from data it can build again: it must not consume captures, write files or announce anything.
     pub(crate) fn commit_following<E: From<DbError>>(
         &self,
         generation: Generation,
-        plan: impl FnOnce(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
+        plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<CommitResult, PlanCommitError<E>> {
         self.commit_following_report(generation, plan).map(|(result, _)| result)
     }
 
     pub(crate) fn commit_following_report<E: From<DbError>>(
-        &self,
-        generation: Generation,
-        plan: impl FnOnce(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
-    ) -> Result<(CommitResult, Followed), PlanCommitError<E>> {
-        let mut followed = Followed::default();
-        let result = self.shared.store.commit_with(generation, |reader| {
-            let Some(envelope) = plan(reader)? else { return Ok(None) };
-            let (envelope, found) = self.follow(reader, envelope)?;
-            followed = found;
-            Ok(Some(envelope))
-        })?;
-        Ok((result, followed))
-    }
-
-    /// For planners that only read and build from captured data: the plan runs outside the writer and again under it when a commit landed in between.
-    pub(crate) fn commit_following_prepared<E: From<DbError>>(
-        &self,
-        generation: Generation,
-        plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
-    ) -> Result<CommitResult, PlanCommitError<E>> {
-        self.commit_following_prepared_report(generation, plan).map(|(result, _)| result)
-    }
-
-    pub(crate) fn commit_following_prepared_report<E: From<DbError>>(
         &self,
         generation: Generation,
         mut plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,

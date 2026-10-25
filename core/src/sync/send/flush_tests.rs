@@ -25,7 +25,7 @@ async fn sending_uses_the_input_frozen_by_its_owner_instead_of_a_stale_snapshot(
     let generation = rig.db.generation();
     let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Optimistic, generation);
     envelope.operation_transitions.push(stale.rewritten(stale.operation.row_ids.clone(), json!({"id": "m1", "text": "after"}), stale.rollback.clone()));
-    rig.sync.inner.commit(generation, |_| Ok(Some(envelope))).unwrap();
+    rig.sync.inner.commit(generation, |_| Ok(Some(envelope.clone()))).unwrap();
     let operation = rig.sync.inner.operations.lock().unwrap()["UpdateMoment"].clone();
     let sending = super::Sending { entry: &stale, model: "moments".into(), action: "update".into(), generation, base_revision: rig.db.revision_seq().unwrap() };
     rig.transport.enqueue("UpdateMoment", updated("m1", "after"));
