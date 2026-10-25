@@ -124,3 +124,27 @@ async fn inv_cloud_11_rows_without_stamps_wait_for_a_source_choice() {
         assert_eq!(a.cloud.state(), CloudState::Idle);
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn inv_cloud_10_manual_sync_returns_the_original_error_without_retries_and_keeps_the_journal() {
+    let cases = [
+        (CloudError::Offline { detail: "no route".into() }, CloudState::Offline),
+        (CloudError::Unavailable { detail: "down".into() }, CloudState::Offline),
+        (CloudError::Throttled { retry_after_ms: 5_000 }, CloudState::Offline),
+        (CloudError::NeedsAuthorization { detail: "consent".into() }, CloudState::NeedsAuthorization),
+        (CloudError::QuotaExceeded { detail: "full".into() }, CloudState::QuotaExceeded),
+        (CloudError::Rejected { detail: "refused".into() }, CloudState::Failed { detail: "refused".into() }),
+    ];
+    for (error, state) in cases {
+        let fake = FakeCloud::new();
+        let a = device(&fake, 1_000);
+        note(&a, json!({"title": "t"}));
+        fake.fail_pushes(vec![(error.clone(), false)]);
+        let outcome = a.cloud.sync_now().await;
+        assert_eq!(outcome, Err(error.clone()), "{error:?} comes back unchanged");
+        assert_eq!(a.cloud.state(), state, "{error:?}");
+        assert_eq!(fake.pushes(), 1, "{error:?} made one transport call");
+        assert_eq!(a.clock.active(), 0, "{error:?} armed a retry timer");
+        assert!(a.db.cloud_pending().unwrap() > 0, "{error:?} lost the journal");
+    }
+}
