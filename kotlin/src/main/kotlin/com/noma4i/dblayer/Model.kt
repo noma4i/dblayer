@@ -50,7 +50,6 @@ data class UploadInfo(
     @SerialName("sent_bytes") val sentBytes: ULong,
     @SerialName("total_bytes") val totalBytes: ULong,
     @SerialName("wait_reason") val waitReason: String? = null,
-    /** Sum of retries for unfinished steps, preserved across restarts. */
     val attempts: Int = 0,
     val error: OperationFailure? = null,
 ) {
@@ -71,19 +70,16 @@ val DBModel.canRetry: Boolean get() = needsAttention
 val DBModel.errorMessage: String? get() = sync.error?.message
 
 suspend fun DBModel.retry(action: String?): ULong = offCaller { DBlayer.database.retry(modelName, id, action) }
-/** Sends the queued changes of the record with [id] again, without holding an instance. */
 suspend fun <Model : DBModel> ModelDecoder<Model>.retry(id: String, action: String?): ULong = offCaller { DBlayer.database.retry(modelName, id, action) }
 suspend fun DBModel.discard(action: String?) { offCaller { DBlayer.database.discard(modelName, id, action) } }
 
 suspend fun DBModel.destroy() { offCaller { DBlayer.database.destroy(modelName, id) } }
 
-/** Writes a field the server never sends. `JsonNull` clears it. */
 suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement) { offCaller { DBlayer.database.setLocal(modelName, id, path, value.jsonText()) } }
 
 /** Waits until the server has answered the queued changes of the record, or of the declared `action` when given, throws on a refusal or when offline. */
 suspend fun DBModel.settled(action: String?) { offCaller { DBlayer.database.settled(modelName, id, action) } }
 
-/** The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline. */
 suspend fun DBModel.confirmedId(): String = offCaller { DBlayer.database.confirmed(modelName, id) }
 
 suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, decoder: ModelDecoder<Model>): Model =
@@ -100,9 +96,7 @@ suspend fun <Model : DBModel, Answer> Model.actAnswering(
     return ActionAnswer(offCaller { decoder.read(queued.row) }, queued.operation, answerSerializer)
 }
 
-/** The optimistic record of a queued action and, once the server answers, the `result` fields the action declares. */
 class ActionAnswer<Model : DBModel, Answer>(val model: Model, private val operation: Long, private val serializer: KSerializer<Answer>) {
-    /** Waits until the server answers the action, throws on a refusal or when offline. The answer is read once. */
     suspend fun answer(): Answer = offCaller { dbJson.decodeFromString(serializer, DBlayer.database.answer(model.modelName, operation)) }
 }
 

@@ -51,7 +51,6 @@ fn gather(value: &Value, path: &[String], out: &mut Vec<String>) {
     }
 }
 
-/// The text of one search path in a row, with the items of lists and arrays joined by spaces.
 pub fn search_text(row: &Map<String, Value>, path: &[String]) -> Option<String> {
     let mut found = Vec::new();
     let (first, rest) = path.split_first()?;

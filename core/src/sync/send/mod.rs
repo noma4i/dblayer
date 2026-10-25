@@ -41,7 +41,6 @@ fn failed_upload_error(row: &crate::db::Row, action: Option<&str>) -> Option<cra
 }
 
 impl Sync {
-    /// Waits until every queued change of the record is answered. Fails with the refusal, when a change is refused or its outcome is unknown.
     pub async fn settled(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
         let key = self.inner.db.action_operation_key(model, action)?;
         let waiting = |row: &RowId| -> Result<Vec<i64>, SyncError> {
@@ -97,7 +96,6 @@ impl Sync {
         }
     }
 
-    /// The server id of a record created locally. Waits for the queued `create` to be answered.
     pub async fn confirmed(&self, model: &str, id: &RowId) -> Result<RowId, SyncError> {
         if !id.is_temp() {
             return Ok(id.clone());
@@ -111,7 +109,6 @@ impl Sync {
         }
     }
 
-    /// Opens the model-level subscriptions declared with `listen`.
     pub fn listen(&self) {
         self.inner.transport.resume_subscriptions();
         self.inner.restart_live(super::resume_machine::Cause::Explicit);

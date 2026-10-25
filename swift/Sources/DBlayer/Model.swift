@@ -24,7 +24,6 @@ extension DBModel {
   @concurrent public func update(values: [String: JSONValue], args: [String: JSONValue] = [:]) async throws -> Self {
     try Self.decode(try await DB.database.update(model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
   }
-  /// Writes a field the server never sends. A `nil` value clears it.
   @concurrent public func setLocal(_ path: String, _ value: JSONValue) async throws {
     try await DB.database.setLocal(model: Self.modelName, rowId: id, path: path, valueJson: value.text)
   }
@@ -41,11 +40,9 @@ extension DBModel {
   @concurrent public func destroy() async throws { try await DB.database.destroy(model: Self.modelName, rowId: id) }
   /// Waits until the server has answered the queued changes of the record, or of the declared `action` when given, throws on a refusal or when offline.
   @concurrent public func settled(action: String?) async throws { try await DB.database.settled(model: Self.modelName, rowId: id, action: action) }
-  /// The server id of a record created locally. Waits for the queued create to be answered, throws when it is refused or the device is offline.
   @concurrent public func confirmedId() async throws -> String { try await DB.database.confirmed(model: Self.modelName, rowId: id) }
 
   @discardableResult @concurrent public func retry(action: String?) async throws -> UInt64 { try await Self.retry(id: id, action: action) }
-  /// Sends the queued changes of the record with `id` again, without holding an instance.
   @discardableResult @concurrent public static func retry(id: String, action: String?) async throws -> UInt64 { try await DB.database.retry(model: modelName, rowId: id, action: action) }
   @concurrent public func discard(action: String?) async throws { try await DB.database.discard(model: Self.modelName, rowId: id, action: action) }
 
@@ -92,12 +89,10 @@ extension DBModel {
   }
 }
 
-/// The optimistic record of a queued action and, once the server answers, the `result` fields the action declares.
 public struct ActionAnswer<Model: DBModel, Answer: Decodable & Sendable>: Sendable {
   public let model: Model
   let operation: Int64
 
-  /// Waits until the server answers the action, throws on a refusal or when offline. The answer is read once.
   @concurrent public func answer() async throws -> Answer {
     try JSONDecoder().decode(Answer.self, from: Data(try await DB.database.answer(model: Model.modelName, operation: operation).utf8))
   }

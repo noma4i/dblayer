@@ -493,7 +493,6 @@ pub enum PageDirection {
     Backward,
 }
 
-/// Where the value of a GraphQL variable comes from when a relation loads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "from", rename_all = "snake_case")]
 pub enum VariableSource {
@@ -501,8 +500,6 @@ pub enum VariableSource {
     Constant { value: Value },
 }
 
-/// A server that pages by its own variable instead of Relay `first`/`after`: the next page is
-/// asked for with `variable`, whose value is read from `from` inside the connection object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CursorSpec {
     pub variable: String,

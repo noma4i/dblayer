@@ -66,7 +66,6 @@ impl Warm {
 }
 
 impl Db {
-    /// Reads the query once, waits for its first delivery, and keeps its rows in memory, current with every commit, so `peek_query` answers without SQLite. The newest `WARM_QUERIES` queries stay warm.
     pub fn warm(&self, query: &Query) -> Result<(), DbError> {
         let warmed = self.warm_shelf(query)?;
         let shelf = &warmed.peek;
@@ -103,7 +102,6 @@ impl Db {
         Ok(warmed)
     }
 
-    /// The rows and revision of a warm query as last delivered, or `None` when the query is not warm or has no delivery yet. Takes no SQLite and no store lock.
     pub fn peek_query(&self, query: &Query) -> Option<Peeked> {
         let key = Subject::Rows(query.clone()).key();
         let found = locked(&self.shared.warm).touch(&key).and_then(|warmed| {

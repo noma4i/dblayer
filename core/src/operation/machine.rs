@@ -142,7 +142,6 @@ impl OperationFacts {
 const ALL: [OperationStatus; 5] = [OperationStatus::Pending, OperationStatus::Failed, OperationStatus::DeliveryUnknown, OperationStatus::Committed, OperationStatus::RolledBack];
 
 impl OperationEvent {
-    /// The SQL condition on `op` rows under which the machine accepts this event, `None` when it accepts the event from no facts.
     pub(crate) fn guard_sql(self) -> Option<String> {
         let mut clauses = Vec::new();
         for status in ALL {

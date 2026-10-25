@@ -90,7 +90,6 @@ internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
     fun beginFeed(): ULong = machine.beginFeed().feed
 }
 
-/** Collecting keeps the entity reachable until the collection ends. */
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
 private class HeldState<T>(private val owner: Any, private val inner: StateFlow<T>) : StateFlow<T> {
     override val value: T get() = inner.value
@@ -100,15 +99,11 @@ private class HeldState<T>(private val owner: Any, private val inner: StateFlow<
     }
 }
 
-/** The live value of one record. The library keeps it current while the object is reachable and lets go of the record when it is not. */
 class Entity<Model : DBModel> internal constructor(private val fixedId: String?, internal val cell: EntityCell<Model>) {
-    /** The id of the record. A singleton has no id until its row has loaded. */
     val id: String get() = fixedId ?: cell.value.value?.id.orEmpty()
-    /** The newest value, null while none has arrived or when the record does not exist. */
     val value: StateFlow<Model?> = HeldState(this, cell.value)
     val isStale: Boolean get() = cell.stale
     val phase: StateFlow<EntityPhase> = HeldState(this, cell.phase)
-    /** True after the database closed. A closed entity never receives a value again. */
     val isClosed: Boolean get() = cell.phase.value == EntityPhase.Closed
 }
 
@@ -135,7 +130,6 @@ private object EntityReferences {
 
 private enum class Step { Retain, Release, Refresh }
 
-/** The registry of one model: one [Entity] per id, one core observer for the whole model. */
 class Entities<Model : DBModel> internal constructor(
     private val modelName: String,
     private val decoder: ModelDecoder<Model>,
@@ -156,7 +150,6 @@ class Entities<Model : DBModel> internal constructor(
     internal val decodedRows: Int get() = core.decodedRows
     internal val leaseFailures: Int get() = core.leaseFailures
 
-    /** The entity of an id. Hold it for as long as the value is shown. The value is there at once when the id is live or retained. */
     fun entity(id: String): Entity<Model> = synchronized(lock) {
         val previous = live[id]
         previous?.get()?.let { return it }
@@ -178,7 +171,6 @@ class Entities<Model : DBModel> internal constructor(
 
     fun entities(ids: List<String>): List<Entity<Model>> = ids.map(::entity)
 
-    /** The entity of the one row of a model that has one. It lives as long as the database handle, holds no lease and has no id until the row has loaded. */
     fun singleton(query: Query<Model>): Entity<Model> = synchronized(lock) {
         single?.let { return it }
         val made = Entity(null, EntityCell<Model>(singleton = true))
@@ -214,7 +206,6 @@ class Entities<Model : DBModel> internal constructor(
 
     internal val currentSingleFeed: SingletonFeed<Model>? get() = synchronized(lock) { singleFeed }
 
-    /** The account ended. The core tells every leased entity that its row is gone and later delivers the rows of the next account. */
     fun reset() = synchronized(lock) {
         kept.clear(modelName)
         singleFeed?.cancel()
@@ -222,7 +213,6 @@ class Entities<Model : DBModel> internal constructor(
         single?.cell?.reset()
     }
 
-    /** The database closed. Every entity that is still held becomes closed and the registry starts empty. */
     internal fun close() = synchronized(lock) {
         live.values.forEach { ref -> ref.get()?.cell?.let { it.close() } }
         live.clear()
@@ -285,7 +275,6 @@ class Entities<Model : DBModel> internal constructor(
     }
 }
 
-/** Opens the one core observer of a model on first use. */
 internal class CoreEntitySource<Model : DBModel>(
     private val modelName: String,
     private val decoder: ModelDecoder<Model>,
@@ -343,7 +332,6 @@ internal class CoreEntitySource<Model : DBModel>(
     }
 }
 
-/** The one relation subscription of a singleton. It belongs to one database and one reset: a replaced feed writes nothing. */
 internal class SingletonFeed<Model : DBModel>(
     private val query: Query<Model>,
     private val decoder: ModelDecoder<Model>,
@@ -356,7 +344,6 @@ internal class SingletonFeed<Model : DBModel>(
     private var cancelled = false
     private val count = AtomicInteger()
 
-    /** Deliveries made so far. */
     val delivered: Int get() = count.get()
 
     fun attach() {
@@ -391,10 +378,8 @@ internal object EntityRegistries {
     fun resumeAll() = registries.values.forEach { it.resume() }
 }
 
-/** The live entity of a record by id. */
 fun <Model : DBModel> entityOf(modelName: String, decoder: ModelDecoder<Model>, id: String): Entity<Model> =
     EntityRegistries.of(modelName, decoder).entity(id)
 
-/** The live entity of the one row of a model that has one. */
 fun <Model : DBModel> singletonEntityOf(modelName: String, decoder: ModelDecoder<Model>, query: Query<Model>): Entity<Model> =
     EntityRegistries.of(modelName, decoder).singleton(query)

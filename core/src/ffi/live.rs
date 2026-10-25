@@ -32,7 +32,6 @@ pub struct Replacement {
     pub to: String,
 }
 
-/// The edges of a window: whether the query has local rows before or after it, and how many rows the query has.
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct LiveWindowEdge {
     pub has_before: bool,

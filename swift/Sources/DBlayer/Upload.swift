@@ -1,6 +1,5 @@
 import Foundation
 
-/// A registered operation of the upload declaration. `rootPath` names the response field the operation answers under; nil keeps the first field of its document.
 public struct UploadOperation: Sendable {
   public var name: String
   public var rootPath: String?
@@ -12,7 +11,6 @@ public struct UploadOperation: Sendable {
   var wire: WireUploadOperation { WireUploadOperation(name: name, rootPath: rootPath) }
 }
 
-/// The operations that move a file to storage, declared once in `DBlayer.open`. A file takes the single request through `createBlob` or the multipart requests, by its size.
 public struct UploadOperations: Sendable {
   public struct Multipart: Sendable {
     public var initiate: UploadOperation, presign: UploadOperation, complete: UploadOperation, abort: UploadOperation
@@ -33,7 +31,6 @@ public struct UploadOperations: Sendable {
   var wire: WireUploadOperations { WireUploadOperations(createBlob: createBlob?.wire, multipart: multipart?.wire) }
 }
 
-/// A local file sent to storage, then the content mutation of the declared upload action, which carries the stored blob as `signedId`.
 public struct UploadRequest: Sendable {
   public var path: String
   public var name: String?
@@ -88,7 +85,6 @@ extension DBModel {
     try decode(try await DB.database.uploadCreate(model: modelName, action: action, valuesJson: JSONValue.object(values).text, request: request.wire))
   }
 
-  /// Sends the file of an existing record through the declared upload `action`, then runs its content mutation.
   @concurrent public func upload(action: String, _ request: UploadRequest) async throws { try await DB.database.upload(model: Self.modelName, rowId: id, action: action, request: request.wire) }
 
   @concurrent public func cancelUpload(action: String) async throws -> Bool { try await DB.database.cancelUpload(model: Self.modelName, rowId: id, action: action) }

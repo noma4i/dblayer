@@ -147,7 +147,6 @@ impl Observers {
         }
     }
 
-    /// The revision that a group has read, or None while it still has work. Subscribers are told this revision, and `Db::await_revision` waits for it.
     fn mark(group: &Group, top: i64) -> Option<i64> {
         let facts = &group.facts;
         let idle = !facts.reading && facts.read_error.is_none() && facts.again.is_none() && facts.growth.is_none() && facts.joining.is_empty();
@@ -315,7 +314,6 @@ impl ObserverHandle {
 
 }
 
-/// Controls one feed observer without keeping it alive: dropping the `ObserverHandle` still cancels it.
 #[derive(Clone)]
 pub(crate) struct ObserverControl {
     shared: Weak<Shared>,
@@ -325,14 +323,12 @@ pub(crate) struct ObserverControl {
 }
 
 impl ObserverControl {
-    /// Asks to be told through `Feed::Reached` once the group has read through `revision`. Nothing is sent to a subscriber that did not ask.
     pub(crate) fn want_reach(&self, revision: i64) {
         if let Some(shared) = self.shared.upgrade() {
             shared.command_observers(ObserverCommand::WantReach { group: self.group.clone(), id: self.id, subscriber: self.subscriber.clone(), revision });
         }
     }
 
-    /// Starts the deliveries of an observer created paused. Everything that happened meanwhile arrives as one change.
     pub(crate) fn resume(&self) {
         if let Some(shared) = self.shared.upgrade() {
             self.subscriber.resume(&shared.executor);
@@ -371,7 +367,6 @@ impl Shared {
         }
     }
 
-    /// Tells each subscriber that asked for a revision once its group has read through it. Groups no one asked about are not visited.
     fn serve_reach(&self, observers: &mut Observers) {
         let top = observers.top;
         let mut waiting = std::mem::take(&mut observers.reach_waiting);

@@ -71,7 +71,6 @@ impl Mailbox {
         self.paused = true;
     }
 
-    /// True when the caller must schedule the run that was owed while paused.
     pub(crate) fn resume(&mut self) -> bool {
         self.paused = false;
         std::mem::take(&mut self.owes_run) && !std::mem::replace(&mut self.scheduled, true)
@@ -83,7 +82,6 @@ impl Mailbox {
         }
     }
 
-    /// True when the caller must schedule a run. A paused mailbox keeps what it merged and owes the run until resume.
     fn wants_run(&mut self) -> bool {
         if self.paused {
             self.owes_run = true;

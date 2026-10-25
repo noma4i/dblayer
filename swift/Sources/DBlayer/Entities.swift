@@ -6,18 +6,13 @@ private let entityLog = Logger(subsystem: "DBlayer", category: "entities")
 
 public enum EntityPhase: Sendable, Equatable { case opening, present, absent, failed(String), closed }
 
-/// The live value of one record. The library keeps it current while the object is alive and lets go of the record when the last holder drops it.
 @MainActor
 @Observable
 public final class Entity<Model: DBModel> {
-  /// The id of the record. A singleton has no id until its row has loaded.
   public private(set) var id: String
-  /// The newest value, nil while none has arrived or when the record does not exist.
   public private(set) var value: Model?
   public private(set) var isStale: Bool
-  /// `opening` until the core answers, then `present` or `absent`. `failed` keeps the last value and says why the core could not read or decode the record. `closed` after the database closed.
   public private(set) var phase: EntityPhase = .opening
-  /// True after the database closed. A closed entity never receives a value again.
   public var isClosed: Bool { phase == .closed }
   @ObservationIgnored private(set) var revision: Int64 = Int64.min
   @ObservationIgnored private var bytes: UInt64 = 0
@@ -169,7 +164,6 @@ protocol EntitySource: AnyObject, Sendable {
   func release(_ ids: [String])
 }
 
-/// The registry of one model: one `Entity` per id, one core observer for the whole model.
 @MainActor
 public final class Entities<Model: DBModel> {
   public static var shared: Entities<Model> { EntityRegistries.registry(for: Model.self) }
@@ -201,11 +195,9 @@ public final class Entities<Model: DBModel> {
     }
   }
 
-  /// Rows decoded from deliveries so far: 1 per changed row.
   var decodedRows: Int { core.decodedRows }
   var leaseFailures: Int { core.leaseFailures }
 
-  /// The entity of an id. Hold it for as long as the value is shown. The value is there at once when the id is live or retained.
   public func entity(_ id: String) -> Entity<Model> {
     if let existing = live[id]?.entity { return existing }
     let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
@@ -222,7 +214,6 @@ public final class Entities<Model: DBModel> {
 
   public func entities(_ ids: [String]) -> [Entity<Model>] { ids.map(entity) }
 
-  /// The entity of the one row of a model that has one. It lives as long as the database handle, holds no lease and has no id until the row has loaded.
   public func singleton(_ query: Query<Model>) -> Entity<Model> {
     if let single { return single }
     let made = Entity<Model>(singletonOf: self)
@@ -258,7 +249,6 @@ public final class Entities<Model: DBModel> {
     singleQuery = nil
   }
 
-  /// The account ended. The core tells every leased entity that its row is gone and later delivers the rows of the next account.
   public func reset() {
     kept.clear(Model.modelName)
     singleFeed?.cancel()
@@ -266,7 +256,6 @@ public final class Entities<Model: DBModel> {
     single?.reset()
   }
 
-  /// The database closed. Every entity that is still held becomes closed and the registry starts empty.
   func close() {
     live.values.forEach { $0.entity?.close() }
     live = [:]
@@ -350,20 +339,15 @@ enum EntityRegistries {
 }
 
 extension DBModel {
-  /// The live entity of a record by id.
   @MainActor public static func entity(_ id: String) -> Entity<Self> { Entities<Self>.shared.entity(id) }
-  /// The live entities of several ids.
   @MainActor public static func entities(_ ids: [String]) -> [Entity<Self>] { Entities<Self>.shared.entities(ids) }
 }
 
-/// A model with one row for the whole account, such as the current user. The generator declares it for a model that has one global relation answered as a single record.
 public protocol DBSingleton: DBModel {
-  /// The relation that holds the one row.
   static var singleton: Query<Self> { get }
 }
 
 extension DBSingleton {
-  /// The live entity of the one row. Empty until the row has loaded and again after `DB.logout()`. Hold it as long as the value is shown.
   @MainActor public static func entity() -> Entity<Self> { Entities<Self>.shared.singleton(singleton) }
 }
 
@@ -377,7 +361,6 @@ enum EntityDecoding {
   }
 }
 
-/// Opens the one core observer of a model on first use and keeps its calls off the main thread, in order.
 final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable {
   private final class Changes: EntityListener, @unchecked Sendable {
     weak var source: CoreEntitySource?
@@ -445,7 +428,6 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
   }
 }
 
-/// The one relation subscription of a singleton. It belongs to one database and one reset: a replaced feed writes nothing.
 final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   private let lock = NSLock()
   private let query: Query<Model>
@@ -454,7 +436,6 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   private var cancelled = false
   private var count = 0
 
-  /// Deliveries made so far.
   var delivered: Int { lock.withLock { count } }
 
   init(query: Query<Model>, generation: UInt64) {

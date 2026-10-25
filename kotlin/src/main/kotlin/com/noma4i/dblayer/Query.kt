@@ -5,7 +5,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -78,11 +77,9 @@ class Query<Model : DBModel>(
         Query(modelName, decoder, condition, orders, limitCount, relation, params)
 
     fun where(next: Condition) = copy(condition = condition?.and(next) ?: next)
-    /** Rows whose searchable fields hold the words of [text], best match first when the query has no order. The last word matches as a prefix unless [wholeWords] is true. */
     fun search(text: String, wholeWords: Boolean = false) = where(Condition.search(text, wholeWords))
     fun order(vararg next: Order) = copy(orders = orders + next)
     fun limit(count: Int) = copy(limitCount = count)
-    /** The last [rows] rows of this query, kept live. The query needs an order and no limit, and it reads the local database only. */
     fun window(tail: Int) = Window(this, tail)
 
     internal val json: String
@@ -120,18 +117,14 @@ class Query<Model : DBModel>(
     fun find(id: String): LiveSource<Model?> =
         listSource<Model, Model?>(null, decoder, open = { listener -> DBlayer.database.liveFind(modelName, id, listener) }) { applied, _ -> applied.rows.firstOrNull() }
 
-    /** The rows of this query from memory, or null when the query is not warm. It throws when the cache read or the decode of a row fails. It reads no database file, and the copy and the decode of the rows run off the thread of the caller. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows. */
     suspend fun cached(): Cached<List<Model>>? =
         offCaller { DBlayer.database.peekQuery(json)?.let { change -> Cached(change.rows.map(decoder::read), change.revision) } }
 
-    /** One row from the row cache, or null when it is not cached. It throws when the cache read or the decode fails. Null does not mean that the row does not exist. */
     suspend fun cachedRow(id: String): Model? =
         offCaller { DBlayer.database.peekRow(modelName, id)?.let(decoder::read) }
 
-    /** Reads the query once and keeps its rows in memory, so that `cached()` answers at once. The library keeps the latest queries warm and drops the oldest. */
     suspend fun warm() = offCaller { DBlayer.database.warm(json) }
 
-    /** The values that the connection of this relation carried on the edge of one row, or null when the row is not in the connection. It reads one row by key and never waits for a write. */
     suspend fun edgeValues(id: String): JsonObject? =
         offCaller { (Json.parseToJsonElement(DBlayer.database.edgeValues(modelName, relation.orEmpty(), params.jsonText(), listOf(id))) as JsonObject)[id] as? JsonObject }
 
@@ -159,7 +152,6 @@ class RelatedQuery<Target : DBModel> internal constructor(
     val live: LiveSource<List<Target>>
         get() = listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveRelated(sourceJson(), name, listener) }) { applied, _ -> applied.rows }
 
-    /** `hasMore` and the load phase belong to the source query. `total` is null: the source count is not the number of targets. */
     val snapshots: LiveSource<Snapshot<Target>>
         get() = listSource(Snapshot(emptyList(), emptyMap()), decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener ->
             DBlayer.database.liveRelated(sourceJson(), name, listener)

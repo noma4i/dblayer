@@ -70,14 +70,12 @@ public struct Query<Model: DBModel>: Sendable {
     copy.condition = self.condition.map { $0 && condition } ?? condition
     return copy
   }
-  /// Rows whose searchable fields hold the words of `text`, best match first when the query has no order. The last word matches as a prefix unless `wholeWords` is true.
   public func search(_ text: String, wholeWords: Bool = false) -> Query { `where`(.search(text, wholeWords: wholeWords)) }
   public func order(_ order: Order...) -> Query { var copy = self; copy.orders += order; return copy }
   public func limit(_ count: Int) -> Query { var copy = self; copy.limitCount = count; return copy }
   public func related<Target: DBModel>(_ association: Association<Model, Target>) -> RelatedQuery<Target> {
     RelatedQuery(name: association.name, sourceJson: { try json })
   }
-  /// The last `rows` rows of this query, kept live. The query needs an order and no limit, and it reads the local database only.
   public func window(tail rows: Int) -> Window<Model> { Window(query: self, tail: rows) }
 
   var json: String {
@@ -100,22 +98,18 @@ public struct Query<Model: DBModel>: Sendable {
     listSource(initial: nil, open: { listener in try DB.database.liveFind(model: Model.modelName, rowId: id, listener: listener) }) { (applied: ListApplied<Model>, _) in applied.rows.first }
   }
 
-  /// The rows of this query from memory, or nil when the query is not warm. It throws when the cache read or the decode of a row fails. It reads no database file, and the copy and the decode of the rows run off the thread of the caller. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows.
   @concurrent public func cached() async throws -> Cached<[Model]>? {
     guard let change = try await DB.database.peekQuery(queryJson: json) else { return nil }
     return Cached(value: try change.rows.map { try Model.decode($0) }, revision: change.revision)
   }
 
-  /// One row from the row cache, or nil when it is not cached. It throws when the cache read or the decode fails. Nil does not mean that the row does not exist.
   @concurrent public func cachedRow(_ id: String) async throws -> Model? {
     guard let row = try DB.database.peekRow(model: Model.modelName, rowId: id) else { return nil }
     return try Model.decode(row)
   }
 
-  /// Reads the query once and keeps its rows in memory, so that `cached()` answers at once. The library keeps the latest queries warm and drops the oldest.
   @concurrent public func warm() async throws { try await DB.database.warm(queryJson: json) }
 
-  /// The values that the connection of this relation carried on the edge of one row, or nil when the row is not in the connection. It reads one row by key and never waits for a write.
   @concurrent public func edgeValues(of id: String) async throws -> [String: JSONValue]? {
     try JSONValue.read(try await DB.database.edgeValues(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
   }
@@ -126,7 +120,6 @@ public struct Query<Model: DBModel>: Sendable {
   @concurrent public func loadAll(force: Bool = false) async throws { try await DB.database.loadAll(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, force: force) }
   @discardableResult @concurrent public func loadMore() async throws -> LoadMoreResult { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
 
-  /// The rows with the ids that the delivery replaced: a created record answered by the server (or matched by `correlate`) arrives under its real id.
   public var snapshots: LiveSource<Snapshot<Model>> {
     snapshots(refreshOnConnect: false) { _ in }
   }
@@ -156,7 +149,6 @@ public struct RelatedQuery<Target: DBModel>: Sendable {
     return listSource(initial: [], open: { listener in try DB.database.liveRelated(queryJson: try sourceJson(), name: name, listener: listener) }) { (applied: ListApplied<Target>, _) in applied.rows }
   }
 
-  /// `hasMore` and the load phase belong to the source query. `total` is nil: the source count is not the number of targets.
   public var snapshots: LiveSource<Snapshot<Target>> {
     let name = name, sourceJson = sourceJson
     return listSource(initial: Snapshot(rows: [], replaced: [:], reordered: false), merge: { Snapshot.merging($0, $1) }, open: { listener in
@@ -186,28 +178,22 @@ extension LoadPhase {
   }
 }
 
-/// One delivery of a live list: the rows with the ids it replaced, the load phase of the relation and the error, as the core saw them at `seq`.
 public struct Snapshot<Model: DBModel>: Sendable {
   public let rows: [Model]
-  /// Real id of a row that replaced a temporary one in this delivery, to the temporary id.
   public let replaced: [String: String]
   public let reordered: Bool
   public let edits: [ListEdit<Model>]?
   public let window: WindowEdges?
   public let seq: UInt64
   public let phase: LoadPhase
-  /// The running load is the first one of a list that has no rows yet.
   public let isInitialLoading: Bool
-  /// The running load reloads a list that already has rows.
   public let isRefreshing: Bool
-  /// The running load fetches the next page.
   public let isFetchingMore: Bool
   public let hasMore: Bool
   public let total: Int?
   public let loadedAt: Int64?
   public let error: (any Error)?
   public let errorKind: String?
-  /// The ids of the rows that this build cannot decode. They are not in `rows`.
   public let undecodable: [String]
 
   public init(
@@ -244,7 +230,6 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public var isLoading: Bool { phase == .loading }
   public var failed: Bool { phase == .failed }
 
-  /// The newer delivery with the replacements of both: a chain A to B to C reads as C replaced A, and no pair is lost.
   static func merging(_ older: Snapshot, _ newer: Snapshot) -> Snapshot {
     var replaced = older.replaced
     for (real, temporary) in newer.replaced {

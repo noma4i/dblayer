@@ -62,7 +62,6 @@ pub fn resolve_types(models: &mut [ModelSpec]) {
 }
 
 impl FieldSpec {
-    /// A value with a declared shape: a list, or an object or array of a named type.
     pub fn is_structured(&self) -> bool {
         match self.kind {
             FieldKind::List { .. } => true,

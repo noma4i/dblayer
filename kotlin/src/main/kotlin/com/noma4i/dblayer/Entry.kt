@@ -21,7 +21,6 @@ object DBlayer {
 
     internal fun openedDatabase(): Database? = opened
 
-    /** Opens the subscriptions that models declare with `listen`. Call it after sign-in, stop it with `unlisten()`. */
     fun listen() = database.listen()
     fun unlisten() = database.unlisten()
     /** Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground and when the network returns. Call this for a manual refresh and after sign-in: it also restarts stopped subscriptions and singleton entities. */
@@ -30,32 +29,25 @@ object DBlayer {
         EntityRegistries.resumeAll()
     }
 
-    /** Ends the session: clears the stored data. Entities that readers hold become empty and receive the next session's rows. */
     suspend fun logout() {
         offCaller { database.logout() }
         EntityRegistries.resetAll()
     }
 
-    /** Sends every failed and delivery-unknown change again. Returns the number of reset operations or upload items. */
     suspend fun retryAll(): ULong = offCaller { database.retryAll() }
 
-    /** Sends a session operation declared in the encrypted config and decodes its answer. A refusal throws the typed error. */
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
         offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
 
-    /** Sends a session operation and ignores its answer body. */
     suspend inline fun <reified Body> sessionSend(operation: String, body: Body) {
         offCaller { database.sessionCall(operation, dbJson.encodeToString(body)) }
     }
 
-    /** Restores the stored session. Returns the answer of the resume call, or `null` when there is nothing to resume. */
     suspend inline fun <reified Answer> sessionResume(): Answer? =
         offCaller { database.sessionResume()?.let { dbJson.decodeFromString<Answer>(it) } }
 
-    /** Drops the stored session and its credential, so the next sign-in starts clean. */
     fun sessionReset() = database.sessionReset()
 
-    /** Closes the database. Every entity becomes closed, and `open` may open the database again. Meant for tests and the end of the process. */
     fun close() {
         EntityRegistries.closeAll()
         ForegroundEvents.stop()
@@ -64,19 +56,14 @@ object DBlayer {
         ready = CompletableDeferred()
     }
 
-    /** The live subscriptions of the database: observed queries and subscriptions, for probes of how many a screen opens. */
     fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
 
-    /** What the entity observers did: facts told, deliveries skipped as not newer than the row, reads that failed. A failed read leaves the id dirty and the core reads it again. */
     fun entityCensus(): EntityCensus = database.entityCensus()
 
-    /** Lease calls the core refused and rows that failed to decode for an entity, for probes that tell a refused lease from a lost delivery. */
     fun entityLeaseFailures(): Int = EntityRegistries.leaseFailures()
 
-    /** What the open discarded: the reason the database file was recreated, and the models whose rows a schema change cleared. Empty when nothing was discarded. */
     fun openReport(): OpenReport = database.openReport()
 
-    /** Sends one registered operation that no model owns and decodes the value at its root field. The generated `Operations` calls use it. */
     suspend fun <Answer> run(operation: String, variables: JsonObject, serializer: KSerializer<Answer>): Answer =
         offCaller { dbJson.decodeFromString(serializer, database.run(operation, variables.jsonText())) }
 
@@ -84,7 +71,6 @@ object DBlayer {
         offCaller { database.run(operation, variables.jsonText()) }
     }
 
-    /** The one database of the process. Set by `open`, empty again after `close`. */
     var database: Database
         get() = opened ?: throw IllegalStateException("database is not open; call DBlayer.open once at app start")
         internal set(value) { opened = value }

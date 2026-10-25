@@ -10,7 +10,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** What a call without a queued reply gets: `Strict` fails it with `Invalid`, records it in `unscripted` and fails the test thread with `AssertionError` at its next touch of any mock, `NetworkError` throws the retried network error. */
 enum class Unanswered { Strict, NetworkError }
 
-/** Answers by operation name, can delay or fail answers, and lets a test push or break a subscription. */
 class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Transport {
     private class Missed(val owner: MockTransport, val message: String)
 
@@ -42,7 +41,6 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
         testThreads.add(Thread.currentThread())
     }
 
-    /** The requests that had no queued reply. Reading them clears the failure the test would get, so call it in a test that expects such a request. */
     fun claimUnscripted(): List<TransportRequest> {
         missed.removeAll { it.owner === this }
         return unscripted.toList()

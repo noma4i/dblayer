@@ -8,7 +8,6 @@ final class ChangeListener: QueryListener, @unchecked Sendable {
   func changed(change: LiveChange) { body(change) }
 }
 
-/// The newest value waits for a slow reader. Values that arrive meanwhile are merged into it, so the queue never grows.
 final class Latest<Value: Sendable>: @unchecked Sendable {
   private let lock = NSLock()
   private var pending: Value?
@@ -53,7 +52,6 @@ final class Latest<Value: Sendable>: @unchecked Sendable {
   }
 }
 
-/// Cancels the core subscription when the stream is dropped, read to its end or cancelled.
 final class Attachment: @unchecked Sendable {
   private let lock = NSLock()
   private var cancelAction: (@Sendable () -> Void)?
@@ -62,7 +60,6 @@ final class Attachment: @unchecked Sendable {
   deinit { cancel() }
 }
 
-/// The values of a live source in order. The subscription ends when the stream and its iterators are dropped or the reading task is cancelled.
 public struct LiveStream<Value: Sendable>: AsyncSequence, Sendable {
   public typealias Element = Value
   let receive: @Sendable () async -> Value?
@@ -157,7 +154,6 @@ public struct Live<Value: Sendable>: DynamicProperty {
   @StateObject private var box: LiveBox<Value>
   public init(_ source: LiveSource<Value>) { _box = StateObject(wrappedValue: LiveBox(source)) }
   public var wrappedValue: Value { box.value }
-  /// The error that ended the subscription, nil while it runs.
   public var projectedValue: Error? { box.failure }
 }
 
@@ -177,14 +173,12 @@ public struct LiveView<Value: Sendable, Content: View>: View {
   public var body: some View { content(value) }
 }
 
-/// A live query for view models: the newest snapshot of the list and the calls that move it.
 @MainActor
 @Observable
 public final class LiveList<Model: DBModel> {
   public private(set) var snapshot = Snapshot<Model>(rows: [], replaced: [:])
   public private(set) var rows: [Model] = []
   public private(set) var ids: [String] = []
-  /// The ids that the last delivery of `rows` replaced: real id to temporary id.
   public private(set) var replaced: [String: String] = [:]
   @ObservationIgnored private let query: Query<Model>
   @ObservationIgnored let updates = ListUpdates<Model>()
