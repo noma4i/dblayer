@@ -12,7 +12,7 @@ descendants() {
 }
 
 freeze_tree() {
-  local pid="$1" known="" now
+  local pid="$1" known="unlisted" now
   kill -STOP -- "-$pid" 2>/dev/null || true
   kill -STOP "$pid" 2>/dev/null || true
   while :; do
@@ -34,6 +34,26 @@ kill_tree() {
   sleep 2
   kill -KILL -- "-$pid" $tree 2>/dev/null || true
   kill -KILL "$pid" 2>/dev/null || true
+  survivors "$pid" $tree
+}
+
+# Every process that was in the tree must be gone (a zombie waits for its parent and counts as gone). A survivor is killed again, up to 50 times, then the step fails loudly.
+survivors() {
+  local left tries=0 one
+  while :; do
+    left=""
+    for one in "$@"; do
+      case "$(ps -o state= -p "$one" 2>/dev/null)" in "" | Z*) ;; *) left="$left $one" ;; esac
+    done
+    [ -z "$left" ] && return 0
+    if [ "$tries" -ge 50 ]; then
+      echo "check: kill_tree could not remove:$left" >&2
+      return 1
+    fi
+    kill -KILL $left 2>/dev/null || true
+    tries=$((tries + 1))
+    sleep 0.1
+  done
 }
 
 run_bounded() {

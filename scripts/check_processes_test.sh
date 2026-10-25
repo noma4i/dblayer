@@ -32,8 +32,8 @@ fi
 source "$here/check_steps.sh"
 root="$work"
 steps=("a|owner|10|-|echo \$CHECK_OWNER_ID >> owners")
-run_checks > "$work/owners.out" 2>&1 || { cat "$work/owners.out"; exit 1; }
-run_checks >> "$work/owners.out" 2>&1 || { cat "$work/owners.out"; exit 1; }
+(run_checks) > "$work/owners.out" 2>&1 || { cat "$work/owners.out"; exit 1; }
+(run_checks) >> "$work/owners.out" 2>&1 || { cat "$work/owners.out"; exit 1; }
 if [ "$(sort -u "$work/owners" | wc -l | tr -d ' ')" -ne 2 ]; then
   echo "FAIL consecutive checks reused an owner ID"
   exit 1
