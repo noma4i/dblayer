@@ -48,8 +48,8 @@ pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Ru
     Ok(slot.runtime.get_or_init(|| runtime))
 }
 
-async fn on_executor<T: Send + 'static>(work: impl std::future::Future<Output = Result<T, crate::sync::SyncError>> + Send + 'static) -> Result<T, DbError> {
-    executor()?.spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(DbError::from)
+async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'static>(work: impl std::future::Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
+    executor()?.spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(Into::into)
 }
 
 pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
@@ -175,9 +175,12 @@ impl Database {
         Ok(self.db.peek_query(&query).map(|peeked| LiveChange::whole(peeked.revision, peeked.rows.iter().map(|row| wire.row(row)).collect())))
     }
     pub async fn warm(&self, query_json: String) -> Result<(), DbError> {
-        let (query, _) = self.parsed_query(&query_json)?;
-        let db = self.db.clone();
-        blocking(move || Ok(db.warm(&query)?)).await
+        let this = self.clone();
+        blocking(move || {
+            let (query, _) = this.parsed_query(&query_json)?;
+            Ok(this.db.warm(&query)?)
+        })
+        .await
     }
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
     pub fn subscription_census(&self) -> SubscriptionCensus {
@@ -296,25 +299,38 @@ impl Database {
     }
     pub async fn run(&self, operation: String, variables_json: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
-        let variables: Value = serde_json::from_str(&variables_json)?;
-        Ok(on_executor(async move { sync.run(&operation, variables).await }).await?.to_string())
+        Ok(on_executor(async move {
+            let variables: Value = serde_json::from_str(&variables_json).map_err(DbError::from)?;
+            Ok::<_, DbError>(sync.run(&operation, variables).await?)
+        })
+        .await?
+        .to_string())
     }
     pub async fn load(&self, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        let params = serde_json::from_str(&params_json)?;
-        on_executor(async move { sync.load(&model, &relation, &params, LoadOptions::default()).await }).await?;
+        on_executor(async move {
+            let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
+            Ok::<_, DbError>(sync.load(&model, &relation, &params, LoadOptions::default()).await?)
+        })
+        .await?;
         Ok(())
     }
     pub async fn refresh(&self, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        let params = serde_json::from_str(&params_json)?;
-        on_executor(async move { sync.refresh(&model, &relation, &params).await }).await?;
+        on_executor(async move {
+            let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
+            Ok::<_, DbError>(sync.refresh(&model, &relation, &params).await?)
+        })
+        .await?;
         Ok(())
     }
     pub async fn load_more(&self, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         let sync = self.sync()?.clone();
-        let params = serde_json::from_str(&params_json)?;
-        let outcome = on_executor(async move { sync.load_more(&model, &relation, &params).await }).await?;
+        let outcome = on_executor(async move {
+            let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
+            Ok::<_, DbError>(sync.load_more(&model, &relation, &params).await?)
+        })
+        .await?;
         Ok(match outcome.status {
             LoadStatus::NoMorePages(LoadMoreVerdict::AlreadyLoading) => LoadMoreResult::AlreadyLoading,
             LoadStatus::NoMorePages(_) => LoadMoreResult::NoMore,
@@ -355,7 +371,7 @@ impl Database {
         on_executor(async move {
             let count = db.retry(&model, &row)?;
             sync.flush().await?;
-            Ok(count as u64)
+            Ok::<_, crate::sync::SyncError>(count as u64)
         }).await
     }
     pub async fn retry_all(&self) -> Result<u64, DbError> {
@@ -364,7 +380,7 @@ impl Database {
         on_executor(async move {
             let count = db.retry_all()?;
             sync.flush().await?;
-            Ok(count as u64)
+            Ok::<_, crate::sync::SyncError>(count as u64)
         }).await
     }
     pub async fn discard(&self, model: String, row_id: String) -> Result<(), DbError> {
@@ -388,26 +404,34 @@ impl Database {
     pub async fn upload(&self, model: String, row_id: String, input_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        let input = serde_json::from_str(&input_json)?;
-        on_executor(async move { sync.upload(&model, &row, input).await }).await?;
+        on_executor(async move {
+            let input = serde_json::from_str(&input_json).map_err(DbError::from)?;
+            Ok::<_, DbError>(sync.upload(&model, &row, input).await?)
+        })
+        .await?;
         Ok(())
     }
     pub async fn upload_create(&self, model: String, values_json: String, input_json: String) -> Result<WireRow, DbError> {
         let sync = self.sync()?.clone();
-        let (values, input) = (serde_json::from_str(&values_json)?, serde_json::from_str(&input_json)?);
-        let owner = model.clone();
-        let row_id = on_executor(async move { sync.upload_create(&owner, values, input).await }).await?;
-        let row = self.db.find(&model, &row_id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {row_id} was not created") })?;
-        Ok(self.wire(&model)?.row(&row))
+        let (db, wire) = (self.db.clone(), self.wire(&model)?.clone());
+        on_executor(async move {
+            let (values, input) = (serde_json::from_str(&values_json).map_err(DbError::from)?, serde_json::from_str(&input_json).map_err(DbError::from)?);
+            let row_id = sync.upload_create(&model, values, input).await?;
+            let row = db.find(&model, &row_id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {row_id} was not created") })?;
+            Ok::<_, DbError>(wire.row(&row))
+        })
+        .await
     }
     pub async fn upload_create_batch(&self, model: String, items_json: String, input_json: String) -> Result<Vec<WireRow>, DbError> {
         let sync = self.sync()?.clone();
-        let items = serde_json::from_str(&items_json)?;
-        let input = serde_json::from_str(&input_json)?;
-        let owner = model.clone();
-        let rows = on_executor(async move { sync.upload_create_batch(&owner, items, input).await }).await?;
-        let wire = self.wire(&model)?;
-        Ok(rows.iter().map(|row| wire.row(row)).collect())
+        let wire = self.wire(&model)?.clone();
+        on_executor(async move {
+            let items = serde_json::from_str(&items_json).map_err(DbError::from)?;
+            let input = serde_json::from_str(&input_json).map_err(DbError::from)?;
+            let rows = sync.upload_create_batch(&model, items, input).await?;
+            Ok::<_, DbError>(rows.iter().map(|row| wire.row(row)).collect())
+        })
+        .await
     }
     pub async fn confirmed(&self, model: String, row_id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();

@@ -5,7 +5,7 @@ use super::{Config, Database, DbError, Transport};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
 
-struct Refusing {
+pub(super) struct Refusing {
     calls: AtomicUsize,
     answer: Result<&'static str, fn() -> DbError>,
 }
@@ -26,7 +26,7 @@ impl Transport for Refusing {
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: Vec<u8>, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
-async fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<Database>, Arc<Refusing>) {
+pub(super) async fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<Database>, Arc<Refusing>) {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     let mut relation = RelationSpec::global("feed");
     relation.remote = Some(RemoteSpec {
