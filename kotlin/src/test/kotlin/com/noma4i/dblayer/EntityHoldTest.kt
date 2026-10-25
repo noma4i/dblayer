@@ -3,9 +3,8 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.Moment
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -21,26 +20,24 @@ class EntityHoldTest {
 
     private fun moment(id: String, text: String) = Moment(id = id, uuid = id, text = text, likedByMe = false, media = JsonObject(emptyMap()), createdAt = "2026-10-08T00:00:00.000Z")
 
-    private fun collectGarbage(rounds: Int, until: () -> Boolean): Boolean {
-        repeat(rounds) { if (until()) return true; System.gc(); Thread.sleep(20) }
-        return until()
-    }
-
     @Test
-    fun collectingValueOrPhaseHoldsTheEntityUntilTheCollectionEnds() = runBlocking {
+    fun collectorsOfValueAndPhaseReceiveDeliveriesAndCancelOnlyEndsTheCancelled() = runBlocking {
         val registry = Entities("Moment", Moment, { 0 }, NoSource)
-        var entity: Entity<Moment>? = registry.entity("1")
-        val valueReader = launch(Dispatchers.Unconfined, CoroutineStart.UNDISPATCHED) { entity!!.value.first { it?.text == "B" } }
-        val phaseReader = launch(Dispatchers.Unconfined, CoroutineStart.UNDISPATCHED) { entity!!.phase.first { it == EntityPhase.Closed } }
-        entity = null
-        assertTrue("both readers still run", valueReader.isActive && phaseReader.isActive)
-        collectGarbage(10) { false }
-        assertEquals(1, registry.liveCount)
+        val entity = registry.entity("1")
+        val untilB = async(Dispatchers.Unconfined, CoroutineStart.UNDISPATCHED) { entity.value.first { it?.text == "B" } }
+        val untilPresent = async(Dispatchers.Unconfined, CoroutineStart.UNDISPATCHED) { entity.phase.first { it == EntityPhase.Present } }
+        val cancelled = async(Dispatchers.Unconfined, CoroutineStart.UNDISPATCHED) { entity.value.first { it?.text == "C" } }
+        val kept = async(Dispatchers.Unconfined, CoroutineStart.UNDISPATCHED) { entity.value.first { it?.text == "C" } }
+        assertTrue(untilB.isActive && untilPresent.isActive && cancelled.isActive && kept.isActive)
+
         registry.apply(EntityDeliveryRows(1, listOf(moment("1", "B") to 1uL), emptyList()))
-        valueReader.join()
-        collectGarbage(10) { false }
-        assertEquals("a reader of the phase holds the entity alone", 1, registry.liveCount)
-        phaseReader.cancelAndJoin()
-        assertTrue("the entity is freed after its readers end", collectGarbage(100) { registry.liveCount == 0 })
+        assertTrue(untilB.isCompleted && untilPresent.isCompleted)
+        assertEquals("B", untilB.await()?.text)
+
+        cancelled.cancel()
+        assertTrue(cancelled.isCancelled && kept.isActive)
+        registry.apply(EntityDeliveryRows(2, listOf(moment("1", "C") to 1uL), emptyList()))
+        assertTrue(kept.isCompleted)
+        assertEquals("C", kept.await()?.text)
     }
 }

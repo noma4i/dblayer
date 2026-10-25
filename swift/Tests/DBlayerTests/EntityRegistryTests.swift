@@ -5,13 +5,19 @@ import Testing
 
 final class CountingSource: EntitySource, @unchecked Sendable {
   private let cached: WireRow?
-  init(cached: WireRow? = nil) { self.cached = cached }
+  init(cached: WireRow? = nil) {
+    self.cached = cached
+    (events, eventSink) = AsyncStream.makeStream()
+  }
   func cachedRow(_ id: String) -> WireRow? { cached?.id == id ? cached : nil }
   private let lock = NSLock()
   private var retains: [[String]] = []
   private var releases: [[String]] = []
-  func retain(_ ids: [String]) { lock.withLock { retains.append(ids) } }
-  func release(_ ids: [String]) { lock.withLock { releases.append(ids) } }
+  /// Each lease call in order, as "retain <ids>" or "release <ids>".
+  let events: AsyncStream<String>
+  private let eventSink: AsyncStream<String>.Continuation
+  func retain(_ ids: [String]) { lock.withLock { retains.append(ids) }; eventSink.yield("retain \(ids.joined(separator: ","))") }
+  func release(_ ids: [String]) { lock.withLock { releases.append(ids) }; eventSink.yield("release \(ids.joined(separator: ","))") }
   var retained: [String] { lock.withLock { retains.flatMap { $0 } } }
   var released: [String] { lock.withLock { releases.flatMap { $0 } } }
 }

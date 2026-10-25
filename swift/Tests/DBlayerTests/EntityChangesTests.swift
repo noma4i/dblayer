@@ -12,8 +12,6 @@ struct EntityChangesTests {
     EntityDecoding.Decoded(revision: revision, rows: rows.map { ($0, 1) }, removed: removed)
   }
 
-  func settle() async { for _ in 0 ..< 5 { await Task.yield() } }
-
   /// current, update, newest-only and removal
   @Test
   func streamDeliversCurrentThenNewest() async {
@@ -30,36 +28,36 @@ struct EntityChangesTests {
     #expect(removed != nil && removed! == nil)
   }
 
-  /// owner: one core observer for two readers, cancel of one keeps the other, drop releases the entity
+  /// owner: one core observer for two readers, cancelling one keeps the other, ending all releases entity and lease
   @Test
-  func readersShareTheLeaseAndHoldTheEntity() async {
+  func readersShareTheLeaseAndHoldTheEntity() async throws {
     let source = CountingSource()
+    var events = source.events.makeAsyncIterator()
     let registry = Entities<Moment>(source: source)
     weak var weakEntity: Entity<Moment>?
     var second: LiveStream<Moment?>?
+    let reader: Task<Void, Never>
     do {
       let entity = registry.entity("1")
       weakEntity = entity
       let first = entity.changes()
       second = entity.changes()
-      await settle()
-      #expect(source.retained == ["1"] && source.released.isEmpty)
-      registry.apply(delivery(1, [moment("1", "A")]))
-      var iterator = first.makeAsyncIterator()
-      #expect(await iterator.next()??.text == "A")
+      reader = Task { @MainActor in for await _ in first {} }
     }
-    await settle()
-    #expect(weakEntity != nil)
-    registry.apply(delivery(2, [moment("1", "B")]))
+    try #require(weakEntity != nil)
+    #expect(await events.next() == "retain 1")
+    reader.cancel()
+    await reader.value
+    try #require(weakEntity != nil)
+
+    registry.apply(delivery(1, [moment("1", "A")]))
     do {
       var iterator = second!.makeAsyncIterator()
-      #expect(await iterator.next()??.text == "B")
+      #expect(await iterator.next()??.text == "A")
     }
     second = nil
-    await settle()
+    #expect(await events.next() == "release 1")
     #expect(weakEntity == nil)
-    await settle()
-    #expect(source.released == ["1"])
   }
 
   /// close ends the reader
@@ -88,7 +86,6 @@ struct EntityChangesTests {
     }
     #expect(weakEntity != nil)
     registry.close()
-    await settle()
     #expect(weakEntity == nil)
     _ = kept
   }

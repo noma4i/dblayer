@@ -4,6 +4,7 @@ import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.lang.ref.Reference
 import java.lang.ref.ReferenceQueue
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
@@ -59,12 +60,14 @@ internal class EntityCell<Model : DBModel> {
     }
 }
 
-/** The collector of a flow holds the flow, so collecting it keeps the entity reachable. */
+/** Collecting keeps the entity reachable until the collection ends. */
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
 private class HeldState<T>(private val owner: Any, private val inner: StateFlow<T>) : StateFlow<T> {
     override val value: T get() = inner.value
     override val replayCache: List<T> get() = inner.replayCache
-    override suspend fun collect(collector: FlowCollector<T>): Nothing = inner.collect(collector)
+    override suspend fun collect(collector: FlowCollector<T>): Nothing {
+        try { inner.collect(collector) } finally { Reference.reachabilityFence(owner) }
+    }
 }
 
 /** The live value of one record. The library keeps it current while the object is reachable and lets go of the record when it is not. */
