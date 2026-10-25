@@ -39,15 +39,16 @@ impl CredentialStore for WatchedHeld {
 pub(super) struct Rig {
     pub(super) server: Arc<FakeServer>,
     pub(super) credentials: Arc<WatchedHeld>,
+    pub(super) retries: Arc<super::RetryProgress>,
 }
 
 impl Rig {
     pub(super) fn new() -> Self {
-        Self { server: FakeServer::new(Arc::new(SystemClock)), credentials: Arc::default() }
+        Self { server: FakeServer::new(Arc::new(SystemClock)), credentials: Arc::default(), retries: super::RetryProgress::new() }
     }
 
     pub(super) async fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
-        Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), Some(self.credentials.clone()), Some(Arc::new(ThroughServer(self.server.clone()))), None).await
+        Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), Some(self.credentials.clone()), Some(Arc::new(ThroughServer(self.server.clone()))), None, Some(self.retries.clone())).await
     }
 
     pub(super) fn touched(&self) -> (usize, usize) {
@@ -101,7 +102,7 @@ async fn resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it
     let path = directory.path().join("session.sqlite");
     let first = rig.open(Some(&path), pin()).await.unwrap();
     rig.server.drop_next_request();
-    super::encrypted_tests::cancel_on_retry(&first, first.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into())).await;
+    super::encrypted_tests::cancel_on_retry(&rig.retries, first.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into())).await;
     assert_eq!(rig.server.seen().len(), 0);
     drop(first);
 
@@ -121,7 +122,7 @@ async fn a_lost_logout_answer_is_resumed_through_the_bridge_and_clears_the_crede
     let first = rig.open(Some(&path), pin()).await.unwrap();
     first.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.lose_next_answer();
-    super::encrypted_tests::cancel_on_retry(&first, first.session_call("logout".into(), "{}".into())).await;
+    super::encrypted_tests::cancel_on_retry(&rig.retries, first.session_call("logout".into(), "{}".into())).await;
     assert!(rig.credentials.inner.value().is_some());
     drop(first);
 

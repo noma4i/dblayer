@@ -72,7 +72,7 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
         models.push(other);
         models[0].change_feed = Some(crate::schema::ChangeFeed { subscription: "Notices".into(), root: "notices.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
     }
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), Some(transport.clone()), None, None, None, None).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), Some(transport.clone()), None, None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"},{"name":"Feed","document":"query Feed { moments { id } }","rootPath":"moments"}]"#.into()).unwrap();
     let (failures, received) = std::sync::mpsc::channel();
     let live = database.live_query(r#"{"model":"Notice","relation":"recent","params":{}}"#.into(), Arc::new(Listener(failures)));
@@ -100,7 +100,7 @@ async fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_lo
     relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription:"BulletinAdded".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
     model.relations.push(relation);
     let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), hold: None, gate: None, subscriptions: None });
-    let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None, None).await.unwrap();
+    let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body } }","rootPath":"bulletinAdded"}]"#.into()).unwrap();
     for window in [false, true] {
         let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#.into();
@@ -153,7 +153,7 @@ async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tokio::sync::S
     let transport_handle = Some(transport.clone() as Arc<dyn Transport>);
     let db = match &clock {
         Some(clock) => Database::open_with_clock(config, models, transport_handle, None, clock.clone()).await,
-        None => Database::open(config, models, transport_handle, None, None, None, None).await,
+        None => Database::open(config, models, transport_handle, None, None, None, None, None).await,
     }
     .unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();

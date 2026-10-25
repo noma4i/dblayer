@@ -58,7 +58,7 @@ async fn a_queued_create_refused_without_a_sequence_is_executed_once_by_resume_a
 async fn a_queued_create_whose_answer_was_lost_is_executed_once_by_resume_and_the_next_flush() {
   for concurrent in [false, true] {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
-    let rig = Rig { server: crate::transport::encrypted::fake_server_tests::FakeServer::new(clock.clone()), credentials: Arc::default() };
+    let rig = Rig { server: crate::transport::encrypted::fake_server_tests::FakeServer::new(clock.clone()), credentials: Arc::default(), retries: super::RetryProgress::new() };
     let database = super::Database::start_with(
         super::Config { path: None, data_version: None, cache_rows: 8 },
         serde_json::to_string(&vec![super::sealed_errors_tests::moment_spec()]).unwrap(), None,

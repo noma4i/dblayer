@@ -12,7 +12,7 @@ use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
 use crate::pacing::{Clock, RetryPolicy};
 use crate::transport::TransportError;
-use crate::transport::retry::{RetryClass, RetryEvents, Retrying};
+use crate::transport::retry::{RetryClass, RetryCalls, Retrying};
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const REPLAYED: &str = "REPLAYED_REQUEST";
@@ -80,7 +80,7 @@ pub struct EncryptedClient {
     pub(crate) online: Arc<crate::transport::Connectivity>,
     credential: Mutex<Option<String>>,
     mutations: Gate<()>,
-    retry_events: RetryEvents,
+    progress: Arc<RetryCalls>,
 }
 
 pub(super) fn digest_of(credential: &str) -> String {
@@ -122,7 +122,7 @@ impl EncryptedClient {
         if operation == "logout" { return self.mutate(&self.config.endpoints.logout, body).await; }
         let operation = self.config.endpoints.session_operations.get(operation).ok_or_else(|| TransportError::Decode(format!("unknown session operation {operation}")))?;
         if !operation.sessionless { return self.mutate(&operation.path, body).await; }
-        let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events, &self.online, RetryPolicy::Http);
+        let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
         loop {
             self.online.online().await;
             let request_id = uuid::Uuid::new_v4().to_string();
@@ -133,7 +133,10 @@ impl EncryptedClient {
         }
     }
 
-    pub fn set_retry_listener(&self, listener: Option<Arc<dyn crate::transport::RetryListener>>) { self.retry_events.set(listener); }
+    pub fn observed_by(mut self, progress: Arc<RetryCalls>) -> Self {
+        self.progress = progress;
+        self
+    }
 
     pub fn has_session_operation(&self, operation: &str) -> bool {
         operation == "logout" || self.config.endpoints.session_operations.contains_key(operation)
@@ -153,7 +156,7 @@ impl EncryptedClient {
         }
         let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Decode(error.to_string()))?;
         let online = db.connectivity();
-        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: Mutex::new(None), mutations: Gate::new(()), retry_events: RetryEvents::default() })
+        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: Mutex::new(None), mutations: Gate::new(()), progress: Arc::default() })
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -243,7 +246,7 @@ impl EncryptedClient {
     }
 
     async fn await_answer(&self, mut pending: Pending) -> Result<Answer, TransportError> {
-      let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events, &self.online, RetryPolicy::Http);
+      let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
       loop {
         self.online.online().await;
         let token = self.pending_token(&self.credential()?, &pending)?;
@@ -290,7 +293,7 @@ impl EncryptedClient {
     }
 
     async fn exchange(&self, credential: &str, request_id: &str, response_key: &str, sequence: Option<i64>, path: &str, body: &Value) -> Result<Answer, TransportError> {
-        let mut retry = Retrying::new(self.clock.as_ref(), &self.retry_events, &self.online, RetryPolicy::Http);
+        let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
         loop {
             self.online.online().await;
             let token = self.request_token(Some(RequestSession { credential: credential.into(), sequence }), request_id, response_key, path, body)?;

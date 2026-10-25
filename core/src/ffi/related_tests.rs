@@ -21,7 +21,7 @@ async fn open() -> Arc<Database> {
     moment.associations.push(AssociationSpec::new("tags", AssociationKind::References, "Tag", "tagIds"));
     let profile = ModelSpec::new("Profile", vec![id_field(), FieldSpec::scalar("userId", ScalarKind::Id).nullable().indexed()]);
     let tag = ModelSpec::new("Tag", vec![id_field(), FieldSpec::scalar("label", ScalarKind::Str).optional()]);
-    Database::open(Config { path: None, data_version: None, cache_rows: 512 }, serde_json::to_string(&vec![user, moment, profile, tag]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None).await.unwrap()
+    Database::open(Config { path: None, data_version: None, cache_rows: 512 }, serde_json::to_string(&vec![user, moment, profile, tag]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None, None).await.unwrap()
 }
 
 fn settle(db: &Database) { db.db.await_revision(db.db.revision_seq().unwrap()); }

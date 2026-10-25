@@ -74,12 +74,6 @@ private final class BootstrapHttp: EncryptedHttp, @unchecked Sendable {
   }
 }
 
-private final class BootstrapRetry: RetryListener, @unchecked Sendable {
-  let signal: AsyncStream<(UInt64, UInt64, String)>.Continuation
-  init(_ signal: AsyncStream<(UInt64, UInt64, String)>.Continuation) { self.signal = signal }
-  func retrying(attempt: UInt64, delayMs: UInt64, reason: String) { signal.yield((attempt, delayMs, reason)) }
-}
-
 private final class HeldBootstrapHttp: EncryptedHttp, @unchecked Sendable {
   let signal: AsyncStream<String>.Continuation
   init(_ signal: AsyncStream<String>.Continuation) { self.signal = signal }
@@ -187,13 +181,15 @@ struct BootstrapConfigTests {
   func bootstrapTimeoutWaitsForCancellationAndReportsTheAttempt() async throws {
     let peer = try BootstrapPeer()
     let http = BootstrapHttp(peer, "timeout")
-    let (events, signal) = AsyncStream<(UInt64, UInt64, String)>.makeStream()
-    let task = Task { try await DB.serverConfig(encrypted: peer.encrypted, platform: .ios, version: "1.2", http: http, retryListener: BootstrapRetry(signal)) }
-    let event = try #require(await Cursor(events).next("bootstrap retry"))
-    #expect(event.0 == 1 && (800...1000).contains(event.1) && event.2 == "network")
+    let retries = RetryProgress()
+    let changes = Cursor(try await retries.changes.stream())
+    #expect(await changes.next("the snapshot at connect") == RetrySnapshot(activeCalls: 0, lastAttempt: nil))
+    let task = Task { try await DB.serverConfig(encrypted: peer.encrypted, platform: .ios, version: "1.2", http: http, retries: retries) }
+    let attempt = try #require(await changes.next("the first retry")?.lastAttempt)
+    #expect(attempt.attempt == 1 && (800...1000).contains(attempt.delayMs) && attempt.reason == "network")
     task.cancel()
     if case .success = await task.result { Issue.record("cancelled bootstrap succeeded") }
-    signal.finish()
+    #expect(await changes.next("the cancelled call leaving") == RetrySnapshot(activeCalls: 0, lastAttempt: nil))
     #expect(http.calls == 1)
   }
 

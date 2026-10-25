@@ -29,7 +29,7 @@ pub use online::Connectivity;
 pub use put::{ByteSink, PutRequest, PutResponse};
 pub use request::{GraphQLError, GraphQLRequest, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};
-pub use retry::{RetryClass, RetryListener};
+pub use retry::{RetryAttempt, RetryClass, RetryCalls, RetrySnapshot};
 pub use session_code::SessionCode;
 pub use subscription::{
     Subscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind,

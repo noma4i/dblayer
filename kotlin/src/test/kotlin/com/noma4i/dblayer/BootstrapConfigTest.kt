@@ -13,6 +13,10 @@ import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.spec.*
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.awaitCancellation
@@ -81,22 +85,23 @@ class BootstrapConfigTest {
     @Test
     fun bootstrapTimeoutWaitsForCancellationAndReportsTheAttempt() = bounded {
         val calls = AtomicInteger()
-        val event = CompletableDeferred<Triple<ULong, ULong, String>>()
+        val retries = RetryProgress()
         val http = object : EncryptedHttp {
             override suspend fun post(path: String, body: String): EncryptedReply {
                 calls.incrementAndGet()
                 throw classifyEncryptedHttpFailure(SocketTimeoutException("timeout"))
             }
         }
-        val listener = object : RetryListener {
-            override fun retrying(attempt: ULong, delayMs: ULong, reason: String) { event.complete(Triple(attempt, delayMs, reason)) }
-        }
-        val call = launch { DBlayer.serverConfig(context, encrypted(), AppPlatform.ANDROID, "1.2", http = http, retryListener = listener) }
-        val (attempt, delay, reason) = event.await()
-        assertEquals(1uL, attempt)
-        assertTrue(delay in 800uL..1000uL)
-        assertEquals("network", reason)
+        val connected = async { retries.flow.take(2).toList() }
+        val call = launch { DBlayer.serverConfig(context, encrypted(), AppPlatform.ANDROID, "1.2", http = http, retries = retries) }
+        val (first, second) = connected.await()
+        assertNotEquals("the reader sees the current snapshot once", first, second)
+        val attempt = retries.flow.first { it.activeCalls == 1u }.lastAttempt!!
+        assertEquals(1uL, attempt.attempt)
+        assertTrue(attempt.delayMs in 800uL..1000uL)
+        assertEquals("network", attempt.reason)
         call.cancelAndJoin()
+        assertEquals(RetrySnapshot(0u, null), retries.flow.first { it.activeCalls == 0u })
         assertEquals(1, calls.get())
     }
 

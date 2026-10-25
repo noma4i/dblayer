@@ -147,6 +147,7 @@ impl Database {
         Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, wires: Arc::new(wires) }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn open(
         config: Config,
         models_json: String,
@@ -155,11 +156,12 @@ impl Database {
         credentials: Option<Arc<dyn super::CredentialStore>>,
         http: Option<Arc<dyn super::EncryptedHttp>>,
         uploads: Option<UploadOperations>,
+        retries: Option<Arc<super::RetryProgress>>,
     ) -> Result<Arc<Self>, DbError> {
         blocking(move || {
             let Some(encrypted) = encrypted else {
-                if credentials.is_some() || http.is_some() {
-                    return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
+                if credentials.is_some() || http.is_some() || retries.is_some() {
+                    return Err(DbError::Invalid { detail: "credentials, http and retries require encrypted".into() });
                 }
                 return Self::start(config, models_json, transport, uploads, Arc::new(SystemClock));
             };
@@ -168,7 +170,7 @@ impl Database {
             let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
             let _entered = executor()?.enter();
             Self::start_with(config, models_json, uploads, Arc::new(SystemClock), |db, clock| {
-                super::encrypted::wire(db, clock, encrypted, http, credentials, transport)
+                super::encrypted::wire(db, clock, encrypted, http, credentials, transport, retries)
             })
         }).await
     }

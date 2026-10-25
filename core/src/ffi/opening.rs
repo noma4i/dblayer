@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use super::open_slot::OpenSlot;
 use super::upload_wire::WireUploadOperations;
-use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, TestClock, Transport};
+use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, RetryProgress, TestClock, Transport};
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenOptions {
@@ -19,11 +19,12 @@ impl OpenDatabase {
     #[uniffi::constructor]
     pub fn new() -> Arc<Self> { Arc::new(Self { slot: OpenSlot::new() }) }
 
-    pub async fn open(&self, config: Config, models_json: String, options: OpenOptions, transport: Option<Arc<dyn Transport>>, encrypted: Option<EncryptedConfig>, credentials: Option<Arc<dyn CredentialStore>>, http: Option<Arc<dyn EncryptedHttp>>) -> Result<Arc<Database>, DbError> {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn open(&self, config: Config, models_json: String, options: OpenOptions, transport: Option<Arc<dyn Transport>>, encrypted: Option<EncryptedConfig>, credentials: Option<Arc<dyn CredentialStore>>, http: Option<Arc<dyn EncryptedHttp>>, retries: Option<Arc<RetryProgress>>) -> Result<Arc<Database>, DbError> {
         serde_json::from_str::<serde_json::Value>(&options.operations)?;
         let lease = self.slot.acquire()?;
         let remote = transport.is_some();
-        let database = Database::open(config, models_json, transport, encrypted, credentials, http, options.uploads.map(Into::into)).await?;
+        let database = Database::open(config, models_json, transport, encrypted, credentials, http, options.uploads.map(Into::into), retries).await?;
         database.hold(lease);
         if remote {
             if let Err(error) = database.register_operations(options.operations).and_then(|()| Ok(database.sync()?.check_uploads()?)) {

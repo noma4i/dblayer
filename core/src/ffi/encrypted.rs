@@ -89,20 +89,63 @@ pub(super) fn wire(
     http: Arc<dyn EncryptedHttp>,
     credentials: Arc<dyn CredentialStore>,
     transport: Arc<dyn Transport>,
+    retries: Option<Arc<RetryProgress>>,
 ) -> Result<Wiring, DbError> {
     let client = EncryptedClient::new(&encrypted, Arc::new(ForeignHttp(http)), Arc::new(ForeignCredentials(credentials)), db.clone(), clock.clone())
         .map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+    let client = match retries {
+        Some(retries) => client.observed_by(retries.inner.clone()),
+        None => client,
+    };
     let client = Arc::new(client);
     Ok((Some(Arc::new(EncryptedTransport::new(client.clone(), Arc::new(ForeignTransport(transport))))), Some(client)))
 }
 
+#[uniffi::export(rust, foreign)]
+pub trait RetryProgressListener: Send + Sync {
+    fn changed(&self, snapshot: core::RetrySnapshot);
+}
+
+#[derive(uniffi::Object)]
+pub struct RetryProgress { pub(super) inner: Arc<core::RetryCalls> }
+
+#[uniffi::export]
+impl RetryProgress {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> { Arc::new(Self { inner: Arc::default() }) }
+
+    pub fn current(&self) -> core::RetrySnapshot { self.inner.current() }
+
+    /// Delivers the current snapshot at once, then each newer one. A slow listener sees the newest snapshot and delays no request.
+    pub fn subscribe(&self, listener: Arc<dyn RetryProgressListener>) -> Result<Arc<RetrySubscription>, DbError> {
+        let mut changes = self.inner.watch();
+        let runtime = super::database::executor()?;
+        let task = runtime.spawn(async move {
+            loop {
+                let snapshot = changes.borrow_and_update().clone();
+                let listener = listener.clone();
+                let _ = tokio::task::spawn_blocking(move || std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| listener.changed(snapshot)))).await;
+                if changes.changed().await.is_err() { break; }
+            }
+        });
+        Ok(Arc::new(RetrySubscription(task.abort_handle())))
+    }
+}
+
+#[derive(uniffi::Object)]
+pub struct RetrySubscription(tokio::task::AbortHandle);
+
+#[uniffi::export]
+impl RetrySubscription {
+    pub fn cancel(&self) { self.0.abort(); }
+}
+
+impl Drop for RetrySubscription {
+    fn drop(&mut self) { self.0.abort(); }
+}
+
 #[uniffi::export]
 impl Database {
-    pub fn set_retry_listener(&self, listener: Option<Arc<dyn core::RetryListener>>) -> Result<(), DbError> {
-        self.session()?.set_retry_listener(listener);
-        Ok(())
-    }
-
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
         let client = self.session()?.clone();
         if !client.has_session_operation(&operation) { return Err(DbError::Invalid { detail: format!("unknown session operation {operation}") }); }
@@ -131,10 +174,9 @@ impl Database {
 }
 
 #[uniffi::export]
-pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retry_listener: Option<Arc<dyn core::RetryListener>>, connectivity: Arc<core::Connectivity>) -> Result<ServerConfig, DbError> {
+pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, connectivity: Arc<core::Connectivity>) -> Result<ServerConfig, DbError> {
     cancellable(async move {
-        let events = core::retry::RetryEvents::default();
-        events.set(retry_listener);
-        core::encrypted::bootstrap::fetch(&encrypted, platform, &version, build.as_deref(), Arc::new(ForeignHttp(http)), &crate::pacing::SystemClock, &events, &connectivity).await.map_err(typed)
+        let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
+        core::encrypted::bootstrap::fetch(&encrypted, platform, &version, build.as_deref(), Arc::new(ForeignHttp(http)), &crate::pacing::SystemClock, &progress, &connectivity).await.map_err(typed)
     }).await?
 }

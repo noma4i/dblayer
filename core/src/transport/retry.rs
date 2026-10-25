@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use super::error::TransportError;
 use crate::pacing::{Backoff, Clock, RetryPolicy};
 use super::{Connectivity, GraphQLRequest, Response, Transport};
@@ -48,48 +46,85 @@ impl RetryClass {
 
 }
 
-#[uniffi::export(rust, foreign)]
-pub trait RetryListener: Send + Sync {
-    fn retrying(&self, attempt: u64, delay_ms: u64, reason: String);
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RetryAttempt {
+    pub attempt: u64,
+    pub delay_ms: u64,
+    pub reason: String,
 }
 
-#[derive(Default)]
-pub(crate) struct RetryEvents(Mutex<Option<Arc<dyn RetryListener>>>);
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct RetrySnapshot {
+    pub active_calls: u32,
+    pub last_attempt: Option<RetryAttempt>,
+}
 
-impl RetryEvents {
-    pub(crate) fn set(&self, listener: Option<Arc<dyn RetryListener>>) { *crate::db::locked(&self.0) = listener; }
+/// The calls that wait for a retry and the newest attempt among them. Calls join on their first retry and leave when they succeed, fail for good or are cancelled.
+pub struct RetryCalls(tokio::sync::watch::Sender<RetrySnapshot>);
+
+impl Default for RetryCalls {
+    fn default() -> Self { Self(tokio::sync::watch::channel(RetrySnapshot::default()).0) }
+}
+
+impl RetryCalls {
+    pub fn current(&self) -> RetrySnapshot { self.0.borrow().clone() }
+
+    pub fn watch(&self) -> tokio::sync::watch::Receiver<RetrySnapshot> { self.0.subscribe() }
+
+    fn record(&self, attempt: RetryAttempt, joined: &mut bool) {
+        let first = !std::mem::replace(joined, true);
+        self.0.send_modify(|snapshot| {
+            snapshot.active_calls += u32::from(first);
+            snapshot.last_attempt = Some(attempt);
+        });
+    }
+
+    fn leave(&self, joined: &mut bool) {
+        if !std::mem::replace(joined, false) { return; }
+        self.0.send_modify(|snapshot| {
+            snapshot.active_calls -= 1;
+            if snapshot.active_calls == 0 { snapshot.last_attempt = None; }
+        });
+    }
 }
 
 pub(crate) struct Retrying<'a> {
     clock: &'a dyn crate::pacing::Clock,
-    events: &'a RetryEvents,
+    progress: &'a RetryCalls,
     backoff: Backoff,
     attempt: u64,
+    joined: bool,
     online: &'a Connectivity,
 }
 
+impl Drop for Retrying<'_> {
+    fn drop(&mut self) { self.progress.leave(&mut self.joined); }
+}
+
 impl<'a> Retrying<'a> {
-    pub(crate) fn new(clock: &'a dyn Clock, events: &'a RetryEvents, online: &'a Connectivity, policy: RetryPolicy) -> Self {
-        Self { clock, events, online, backoff: policy.backoff().randomized(), attempt: 0 }
+    pub(crate) fn new(clock: &'a dyn Clock, progress: &'a RetryCalls, online: &'a Connectivity, policy: RetryPolicy) -> Self {
+        Self { clock, progress, online, backoff: policy.backoff().randomized(), attempt: 0, joined: false }
     }
 
     pub(crate) async fn failed(&mut self, error: TransportError) -> Result<(), TransportError> {
-        if RetryClass::of_error(&error) == RetryClass::Fatal || !self.backoff.allows(self.attempt.min(u32::MAX as u64) as u32) { return Err(error); }
+        if RetryClass::of_error(&error) == RetryClass::Fatal || !self.backoff.allows(self.attempt.min(u32::MAX as u64) as u32) { return Err(self.refused(error)); }
         self.online.online().await;
         let delay = self.backoff.delay(self.attempt.min(u32::MAX as u64) as u32);
+        let reason = match &error {
+            TransportError::Network(_) => "network".to_string(),
+            TransportError::Http { status, .. } => format!("HTTP {status}"),
+            TransportError::Graphql { messages, extensions } => extensions.as_ref().and_then(|value| value.code.clone()).or_else(|| messages.first().cloned()).unwrap_or_default(),
+            _ => return Err(self.refused(error)),
+        };
         self.attempt = self.attempt.saturating_add(1);
-        let listener = crate::db::locked(&self.events.0).clone();
-        if let Some(listener) = listener {
-            let reason = match &error {
-                TransportError::Network(_) => "network".to_string(),
-                TransportError::Http { status, .. } => format!("HTTP {status}"),
-                TransportError::Graphql { messages, extensions } => extensions.as_ref().and_then(|value| value.code.clone()).or_else(|| messages.first().cloned()).unwrap_or_default(),
-                _ => return Err(error),
-            };
-            listener.retrying(self.attempt, delay.as_millis() as u64, reason);
-        }
+        self.progress.record(RetryAttempt { attempt: self.attempt, delay_ms: delay.as_millis() as u64, reason }, &mut self.joined);
         self.online.wait(self.clock, delay).await;
         Ok(())
+    }
+
+    fn refused(&mut self, error: TransportError) -> TransportError {
+        self.progress.leave(&mut self.joined);
+        error
     }
 }
 
@@ -98,8 +133,8 @@ pub(crate) async fn query(transport: &dyn Transport, request: GraphQLRequest, cl
         called();
         return transport.query(request).await.map(|response| (response, 1));
     }
-    let events = RetryEvents::default();
-    let mut retry = Retrying::new(clock, &events, online, RetryPolicy::QueryNetwork);
+    let progress = RetryCalls::default();
+    let mut retry = Retrying::new(clock, &progress, online, RetryPolicy::QueryNetwork);
     loop {
         online.online().await;
         called();

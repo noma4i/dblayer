@@ -4,6 +4,7 @@
 
 ### Added
 - `preload` in a `.dbl` scope loads the scope after open, sign-in, reset and network return.
+- `RetryProgress` follows encrypted HTTP calls that wait for a retry: `changes` on Swift and `flow` on Kotlin deliver `RetrySnapshot(activeCalls, lastAttempt)`. Pass one object as `retries` to `open` and `serverConfig`.
 - `Query.related(Association)` reads typed related rows on Swift and Kotlin; `Model.Relations` lists links.
 - Stale observed windows reload when the app returns to the foreground or the network returns.
 - `UploadOperations` declares upload operations once in `DB.open` on Swift and `DBlayer.open` on Kotlin.
@@ -14,6 +15,7 @@
 - Swift `Entity.changes()` streams the value of an entity, current value then updates, and holds the entity while it is read.
 
 ### Changed
+- `RetryListener` and `Database.setRetryListener` are removed; `serverConfig(retryListener:)` becomes `serverConfig(retries:)`. A call leaves the retry state on success, failure and cancel by itself.
 - Preserve typed errors in `Snapshot.error` and `LiveWindow.failure` on Swift and Kotlin.
 - A live query delivers again when only the GraphQL `extensions` of the same error change.
 - The core decides every `Entity` transition (seed, revision order, stale, failure, reset, close) with one state machine on both platforms. A late failure of a replaced singleton feed no longer changes the new state.

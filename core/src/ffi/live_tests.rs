@@ -64,7 +64,7 @@ impl QueryListener for Tape {
 
 async fn with_rows(count: usize) -> (Arc<Database>, Vec<String>) {
     let model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
-    let db = Database::open(Config { path: None, data_version: None, cache_rows: 64 }, serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None).await.unwrap();
+    let db = Database::open(Config { path: None, data_version: None, cache_rows: 64 }, serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None, None).await.unwrap();
     let mut ids = Vec::new();
     for n in 0..count {
         ids.push(db.create("Moment".into(), format!(r#"{{"text":"t{n:05}"}}"#), "{}".into()).await.unwrap().id);

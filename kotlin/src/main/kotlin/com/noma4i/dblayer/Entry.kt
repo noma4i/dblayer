@@ -61,8 +61,8 @@ object DBlayer {
         get() = opened ?: throw IllegalStateException("database is not open; call DBlayer.open once at app start")
         internal set(value) { opened = value }
 
-    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retryListener: RetryListener? = null): ServerConfig =
-        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retryListener, Reachability.start(context))
+    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig =
+        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retries, Reachability.start(context))
 
     suspend fun open(
         context: Context,
@@ -76,12 +76,13 @@ object DBlayer {
         operations: List<GraphQLOperation> = emptyList(),
         uploads: UploadOperations? = null,
         http: EncryptedHttp? = null,
+        retries: RetryProgress? = null,
     ) = opening.withLock {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
         val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire())
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers, cablePath = encrypted?.endpoints?.cable) }
         Reachability.start(context)
-        val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) })
+        val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }, retries)
         val sink = made.onlineSink()
         Reachability.connect(sink)
         ForegroundEvents.start(sink)

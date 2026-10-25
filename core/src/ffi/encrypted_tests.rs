@@ -52,7 +52,7 @@ pub(super) async fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<Fake
     let server = FakeServer::new(Arc::new(SystemClock));
     let credentials = Arc::new(MemoryCredentials::default());
     let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: server_key.to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() };
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone()))), None).await
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone()))), None, None).await
     .unwrap();
     (database, server, credentials)
 }
@@ -62,19 +62,14 @@ pub(super) fn code(error: DbError) -> SessionCode {
     code
 }
 
-pub(super) async fn cancel_on_retry(db: &Database, call: impl std::future::Future) {
-    struct Retried(tokio::sync::watch::Sender<bool>);
-    impl crate::transport::RetryListener for Retried {
-        fn retrying(&self, _: u64, _: u64, _: String) { self.0.send_replace(true); }
-    }
-    let (reached, mut retried) = tokio::sync::watch::channel(false);
-    db.set_retry_listener(Some(Arc::new(Retried(reached)))).unwrap();
+pub(super) async fn cancel_on_retry(retries: &super::RetryProgress, call: impl std::future::Future) {
+    let mut waiting = retries.inner.watch();
     {
         let mut call = Box::pin(call);
-        tokio::select! { _ = retried.wait_for(|reached| *reached) => {}, _ = &mut call => {} }
-        assert!(*retried.borrow(), "call completed before retry");
+        let deadline = super::database::executor().unwrap().spawn(tokio::time::sleep(std::time::Duration::from_secs(10)));
+        tokio::select! { _ = waiting.wait_for(|snapshot| snapshot.active_calls > 0) => {}, _ = &mut call => {}, _ = deadline => panic!("the retry was not observed") }
+        assert!(waiting.borrow().active_calls > 0, "call completed before retry");
     }
-    db.set_retry_listener(None).unwrap();
 }
 
 #[tokio::test]
@@ -97,7 +92,7 @@ async fn dropping_foreign_calls_cancels_the_inflight_http_future() {
         let stopped = Arc::new(tokio::sync::Notify::new());
         let http = Arc::new(Waiting { started: tokio::sync::Notify::new(), stopped: stopped.clone() });
         let config = crate::transport::EncryptedConfig { origin: origin().into(), pin: pin().into(), server_key: public_key_der_b64().into(), ..crate::transport::encrypted::protocol_tests::config() };
-        let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(config.clone()), Some(Arc::new(Held(Arc::new(MemoryCredentials::default())))), Some(http.clone()), None).await.unwrap();
+        let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(config.clone()), Some(Arc::new(Held(Arc::new(MemoryCredentials::default())))), Some(http.clone()), None, None).await.unwrap();
         let mut call = Box::pin(async {
             if bootstrap {
                 super::fetch_server_config(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http.clone(), None, crate::transport::Connectivity::new(true)).await.map(|_| ())
@@ -132,7 +127,7 @@ async fn a_sessionless_operation_posts_all_fields_without_a_session() {
     let mut encrypted = EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() };
     encrypted.endpoints.session_operations = [("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true })].into();
     let credentials = Arc::new(MemoryCredentials::default());
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(TicketPost)), None).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(TicketPost)), None, None).await.unwrap();
     assert!(credentials.value().is_none());
 
     database.session_call("ticket".into(), body.into()).await.unwrap();
@@ -168,7 +163,7 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
         let mut encrypted = crate::transport::encrypted::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true });
         let credentials = Arc::new(MemoryCredentials::default());
-        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(Reply(status))), None).await.unwrap();
+        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(Reply(status))), None, None).await.unwrap();
         let result = database.session_call("ticket".into(), "{}".into()).await;
         if status == 200 { assert_eq!(result.unwrap(), "{}"); }
         else { assert!(matches!(result, Err(DbError::Http { status: 400, .. })), "{result:?}"); }
@@ -182,4 +177,71 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
         drop(inner);
         assert_eq!(database.session_call("social".into(), "{}".into()).await.unwrap(), "{}");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_reader_delays_no_request() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    use tokio::sync::watch;
+    use crate::transport::RetrySnapshot;
+
+    struct Failing(watch::Sender<usize>);
+    #[async_trait]
+    impl EncryptedHttp for Failing {
+        async fn post(&self, _: String, _: String) -> Result<EncryptedReply, DbError> {
+            self.0.send_modify(|posts| *posts += 1);
+            Ok(EncryptedReply { status: 503, body: String::new() })
+        }
+    }
+    struct Tap {
+        seen: watch::Sender<Option<RetrySnapshot>>,
+        deliveries: AtomicUsize,
+        gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    }
+    impl super::RetryProgressListener for Tap {
+        fn changed(&self, snapshot: RetrySnapshot) {
+            self.deliveries.fetch_add(1, Ordering::SeqCst);
+            let gate = self.gate.lock().unwrap().take();
+            if let Some(gate) = gate { gate.recv().unwrap(); }
+            self.seen.send_replace(Some(snapshot));
+        }
+    }
+    fn tap(gate: Option<std::sync::mpsc::Receiver<()>>) -> (Arc<Tap>, watch::Receiver<Option<RetrySnapshot>>) {
+        let (seen, receiver) = watch::channel(None);
+        (Arc::new(Tap { seen, deliveries: AtomicUsize::new(0), gate: Mutex::new(gate) }), receiver)
+    }
+    async fn reaches(seen: &mut watch::Receiver<Option<RetrySnapshot>>, expected: impl Fn(&RetrySnapshot) -> bool) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), seen.wait_for(|snapshot| snapshot.as_ref().is_some_and(&expected))).await.expect("snapshot delivered").unwrap();
+    }
+
+    let (posted, mut posts) = watch::channel(0);
+    let http = Arc::new(Failing(posted));
+    let config = crate::transport::EncryptedConfig { origin: origin().into(), pin: pin().into(), server_key: public_key_der_b64().into(), ..crate::transport::encrypted::protocol_tests::config() };
+    let retries = super::RetryProgress::new();
+    let (release, gate) = std::sync::mpsc::channel();
+    let (slow, mut slow_seen) = tap(Some(gate));
+    let slow_subscription = retries.subscribe(slow.clone()).unwrap();
+    let call = tokio::spawn({
+        let retries = retries.clone();
+        async move { super::fetch_server_config(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http, Some(retries), crate::transport::Connectivity::new(true)).await }
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), posts.wait_for(|posts| *posts >= 2)).await.expect("the request retried while the first delivery blocked").unwrap();
+    assert!(slow_seen.borrow().is_none(), "the blocked reader has not seen anything yet");
+    assert_eq!(retries.current().active_calls, 1);
+
+    let (late, mut late_seen) = tap(None);
+    let late_subscription = retries.subscribe(late.clone()).unwrap();
+    reaches(&mut late_seen, |snapshot| snapshot.active_calls == 1 && snapshot.last_attempt.as_ref().is_some_and(|attempt| attempt.reason == "HTTP 503")).await;
+
+    release.send(()).unwrap();
+    reaches(&mut slow_seen, |snapshot| snapshot.active_calls == 1).await;
+    slow_subscription.cancel();
+    let delivered = slow.deliveries.load(Ordering::SeqCst);
+
+    call.abort();
+    reaches(&mut late_seen, |snapshot| snapshot.active_calls == 0 && snapshot.last_attempt.is_none()).await;
+    assert_eq!(slow.deliveries.load(Ordering::SeqCst), delivered, "a cancelled reader hears nothing more, the other reader kept going");
+    drop(late_subscription);
 }

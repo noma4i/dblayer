@@ -373,15 +373,18 @@ The Swift generator connects these calls to UniFFI cancellation and serializes c
 Other Swift async calls keep their existing cancellation behavior.
 UniFFI generates non-throwing `current`, `cableNext` and `cableClose` with `try!`, so cancelling every async call would crash those methods.
 
-`Database.setRetryListener(listener:)` in Swift and `Database.setRetryListener(listener)` in Kotlin install the same optional `RetryListener`.
-Pass `nil` or `null` to remove it.
-`DB.serverConfig` and `DBlayer.serverConfig` also accept `retryListener`, because bootstrap runs before open.
-For encrypted HTTP that owns retries, `retrying(attempt, delayMs, reason)` runs after each temporary failure and before sleeping.
-Durable outbox and upload owners expose their saved attempts through operation state.
+Create one `RetryProgress()` before the database exists. Pass it as `retries` to `DB.open` and `DB.serverConfig` in Swift, and to `DBlayer.open` and `DBlayer.serverConfig` in Kotlin.
+It is optional. Without it, retries behave identically. There is no process-wide instance.
+`RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin deliver a `RetrySnapshot`: `activeCalls` and `lastAttempt` (`attempt`, `delayMs`, `reason`).
+A reader gets the current snapshot first, then the newest one. A slow reader sees the newest snapshot and delays no request.
+Cancelling a read ends only that reader. The calls and the other readers go on.
+A call becomes active after its first temporary failure. It leaves when it succeeds, fails for good or is cancelled.
+`activeCalls` is 0 and `lastAttempt` is empty only when no call waits for a retry, even when one of several parallel calls ends.
+There is no timer. The snapshot only follows the retry loops that `RetryPolicy` already runs.
 `attempt` starts at 1 for each call. `delayMs` is the actual jittered delay until the next attempt.
 `reason` is `network`, `HTTP <status>` or the temporary error code. It contains no request payload.
-The callback runs on a library thread. Dispatch UI changes to the application's UI thread.
-Without a listener, retries behave identically. Completing or cancelling the awaited call ends its connecting indication.
+Retries cover encrypted HTTP only. Durable outbox and upload owners expose their saved attempts through operation state.
+Passing `retries` to `open` without `encrypted` is an error.
 
 Kotlin `OkHttpEncryptedHttp` sets call and read timeouts to 30 seconds and connect timeout to 10 seconds.
 Swift `UrlSessionEncryptedHttp` sets request and resource timeouts to 30 seconds, including when given a custom session.
