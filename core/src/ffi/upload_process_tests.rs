@@ -58,7 +58,7 @@ async fn child(mode: &str) {
         let source = format!("{path}.mp4");
         std::fs::write(&source, b"abc").unwrap();
         let input = UploadInput::new(&source, UploadSteps::new("MakeMoment").single("CreateBlob"));
-        database.upload("Moment".into(), "42".into(), "upload".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
+        database.upload("Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
         assert_eq!(database.db.outbox().unwrap().len(), 1);
     } else {

@@ -1206,3 +1206,23 @@ async fn settled_waits_only_for_the_selected_upload_action() {
     assert!(matches!(rig.sync.settled("moments", &rid("m1"), Some("upload")).await, Ok(())), "nothing of that action is open");
     assert!(matches!(rig.sync.settled("moments", &rid("m1"), Some("cover")).await, Err(SyncError::Offline)), "the pending cover upload is awaited");
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_single_upload_takes_its_mutation_from_the_declaration_and_refuses_one_without_it() {
+    let source = file(b"abcdef");
+    let try_upload = |declared: Option<&str>| {
+        let mut specs = crate::sync::rig::specs();
+        specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().actions.iter_mut().find(|action| action.name == "upload").unwrap().mutation = declared.map(str::to_string);
+        let rig = rig_on(crate::db::Db::open_in_memory(specs, None).unwrap(), crate::transport::MockTransport::new(), SyncConfig::default());
+        put(&rig, "moments", moment("m1", "x"));
+        let mut request = input(&source);
+        request.steps.mutation = String::new();
+        (rig, request)
+    };
+    let (rig, request) = try_upload(Some("CreateMoment"));
+    rig.sync.upload("moments", &rid("m1"), "upload", request).await.unwrap();
+    assert_eq!(rig.db.outbox().unwrap().len(), 1, "the declared mutation admits the upload");
+    let (bare, request) = try_upload(None);
+    assert!(bare.sync.upload("moments", &rid("m1"), "upload", request).await.is_err(), "no mutation anywhere admits nothing");
+    assert!(bare.db.outbox().unwrap().is_empty());
+}

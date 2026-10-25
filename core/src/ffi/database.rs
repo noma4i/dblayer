@@ -17,6 +17,7 @@ use super::live::{follow_failures, intake, LiveHandles};
 use super::live_feed::LiveFeed;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
+use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
 use super::wire::{WireModel, WireRow};
 use super::{DbError, LiveChange, LiveSubscription, LoadMoreResult, OnlineSink, QueryListener, Transport};
 
@@ -401,33 +402,33 @@ impl Database {
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone(), online: self.db.connectivity() })) }
-    pub async fn upload(&self, model: String, row_id: String, action: String, input_json: String) -> Result<(), DbError> {
+    pub async fn upload(&self, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
         on_executor(async move {
-            let input = serde_json::from_str(&input_json).map_err(DbError::from)?;
+            let input = request.into_input()?;
             Ok::<_, DbError>(sync.upload(&model, &row, &action, input).await?)
         })
         .await?;
         Ok(())
     }
-    pub async fn upload_create(&self, model: String, action: String, values_json: String, input_json: String) -> Result<WireRow, DbError> {
+    pub async fn upload_create(&self, model: String, action: String, values_json: String, request: WireUploadRequest) -> Result<WireRow, DbError> {
         let sync = self.sync()?.clone();
         let (db, wire) = (self.db.clone(), self.wire(&model)?.clone());
         on_executor(async move {
-            let (values, input) = (serde_json::from_str(&values_json).map_err(DbError::from)?, serde_json::from_str(&input_json).map_err(DbError::from)?);
+            let (values, input) = (serde_json::from_str(&values_json).map_err(DbError::from)?, request.into_input()?);
             let row_id = sync.upload_create(&model, &action, values, input).await?;
             let row = db.find(&model, &row_id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {row_id} was not created") })?;
             Ok::<_, DbError>(wire.row(&row))
         })
         .await
     }
-    pub async fn upload_create_batch(&self, model: String, items_json: String, input_json: String) -> Result<Vec<WireRow>, DbError> {
+    pub async fn upload_create_batch(&self, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<Vec<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?.clone();
         on_executor(async move {
-            let items = serde_json::from_str(&items_json).map_err(DbError::from)?;
-            let input = serde_json::from_str(&input_json).map_err(DbError::from)?;
+            let items = items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?;
+            let input = request.into_input()?;
             let rows = sync.upload_create_batch(&model, items, input).await?;
             Ok::<_, DbError>(rows.iter().map(|row| wire.row(row)).collect())
         })

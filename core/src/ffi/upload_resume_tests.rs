@@ -94,7 +94,7 @@ async fn upload_resume_and_retry_execute_the_saved_step_once_after_reopen() {
                 server.upgrade().unwrap().refuse_next("ACCOUNT_UNAVAILABLE", false);
             }
         });
-        database.upload("Moment".into(), "42".into(), "upload".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
+        database.upload("Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
         let database = if restart { drop(database); open(&rig, &path).await } else { database };
         database.session_resume().await.unwrap();
@@ -117,7 +117,7 @@ async fn upload_preserves_the_session_code_in_its_failure() {
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
     let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
-    database.upload("Moment".into(), "42".into(), "upload".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
+    database.upload("Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     let entry = database.db.outbox().unwrap().remove(0);
     assert_eq!(entry.operation.error.unwrap().kind, crate::syncstate::FailureKind::Session(SessionCode::AccountUnavailable));
@@ -181,7 +181,7 @@ async fn resume_consumes_a_lost_upload_answer_without_repeating_the_effect() {
         _ => {},
     });
     let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
-    database.upload("Moment".into(), "42".into(), "upload".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
+    database.upload("Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     database.session_resume().await.unwrap();
     database.retry("Moment".into(), "42".into(), None).await.unwrap();

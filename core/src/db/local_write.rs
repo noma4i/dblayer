@@ -168,6 +168,9 @@ impl Db {
         let spec = self.shared.spec(model)?;
         let declared = spec.upload_action(action).filter(|declared| declared.batch.is_none()).ok_or_else(|| DbError::InvalidUpload(format!("{model} declares no single upload action {action}")))?;
         if let Some(mutation) = &declared.mutation { input.steps.mutation = mutation.clone(); }
+        if input.steps.mutation.is_empty() {
+            return Err(DbError::InvalidUpload(format!("{model} {action} declares no mutation")));
+        }
         Ok(())
     }
 

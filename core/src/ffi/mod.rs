@@ -14,6 +14,7 @@ mod live_feed;
 mod retention;
 mod state;
 mod transport;
+pub mod upload_wire;
 pub mod wire;
 
 #[uniffi::export]

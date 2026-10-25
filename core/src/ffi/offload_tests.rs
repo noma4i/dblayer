@@ -13,11 +13,14 @@ fn ready_on_first_poll<T>(call: impl Future<Output = T>) -> bool {
 async fn calls_with_json_arguments_parse_them_off_the_caller_thread() {
     let (db, _) = rig(Ok("{}")).await;
     let bad = || "{".to_string();
+    let request = || super::upload_wire::WireUploadRequest { path: "p".into(), name: None, mime: None, variables_json: bad(), create_blob: None, multipart: None };
+    let item = || super::upload_wire::WireUploadItem { values_json: bad(), path: "p".into(), name: None, mime: None, variables_json: "{}".into() };
+    let batch = || super::upload_wire::WireUploadBatch { operation: "o".into(), variables_json: "{}".into(), create_blob: None, multipart: None };
     let (moment, row) = (|| "Moment".to_string(), || "r1".to_string());
     let calls: Vec<(&str, bool)> = vec![
-        ("upload", ready_on_first_poll(db.upload(moment(), row(), "upload".into(), bad()))),
-        ("upload_create", ready_on_first_poll(db.upload_create(moment(), "upload".into(), bad(), bad()))),
-        ("upload_create_batch", ready_on_first_poll(db.upload_create_batch(moment(), bad(), bad()))),
+        ("upload", ready_on_first_poll(db.upload(moment(), row(), "upload".into(), request()))),
+        ("upload_create", ready_on_first_poll(db.upload_create(moment(), "upload".into(), bad(), request()))),
+        ("upload_create_batch", ready_on_first_poll(db.upload_create_batch(moment(), vec![item()], batch()))),
         ("run", ready_on_first_poll(db.run("Feed".into(), bad()))),
         ("load", ready_on_first_poll(db.load(moment(), "feed".into(), bad()))),
         ("refresh", ready_on_first_poll(db.refresh(moment(), "feed".into(), bad()))),
