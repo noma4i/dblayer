@@ -18,13 +18,13 @@ struct EntityChangesTests {
     let registry = Entities<Moment>(source: CountingSource())
     let entity = registry.entity("1")
     registry.apply(delivery(1, [moment("1", "A")]))
-    var iterator = entity.changes().makeAsyncIterator()
-    #expect(await iterator.next()??.text == "A")
+    let cursor = Cursor(entity.changes())
+    #expect(await cursor.next("the current value")??.text == "A")
     registry.apply(delivery(2, [moment("1", "B")]))
     registry.apply(delivery(3, [moment("1", "C")]))
-    #expect(await iterator.next()??.text == "C")
+    #expect(await cursor.next("the newest value")??.text == "C")
     registry.apply(delivery(4, removed: ["1"]))
-    let removed = await iterator.next()
+    let removed = await cursor.next("the removal")
     #expect(removed != nil && removed! == nil)
   }
 
@@ -32,7 +32,7 @@ struct EntityChangesTests {
   @Test
   func readersShareTheLeaseAndHoldTheEntity() async throws {
     let source = CountingSource()
-    var events = source.events.makeAsyncIterator()
+    let events = Cursor(source.events)
     let registry = Entities<Moment>(source: source)
     weak var weakEntity: Entity<Moment>?
     var second: LiveStream<Moment?>?
@@ -42,21 +42,21 @@ struct EntityChangesTests {
       weakEntity = entity
       let first = entity.changes()
       second = entity.changes()
-      reader = Task { @MainActor in for await _ in first {} }
+      reader = Task { @MainActor in _ = await Cursor(first).next("a delivery that never comes") }
     }
     try #require(weakEntity != nil)
-    #expect(await events.next() == "retain 1")
+    #expect(await events.next("the retain") == "retain 1")
     reader.cancel()
     await reader.value
     try #require(weakEntity != nil)
 
     registry.apply(delivery(1, [moment("1", "A")]))
     do {
-      var iterator = second!.makeAsyncIterator()
-      #expect(await iterator.next()??.text == "A")
+      let cursor = Cursor(second!)
+      #expect(await cursor.next("the delivery")??.text == "A")
     }
     second = nil
-    #expect(await events.next() == "release 1")
+    #expect(await events.next("the release") == "release 1")
     #expect(weakEntity == nil)
   }
 
@@ -65,12 +65,12 @@ struct EntityChangesTests {
   func closedDatabaseEndsTheStream() async {
     let registry = Entities<Moment>(source: CountingSource())
     let entity = registry.entity("1")
-    var iterator = entity.changes().makeAsyncIterator()
-    _ = await iterator.next()
+    let cursor = Cursor(entity.changes())
+    _ = await cursor.next("the first value")
     registry.close()
-    #expect(await iterator.next() == nil)
-    var again = entity.changes().makeAsyncIterator()
-    #expect(await again.next() == nil)
+    #expect(await cursor.next("the end of the stream") == nil)
+    let again = Cursor(entity.changes())
+    #expect(await again.next("the end of a new stream") == nil)
   }
 
   /// a kept stream does not keep a closed entity

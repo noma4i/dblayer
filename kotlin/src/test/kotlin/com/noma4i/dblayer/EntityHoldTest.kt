@@ -5,7 +5,6 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -21,7 +20,7 @@ class EntityHoldTest {
     private fun moment(id: String, text: String) = Moment(id = id, uuid = id, text = text, likedByMe = false, media = JsonObject(emptyMap()), createdAt = "2026-10-08T00:00:00.000Z")
 
     @Test
-    fun collectorsOfValueAndPhaseReceiveDeliveriesAndCancelOnlyEndsTheCancelled() = runBlocking {
+    fun collectorsOfValueAndPhaseReceiveDeliveriesAndCancelOnlyEndsTheCancelled() = bounded {
         val registry = Entities("Moment", Moment, { 0 }, NoSource)
         val entity = registry.entity("1")
         val untilB = async(Dispatchers.Unconfined, CoroutineStart.UNDISPATCHED) { entity.value.first { it?.text == "B" } }

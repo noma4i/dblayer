@@ -24,6 +24,10 @@ To read the changes of an entity in code, not in a view, use `changes()` in Swif
 for await value in User.entity(id).changes() { render(value) }   // current value first, then each newer one
 ```
 
+```kotlin
+User.entity(id).value.collect { render(it) }   // current value first, then each newer one
+```
+
 The Swift stream gives the current value, then updates. A reader that falls behind gets only the newest value. Many readers of one entity open no new subscription. Cancelling or dropping one stream leaves the others. The stream ends when the database closes. A `nil` value means the record is absent or not loaded: `phase` tells which, and carries a read error.
 
 Every entity has a `phase`: `opening` until the core answers, then `present` or `absent`. `failed(error)` keeps the last value and tells that the core could not lease the id, read the row or decode it on this build. `closed` follows `DB.close()`. Entity creation reads only memory. It never reads SQLite synchronously. A cache miss stays empty until the first delivery, even if the record exists on disk.
