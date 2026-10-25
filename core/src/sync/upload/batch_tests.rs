@@ -527,3 +527,47 @@ async fn a_batch_item_retried_after_it_was_selected_is_not_expired() {
     assert_eq!(db.expire_candidates(stale, due, &[]).unwrap(), 0);
     assert!(db.find("Asset", &ids[0]).unwrap().is_some());
 }
+
+#[tokio::test]
+async fn a_batch_item_that_fails_while_its_request_is_pending_is_aborted_once_the_request_resolves() {
+    let db = Db::open_in_memory(vec![spec()], None).unwrap();
+    let transport = Arc::new(MockTransport::new());
+    let config = SyncConfig { upload: crate::upload::UploadConfig { multipart_threshold: 10, part_size: 5, ..Default::default() }, ..SyncConfig::default() };
+    let sync = Sync::new(db.clone(), transport.clone(), Arc::new(ManualClock::new(std::time::Duration::ZERO)), config);
+    for (name, root) in [("CreateAssets", "createAssets.assets"), ("CreateBlob", "createBlob"), ("Init", "initMultipart"), ("Presign", "presignParts"), ("Complete", "completeMultipart"), ("Abort", "abortMultipart")] {
+        sync.register(crate::sync::OperationDef::new(name, "mutation x { x }", root));
+    }
+    let source = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(source.path(), b"0123456789ab").unwrap();
+    let items = [source.path().to_str().unwrap(), "missing.png"].into_iter().enumerate().map(|(position, path)| UploadItem {
+        values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(),
+        path: path.into(), name: None, mime: None, variables: Default::default(),
+    }).collect();
+    let steps = UploadSteps::new("CreateAssets").single("CreateBlob").multipart("Init", "Presign", "Complete", "Abort");
+    let request = UploadBatchInput { operation: "create_files".into(), steps, variables: Default::default() };
+    transport.enqueue("Init", crate::transport::Reply::data(json!({"initMultipart": {"key": "k1", "uploadId": "u1"}})));
+    transport.enqueue("Init", crate::transport::Reply::data(json!({"initMultipart": {"key": "k2", "uploadId": "u2"}})));
+    let pending = db.clone();
+    transport.respond_with(move |call| {
+        if call.operation_name != "Presign" { return None; }
+        let seq: i64 = pending.shared.store.lock().connection.query_row("SELECT seq FROM op", [], |row| row.get(0)).unwrap();
+        let position = 0;
+        pending.shared.store.lock().connection.execute("INSERT OR REPLACE INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage) VALUES (1, 'd', 'r', 'k', 1, '/graphql', '{}', ?1, ?2, 'presign')", rusqlite::params![seq, position]).unwrap();
+        Some(crate::transport::Reply::graphql_error("denied", "FORBIDDEN"))
+    });
+    let ids: Vec<_> = sync.upload_create_batch("Asset", items, request).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    sync.wait_uploads().await;
+    let failed: Vec<_> = crate::operation::read_upload_items(&db.shared.store.lock().connection).unwrap().into_iter().filter(|(_, state)| state.phase == crate::upload::UploadStatus::Failed && state.upload_id.is_some()).collect();
+    assert_eq!(failed.len(), 1, "one item failed while its request was pending: {ids:?}");
+    let ((seq, position), state) = failed.iter().next().unwrap();
+    let (seq, position) = (*seq, *position);
+    assert!(state.upload_id.is_some());
+    assert_eq!(transport.call_count("Abort"), 0, "the pending request may still complete");
+    transport.enqueue("Abort", crate::transport::Reply::data(json!({"abortMultipart": {"ok": true}})));
+    db.shared.store.lock().connection.execute("DELETE FROM encrypted_pending", []).unwrap();
+    let owner = crate::transport::RequestOwner { seq, item_position: position, stage: "presign".into() };
+    let claim = sync.inner.claim_upload_resume(&owner).await.unwrap().expect("the failed item is still the owner of the stored step");
+    sync.inner.resume_upload(claim, Err(crate::transport::TransportError::Graphql { messages: vec!["denied".into()], extensions: None })).await;
+    sync.wait_uploads().await;
+    assert_eq!(transport.call_count("Abort"), 1, "the multipart must be aborted once its pending request resolved");
+}
