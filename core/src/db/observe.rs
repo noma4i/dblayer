@@ -296,17 +296,16 @@ impl ObserverHandle {
     }
 }
 
+pub(crate) enum ObserverCommand {
+    Grow { group: String, before: usize, after: usize },
+    Cancel { group: String, id: u64 },
+}
+
 impl ObserverHandle {
     pub(crate) fn grow(&self, before: usize, after: usize) {
-        if let Some(shared) = self.shared.upgrade() {
-            let mut observers = shared.observers();
-            if let Some(group) = observers.groups.get_mut(&self.group) {
-                accumulate_growth(&mut group.facts.growth, before, after);
-                shared.pump(&mut observers, &self.group);
-            } else if let Some(opening) = observers.opening.get_mut(&self.group) {
-                accumulate_growth(&mut opening.growth, before, after);
-            }
-        }
+        let Some(shared) = self.shared.upgrade() else { return };
+        let command = ObserverCommand::Grow { group: self.group.clone(), before, after };
+        shared.command_observers(command);
     }
 }
 
@@ -314,24 +313,51 @@ impl Drop for ObserverHandle {
     fn drop(&mut self) {
         self.subscriber.cancel();
         let Some(shared) = self.shared.upgrade() else { return };
-        let mut observers = shared.observers();
-        observers.warm_ids.remove(&self.id);
-        if let Some(group) = observers.groups.get_mut(&self.group) {
-            group.subscribers.retain(|(id, _)| *id != self.id);
-            group.facts.joining.retain(|(id, _)| *id != self.id);
-            if group.subscribers.is_empty() && group.facts.joining.is_empty() {
-                observers.remove_group(&self.group);
-            }
-        } else if let Some(opening) = observers.opening.get_mut(&self.group) {
-            opening.waiting.retain(|(id, _)| *id != self.id);
-            if opening.waiting.is_empty() {
-                observers.opening.remove(&self.group);
-                observers.remove_deferred(&self.group);
+        shared.command_observers(ObserverCommand::Cancel { group: self.group.clone(), id: self.id });
+    }
+}
+
+impl Shared {
+    pub(crate) fn command_observers(&self, command: ObserverCommand) {
+        locked(&self.observer_commands).push(command);
+        match self.try_observers() {
+            Some(observers) => drop(observers),
+            None => self.dispatch.push(Event::default()),
+        }
+    }
+
+    pub(crate) fn run_observer_commands(&self, observers: &mut Observers) {
+        let commands = std::mem::take(&mut *locked(&self.observer_commands));
+        for command in commands {
+            match command {
+                ObserverCommand::Grow { group: key, before, after } => {
+                    if let Some(group) = observers.groups.get_mut(&key) {
+                        accumulate_growth(&mut group.facts.growth, before, after);
+                        self.pump(observers, &key);
+                    } else if let Some(opening) = observers.opening.get_mut(&key) {
+                        accumulate_growth(&mut opening.growth, before, after);
+                    }
+                }
+                ObserverCommand::Cancel { group: key, id } => {
+                    observers.warm_ids.remove(&id);
+                    if let Some(group) = observers.groups.get_mut(&key) {
+                        group.subscribers.retain(|(member, _)| *member != id);
+                        group.facts.joining.retain(|(member, _)| *member != id);
+                        if group.subscribers.is_empty() && group.facts.joining.is_empty() {
+                            observers.remove_group(&key);
+                        }
+                    } else if let Some(opening) = observers.opening.get_mut(&key) {
+                        opening.waiting.retain(|(member, _)| *member != id);
+                        if opening.waiting.is_empty() {
+                            observers.opening.remove(&key);
+                            observers.remove_deferred(&key);
+                        }
+                    }
+                }
             }
         }
     }
 }
-
 
 struct Due {
     key: String,

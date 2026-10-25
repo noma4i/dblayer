@@ -42,6 +42,7 @@ pub(crate) struct Shared {
     pub pointer_guards: BTreeMap<String, Vec<AssociationSpec>>,
     pub cache: Arc<Mutex<RowCache>>,
     pub observers: Mutex<Observers>,
+    pub observer_commands: Mutex<Vec<super::observe::ObserverCommand>>,
     pub warm: Mutex<Warm>,
     pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
@@ -71,6 +72,16 @@ thread_local! {
 pub(crate) struct ObserversGuard<'a>(MutexGuard<'a, Observers>);
 
 impl<'a> ObserversGuard<'a> {
+    fn try_new(mutex: &'a Mutex<Observers>) -> Option<Self> {
+        let guard = match mutex.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        OBSERVERS_HELD.with(|held| held.set(held.get() + 1));
+        Some(Self(guard))
+    }
+
     fn new(mutex: &'a Mutex<Observers>) -> Self {
         let guard = locked(mutex);
         OBSERVERS_HELD.with(|held| held.set(held.get() + 1));
@@ -127,7 +138,15 @@ impl Shared {
     }
 
     pub(crate) fn observers(&self) -> ObserversGuard<'_> {
-        ObserversGuard::new(&self.observers)
+        let mut guard = ObserversGuard::new(&self.observers);
+        self.run_observer_commands(&mut guard);
+        guard
+    }
+
+    pub(crate) fn try_observers(&self) -> Option<ObserversGuard<'_>> {
+        let mut guard = ObserversGuard::try_new(&self.observers)?;
+        self.run_observer_commands(&mut guard);
+        Some(guard)
     }
 
     pub(crate) fn read<T>(&self, models: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, DbError>) -> Result<T, DbError> {
@@ -208,6 +227,7 @@ impl Db {
             pointer_guards,
             cache,
             observers: Mutex::new(Observers::default()),
+            observer_commands: Mutex::new(Vec::new()),
             warm: Mutex::new(Warm::default()),
             counters: Arc::new(Mutex::new(Counters::default())),
             executor: Executor::new(dispatch.progress.clone()),

@@ -294,3 +294,43 @@ fn inv_observe_29_refreshes_deferred_by_saturation_merge_their_touched_rows() {
     assert_eq!(log.lock().unwrap().last().unwrap().rows.iter().find(|row| row.id.as_str() == "u001").unwrap().text("name"), Some("latest"));
     assert!(loaded <= 2, "two deferred refreshes of one touched row each loaded {loaded} rows");
 }
+
+fn returns_while_the_registry_is_held(call: impl FnOnce() + Send + 'static, db: &crate::db::Db) -> bool {
+    let (held, release) = (std::sync::Arc::new(std::sync::Barrier::new(2)), std::sync::Arc::new(std::sync::Barrier::new(2)));
+    let holder = {
+        let (shared, held, release) = (db.shared.clone(), held.clone(), release.clone());
+        std::thread::spawn(move || {
+            let _registry = shared.observers();
+            held.wait();
+            release.wait();
+        })
+    };
+    held.wait();
+    let (done, finished) = std::sync::mpsc::channel();
+    let caller = std::thread::spawn(move || {
+        call();
+        let _ = done.send(());
+    });
+    let returned = finished.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
+    release.wait();
+    holder.join().unwrap();
+    caller.join().unwrap();
+    returned
+}
+
+#[test]
+fn nb1_cancelling_and_growing_an_observer_do_not_wait_for_the_registry() {
+    let db = booted();
+    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
+    let query = Query::new("users").ordered(vec![crate::query::Order::new("id", crate::value::SortDirection::Asc)]);
+    let (_log, callback) = recorder();
+    let window = db.observe_window(query, WindowSpec::Tail { size: 1 }, callback).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    assert!(returns_while_the_registry_is_held(move || window.expand_before(1), &db), "expand waited for the observers lock");
+    let (_log, callback) = recorder();
+    let observer = db.observe(Query::new("users"), callback).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    assert!(returns_while_the_registry_is_held(move || drop(observer), &db), "cancel waited for the observers lock");
+    db.await_revision(db.revision_seq().unwrap());
+    assert_eq!(db.observer_census().subscriptions, 0, "deferred cancellations and the dropped window reach the registry");
+}

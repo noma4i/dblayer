@@ -25,6 +25,7 @@ Live results arrive from library threads. Record writes run on background thread
 - `entity(id)` returns from memory. Swift and Kotlin submit batched retain/release calls in order on background threads. Rust reads the rows in its reader pool.
 - Frequent changes are merged: a listener gets one change per dispatch cycle, and the last state always arrives.
 - Cancelling or dropping a subscription stops its work at once without leaking tasks.
+- Cancelling a subscription or expanding a window returns without waiting for the observer registry. When the dispatch thread holds it, the request is queued and applied before the next registry access.
 - A subscription to a remote relation returns its handle at once. The stored window state is read on a blocking task, and the first value is delivered after it arrives.
 - Releasing the last owning synchronization handle stops background subscriptions, uploads and scheduled retries. Background tasks never keep that handle alive.
 - Cloned database handles and connectivity sinks keep synchronization alive until they are released. Explicitly awaited operations retain their handle until they finish.
