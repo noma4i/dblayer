@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::ddl::{fts_name, table_name};
-use crate::identity::{permanent_row_flag, ModelKey, ScopeKey};
+use crate::identity::{permanent_row_flag, ModelKey, ListKey};
 use crate::schema::ModelSpec;
 use crate::value::SortDirection;
 
@@ -79,7 +79,7 @@ pub struct Query {
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]
-    pub scope: Option<ScopeKey>,
+    pub scope: Option<ListKey>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stable: bool,
 }
@@ -125,7 +125,7 @@ impl Query {
         Self { include: names.iter().map(|name| name.to_string()).collect(), ..self }
     }
 
-    pub fn in_scope(self, scope: ScopeKey) -> Self {
+    pub fn in_scope(self, scope: ListKey) -> Self {
         Self { scope: Some(scope), ..self }
     }
 }
@@ -303,6 +303,6 @@ pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStateme
     Ok(CompiledStatement { sql, bindings })
 }
 
-fn scope_bindings(model: &ModelKey, scope: &ScopeKey) -> Vec<SqlValue> {
+fn scope_bindings(model: &ModelKey, scope: &ListKey) -> Vec<SqlValue> {
     vec![SqlValue::Text(model.as_str().to_string()), SqlValue::Text(scope.as_str().to_string())]
 }

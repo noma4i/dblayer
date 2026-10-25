@@ -221,7 +221,7 @@ impl core::Transport for ForeignTransport {
         let json = self.0.mutate(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
-    async fn subscribe(&self, request: core::GraphQLRequest) -> Result<core::Subscription, core::TransportError> {
+    async fn subscribe(&self, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
         let (sender, receiver) = mpsc::unbounded_channel();
         let transport = self.0.clone();
         let handle = super::database::executor().map_err(transport_error)?.handle().clone();
@@ -235,7 +235,7 @@ impl core::Transport for ForeignTransport {
             sink.abandon();
             return Err(transport_error(DbError::Invalid { detail: "subscribe finished without opened".into() }));
         }
-        Ok(core::Subscription::new(receiver, core::SubscriptionHandle::new(move || sink.abandon())))
+        Ok(core::ServerSubscription::new(receiver, core::ServerSubscriptionHandle::new(move || sink.abandon())))
     }
     async fn put(&self, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });

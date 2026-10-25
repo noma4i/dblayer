@@ -12,7 +12,7 @@ use crate::pacing::{Backoff, Debounce, RetryPolicy};
 use crate::store::PlanCommitError;
 use crate::syncstate::operation_keys;
 use crate::transport::{
-    EventSpec, GraphQLRequest, Response, Subscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFailure,
+    EventSpec, GraphQLRequest, Response, ServerSubscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFailure,
     TransportError,
 };
 use crate::value::read_id;
@@ -79,13 +79,13 @@ pub struct SubscriptionStatus {
 
 type SharedStatus = Arc<Mutex<SubscriptionStatus>>;
 
-pub struct EventSubscription {
+pub struct Updates {
     abort: AbortHandle,
     status: SharedStatus,
     pub(crate) definition: SubscriptionDef,
 }
 
-impl EventSubscription {
+impl Updates {
     pub fn status(&self) -> SubscriptionStatus {
         locked(&self.status).clone()
     }
@@ -95,7 +95,7 @@ impl EventSubscription {
     }
 }
 
-impl Drop for EventSubscription {
+impl Drop for Updates {
     fn drop(&mut self) {
         self.abort.abort();
     }
@@ -367,7 +367,7 @@ impl Feed {
         status.stopped = lifecycle.stopped();
     }
 
-    async fn pump(&self, connection: &mut Subscription, lifecycle: &mut Lifecycle) -> SubscriptionFailureKind {
+    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle) -> SubscriptionFailureKind {
         let debounce = self.def.event.debounce_interval.map(|interval| Debounce::new(interval, |item: &Pending| item.bucket.clone()));
         let mut pending: Vec<Pending> = Vec::new();
         let mut deadline: Option<Duration> = None;
@@ -413,7 +413,7 @@ impl Feed {
         }
     }
 
-    async fn run(self, request: GraphQLRequest, first: Option<Result<Subscription, TransportError>>) {
+    async fn run(self, request: GraphQLRequest, first: Option<Result<ServerSubscription, TransportError>>) {
         let mut lifecycle = Lifecycle::new(self.backoff);
         let mut opened = first;
         loop {
@@ -458,13 +458,13 @@ impl Feed {
 }
 
 impl Sync {
-    pub async fn subscribe(&self, def: SubscriptionDef) -> Result<EventSubscription, SyncError> {
+    pub async fn subscribe(&self, def: SubscriptionDef) -> Result<Updates, SyncError> {
         self.inner.subscribe(def).await
     }
 }
 
 impl Inner {
-    async fn open_subscription(&self, request: GraphQLRequest) -> Option<Result<Subscription, TransportError>> {
+    async fn open_subscription(&self, request: GraphQLRequest) -> Option<Result<ServerSubscription, TransportError>> {
         let mut stopped = self.stopped.clone();
         tokio::select! {
             biased;
@@ -476,7 +476,7 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn subscribe(self: &Arc<Self>, def: SubscriptionDef) -> Result<EventSubscription, SyncError> {
+    pub(crate) async fn subscribe(self: &Arc<Self>, def: SubscriptionDef) -> Result<Updates, SyncError> {
         if let Some(fault) = def.event.fault() {
             return Err(SyncError::Event(format!("{fault:?}")));
         }
@@ -492,6 +492,6 @@ impl Inner {
         let def_root = def.root.clone();
         let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or_else(|| operation.root_path.clone()), status: status.clone(), backoff: RetryPolicy::Subscription.backoff().randomized() };
         let task = tokio::spawn(self.until_closed(feed.run(request, first)));
-        Ok(EventSubscription { abort: task.abort_handle(), status, definition })
+        Ok(Updates { abort: task.abort_handle(), status, definition })
     }
 }

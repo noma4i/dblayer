@@ -6,7 +6,7 @@ use std::sync::Arc;
 fn cancel_calls_on_cancel_once() {
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();
-    let handle = SubscriptionHandle::new(move || {
+    let handle = ServerSubscriptionHandle::new(move || {
         seen.fetch_add(1, Ordering::SeqCst);
     });
     handle.cancel();
@@ -19,9 +19,9 @@ async fn dropping_subscription_cancels_and_closed_stream_ends() {
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-    let mut subscription = Subscription::new(
+    let mut subscription = ServerSubscription::new(
         receiver,
-        SubscriptionHandle::new(move || {
+        ServerSubscriptionHandle::new(move || {
             seen.fetch_add(1, Ordering::SeqCst);
         }),
     );

@@ -1,7 +1,7 @@
 use super::fixtures::{obj, put, rid};
 use super::*;
 use crate::commit::ScopeRef;
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::schema::{Coverage, EphemeralSpec, FieldSpec, MergeRule, ModelSpec, RelationSpec, Storage};
 use crate::value::ScalarKind;
 use serde_json::{json, Value};
@@ -51,7 +51,7 @@ fn parsed_values_survive_storage_canonical_normalization_and_other_field_patches
     items.fields = vec![parsed("data")];
     let spec = ModelSpec::new("samples", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("label", ScalarKind::Str), parsed("data"), meta, items]);
     let db = Db::open_in_memory(vec![spec], None).unwrap();
-    let request = ReplaceRequest::new(ScopeRef::new(ModelKey::new("samples"), ScopeKey::from_raw("all")), Coverage::Complete);
+    let request = ReplaceRequest::new(ScopeRef::new(ModelKey::new("samples"), ListKey::from_raw("all")), Coverage::Complete);
     for (i, (input, expected)) in [
         (json!("{\"values\":[1,null,{\"nested\":[true]}]}"), Some(json!({"values":[1,null,{"nested":[true]}]}))),
         (json!("\"text\""), Some(json!("text"))),
@@ -82,7 +82,7 @@ fn parsed_defaults_ephemeral_and_local_values_keep_their_decoded_objects() {
     let mut spec = ModelSpec::new("samples", vec![FieldSpec::scalar("id", ScalarKind::Id), parsed("data").with_default(json!({"enabled":true})), local]);
     spec.ephemeral.push(EphemeralSpec::new(parsed("live").with_default(json!({"enabled":false}))));
     let db = Db::open_in_memory(vec![spec], None).unwrap();
-    let request = ReplaceRequest::new(ScopeRef::new(ModelKey::new("samples"), ScopeKey::from_raw("all")), Coverage::Complete);
+    let request = ReplaceRequest::new(ScopeRef::new(ModelKey::new("samples"), ListKey::from_raw("all")), Coverage::Complete);
     db.replace(&request, vec![obj(json!({"id":"s1"}))]).unwrap();
     assert_eq!(db.find("samples", &rid("s1")).unwrap().unwrap().get("data"), Some(&json!({"enabled":true})));
     assert_eq!(db.find("samples", &rid("s1")).unwrap().unwrap().get("live"), Some(&json!({"enabled":false})));

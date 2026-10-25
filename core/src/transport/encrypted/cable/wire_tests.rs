@@ -305,7 +305,7 @@ impl crate::transport::Transport for FakeConnect {
     async fn open_cable(&self) -> Result<Arc<dyn CableSocket>, TransportError> { CableConnect::open(self).await }
     async fn query(&self, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted query") }
     async fn mutate(&self, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted mutation") }
-    async fn subscribe(&self, _: GraphQLRequest) -> Result<crate::transport::Subscription, TransportError> { panic!("V2 subscription") }
+    async fn subscribe(&self, _: GraphQLRequest) -> Result<crate::transport::ServerSubscription, TransportError> { panic!("V2 subscription") }
     async fn put(&self, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, TransportError> { unreachable!() }
 }
 

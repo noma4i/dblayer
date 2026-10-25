@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use super::request::Response;
 
 #[derive(Clone)]
-pub struct SubscriptionHandle {
+pub struct ServerSubscriptionHandle {
     inner: Arc<HandleInner>,
 }
 
@@ -15,7 +15,7 @@ struct HandleInner {
     on_cancel: Box<dyn Fn() + Send + Sync>,
 }
 
-impl SubscriptionHandle {
+impl ServerSubscriptionHandle {
     pub fn new(on_cancel: impl Fn() + Send + Sync + 'static) -> Self {
         Self { inner: Arc::new(HandleInner { cancelled: AtomicBool::new(false), on_cancel: Box::new(on_cancel) }) }
     }
@@ -90,9 +90,9 @@ impl SubscriptionEvent {
     }
 }
 
-pub struct Subscription {
+pub struct ServerSubscription {
     events: UnboundedReceiver<SubscriptionEvent>,
-    handle: SubscriptionHandle,
+    handle: ServerSubscriptionHandle,
     #[cfg(any(test, feature = "stress"))]
     on_next: Option<Box<dyn Fn(ConsumerSignal) + Send + Sync>>,
 }
@@ -115,8 +115,8 @@ impl Drop for Waiting<'_> {
     }
 }
 
-impl Subscription {
-    pub fn new(events: UnboundedReceiver<SubscriptionEvent>, handle: SubscriptionHandle) -> Self {
+impl ServerSubscription {
+    pub fn new(events: UnboundedReceiver<SubscriptionEvent>, handle: ServerSubscriptionHandle) -> Self {
         Self {
             events,
             handle,
@@ -151,7 +151,7 @@ impl Subscription {
     }
 }
 
-impl Drop for Subscription {
+impl Drop for ServerSubscription {
     fn drop(&mut self) {
         self.handle.cancel();
     }

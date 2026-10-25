@@ -2,7 +2,7 @@ use super::dispatch::Event;
 use super::fixtures::*;
 use super::watch::Subject;
 use crate::commit::ScopeRef;
-use crate::identity::{ModelKey, RowRef, ScopeKey};
+use crate::identity::{ModelKey, RowRef, ListKey};
 use crate::query::Query;
 use std::collections::BTreeSet;
 
@@ -26,7 +26,7 @@ fn inv_observe_07_a_query_depends_on_its_model_and_the_models_it_includes() {
 #[test]
 fn inv_observe_07_a_scope_query_depends_on_its_scope_not_on_its_model() {
     let db = booted();
-    let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("feed"));
+    let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
     let deps = deps_of(&db, Subject::Rows(Query::new("moments").in_scope(scope.key.clone())));
     assert!(!deps.hit(&model_event("moments")));
     assert!(deps.hit(&Event { revision: 1, scopes: BTreeSet::from([scope]), ..Event::default() }));

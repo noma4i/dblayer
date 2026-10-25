@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::files::FileRecord;
-use crate::identity::{Generation, ModelKey, RowId, RowRef, ScopeKey};
+use crate::identity::{Generation, ModelKey, RowId, RowRef, ListKey};
 use crate::operation::OperationStatus;
 use crate::syncstate::OperationFailure;
 use crate::upload::UploadState;
@@ -65,11 +65,11 @@ pub enum FileOp {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ScopeRef {
     pub model: ModelKey,
-    pub key: ScopeKey,
+    pub key: ListKey,
 }
 
 impl ScopeRef {
-    pub fn new(model: ModelKey, key: ScopeKey) -> Self {
+    pub fn new(model: ModelKey, key: ListKey) -> Self {
         Self { model, key }
     }
 }

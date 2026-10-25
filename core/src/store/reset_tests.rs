@@ -2,7 +2,7 @@ use super::fixtures::*;
 use super::*;
 use serde_json::json;
 
-use crate::identity::ScopeKey;
+use crate::identity::ListKey;
 
 #[test]
 fn inv_reset_01_intent_never_persists_a_partial_model_list() {
@@ -30,8 +30,8 @@ fn seed_two_models(store: &Store) {
         .unwrap();
     store.mark_tombstone("messages", "m9", 1, 1).unwrap();
     store.mark_tombstone("items", "i9", 2, 2).unwrap();
-    let messages_window = ScopeKey::compose(&["messages", "thread"]).as_str().to_string() + ":forward";
-    let items_window = ScopeKey::compose(&["items", "list"]).as_str().to_string() + ":forward";
+    let messages_window = ListKey::compose(&["messages", "thread"]).as_str().to_string() + ":forward";
+    let items_window = ListKey::compose(&["items", "list"]).as_str().to_string() + ":forward";
     for window_key in [messages_window, items_window] {
         store
             .save_window(&WindowRecord {

@@ -179,13 +179,13 @@ async fn inv_upload_17_cancel_after_mutation_start_returns_false_without_waiting
 
 #[tokio::test(start_paused = true)]
 async fn http_put_failure_does_not_confirm_transfer() {
-    use crate::transport::{Transport, GraphQLRequest, Response, Subscription, PutRequest, PutResponse};
+    use crate::transport::{Transport, GraphQLRequest, Response, ServerSubscription, PutRequest, PutResponse};
     struct HttpStatus(crate::transport::MockTransport, u16);
     #[async_trait::async_trait]
     impl Transport for HttpStatus {
         async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> { self.0.query(request).await }
         async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> { self.0.mutate(request).await }
-        async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> { self.0.subscribe(request).await }
+        async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { self.0.subscribe(request).await }
         async fn put(&self, _: PutRequest) -> Result<PutResponse, TransportError> { Ok(PutResponse { status: self.1, etag: None }) }
     }
     for status in [503, 408, 429, 400, 403, 302] {

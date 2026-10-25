@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 use crate::commit::ScopeRef;
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::schema::Coverage;
 use serde_json::{json, Value};
 
@@ -12,7 +12,7 @@ fn rows(ids: &[usize]) -> Vec<serde_json::Map<String, Value>> {
 #[test]
 fn consecutive_refreshes_never_hand_two_members_one_order_key() {
     let db = booted();
-    let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("feed"));
+    let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
     let steps: [(&[usize], Coverage); 4] = [
         (&[3, 0, 6, 2], Coverage::Complete),
         (&[2, 3, 4, 5, 7], Coverage::Page),

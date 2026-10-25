@@ -12,7 +12,7 @@ fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
     let roots = ids.iter().map(|id| moment(id, &format!("issued {issued}")).as_object().unwrap().clone()).collect();
     Landing {
         model: "moments".to_string(),
-        scope: ScopeRef::new(ModelKey::new("moments"), crate::identity::ScopeKey::from_raw(&scope_key)),
+        scope: ScopeRef::new(ModelKey::new("moments"), crate::identity::ListKey::from_raw(&scope_key)),
         window_key: key.clone(),
         normalized: Normalized { roots, ..Default::default() },
         is_first_page: true,
@@ -75,7 +75,7 @@ async fn a_list_response_started_before_create_preserves_the_confirmed_member() 
         let rig = rig();
         let query_params = params(serde_json::json!({"userId": "u42"}));
         let key = rig.sync.window_key("moments", "by_user", &query_params).unwrap();
-        let scope = ScopeRef::new(ModelKey::new("moments"), crate::identity::ScopeKey::from_raw(key.trim_end_matches(":forward")));
+        let scope = ScopeRef::new(ModelKey::new("moments"), crate::identity::ListKey::from_raw(key.trim_end_matches(":forward")));
         let mut old = moment("m1", "old").as_object().unwrap().clone();
         old.insert("userId".into(), serde_json::json!("u42"));
         rig.db.replace(&crate::db::ReplaceRequest::new(scope.clone(), coverage), vec![old.clone()]).unwrap();

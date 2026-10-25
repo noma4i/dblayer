@@ -1,13 +1,13 @@
 use super::fixtures::*;
 use super::*;
 use crate::commit::{CommitEnvelope, ScopeOp, ScopeRef, WriteOrigin};
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::query::Query;
 use crate::schema::Coverage;
 use serde_json::{json, Value};
 
 fn scope(name: &str) -> ScopeRef {
-    ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw(name))
+    ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw(name))
 }
 
 fn rows(items: &[(&str, &str)]) -> Vec<serde_json::Map<String, Value>> {
@@ -206,7 +206,7 @@ fn replace_all_ignores_the_anchor() {
 #[test]
 fn replace_on_an_unknown_model_fails() {
     let db = booted();
-    let ghost = ScopeRef::new(ModelKey::new("ghosts"), ScopeKey::from_raw("x"));
+    let ghost = ScopeRef::new(ModelKey::new("ghosts"), ListKey::from_raw("x"));
     assert!(matches!(db.replace(&ReplaceRequest::new(ghost, Coverage::Complete), vec![]), Err(DbError::UnknownModel(_))));
 }
 
@@ -224,7 +224,7 @@ fn a_server_row_moves_the_parent_pointer_only_forward() {
     for (name, id, at, (held, held_at)) in cases {
         let db = booted();
         put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": held, "lastMessageAt": held_at}));
-        let chats = ScopeRef::new(ModelKey::new("chats"), ScopeKey::from_raw("all"));
+        let chats = ScopeRef::new(ModelKey::new("chats"), ListKey::from_raw("all"));
         db.replace(&ReplaceRequest::new(chats, Coverage::Complete), vec![obj(json!({"id": "c1", "title": "t", "lastMessageId": id, "lastMessageAt": at}))]).unwrap();
         let chat = db.find("chats", &rid("c1")).unwrap().unwrap();
         let expected = if name.starts_with("a newer") { (id, at) } else { (held, held_at) };

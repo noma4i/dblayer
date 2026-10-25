@@ -138,7 +138,7 @@ pub(super) fn refresh_places(connection: &Connection, info: &ModelInfo, changes:
             .filter(|change| change.kind == RowChangeKind::Inserted || fields.iter().any(|field| change.fields.contains(&field.column)))
             .map(|change| change.row.id.to_string())
             .collect();
-        let prefix = crate::identity::ScopeKey::compose(&[info.spec.key.as_str(), relation.name.as_str()]);
+        let prefix = crate::identity::ListKey::compose(&[info.spec.key.as_str(), relation.name.as_str()]);
         for chunk in ids.chunks(CHUNK) {
             for (row_id, place) in places_of(connection, info, fields, chunk)? {
                 connection.prepare_cached(

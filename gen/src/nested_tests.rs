@@ -23,7 +23,7 @@ end"#;
     let patch = models[0].actions[0].optimistic.clone();
     let db = Db::open_in_memory(models, None).unwrap();
     let id = dblayer::identity::RowId::new("m1").unwrap();
-    let scope = dblayer::commit::ScopeRef::new(dblayer::identity::ModelKey::new("Message"), dblayer::identity::ScopeKey::from_raw("all"));
+    let scope = dblayer::commit::ScopeRef::new(dblayer::identity::ModelKey::new("Message"), dblayer::identity::ListKey::from_raw("all"));
     let request = dblayer::db::ReplaceRequest::new(scope, dblayer::schema::Coverage::Complete);
     db.replace(&request, vec![json!({"id": "m1", "reactions": [{"user": {"id": "u1"}, "body": "A"}, {"user": {"id": "u2"}, "body": "B"}]}).as_object().unwrap().clone()]).unwrap();
     for (body, expected) in [("C", vec!["C", "B"]), ("", vec!["B"])] {

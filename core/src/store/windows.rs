@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::identity::ScopeKey;
+use crate::identity::ListKey;
 use crate::schema::PageDirection;
 
 use super::{Store, StoreError};
@@ -30,7 +30,7 @@ impl WindowFreshness {
 }
 
 pub fn family_prefix(model: &str, relation: &str) -> String {
-    ScopeKey::compose(&[model, relation]).as_str().to_string()
+    ListKey::compose(&[model, relation]).as_str().to_string()
 }
 
 fn like_prefix(prefix: &str) -> String {

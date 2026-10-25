@@ -6,7 +6,7 @@ use super::super::rig::*;
 use super::fixtures::*;
 use crate::operation::OperationStatus;
 
-async fn server_destroys(rig: &Rig, id: &str) -> crate::sync::subscribe::EventSubscription {
+async fn server_destroys(rig: &Rig, id: &str) -> crate::sync::subscribe::Updates {
     use crate::sync::subscribe::{EventEffect, SubscriptionDef};
     use crate::transport::{EventSpec, Response, SubscriptionEvent};
     rig.sync.register(crate::sync::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));

@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 use crate::commit::ScopeRef;
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::query::Query;
 use crate::schema::Coverage;
 use serde_json::json;
@@ -105,7 +105,7 @@ fn rolling_back_an_unknown_operation_fails() {
 #[test]
 fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
     let db = booted();
-    let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("feed"));
+    let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
     let request = ReplaceRequest::new(scope, Coverage::Complete);
     let rows = |ids: &[&str]| ids.iter().map(|id| obj(json!({"id": id, "userId": "u1", "text": id}))).collect::<Vec<_>>();
     db.replace(&request, rows(&["a", "b"])).unwrap();

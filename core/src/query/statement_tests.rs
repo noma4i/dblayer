@@ -1,5 +1,5 @@
 use super::*;
-use crate::identity::ScopeKey;
+use crate::identity::ListKey;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::{ScalarKind, SortDirection};
 use rusqlite::types::Value as SqlValue;
@@ -114,7 +114,7 @@ fn query_round_trips_through_json() {
 
 #[test]
 fn a_scope_query_keeps_its_filter_and_counts_members() {
-    let scope = ScopeKey::from_raw("feed");
+    let scope = ListKey::from_raw("feed");
     let filtered = query().in_scope(scope).filtered(Where::equal("status", json!("active")));
     let statement = compile_count(&filtered, &people()).unwrap();
     assert!(statement.sql.contains("JOIN scope_member"));

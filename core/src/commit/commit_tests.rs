@@ -10,7 +10,7 @@ fn model() -> ModelKey {
 }
 
 fn scope() -> ScopeRef {
-    ScopeRef::new(model(), ScopeKey::compose(&["messages", "thread"]))
+    ScopeRef::new(model(), ListKey::compose(&["messages", "thread"]))
 }
 
 fn payload(id: &str) -> Map<String, Value> {

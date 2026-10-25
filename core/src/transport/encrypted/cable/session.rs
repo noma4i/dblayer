@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use crate::transport::{Connectivity, GraphQLRequest, Subscription, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, SubscriptionHandle};
+use crate::transport::{Connectivity, GraphQLRequest, ServerSubscription, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, ServerSubscriptionHandle};
 use super::CableError;
 use super::lifecycle::{Entry, Event, Heard, Lifecycle};
 use crate::pacing::Clock;
@@ -20,7 +20,7 @@ impl CableSession {
         Self { lifecycle: Lifecycle::new(clock, online), next_id: 0, cancellations, cancel }
     }
 
-    pub fn subscribe(&mut self, request: GraphQLRequest) -> (String, Subscription) {
+    pub fn subscribe(&mut self, request: GraphQLRequest) -> (String, ServerSubscription) {
         self.next_id += 1;
         let id = self.next_id.to_string();
         let (events, receiver) = mpsc::unbounded_channel();
@@ -36,7 +36,7 @@ impl CableSession {
         }
         let cancel = self.cancel.clone();
         let token = id.clone();
-        let subscription = Subscription::new(receiver, SubscriptionHandle::new(move || { let _ = cancel.send(token.clone()); }));
+        let subscription = ServerSubscription::new(receiver, ServerSubscriptionHandle::new(move || { let _ = cancel.send(token.clone()); }));
         (id, subscription)
     }
 

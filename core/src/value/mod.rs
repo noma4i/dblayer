@@ -9,7 +9,7 @@ use time::macros::format_description;
 use time::format_description::well_known::Rfc3339;
 use time::{OffsetDateTime, UtcOffset};
 
-use crate::identity::{RowId, ScopeKey};
+use crate::identity::{RowId, ListKey};
 
 mod fractional;
 
@@ -46,7 +46,7 @@ pub enum RelationParamsError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ScopeKeyError {
+pub enum ListKeyError {
     #[error("model and relation name must not be empty")]
     MissingSegment,
     #[error(transparent)]
@@ -336,12 +336,12 @@ pub fn relation_scope_key(
     model: &str,
     name: &str,
     params: &BTreeMap<String, String>,
-) -> Result<ScopeKey, ScopeKeyError> {
+) -> Result<ListKey, ListKeyError> {
     if model.is_empty() || name.is_empty() {
-        return Err(ScopeKeyError::MissingSegment);
+        return Err(ListKeyError::MissingSegment);
     }
     let encoded = serde_json::to_string(params).expect("string map serializes");
-    Ok(ScopeKey::compose(&[model, name, encoded.as_str()]))
+    Ok(ListKey::compose(&[model, name, encoded.as_str()]))
 }
 
 pub fn relation_scope_key_from_values(
@@ -349,7 +349,7 @@ pub fn relation_scope_key_from_values(
     name: &str,
     values: &Map<String, Value>,
     kinds: &BTreeMap<String, ScalarKind>,
-) -> Result<ScopeKey, ScopeKeyError> {
+) -> Result<ListKey, ListKeyError> {
     relation_scope_key(model, name, &normalize_relation_params(values, kinds)?)
 }
 

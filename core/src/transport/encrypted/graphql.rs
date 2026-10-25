@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 use super::client::{Answer, EncryptedClient};
-use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutResponse, Response, Subscription, Transport, TransportError};
+use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutResponse, Response, ServerSubscription, Transport, TransportError};
 use crate::transport::{CableConnect, CableSocket, CableSubscriptions};
 
 const PERSISTED_QUERY_VERSION: u32 = 1;
@@ -101,7 +101,7 @@ impl Transport for EncryptedTransport {
         response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner.clone(), request.upload).await?)
     }
 
-    async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> {
+    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         self.cable.subscribe(request).await
     }
 

@@ -3,7 +3,7 @@ use serde_json::json;
 use super::fixtures::*;
 use crate::commit::{CommitEnvelope, ScopeOp, ScopeRef, WriteOrigin};
 use crate::db::fixtures::*;
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::query::Query;
 use crate::syncstate::SyncState;
 
@@ -92,7 +92,7 @@ fn inv_rollback_04_rolling_back_a_create_removes_the_row_with_its_edits_file_and
         let create = only_seq(&db);
         db.attach("moments", &id, "media", b"bytes", "a.bin", "a/b").unwrap();
         db.update("moments", &id, obj(json!({"text": "edited"}))).unwrap();
-        let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("feed"));
+        let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.scope_ops.push(ScopeOp::Append { scope, row: id.clone(), order_key: "a".into() });
         db.land(envelope).unwrap();

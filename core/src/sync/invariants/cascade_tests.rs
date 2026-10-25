@@ -9,7 +9,7 @@ use super::event_tests::event;
 use crate::commit::ScopeRef;
 use crate::db::fixtures::{all_specs, changes, obj, recorder, rid};
 use crate::db::{Db, ReplaceRequest};
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::query::Query;
 use crate::schema::Coverage;
 use crate::sync::SyncConfig;
@@ -30,7 +30,7 @@ fn seeded(db: &Db) {
     for (id, moment) in [("v1", "m1"), ("v2", "m2"), ("v3", "m3")] {
         put_row("vibes", json!({"id": id, "momentId": moment, "kind": "like"}));
     }
-    let feed = ReplaceRequest::new(ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("feed")), Coverage::Complete);
+    let feed = ReplaceRequest::new(ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed")), Coverage::Complete);
     db.replace(&feed, ["m1", "m2", "m3"].iter().map(|id| obj(json!({"id": id}))).collect()).unwrap();
     db.attach("moments", &rid("m1"), "media", b"m1 bytes", "a.bin", "a/b").unwrap();
     db.attach("vibes", &rid("v1"), "media", b"v1 bytes", "b.bin", "a/b").unwrap();

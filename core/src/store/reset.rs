@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::ddl::{fingerprint, fts_tables, manifest_read, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
-use crate::identity::ScopeKey;
+use crate::identity::ListKey;
 use crate::nodes::read_trees;
 use crate::operation::{delete_operation, quarantine_add, read_value, Operation, QuarantineReason};
 use crate::schema::MergeRule;
@@ -79,7 +79,7 @@ pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str
     clear_model(connection, model)?;
     connection.execute("DELETE FROM tombstone WHERE model = ?1", params![model])?;
     connection.execute("DELETE FROM local_pending WHERE model = ?1", params![model])?;
-    connection.execute("DELETE FROM query_window WHERE key LIKE ?1 ESCAPE '\\'", params![like_pattern(ScopeKey::compose(&[model]).as_str())])?;
+    connection.execute("DELETE FROM query_window WHERE key LIKE ?1 ESCAPE '\\'", params![like_pattern(ListKey::compose(&[model]).as_str())])?;
     Ok(())
 }
 

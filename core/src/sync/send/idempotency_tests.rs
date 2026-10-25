@@ -9,7 +9,7 @@ use crate::pacing::ManualClock;
 use crate::schema::ModelSpec;
 use crate::sync::rig::{keeping_specs, params, register_operations};
 use crate::sync::SyncConfig;
-use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, Subscription, Transport, TransportError};
+use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, ServerSubscription, Transport, TransportError};
 use crate::transport::{EncryptedClient, EncryptedConfig, EncryptedTransport, HttpExchange, HttpReply};
 use crate::transport::encrypted::fake_server_tests::{open_request, seal_response, MemoryCredentials};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
@@ -73,7 +73,7 @@ impl Transport for Mutex<Server> {
         Ok(answer)
     }
     async fn query(&self, _: GraphQLRequest) -> Result<Response, TransportError> { unreachable!() }
-    async fn subscribe(&self, _: GraphQLRequest) -> Result<Subscription, TransportError> { unreachable!() }
+    async fn subscribe(&self, _: GraphQLRequest) -> Result<ServerSubscription, TransportError> { unreachable!() }
     async fn put(&self, _: PutRequest) -> Result<PutResponse, TransportError> { unreachable!() }
 }
 

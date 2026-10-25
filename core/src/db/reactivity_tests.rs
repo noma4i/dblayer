@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::query::{Query, Where};
 use crate::schema::Coverage;
 use serde_json::json;
@@ -13,7 +13,7 @@ use std::time::Duration;
 const WAIT: Duration = Duration::from_secs(10);
 
 fn feed() -> ScopeRef {
-    ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("feed"))
+    ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"))
 }
 
 fn land_scope(db: &Db, scope_ops: Vec<ScopeOp>) {
@@ -95,7 +95,7 @@ fn a_scope_query_ignores_other_scopes_and_rows_outside_its_scope() {
     let _subscription = db.observe(Query::new("moments").in_scope(feed().key), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let reads = db.counters().observation_reads;
-    land_scope(&db, vec![ScopeOp::Append { scope: ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("other")), row: rid("m2"), order_key: "a".to_string() }]);
+    land_scope(&db, vec![ScopeOp::Append { scope: ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("other")), row: rid("m2"), order_key: "a".to_string() }]);
     put(&db, "moments", json!({"id": "m3", "userId": "u1", "text": "outside"}));
     assert_eq!(calls(&log), vec![1]);
     assert_eq!(db.counters().observation_reads, reads);

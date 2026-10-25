@@ -46,5 +46,5 @@ fn the_stable_order_of_a_scope_key_belongs_to_the_relation_that_made_it() {
     assert!(model.stable_order(&key("thread")).is_some());
     assert!(model.stable_order(&key("thread2")).is_some());
     assert!(model.stable_order(&key("threads")).is_none());
-    assert!(model.stable_order(&ScopeKey::compose(&["messages", "other", "{}"])).is_none());
+    assert!(model.stable_order(&ListKey::compose(&["messages", "other", "{}"])).is_none());
 }

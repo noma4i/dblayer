@@ -12,7 +12,7 @@ use super::{CloudError, CloudState};
 #[test]
 fn inv_cloud_13_values_received_before_the_server_row_survive_its_arrival() {
     use crate::commit::{CommitEnvelope, EntityOp, ScopeRef, WriteOrigin};
-    use crate::identity::{ModelKey, ScopeKey};
+    use crate::identity::{ModelKey, ListKey};
     for origin in [WriteOrigin::Snapshot, WriteOrigin::Event, WriteOrigin::Replace] {
         for pending in [None, Some(json!(null)), Some(json!("local"))] {
             let fake = FakeCloud::new();
@@ -25,7 +25,7 @@ fn inv_cloud_13_values_received_before_the_server_row_survive_its_arrival() {
             }
             let row = obj(json!({"id": "p1", "name": "server"}));
             if origin == WriteOrigin::Replace {
-                let scope = ScopeRef::new(ModelKey::new("profiles"), ScopeKey::from_raw("all"));
+                let scope = ScopeRef::new(ModelKey::new("profiles"), ListKey::from_raw("all"));
                 a.db.replace(&crate::db::ReplaceRequest::new(scope, crate::schema::Coverage::Complete), vec![row]).unwrap();
             } else {
                 let mut envelope = CommitEnvelope::new(origin, a.db.generation());

@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
-use crate::identity::{ModelKey, RowId, RowRef, ScopeKey};
+use crate::identity::{ModelKey, RowId, RowRef, ListKey};
 use crate::commit::ScopeRef;
 use crate::pacing::{Clock, SystemClock};
 use crate::schema::ModelSpec;
@@ -266,7 +266,7 @@ impl Shared {
                 event.models.insert(ModelKey::new(model));
                 event.rows.insert(RowRef::new(ModelKey::new(model), RowId::new(id)?));
                 for key in reader.scopes_of(model, id)? {
-                    event.scopes.insert(ScopeRef::new(ModelKey::new(model), ScopeKey::from_raw(&key)));
+                    event.scopes.insert(ScopeRef::new(ModelKey::new(model), ListKey::from_raw(&key)));
                 }
             }
             Ok(())

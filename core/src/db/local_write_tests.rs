@@ -2,7 +2,7 @@ use super::fixtures::*;
 use super::*;
 use crate::commit::{CommitEnvelope, OperationTransition, ScopeOp, ScopeRef, WriteOrigin};
 use crate::operation::OperationStatus;
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::query::Query;
 use crate::syncstate::{FailureKind, OperationFailure};
 use crate::schema::{Coverage, PageDirection, RelationSpec, RemoteShape, RemoteSpec, VariableSource};
@@ -254,7 +254,7 @@ fn threaded_db() -> Db {
     Db::open_in_memory(vec![chats_spec(), spec], None).unwrap()
 }
 
-fn scope_of(relation: &str, chat: &str) -> ScopeKey {
+fn scope_of(relation: &str, chat: &str) -> ListKey {
     relation_scope_key("messages", relation, &[("chatId".to_string(), chat.to_string())].into()).unwrap()
 }
 

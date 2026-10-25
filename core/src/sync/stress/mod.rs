@@ -28,7 +28,7 @@ use serde_json::Map;
 use tokio::runtime::{Builder, Runtime};
 
 use crate::db::Db;
-use crate::identity::ScopeKey;
+use crate::identity::ListKey;
 use crate::pacing::Backoff;
 use crate::transport::{EventSpec, MockTransport};
 use crate::upload::{UploadOperation, UploadOperations};
@@ -78,7 +78,7 @@ pub struct StressReport {
     pub requests: u64,
 }
 
-pub fn scope_of(db: &Db, relation: &str) -> ScopeKey {
+pub fn scope_of(db: &Db, relation: &str) -> ListKey {
     let spec = db.spec("moments").expect("moments model");
     let relation = spec.relations.iter().find(|candidate| candidate.name == relation).expect("relation");
     relation.scope_key("moments", &BTreeMap::new()).expect("global relation key")

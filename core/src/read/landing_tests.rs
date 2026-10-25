@@ -1,6 +1,6 @@
 use super::*;
 use crate::commit::{EntityOp, ScopeOp, ScopeRef};
-use crate::identity::{ModelKey, RowId, ScopeKey};
+use crate::identity::{ModelKey, RowId, ListKey};
 use serde_json::{json, Map, Value};
 
 fn person() -> ModelKey {
@@ -8,7 +8,7 @@ fn person() -> ModelKey {
 }
 
 fn scope(name: &str) -> ScopeRef {
-    ScopeRef::new(person(), ScopeKey::compose(&["Person", name]))
+    ScopeRef::new(person(), ListKey::compose(&["Person", name]))
 }
 
 fn row(id: &str) -> Map<String, Value> {
@@ -105,7 +105,7 @@ fn inv_order_01_next_page_appends_after_the_largest_key_and_keeps_existing_keys(
 
 #[test]
 fn foreign_scope_is_rejected() {
-    let foreign = ScopeRef::new(ModelKey::new("other"), ScopeKey::compose(&["other", "items"]));
+    let foreign = ScopeRef::new(ModelKey::new("other"), ListKey::compose(&["other", "items"]));
     assert_eq!(plan_landing(&foreign, &person(), &StoredScope::default(), &[row("x")]), Err(LandingError::ScopeModelMismatch));
 }
 

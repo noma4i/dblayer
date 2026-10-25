@@ -53,7 +53,7 @@ pub use model_event::{ModelEvent, ModelEventItem, ModelEvents};
 pub use resume::{ResumeReport, Watch};
 pub(crate) use resume::Failures;
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
-pub use subscribe::{EventEffect, EventSubscription, SubscriptionDef, SubscriptionStatus};
+pub use subscribe::{EventEffect, Updates, SubscriptionDef, SubscriptionStatus};
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicI64;

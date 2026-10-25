@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::ddl::{column_name, column_type, SERVICE_COLUMNS};
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::value::{
-    duplicates, read_array, read_enum, read_raw, read_scalar, relation_scope_key, relation_scope_key_from_values, ScalarKind, ScopeKeyError,
+    duplicates, read_array, read_enum, read_raw, read_scalar, relation_scope_key, relation_scope_key_from_values, ScalarKind, ListKeyError,
     SortDirection,
 };
 
@@ -716,7 +716,7 @@ impl RelationSpec {
         self.remote.as_ref().is_some_and(RemoteSpec::supports_paging)
     }
 
-    pub fn scope_key(&self, model: &str, params: &BTreeMap<String, String>) -> Result<ScopeKey, ScopeKeyError> {
+    pub fn scope_key(&self, model: &str, params: &BTreeMap<String, String>) -> Result<ListKey, ListKeyError> {
         relation_scope_key(model, &self.name, params)
     }
 
@@ -1065,7 +1065,7 @@ impl ModelSpec {
         }
     }
 
-    pub fn list_scopes(&self, row: &Map<String, Value>) -> Vec<ScopeKey> {
+    pub fn list_scopes(&self, row: &Map<String, Value>) -> Vec<ListKey> {
         self.relations
             .iter()
             .filter(|relation| relation.lists_every_row_of_its_params() || relation.takes_created_rows())
@@ -1082,9 +1082,9 @@ impl ModelSpec {
             .collect()
     }
 
-    pub fn stable_order(&self, scope: &ScopeKey) -> Option<&[SortField]> {
+    pub fn stable_order(&self, scope: &ListKey) -> Option<&[SortField]> {
         let relation = self.relations.iter().filter(|relation| relation.order_stable).find(|relation| {
-            scope.as_str().starts_with(ScopeKey::compose(&[self.key.as_str(), relation.name.as_str()]).as_str())
+            scope.as_str().starts_with(ListKey::compose(&[self.key.as_str(), relation.name.as_str()]).as_str())
         })?;
         match &relation.sort {
             Sort::Fields(fields) => Some(fields),

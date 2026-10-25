@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
-use crate::identity::{ModelKey, RowId, ScopeKey};
+use crate::identity::{ModelKey, RowId, ListKey};
 use crate::pacing::ManualClock;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
@@ -52,7 +52,7 @@ pub fn model(name: &str) -> ModelKey {
 }
 
 pub fn scope(model_name: &str, name: &str) -> ScopeRef {
-    ScopeRef::new(model(model_name), ScopeKey::compose(&[model_name, name, "1"]))
+    ScopeRef::new(model(model_name), ListKey::compose(&[model_name, name, "1"]))
 }
 
 pub fn upsert(model_name: &str, payload: Value) -> EntityOp {

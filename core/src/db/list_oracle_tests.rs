@@ -7,7 +7,7 @@ use super::listeners::{Listener, Mailbox, Subscriber};
 use super::watch::{Body, Loaded, Subject, Version};
 use super::{Change, Db, Row};
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::query::{CompareOp, Order, Query, Where};
 use crate::value::SortDirection;
 
@@ -28,7 +28,7 @@ impl Dice {
 fn query_of(variant: usize) -> Query {
     let order = |field: &str, direction| Order::new(field, direction);
     let moments = Query::new("moments");
-    let roster = || ScopeKey::from_raw("roster");
+    let roster = || ListKey::from_raw("roster");
     match variant % 9 {
         0 => moments.ordered(vec![order("text", SortDirection::Asc)]),
         1 => moments.ordered(vec![order("text", SortDirection::Desc)]),
@@ -56,7 +56,7 @@ fn random_row(dice: &mut Dice, id: &str) -> serde_json::Map<String, serde_json::
 
 fn commit(db: &Db, dice: &mut Dice, op: EntityOp) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("roster"));
+    let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("roster"));
     let row = op.row_ref().id;
     let order_key = format!("a1{}{}", &row.as_str()[1..], 1 + dice.below(9));
     match (&op, dice.below(4)) {

@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::{DestroyReason, EntityOp, ScopeOp, ScopeRef};
 use crate::files::references_of_row;
-use crate::identity::{ModelKey, RowId, ScopeKey};
+use crate::identity::{ModelKey, RowId, ListKey};
 use crate::store::{Reader, StoreError};
 use crate::value::read_id;
 use crate::write::restore_patch;
@@ -58,7 +58,7 @@ impl PriorRow {
         let (Ok(row_id), key) = (RowId::new(id), ModelKey::new(model)) else { return (None, Vec::new()) };
         let mut scopes = Vec::new();
         for member in members {
-            scopes.push(ScopeOp::Append { scope: ScopeRef::new(key.clone(), ScopeKey::from_raw(&member.scope_key)), row: row_id.clone(), order_key: member.order_key.clone() });
+            scopes.push(ScopeOp::Append { scope: ScopeRef::new(key.clone(), ListKey::from_raw(&member.scope_key)), row: row_id.clone(), order_key: member.order_key.clone() });
         }
         (Some(EntityOp::Upsert { model: key, id: row_id, row: before.clone() }), scopes)
     }

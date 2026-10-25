@@ -1,6 +1,6 @@
 use super::*;
 use crate::ddl::{create_model_tables, migrate_core};
-use crate::identity::ScopeKey;
+use crate::identity::ListKey;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::{null_compare, null_equals, null_is_in, null_is_not_in, null_not_equals, ScalarKind, SortDirection};
 use rusqlite::{params, Connection};
@@ -226,7 +226,7 @@ fn scope_read_follows_order_key_and_skips_dangling_members() {
     member(&connection, "inbox", "ghost", "c");
     member(&connection, "inbox", "p3", "d");
     member(&connection, "other", "p4", "a");
-    let inbox = Query::new("people").in_scope(ScopeKey::from_raw("inbox"));
+    let inbox = Query::new("people").in_scope(ListKey::from_raw("inbox"));
     let all = fetch_keys(&connection, &compile_keys(&inbox, &people()).unwrap()).unwrap();
     assert_eq!(ids(&all), ["p2", "p1", "p3"]);
     let windowed = fetch_keys(&connection, &compile_keys(&inbox.clone().limited(2), &people()).unwrap()).unwrap();
@@ -237,7 +237,7 @@ fn scope_read_follows_order_key_and_skips_dangling_members() {
 #[test]
 fn scope_read_plan_walks_the_scope_index_without_sorting() {
     let connection = seeded();
-    let statement = compile_keys(&Query::new("people").in_scope(ScopeKey::from_raw("inbox")).limited(5), &people()).unwrap();
+    let statement = compile_keys(&Query::new("people").in_scope(ListKey::from_raw("inbox")).limited(5), &people()).unwrap();
     let mut prepared = connection.prepare(&format!("EXPLAIN QUERY PLAN {}", statement.sql)).unwrap();
     let details: Vec<String> = prepared
         .query_map(rusqlite::params_from_iter(statement.bindings.iter()), |row| row.get::<_, String>(3))

@@ -682,7 +682,7 @@ fn collect_scopes(
             let arguments = std::iter::once(model.as_str()).chain(chunk.iter().copied());
             let keys = statement.query_map(params_from_iter(arguments), |row| row.get::<_, String>(0))?;
             for key in keys {
-                scopes.insert(ScopeRef::new(model.clone(), crate::identity::ScopeKey::from_raw(&key?)));
+                scopes.insert(ScopeRef::new(model.clone(), crate::identity::ListKey::from_raw(&key?)));
             }
         }
     }

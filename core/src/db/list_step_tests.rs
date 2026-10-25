@@ -161,13 +161,13 @@ fn a_live_ordered_list_reads_only_the_written_rows_after_a_write() {
 }
 
 fn scoped_query() -> Query {
-    Query::new("users").in_scope(crate::identity::ScopeKey::from_raw("roster"))
+    Query::new("users").in_scope(crate::identity::ListKey::from_raw("roster"))
 }
 
 fn scoped_step_cost(size: usize) -> usize {
     use crate::commit::{ScopeOp, ScopeRef};
     let db = booted();
-    let scope = ScopeRef::new(ModelKey::new("users"), crate::identity::ScopeKey::from_raw("roster"));
+    let scope = ScopeRef::new(ModelKey::new("users"), crate::identity::ListKey::from_raw("roster"));
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     for index in 0..size {
         let id = format!("u{index:06}");

@@ -92,7 +92,7 @@ pub async fn load_page(rig: &Rig, nodes: Vec<Value>, has_next: bool, cursor: &st
     load_first_page(rig).await;
 }
 
-pub async fn subscribe_to_events(rig: &Rig) -> super::super::subscribe::EventSubscription {
+pub async fn subscribe_to_events(rig: &Rig) -> super::super::subscribe::Updates {
     let definition = SubscriptionDef::new(EventSpec::new("message_changed"), "MessageChanged", "messages", EventEffect::Upsert);
     rig.sync.subscribe(definition).await.unwrap()
 }

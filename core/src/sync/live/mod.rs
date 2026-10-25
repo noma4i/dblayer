@@ -8,7 +8,7 @@ use crate::pacing::parse_duration;
 use crate::schema::UpdatesSpec;
 use crate::transport::EventSpec;
 
-use super::subscribe::{EventEffect, EventSubscription, SubscriptionDef};
+use super::subscribe::{EventEffect, Updates, SubscriptionDef};
 use super::variables::mapped_variables;
 use super::{locked, Inner};
 
@@ -16,7 +16,7 @@ use super::{locked, Inner};
 pub(crate) struct Live {
     runtime: Option<Handle>,
     readers: usize,
-    pub(crate) subscription: Option<EventSubscription>,
+    pub(crate) subscription: Option<Updates>,
     starting: Option<AbortHandle>,
     closing: Option<AbortHandle>,
 }

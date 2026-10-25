@@ -2,7 +2,7 @@ use serde_json::json;
 
 use super::fixtures::*;
 use super::*;
-use crate::identity::ScopeKey;
+use crate::identity::ListKey;
 use crate::schema::{FieldSpec, MergeRule, ModelSpec, PageDirection, Storage};
 use crate::store::{window_key, WindowRecord};
 use crate::value::ScalarKind;
@@ -40,7 +40,7 @@ fn inv_open_05_a_fingerprint_change_of_one_server_model_clears_the_whole_server_
         db.set_local("moments", &rid("m2"), "pinned", json!("early")).unwrap();
         db.shared
             .store
-            .save_window(&WindowRecord { key: window_key(ScopeKey::compose(&["moments", "feed"]).as_str(), PageDirection::Forward), cursor: None, has_next: false, total: None, pages: 1, issued: 1, applied: 1, generation: 0 })
+            .save_window(&WindowRecord { key: window_key(ListKey::compose(&["moments", "feed"]).as_str(), PageDirection::Forward), cursor: None, has_next: false, total: None, pages: 1, issued: 1, applied: 1, generation: 0 })
             .unwrap();
         db.create("notes", obj(json!({"body": "mine"}))).unwrap()
     };

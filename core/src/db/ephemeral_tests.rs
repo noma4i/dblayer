@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::pacing::ManualClock;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, AssociationSpec, EphemeralSpec, FieldSpec, ModelSpec, Storage};
@@ -108,7 +108,7 @@ fn inv_ephemeral_04_a_write_reaches_observers_as_an_updated_row_without_a_databa
 #[test]
 fn row_observers_and_scope_observers_hear_the_write() {
     let (db, _) = rig();
-    let scope = ScopeRef::new(ModelKey::new("people"), ScopeKey::compose(&["people", "room", "1"]));
+    let scope = ScopeRef::new(ModelKey::new("people"), ListKey::compose(&["people", "room", "1"]));
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid("p1"), order_key: "a".into() });
     db.land(envelope).unwrap();

@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 
-use crate::identity::ScopeKey;
+use crate::identity::ListKey;
 use crate::schema::PageDirection;
 
 #[test]
@@ -37,7 +37,7 @@ fn window(key: &str) -> WindowRecord {
 }
 
 fn key(model_name: &str, relation: &str, param: &str) -> String {
-    ScopeKey::compose(&[model_name, relation, param]).as_str().to_string()
+    ListKey::compose(&[model_name, relation, param]).as_str().to_string()
 }
 
 #[test]

@@ -10,7 +10,7 @@ use tokio::sync::Notify;
 use super::error::TransportError;
 use super::put::{PutRequest, PutResponse};
 use super::request::{GraphQLError, GraphQLRequest, Response};
-use super::subscription::{ConsumerSignal, Subscription, SubscriptionEvent, SubscriptionHandle};
+use super::subscription::{ConsumerSignal, ServerSubscription, SubscriptionEvent, ServerSubscriptionHandle};
 use super::Transport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,7 +352,7 @@ impl Transport for MockTransport {
         self.reply(CallKind::Mutation, request).await
     }
 
-    async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> {
+    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         self.record(CallKind::Subscription, &request);
         let (sender, receiver) = mpsc::unbounded_channel();
         let name = request.operation_name;
@@ -367,7 +367,7 @@ impl Transport for MockTransport {
         drop(state);
         self.wake.notify_waiters();
         let (shared, wake) = (self.state.clone(), self.wake.clone());
-        let handle = SubscriptionHandle::new(move || {
+        let handle = ServerSubscriptionHandle::new(move || {
             let mut state = shared.lock().expect("mock transport state");
             *state.cancellations.entry(name.clone()).or_default() += 1;
             state.streams[index].open = false;
@@ -375,7 +375,7 @@ impl Transport for MockTransport {
             wake.notify_waiters();
         });
         let (shared, wake) = (self.state.clone(), self.wake.clone());
-        Ok(Subscription::new(receiver, handle).on_next(move |signal| {
+        Ok(ServerSubscription::new(receiver, handle).on_next(move |signal| {
             let mut state = shared.lock().expect("mock transport state");
             let stream = &mut state.streams[index];
             match signal {

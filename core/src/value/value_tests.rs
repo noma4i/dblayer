@@ -220,11 +220,11 @@ fn relation_scope_keys_match_spec() {
 
 #[test]
 fn relation_scope_keys_reject_empty_segments_and_unknown_fields() {
-    assert_eq!(relation_scope_key("", "thread", &BTreeMap::new()), Err(ScopeKeyError::MissingSegment));
-    assert_eq!(relation_scope_key("message", "", &BTreeMap::new()), Err(ScopeKeyError::MissingSegment));
+    assert_eq!(relation_scope_key("", "thread", &BTreeMap::new()), Err(ListKeyError::MissingSegment));
+    assert_eq!(relation_scope_key("message", "", &BTreeMap::new()), Err(ListKeyError::MissingSegment));
     let kinds = BTreeMap::from([("chatId".to_string(), ScalarKind::Id)]);
     assert_eq!(
         relation_scope_key_from_values("message", "thread", &object(json!({"authorId": "1"})), &kinds),
-        Err(ScopeKeyError::Params(RelationParamsError::UnknownField("authorId".into())))
+        Err(ListKeyError::Params(RelationParamsError::UnknownField("authorId".into())))
     );
 }

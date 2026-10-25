@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::db::{Change, CountChange, Db, ObserverHandle};
-use crate::identity::{RowId, ScopeKey};
+use crate::identity::{RowId, ListKey};
 use crate::query::{Query, Where};
 
 use super::findings::Findings;
@@ -165,7 +165,7 @@ impl Watcher {
 }
 
 impl Watchers {
-    pub fn attach(db: &Db, findings: &Findings, universe: &Universe, aliases: &Aliases, row_ids: &[String], feed: ScopeKey) -> Self {
+    pub fn attach(db: &Db, findings: &Findings, universe: &Universe, aliases: &Aliases, row_ids: &[String], feed: ListKey) -> Self {
         let mut targets = vec![
             ("all moments", Target::Rows(Query::new("moments"))),
             ("liked moments", Target::Rows(Query::new("moments").filtered(Where::equal("likedByMe", serde_json::json!(true))))),

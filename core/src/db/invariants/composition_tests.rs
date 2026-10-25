@@ -3,7 +3,7 @@ use serde_json::json;
 use crate::commit::ScopeRef;
 use crate::db::fixtures::*;
 use crate::db::ReplaceRequest;
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{ModelKey, ListKey};
 use crate::schema::Coverage;
 
 struct Seed(u64);
@@ -36,7 +36,7 @@ fn composed(current: &[String], incoming: &[String], coverage: Coverage) -> Vec<
 
 #[test]
 fn inv_merge_07_the_list_after_a_merge_follows_the_complete_and_page_rules_for_random_lists() {
-    let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("feed"));
+    let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
     let mut seed = Seed(7);
     for case in 0..100 {
         for coverage in [Coverage::Complete, Coverage::Page] {

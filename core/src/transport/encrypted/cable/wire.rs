@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 use crate::pacing::{Clock, timeout};
-use crate::transport::{Connectivity, GraphQLRequest, Subscription, TransportError};
+use crate::transport::{Connectivity, GraphQLRequest, ServerSubscription, TransportError};
 use super::{CableLink, CableSession, EncryptedConfig};
 
 
@@ -28,7 +28,7 @@ pub trait CableConnect: Send + Sync {
 
 struct Add {
     request: GraphQLRequest,
-    reply: oneshot::Sender<Subscription>,
+    reply: oneshot::Sender<ServerSubscription>,
 }
 
 enum Command {
@@ -52,7 +52,7 @@ impl CableSubscriptions {
         Self { commands, wakes, online }
     }
 
-    pub async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError> {
+    pub async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         let (reply, receiver) = oneshot::channel();
         self.commands.send(Command::Add(Add { request, reply })).map_err(|_| TransportError::Network("cable stopped".into()))?;
         receiver.await.map_err(|_| TransportError::Network("cable stopped".into()))

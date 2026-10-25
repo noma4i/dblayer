@@ -53,13 +53,13 @@ fn inv_dsl_07_a_schema_change_quarantines_the_operations_of_every_server_model()
 #[test]
 fn inv_fresh_04_a_full_reset_leaves_no_row_in_any_data_table() {
     use crate::commit::{CommitEnvelope, ScopeOp, ScopeRef, WriteOrigin};
-    use crate::identity::{ModelKey, ScopeKey};
+    use crate::identity::{ModelKey, ListKey};
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     db.update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
     db.attach("moments", &rid("m1"), "media", b"bytes", "a.txt", "text/plain").unwrap();
-    let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::compose(&["moments", "feed"]));
+    let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::compose(&["moments", "feed"]));
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid("m1"), order_key: "a".into() });
     db.land(envelope).unwrap();

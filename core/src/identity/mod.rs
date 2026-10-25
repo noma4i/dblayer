@@ -142,9 +142,9 @@ impl RowRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ScopeKey(String);
+pub struct ListKey(String);
 
-impl ScopeKey {
+impl ListKey {
     pub fn from_raw(value: &str) -> Self {
         Self(value.to_string())
     }
@@ -193,7 +193,7 @@ impl ScopeKey {
     }
 }
 
-impl fmt::Display for ScopeKey {
+impl fmt::Display for ListKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }

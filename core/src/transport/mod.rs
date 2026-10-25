@@ -32,8 +32,8 @@ pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryAttempt, RetryClass, RetryCalls, RetrySnapshot};
 pub use session_code::SessionCode;
 pub use subscription::{
-    Subscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind,
-    SubscriptionHandle,
+    ServerSubscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind,
+    ServerSubscriptionHandle,
 };
 
 #[async_trait]
@@ -47,7 +47,7 @@ pub trait Transport: Send + Sync {
     }
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
-    async fn subscribe(&self, request: GraphQLRequest) -> Result<Subscription, TransportError>;
+    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError>;
     async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError>;
 }
 

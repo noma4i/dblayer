@@ -580,7 +580,7 @@ async fn a_typed_session_refusal_during_subscribe_stops_without_retry() {
     impl crate::transport::Transport for Refusal {
         async fn query(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
         async fn mutate(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
-        async fn subscribe(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Subscription, crate::transport::TransportError> {
+        async fn subscribe(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
             Err(crate::transport::TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "session_unknown".into() })
         }
         async fn put(&self, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> { unreachable!() }
@@ -743,7 +743,7 @@ impl crate::transport::Transport for RefusingFirstSubscribe {
     async fn mutate(&self, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
         self.inner.mutate(request).await
     }
-    async fn subscribe(&self, request: crate::transport::GraphQLRequest) -> Result<crate::transport::Subscription, crate::transport::TransportError> {
+    async fn subscribe(&self, request: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
         let refused = self.refusals.try_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |left| left.checked_sub(1)).is_ok();
         if refused {
             return Err(crate::transport::TransportError::Network("down".to_string()));
