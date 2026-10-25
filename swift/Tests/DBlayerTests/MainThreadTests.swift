@@ -98,29 +98,120 @@ struct MainThreadTests {
     #expect(reads.main == 0)
   }
 
-  @Test
-  func aLiveListHasItsUpdateReadyWhileTheMainActorIsBusy() async {
+  @Test(arguments: ["list", "window"])
+  func aLiveCollectionHasItsUpdateReadyWhileTheMainActorIsBusy(kind: String) async {
+    let prepared = DispatchSemaphore(value: 0)
     let box = SnapshotBox()
-    let source = LiveSource<Snapshot<ProbeRow>>(initial: Snapshot(rows: [], replaced: [:]), merge: { _, newer in newer }) { emit in
-      box.emit = emit
+    let source = LiveSource<Snapshot<PreparedRow>>(initial: Snapshot(rows: [], replaced: [:]), merge: { _, newer in newer }) { emit in
+      box.set(emit)
       return {}
     }
-    let list = LiveList<ProbeRow>(Query<ProbeRow>(), snapshots: source)
-    await eventually("the subscription") { box.emit != nil }
-    let rows = (0 ..< 3).map { ProbeRow(key: "r\($0)") }
-    box.emit?(Snapshot(rows: rows, replaced: [:], reordered: true, seq: 1))
-    await eventually("the first delivery") { list.rows.count == 3 }
-    _ = list.takeUpdate()
+    let take: () -> ListUpdate<PreparedRow>
+    let shown: () -> Int
+    if kind == "list" {
+      let list = LiveList<PreparedRow>(Query<PreparedRow>(), snapshots: source)
+      (take, shown) = ({ list.takeUpdate() }, { list.rows.count })
+    } else {
+      let window = LiveWindow<PreparedRow>(Window<PreparedRow>(query: Query<PreparedRow>(), tail: 3), snapshots: source)
+      (take, shown) = ({ window.takeUpdate() }, { window.rows.count })
+    }
+    await eventually("the subscription") { box.get() != nil }
+    let rows = (0 ..< 3).map { PreparedRow(key: "r\($0)", prepared: prepared) }
+    box.get()?(Snapshot(rows: rows, replaced: [:], reordered: true, seq: 1))
+    await eventually("the first delivery") { shown() == 3 }
+    _ = take()
+    while block(on: prepared, seconds: 0) {}
 
-    box.emit?(Snapshot(rows: rows, replaced: [:], edits: [.rewrite(2, rows[2])], seq: 2))
-    usleep(500_000)
+    box.get()?(Snapshot(rows: rows, replaced: [:], reordered: true, edits: [.rewrite(2, rows[2])], seq: 2))
+    let preparedInTheBackground = block(on: prepared, seconds: 5)
+    var update = take()
+    let deadline = DispatchTime.now() + 5
+    while update.revision < 2, DispatchTime.now() < deadline {
+      usleep(1000)
+      update = take()
+    }
 
-    let update = list.takeUpdate()
-    #expect(update.revision == 2)
-    #expect(update.edits?.count == 1)
+    #expect(preparedInTheBackground, "\(kind): the background stage prepared the delivery")
+    #expect(update.revision == 2, "\(kind): the revision")
+    #expect(update.edits?.count == 1, "\(kind): the edits")
+    #expect(update.rows.count == 3, "\(kind): the rows")
   }
 }
 
+func block(on semaphore: DispatchSemaphore, seconds: Double) -> Bool {
+  semaphore.wait(timeout: .now() + seconds) == .success
+}
+
+struct PreparedRow: DBModel {
+  static let modelName = "Prepared"
+  static let wireLayout = "prepared"
+  let key: String
+  let prepared: DispatchSemaphore
+  var id: String { if !Thread.isMainThread { prepared.signal() }; return key }
+  let sync = SyncInfo()
+  let upload: UploadInfo? = nil
+
+  init(key: String, prepared: DispatchSemaphore) { self.key = key; self.prepared = prepared }
+  init(wire: WireRow) throws { key = wire.id; prepared = DispatchSemaphore(value: 0) }
+  static func == (left: PreparedRow, right: PreparedRow) -> Bool { left.key == right.key }
+}
+
 final class SnapshotBox: @unchecked Sendable {
-  var emit: (@Sendable (Snapshot<ProbeRow>) -> Void)?
+  private let lock = NSLock()
+  private var emit: (@Sendable (Snapshot<PreparedRow>) -> Void)?
+
+  func set(_ next: @escaping @Sendable (Snapshot<PreparedRow>) -> Void) { lock.withLock { emit = next } }
+  func get() -> (@Sendable (Snapshot<PreparedRow>) -> Void)? { lock.withLock { emit } }
+}
+
+struct ListUpdatesReleaseTests {
+  final class Token: @unchecked Sendable {
+    let released: () -> Void
+    init(_ released: @escaping () -> Void) { self.released = released }
+    deinit { released() }
+  }
+
+  struct TokenRow: DBModel {
+    static let modelName = "Token"
+    static let wireLayout = "token"
+    let key: String
+    let token: Token?
+    var id: String { key }
+    let sync = SyncInfo()
+    let upload: UploadInfo? = nil
+
+    init(key: String, token: Token? = nil) { self.key = key; self.token = token }
+    init(wire: WireRow) throws { key = wire.id; token = nil }
+    static func == (left: TokenRow, right: TokenRow) -> Bool { left.key == right.key }
+  }
+
+  final class Outcome: @unchecked Sendable {
+    private let lock = NSLock()
+    private var checked = false
+    private var blocked = false
+    var seen: (checked: Bool, blocked: Bool) { lock.withLock { (checked, blocked) } }
+    func begin() -> Bool { lock.withLock { defer { checked = true }; return !checked } }
+    func block() { lock.withLock { blocked = true } }
+  }
+
+  @Test
+  func theRowsOfAReplacedUpdateAreReleasedWithoutHoldingTheLock() {
+    let updates = ListUpdates<TokenRow>()
+    let outcome = Outcome()
+    func publishRowWithToken() {
+      let token = Token {
+        guard outcome.begin() else { return }
+        let done = DispatchSemaphore(value: 0)
+        Thread.detachNewThread { _ = updates.take(); done.signal() }
+        if done.wait(timeout: .now() + 2) == .timedOut { outcome.block() }
+      }
+      updates.publish(Snapshot(rows: [TokenRow(key: "a", token: token)], replaced: [:], seq: 1))
+    }
+    publishRowWithToken()
+
+    updates.publish(Snapshot(rows: [TokenRow(key: "b")], replaced: [:], seq: 2))
+
+    #expect(outcome.seen.checked, "the old rows were released by the publication")
+    #expect(!outcome.seen.blocked, "a take had to wait for the release of the old rows")
+  }
 }

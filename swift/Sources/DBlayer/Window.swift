@@ -69,15 +69,17 @@ public final class LiveWindow<Model: DBModel> {
   public private(set) var total: Int?
   public private(set) var failure: String?
   @ObservationIgnored private let window: Window<Model>
-  @ObservationIgnored private let updates = ListUpdates<Model>()
+  @ObservationIgnored let updates = ListUpdates<Model>()
   @ObservationIgnored private var task: Task<Void, Never>?
 
-  public init(_ window: Window<Model>) {
+  public convenience init(_ window: Window<Model>) { self.init(window, snapshots: window.snapshots) }
+
+  init(_ window: Window<Model>, snapshots: LiveSource<Snapshot<Model>>) {
     self.window = window
     let updates = updates
     task = Task.detached { [weak self] in
       let stream: LiveStream<Snapshot<Model>>
-      do { stream = try await window.snapshots.stream() } catch { await self?.fail(error); return }
+      do { stream = try await snapshots.stream() } catch { await self?.fail(error); return }
       for await snapshot in stream {
         let ids = snapshot.reordered ? snapshot.rows.map(\.id) : nil
         updates.publish(snapshot)

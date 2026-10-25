@@ -187,7 +187,7 @@ public final class LiveList<Model: DBModel> {
   /// The ids that the last delivery of `rows` replaced: real id to temporary id.
   public private(set) var replaced: [String: String] = [:]
   @ObservationIgnored private let query: Query<Model>
-  @ObservationIgnored private let updates = ListUpdates<Model>()
+  @ObservationIgnored let updates = ListUpdates<Model>()
   @ObservationIgnored private(set) var tasks: [Task<Void, Never>] = []
   @ObservationIgnored private var initialLoad: Task<Void, Error>?
 
