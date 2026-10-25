@@ -1,3 +1,4 @@
+use rusqlite::OptionalExtension;
 use crate::commit::{CommitEnvelope, OperationStatus, OperationTransition, WriteOrigin};
 use crate::identity::RowId;
 #[cfg(test)]
@@ -114,14 +115,20 @@ impl Db {
             if batched && status != "delivery_unknown" {
                 let id = RowId::new(&row).map_err(|error| DbError::InvalidUpload(error.to_string()))?;
                 let item = row.clone();
-                let still = move |reader: &crate::store::Reader<'_>, entry: &OutboxOperation| {
-                    let states = crate::operation::read_operation_uploads(reader.connection(), seq).unwrap_or_default();
-                    let position = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, item], |found| found.get::<_, i64>(0));
-                    entry.operation.status == OperationStatus::Pending && position.is_ok_and(|position| states.get(&(seq, position)).is_some_and(|state| state.phase == crate::upload::UploadStatus::Failed && state.failed_at.is_some_and(|failed| failed as i64 <= due)))
+                let still = move |reader: &crate::store::Reader<'_>, entry: &OutboxOperation| -> Result<bool, crate::store::StoreError> {
+                    match entry.operation.status {
+                        OperationStatus::Failed => Ok(entry.operation.since <= due),
+                        OperationStatus::Pending => {
+                            let Some(position) = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, item], |found| found.get::<_, i64>(0)).optional()? else { return Ok(false) };
+                            let states = crate::operation::read_operation_uploads(reader.connection(), seq)?;
+                            Ok(states.get(&(seq, position)).is_some_and(|state| state.phase == crate::upload::UploadStatus::Failed && state.failed_at.is_some_and(|failed| failed as i64 <= due)))
+                        }
+                        _ => Ok(false),
+                    }
                 };
                 if self.remove_upload_item_if(&model, &id, seq, true, Some(&still))? { removed += 1; }
             } else if rolled_back.insert(seq) {
-                let still = |_: &crate::store::Reader<'_>, entry: &OutboxOperation| entry.operation.status == OperationStatus::Failed && entry.operation.since <= due;
+                let still = |_: &crate::store::Reader<'_>, entry: &OutboxOperation| Ok(entry.operation.status == OperationStatus::Failed && entry.operation.since <= due);
                 if !self.roll_back_if(seq, self.generation(), Some(&still))?.is_noop() { removed += 1; }
             }
         }

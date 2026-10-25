@@ -484,7 +484,7 @@ async fn discarding_one_batch_member_keeps_its_multipart_abort_after_the_item_is
     assert_eq!(orphans.iter().map(|(_, key, upload, abort)| (key.as_str(), upload.as_str(), abort.as_str())).collect::<Vec<_>>(), [("k1", "u1", "Abort")]);
 }
 
-async fn one_failed_batch_item() -> (Db, Sync, Arc<ManualClock>, Vec<crate::identity::RowId>) {
+async fn failed_batch(whole_operation: bool) -> (Db, Sync, Arc<ManualClock>, Vec<crate::identity::RowId>) {
     let db = Db::open_in_memory(vec![spec()], None).unwrap();
     let transport = Arc::new(MockTransport::new());
     let clock = Arc::new(ManualClock::new(std::time::Duration::ZERO));
@@ -493,32 +493,39 @@ async fn one_failed_batch_item() -> (Db, Sync, Arc<ManualClock>, Vec<crate::iden
     sync.register(crate::sync::OperationDef::new("CreateAssets", "mutation x { x }", "createAssets.assets"));
     let source = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(source.path(), b"image").unwrap();
-    transport.enqueue("CreateBlob", crate::transport::Reply::data(json!({"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}})));
-    let items = ["missing.png", source.path().to_str().unwrap()].into_iter().enumerate().map(|(position, path)| UploadItem {
-        values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(), path: path.into(), name: None, mime: None, variables: Default::default(),
+    for _ in 0..2 { transport.enqueue("CreateBlob", crate::transport::Reply::data(json!({"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}))); }
+    if whole_operation { transport.enqueue("CreateAssets", crate::transport::Reply::graphql_error("denied", "FORBIDDEN")); }
+    let paths = ["missing.png", source.path().to_str().unwrap()];
+    let items = (0..2).map(|position| UploadItem {
+        values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(),
+        path: if whole_operation { source.path().to_str().unwrap() } else { paths[position] }.into(), name: None, mime: None, variables: Default::default(),
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default() };
     let ids: Vec<_> = sync.upload_create_batch("Asset", items, request).await.unwrap().iter().map(|row| row.id.clone()).collect();
     sync.wait_uploads().await;
-    assert_eq!(db.find("Asset", &ids[0]).unwrap().unwrap().sync.state, SyncState::Failed);
+    sync.flush().await.ok();
+    sync.wait_uploads().await;
+    assert_eq!(db.find("Asset", &ids[0]).unwrap().unwrap().sync.state, SyncState::Failed, "whole_operation={whole_operation}");
     (db, sync, clock, ids)
 }
 
 #[tokio::test]
-async fn a_failed_batch_item_older_than_seven_days_is_removed_and_its_siblings_stay() {
-    let (db, sync, clock, ids) = one_failed_batch_item().await;
-    clock.advance(std::time::Duration::from_secs(7 * 24 * 3600 - 3600));
-    sync.inner.expire_uploads().await.unwrap();
-    assert!(db.find("Asset", &ids[0]).unwrap().is_some(), "not yet due");
-    clock.advance(std::time::Duration::from_secs(2 * 3600));
-    sync.inner.expire_uploads().await.unwrap();
-    assert!(db.find("Asset", &ids[0]).unwrap().is_none(), "the failed item is expired");
-    assert!(db.find("Asset", &ids[1]).unwrap().is_some(), "the healthy sibling stays");
+async fn failed_batch_work_older_than_seven_days_is_removed_per_item_and_whole_but_siblings_stay() {
+    for (whole_operation, removed) in [(false, [true, false]), (true, [true, true])] {
+        let (db, sync, clock, ids) = failed_batch(whole_operation).await;
+        clock.advance(std::time::Duration::from_secs(7 * 24 * 3600 - 3600));
+        sync.inner.expire_uploads().await.unwrap();
+        assert!(ids.iter().all(|id| db.find("Asset", id).unwrap().is_some()), "whole_operation={whole_operation}: not yet due");
+        clock.advance(std::time::Duration::from_secs(2 * 3600));
+        sync.inner.expire_uploads().await.unwrap();
+        let gone: Vec<bool> = ids.iter().map(|id| db.find("Asset", id).unwrap().is_none()).collect();
+        assert_eq!(gone, removed, "whole_operation={whole_operation}");
+    }
 }
 
 #[tokio::test]
 async fn a_batch_item_retried_after_it_was_selected_is_not_expired() {
-    let (db, sync, clock, ids) = one_failed_batch_item().await;
+    let (db, sync, clock, ids) = failed_batch(false).await;
     clock.advance(std::time::Duration::from_secs(8 * 24 * 3600));
     let due = sync.inner.now_ms() - 7 * 24 * 3600 * 1000;
     let stale = db.failed_upload_candidates(due).unwrap();
@@ -570,4 +577,24 @@ async fn a_batch_item_that_fails_while_its_request_is_pending_is_aborted_once_th
     sync.inner.resume_upload(claim, Err(crate::transport::TransportError::Graphql { messages: vec!["denied".into()], extensions: None })).await;
     sync.wait_uploads().await;
     assert_eq!(transport.call_count("Abort"), 1, "the multipart must be aborted once its pending request resolved");
+}
+
+#[tokio::test]
+async fn discarding_one_item_of_a_rejected_batch_operation_removes_only_that_item() {
+    let (db, _sync, _clock, ids) = failed_batch(true).await;
+    assert_eq!(db.discard("Asset", &ids[0]).unwrap(), 1);
+    assert!(db.find("Asset", &ids[0]).unwrap().is_none());
+    assert!(db.find("Asset", &ids[1]).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn an_unreadable_candidate_is_reported_by_expiry_and_expires_once_readable() {
+    let (db, sync, clock, ids) = failed_batch(false).await;
+    clock.advance(std::time::Duration::from_secs(8 * 24 * 3600));
+    db.shared.store.lock().connection.execute_batch("ALTER TABLE op_part RENAME TO op_part_hidden").unwrap();
+    assert!(sync.inner.expire_uploads().await.is_err(), "a read failure must not look like a skipped candidate");
+    assert!(db.find("Asset", &ids[0]).unwrap().is_some());
+    db.shared.store.lock().connection.execute_batch("ALTER TABLE op_part_hidden RENAME TO op_part").unwrap();
+    sync.inner.expire_uploads().await.unwrap();
+    assert!(db.find("Asset", &ids[0]).unwrap().is_none());
 }

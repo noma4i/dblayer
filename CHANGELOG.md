@@ -55,6 +55,7 @@
 - Dropping `Sync` no longer cancels queued upload file cleanup.
 - Discarding or rolling back an upload keeps its multipart abort until the server answers, with or without confirmed parts.
 - A finished or committed upload never records a multipart abort.
+- Discarding one item of a rejected batch operation removes that item instead of failing as in flight, and a rejected batch operation older than 7 days expires like a failed item.
 - A panic inside an upload task fails that upload and frees its file slot, so queued uploads keep starting.
 - One unreadable upload no longer stops the other waiting uploads from starting.
 - Waiting for a record or for one queued action reads the in-memory queue and no longer loads every queued operation on each event.

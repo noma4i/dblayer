@@ -12,7 +12,7 @@ use super::local_write::{plan_fault, OutboxOperation};
 use super::open::Db;
 use super::prior::{Prior, PriorRow};
 
-pub(crate) type Still<'a> = dyn Fn(&Reader<'_>, &OutboxOperation) -> bool + 'a;
+pub(crate) type Still<'a> = dyn Fn(&Reader<'_>, &OutboxOperation) -> Result<bool, StoreError> + 'a;
 
 #[derive(Default)]
 struct Restore {
@@ -183,8 +183,8 @@ impl Db {
         let mut removed = false;
         self.commit_following(generation, |reader| {
             let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
-            if still.is_some_and(|still| !still(reader, &entry)) { return Ok(None); }
-            if entry.operation.transport_started { return Err(DbError::InFlight { model: model.into(), id: id.to_string() }); }
+            if let Some(still) = still { if !still(reader, &entry)? { return Ok(None); } }
+            if entry.operation.transport_started && entry.operation.status == OperationStatus::Pending { return Err(DbError::InFlight { model: model.into(), id: id.to_string() }); }
             let position = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get(0))?;
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
             let mut prior = Prior::of(&entry).unwrap_or_default();
@@ -242,9 +242,12 @@ impl Db {
                 let found = OutboxOperation::read(reader, seq)?;
                 let entry = match (found, still) {
                     (Some(entry), None) => entry,
-                    (Some(entry), Some(still)) if still(reader, &entry) => entry,
+                    (Some(entry), Some(still)) => {
+                        if !still(reader, &entry)? { return Ok(None); }
+                        entry
+                    }
                     (None, None) => return Err(DbError::UnknownOperation(seq)),
-                    _ => return Ok(None),
+                    (None, Some(_)) => return Ok(None),
                 };
                 let plan = restore(reader, &Prior::related_operations(reader, &entry)?, &entry)?;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
