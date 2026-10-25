@@ -43,10 +43,9 @@ fn inv_op_04_only_the_transitions_of_the_state_table_apply() {
             let source = facts(status, started);
             let accepted = match (status, started, event) {
                 (Pending, false, OperationEvent::Start) => Some(facts(Pending, true)),
-                (Pending, false, OperationEvent::Close(RolledBack)) => Some(facts(RolledBack, false)),
                 (Pending, true, OperationEvent::Postpone) => Some(facts(Pending, false)),
-                (Pending, true, OperationEvent::Fail(to @ (Failed | DeliveryUnknown))) => Some(facts(to, true)),
-                (Pending, true, OperationEvent::Close(to @ (Committed | RolledBack))) => Some(facts(to, true)),
+                (Pending, _, OperationEvent::Fail(to @ (Failed | DeliveryUnknown))) => Some(facts(to, started)),
+                (Pending, _, OperationEvent::Close(to @ (Committed | RolledBack))) => Some(facts(to, started)),
                 (Failed | DeliveryUnknown, true, OperationEvent::Retry) => Some(facts(Pending, false)),
                 (Failed | DeliveryUnknown, true, OperationEvent::Close(RolledBack)) => Some(facts(RolledBack, true)),
                 _ => None,

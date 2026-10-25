@@ -47,7 +47,17 @@ impl OperationFlow {
         }
     }
 
-    #[state(superstate = "open")]
+    #[superstate(superstate = "open")]
+    fn live(event: &OperationEvent) -> Outcome<State> {
+        match event {
+            OperationEvent::Fail(OperationStatus::Failed) => Transition(State::failed()),
+            OperationEvent::Fail(OperationStatus::DeliveryUnknown) => Transition(State::delivery_unknown()),
+            OperationEvent::Close(OperationStatus::Committed) => Transition(State::committed()),
+            _ => Super,
+        }
+    }
+
+    #[state(superstate = "live")]
     fn idle(context: &mut Flow, event: &OperationEvent) -> Outcome<State> {
         match event {
             OperationEvent::Start => {
@@ -59,16 +69,13 @@ impl OperationFlow {
         }
     }
 
-    #[state(superstate = "open")]
+    #[state(superstate = "live")]
     fn sending(context: &mut Flow, event: &OperationEvent) -> Outcome<State> {
         match event {
             OperationEvent::Postpone => {
                 context.facts.transport_started = false;
                 Transition(State::idle())
             }
-            OperationEvent::Fail(OperationStatus::Failed) => Transition(State::failed()),
-            OperationEvent::Fail(OperationStatus::DeliveryUnknown) => Transition(State::delivery_unknown()),
-            OperationEvent::Close(OperationStatus::Committed) => Transition(State::committed()),
             OperationEvent::Recover => Transition(State::delivery_unknown()),
             _ => Super,
         }
