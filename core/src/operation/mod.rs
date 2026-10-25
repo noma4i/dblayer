@@ -8,7 +8,7 @@ mod stored;
 mod table;
 
 pub use fsck::*;
-pub(crate) use machine::{OperationEvent, OperationFacts};
+pub(crate) use machine::OperationEvent;
 pub use outbox::*;
 pub(crate) use queue::{OperationQueue, OperationQueues, QueueOperation};
 pub use quarantine::*;

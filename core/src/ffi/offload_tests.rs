@@ -1,14 +1,7 @@
 use std::future::Future;
-use std::pin::pin;
-use std::task::{Context, Poll, Waker};
 
 use super::failure_tests::rig;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
-
-fn ready_on_first_poll<T>(call: impl Future<Output = T>) -> bool {
-    let mut call = pin!(call);
-    matches!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(_))
-}
 
 const MARKER_COLUMN: usize = 10_000;
 
