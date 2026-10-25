@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use crate::identity::RowId;
@@ -392,7 +392,7 @@ pub(crate) struct Executor {
     wake: Condvar,
     progress: Arc<Progress>,
     #[cfg(test)]
-    pub(crate) refuse_spawn: AtomicBool,
+    pub(crate) refuse_spawn: std::sync::atomic::AtomicBool,
 }
 
 impl Executor {
@@ -402,7 +402,7 @@ impl Executor {
             wake: Condvar::new(),
             progress,
             #[cfg(test)]
-            refuse_spawn: AtomicBool::new(false),
+            refuse_spawn: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
