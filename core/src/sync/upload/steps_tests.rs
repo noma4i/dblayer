@@ -6,7 +6,7 @@ use crate::db::Db;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 use crate::transport::{MockTransport, PutReply, Reply};
-use crate::upload::{UploadConfig, UploadSteps};
+use crate::upload::{UploadConfig, UploadStatus, UploadSteps};
 use super::super::{OperationDef, SyncConfig};
 use super::super::rig::{Rig, rig_without_operations, put, await_outbox};
 use super::upload_tests::{await_released, file, rid, small};

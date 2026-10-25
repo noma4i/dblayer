@@ -58,13 +58,9 @@ impl Db {
                 None => crate::operation::read_upload_items(connection)?,
             };
             for ((seq, position), mut state) in uploads {
-                if state.phase != crate::upload::UploadStatus::Failed { continue; }
                 let (action, status, row): (String, String, String) = connection.query_row("SELECT op.action_key, op.status, op_item.row_id FROM op JOIN op_item USING (seq) WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
                 if status != "pending" || target.is_some_and(|(model, id, key)| row != id.as_str() || key.is_some_and(|key| action != key) || crate::operation::Operation::split_action_key(&action).is_none_or(|(owner, _)| owner != model)) { continue; }
-                state.phase = crate::upload::UploadStatus::Queued;
-                state.error = None;
-                state.failed_at = None;
-                state.retries.clear();
+                if state.apply(crate::upload::UploadEvent::Retried).is_err() { continue; }
                 envelope.operation_transitions.push(OperationTransition::Progress { seq, item_position: position, state });
                 retried += 1;
             }

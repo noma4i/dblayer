@@ -15,6 +15,7 @@
 - Generated Swift parameterized scopes and upload variable builders throw on serialization failure.
 - Kotlin `parseJsonObject` throws when the body is not a JSON object.
 - Cancelling a single upload after its content mutation starts returns false.
+- Upload phase and stage change only through typed events of one state machine, and operation status changes follow a second machine; stored data and public API are unchanged.
 - Uploads reject local and memory models without creating records or files.
 - Upload sources are copied and hashed before the operation is written.
 - Upload file reads and checksums run on blocking tasks and stop on cancellation.

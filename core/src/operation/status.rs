@@ -82,10 +82,3 @@ impl Operation {
 pub fn removes_row(status: OperationStatus) -> bool {
     status.is_terminal()
 }
-
-pub fn recovered_status(transport_started: bool, status: OperationStatus) -> OperationStatus {
-    match status {
-        OperationStatus::Pending if transport_started => OperationStatus::DeliveryUnknown,
-        other => other,
-    }
-}

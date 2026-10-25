@@ -286,9 +286,7 @@ impl Inner {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
                 for ((seq, position), state) in &states {
                     let mut state = state.clone();
-                    state.phase = crate::upload::UploadStatus::Sending;
-                    state.stage = crate::upload::UploadStage::Mutation;
-                    state.request = Some(crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() });
+                    state.apply(crate::upload::UploadEvent::MutationBegan { request: crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() } }).map_err(|error| SyncError::Malformed(error.to_string()))?;
                     envelope.operation_transitions.push(OperationTransition::Progress { seq: *seq, item_position: *position, state });
                 }
                 Ok(Some(envelope))
@@ -315,9 +313,7 @@ impl Inner {
         };
         let request = GraphQLRequest::new(&operation.document, &operation.name, variables);
         if let Some(mut state) = entry.operation.upload.clone() {
-            state.phase = crate::upload::UploadStatus::Sending;
-            state.stage = crate::upload::UploadStage::Mutation;
-            state.request = Some(crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() });
+            state.apply(crate::upload::UploadEvent::MutationBegan { request: crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() } }).map_err(|error| SyncError::Malformed(error.to_string()))?;
             self.commit(sending.generation, |_| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
                 envelope.operation_transitions.push(OperationTransition::Progress { seq: entry.operation.id.0, item_position: 0, state: state.clone() });
@@ -425,7 +421,7 @@ impl Inner {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
             if let Some(batch) = batch {
                 let items = crate::operation::read_operation_uploads(reader.connection(), seq).map_err(StoreError::from)?;
-                if items.iter().any(|(key, state)| key.0 == seq && (!state.is_transferred() || matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled))) { return Ok(None); }
+                if items.iter().any(|(key, state)| key.0 == seq && !state.is_sendable()) { return Ok(None); }
                 if entry.operation.row_ids.len() < batch.min {
                     let single = spec.actions.iter().find(|action| action.name == batch.single).ok_or_else(|| SyncError::Malformed("single upload declaration is missing".into()))?;
                     let mutation = single.mutation.clone().ok_or_else(|| SyncError::Malformed("single upload mutation is missing".into()))?;

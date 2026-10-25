@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::syncstate::{FailureKind, OperationFailure};
 use crate::transport::{GraphQLRequest, PutRequest, ResponseOutcome, RetryClass, TransportError};
-use crate::upload::{read_range, UploadRetry, UploadStage};
+use crate::upload::{read_range, UploadEvent, UploadStage};
 
 use super::super::extract::root_value;
 use super::super::locked;
@@ -50,9 +50,9 @@ fn step_error(error: TransportError, cancelled: bool) -> StepError {
 
 impl Runner {
     pub(super) fn remember(&self, request: &GraphQLRequest) -> Result<(), StepError> {
-        self.save(|state| state.request = Some(crate::upload::UploadRequest {
+        self.save(UploadEvent::RequestRemembered { request: crate::upload::UploadRequest {
             document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone(),
-        })).map_err(|stop| match stop {
+        } }).map_err(|stop| match stop {
             Stop::Failed(failure) => StepError::Fatal(failure),
             _ => StepError::Cancelled,
         })
@@ -151,7 +151,7 @@ impl Runner {
             self.await_online().await?;
             match call().await {
                 Ok(value) => {
-                    self.save(|state| state.retries.retain(|retry| retry.stage != stage || retry.part_number != part_number))?;
+                    self.save(UploadEvent::RetryCleared { stage, part_number })?;
                     return Ok(value);
                 }
                 Err(StepError::Cancelled) => return Err(Stop::Cancelled),
@@ -175,11 +175,7 @@ impl Runner {
             return Err(Stop::Failed(failure));
         }
         let delay = backoff.delay(attempt);
-        self.save(|state| {
-            state.retries.retain(|retry| retry.stage != stage || retry.part_number != part_number);
-            state.retries.push(UploadRetry { stage, part_number, attempts: attempt + 1, retry_at: Some((self.inner.clock.now() + delay).as_millis() as u64) });
-            state.error = Some(failure);
-        })?;
+        self.save(UploadEvent::RetryScheduled { stage, part_number, attempts: attempt + 1, retry_at: (self.inner.clock.now() + delay).as_millis() as u64, failure })?;
         self.wait_retry(stage, part_number).await
     }
 
@@ -191,10 +187,7 @@ impl Runner {
             () = self.inner.connectivity.wait(self.inner.clock.as_ref(), delay) => {}
             () = self.token.cancelled() => return Err(Stop::Cancelled),
         }
-        self.save(|state| {
-            if let Some(retry) = state.retries.iter_mut().find(|retry| retry.stage == stage && retry.part_number == part_number) { retry.retry_at = None; }
-            state.error = None;
-        })
+        self.save(UploadEvent::RetryElapsed { stage, part_number })
     }
 
     pub(super) async fn await_online(&self) -> Result<(), Stop> {

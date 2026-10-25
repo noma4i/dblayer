@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tokio::task::JoinSet;
 
 use crate::syncstate::{FailureKind, OperationFailure};
-use crate::upload::{md5_base64, parse_headers, part_count, part_range, UploadPart, UploadStage};
+use crate::upload::{md5_base64, parse_headers, part_count, part_range, UploadEvent, UploadPart, UploadStage};
 
 use super::run::{stop_of, Runner};
 use super::steps::{fatal, text, Stop, EXPIRED_MESSAGE};
@@ -24,18 +24,13 @@ impl Runner {
             .ok_or_else(|| Stop::Failed(OperationFailure::new(FailureKind::Rejected, "the upload has no multipart steps")))?;
         let config = &self.inner.config.upload;
         if self.snapshot().upload_id.is_none() {
-            self.save(|state| state.stage = UploadStage::Init)?;
+            self.save(UploadEvent::InitStarted)?;
             let checksum = md5_base64(std::path::Path::new(&self.input.path), &self.token).await
                 .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
             let variables = json!({"filename": self.file_name(), "contentType": self.content_type(), "byteSize": total, "checksum": checksum});
             let data = self.retrying(UploadStage::Init, 0, || self.graphql(&steps.init, variables.clone(), true)).await?;
             let (key, upload_id) = (text(&data, "key").map_err(stop_of)?, text(&data, "uploadId").map_err(stop_of)?);
-            self.save(|state| {
-                state.key = Some(key);
-                state.upload_id = Some(upload_id);
-                state.parts.clear();
-                state.sent_bytes = 0;
-            })?;
+            self.save(UploadEvent::Initiated { key, upload_id })?;
         }
         let stored = self.snapshot();
         let (Some(key), Some(upload_id)) = (stored.key.clone(), stored.upload_id.clone()) else {
@@ -45,7 +40,7 @@ impl Runner {
         let size = |number: u32| part_range(total, config.part_size, number).1;
         self.progress().begin_phase(finished.keys().map(|number| (*number, size(*number))));
         let baseline = self.progress().sent();
-        self.save(|state| state.sent_bytes = baseline)?;
+        self.save(UploadEvent::Baseline { sent: baseline })?;
         let mut queue: VecDeque<u32> = (1..=part_count(total, config.part_size)).filter(|number| !finished.contains_key(number)).collect();
         let mut targets: HashMap<u32, PartTarget> = HashMap::new();
         let mut presigned_at = Duration::ZERO;
@@ -77,12 +72,7 @@ impl Runner {
                 Ok(Some(etag)) => {
                     self.progress().finish(number, size(number));
                     let sent = self.progress().sent();
-                    self.save(|state| {
-                        state.parts.push(UploadPart { number, etag, confirmed_bytes: size(number) });
-                        state.parts.sort_by_key(|part| part.number);
-                        state.sent_bytes = state.sent_bytes.max(sent);
-                        state.confirmed_bytes = sent;
-                    })?;
+                    self.save(UploadEvent::PartConfirmed { part: UploadPart { number, etag, confirmed_bytes: size(number) }, sent })?;
                 }
                 Ok(None) => return self.stop_flight(flight, Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, "the part answer has no etag"))).await,
                 Err(Stop::Expired) => {
@@ -98,25 +88,16 @@ impl Runner {
                 Err(stop) => return self.stop_flight(flight, stop).await,
             }
         }
-        self.save(|state| state.stage = UploadStage::Complete)?;
+        self.save(UploadEvent::CompleteStarted)?;
         let parts: Vec<Value> = self.snapshot().parts.iter().map(|part| json!({"partNumber": part.number, "etag": part.etag})).collect();
         let variables = json!({"key": key, "uploadId": upload_id, "parts": parts});
         let data = self.retrying(UploadStage::Complete, 0, || self.graphql(&steps.complete, variables.clone(), true)).await?;
         let (signed, blob) = (text(&data, "signedId").map_err(stop_of)?, text(&data, "blobId").map_err(stop_of)?);
-        self.save(|state| {
-            state.signed_id = Some(signed);
-            state.blob_id = Some(blob);
-            state.sent_bytes = total;
-            state.confirmed_bytes = total;
-            state.transferred = true;
-            state.key = None;
-            state.upload_id = None;
-            state.parts.clear();
-        })
+        self.save(UploadEvent::Completed { signed_id: signed, blob_id: blob, total })
     }
 
     async fn presign(self: &Arc<Self>, operation: &str, key: &str, upload_id: &str, numbers: &[u32]) -> Result<HashMap<u32, PartTarget>, Stop> {
-        self.save(|state| state.stage = UploadStage::Presign)?;
+        self.save(UploadEvent::PresignStarted)?;
         let variables = json!({"key": key, "uploadId": upload_id, "partNumbers": numbers});
         let data = self.retrying(UploadStage::Presign, 0, || self.graphql(operation, variables.clone(), true)).await?;
         let mut targets = HashMap::new();
@@ -127,7 +108,7 @@ impl Runner {
         if numbers.iter().any(|number| !targets.contains_key(number)) {
             return Err(stop_of(fatal(FailureKind::Unrecognized, "the presign answer misses requested parts")));
         }
-        self.save(|state| state.stage = UploadStage::Part)?;
+        self.save(UploadEvent::Presigned)?;
         Ok(targets)
     }
 

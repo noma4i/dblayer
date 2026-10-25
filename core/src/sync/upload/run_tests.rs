@@ -3,7 +3,7 @@ use std::time::Duration;
 use super::*;
 use super::upload_tests::{blob, created, file, input, rid, single_replies, small, upload_rig};
 use crate::transport::PutReply;
-use crate::upload::{UploadConfig, UploadStage};
+use crate::upload::{UploadConfig, UploadStage, UploadStatus};
 
 #[tokio::test]
 async fn inv_upload_18_materialization_and_cleanup_leave_the_async_executor() {
@@ -71,7 +71,7 @@ fn cancellation_does_not_wait_for_queued_file_io() {
         });
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let mut changes = rig.db.outbox_changes();
-        rig.sync.inner.spawn_run(seq, 0, Mode::Transfer).unwrap();
+        rig.sync.inner.spawn_run(seq, 0, RunMode::Transfer).unwrap();
         crate::sync::rig::await_outbox(&mut changes, || rig.db.sync_info("moments", &rid("m1")).unwrap().uploads.get("upload").cloned().is_some_and(|upload| upload.status == UploadStatus::Preparing)).await;
         let cancelled = tokio::time::timeout(Duration::from_secs(1), rig.sync.cancel_upload("moments", &rid("m1"), "upload")).await;
         release_tx.send(()).unwrap();
@@ -95,7 +95,7 @@ async fn a_final_mutation_does_not_hold_a_file_permit() {
         } else { UploadState::queued() };
         let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state).unwrap();
         if transferred { locked(&rig.sync.inner.uploads).active_files = 1; }
-        rig.sync.inner.spawn_run(seq, 0, Mode::Transfer).unwrap();
+        rig.sync.inner.spawn_run(seq, 0, RunMode::Transfer).unwrap();
         rig.transport.await_calls("CreateMoment", 1).await;
         assert_eq!(rig.transport.call_count("CreateMoment"), 1, "transferred={transferred}");
         assert_eq!(locked(&rig.sync.inner.uploads).active_files, usize::from(transferred));
@@ -112,8 +112,8 @@ async fn only_one_attempt_can_send_and_settle_the_same_upload() {
     let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state).unwrap();
     let (run, token) = rig.sync.inner.register(seq, 0).unwrap();
     tokio::join!(
-        super::run::drive(rig.sync.inner.clone(), seq, 0, run, token.clone(), Mode::Transfer, None),
-        super::run::drive(rig.sync.inner.clone(), seq, 0, run, token, Mode::Transfer, None)
+        super::run::drive(rig.sync.inner.clone(), seq, 0, run, token.clone(), RunMode::Transfer, None),
+        super::run::drive(rig.sync.inner.clone(), seq, 0, run, token, RunMode::Transfer, None)
     );
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     assert!(rig.db.outbox().unwrap().is_empty());

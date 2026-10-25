@@ -4,6 +4,7 @@ use crate::commit::{
     CommitEnvelope, DestroyReason, EntityOp, EnvelopeFault, OperationRecord, OperationStatus, OperationTransition,
     RowChangeKind, ScopeOp, WriteOrigin,
 };
+use crate::syncstate::{FailureKind, OperationFailure};
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -406,7 +407,8 @@ fn closing_an_operation_follows_its_status() {
         let (store, _) = booted_store();
         let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
         let seq = *started.operations.iter().next().unwrap();
-        transitions(&store, vec![OperationTransition::Close { seq, status }]);
+        let closing = if status.is_terminal() { OperationTransition::Close { seq, status } } else { OperationTransition::Fail { seq, status, failure: OperationFailure::new(FailureKind::Rejected, "no") } };
+        transitions(&store, vec![closing]);
         assert_eq!(count(&store, operations_sql), operations, "{case}: operations");
     }
 }
@@ -442,7 +444,7 @@ fn open_dedupe_key_is_unique_and_failed_frees_it() {
     duplicate.operation_transitions = vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))];
     assert!(matches!(store.commit(duplicate), Err(StoreError::Constraint(_))));
     let seq = *first.operations.iter().next().unwrap();
-    transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Failed }]);
+    transitions(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: OperationFailure::new(FailureKind::Rejected, "no") }]);
     transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 2);
 }

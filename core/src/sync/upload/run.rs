@@ -8,20 +8,12 @@ use crate::operation::Operation;
 use crate::syncstate::{FailureKind, OperationFailure};
 use crate::transport::{CancelToken, Response, TransportError};
 use crate::upload::{
-    file_len, md5_base64, mime_of, scenario_for, TransferProgress, UploadInput, UploadScenario, UploadStage, UploadState, UploadStatus,
+    file_len, md5_base64, mime_of, scenario_for, RunMode, TransferProgress, UploadEvent, UploadInput, UploadScenario, UploadStage, UploadState,
 };
 
 use super::super::send::Sending;
 use super::super::{locked, Inner};
 use super::steps::{text, StepError, Stop, EXPIRED_MESSAGE};
-
-#[derive(Clone, Copy)]
-pub(super) enum Mode {
-    Transfer,
-    Mutation,
-    Orphan,
-    Cancel,
-}
 
 pub(super) struct Runner {
     pub(super) inner: Arc<Inner>,
@@ -63,9 +55,9 @@ pub(super) fn stop_of(error: StepError) -> Stop {
     }
 }
 
-pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: Mode, resumed: Option<Result<Response, TransportError>>) {
+pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) {
     let generation = inner.db.generation();
-    let runner = match Runner::load(inner.clone(), seq, position, run, token, matches!(mode, Mode::Transfer)) {
+    let runner = match Runner::load(inner.clone(), seq, position, run, token, matches!(mode, RunMode::Transfer)) {
         Ok(Some(runner)) => runner,
         Ok(None) => return,
         Err(error) => {
@@ -81,9 +73,9 @@ pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, 
     let runner = Arc::new(runner);
     *locked(&runner.resumed) = resumed;
     match mode {
-        Mode::Transfer | Mode::Mutation => runner.transfer().await,
-        Mode::Orphan => runner.abort_remote().await,
-        Mode::Cancel => runner.cancelled().await,
+        RunMode::Transfer | RunMode::Mutation => runner.transfer().await,
+        RunMode::Orphan => runner.abort_remote().await,
+        RunMode::Cancel => runner.cancelled().await,
     }
 }
 
@@ -151,9 +143,9 @@ impl Runner {
         }
     }
 
-    pub(super) fn save(&self, edit: impl FnOnce(&mut UploadState)) -> Result<(), Stop> {
+    pub(super) fn save(&self, event: UploadEvent) -> Result<(), Stop> {
         let mut state = locked(&self.state);
-        edit(&mut state);
+        state.apply(event).map_err(|_| Stop::Superseded)?;
         let snapshot = state.clone();
         self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state: snapshot.clone() }))
     }
@@ -165,7 +157,7 @@ impl Runner {
             progress.due(self.inner.clock.now())
         };
         if let Some(sent) = due {
-            let _ = self.save(|state| state.sent_bytes = state.sent_bytes.max(sent));
+            let _ = self.save(UploadEvent::Progress { sent });
         }
     }
 
@@ -211,11 +203,7 @@ impl Runner {
         if let Some(error) = &self.source_error {
             return Err(Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))));
         }
-        self.save(|state| {
-            state.phase = UploadStatus::Preparing;
-            state.stage = UploadStage::Prepare;
-            state.error = None;
-        })?;
+        self.save(UploadEvent::Start)?;
         self.materialize().await?;
         let total = file_len(Path::new(&self.input.path), &self.token).await
             .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
@@ -228,11 +216,7 @@ impl Runner {
             state if state.upload_id.is_some() => UploadScenario::Multipart,
             _ => scenario_for(total, self.inner.config.upload.multipart_threshold),
         };
-        self.save(|state| {
-            state.total_bytes = total;
-            state.phase = UploadStatus::Uploading;
-            state.scenario = Some(scenario);
-        })?;
+        self.save(UploadEvent::Located { total, scenario })?;
         if !self.snapshot().is_transferred() {
             match scenario {
                 UploadScenario::Single => self.single(total).await?,
@@ -263,7 +247,7 @@ impl Runner {
             .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
         loop {
             if self.snapshot().put_url.is_none() {
-                self.save(|state| state.stage = UploadStage::Create)?;
+                self.save(UploadEvent::CreateStarted)?;
                 let variables = json!({
                     "filename": self.file_name(),
                     "contentType": self.content_type(),
@@ -274,33 +258,22 @@ impl Runner {
                 let url = text(&data, "url").map_err(stop_of)?;
                 let headers = crate::upload::parse_headers(data.get("headers"));
                 let (signed, blob) = (text(&data, "signedId").map_err(stop_of)?, text(&data, "blobId").map_err(stop_of)?);
-                self.save(|state| {
-                    state.signed_id = Some(signed);
-                    state.blob_id = Some(blob);
-                    state.put_url = Some(url);
-                    state.headers = headers;
-                    state.checksum = Some(checksum.clone());
-                    state.url_issued_at = Some(self.inner.clock.now().as_millis() as u64);
-                })?;
+                self.save(UploadEvent::Granted { signed_id: signed, blob_id: blob, url, headers, checksum: checksum.clone(), issued_at: self.inner.clock.now().as_millis() as u64 })?;
             }
             let grant = self.snapshot();
             let url = grant.put_url.ok_or(Stop::Superseded)?;
             let headers = grant.headers;
-            self.save(|state| state.stage = UploadStage::Put)?;
+            self.save(UploadEvent::PutStarted)?;
             self.progress().begin_phase([]);
             match self.retrying(UploadStage::Put, 0, || self.put_once(&url, &headers, 0, total, 1)).await {
                 Ok(_) => {
                     self.progress().finish(1, total);
-                    self.save(|state| {
-                        state.sent_bytes = total;
-                        state.confirmed_bytes = total;
-                        state.transferred = true;
-                    })?;
+                    self.save(UploadEvent::PutDone { total })?;
                     return Ok(());
                 }
                 Err(Stop::Expired) => {
                     self.pause_retry(UploadStage::Put, 0, OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await?;
-                    self.save(|state| { state.put_url = None; state.headers.clear(); })?;
+                    self.save(UploadEvent::GrantDropped)?;
                 }
                 Err(other) => return Err(other),
             }
@@ -357,13 +330,7 @@ impl Runner {
                 return;
             }
         }
-        let _ = self.save(|state| {
-            state.key = None;
-            state.upload_id = None;
-            state.parts.clear();
-            state.sent_bytes = 0;
-            state.request = None;
-        });
+        let _ = self.save(UploadEvent::Aborted);
     }
 
     async fn failed(&self, failure: OperationFailure) {
@@ -371,18 +338,13 @@ impl Runner {
         let stage = self.snapshot().stage;
         let snapshot = self.snapshot();
         if snapshot.upload_id.is_some() && !snapshot.all_parts_confirmed() && !self.has_pending_request() {
-            let _ = self.save(|state| state.stage = UploadStage::Abort);
+            let _ = self.save(UploadEvent::AbortStarted);
             self.abort_remote().await;
         }
         let pending = self.has_pending_request();
         let state = {
             let mut state = locked(&self.state);
-            if !pending {
-                state.stage = stage;
-            }
-            state.error = Some(failure.clone());
-            state.failed_at = Some(self.inner.clock.now().as_millis() as u64);
-            if batch { state.phase = UploadStatus::Failed; }
+            let _ = state.apply(UploadEvent::Failed { failure: failure.clone(), at: self.inner.clock.now().as_millis() as u64, batch, resume_at: (!pending).then_some(stage) });
             state.clone()
         };
         let _ = self.commit(|envelope| {
@@ -393,14 +355,14 @@ impl Runner {
 
     pub(super) async fn cancelled(&self) {
         let batch = self.inner.db.spec(&self.model).is_ok_and(|spec| spec.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&self.input.steps.mutation)));
-        let _ = self.save(|state| state.phase = UploadStatus::Cancelled);
+        let _ = self.save(UploadEvent::Cancel);
         if self.snapshot().upload_id.is_some() {
-            let _ = self.save(|state| state.stage = UploadStage::Abort);
+            let _ = self.save(UploadEvent::AbortStarted);
             self.abort_remote().await;
         }
         if self.snapshot().upload_id.is_some() {
             let failure = OperationFailure::new(FailureKind::Network, "the upload was cancelled but its remote parts are not aborted yet");
-            if batch { let _ = self.save(|state| state.error = Some(failure)); return; }
+            if batch { let _ = self.save(UploadEvent::ErrorNoted { failure }); return; }
             let _ = self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure: failure.clone() }));
             return;
         }

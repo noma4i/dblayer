@@ -19,10 +19,11 @@ fn ledger_removes_terminal_rows_recovers_by_transport_flag_and_namespaces_by_act
     assert!(!removes_row(Failed));
     assert!(removes_row(Committed));
     assert!(removes_row(RolledBack));
-    assert_eq!(recovered_status(true, Pending), DeliveryUnknown);
-    assert_eq!(recovered_status(false, Pending), Pending);
-    assert_eq!(recovered_status(true, DeliveryUnknown), DeliveryUnknown);
-    assert_eq!(recovered_status(false, Failed), Failed);
+    let recovered = |transport_started, status| OperationFacts { status, transport_started }.recovered();
+    assert_eq!(recovered(true, Pending), DeliveryUnknown);
+    assert_eq!(recovered(false, Pending), Pending);
+    assert_eq!(recovered(true, DeliveryUnknown), DeliveryUnknown);
+    assert_eq!(recovered(false, Failed), Failed);
 }
 
 #[test]

@@ -25,12 +25,11 @@ use crate::db::OutboxOperation;
 use crate::identity::RowId;
 use crate::operation::Operation;
 use crate::transport::CancelToken;
-use crate::upload::{UploadInput, UploadState, UploadStatus};
+use crate::upload::{RunMode, UploadInput, UploadState};
 
 use super::error::SyncError;
 use super::{locked, Inner, Sync};
 
-use run::Mode;
 
 struct ActiveRun {
     run: u64,
@@ -121,13 +120,8 @@ impl Inner {
         let mut ready = Vec::new();
         if let Some(operation) = operation {
             for ((_, position), state) in items {
-                let mode = match operation.status {
-                    OperationStatus::Pending if state.phase == UploadStatus::Cancelled => Some(Mode::Cancel),
-                    OperationStatus::Pending if state.phase == UploadStatus::Failed && state.upload_id.is_some() && !state.all_parts_confirmed() => Some(Mode::Orphan),
-                    OperationStatus::Pending if !operation.transport_started && !self.is_waiting(&operation) && !matches!(state.phase, UploadStatus::Failed | UploadStatus::Cancelled) => Some(if state.is_transferred() { Mode::Mutation } else { Mode::Transfer }),
-                    OperationStatus::Failed | OperationStatus::DeliveryUnknown if state.upload_id.is_some() && (state.phase == UploadStatus::Cancelled || !state.all_parts_confirmed()) && !crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()) => Some(if state.phase == UploadStatus::Cancelled { Mode::Cancel } else { Mode::Orphan }),
-                    _ => None,
-                };
+                let waiting = self.is_waiting(&operation);
+                let mode = state.run_mode(operation.status, operation.transport_started, waiting, || crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()));
                 if let Some(mode) = mode { ready.push((position, mode)); }
             }
         }
@@ -138,7 +132,7 @@ impl Inner {
             let key = (seq, position);
             if runs.active.contains_key(&key) { continue; }
             let pending = previous.remove(&key).unwrap_or(ReadyRun { resumed: None });
-            if matches!(mode, Mode::Transfer) {
+            if matches!(mode, RunMode::Transfer) {
                 runs.ready.insert(key, pending);
             } else {
                 self.launch_run(&mut runs, seq, position, mode, pending.resumed);
@@ -198,7 +192,7 @@ impl Inner {
         let retry = (|| -> Result<(), SyncError> {
             let retried = locked(self.operation_queue()?).entries.get(&seq).is_some_and(|entry| entry.uploading && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation));
             if !retried { return Ok(()); }
-            let unfinished = self.operation_uploads(seq)?.remove(&(seq, position)).is_some_and(|state| !state.is_transferred() && !matches!(state.phase, UploadStatus::Failed | UploadStatus::Cancelled));
+            let unfinished = self.operation_uploads(seq)?.remove(&(seq, position)).is_some_and(|state| state.awaits_transfer());
             if unfinished { locked(&self.uploads).ready.entry((seq, position)).or_insert(ReadyRun { resumed: None }); }
             Ok(())
         })();
@@ -209,13 +203,13 @@ impl Inner {
     }
 
     #[cfg(test)]
-    fn spawn_run(self: &Arc<Self>, seq: i64, position: i64, mode: Mode) -> Result<(), SyncError> {
+    fn spawn_run(self: &Arc<Self>, seq: i64, position: i64, mode: RunMode) -> Result<(), SyncError> {
         let transferred = self.operation_uploads(seq)?.remove(&(seq, position)).is_some_and(|state| state.is_transferred());
-        let mode = if matches!(mode, Mode::Transfer) && transferred { Mode::Mutation } else { mode };
+        let mode = if matches!(mode, RunMode::Transfer) && transferred { RunMode::Mutation } else { mode };
         {
             let mut runs = locked(&self.uploads);
             if runs.active.contains_key(&(seq, position)) { return Ok(()); }
-            if matches!(mode, Mode::Transfer) {
+            if matches!(mode, RunMode::Transfer) {
                 runs.ready.insert((seq, position), ReadyRun { resumed: None });
             } else {
                 self.launch_run(&mut runs, seq, position, mode, None);
@@ -230,13 +224,13 @@ impl Inner {
         while runs.active_files < runs.max_files {
             let Some(((seq, position), pending)) = runs.ready.pop_first() else { break };
             if runs.active.contains_key(&(seq, position)) { continue; }
-            self.launch_run(&mut runs, seq, position, Mode::Transfer, pending.resumed);
+            self.launch_run(&mut runs, seq, position, RunMode::Transfer, pending.resumed);
         }
     }
 
-    fn launch_run(self: &Arc<Self>, runs: &mut UploadRuns, seq: i64, position: i64, mode: Mode, resumed: Option<Result<crate::transport::Response, crate::transport::TransportError>>) {
+    fn launch_run(self: &Arc<Self>, runs: &mut UploadRuns, seq: i64, position: i64, mode: RunMode, resumed: Option<Result<crate::transport::Response, crate::transport::TransportError>>) {
         while runs.tasks.try_join_next().is_some() {}
-        let (run, token) = runs.register(seq, position, matches!(mode, Mode::Transfer));
+        let (run, token) = runs.register(seq, position, matches!(mode, RunMode::Transfer));
         let inner = self.clone();
         runs.tasks.spawn(self.until_closed(async move {
             if !survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed)).await {
@@ -312,17 +306,12 @@ impl Inner {
             Err(error) => { self.fail_upload(seq, error); return; }
         };
         let Some(state) = state else { return };
-        let mode = match (state.stage, state.phase) {
-                (crate::upload::UploadStage::Abort, crate::upload::UploadStatus::Cancelled) => Mode::Cancel,
-                (crate::upload::UploadStage::Abort, _) => Mode::Orphan,
-                _ if state.is_transferred() => Mode::Mutation,
-                _ => Mode::Transfer,
-            };
+        let mode = state.resume_mode();
         {
             let mut runs = locked(&self.uploads);
             if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) { return; }
             if let Some(active) = runs.active.remove(&(seq, owner.position)) { active.done.send_replace(true); }
-            if matches!(mode, Mode::Transfer) {
+            if matches!(mode, RunMode::Transfer) {
                 runs.ready.insert((seq, owner.position), ReadyRun { resumed: Some(result) });
             } else {
                 self.launch_run(&mut runs, seq, owner.position, mode, Some(result));
@@ -386,7 +375,7 @@ impl Sync {
         for (token, _) in &running { token.cancel(); }
         if running.is_empty() {
             for ((_, item), _) in self.inner.operation_uploads(seq)? {
-                if position.is_none_or(|position| item == position) { self.run_inline(seq, item, Mode::Cancel).await; }
+                if position.is_none_or(|position| item == position) { self.run_inline(seq, item, RunMode::Cancel).await; }
             }
         } else {
             for (_, mut done) in running { let _ = done.wait_for(|finished| *finished).await; }
@@ -412,7 +401,7 @@ impl Sync {
         }
     }
 
-    async fn run_inline(&self, seq: i64, position: i64, mode: Mode) {
+    async fn run_inline(&self, seq: i64, position: i64, mode: RunMode) {
         let Some((run, token)) = self.inner.register(seq, position) else { return };
         run::drive(self.inner.clone(), seq, position, run, token, mode, None).await;
         self.inner.finish_run(seq, position, run);

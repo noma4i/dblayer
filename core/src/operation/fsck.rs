@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
-use super::status::{recovered_status, removes_row, Operation, OperationId, OperationStatus};
+use super::machine::OperationFacts;
+use super::status::{removes_row, Operation, OperationId, OperationStatus};
 use crate::identity::{ModelKey, RowRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,7 +21,7 @@ pub fn fsck_action(operation: &Operation, known_models: &HashSet<String>) -> Fsc
     if !operation.transport_started {
         return keep;
     }
-    FsckAction::SetStatus(operation.id, recovered_status(operation.transport_started, operation.status))
+    FsckAction::SetStatus(operation.id, OperationFacts { status: operation.status, transport_started: operation.transport_started }.recovered())
 }
 
 pub fn needs_temp_rebuild(operation: &Operation, resident_rows: &HashSet<RowRef>) -> bool {
