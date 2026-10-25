@@ -33,7 +33,7 @@ use crate::pacing::Backoff;
 use crate::transport::{EventSpec, MockTransport};
 
 use super::rig::{rig_on, specs};
-use super::{EventEffect, LoadOptions, OperationDef, SubscriptionDef, SyncConfig};
+use super::{EventEffect, LoadOptions, OperationDef, SubscriptionDef, Sync, SyncConfig};
 
 use findings::Findings;
 use observers::{Aliases, Universe, Watchers};
@@ -89,7 +89,7 @@ fn scratch_dir() -> tempfile::TempDir {
 
 fn runtime(threads: usize) -> Runtime {
     if threads <= 1 {
-        Builder::new_current_thread().max_blocking_threads(1).enable_time().start_paused(true).build().expect("runtime")
+        Builder::new_current_thread().enable_time().start_paused(true).build().expect("runtime")
     } else {
         Builder::new_multi_thread().worker_threads(threads).enable_time().build().expect("runtime")
     }
@@ -200,7 +200,13 @@ async fn worker_loop(id: usize, config: StressConfig, world: Arc<World>, progres
         let label = name_of(op);
         progress.begin(id, label);
         world.findings.trace(|| format!("worker {id} op {done} {label}"));
-        if tokio::time::timeout(STEP_LIMIT, worker.run(&world, op)).await.is_err() {
+        let step = async {
+            worker.run(&world, op).await;
+            if config.threads <= 1 && !world.is_offline() {
+                settle_uploads(&world.rig.sync).await;
+            }
+        };
+        if tokio::time::timeout(STEP_LIMIT, step).await.is_err() {
             world.findings.report("hang", format!("worker {id} did not finish {label} in {} s\n{}", STEP_LIMIT.as_secs(), dump(&world, &progress)));
             stop.store(true, Ordering::SeqCst);
             return;
@@ -214,30 +220,12 @@ async fn worker_loop(id: usize, config: StressConfig, world: Arc<World>, progres
             check::lists(&world.rig.db, &world.findings);
             check::cache(&world.rig.db, &world.universe, &world.findings);
         }
-        if config.threads <= 1 {
-            settle_blocking(|| format!("{} {:?} {}", world.server.received(), world.rig.db.revision_seq(), outbox_line(&world))).await;
-        } else {
-            tokio::task::yield_now().await;
-        }
+        tokio::task::yield_now().await;
     }
 }
 
-async fn settle_blocking(observe: impl Fn() -> String) {
-    let mut last = observe();
-    let mut unchanged = 0;
-    while unchanged < 2 {
-        let _ = tokio::task::spawn_blocking(|| ()).await;
-        for _ in 0..3 {
-            tokio::task::yield_now().await;
-        }
-        let now = observe();
-        if now == last {
-            unchanged += 1;
-        } else {
-            unchanged = 0;
-            last = now;
-        }
-    }
+async fn settle_uploads(sync: &Sync) {
+    sync.wait_uploads().await;
 }
 
 async fn drain(world: &World, progress: &Progress) {

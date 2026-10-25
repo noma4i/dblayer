@@ -50,6 +50,7 @@ struct Backend {
     retries: u64,
     active_retries: u64,
     received: u64,
+    blob_hold: Duration,
 }
 
 #[derive(Clone)]
@@ -113,6 +114,7 @@ impl FakeServer {
             retries: 0,
             active_retries: 0,
             received: 0,
+            blob_hold: Duration::ZERO,
         };
         let server = Self { backend: Arc::new(Mutex::new(backend)), transport: transport.clone(), findings };
         let responder = server.clone();
@@ -141,6 +143,10 @@ impl FakeServer {
 
     pub fn set_calm(&self, calm: bool) {
         self.lock().calm = calm;
+    }
+
+    pub fn hold_blob_replies(&self, by: Duration) {
+        self.lock().blob_hold = by;
     }
 
     pub fn note_retry(&self) -> RetryCall {
@@ -258,6 +264,7 @@ impl FakeServer {
         backend.received += 1;
         let applies = matches!(fate, Fate::Committed | Fate::AppliedThenLost | Fate::ServerErrorApplied);
         let delay = Self::delay(&mut backend, 30);
+        let delay = if name == "CreateBlob" && !backend.blob_hold.is_zero() { backend.blob_hold } else { delay };
         let token = (name == "CreateMoment" || name == "UpdateMoment").then(|| variables["text"].as_str().unwrap_or_default().to_string());
         let keeps_failures = variables.get("signedId").is_some();
         let applied = if applies { self.apply(&mut backend, name, variables) } else { Err("not applied".to_string()) };

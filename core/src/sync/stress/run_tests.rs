@@ -1,6 +1,14 @@
 use std::time::Duration;
 
-use super::{run, runtime, settle_blocking, shrink, StressConfig};
+use serde_json::json;
+
+use crate::db::Db;
+use crate::sync::rig::{rig_on, specs};
+use crate::sync::{OperationDef, SyncConfig};
+use crate::transport::MockTransport;
+use crate::upload::{UploadInput, UploadSteps};
+
+use super::{run, runtime, scratch_dir, settle_uploads, shrink, FakeServer, Findings, StressConfig};
 
 #[test]
 fn finishing_a_run_keeps_another_runs_uploads() {
@@ -36,23 +44,26 @@ fn another_seed_ends_in_another_state() {
 }
 
 #[test]
-fn settling_waits_for_a_blocking_job_until_it_is_released() {
+fn settling_uploads_waits_for_an_upload_started_offline_and_released_online() {
     runtime(1).block_on(async {
-        let (release, held) = std::sync::mpsc::channel::<()>();
-        let job = tokio::task::spawn_blocking(move || held.recv().unwrap());
-        let settled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let flag = settled.clone();
-        let waiter = tokio::spawn(async move {
-            settle_blocking(String::new).await;
-            flag.store(true, std::sync::atomic::Ordering::SeqCst);
-        });
-        for _ in 0..20 {
-            tokio::task::yield_now().await;
-        }
-        assert!(!settled.load(std::sync::atomic::Ordering::SeqCst));
-        release.send(()).unwrap();
-        job.await.unwrap();
-        waiter.await.unwrap();
-        assert!(settled.load(std::sync::atomic::Ordering::SeqCst));
+        let transport = MockTransport::new();
+        let server = FakeServer::install(&transport, 1, Findings::default());
+        server.set_calm(true);
+        let rig = rig_on(Db::open_in_memory(specs(), None).unwrap(), transport, SyncConfig::default());
+        rig.sync.register(OperationDef::new("CreateBlob", "operation CreateBlob { x }", "createBlob"));
+        server.set_offline(true);
+        rig.sync.set_online(false);
+        let row = rig.db.create("moments", json!({"text": "w0:1"}).as_object().unwrap().clone()).unwrap();
+        let scratch = scratch_dir();
+        let path = scratch.path().join("upload.bin");
+        std::fs::write(&path, b"abcdef").unwrap();
+        let input = UploadInput::new(&path.to_string_lossy(), UploadSteps::new("CreateMoment").single("CreateBlob")).variable("text", json!("w0:2"));
+        rig.sync.upload("moments", &row.id, "upload", input).await.unwrap();
+        server.set_offline(false);
+        server.hold_blob_replies(std::time::Duration::from_secs(10));
+        rig.sync.set_online(true);
+        settle_uploads(&rig.sync).await;
+        assert!(rig.db.outbox().unwrap().iter().all(|entry| entry.operation.upload.is_none()));
+        assert_eq!(*rig.sync.inner.file_tasks.borrow(), 0);
     });
 }
