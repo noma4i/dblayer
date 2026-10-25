@@ -23,7 +23,7 @@ fn upload_at(db: &Db, sent: u64) {
         None => {
             let record = OperationRecord {
                 seq: None,
-                action_key: "moments:upload".to_string(),
+                action_key: "moments:upload:upload".to_string(),
                 status: OperationStatus::Pending,
                 row_ids: vec![rid("m1")],
                 temp_id: None,

@@ -4,7 +4,6 @@ use crate::identity::RowId;
 #[cfg(test)]
 use crate::syncstate::{read_sync, SyncInfo};
 #[cfg(test)]
-use crate::upload::UploadInfo;
 
 use super::error::DbError;
 use super::prior::Prior;
@@ -28,11 +27,6 @@ impl Db {
     pub fn sync_info(&self, model: &str, id: &RowId) -> Result<SyncInfo, DbError> {
         self.shared.spec(model)?;
         self.shared.read(&[model], |reader| Ok(read_sync(reader.connection(), model, &[id.to_string()])?.remove(id.as_str()).unwrap_or_default()))
-    }
-
-    #[cfg(test)]
-    pub fn upload_info(&self, model: &str, id: &RowId) -> Result<Option<UploadInfo>, DbError> {
-        Ok(self.sync_info(model, id)?.upload)
     }
 
     pub fn retry(&self, model: &str, id: &RowId) -> Result<usize, DbError> {

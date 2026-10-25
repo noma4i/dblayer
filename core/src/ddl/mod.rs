@@ -72,7 +72,7 @@ END",
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 36] = [
+const CORE_STATEMENTS: [&str; 37] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -189,16 +189,22 @@ const CORE_STATEMENTS: [&str; 36] = [
   error_extensions TEXT,
   attempts INTEGER NOT NULL,
   since INTEGER NOT NULL,
-  up_status TEXT,
-  up_stage TEXT,
-  up_sent INTEGER,
-  up_total INTEGER,
-  up_wait TEXT,
-  up_attempts INTEGER,
-  up_error_kind TEXT,
-  up_error_message TEXT,
-  up_error_extensions TEXT,
   PRIMARY KEY (model, row_id)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS sync_upload (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  status TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  sent INTEGER NOT NULL,
+  total INTEGER NOT NULL,
+  wait TEXT,
+  attempts INTEGER NOT NULL,
+  error_kind TEXT,
+  error_message TEXT,
+  error_extensions TEXT,
+  PRIMARY KEY (model, row_id, action)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS sync_action (
   model TEXT NOT NULL,

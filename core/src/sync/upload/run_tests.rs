@@ -72,7 +72,7 @@ fn cancellation_does_not_wait_for_queued_file_io() {
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let mut changes = rig.db.outbox_changes();
         rig.sync.inner.spawn_run(seq, 0, Mode::Transfer).unwrap();
-        crate::sync::rig::await_outbox(&mut changes, || rig.db.upload_info("moments", &rid("m1")).unwrap().is_some_and(|upload| upload.status == UploadStatus::Preparing)).await;
+        crate::sync::rig::await_outbox(&mut changes, || rig.db.sync_info("moments", &rid("m1")).unwrap().uploads.get("upload").cloned().is_some_and(|upload| upload.status == UploadStatus::Preparing)).await;
         let cancelled = tokio::time::timeout(Duration::from_secs(1), rig.sync.cancel_upload("moments", &rid("m1"), "upload")).await;
         release_tx.send(()).unwrap();
         occupied.await.unwrap();
@@ -178,7 +178,7 @@ async fn an_unwritable_owned_file_is_failed_without_restarting_the_runner() {
     rig.sync.inner.start_uploads().unwrap();
     let finished = tokio::time::timeout(Duration::from_secs(5), rig.sync.wait_uploads()).await;
     assert!(finished.is_ok(), "the source error restarted the runner instead of failing the operation");
-    assert_eq!(rig.db.upload_info("moments", &rid("m1")).unwrap().unwrap().status, crate::upload::UploadStatus::Failed);
+    assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().uploads.get("upload").cloned().unwrap().status, crate::upload::UploadStatus::Failed);
     assert!(rig.transport.calls().is_empty());
 }
 

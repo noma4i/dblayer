@@ -56,7 +56,7 @@ async fn restart_preserves_each_put_budget_and_deadline() {
         rig.transport.enqueue_put("https://storage/file", PutReply::status(503));
         let mut outbox = rig.db.outbox_changes();
         rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
-        await_outbox(&mut outbox, || rig.db.upload_info("assets", &rid("a")).unwrap().unwrap().attempts == 1).await;
+        await_outbox(&mut outbox, || rig.db.sync_info("assets", &rid("a")).unwrap().uploads.get("upload").cloned().unwrap().attempts == 1).await;
         assert_eq!(rig.transport.put_count("https://storage/file"), 1);
         shutdown(rig).await;
         let rig = reopen(&path, 1);
@@ -71,7 +71,7 @@ async fn restart_preserves_each_put_budget_and_deadline() {
         rig.sync.set_online(true);
         rig.sync.wait_uploads().await;
         observed.push((multipart, rig.transport.put_calls().iter().filter(|call| call.url == "https://storage/file").count()));
-        assert_eq!(rig.db.upload_info("assets", &rid("a")).unwrap().unwrap().status, UploadStatus::Failed);
+        assert_eq!(rig.db.sync_info("assets", &rid("a")).unwrap().uploads.get("upload").cloned().unwrap().status, UploadStatus::Failed);
         shutdown(rig).await;
     }
     assert_eq!(observed, [(false, 1), (true, 1)], "restart granted another retry");
@@ -105,7 +105,7 @@ async fn restart_preserves_each_graphql_step_budget() {
         assert_eq!(rig.transport.call_count(operation), 0, "{operation} skipped its deadline");
         rig.sync.wait_uploads().await;
         observed.push((operation, rig.transport.call_count(operation)));
-        assert_eq!(rig.db.upload_info("assets", &rid("a")).unwrap().unwrap().status, UploadStatus::Failed);
+        assert_eq!(rig.db.sync_info("assets", &rid("a")).unwrap().uploads.get("upload").cloned().unwrap().status, UploadStatus::Failed);
         shutdown(rig).await;
     }
     assert_eq!(observed, [("Grant", 1), ("Start", 1), ("Sign", 1), ("Finish", 1)]);
@@ -150,7 +150,7 @@ async fn manual_retry_refreshes_the_budget_and_success_removes_its_record() {
     assert_eq!(rig.transport.put_calls().len(), 4);
     assert!(rig.db.outbox().unwrap()[0].operation.upload.as_ref().unwrap().is_transferred());
     assert_eq!(retry_rows(&rig), 0, "successful PUT retained its retry record");
-    assert_eq!(rig.db.upload_info("assets", &rid("a")).unwrap().unwrap().attempts, 0);
+    assert_eq!(rig.db.sync_info("assets", &rid("a")).unwrap().uploads.get("upload").cloned().unwrap().attempts, 0);
     shutdown(rig).await;
 }
 
@@ -198,7 +198,7 @@ async fn alternating_grant_failures_and_put_expiry_share_only_the_put_budget() {
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("Grant"), 4);
     assert_eq!(rig.transport.put_calls().len(), 2, "url renewal reset the PUT budget");
-    let info = rig.db.upload_info("assets", &rid("a")).unwrap().unwrap();
+    let info = rig.db.sync_info("assets", &rid("a")).unwrap().uploads.get("upload").cloned().unwrap();
     assert_eq!((info.status, info.attempts), (UploadStatus::Failed, 1));
     assert_eq!(retry_rows(&rig), 1);
     shutdown(rig).await;
@@ -215,7 +215,7 @@ async fn fifty_retries_exhaust_the_step_budget() {
     rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.put_calls().len(), 51);
-    let info = rig.db.upload_info("assets", &rid("a")).unwrap().unwrap();
+    let info = rig.db.sync_info("assets", &rid("a")).unwrap().uploads.get("upload").cloned().unwrap();
     assert_eq!((info.status, info.attempts), (UploadStatus::Failed, 50));
     shutdown(rig).await;
 }

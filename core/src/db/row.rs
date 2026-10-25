@@ -5,7 +5,6 @@ use serde_json::{Map, Value};
 use crate::identity::RowId;
 use crate::syncstate::SyncInfo;
 #[cfg(test)]
-use crate::upload::UploadInfo;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
@@ -19,11 +18,6 @@ pub struct Record {
 pub type Row = Arc<Record>;
 
 impl Record {
-    #[cfg(test)]
-    pub fn upload(&self) -> Option<&UploadInfo> {
-        self.sync.upload.as_ref()
-    }
-
     pub fn is_local(&self) -> bool {
         self.id.is_temp()
     }

@@ -132,7 +132,7 @@ fn the_row_carries_its_id_sync_state_and_upload() {
     data.sync.error = Some(crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Server, "http 503"));
     data.sync.attempts = 2;
     data.sync.since = 7;
-    data.sync.upload = Some(crate::upload::UploadInfo {
+    data.sync.uploads.insert("upload".to_string(), crate::upload::UploadInfo {
         status: crate::upload::UploadStatus::Uploading,
         stage: crate::upload::UploadStage::Part,
         sent_bytes: 40,
@@ -155,16 +155,19 @@ fn the_row_carries_its_id_sync_state_and_upload() {
         }
     );
     assert_eq!(
-        wire.upload,
-        Some(WireUpload {
-            status: WireUploadStatus::Uploading,
-            stage: "part".into(),
-            sent_bytes: 40,
-            total_bytes: 90,
-            wait_reason: Some("create_unconfirmed".into()),
-            attempts: 1,
-            error: None,
-        })
+        wire.uploads,
+        vec![WireUploadEntry {
+            action: "upload".into(),
+            upload: WireUpload {
+                status: WireUploadStatus::Uploading,
+                stage: "part".into(),
+                sent_bytes: 40,
+                total_bytes: 90,
+                wait_reason: Some("create_unconfirmed".into()),
+                attempts: 1,
+                error: None,
+            },
+        }]
     );
 }
 

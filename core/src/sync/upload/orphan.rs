@@ -19,6 +19,7 @@ impl Inner {
         locked(&self.uploads).tasks.spawn_on(task, &runtime);
     }
 
+    #[cfg(test)]
     pub(crate) async fn upload_housekeeping(self: &Arc<Self>) -> Result<(), SyncError> {
         self.run_housekeeping(true).await
     }

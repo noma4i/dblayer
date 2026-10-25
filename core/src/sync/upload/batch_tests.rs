@@ -309,8 +309,8 @@ async fn cancelling_one_offline_item_keeps_the_other_item_and_both_local_rows() 
     let request = UploadBatchInput { operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default() };
     let ids: Vec<_> = sync.upload_create_batch("Asset", items, request).await.unwrap().iter().map(|row| row.id.clone()).collect();
     assert!(sync.cancel_upload("Asset", &ids[0], "create_files").await.unwrap());
-    assert!(db.find("Asset", &ids[0]).unwrap().unwrap().upload().is_none());
-    assert!(db.find("Asset", &ids[1]).unwrap().unwrap().upload().is_some());
+    assert!(db.find("Asset", &ids[0]).unwrap().unwrap().sync.uploads.is_empty());
+    assert!(db.find("Asset", &ids[1]).unwrap().unwrap().sync.uploads.contains_key("create_files"));
     assert!(transport.calls().is_empty());
 }
 
@@ -424,7 +424,7 @@ async fn batch_creates_all_rows_and_owns_each_file_before_returning() {
         assert!(id.is_temp());
         let row = db.find("Asset", id).unwrap().unwrap();
         assert_eq!(row.sync.state, SyncState::Sending);
-        assert!(row.upload().is_some());
+        assert!(row.sync.uploads.contains_key("create_files"));
     }
     assert_eq!(db.outbox().unwrap().len(), 1);
     db.shared.read(&[], |reader| {

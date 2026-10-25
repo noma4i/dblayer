@@ -36,7 +36,7 @@ impl Sync {
     /// Waits until every queued change of the record is answered. Fails with the refusal, when a change is refused or its outcome is unknown.
     pub async fn settled(&self, model: &str, id: &RowId) -> Result<(), SyncError> {
         let waiting = |row: &RowId| -> Result<Vec<i64>, SyncError> {
-            if let Some(failure) = self.inner.db.find(model, row)?.filter(|row| row.sync.upload.as_ref().is_some_and(|upload| upload.status == crate::upload::UploadStatus::Failed)).and_then(|row| row.sync.error.clone()) {
+            if let Some(failure) = self.inner.db.find(model, row)?.filter(|row| row.sync.uploads.values().any(|upload| upload.status == crate::upload::UploadStatus::Failed)).and_then(|row| row.sync.error.clone()) {
                 return Err(outcomes::error_of(model, &SendResult::Rejected(failure), row.as_str()));
             }
             Ok(locked(self.inner.operation_queue()?).pending_of(&crate::identity::RowRef::new(crate::identity::ModelKey::new(model), row.clone())))

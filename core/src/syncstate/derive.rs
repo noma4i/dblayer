@@ -42,9 +42,14 @@ pub fn fold_entries(entries: &[SyncEntry]) -> Option<SyncInfo> {
         }
     }
     let waiting = entries.iter().any(|entry| entry.action == "create").then_some(WaitReason::CreateUnconfirmed);
-    let upload = entries
+    let uploads = entries
         .iter()
-        .find_map(|entry| entry.upload.as_ref().map(|state| UploadInfo::of(entry.status, entry.transport_started, state, waiting, entry.error.clone())));
+        .filter_map(|entry| {
+            let action = entry.action.strip_prefix("upload:")?;
+            let state = entry.upload.as_ref()?;
+            Some((action.to_string(), UploadInfo::of(entry.status, entry.transport_started, state, waiting, entry.error.clone())))
+        })
+        .collect();
     Some(SyncInfo {
         state: decisive.state(),
         actions: entries.iter().filter(|entry| entry.upload.is_none()).map(|entry| entry.action.clone()).collect(),
@@ -52,6 +57,6 @@ pub fn fold_entries(entries: &[SyncEntry]) -> Option<SyncInfo> {
         error: decisive.error.clone(),
         attempts: decisive.attempts,
         since: decisive.since,
-        upload,
+        uploads,
     })
 }

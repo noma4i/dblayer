@@ -12,7 +12,7 @@ use crate::syncstate::OperationFailure;
 use crate::upload::{UploadInfo, UploadPart, UploadRequest, UploadRetry, UploadState};
 
 pub const UPLOAD_COLUMNS: &str = "phase, stage, scenario, total_bytes, sent_bytes, storage_key, upload_id, signed_id, blob_id, document, operation, transferred, confirmed_bytes, checksum, put_url, url_issued_at, failed_at, error_kind, error_message, error_extensions";
-pub const INFO_COLUMNS: &str = "up_status, up_stage, up_sent, up_total, up_wait, up_attempts, up_error_kind, up_error_message, up_error_extensions";
+pub const INFO_COLUMNS: &str = "status, stage, sent, total, wait, attempts, error_kind, error_message, error_extensions";
 
 pub fn enum_text<T: Serialize>(value: &T) -> Option<String> {
     match serde_json::to_value(value) {

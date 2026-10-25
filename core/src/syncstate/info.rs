@@ -100,7 +100,7 @@ pub struct SyncInfo {
     pub error: Option<OperationFailure>,
     pub attempts: u32,
     pub since: i64,
-    pub upload: Option<UploadInfo>,
+    pub uploads: std::collections::BTreeMap<String, UploadInfo>,
 }
 
 impl SyncInfo {

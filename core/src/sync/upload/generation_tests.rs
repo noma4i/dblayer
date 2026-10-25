@@ -14,7 +14,7 @@ async fn a_step_answered_after_reset_all_sends_nothing_and_leaves_nothing() {
     rig.sync.wait_uploads().await;
     assert_eq!((rig.transport.put_calls().len(), rig.transport.call_count("CreateMoment")), (0, 0));
     assert!(rig.db.outbox().unwrap().is_empty());
-    assert_eq!(rig.db.upload_info("moments", &rid("m1")).unwrap(), None);
+    assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().uploads.get("upload").cloned(), None);
 }
 
 #[tokio::test(start_paused = true)]

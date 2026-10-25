@@ -14,12 +14,16 @@ fn database() -> Connection {
 }
 
 fn insert_upload(connection: &Connection, status: &str, started: i64, state: &UploadState) -> i64 {
+    insert_action_upload(connection, "upload", status, started, state)
+}
+
+fn insert_action_upload(connection: &Connection, action: &str, status: &str, started: i64, state: &UploadState) -> i64 {
     let failure = (status == "failed").then(|| OperationFailure::new(FailureKind::Network, "offline"));
     let [kind, message, extensions] = failure_cells(failure.as_ref()).unwrap();
     connection
         .execute(
-            "INSERT INTO op (action_key, status, transport_started, created_at, since, error_kind, error_message, error_extensions) VALUES ('moments:upload', ?1, ?2, 5, 5, ?3, ?4, ?5)",
-            rusqlite::params![status, started, kind, message, extensions],
+            "INSERT INTO op (action_key, status, transport_started, created_at, since, error_kind, error_message, error_extensions) VALUES (?6, ?1, ?2, 5, 5, ?3, ?4, ?5)",
+            rusqlite::params![status, started, kind, message, extensions, format!("moments:upload:{action}")],
         )
         .unwrap();
     let seq = connection.last_insert_rowid();
@@ -50,11 +54,11 @@ fn a_queued_upload_is_pending_and_a_running_one_is_sending() {
     let seq = insert_upload(&connection, "pending", 0, &state(UploadStatus::Queued, 0));
     recompute_sync(&connection, &keys()).unwrap();
     let queued = info(&connection).unwrap();
-    assert_eq!((queued.state, queued.upload.as_ref().map(|upload| upload.status)), (SyncState::Pending, Some(UploadStatus::Queued)));
+    assert_eq!((queued.state, queued.uploads.get("upload").map(|upload| upload.status)), (SyncState::Pending, Some(UploadStatus::Queued)));
     set_upload(&connection, seq, &state(UploadStatus::Uploading, 40));
     assert_eq!(recompute_sync(&connection, &keys()).unwrap(), keys());
     let running = info(&connection).unwrap();
-    let upload = running.upload.unwrap();
+    let upload = running.uploads.get("upload").cloned().unwrap();
     assert_eq!((running.state, upload.status, upload.stage, upload.sent_bytes, upload.total_bytes), (SyncState::Sending, UploadStatus::Uploading, UploadStage::Put, 40, 100));
     assert_eq!(upload.fraction(), 0.4);
 }
@@ -75,7 +79,7 @@ fn a_failed_upload_carries_the_error_and_a_closed_one_leaves_no_upload() {
     let seq = insert_upload(&connection, "failed", 0, &state(UploadStatus::Uploading, 10));
     recompute_sync(&connection, &keys()).unwrap();
     let failed = info(&connection).unwrap();
-    let upload = failed.upload.unwrap();
+    let upload = failed.uploads.get("upload").cloned().unwrap();
     assert_eq!((failed.state, upload.status, upload.error.map(|error| error.message)), (SyncState::Failed, UploadStatus::Failed, Some("offline".to_string())));
     delete_operation(&connection, seq).unwrap();
     recompute_sync(&connection, &keys()).unwrap();
@@ -90,5 +94,17 @@ fn an_operation_without_upload_state_has_no_upload() {
         .unwrap();
     write_rows(&connection, connection.last_insert_rowid(), &[crate::identity::RowId::new("m1").unwrap()]).unwrap();
     recompute_sync(&connection, &keys()).unwrap();
-    assert_eq!(info(&connection).unwrap().upload, None);
+    assert!(info(&connection).unwrap().uploads.is_empty());
+}
+
+#[test]
+fn a_record_shows_every_upload_it_holds_by_action() {
+    let connection = database();
+    insert_action_upload(&connection, "upload", "pending", 0, &state(UploadStatus::Queued, 0));
+    insert_action_upload(&connection, "cover", "pending", 0, &state(UploadStatus::Uploading, 40));
+    recompute_sync(&connection, &keys()).unwrap();
+    let info = info(&connection).unwrap();
+    let shown: Vec<_> = info.uploads.iter().map(|(action, upload)| (action.as_str(), upload.status, upload.sent_bytes)).collect();
+    assert_eq!(shown, [("cover", UploadStatus::Uploading, 40), ("upload", UploadStatus::Queued, 0)]);
+    assert!(info.actions.is_empty());
 }

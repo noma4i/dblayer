@@ -65,6 +65,12 @@ pub struct WireUpload {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct WireUploadEntry {
+    pub action: String,
+    pub upload: WireUpload,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireSync {
     pub state: WireSyncState,
     pub actions: Vec<String>,
@@ -82,7 +88,7 @@ pub struct WireRow {
     pub layout: String,
     pub cells: Vec<Cell>,
     pub sync: WireSync,
-    pub upload: Option<WireUpload>,
+    pub uploads: Vec<WireUploadEntry>,
 }
 
 pub fn wire_fields(spec: &ModelSpec) -> Vec<&FieldSpec> {
@@ -264,7 +270,7 @@ impl WireModel {
             layout: self.layout.clone(),
             cells: self.fields.iter().map(|field| cell(field, record.data.get(&field.name), &mut types)).collect(),
             sync: sync(&record.sync),
-            upload: record.sync.upload.as_ref().map(upload),
+            uploads: record.sync.uploads.iter().map(|(action, info)| WireUploadEntry { action: action.clone(), upload: upload(info) }).collect(),
         }
     }
 }

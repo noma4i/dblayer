@@ -29,7 +29,7 @@ pub(crate) fn row_bytes(model: &str, row: &super::Record) -> usize {
         + model.len() + 2 * row.id.as_str().len() + object_bytes(&row.data)
         + strings(&row.sync.actions) + strings(&row.sync.dirty_fields)
         + row.sync.error.as_ref().map_or(0, |error| error.message.capacity())
-        + row.sync.upload.as_ref().and_then(|upload| upload.error.as_ref()).map_or(0, |error| error.message.capacity())
+        + row.sync.uploads.iter().map(|(action, upload)| action.capacity() + upload.error.as_ref().map_or(0, |error| error.message.capacity())).sum::<usize>()
 }
 
 pub(crate) struct RowCache {

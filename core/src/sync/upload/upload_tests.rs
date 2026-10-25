@@ -110,7 +110,7 @@ fn variables(rig: &Rig, operation: &str) -> Vec<Value> {
 }
 
 fn upload_of(rig: &Rig, id: &str) -> Option<crate::upload::UploadInfo> {
-    rig.db.upload_info("moments", &rid(id)).unwrap()
+    rig.db.sync_info("moments", &rid(id)).unwrap().uploads.get("upload").cloned()
 }
 
 fn stored_state(rig: &Rig) -> UploadState {
@@ -396,7 +396,7 @@ async fn observers_and_reads_see_the_upload_state_and_bytes_while_it_runs() {
     let _observer = rig
         .db
         .observe_row("moments", &rid("m1"), move |change| {
-            let upload = change.rows.first().and_then(|row| row.upload()).map(|upload| (upload.status, upload.stage, upload.sent_bytes));
+            let upload = change.rows.first().and_then(|row| row.sync.uploads.get("upload")).map(|upload| (upload.status, upload.stage, upload.sent_bytes));
             sink.lock().unwrap().push(upload);
         })
         .unwrap();
