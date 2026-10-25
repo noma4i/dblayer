@@ -569,7 +569,7 @@ async fn inv_upload_09_offline_waits_without_spending_attempts() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_network_error_while_offline_is_not_an_attempt() {
+async fn inv_upload_09_a_network_error_while_offline_is_not_an_attempt() {
     let rig = upload_rig(UploadConfig { backoff: Backoff::new(Duration::from_secs(1), Duration::from_secs(15)).limited(0), ..small() });
     single_replies(&rig);
     rig.transport.enqueue_put("https://s3/single", PutReply::fail(TransportError::Network("lost".into())).after(Duration::from_secs(8)));
