@@ -73,7 +73,6 @@ struct GroupFacts {
     read_error: Option<DbError>,
     joining: Subscribers,
     growth: Option<(usize, usize)>,
-    seen: i64,
 }
 
 struct Group {
@@ -96,7 +95,6 @@ struct Opening {
     missed: bool,
     read_error: Option<DbError>,
     growth: Option<(usize, usize)>,
-    seen: i64,
 }
 
 #[derive(Clone)]
@@ -122,6 +120,15 @@ pub(crate) struct Observers {
     pub(crate) warm_ids: HashSet<u64>,
     read_ready: BTreeMap<u64, String>,
     read_order: HashMap<String, u64>,
+    top: i64,
+    reach_waiting: Vec<ReachWait>,
+}
+
+struct ReachWait {
+    key: String,
+    id: u64,
+    subscriber: Arc<Subscriber>,
+    revision: i64,
 }
 
 impl Observers {
@@ -141,15 +148,15 @@ impl Observers {
     }
 
     /// The revision that a group has read, or None while it still has work. Subscribers are told this revision, and `Db::await_revision` waits for it.
-    fn mark(group: &Group) -> Option<i64> {
+    fn mark(group: &Group, top: i64) -> Option<i64> {
         let facts = &group.facts;
         let idle = !facts.reading && facts.read_error.is_none() && facts.again.is_none() && facts.growth.is_none() && facts.joining.is_empty();
-        idle.then(|| facts.seen.max(group.at))
+        idle.then(|| top.max(group.at))
     }
 
     fn reached_through(&self, revision: i64) -> bool {
         let groups = self.groups.values().all(|group| {
-            let read = if group.facts.read_error.is_some() { !group.facts.reading } else { Self::mark(group).is_some_and(|reached| reached >= revision) };
+            let read = if group.facts.read_error.is_some() { !group.facts.reading } else { Self::mark(group, self.top).is_some_and(|reached| reached >= revision) };
             read && group.subscribers.iter().chain(&group.facts.joining).all(|(_, subscriber)| subscriber.idle())
         });
         let opening = self.opening.values().all(|opening| opening.read_error.is_some() && !opening.reading && opening.waiting.iter().all(|(_, subscriber)| subscriber.idle()));
@@ -158,8 +165,13 @@ impl Observers {
     }
 
     #[cfg(test)]
+    pub(crate) fn groups_read_through(&self, revision: i64) -> bool {
+        self.groups.values().all(|group| Self::mark(group, self.top).is_some_and(|reached| reached >= revision))
+    }
+
+    #[cfg(test)]
     pub(crate) fn groups_seen_through(&self, revision: i64) -> bool {
-        self.groups.values().all(|group| group.facts.seen >= revision)
+        self.top >= revision
     }
 
     #[cfg(test)]
@@ -294,11 +306,54 @@ impl ObserverHandle {
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
+
+    #[cfg(test)]
+    pub(crate) fn owes_delivery(&self) -> bool {
+        self.subscriber.owes_delivery()
+    }
+
+    pub(crate) fn control(&self) -> ObserverControl {
+        ObserverControl { shared: self.shared.clone(), group: self.group.clone(), id: self.id, subscriber: self.subscriber.clone() }
+    }
+
+    pub(crate) fn want_reach(&self, revision: i64) {
+        self.control().want_reach(revision);
+    }
+
+    pub(crate) fn resume(&self) {
+        self.control().resume();
+    }
+}
+
+/// Controls one feed observer without keeping it alive: dropping the `ObserverHandle` still cancels it.
+#[derive(Clone)]
+pub(crate) struct ObserverControl {
+    shared: Weak<Shared>,
+    group: String,
+    id: u64,
+    subscriber: Arc<Subscriber>,
+}
+
+impl ObserverControl {
+    /// Asks to be told through `Feed::Reached` once the group has read through `revision`. Nothing is sent to a subscriber that did not ask.
+    pub(crate) fn want_reach(&self, revision: i64) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.command_observers(ObserverCommand::WantReach { group: self.group.clone(), id: self.id, subscriber: self.subscriber.clone(), revision });
+        }
+    }
+
+    /// Starts the deliveries of an observer created paused. Everything that happened meanwhile arrives as one change.
+    pub(crate) fn resume(&self) {
+        if let Some(shared) = self.shared.upgrade() {
+            self.subscriber.resume(&shared.executor);
+        }
+    }
 }
 
 pub(crate) enum ObserverCommand {
     Grow { group: String, before: usize, after: usize },
     Cancel { group: String, id: u64 },
+    WantReach { group: String, id: u64, subscriber: Arc<Subscriber>, revision: i64 },
 }
 
 impl ObserverHandle {
@@ -326,6 +381,23 @@ impl Shared {
         }
     }
 
+    /// Tells each subscriber that asked for a revision once its group has read through it. Groups no one asked about are not visited.
+    fn serve_reach(&self, observers: &mut Observers) {
+        let top = observers.top;
+        let mut waiting = std::mem::take(&mut observers.reach_waiting);
+        waiting.retain(|wait| match observers.groups.get(&wait.key) {
+            Some(group) => match Observers::mark(group, top) {
+                Some(reached) if reached >= wait.revision => {
+                    wait.subscriber.reach(&self.executor, reached);
+                    false
+                }
+                _ => true,
+            },
+            None => observers.opening.contains_key(&wait.key),
+        });
+        observers.reach_waiting.extend(waiting);
+    }
+
     pub(crate) fn run_observer_commands(&self, observers: &mut Observers) {
         let commands = std::mem::take(&mut *locked(&self.observer_commands));
         for command in commands {
@@ -338,7 +410,12 @@ impl Shared {
                         accumulate_growth(&mut opening.growth, before, after);
                     }
                 }
+                ObserverCommand::WantReach { group: key, id, subscriber, revision } => {
+                    observers.reach_waiting.push(ReachWait { key, id, subscriber, revision });
+                    self.serve_reach(observers);
+                }
                 ObserverCommand::Cancel { group: key, id } => {
+                    observers.reach_waiting.retain(|wait| wait.id != id);
                     observers.warm_ids.remove(&id);
                     if let Some(group) = observers.groups.get_mut(&key) {
                         group.subscribers.retain(|(member, _)| *member != id);
@@ -369,12 +446,9 @@ impl Shared {
         let (due, touched): (Vec<Due>, Vec<(String, ModelKey, BTreeSet<RowId>)>) = {
             let mut observers = self.observers();
             let top = batch.iter().map(|event| event.revision).max().unwrap_or(0);
+            observers.top = observers.top.max(top);
             for opening in observers.opening.values_mut() {
                 opening.missed |= batch.iter().any(|event| opening.deps.hit(event));
-                opening.seen = opening.seen.max(top);
-            }
-            for group in observers.groups.values_mut() {
-                group.facts.seen = group.facts.seen.max(top);
             }
             let mut keys = observers.candidates(batch);
             keys.extend(observers.groups.iter().filter(|(_, group)| group.facts.read_error.is_some()).map(|(key, _)| key.clone()));
@@ -414,10 +488,7 @@ impl Shared {
             });
         }
         let mut observers = self.observers();
-        let idle: Vec<String> = observers.groups.keys().cloned().collect();
-        for key in idle {
-            self.pump(&mut observers, &key);
-        }
+        self.serve_reach(&mut observers);
         let retry: Vec<String> = observers.opening.iter().filter(|(_, opening)| !opening.reading && opening.read_error.is_some()).map(|(key, _)| key.clone()).collect();
         for key in retry {
             self.issue_open(&mut observers, &key);
@@ -489,6 +560,7 @@ impl Shared {
     }
 
     fn pump(&self, observers: &mut Observers, key: &str) {
+        let top = observers.top;
         let Some(group) = observers.groups.get_mut(key) else {
             if observers.opening.get(key).is_some_and(|opening| !opening.reading && opening.read_error.is_none()) {
                 self.issue_open(observers, key);
@@ -505,7 +577,7 @@ impl Shared {
             self.issue_publish(observers, key, Some(step), Some(grow));
         } else if !group.facts.joining.is_empty() {
             self.issue_join(observers, key);
-        } else if let Some(reach) = Observers::mark(group) {
+        } else if let Some(reach) = Observers::mark(group, top) {
             for (_, subscriber) in &group.subscribers {
                 subscriber.reach(&self.executor, reach);
             }
@@ -563,6 +635,7 @@ impl Shared {
         self.contained(&key, || self.apply(result));
         let mut observers = self.observers();
         drop(permit);
+        self.serve_reach(&mut observers);
         while self.reads.has_capacity() {
             let Some((_, key)) = observers.read_ready.pop_first() else { break };
             observers.read_order.remove(&key);
@@ -704,7 +777,7 @@ impl Shared {
         let Some(opening) = observers.opening.remove(key) else { return };
         let Evaluated { version, loaded } = evaluated;
         let version = Arc::new(version);
-        let facts = GroupFacts { again: opening.missed.then_some(Follow::Full), growth: opening.growth, seen: opening.seen, ..GroupFacts::default() };
+        let facts = GroupFacts { again: opening.missed.then_some(Follow::Full), growth: opening.growth, ..GroupFacts::default() };
         let token = observers.next();
         let group = Group { subject: opening.subject, deps: opening.deps, at: version.revision, epoch: version.epoch, token, version: version.clone(), subscribers: opening.waiting.clone(), facts };
         observers.add_group(key, group);
@@ -716,11 +789,14 @@ impl Shared {
 }
 
 impl Db {
-    fn subscribe(&self, subject: Subject, listener: Listener) -> Result<ObserverHandle, DbError> {
+    fn subscribe(&self, subject: Subject, listener: Listener, paused: bool) -> Result<ObserverHandle, DbError> {
         let key = subject.key();
         let deps = self.shared.deps(&subject)?;
         self.shared.validate(&subject)?;
         let subscriber = Subscriber::new(listener, self.shared.counters.clone());
+        if paused {
+            subscriber.pause();
+        }
         let known = self.shared.observers().groups.get(&key).map(|group| group.at);
         let behind = known.is_some_and(|at| locked(&self.shared.cache).committed_revision > at);
         let mut observers = self.shared.observers();
@@ -734,7 +810,7 @@ impl Db {
             opening.waiting.push((id, subscriber.clone()));
         } else {
             let token = observers.next();
-            observers.opening.insert(key.clone(), Opening { subject, deps, token, waiting: vec![(id, subscriber.clone())], reading: false, missed: false, read_error: None, growth: None, seen: 0 });
+            observers.opening.insert(key.clone(), Opening { subject, deps, token, waiting: vec![(id, subscriber.clone())], reading: false, missed: false, read_error: None, growth: None });
         }
         self.shared.pump(&mut observers, &key);
         drop(observers);
@@ -742,26 +818,26 @@ impl Db {
     }
 
     pub(crate) fn observe_subject(&self, subject: Subject, listener: impl Fn(&Change) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
-        self.subscribe(subject, Listener::Rows(Box::new(listener)))
+        self.subscribe(subject, Listener::Rows(Box::new(listener)), false)
     }
 
     pub fn observe(&self, query: Query, listener: impl Fn(&Change) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
-        self.subscribe(Subject::Rows(query), Listener::Rows(Box::new(listener)))
+        self.subscribe(Subject::Rows(query), Listener::Rows(Box::new(listener)), false)
     }
 
     pub fn observe_row(&self, model: &str, id: &RowId, listener: impl Fn(&Change) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
-        self.subscribe(Subject::Row(RowRef::new(ModelKey::new(model), id.clone())), Listener::Rows(Box::new(listener)))
+        self.subscribe(Subject::Row(RowRef::new(ModelKey::new(model), id.clone())), Listener::Rows(Box::new(listener)), false)
     }
 
-    pub(crate) fn observe_feed(&self, subject: Subject, listener: impl Fn(Feed) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
-        self.subscribe(subject, Listener::Feed(Box::new(listener)))
+    pub(crate) fn observe_feed(&self, subject: Subject, paused: bool, listener: impl Fn(Feed) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
+        self.subscribe(subject, Listener::Feed(Box::new(listener)), paused)
     }
 
-    pub(crate) fn observe_query_feed(&self, query: Query, count: bool, listener: impl Fn(Feed) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
-        self.observe_feed(if count { Subject::Count(query) } else { Subject::Rows(query) }, listener)
+    pub(crate) fn observe_query_feed(&self, query: Query, count: bool, paused: bool, listener: impl Fn(Feed) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
+        self.observe_feed(if count { Subject::Count(query) } else { Subject::Rows(query) }, paused, listener)
     }
 
     pub fn observe_count(&self, query: Query, listener: impl Fn(&CountChange) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
-        self.subscribe(Subject::Count(query), Listener::Count(Box::new(listener)))
+        self.subscribe(Subject::Count(query), Listener::Count(Box::new(listener)), false)
     }
 }

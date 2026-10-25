@@ -257,72 +257,14 @@ fn inv_loadm_14_snapshots_from_many_threads_arrive_in_strictly_growing_order() {
 }
 
 #[test]
-fn rows_arriving_before_the_relation_state_are_held_and_delivered_in_order_with_it() {
-    let (feed, tape) = feed();
-    feed.expect_load();
-    feed.rows(rows(1, 1));
-    feed.rows(rows(2, 2));
-    assert!(heard(&tape).is_empty(), "nothing is shown before the relation state arrives");
-    feed.state(relation(LoadPhase::Loaded, 0, None));
-    let sizes: Vec<u32> = heard(&tape).iter().map(|change| change.size).collect();
-    assert_eq!(sizes, vec![1, 2]);
-    assert!(heard(&tape).iter().all(|change| change.phase == Some(LivePhase::Loaded)));
-    assert!(heard(&tape).windows(2).all(|pair| pair[0].seq < pair[1].seq));
-}
-
-#[test]
-fn a_load_that_ends_without_a_relation_state_releases_the_held_rows() {
-    let (feed, tape) = feed();
-    feed.expect_load();
-    feed.rows(rows(1, 3));
-    assert!(heard(&tape).is_empty());
-    feed.load_finished(Some(DbError::Invalid { detail: "relation".into() }));
-    let heard = heard(&tape);
-    assert_eq!(heard.iter().map(|change| change.size).collect::<Vec<_>>(), vec![3]);
-}
-
-struct Reentrant {
-    seen: Mutex<Vec<LiveChange>>,
-    inject: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-}
-
-impl QueryListener for Reentrant {
-    fn changed(&self, change: LiveChange) {
-        self.seen.lock().unwrap().push(change);
-        let next = self.inject.lock().unwrap().take();
-        if let Some(next) = next {
-            next();
-        }
-    }
-}
-
-#[test]
-fn rows_arriving_while_held_rows_are_released_stay_behind_them() {
-    let listener = Arc::new(Reentrant { seen: Mutex::new(Vec::new()), inject: Mutex::new(None) });
-    let feed = LiveFeed::new(listener.clone());
-    let later = feed.clone();
-    *listener.inject.lock().unwrap() = Some(Box::new(move || later.rows(rows(99, 99))));
-    feed.expect_load();
-    for size in 1..=3 {
-        feed.rows(rows(size.into(), size));
-    }
-    feed.state(relation(LoadPhase::Loaded, 0, None));
-    let sizes: Vec<u32> = listener.seen.lock().unwrap().iter().map(|change| change.size).collect();
-    assert_eq!(sizes, vec![1, 2, 3, 99]);
-}
-
-#[test]
-fn a_relation_state_that_never_arrives_cannot_make_the_feed_hold_rows_without_bound() {
-    let (feed, tape) = feed();
-    feed.expect_load();
-    for size in 1..=1000 {
-        feed.rows(rows(size.into(), size));
-    }
-    let before_state = heard(&tape);
-    assert!(!before_state.is_empty(), "rows kept flowing to the listener");
-    assert!(before_state.iter().all(|change| change.phase == Some(LivePhase::NotLoaded)), "without a relation state the phase stays NotLoaded");
-    assert_eq!(before_state.last().map(|change| change.size), Some(1000));
-    assert!(before_state.windows(2).all(|pair| pair[0].size < pair[1].size), "in order, none dropped");
-    feed.state(relation(LoadPhase::Loaded, 0, None));
-    assert_eq!(heard(&tape).last().and_then(|change| change.phase), Some(LivePhase::Loaded));
+fn a_relation_state_ahead_of_the_rows_asks_the_group_to_reach_its_revision() {
+    let (feed, _tape) = feed();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let sink = asked.clone();
+    feed.on_ahead(Arc::new(move |revision| sink.lock().unwrap().push(revision)));
+    feed.rows(rows(3, 1));
+    feed.state(relation(LoadPhase::Loaded, 3, None));
+    assert!(asked.lock().unwrap().is_empty(), "rows already at the revision: nothing to ask");
+    feed.state(relation(LoadPhase::Loaded, 7, None));
+    assert_eq!(*asked.lock().unwrap(), vec![7]);
 }

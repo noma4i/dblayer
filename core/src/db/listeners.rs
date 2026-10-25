@@ -44,6 +44,8 @@ pub(crate) struct Mailbox {
     reached: i64,
     told_reached: i64,
     failure: Option<String>,
+    paused: bool,
+    owes_run: bool,
 }
 
 impl Mailbox {
@@ -62,6 +64,31 @@ impl Mailbox {
             _ => self.unmergeable = true,
         }
         self.steps += 1;
+        self.wants_run()
+    }
+
+    pub(crate) fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    /// True when the caller must schedule the run that was owed while paused.
+    pub(crate) fn resume(&mut self) -> bool {
+        self.paused = false;
+        std::mem::take(&mut self.owes_run) && !std::mem::replace(&mut self.scheduled, true)
+    }
+
+    pub(crate) fn forget_owed(&mut self) {
+        if std::mem::take(&mut self.owes_run) {
+            self.drop_pending();
+        }
+    }
+
+    /// True when the caller must schedule a run. A paused mailbox keeps what it merged and owes the run until resume.
+    fn wants_run(&mut self) -> bool {
+        if self.paused {
+            self.owes_run = true;
+            return false;
+        }
         !std::mem::replace(&mut self.scheduled, true)
     }
 
@@ -155,10 +182,28 @@ impl Subscriber {
 
     pub(crate) fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
+        held(&self.mailbox).forget_owed();
+    }
+
+    pub(crate) fn pause(&self) {
+        held(&self.mailbox).pause();
+    }
+
+    pub(crate) fn resume(self: &Arc<Self>, executor: &Arc<Executor>) {
+        let needs_run = held(&self.mailbox).resume();
+        if needs_run {
+            executor.schedule(self.clone());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn owes_delivery(&self) -> bool {
+        held(&self.mailbox).owes_run
     }
 
     pub(crate) fn idle(&self) -> bool {
-        !held(&self.mailbox).scheduled
+        let mailbox = held(&self.mailbox);
+        !mailbox.scheduled && !mailbox.owes_run
     }
 
     pub(crate) fn post(self: &Arc<Self>, executor: &Arc<Executor>, version: Arc<Version>, replaced: &[(RowId, RowId)], loaded: Loaded) {
@@ -178,7 +223,8 @@ impl Subscriber {
                 return;
             }
             mailbox.reached = revision;
-            !std::mem::replace(&mut mailbox.scheduled, true)
+            locked(&self.counters).reach_notices += 1;
+            mailbox.wants_run()
         };
         if needs_run {
             executor.schedule(self.clone());
@@ -192,7 +238,7 @@ impl Subscriber {
         let needs_run = {
             let mut mailbox = held(&self.mailbox);
             mailbox.failure = Some(error);
-            !std::mem::replace(&mut mailbox.scheduled, true)
+            mailbox.wants_run()
         };
         if needs_run {
             executor.schedule(self.clone());

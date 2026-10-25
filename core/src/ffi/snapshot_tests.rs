@@ -135,3 +135,28 @@ async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_s
         subscription.wait_for_initial_load().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn inv_loadm_16_a_refresh_that_changes_no_row_still_shows_its_state_once_the_group_has_read_through_it() {
+    let (db, clock) = open(&[ONE_ROW, ONE_ROW]).await;
+    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    let listener = tape();
+    let live = db.live_query(FEED.into(), listener.clone());
+    live.wait_for_initial_load().await.unwrap();
+    let first_loaded_at = heard(&listener).last().and_then(|change| change.loaded_at).expect("the first frame is loaded");
+    clock.advance(60_000);
+    db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    let shown = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let current = live.current().await;
+            if current.loaded_at.is_some_and(|at| at > first_loaded_at) && !current.refreshing {
+                return current;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the state of the refresh reaches the listener although no row changed");
+    assert_eq!((shown.phase, shown.size), (Some(LivePhase::Loaded), 1));
+    consistent(&heard(&listener));
+}

@@ -23,7 +23,7 @@ fn inv_observe_28_await_revision_returns_after_every_subscriber_was_told_that_re
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let (log, feed) = reached_tape();
-    let _observer = db.observe_query_feed(Query::new("users"), false, feed).unwrap();
+    let _observer = db.observe_query_feed(Query::new("users"), false, false, feed).unwrap();
     for number in 0..20 {
         let id = format!("m{number}");
         db.create("moments", obj(json!({"id": id, "userId": "u1", "text": "t"}))).unwrap();
@@ -38,7 +38,7 @@ fn inv_observe_28_await_revision_of_a_past_revision_does_not_wait_for_later_comm
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let (log, feed) = reached_tape();
-    let _observer = db.observe_query_feed(Query::new("users"), false, feed).unwrap();
+    let _observer = db.observe_query_feed(Query::new("users"), false, false, feed).unwrap();
     let past = db.revision_seq().unwrap();
     put(&db, "users", json!({"id": "u2", "name": "Bob"}));
     db.await_revision(past);

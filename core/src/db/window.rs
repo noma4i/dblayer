@@ -293,7 +293,7 @@ impl Db {
         if !windowable(&query) {
             return Err(QueryError::NotWindowable.into());
         }
-        self.observe_feed(Subject::window(query, spec), listener).map(|observer| WindowHandle { observer })
+        self.observe_feed(Subject::window(query, spec), false, listener).map(|observer| WindowHandle { observer })
     }
 }
 

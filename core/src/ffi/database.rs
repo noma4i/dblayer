@@ -537,17 +537,24 @@ impl Database {
         }
         let wire = self.wire(&model)?.clone();
         let sink = feed.clone();
-        let observer = self.db.observe_query_feed(query, count, move |item| intake(&sink, &wire, item))?;
+        let observer = self.db.observe_query_feed(query, count, tracked.is_some(), move |item| intake(&sink, &wire, item))?;
         let (load, state) = match tracked {
             Some((sync, relation, params)) => {
+                let control = observer.control();
+                let ask = control.clone();
+                feed.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
                 let (follower, loader) = (feed.clone(), feed.clone());
                 let (ready, seeded) = tokio::sync::oneshot::channel();
                 let state = executor()?.spawn(async move {
                     let mut changes = match sync.relation_state(&model, &relation, &params).await {
                         Ok(changes) => changes,
-                        Err(error) => return follower.load_finished(Some(DbError::from(error))),
+                        Err(error) => {
+                            follower.load_finished(Some(DbError::from(error)));
+                            return control.resume();
+                        }
                     };
                     follower.state(changes.borrow_and_update().clone());
+                    control.resume();
                     let _ = ready.send((sync, model, relation, params, changes.clone()));
                     while changes.changed().await.is_ok() { follower.state(changes.borrow_and_update().clone()); }
                 }).abort_handle();
@@ -569,7 +576,7 @@ impl Database {
         let target = self.db.spec(&model)?.associations.iter().find(|association| association.name == name).map(|association| association.target.to_string()).ok_or_else(|| DbError::Invalid { detail: format!("{model} has no association {name}") })?;
         let wire = self.wire(&target)?.clone();
         let query = Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))).including(&[&name]);
-        let observer = self.db.observe_query_feed(query, false, move |item| match item {
+        let observer = self.db.observe_query_feed(query, false, false, move |item| match item {
             Feed::Rows(change) => {
                 let rows = change.related.get(&name).and_then(|parents| parents.get(&row_id)).cloned().unwrap_or_default();
                 feed.rows(LiveChange::whole(change.revision, rows.iter().map(|row| wire.row(row)).collect()));

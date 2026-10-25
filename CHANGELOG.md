@@ -29,7 +29,8 @@
 - Loading rows builds them and sizes them outside the row cache lock, so cached reads are not held back by a large load.
 - Cancelling a subscription and expanding a window never wait for the observer registry: a busy registry takes the request later.
 - A refresh deferred by the read limit or a running read keeps its touched rows and reads only those, instead of re-reading the whole list.
-- Connecting a live query to a remote relation no longer waits for the storage writer: the stored window state is read on a blocking task and the first value is held until it arrives.
+- Connecting a live query to a remote relation no longer waits for the storage writer: the stored window state is read on a blocking task and the query delivers its first snapshot, merged from everything that happened meanwhile, once the state is known.
+- A commit that touches none of a query's rows no longer notifies every live query: only queries whose relation state is ahead of their rows ask to be told.
 - Upload files are written to the cache and removed on the blocking pool, never on an async executor.
 - Removing files after a confirmed destroy or a server destroy event runs on the blocking pool.
 - Uploads are identified by their declared upload action (`model:upload:action`): `upload`, `uploadCreate` and `cancelUpload` take the action, a record can hold one upload per action, and an undeclared action admits nothing.
