@@ -81,6 +81,15 @@ class OkHttpTransport(
                     }
                 }
 
+                override fun onClosing(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                    sink.closed()
+                    webSocket.close(code, reason)
+                }
+
+                override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                    sink.closed()
+                }
+
                 override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
                     sink.failed(classifyTransportFailure(java.io.IOException(t), GraphQLOperationKind.Query))
                     sink.closed()
