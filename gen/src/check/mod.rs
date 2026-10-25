@@ -6,7 +6,7 @@ use dblayer::value::ScalarKind;
 use crate::build::build;
 use crate::decl::{
     Effect, ModelDecl, OperationDecl, OperationKind, OptimisticDecl, OptimisticElement, OptimisticValue, ParamBase, ParameterDecl, Pos,
-    ResponseDecl, ResponseShape, ScopeDecl, SubscribeDecl, TypeRef, VariableValue,
+    PreloadDecl, ResponseDecl, ResponseShape, ScopeDecl, SubscribeDecl, TypeRef, VariableValue,
 };
 use crate::ParseError;
 
@@ -210,10 +210,54 @@ fn check_scope(node: &ModelDecl, scope: &ScopeDecl, report: &mut impl FnMut(Pos,
             }
         }
     }
+    if let Some(preload) = &scope.preload {
+        check_preload(scope, preload, report);
+    }
     if !scope.is_remote() {
         return;
     }
     check_remote_scope(scope, report);
+}
+
+fn check_preload(scope: &ScopeDecl, preload: &PreloadDecl, report: &mut impl FnMut(Pos, String)) {
+    let name = &scope.name;
+    if scope.node.is_some() {
+        report(preload.pos, format!("scope `{name}`: `preload` does not apply to a `node` scope"));
+        return;
+    }
+    let mut keys = HashSet::new();
+    for (key, values) in &preload.values {
+        if !keys.insert(key.item.as_str()) {
+            report(key.pos, format!("scope `{name}`: `preload` lists `{}` twice", key.item));
+        }
+        let Some(parameter) = scope.parameters.iter().find(|parameter| parameter.name == key.item) else {
+            report(key.pos, format!("scope `{name}`: `preload` names `{}`, which is not declared with `parameter`", key.item));
+            continue;
+        };
+        if values.is_empty() {
+            report(key.pos, format!("scope `{name}`: `preload {}:` needs at least 1 value", key.item));
+        }
+        let mut seen = Vec::new();
+        for value in values {
+            let fits = match (&parameter.ty.base, parameter.ty.list, &value.item) {
+                (_, true, _) => false,
+                (ParamBase::Int | ParamBase::Long, _, serde_json::Value::Number(_)) | (ParamBase::Bool, _, serde_json::Value::Bool(_)) => true,
+                (ParamBase::String | ParamBase::Id | ParamBase::Named(_), _, serde_json::Value::String(_)) => true,
+                _ => false,
+            };
+            if !fits {
+                report(value.pos, format!("scope `{name}`: `preload {}:` value does not match the type {} of the parameter", key.item, parameter.ty.describe()));
+            } else if seen.contains(&&value.item) {
+                report(value.pos, format!("scope `{name}`: `preload {}:` lists a value twice", key.item));
+            }
+            seen.push(&value.item);
+        }
+    }
+    for parameter in &scope.parameters {
+        if !keys.contains(parameter.name.as_str()) {
+            report(preload.pos, format!("scope `{name}`: `preload` needs a list of values for parameter `{}`", parameter.name));
+        }
+    }
 }
 
 fn check_scope_parameter(scope: &ScopeDecl, parameter: &ParameterDecl, linked: bool, node: &ModelDecl, report: &mut impl FnMut(Pos, String)) {

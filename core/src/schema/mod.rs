@@ -666,6 +666,8 @@ pub struct RelationSpec {
     pub node: Option<NodeRead>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edge_fields: Vec<FieldSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preload: Option<BTreeMap<String, Vec<Value>>>,
 }
 
 impl RelationSpec {
@@ -686,6 +688,7 @@ impl RelationSpec {
             order_stable: false,
             node: None,
             edge_fields: Vec::new(),
+            preload: None,
         }
     }
 

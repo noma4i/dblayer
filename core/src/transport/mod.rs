@@ -41,6 +41,7 @@ pub trait Transport: Send + Sync {
     fn retries_queries(&self) -> bool { false }
     fn set_online(&self, _online: bool) {}
     fn resume_subscriptions(&self) {}
+    fn session(&self) -> Result<Option<String>, TransportError> { Ok(Some(String::new())) }
     async fn open_cable(&self) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {
         Err(TransportError::Network("encrypted cable socket is not connected".into()))
     }

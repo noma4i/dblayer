@@ -227,6 +227,10 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
         relation.joins_events = insert.item.contains(&InsertOn::Event);
     }
     relation.order_stable = scope.stable_order.is_some();
+    relation.preload = scope.preload.as_ref().map(|preload| preload.values.iter().map(|(parameter, values)| {
+        let column = scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone());
+        (column, values.iter().map(|value| value.item.clone()).collect())
+    }).collect());
     if scope.is_remote() {
         relation.remote = Some(build_remote(scope));
         relation.edge_fields = scope.edges.iter().map(|edge| build_field(edge, "")).collect();

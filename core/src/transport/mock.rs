@@ -116,6 +116,7 @@ struct MockState {
     cancellations: HashMap<String, usize>,
     calls: Vec<RecordedCall>,
     responder: Option<Responder>,
+    session: Option<Result<Option<String>, TransportError>>,
 }
 
 struct Stream {
@@ -136,6 +137,14 @@ pub struct MockTransport {
 impl MockTransport {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn set_session(&self, session: Option<&str>) {
+        self.lock().session = Some(Ok(session.map(str::to_string)));
+    }
+
+    pub fn fail_session(&self, message: &str) {
+        self.lock().session = Some(Err(TransportError::Network(message.to_string())));
     }
 
     pub fn enqueue(&self, operation_name: &str, reply: Reply) {
@@ -317,6 +326,10 @@ impl MockTransport {
 
 #[async_trait]
 impl Transport for MockTransport {
+    fn session(&self) -> Result<Option<String>, TransportError> {
+        self.lock().session.clone().unwrap_or_else(|| Ok(Some(String::new())))
+    }
+
     async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
         self.transfer(request).await
     }

@@ -210,3 +210,22 @@ fn scope_names_are_unique_within_the_model() {
         ("same name twice", &format!("{}\n{}", scope("", ""), scope("", "")), Some("name `s` is declared twice")),
     ]);
 }
+
+#[test]
+fn preload_lists_the_values_of_every_parameter_of_a_remote_scope() {
+    let remote = |lines: &str| scope("", &format!("    query \"S\"\n{lines}"));
+    let with_channel = |lines: &str| remote(&format!("    parameter :channel, :string\n{lines}"));
+    run(&[
+        ("scope without parameters", &remote("    preload\n"), None),
+        ("one parameter", &with_channel("    preload channel: [\"a\", \"b\"]\n"), None),
+        ("where parameter", &scope("", &format!("{BY_OWNER}    query \"S\"\n    preload ownerId: [\"1\", \"2\"]\n")), None),
+        ("local scope", &scope("", "    preload\n"), Some("`preload` needs a scope with `query`")),
+        ("value list missing", &with_channel("    preload\n"), Some("needs a list of values for parameter `channel`")),
+        ("unknown parameter", &remote("    preload ghost: [\"a\"]\n"), Some("`preload` names `ghost`")),
+        ("empty list", &with_channel("    preload channel: []\n"), Some("needs at least 1 value")),
+        ("value of the wrong type", &with_channel("    preload channel: [1]\n"), Some("does not match the type")),
+        ("duplicate value", &with_channel("    preload channel: [\"a\", \"a\"]\n"), Some("lists a value twice")),
+        ("not a list", &with_channel("    preload channel: \"a\"\n"), Some("takes a list of values")),
+        ("twice", &remote("    preload\n    preload\n"), Some("`preload` is declared twice")),
+    ]);
+}

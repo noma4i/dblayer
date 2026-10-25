@@ -211,6 +211,12 @@ pub struct FreshnessDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct PreloadDecl {
+    pub pos: Pos,
+    pub values: Vec<(Spanned<String>, Vec<Spanned<Json>>)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct WhereDecl {
     pub pos: Pos,
     pub pairs: Vec<(Spanned<String>, Spanned<String>)>,
@@ -273,6 +279,7 @@ pub struct ScopeDecl {
     pub response: Option<ResponseRead>,
     pub paginate: Option<PaginateDecl>,
     pub freshness: Option<FreshnessDecl>,
+    pub preload: Option<PreloadDecl>,
     pub total: Option<Spanned<String>>,
     pub edges: Vec<AttributeDecl>,
     pub subscriptions: Vec<SubscribeDecl>,

@@ -25,6 +25,9 @@ mod load_wiring_tests;
 mod node;
 mod normalize;
 mod online;
+mod preload;
+#[cfg(test)]
+mod preload_tests;
 mod registry;
 mod state;
 #[cfg(test)]
@@ -137,6 +140,7 @@ pub(crate) struct Inner {
     pub connectivity: Arc<Connectivity>,
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
     pub(crate) resume: resume::ResumeOwner,
+    pub(crate) preload: preload::PreloadOwner,
     pub replaced: Mutex<HashMap<String, String>>,
     pub outcomes: Mutex<send::Outcomes>,
     pub final_attempts: Mutex<send::FinalAttempts>,
@@ -220,11 +224,19 @@ impl Sync {
             connectivity,
             wake: Mutex::new(None),
             resume: resume::ResumeOwner::new(),
+            preload: preload::PreloadOwner::default(),
             replaced: Mutex::new(HashMap::new()),
             outcomes: Mutex::new(send::Outcomes::default()),
             final_attempts: Mutex::new(send::FinalAttempts::default()),
         };
-        Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) }
+        let this = Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) };
+        let preloads = Arc::downgrade(&this.inner);
+        this.inner.db.on_reset(Arc::new(move |_| {
+            if let Some(inner) = preloads.upgrade() {
+                inner.preload_on_event();
+            }
+        }));
+        this
     }
 
     pub fn register(&self, mut def: OperationDef) {

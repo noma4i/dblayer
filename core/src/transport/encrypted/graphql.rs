@@ -79,6 +79,7 @@ impl Transport for EncryptedTransport {
     fn retries_queries(&self) -> bool { true }
     fn set_online(&self, online: bool) { self.cable.set_online(online); }
     fn resume_subscriptions(&self) { self.cable.resume(); }
+    fn session(&self) -> Result<Option<String>, TransportError> { self.client.signed_in() }
 
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let response = response_of(self.client.read(&self.client.config.endpoints.graphql, graphql_body(&request, false)).await?)?;

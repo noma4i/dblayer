@@ -10,6 +10,13 @@ model Presence, storage: :memory, expires_in: 1.minute do
     query "PresenceOnline"
     response shape: :list
     freshness expires_in: 30.seconds
+    preload
     subscribe "PresenceChanged", apply: { effect: :upsert, delete_if: "left" }
+  end
+  scope :on_channel do
+    parameter :channel, :string
+    query "PresenceOnChannel"
+    response shape: :list
+    preload channel: ["lobby", "stage"]
   end
 end

@@ -769,7 +769,7 @@ fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
     let lines = block(cx, call)?;
     let mut decl = ScopeDecl {
         pos: line.pos, name, node, insert_on: insert, stable_order: stable, parameters: Vec::new(), where_: None, order: None, query: None, variables: None,
-        response: None, paginate: None, freshness: None, total: None, edges: Vec::new(), subscriptions: Vec::new(), has_block: true,
+        response: None, paginate: None, freshness: None, preload: None, total: None, edges: Vec::new(), subscriptions: Vec::new(), has_block: true,
     };
     let remote = lines.iter().any(|candidate| candidate.word == "query");
     let mut seen: Vec<&str> = Vec::new();
@@ -846,6 +846,30 @@ fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
             if let Some(expires_in) = require(cx, &line, "expires_in", expires) {
                 decl.freshness = Some(FreshnessDecl { pos: line.pos, expires_in, empty_in: empty });
             }
+        }
+        "preload" => {
+            no_block(cx, call);
+            line.no_args(cx);
+            line.used.iter_mut().for_each(|used| *used = true);
+            let values = call.options.iter().map(|pair| {
+                let items = match &pair.value.item {
+                    Value::Array(nodes) => nodes.iter().filter_map(|node| match &node.item {
+                        Value::Str(text) => Some(Spanned::new(Json::String(text.clone()), at(node))),
+                        Value::Int(number) => Some(Spanned::new(Json::from(*number), at(node))),
+                        Value::Bool(flag) => Some(Spanned::new(Json::Bool(*flag), at(node))),
+                        _ => {
+                            cx.fail(at(node), "a `preload` value is a string, a number or true or false");
+                            None
+                        }
+                    }).collect(),
+                    _ => {
+                        cx.fail(at(&pair.value), "`preload` takes a list of values like `preload list: [\"primary\", \"secondary\"]`");
+                        Vec::new()
+                    }
+                };
+                (Spanned::new(pair.key.clone(), pair_pos(pair)), items)
+            }).collect();
+            decl.preload = Some(PreloadDecl { pos: line.pos, values });
         }
         "total" => {
             no_block(cx, call);

@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `preload` in a `.dbl` scope loads the scope after open, sign-in, reset and network return.
 - `Query.related(Association)` reads typed related rows on Swift and Kotlin; `Model.Relations` lists links.
 - Stale observed windows reload when the app returns to the foreground or the network returns.
 - `UploadOperations` declares upload operations once in `DB.open` on Swift and `DBlayer.open` on Kotlin.

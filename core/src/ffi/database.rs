@@ -338,6 +338,8 @@ impl Database {
             if let Some(size) = def["pageSize"].as_u64() { operation = operation.paged(u32::try_from(size).map_err(|error| DbError::Invalid { detail: error.to_string() })?); }
             sync.register(operation);
         }
+        let _entered = executor()?.enter();
+        sync.preload_on_session();
         Ok(())
     }
     pub async fn run(&self, operation: String, variables_json: String) -> Result<String, DbError> {

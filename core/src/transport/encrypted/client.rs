@@ -227,6 +227,10 @@ impl EncryptedClient {
         Ok(answer)
     }
 
+    pub fn signed_in(&self) -> Result<Option<String>, TransportError> {
+        Ok(self.with_connection(state::session)?.filter(|session| session.sequence > 0).map(|session| session.credential_digest))
+    }
+
     pub fn reset(&self) -> Result<(), TransportError> {
         self.credentials.clear()?;
         *crate::db::locked(&self.credential) = None;

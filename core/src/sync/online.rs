@@ -23,6 +23,7 @@ impl Sync {
                 self.inner.spawn_retry(target, kind);
             }
             self.inner.resume_on_event();
+            self.inner.preload_start();
         }
     }
 }

@@ -108,7 +108,9 @@ impl Database {
         if !client.has_session_operation(&operation) { return Err(DbError::Invalid { detail: format!("unknown session operation {operation}") }); }
         let body = serde_json::from_str::<Value>(&body_json)?;
         let answer = cancellable(async move { client.session_call(&operation, body).await }).await?.map_err(typed)?;
-        Ok(refused(answer)?.body.to_string())
+        let body = refused(answer)?.body.to_string();
+        if let Some(sync) = &self.sync { sync.preload_on_session(); }
+        Ok(body)
     }
 
     pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
