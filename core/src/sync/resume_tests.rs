@@ -148,6 +148,36 @@ async fn a_session_refusal_from_a_normal_load_keeps_events_away_until_the_manual
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_session_failure_is_selected_among_the_failures_of_every_observed_subscription() {
+    use crate::transport::{SessionCode, SubscriptionEvent, SubscriptionFailure, TransportError};
+    let session = || TransportError::Session { code: SessionCode::Unauthenticated, detail: "session_unknown".into() };
+    let denied = || TransportError::Http { status: 401, body: "denied".into() };
+    let cases = [
+        ("session first", [Some(session()), Some(denied())], true),
+        ("session last", [Some(denied()), Some(session())], true),
+        ("no session", [Some(denied()), Some(denied())], false),
+        ("session alone", [None, Some(session())], true),
+    ];
+    for (name, errors, expects_session) in cases {
+        let rig = rig();
+        let expected = errors.iter().flatten().count();
+        let mut watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
+        for (operation, error) in ["MomentEvents", "MomentRemoved"].into_iter().zip(errors) {
+            within(rig.transport.await_calls(operation, 1)).await;
+            let Some(error) = error else { continue };
+            rig.transport.emit(operation, SubscriptionEvent::Failed(SubscriptionFailure::from_error(error)));
+            within(rig.transport.await_consumed(operation)).await;
+        }
+        let recorded = || super::locked(&rig.sync.inner.lives).values().filter(|live| live.subscription.as_ref().is_some_and(|subscription| subscription.status().failure.is_some())).count();
+        assert_eq!(recorded(), expected, "{name}");
+        let failures = watch.failures().unwrap();
+        for found in [failures.current.clone(), (failures.recheck)()] {
+            assert_eq!(found.map(|failure| failure.error), expects_session.then(session), "{name}");
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_manual_resume_gets_the_report_of_the_pass_that_started_after_it_while_events_arrive() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", crate::transport::Reply::graphql_error("nope", "FORBIDDEN").after(Duration::from_secs(10)));

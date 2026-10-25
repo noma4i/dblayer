@@ -32,6 +32,6 @@ async fn inv_loadm_20_a_lagged_failure_channel_resyncs_from_the_subscription_sta
     }
     tokio::time::sleep(Duration::from_millis(5)).await;
     let last = tape.0.lock().unwrap().last().cloned().unwrap();
-    assert!(matches!(last.error, Some(DbError::Network { .. } | DbError::Session { .. } | DbError::Sync { .. })), "error after lag: {:?}", last.error);
+    assert!(matches!(&last.error, Some(DbError::Session { code, detail }) if *code == SessionCode::Unauthenticated && detail == "session_unknown"), "error after lag: {:?}", last.error);
     assert_eq!(last.error_kind.as_deref(), Some("subscription"));
 }
