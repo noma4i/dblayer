@@ -1,6 +1,25 @@
 use super::*;
 use std::fs;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::thread::ThreadId;
 
+type FileIo = HashMap<String, Vec<(&'static str, ThreadId)>>;
+static FILE_IO: OnceLock<Mutex<FileIo>> = OnceLock::new();
+
+pub(super) fn record_io(id: &str, operation: &'static str) {
+    if let Some(events) = FILE_IO.get() {
+        if let Some(events) = events.lock().unwrap().get_mut(id) { events.push((operation, std::thread::current().id())); }
+    }
+}
+
+pub(crate) fn watch_file_io(id: &str) {
+    FILE_IO.get_or_init(Default::default).lock().unwrap().insert(id.to_string(), Vec::new());
+}
+
+pub(crate) fn take_file_io(id: &str) -> Vec<(&'static str, ThreadId)> {
+    FILE_IO.get().unwrap().lock().unwrap().remove(id).unwrap()
+}
 fn beside_database() -> (tempfile::TempDir, FileDirectories) {
     let root = tempfile::tempdir().unwrap();
     let directories = FileDirectories::beside(&root.path().join("42.sqlite"));

@@ -9,7 +9,7 @@ use crate::transport::{MockTransport, PutReply, Reply};
 use crate::upload::{UploadConfig, UploadSteps};
 use super::super::{OperationDef, SyncConfig};
 use super::super::rig::{Rig, rig_without_operations, put, await_outbox};
-use super::upload_tests::{file, rid, small};
+use super::upload_tests::{await_released, file, rid, small};
 
 fn reopen(path: &Path, budget: u32) -> Rig {
     let model = ModelSpec::new("assets", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
@@ -38,6 +38,7 @@ async fn shutdown(rig: Rig) {
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
     drop(rig);
+    await_released(&database).await;
     assert!(database.upgrade().is_none(), "the database remained open");
 }
 

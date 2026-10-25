@@ -130,9 +130,14 @@ impl FileDirectories {
         fs::read(path)
     }
 
-    pub(crate) fn materialize(&self, id: &str, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+    pub(crate) fn cache_target(&self, id: &str, name: &str) -> PathBuf {
         let leaf = Path::new(name).file_name().and_then(|leaf| leaf.to_str()).filter(|leaf| !leaf.is_empty()).unwrap_or("file");
-        let target = self.cache.join(id).join(leaf);
+        self.cache.join(id).join(leaf)
+    }
+
+    pub(crate) fn materialize(&self, id: &str, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+        #[cfg(test)] super::directories_tests::record_io(id, "materialize");
+        let target = self.cache_target(id, name);
         if !target.exists() {
             write_atomic(&target, bytes)?;
         }
@@ -141,6 +146,7 @@ impl FileDirectories {
 
     pub(crate) fn discard(&self, ids: &[String]) -> io::Result<()> {
         for id in ids {
+            #[cfg(test)] super::directories_tests::record_io(id, "discard");
             if let Some(path) = self.path(id) {
                 ignore_missing(fs::remove_file(suffixed(&path, PART_SUFFIX)))?;
                 ignore_missing(fs::remove_file(path))?;

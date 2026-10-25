@@ -29,6 +29,14 @@ pub(super) fn small() -> UploadConfig {
     }
 }
 
+pub(super) async fn await_released<T>(weak: &std::sync::Weak<T>) {
+    for _ in 0..5000 {
+        if weak.upgrade().is_none() { return; }
+        std::thread::sleep(Duration::from_millis(1));
+        tokio::task::yield_now().await;
+    }
+}
+
 pub(super) fn upload_rig(config: UploadConfig) -> Rig {
     let rig = rig_with(SyncConfig { upload: config, ..SyncConfig::default() });
     for (name, root) in [
@@ -352,6 +360,7 @@ async fn dropping_sync_stops_uploads_before_the_next_request() {
     let inner = Arc::downgrade(&rig.sync.inner);
     drop(rig.sync);
     await_tasks_ended().await;
+    await_released(&inner).await;
     assert!(inner.upgrade().is_none());
     tokio::time::sleep(Duration::from_secs(61)).await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 0);

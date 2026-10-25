@@ -5,6 +5,26 @@ use super::upload_tests::{blob, created, file, input, rid, single_replies, small
 use crate::transport::PutReply;
 use crate::upload::{UploadConfig, UploadStage};
 
+#[tokio::test]
+async fn inv_upload_18_materialization_and_cleanup_leave_the_async_executor() {
+    let rig = upload_rig(small());
+    let source = file(b"inline");
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+    let id = rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT file_id FROM op_item WHERE seq = ?1", [seq], |row| row.get::<_, String>(0))?)).unwrap();
+    crate::files::watch_file_io(&id);
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue("CreateMoment", created("m1"));
+    let executor = std::thread::current().id();
+    rig.sync.flush().await.unwrap();
+    rig.sync.wait_uploads().await;
+    let events = crate::files::take_file_io(&id);
+    assert_eq!(events.iter().map(|(operation, _)| *operation).collect::<Vec<_>>(), ["materialize", "discard"]);
+    assert!(events.iter().all(|(_, thread)| *thread != executor), "file IO used executor {executor:?}: {events:?}");
+    assert_eq!(rig.transport.put_calls()[0].body, b"inline");
+    assert!(rig.db.shared.files.cache_entries().unwrap().is_empty());
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
 #[tokio::test(start_paused = true)]
 async fn queued_files_start_in_order_without_waiting_tasks() {
     let rig = upload_rig(small());
@@ -143,7 +163,7 @@ async fn a_saved_single_grant_is_put_before_the_mutation_without_creating_anothe
 }
 
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn an_unwritable_owned_file_is_failed_without_restarting_the_runner() {
     let rig = upload_rig(small());
     let source = file(b"abcdef");
@@ -156,11 +176,38 @@ async fn an_unwritable_owned_file_is_failed_without_restarting_the_runner() {
     std::fs::remove_dir_all(parent).unwrap();
     std::fs::write(parent, b"obstacle").unwrap();
     rig.sync.inner.start_uploads().unwrap();
-    let (finished, ()) = tokio::join!(
-        tokio::time::timeout(Duration::from_secs(1), rig.sync.wait_uploads()),
-        async { tokio::task::yield_now().await; tokio::time::advance(Duration::from_secs(1)).await; }
-    );
+    let finished = tokio::time::timeout(Duration::from_secs(5), rig.sync.wait_uploads()).await;
     assert!(finished.is_ok(), "the source error restarted the runner instead of failing the operation");
     assert_eq!(rig.db.upload_info("moments", &rid("m1")).unwrap().unwrap().status, crate::upload::UploadStatus::Failed);
     assert!(rig.transport.calls().is_empty());
+}
+
+#[test]
+fn a_runner_dropped_outside_its_runtime_removes_its_cache_file_on_the_blocking_pool() {
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+    let caller = std::thread::current().id();
+    let (rig, runner, id, path) = runtime.block_on(async {
+        let rig = upload_rig(small());
+        let source = file(b"inline");
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+        let id = rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT file_id FROM op_item WHERE seq = ?1", [seq], |row| row.get::<_, String>(0))?)).unwrap();
+        crate::files::watch_file_io(&id);
+        let runner = std::sync::Arc::new(super::run::Runner::load(rig.sync.inner.clone(), seq, 0, 0, crate::transport::CancelToken::new(), true).unwrap().unwrap());
+        assert!(runner.materialize().await.is_ok());
+        let path = std::path::PathBuf::from(&runner.input.path);
+        assert!(path.exists());
+        let generation = rig.db.generation();
+        rig.sync.inner.commit(generation, |_| {
+            let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Response, generation);
+            envelope.operation_transitions.push(crate::commit::OperationTransition::RemoveUploadItem { seq, position: 0, inputs: Vec::new() });
+            Ok(Some(envelope))
+        }).unwrap();
+        (rig, runner, id, path)
+    });
+    drop(runner);
+    runtime.block_on(rig.sync.wait_uploads());
+    let events = crate::files::take_file_io(&id);
+    assert_eq!(events.iter().map(|(operation, _)| *operation).collect::<Vec<_>>(), ["materialize", "discard"]);
+    assert!(events.iter().all(|(_, thread)| *thread != caller), "file IO used the dropping thread: {events:?}");
+    assert!(!path.exists());
 }

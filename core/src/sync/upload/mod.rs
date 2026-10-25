@@ -218,6 +218,12 @@ impl Inner {
         }));
     }
 
+    fn spawn_file_task(&self, runtime: &tokio::runtime::Handle, task: impl FnOnce() + Send + 'static) {
+        let mut tasks = locked(&self.file_tasks);
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn_blocking_on(task, runtime);
+    }
+
     fn fail_upload(&self, seq: i64, error: SyncError) {
         let generation = self.db.generation();
         let _ = self.commit(generation, |_| {
@@ -353,9 +359,11 @@ impl Sync {
         loop {
             let mut tasks = std::mem::take(&mut locked(&self.inner.uploads).tasks);
             while tasks.join_next().await.is_some() {}
+            let mut file_tasks = std::mem::take(&mut *locked(&self.inner.file_tasks));
+            while file_tasks.join_next().await.is_some() {}
             let waiting = {
                 let runs = locked(&self.inner.uploads);
-                if runs.tasks.is_empty() && runs.active.is_empty() {
+                if runs.tasks.is_empty() && runs.active.is_empty() && locked(&self.inner.file_tasks).is_empty() {
                     return;
                 }
                 runs.active.values().next().map(|active| active.done.subscribe())

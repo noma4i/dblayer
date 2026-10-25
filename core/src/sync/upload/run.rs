@@ -29,9 +29,11 @@ pub(super) struct Runner {
     pub(super) position: i64,
     pub(super) run: u64,
     pub(super) token: CancelToken,
+    runtime: tokio::runtime::Handle,
     pub(super) input: UploadInput,
     source_error: Option<String>,
     file_id: Option<String>,
+    inline_file: Mutex<Option<(String, String, Vec<u8>)>>,
     model: String,
     state: Mutex<UploadState>,
     progress: Mutex<TransferProgress>,
@@ -41,12 +43,15 @@ pub(super) struct Runner {
 impl Drop for Runner {
     fn drop(&mut self) {
         self.token.cancel();
-        if let Some(id) = &self.file_id {
-            let missing = self.inner.db.shared.read(&[], |reader| {
-                Ok(!reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM file WHERE id = ?1)", [id], |row| row.get::<_, bool>(0))?)
+        let Some(id) = self.file_id.take() else { return };
+        let inner = self.inner.clone();
+        let cleanup = move || {
+            let missing = inner.db.shared.read(&[], |reader| {
+                Ok(!reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM file WHERE id = ?1)", [&id], |row| row.get::<_, bool>(0))?)
             });
-            if missing.is_ok_and(|missing| missing) { let _ = self.inner.db.shared.files.discard(std::slice::from_ref(id)); }
-        }
+            if missing.is_ok_and(|missing| missing) { let _ = inner.db.shared.files.discard(std::slice::from_ref(&id)); }
+        };
+        self.inner.spawn_file_task(&self.runtime, cleanup);
     }
 }
 
@@ -83,7 +88,7 @@ pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, 
 }
 
 impl Runner {
-    fn load(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, transfer: bool) -> Result<Option<Self>, super::super::SyncError> {
+    pub(super) fn load(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, transfer: bool) -> Result<Option<Self>, super::super::SyncError> {
         let Some(entry) = inner.outbox_operation(seq)? else { return Ok(None) };
         let (model, _) = Operation::split_action_key(&entry.operation.action_key).ok_or_else(|| super::super::SyncError::Malformed("the upload action key is invalid".into()))?;
         let Some(state) = inner.operation_uploads(seq)?.remove(&(seq, position)) else { return Ok(None) };
@@ -106,15 +111,20 @@ impl Runner {
             } else { None };
             Ok((input, file, error, id))
         })?;
+        let mut inline_file = None;
         if let Some((id, name, bytes)) = file {
             let path = match bytes {
-                Some(bytes) => inner.db.shared.files.materialize(&id, &name, &bytes).map_err(|error| super::super::SyncError::Store(error.to_string()))?,
+                Some(bytes) => {
+                    let path = inner.db.shared.files.cache_target(&id, &name);
+                    inline_file = Some((id, name, bytes));
+                    path
+                }
                 None => inner.db.shared.files.path(&id).ok_or_else(|| super::super::SyncError::Store("upload file directory is missing".into()))?,
             };
             input.path = path.to_string_lossy().into_owned();
         }
         let progress = TransferProgress::new(state.total_bytes, inner.config.upload.tick);
-        Ok(Some(Self { inner, seq, position, run, token, input, source_error, file_id, model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
+        Ok(Some(Self { inner, seq, position, run, token, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
     }
 
     pub(super) fn snapshot(&self) -> UploadState {
@@ -182,6 +192,18 @@ impl Runner {
         }
     }
 
+    pub(super) async fn materialize(self: &Arc<Self>) -> Result<(), Stop> {
+        let Some((id, name, bytes)) = locked(&self.inline_file).take() else { return Ok(()) };
+        let (sent, received) = tokio::sync::oneshot::channel();
+        let runner = self.clone();
+        self.inner.spawn_file_task(&self.runtime, move || { let _ = sent.send(runner.inner.db.shared.files.materialize(&id, &name, &bytes)); });
+        match received.await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(error)) => Err(Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string()))),
+            Err(_) => Err(Stop::Cancelled),
+        }
+    }
+
     async fn transfer_file(self: &Arc<Self>) -> Result<(), Stop> {
         if self.snapshot().is_transferred() {
             return Ok(());
@@ -194,6 +216,7 @@ impl Runner {
             state.stage = UploadStage::Prepare;
             state.error = None;
         })?;
+        self.materialize().await?;
         let total = file_len(Path::new(&self.input.path), &self.token).await
             .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
         let stored = self.snapshot();
