@@ -189,6 +189,25 @@ fn moves_may_swap_order_keys_in_one_envelope() {
 }
 
 #[test]
+fn append_reuses_detached_order_key_in_either_operation_order() {
+    for detach_first in [false, true] {
+        let (store, _) = booted_store();
+        let thread = scope("messages", "thread");
+        commit(&store, vec![], vec![append(&thread, "old", "a"), append(&thread, "kept", "b")]);
+        let mut operations = vec![
+            append(&thread, "new", "a"),
+            ScopeOp::Detach { scope: thread.clone(), row: id("old") },
+        ];
+        if detach_first { operations.reverse(); }
+        let result = commit(&store, vec![], operations);
+        assert_eq!(store.scope_members("messages", thread.key.as_str()).unwrap(), vec![("new".into(), "a".into()), ("kept".into(), "b".into())]);
+        assert!(result.scopes.contains(&thread));
+        assert!(result.members.contains(&crate::identity::RowRef::new(thread.model.clone(), id("old"))));
+        assert!(result.members.contains(&crate::identity::RowRef::new(thread.model.clone(), id("new"))));
+    }
+}
+
+#[test]
 fn detach_removes_only_that_member() {
     let (store, _) = booted_store();
     let thread = scope("messages", "thread");

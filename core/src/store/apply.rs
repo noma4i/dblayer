@@ -679,7 +679,9 @@ fn apply_scope_ops(
             )?;
         }
     }
-    for operation in operations {
+    let detached = operations.iter().filter(|operation| matches!(operation, ScopeOp::Detach { .. }));
+    let retained = operations.iter().filter(|operation| !matches!(operation, ScopeOp::Detach { .. }));
+    for operation in detached.chain(retained) {
         let changed = match (operation, stable_fields(operation.scope())) {
             (ScopeOp::Move { .. }, Some(_)) => 0,
             (ScopeOp::Append { scope, row, .. }, Some((info, fields))) => {

@@ -70,6 +70,8 @@ A reset records its complete model list in one transaction before clearing data.
 
 Row identity includes the model and id. Pending writes, recovery and temporary-id replacement keep records of different models separate, even with identical ids.
 
+List changes reserve destination order keys together. Removed members release their keys before additions, regardless of their position in the submitted changes.
+
 | Table | Holds |
 | ----- | ----- |
 | `row_<model>` | One row per record: id, revision, birth revision, one typed column per scalar and enum field, `rev__<field>` revision columns, `<field>__present` flags of typed objects |

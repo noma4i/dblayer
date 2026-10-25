@@ -110,6 +110,8 @@ mod storage_tests;
 #[cfg(test)]
 mod reactivity_tests;
 #[cfg(test)]
+mod order_key_tests;
+#[cfg(test)]
 mod record_sync_tests;
 #[cfg(test)]
 mod replace_tests;
