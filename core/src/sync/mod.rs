@@ -41,6 +41,7 @@ pub use error::SyncError;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
 pub use load_machine::{LoadError, LoadPhase, RelationState};
+pub use load_owner::RelationWatch;
 pub(crate) use load_machine::snapshot_phase;
 pub use resume::{ResumeReport, Watch};
 pub(crate) use resume::Failures;

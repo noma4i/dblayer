@@ -510,7 +510,7 @@ impl Database {
             None => None,
         };
         if !count {
-            let _ = self.db.warm(&query);
+            self.db.retain_query(&query)?;
         }
         let wire = self.wire(&model)?.clone();
         let sink = feed.clone();

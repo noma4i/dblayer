@@ -409,7 +409,7 @@ pub(crate) enum Event {
 }
 
 impl Event {
-    fn ends_flight(&self) -> bool {
+    pub(crate) fn ends_flight(&self) -> bool {
         matches!(self, Event::Landed { .. } | Event::Discarded { .. } | Event::Failed { .. } | Event::Abandoned { .. } | Event::Panicked { .. })
     }
 
@@ -452,6 +452,12 @@ impl Machine {
 
     pub(crate) fn forget(&mut self, keep: impl Fn(&str) -> bool) {
         self.windows.retain(|window, machine| !machine.flights.is_empty() || keep(window));
+    }
+
+    pub(crate) fn forget_window(&mut self, window: &str) -> bool {
+        if self.windows.get(window).is_some_and(|machine| !machine.flights.is_empty()) { return false; }
+        self.windows.remove(window);
+        true
     }
 
     #[cfg(test)]

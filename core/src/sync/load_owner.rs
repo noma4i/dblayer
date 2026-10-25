@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::{Map, Value};
 use tokio::sync::watch;
@@ -18,7 +18,35 @@ pub(crate) struct Target {
 
 enum Queued {
     Event(Event),
+    Target(Event, Target),
     Online,
+}
+
+#[derive(Clone)]
+pub struct RelationWatch {
+    // The receiver must drop before the lease checks remaining observers.
+    receiver: watch::Receiver<RelationState>,
+    _lease: RelationLease,
+}
+
+#[derive(Clone)]
+struct RelationLease {
+    owner: Weak<LoadOwner>,
+    window: String,
+}
+
+impl RelationWatch {
+    pub fn borrow(&self) -> watch::Ref<'_, RelationState> { self.receiver.borrow() }
+    pub fn borrow_and_update(&mut self) -> watch::Ref<'_, RelationState> { self.receiver.borrow_and_update() }
+    pub async fn changed(&mut self) -> Result<(), watch::error::RecvError> { self.receiver.changed().await }
+}
+
+impl Drop for RelationLease {
+    fn drop(&mut self) {
+        if let Some(owner) = self.owner.upgrade() {
+            locked(&owner.state).forget_window(&self.window);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -27,6 +55,19 @@ struct OwnerState {
     senders: HashMap<String, watch::Sender<RelationState>>,
     targets: HashMap<String, Target>,
     retries: Vec<(String, LoadKind)>,
+}
+
+impl OwnerState {
+    fn forget_window(&mut self, window: &str) {
+        if self.senders.get(window).is_some_and(|sender| sender.receiver_count() > 0) {
+            return;
+        }
+        if self.machine.forget_window(window) {
+            self.senders.remove(window);
+            self.targets.remove(window);
+            self.retries.retain(|(key, _)| key != window);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -56,16 +97,26 @@ impl LoadOwner {
     }
 
     fn drain(&self) {
-        let mut state = locked(&self.state);
+        self.drain_locked(&mut locked(&self.state));
+    }
+
+    fn drain_locked(&self, state: &mut OwnerState) {
         loop {
             let Some(queued) = locked(&self.queue).pop_front() else { return };
             let event = match queued {
                 Queued::Event(event) => event,
+                Queued::Target(event, target) => {
+                    if let Some(window) = event.window() {
+                        state.targets.entry(window.to_string()).or_insert(target);
+                    }
+                    event
+                }
                 Queued::Online => Event::Online { observed: state.senders.iter().filter(|(_, sender)| sender.receiver_count() > 0).map(|(window, _)| window.clone()).collect::<BTreeSet<_>>() },
             };
             #[cfg(test)]
             locked(&self.history).push(event.clone());
             let window = event.window().map(str::to_string);
+            let finished = event.ends_flight();
             let resets = matches!(event, Event::Reset { .. });
             let stepped = catch_unwind(AssertUnwindSafe(|| {
                 #[cfg(test)]
@@ -75,7 +126,7 @@ impl LoadOwner {
                 }
                 step(&mut state.machine, event)
             }));
-            let effects = match (stepped, window) {
+            let effects = match (stepped, window.clone()) {
                 (Ok(effects), _) => effects,
                 (Err(_), Some(window)) => step(&mut state.machine, Event::ReadFailed { window, error: LoadError::internal() }),
                 (Err(_), None) => Vec::new(),
@@ -90,6 +141,9 @@ impl LoadOwner {
                     Effect::Retry { window, kind } => state.retries.push((window, kind)),
                 }
             }
+            if finished {
+                if let Some(window) = &window { state.forget_window(window); }
+            }
             if resets {
                 let state = &mut *state;
                 let observed = |window: &str| state.senders.get(window).is_some_and(|sender| sender.receiver_count() > 0);
@@ -101,23 +155,22 @@ impl LoadOwner {
         }
     }
 
-    pub(crate) fn observe(&self, window: &str, target: Target, seed: Option<Stored>) -> watch::Receiver<RelationState> {
-        self.remember(window, &target);
-        self.submit(Event::Observe { window: window.to_string(), model: target.model, seed });
-        let mut state = locked(&self.state);
-        let view = state.machine.view(window).unwrap_or_else(RelationState::closed);
-        state.senders.entry(window.to_string()).or_insert_with(|| watch::channel(view).0).subscribe()
+    pub(crate) fn observe(self: &Arc<Self>, window: &str, target: Target, seed: Option<Stored>) -> RelationWatch {
+        let receiver = {
+            let mut state = locked(&self.state);
+            let view = state.machine.view(window).unwrap_or_else(RelationState::closed);
+            let receiver = state.senders.entry(window.to_string()).or_insert_with(|| watch::channel(view).0).subscribe();
+            locked(&self.queue).push_back(Queued::Target(Event::Observe { window: window.to_string(), model: target.model.clone(), seed }, target));
+            self.drain_locked(&mut state);
+            receiver
+        };
+        RelationWatch { receiver, _lease: RelationLease { owner: Arc::downgrade(self), window: window.to_string() } }
     }
 
     pub(crate) fn begin_flight(&self, window: &str, target: Target, cursor: bool, seed: Option<Stored>) -> FlightId {
         let flight = self.next_flight.fetch_add(1, Ordering::SeqCst);
-        self.remember(window, &target);
-        self.submit(Event::Start { window: window.to_string(), model: target.model, flight, cursor, seed });
+        self.enqueue(Queued::Target(Event::Start { window: window.to_string(), model: target.model.clone(), flight, cursor, seed }, target));
         flight
-    }
-
-    fn remember(&self, window: &str, target: &Target) {
-        locked(&self.state).targets.entry(window.to_string()).or_insert_with(|| target.clone());
     }
 
     pub(crate) fn reset(&self, models: Option<&[String]>) {

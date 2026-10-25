@@ -178,7 +178,7 @@ impl Inner {
     fn next_issued(&self) -> i64 {
         let now = self.now_ms();
         let next = |previous: i64| previous.max(now - 1) + 1;
-        let previous = self.issued.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |previous| Some(next(previous))).unwrap_or_else(|previous| previous);
+        let previous = self.issued.try_update(Ordering::SeqCst, Ordering::SeqCst, |previous| Some(next(previous))).unwrap_or_else(|previous| previous);
         next(previous)
     }
 

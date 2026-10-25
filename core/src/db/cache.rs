@@ -35,7 +35,7 @@ pub(crate) fn row_bytes(model: &str, row: &super::Record) -> usize {
 pub(crate) struct RowCache {
     entries: LruCache<(String, String), (Row, usize)>,
     estimated_bytes: usize,
-    committed_revision: i64,
+    pub(crate) committed_revision: i64,
     counters: Counters,
 }
 

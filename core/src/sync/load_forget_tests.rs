@@ -8,16 +8,21 @@ fn vibe(number: usize) -> serde_json::Map<String, serde_json::Value> {
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_loadm_19_a_reset_forgets_the_windows_that_nobody_observes_and_keeps_the_observed_one() {
+async fn inv_loadm_19_unobserved_windows_are_forgotten_without_waiting_for_reset() {
     let rig = rig();
     for number in 0..30 {
         drop(rig.sync.relation_state("moments", "vibe_feed", &vibe(number)).unwrap());
     }
     let kept = rig.sync.relation_state("moments", "vibe_feed", &vibe(99)).unwrap();
-    assert_eq!(rig.sync.inner.owner.tracked_windows(), 31);
+    assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);
+    let second = kept.clone();
+    drop(kept);
+    assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);
     rig.db.reset_all().unwrap();
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);
-    assert_eq!(kept.borrow().phase, super::load_machine::LoadPhase::NotLoaded);
+    assert_eq!(second.borrow().phase, super::load_machine::LoadPhase::NotLoaded);
+    drop(second);
+    assert_eq!(rig.sync.inner.owner.tracked_windows(), 0);
 }
 
 #[tokio::test(start_paused = true)]
@@ -30,4 +35,6 @@ async fn inv_loadm_19_a_reset_keeps_a_window_with_a_flight() {
     rig.db.reset_all().unwrap();
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);
     flight.abort();
+    assert!(flight.await.unwrap_err().is_cancelled());
+    assert_eq!(rig.sync.inner.owner.tracked_windows(), 0);
 }

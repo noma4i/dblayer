@@ -1,10 +1,9 @@
 use serde_json::{Map, Value};
-use tokio::sync::watch;
 
 use super::error::SyncError;
 use super::load::Resolved;
-use super::load_machine::{Data, LoadError, Order, RelationState, Stored};
-use super::load_owner::Target;
+use super::load_machine::{Data, LoadError, Order, Stored};
+use super::load_owner::{RelationWatch, Target};
 use super::Inner;
 use super::Sync;
 
@@ -48,7 +47,7 @@ impl Inner {
 }
 
 impl Sync {
-    pub fn relation_state(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<watch::Receiver<RelationState>, SyncError> {
+    pub fn relation_state(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<RelationWatch, SyncError> {
         let resolved = self.inner.resolve(model, relation, params)?;
         Ok(self.inner.owner.observe(&resolved.window_key, resolved.target(), self.inner.stored(&resolved)))
     }

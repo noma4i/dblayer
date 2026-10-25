@@ -590,7 +590,7 @@ impl Db {
         self.shared.validate(&subject)?;
         let subscriber = Subscriber::new(listener, self.shared.counters.clone());
         let known = self.shared.observers().groups.get(&key).map(|group| group.at);
-        let behind = known.is_some_and(|at| self.shared.store.revision_seq().is_ok_and(|latest| latest > at));
+        let behind = known.is_some_and(|at| locked(&self.shared.cache).committed_revision > at);
         let mut observers = self.shared.observers();
         let id = observers.next();
         if let Some(group) = observers.groups.get_mut(&key) {

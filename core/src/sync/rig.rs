@@ -250,9 +250,13 @@ pub async fn await_tasks_ended() {
     panic!("{} tasks are still alive", metrics.num_alive_tasks());
 }
 
-pub async fn await_state<T: Clone>(state: &tokio::sync::watch::Receiver<T>, ready: impl Fn(&T) -> bool) {
+pub async fn await_state(state: &super::RelationWatch, ready: impl Fn(&super::RelationState) -> bool) {
     let mut state = state.clone();
-    tokio::time::timeout(Duration::from_secs(60), state.wait_for(|value| ready(value))).await.expect("the state never reached the awaited value").expect("state sender dropped");
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while !ready(&state.borrow_and_update()) {
+            state.changed().await.expect("state sender dropped");
+        }
+    }).await.expect("the state never reached the awaited value");
 }
 
 pub fn member_ids(rig: &Rig, model: &str, relation: &str, params: &Map<String, Value>) -> Vec<String> {

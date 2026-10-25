@@ -7,6 +7,31 @@ use crate::value::ScalarKind;
 struct Tape(Mutex<Vec<LiveChange>>);
 
 #[tokio::test]
+async fn inv_conc_06_live_connect_returns_while_storage_is_locked() {
+    let (database, _) = with_rows(1).await;
+    for warmed in [false, true] {
+        let writer = database.db.shared.store.lock();
+        let db = database.clone();
+        let tape = Arc::new(Tape(Mutex::default()));
+        let sink = tape.clone();
+        let (sent, received) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let live = db.live_query(r#"{"model":"Moment"}"#.into(), sink);
+            sent.send(()).unwrap();
+            live
+        });
+        let returned = received.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
+        drop(writer);
+        let live = thread.join().unwrap();
+        database.db.await_revision(database.db.revision_seq().unwrap());
+        assert!(returned, "live connect waited for storage, warmed={warmed}");
+        assert_eq!(tape.0.lock().unwrap().last().unwrap().rows.len(), 1);
+        live.cancel();
+        assert!(database.db.peek_query(&crate::query::Query::new("Moment")).is_some());
+    }
+}
+
+#[tokio::test]
 async fn changes_classify_insert_update_move_and_remove_without_list_state() {
     let (db, ids) = with_rows(3).await;
     let tape = Arc::new(Tape(Mutex::default()));

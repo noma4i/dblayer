@@ -101,6 +101,8 @@ list.warm()                              // read once, keep in memory
 val row = list.cachedRow(id)             // one row from the row cache, or null
 ```
 
+- Connecting a subscription schedules its first read without waiting for storage. `cached()` remains empty until that read delivers rows.
+- Load state is released when its last observer and request finish. Reopening reads the saved page information from SQLite.
 - A query is warm after `warm()` and after any read of it through `live` or `snapshots`, even when that read has ended. The library keeps the 16 latest queries warm and drops the oldest. A warm query is not a subscription: the subscription count does not include it.
 - A warm query follows every commit. `revision` grows with each commit that reaches the rows, so you can tell a stale value from a newer one. The value can be one delivery behind a commit that you just made.
 - `cachedRow` reads the row cache, which holds a limited number of rows. A miss does not say the row is absent.

@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use serde_json::Map;
-use tokio::sync::watch;
 
 use super::load::{LoadOptions, LoadStatus};
 use super::load_machine::{LoadPhase, RelationState};
@@ -13,7 +12,7 @@ fn none() -> Map<String, serde_json::Value> {
     Map::new()
 }
 
-fn feed_state(rig: &Rig) -> watch::Receiver<RelationState> {
+fn feed_state(rig: &Rig) -> super::RelationWatch {
     rig.sync.relation_state("moments", "feed", &none()).unwrap()
 }
 
