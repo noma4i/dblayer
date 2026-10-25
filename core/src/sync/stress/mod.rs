@@ -214,7 +214,11 @@ async fn worker_loop(id: usize, config: StressConfig, world: Arc<World>, progres
             check::lists(&world.rig.db, &world.findings);
             check::cache(&world.rig.db, &world.universe, &world.findings);
         }
-        tokio::task::yield_now().await;
+        if config.threads <= 1 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        } else {
+            tokio::task::yield_now().await;
+        }
     }
 }
 
