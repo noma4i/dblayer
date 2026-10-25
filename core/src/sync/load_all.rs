@@ -17,17 +17,25 @@ impl Inner {
         if let Some(error) = first.kept_error {
             return Err(error);
         }
-        let RemoteShape::Connection { max_pages, .. } = resolved.remote.shape else { return Ok(()) };
-        if first.status == LoadStatus::Discarded(DiscardReason::StaleGeneration) {
-            return Err(Self::incomplete(resolved, "the database was reset"));
+        match first.status {
+            LoadStatus::Discarded(DiscardReason::StaleGeneration) => return Err(Self::incomplete(resolved, "the database was reset")),
+            LoadStatus::Discarded(_) => {
+                self.flights_settled(resolved).await;
+                if self.db.shared.store.window(&resolved.window_key)?.is_none() {
+                    return Err(Self::incomplete(resolved, "the first page was discarded and no window is stored"));
+                }
+            }
+            _ => {}
         }
+        let RemoteShape::Connection { max_pages, .. } = resolved.remote.shape else { return Ok(()) };
         loop {
             self.flights_settled(resolved).await;
             let Some(window) = self.db.shared.store.window(&resolved.window_key)? else { return Err(Self::incomplete(resolved, "the window is gone")) };
-            let chain = PageChain { cursor: window.cursor.clone(), has_next: window.has_next, loaded_pages: usize::try_from(window.pages).unwrap_or_default(), is_loading: false };
+            let chain = PageChain { cursor: window.cursor.clone(), has_next: window.has_next, loaded_pages: usize::try_from(window.pages).unwrap_or_default(), is_loading: self.is_loading(resolved) };
             match LoadMoreVerdict::of(&chain, max_pages.map(|pages| pages as usize)) {
+                LoadMoreVerdict::AlreadyLoading => continue,
                 LoadMoreVerdict::NoCursor if window.has_next => return Err(Self::incomplete(resolved, "the server reports a next page without a cursor")),
-                LoadMoreVerdict::NoCursor | LoadMoreVerdict::AlreadyLoading => return Ok(()),
+                LoadMoreVerdict::NoCursor => return Ok(()),
                 LoadMoreVerdict::MaxPagesReached => return Err(Self::incomplete(resolved, "max_pages is reached and more pages remain")),
                 LoadMoreVerdict::FetchNextPage => {}
             }

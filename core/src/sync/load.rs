@@ -192,7 +192,7 @@ impl Inner {
         Ok(freshness.is_fresh(self.now_ms(), i64::try_from(window.as_millis()).unwrap_or(i64::MAX)))
     }
 
-    fn is_loading(&self, resolved: &Resolved<'_>) -> bool {
+    pub(super) fn is_loading(&self, resolved: &Resolved<'_>) -> bool {
         let prefix = format!("{}|", resolved.window_key);
         locked(&self.flights).coalescing.in_flight().iter().any(|key| key.starts_with(&prefix))
     }
