@@ -15,6 +15,7 @@ pub struct UploadConfig {
     pub step_timeout: Duration,
     pub presign_ttl: Duration,
     pub tick: Duration,
+    pub failed_ttl: Duration,
 }
 
 impl Default for UploadConfig {
@@ -29,6 +30,7 @@ impl Default for UploadConfig {
             step_timeout: Duration::from_secs(45),
             presign_ttl: Duration::from_secs(50 * 60),
             tick: Duration::from_millis(100),
+            failed_ttl: Duration::from_secs(7 * 24 * 60 * 60),
         }
     }
 }

@@ -18,6 +18,10 @@ use super::{locked, Inner, Sync};
 
 impl Inner {
     pub(crate) async fn flush_pending(self: &std::sync::Arc<Self>) -> Result<FlushReport, SyncError> {
+        if self.upload_housekeeping_due.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.expire_uploads().await;
+            self.spawn_upload_housekeeping();
+        }
         let report = self.flush().await?;
         self.start_uploads()?;
         self.arm_wake()?;

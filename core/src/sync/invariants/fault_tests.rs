@@ -62,6 +62,7 @@ async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_
         let rig = prepare(&root.path().join("1.sqlite"));
         let steps = interrupt_at(&rig, usize::MAX);
         rig.sync.flush().await.unwrap();
+        rig.sync.wait_uploads().await;
         steps.load(Ordering::SeqCst)
     };
     assert!(total > 100, "{total} steps counted");
@@ -72,6 +73,7 @@ async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_
         let rig = prepare(&path);
         interrupt_at(&rig, limit);
         faulted += usize::from(rig.sync.flush().await.is_err());
+        rig.sync.wait_uploads().await;
         drop(rig);
         match check_all_or_nothing(&path, limit) {
             true => confirmed += 1,

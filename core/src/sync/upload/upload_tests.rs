@@ -926,3 +926,102 @@ async fn the_blob_step_reads_a_dotted_root_and_headers_given_as_a_json_string() 
     assert_eq!(puts.first().map(|put| put.headers.clone()), Some(vec![("x-a".to_string(), "1".to_string())]));
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
 }
+
+fn fail_open_upload(rig: &Rig, seq: i64) {
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Response, rig.db.generation());
+    envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: OperationFailure::new(FailureKind::Network, "lost") });
+    rig.db.shared.store.commit(envelope).unwrap();
+}
+
+fn orphan_count(rig: &Rig) -> i64 {
+    rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT COUNT(*) FROM upload_orphan", [], |row| row.get::<_, i64>(0))?)).unwrap()
+}
+
+fn confirmed_parts() -> Vec<UploadPart> {
+    [(1, 5), (2, 5), (3, 2)].map(|(number, bytes)| UploadPart { number, etag: format!("e{number}"), confirmed_bytes: bytes }).to_vec()
+}
+
+#[tokio::test(start_paused = true)]
+async fn inv_upload_19_discarding_a_failed_multipart_aborts_it_once_with_or_without_confirmed_parts() {
+    for (name, parts) in [("unconfirmed", Vec::new()), ("all confirmed", confirmed_parts())] {
+        let rig = upload_rig(small());
+        rig.transport.enqueue("AbortMultipart", abort());
+        let source = file(TWELVE);
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(parts)).unwrap();
+        fail_open_upload(&rig, seq);
+        assert_eq!(rig.db.discard("moments", &rid("m1")).unwrap(), 1, "{name}");
+        assert!(rig.db.outbox().unwrap().is_empty(), "{name}");
+        assert_eq!(orphan_count(&rig), 1, "{name}: the abort must outlive the operation");
+        rig.sync.inner.upload_housekeeping().await;
+        rig.sync.inner.upload_housekeeping().await;
+        assert_eq!(variables(&rig, "AbortMultipart"), [json!({"key": "k1", "uploadId": "u1"})], "{name}");
+        assert_eq!(rig.transport.call_count("CompleteMultipart"), 0, "{name}");
+        assert_eq!(orphan_count(&rig), 0, "{name}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_orphaned_abort_waits_offline_and_is_sent_when_online() {
+    let rig = upload_rig(small());
+    rig.transport.enqueue("AbortMultipart", abort());
+    let source = file(TWELVE);
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
+    fail_open_upload(&rig, seq);
+    rig.db.discard("moments", &rid("m1")).unwrap();
+    rig.sync.set_online(false);
+    rig.sync.inner.upload_housekeeping().await;
+    assert_eq!((rig.transport.call_count("AbortMultipart"), orphan_count(&rig)), (0, 1));
+    rig.sync.set_online(true);
+    rig.sync.wait_uploads().await;
+    rig.sync.inner.upload_housekeeping().await;
+    assert_eq!((rig.transport.call_count("AbortMultipart"), orphan_count(&rig)), (1, 0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn inv_upload_20_a_failed_upload_older_than_seven_days_is_aborted_and_removed_without_a_timer() {
+    for (name, parts) in [("unconfirmed", Vec::new()), ("all confirmed", confirmed_parts())] {
+        let rig = upload_rig(small());
+        rig.transport.enqueue("AbortMultipart", abort());
+        let source = file(TWELVE);
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(parts)).unwrap();
+        fail_open_upload(&rig, seq);
+        rig.clock.advance(Duration::from_secs(7 * 24 * 3600 - 3600));
+        rig.sync.inner.upload_housekeeping().await;
+        assert_eq!((rig.db.outbox().unwrap().len(), rig.transport.call_count("AbortMultipart")), (1, 0), "{name}: not yet due");
+        rig.clock.advance(Duration::from_secs(2 * 3600));
+        rig.sync.inner.upload_housekeeping().await;
+        assert!(rig.db.outbox().unwrap().is_empty(), "{name}");
+        assert_eq!(variables(&rig, "AbortMultipart"), [json!({"key": "k1", "uploadId": "u1"})], "{name}");
+        assert_eq!(rig.transport.call_count("CompleteMultipart"), 0, "{name}");
+        assert_eq!(orphan_count(&rig), 0, "{name}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn upload_housekeeping_runs_at_the_first_flush_and_when_coming_online_never_on_a_timer() {
+    let rig = upload_rig(small());
+    rig.transport.enqueue("AbortMultipart", abort());
+    rig.transport.enqueue("AbortMultipart", abort());
+    let source = file(TWELVE);
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), resumable(Vec::new())).unwrap();
+    fail_open_upload(&rig, seq);
+    rig.clock.advance(Duration::from_secs(8 * 24 * 3600));
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    assert_eq!(rig.db.outbox().unwrap().len(), 1, "nothing runs without an event");
+    rig.sync.flush().await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert!(rig.db.outbox().unwrap().is_empty(), "boot flush");
+    assert_eq!(rig.transport.call_count("AbortMultipart"), 1);
+    let source = file(TWELVE);
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m2"), &input(&source), resumable(Vec::new())).unwrap();
+    fail_open_upload(&rig, seq);
+    rig.clock.advance(Duration::from_secs(8 * 24 * 3600));
+    rig.sync.flush().await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.db.outbox().unwrap().len(), 1, "a second flush is not an event");
+    rig.sync.set_online(false);
+    rig.sync.set_online(true);
+    rig.sync.wait_uploads().await;
+    assert!(rig.db.outbox().unwrap().is_empty(), "online transition");
+    assert_eq!(rig.transport.call_count("AbortMultipart"), 2);
+}

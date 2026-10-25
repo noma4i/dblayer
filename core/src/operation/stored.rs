@@ -270,7 +270,19 @@ pub(crate) fn read_fields(connection: &Connection, seq: i64) -> Result<Vec<Strin
     fields
 }
 
+pub(crate) fn record_orphan_uploads(connection: &Connection, seq: i64, position: Option<i64>) -> Result<()> {
+    let mut statement = connection.prepare_cached("SELECT position, storage_key, upload_id FROM op_item WHERE seq = ?1 AND upload_id IS NOT NULL AND storage_key IS NOT NULL AND (?2 IS NULL OR position = ?2)")?;
+    let pending = statement.query_map(params![seq, position], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))?.collect::<Result<Vec<_>>>()?;
+    for (item, key, upload_id) in pending {
+        let input = read_item_value(connection, seq, item, "input")?.and_then(|value| serde_json::from_value::<crate::upload::UploadInput>(value).ok());
+        let Some(steps) = input.and_then(|input| input.steps.multipart) else { continue };
+        connection.prepare_cached("INSERT INTO upload_orphan (storage_key, upload_id, abort_operation) VALUES (?1, ?2, ?3)")?.execute(params![key, upload_id, steps.abort])?;
+    }
+    Ok(())
+}
+
 pub fn delete_operation(connection: &Connection, seq: i64) -> Result<usize> {
+    record_orphan_uploads(connection, seq, None)?;
     connection.execute("DELETE FROM file WHERE id IN (SELECT file_id FROM op_item WHERE seq = ?1) AND field LIKE 'op_item.%' AND NOT EXISTS (SELECT 1 FROM op_item WHERE op_item.file_id = file.id AND seq != ?1)", [seq])?;
     for table in ["op_row", "op_value", "op_part", "op_item_header", "op_item_retry", "op_item"] {
         connection.prepare_cached(&format!("DELETE FROM {table} WHERE seq = ?1"))?.execute([seq])?;

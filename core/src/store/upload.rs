@@ -9,6 +9,7 @@ use crate::upload::UploadInput;
 use super::StoreError;
 
 pub(super) fn remove_item(connection: &Connection, seq: i64, position: i64) -> Result<(), StoreError> {
+    crate::operation::record_orphan_uploads(connection, seq, Some(position))?;
     connection.execute("DELETE FROM file WHERE id = (SELECT file_id FROM op_item WHERE seq = ?1 AND position = ?2) AND field LIKE 'op_item.%'", params![seq, position])?;
     erase_item(connection, seq, position)
 }
@@ -53,4 +54,18 @@ pub(super) fn separate_items(connection: &Connection, seq: i64, action: &str, mu
     }
     delete_operation(connection, seq)?;
     Ok(sequences)
+}
+
+impl super::Store {
+    pub(crate) fn upload_orphans(&self) -> Result<Vec<(i64, String, String, String)>, StoreError> {
+        let inner = self.lock();
+        let mut statement = inner.connection.prepare("SELECT id, storage_key, upload_id, abort_operation FROM upload_orphan ORDER BY id")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub(crate) fn settle_upload_orphan(&self, id: i64) -> Result<(), StoreError> {
+        self.lock().connection.execute("DELETE FROM upload_orphan WHERE id = ?1", [id])?;
+        Ok(())
+    }
 }

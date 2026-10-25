@@ -72,7 +72,7 @@ END",
 ) STRICT",
 ];
 
-const CORE_STATEMENTS: [&str; 35] = [
+const CORE_STATEMENTS: [&str; 36] = [
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
@@ -148,6 +148,12 @@ const CORE_STATEMENTS: [&str; 35] = [
   PRIMARY KEY (seq, pos)
 ) STRICT, WITHOUT ROWID",
     "CREATE INDEX IF NOT EXISTS op_row_id ON op_row (row_id)",
+    "CREATE TABLE IF NOT EXISTS upload_orphan (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  storage_key TEXT NOT NULL,
+  upload_id TEXT NOT NULL,
+  abort_operation TEXT NOT NULL
+) STRICT",
     "CREATE TABLE IF NOT EXISTS op_part (
   seq INTEGER NOT NULL,
   item_position INTEGER NOT NULL,

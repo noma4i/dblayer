@@ -463,3 +463,23 @@ async fn invalid_batch_answers_preserve_all_temporary_records() {
         assert!(db.find("Asset", &crate::identity::RowId::new("a0").unwrap()).unwrap().is_none(), "{answer}");
     }
 }
+
+#[tokio::test]
+async fn discarding_one_batch_member_keeps_its_multipart_abort_after_the_item_is_gone() {
+    let db = Db::open_in_memory(vec![spec()], None).unwrap();
+    let sync = Sync::new(db.clone(), Arc::new(MockTransport::new()), Arc::new(ManualClock::new(std::time::Duration::ZERO)), SyncConfig::default());
+    sync.set_online(false);
+    let source = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(source.path(), b"image").unwrap();
+    let items = (0..2).map(|position| UploadItem {
+        values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(),
+        path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
+    }).collect();
+    let steps = UploadSteps::new("CreateAssets").single("CreateBlob").multipart("Init", "Presign", "Complete", "Abort");
+    let request = UploadBatchInput { operation: "create_files".into(), steps, variables: Default::default() };
+    let ids: Vec<_> = sync.upload_create_batch("Asset", items, request).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    db.shared.store.lock().connection.execute("UPDATE op_item SET upload_id = 'u1', storage_key = 'k1' WHERE row_id = ?1", [ids[0].as_str()]).unwrap();
+    assert_eq!(db.discard("Asset", &ids[0]).unwrap(), 1);
+    let orphans = db.shared.store.upload_orphans().unwrap();
+    assert_eq!(orphans.iter().map(|(_, key, upload, abort)| (key.as_str(), upload.as_str(), abort.as_str())).collect::<Vec<_>>(), [("k1", "u1", "Abort")]);
+}

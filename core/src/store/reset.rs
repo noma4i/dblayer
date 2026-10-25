@@ -98,7 +98,10 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
     }
     match models {
         Some(models) => models.iter().try_for_each(|model| clear_sync(connection, Some(model)))?,
-        None => clear_sync(connection, None)?,
+        None => {
+            connection.execute("DELETE FROM upload_orphan", [])?;
+            clear_sync(connection, None)?;
+        }
     }
     Ok(())
 }
