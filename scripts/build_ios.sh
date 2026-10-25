@@ -20,6 +20,7 @@ fi
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}" RUST_TEST_THREADS="${RUST_TEST_THREADS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 export IPHONEOS_DEPLOYMENT_TARGET=17.0
+export MACOSX_DEPLOYMENT_TARGET=14.0
 
 stamp="$build/SOURCE_HASH"
 outputs=("$bridge/DBlayerFFI.xcframework" "$bridge/Sources/DBlayer/dblayer.swift")

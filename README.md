@@ -8,7 +8,7 @@ Generated APIs escape language keywords while preserving JSON keys. SQLite also 
 
 ## Requirements
 
-Android 13 (API 33) or newer.
+iOS 17, macOS 14, or Android 13 (API 33) or newer.
 
 ## Highlights
 

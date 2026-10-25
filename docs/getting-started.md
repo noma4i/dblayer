@@ -39,6 +39,9 @@ See [release profile measurements](release-profile-measurements.md) for the size
 
 Single steps:
 
+Apple builds set minimum deployment versions explicitly: iOS 17 and macOS 14, including the bundled SQLite library.
+The native build fingerprint includes both deployment versions.
+
 | Command | Does |
 | ------- | ---- |
 | `cargo test` | Rust core and generator tests |
