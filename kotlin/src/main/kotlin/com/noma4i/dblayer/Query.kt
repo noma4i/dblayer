@@ -135,7 +135,7 @@ class Query<Model : DBModel>(
 
     suspend fun load() = offCaller { DBlayer.database.load(modelName, relation.orEmpty(), params.jsonText()) }
     suspend fun refresh() = offCaller { DBlayer.database.refresh(modelName, relation.orEmpty(), params.jsonText()) }
-    /** Reads every page of the connection of this relation to its confirmed end, so that `snapshots.current()` holds all rows afterwards. `force = false` uses the current freshness and the pages that are stored, `force = true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation shares its page requests. It throws when a page fails, when `maxPages` stops it before the end, or when the query has no remote relation. It does not make the pages atomic: rows of earlier pages stay after a failure. */
+    /** Reads every page of the connection of this relation to its confirmed end, so that `snapshots.current()` holds all rows afterwards. `force = false` uses the current freshness and the pages that are stored, `force = true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation shares its page requests. It throws when a page fails, when `max_pages` stops it before the end, or when the query has no remote relation. It does not make the pages atomic: rows of earlier pages stay after a failure. */
     suspend fun loadAll(force: Boolean = false) = offCaller { DBlayer.database.loadAll(modelName, relation.orEmpty(), params.jsonText(), force) }
     suspend fun loadMore(): LoadMoreResult = offCaller { DBlayer.database.loadMore(modelName, relation.orEmpty(), params.jsonText()) }
 }
