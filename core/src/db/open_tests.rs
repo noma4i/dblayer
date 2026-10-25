@@ -122,7 +122,7 @@ fn fsck_rebuilds_a_missing_temp_row_from_its_create_operation_on_open() {
 }
 
 #[test]
-fn fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_others() {
+fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_others() {
     let mut kept_id = None;
     let (_directory, db) = reopened_after(|db| {
         put(db, "moments", json!({"id": "temp-orphan", "text": "orphan"}));

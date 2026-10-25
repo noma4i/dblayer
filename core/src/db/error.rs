@@ -24,6 +24,8 @@ pub enum DbError {
     UnknownAction { model: String, action: String },
     #[error("model {model} has no association {name}")]
     UnknownAssociation { model: String, name: String },
+    #[error("model {model} declares no field {field}")]
+    UnknownField { model: String, field: String },
     #[error("field {field} of {model} is not a file field")]
     NotFileField { model: String, field: String },
     #[error("field {field} of {model} is not an ephemeral field")]

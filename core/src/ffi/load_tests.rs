@@ -197,6 +197,22 @@ async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() {
+    let (db, transport, _) = open_rig(None, None, None).await;
+    let query = r#"{"model":"Moment","relation":"feed","params":{}}"#;
+    let first = db.live_query(query.into(), Arc::new(Silent));
+    first.wait_for_initial_load().await.unwrap();
+    assert_eq!(queries(&transport), 1);
+    let second = db.live_query(query.into(), Arc::new(Silent));
+    second.wait_for_initial_load().await.unwrap();
+    assert_eq!(queries(&transport), 1);
+    db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    assert_eq!(queries(&transport), 2);
+    first.cancel();
+    second.cancel();
+}
+
+#[tokio::test(start_paused = true)]
 async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
     for preloaded in [false, true] {
         let hold = Arc::new(tokio::sync::Semaphore::new(0));

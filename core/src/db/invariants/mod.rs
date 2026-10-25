@@ -24,3 +24,5 @@ mod snapshot_tests;
 mod work_tests;
 #[cfg(test)]
 mod cut_tests;
+#[cfg(test)]
+mod row_tests;

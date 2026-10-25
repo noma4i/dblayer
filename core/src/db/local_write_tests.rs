@@ -155,13 +155,19 @@ fn inv_cascade_03_update_touches_the_parent_of_the_row() {
 }
 
 #[test]
-fn update_with_unchanged_values_writes_nothing() {
+fn inv_row_05_update_with_unchanged_values_writes_nothing() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
+    let (log, callback) = recorder();
+    let _subscription = db.observe(Query::new("moments"), callback).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    let delivered = calls(&log).len();
     let before = db.find("moments", &rid("m1")).unwrap().unwrap().revision;
     let row = db.update("moments", &rid("m1"), obj(json!({"text": "one"}))).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(row.revision, before);
     assert!(db.outbox().unwrap().is_empty());
+    assert_eq!(calls(&log).len(), delivered);
 }
 
 #[test]

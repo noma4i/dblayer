@@ -67,6 +67,31 @@ fn inv_time_01_only_the_clock_module_and_the_stress_rigs_read_the_wall_clock() {
 }
 
 #[test]
+fn inv_zoo_01_a_public_type_name_is_defined_once_in_core() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rust_files(&root, &mut files);
+    let mut places: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for path in files {
+        for line in fs::read_to_string(&path).unwrap().lines() {
+            let line = line.trim_start();
+            let Some(rest) = ["pub struct ", "pub enum ", "pub trait ", "pub type "].iter().find_map(|prefix| line.strip_prefix(prefix)) else { continue };
+            let name: String = rest.chars().take_while(|character| character.is_alphanumeric()).collect();
+            if name.chars().next().is_some_and(char::is_uppercase) {
+                places.entry(name).or_default().push(path.strip_prefix(&root).unwrap().display().to_string());
+            }
+        }
+    }
+    let allowed: Vec<String> = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("scripts").join("zoo_allowlist.txt"))
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.split('#').next()?.trim().strip_prefix("type:").map(str::to_string))
+        .collect();
+    let duplicated: Vec<_> = places.iter().filter(|(name, found)| found.len() > 1 && !allowed.contains(name)).collect();
+    assert!(duplicated.is_empty(), "public types defined in several places: {duplicated:?}");
+}
+
+#[test]
 fn user_agent_preserves_application_products() {
     let token = format!("DBlayer/{}", env!("CARGO_PKG_VERSION"));
     for (application, expected) in [(None, token.clone()), (Some(String::new()), token.clone()), (Some("Example/3".into()), format!("Example/3 {token}"))] {

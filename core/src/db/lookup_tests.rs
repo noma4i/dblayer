@@ -83,7 +83,7 @@ fn query_reparses_only_the_row_that_changed() {
 }
 
 #[test]
-fn find_sees_a_row_changed_after_it_was_cached_by_a_landing_and_by_a_local_update() {
+fn inv_row_02_find_sees_a_row_changed_after_it_was_cached_by_a_landing_and_by_a_local_update() {
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     assert_eq!(db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("Ann"));
@@ -106,7 +106,7 @@ fn find_does_not_return_a_destroyed_row_from_the_cache() {
 }
 
 #[test]
-fn count_exists_and_first_follow_the_query() {
+fn inv_row_06_count_exists_and_first_follow_the_query() {
     let db = booted();
     seed_tree(&db);
     let all = Query::new("moments").ordered(vec![Order::new("id", SortDirection::Desc)]);

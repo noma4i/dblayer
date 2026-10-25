@@ -33,7 +33,7 @@ fn booleans_promote_to_integer_columns() {
 }
 
 #[test]
-fn identical_upsert_changes_nothing_and_keeps_revision() {
+fn inv_row_03_identical_upsert_changes_nothing_and_keeps_revision() {
     let (store, _) = booted_store();
     commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
     let repeat = commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);

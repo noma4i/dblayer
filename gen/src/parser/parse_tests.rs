@@ -67,7 +67,7 @@ fn bare_and_empty_literals() {
 }
 
 #[test]
-fn malformed_sources_fail_with_a_line_and_a_message() {
+fn inv_dsl_02_malformed_sources_fail_with_a_line_and_a_message() {
     let cases: [(&str, &str, Option<usize>, Option<&str>); 8] = [
         ("top level word other than model", "\nstring :name\n", Some(2), Some("expected `model`, `operation` or `scalar`, found `string`")),
         ("model without name", "model do\nend", Some(1), Some("model needs a constant name, for example `model User do`")),

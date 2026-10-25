@@ -32,6 +32,8 @@ const FORBIDDEN_ACTION_MEMBERS: [&str; 6] = ["after", "invalidate", "onCommit", 
 pub enum SchemaError {
     #[error("missing field {0}")]
     MissingField(String),
+    #[error("value of field {0} does not fit its type")]
+    InvalidValue(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -1126,6 +1128,15 @@ impl ModelSpec {
             }
         }
         Ok(normalized)
+    }
+
+    pub fn check_values(&self, input: &Map<String, Value>) -> Result<(), SchemaError> {
+        for field in self.fields.iter().filter(|field| !field.is_local()) {
+            if field.read(input).is_some_and(|value| !value.is_null() && field.decode(&value).is_none()) {
+                return Err(SchemaError::InvalidValue(field.name.clone()));
+            }
+        }
+        Ok(())
     }
 
     /// Normalizes a locally created row. Server-owned fields the caller did not give take a zero value of their type, dates take `now_ms`.

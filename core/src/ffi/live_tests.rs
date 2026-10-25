@@ -32,6 +32,23 @@ async fn inv_conc_06_live_connect_returns_while_storage_is_locked() {
 }
 
 #[tokio::test]
+async fn inv_api_01_one_live_call_gives_the_value_the_events_and_the_reader_count() {
+    let (db, _) = with_rows(2).await;
+    let tape = Arc::new(Tape(Mutex::default()));
+    let live = db.live_query(r#"{"model":"Moment"}"#.into(), tape.clone());
+    assert_eq!(live.current().await.rows.len(), 2);
+    let counted = db.subscription_census();
+    assert_eq!((counted.subscriptions, counted.observed_queries), (1, 1));
+    db.create("Moment".into(), r#"{"text":"z"}"#.into(), "{}".into()).await.unwrap();
+    db.db.await_revision(db.db.revision_seq().unwrap());
+    assert_eq!(tape.0.lock().unwrap().last().unwrap().inserted.len(), 1);
+    live.cancel();
+    drop(live);
+    let left = db.subscription_census();
+    assert_eq!((left.subscriptions, left.observed_queries), (0, 0));
+}
+
+#[tokio::test]
 async fn changes_classify_insert_update_move_and_remove_without_list_state() {
     let (db, ids) = with_rows(3).await;
     let tape = Arc::new(Tape(Mutex::default()));

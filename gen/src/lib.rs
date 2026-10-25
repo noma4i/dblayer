@@ -192,6 +192,9 @@ mod lib_tests;
 mod roundtrip_tests;
 
 #[cfg(test)]
+mod docs_tests;
+
+#[cfg(test)]
 mod nested_tests;
 
 #[cfg(test)]

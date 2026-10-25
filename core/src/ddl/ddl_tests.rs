@@ -330,7 +330,7 @@ fn associations_and_storage_change_the_fingerprint() {
 }
 
 #[test]
-fn fingerprint_ignores_declaration_order() {
+fn inv_dsl_04_fingerprint_ignores_declaration_order() {
     let fields = vec![
         FieldSpec::scalar("title", ScalarKind::Str).nullable(),
         FieldSpec::scalar("count", ScalarKind::Int).indexed().with_default(json!(0)),
@@ -347,7 +347,7 @@ fn fingerprint_ignores_declaration_order() {
 }
 
 #[test]
-fn field_and_relation_changes_change_the_fingerprint() {
+fn inv_dsl_04_field_and_relation_changes_change_the_fingerprint() {
     let field = |field: FieldSpec| fingerprint(&ModelSpec::new("posts", vec![field]));
     let relation = |relation: RelationSpec| fingerprint(&ModelSpec { relations: vec![relation], ..ModelSpec::new("posts", vec![FieldSpec::raw("id")]) });
     let title = || FieldSpec::scalar("title", ScalarKind::Str).indexed();

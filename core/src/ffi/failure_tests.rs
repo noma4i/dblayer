@@ -48,7 +48,7 @@ fn unauthorized() -> DbError {
 const REFUSED: &str = r#"{"errors":[{"message":"nope"},{"message":"bad"}]}"#;
 
 #[tokio::test]
-async fn a_refused_call_keeps_its_error_and_is_sent_once() {
+async fn inv_api_03_a_refused_call_keeps_its_kind_and_details_and_is_sent_once() {
     for answer in [Err(unauthorized as fn() -> DbError), Ok(REFUSED)] {
         for call in ["run", "refresh"] {
             let (db, transport) = rig(answer).await;

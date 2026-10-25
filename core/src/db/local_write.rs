@@ -222,6 +222,9 @@ impl Db {
 
     fn insert_local(&self, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: Option<(crate::commit::UploadAdmission, crate::identity::Generation)>) -> Result<RowId, DbError> {
         let spec = self.shared.spec(model)?;
+        if held.is_none() {
+            reject_unknown_fields(spec, model, &values)?;
+        }
         let mut input = values;
         let id = match input.get("id").and_then(read_id) {
             Some(id) => id,
@@ -230,6 +233,7 @@ impl Db {
         };
         input.insert("id".to_string(), Value::String(id.to_string()));
         self.shared.store.decode_values(model, &mut input, |source, key| source.get(key))?;
+        spec.check_values(&input)?;
         let now_ms = self.shared.store.lock().now_ms();
         let data = spec.normalize_local(&input, now_ms)?;
         let key = ModelKey::new(model);
@@ -264,6 +268,8 @@ impl Db {
 
     pub fn update_with(&self, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
         let spec = self.shared.spec(model)?;
+        reject_unknown_fields(spec, model, &patch)?;
+        spec.check_values(&patch)?;
         let mut patch = spec.patch(&patch);
         self.shared.store.decode_values(model, &mut patch, |source, key| source.get(key))?;
         patch.remove("id");
@@ -478,5 +484,12 @@ impl Db {
             }
         }
         Ok(())
+    }
+}
+
+fn reject_unknown_fields(spec: &ModelSpec, model: &str, values: &Map<String, Value>) -> Result<(), DbError> {
+    match values.keys().find(|name| spec.field(name).is_none()) {
+        Some(field) => Err(DbError::UnknownField { model: model.to_string(), field: field.clone() }),
+        None => Ok(()),
     }
 }
