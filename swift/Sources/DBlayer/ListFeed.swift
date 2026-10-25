@@ -7,7 +7,7 @@ struct ListApplied<Model: DBModel> {
   let rows: [Model]
   let reordered: Bool
   let desynced: Bool
-  var failure: String?
+  var failure: DbError?
   var edits: [ListEdit<Model>]?
   var undecodable: [String] = []
 }
@@ -30,7 +30,7 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   private var missing = 0
   private var decoded = 0
   private var undecodable = 0
-  private var lastDecodeFailure: String?
+  private var lastDecodeFailure: DbError?
   private var desynced = 0
 
   var decodedRows: Int { lock.withLock { decoded } }
@@ -39,8 +39,13 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   var rows: [Model] { lock.withLock { current } }
 
   private var current: [Model] { missing == 0 ? loaded : slots.compactMap(\.row) }
-  private var decodeFailure: String? { missing == 0 ? nil : lastDecodeFailure }
+  private var decodeFailure: DbError? { missing == 0 ? nil : lastDecodeFailure }
   private var missingIds: [String] { missing == 0 ? [] : slots.filter { $0.row == nil }.map(\.id) }
+
+  private static func invalid(_ error: Error) -> DbError {
+    if let error = error as? DbError, case .Invalid = error { return error }
+    return .Invalid(detail: String(describing: error))
+  }
 
   func apply(_ change: LiveChange) -> ListApplied<Model> {
     lock.withLock {
@@ -52,7 +57,7 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
           return (Slot(id: row.id, row: row), index)
         } catch {
           undecodable += 1
-          lastDecodeFailure = String(describing: error)
+          lastDecodeFailure = Self.invalid(error)
           decodeLog.error("Row of \(Model.modelName, privacy: .public) failed to decode: \(String(describing: error), privacy: .public)")
           return (Slot(id: wire.id, row: nil), index)
         }
@@ -249,7 +254,7 @@ final class ListSession<Model: DBModel, Value: Sendable>: @unchecked Sendable {
     }
     current?()
     decodeLog.error("List of \(Model.modelName, privacy: .public) stopped: \(reason, privacy: .public)")
-    let applied = ListApplied<Model>(rows: feed.rows, reordered: false, desynced: false, failure: reason)
+    let applied = ListApplied<Model>(rows: feed.rows, reordered: false, desynced: false, failure: .Invalid(detail: reason))
     emit(map(applied, LiveChange(revision: 0, full: false, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: .Invalid(detail: reason), phase: .failed, errorKind: "invalid")))
   }
 }

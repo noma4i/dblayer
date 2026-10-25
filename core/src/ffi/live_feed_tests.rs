@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use super::live::{LivePhase, QueryListener};
 use super::live_feed::LiveFeed;
 use super::{DbError, LiveChange};
+use crate::transport::GraphqlExtensions;
 use crate::sync::{LoadError, LoadPhase, RelationState};
 
 struct Tape(Mutex<Vec<LiveChange>>);
@@ -197,6 +198,16 @@ fn inv_loadm_15_a_failure_of_the_server_subscription_stays_until_it_recovers() {
     feed.subscription_failed(None);
     let healed = heard(&tape).pop().unwrap();
     assert!(healed.error.is_none() && healed.error_kind.is_none());
+
+    let refused = |code: &str| DbError::Graphql { messages: vec!["refused".into()], extensions: Some(GraphqlExtensions { code: Some(code.into()), transaction_disposition: None, fields: Default::default() }) };
+    let before = heard(&tape).len();
+    feed.subscription_failed(Some(refused("A")));
+    feed.subscription_failed(Some(refused("B")));
+    feed.subscription_failed(Some(refused("B")));
+    let codes: Vec<_> = heard(&tape)[before..].iter().filter_map(|change| match &change.error { Some(DbError::Graphql { extensions: Some(extensions), .. }) => extensions.code.clone(), _ => None }).collect();
+    assert_eq!(codes, ["A", "B"]);
+    feed.subscription_failed(None);
+    assert!(heard(&tape).pop().unwrap().error.is_none());
 }
 
 #[test]

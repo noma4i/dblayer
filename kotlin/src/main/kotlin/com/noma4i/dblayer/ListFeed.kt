@@ -16,7 +16,7 @@ internal class ListState<Model>(
     val rows: List<Model>,
     val reordered: Boolean,
     val desynced: Boolean = false,
-    val failure: String? = null,
+    val failure: DbException.Invalid? = null,
     val edits: List<ListEdit<Model>>? = null,
     val undecodable: List<String> = emptyList(),
 )
@@ -46,9 +46,9 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
     @get:Synchronized
     val rows: List<Model> get() = current()
 
-    private var lastDecodeFailure: String? = null
+    private var lastDecodeFailure: DbException.Invalid? = null
 
-    private fun decodeFailure(): String? = if (missing == 0) null else lastDecodeFailure
+    private fun decodeFailure(): DbException.Invalid? = if (missing == 0) null else lastDecodeFailure
 
     private fun current(): List<Model> = if (missing == 0) loaded else slots.mapNotNull { it.row }
 
@@ -63,7 +63,7 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
             decoded.incrementAndGet()
             val index = if (change.full) position else change.rowIndexes[position].toInt()
             val row = runCatching { decoder.read(wire) }
-                .onFailure { undecodable.incrementAndGet(); lastDecodeFailure = it.toString(); decodeLog.severe("Row of ${decoder.modelName} failed to decode: $it") }
+                .onFailure { undecodable.incrementAndGet(); lastDecodeFailure = it as? DbException.Invalid ?: DbException.Invalid(it.toString()); decodeLog.severe("Row of ${decoder.modelName} failed to decode: $it") }
                 .getOrNull()
             Slot(wire.id, row) to index
         }
@@ -226,7 +226,7 @@ internal class ListSession<Model : DBModel, Value>(
         val current = synchronized(this) { if (cancelled || stalled) return; stalled = true; cancelSubscription.also { cancelSubscription = null } }
         current?.invoke()
         decodeLog.severe("List stopped: $reason")
-        emit(map(ListState(feed.rows, false, failure = reason), LiveChange(0L, false, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, DbException.Invalid(reason), phase = LivePhase.FAILED, errorKind = "invalid")))
+        emit(map(ListState(feed.rows, false, failure = DbException.Invalid(reason)), LiveChange(0L, false, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null, DbException.Invalid(reason), phase = LivePhase.FAILED, errorKind = "invalid")))
     }
 }
 

@@ -7,7 +7,7 @@ if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--check" ]; }; then
 fi
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
+export PATH="/opt/homebrew/opt/rustup/bin:$PATH" LC_ALL=C
 swift_out="$root/swift/Tests/DBlayerTests/FixtureModels.swift"
 kotlin_out="$root/kotlin/src/test/kotlin/com/noma4i/dblayer/models/FixtureModels.kt"
 swift_operations_out="$root/swift/Tests/DBlayerTests/FixtureOperations.swift"

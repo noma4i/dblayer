@@ -27,7 +27,7 @@ struct Shown {
     has_more: bool,
     total: Option<i64>,
     loaded_at: Option<i64>,
-    error: Option<(String, String)>,
+    error: Option<(String, DbError)>,
     size: u32,
     count: Option<i64>,
 }
@@ -228,7 +228,7 @@ impl LiveFeed {
             has_more: effective.has_more,
             total: effective.total,
             loaded_at: effective.loaded_at,
-            error: error.as_ref().map(|(error, kind)| (kind.clone(), error.to_string())),
+            error: error.clone().map(|(error, kind)| (kind, error)),
             size: state.size,
             count: state.count,
         };

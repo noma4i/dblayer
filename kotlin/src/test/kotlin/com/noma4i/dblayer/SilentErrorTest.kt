@@ -22,7 +22,7 @@ class SilentErrorTest {
         val feed = ListFeed(Moment)
         val state = feed.apply(full(wire("1"), broken("2")))
         assertEquals(listOf("2"), state.undecodable)
-        assertTrue(state.failure.orEmpty(), state.failure != null)
+        assertTrue(state.failure.toString(), state.failure != null)
         assertNull(ListFeed(Moment).apply(full(wire("1"))).failure)
     }
 

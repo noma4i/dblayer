@@ -39,6 +39,38 @@ struct SilentErrorTests {
   }
 
   @Test
+  func aSnapshotKeepsTheTypedFailureWithItsRowsAndPhase() {
+    let rows = [Self.wire("1")]
+    let failures: [DbError] = [.Session(code: .unauthenticated, detail: "session_unknown"), .Http(status: 503, detail: "busy")]
+    var older: Snapshot<Moment>?
+    for failure in failures {
+      let change = LiveChange(revision: 1, full: true, size: 1, rows: rows, rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: failure, inserted: [0], phase: .failed, errorKind: "session")
+      let snapshot = Snapshot(ListFeed<Moment>().apply(change), change)
+      #expect(snapshot.rows.map(\.id) == ["1"])
+      #expect(snapshot.phase == .failed)
+      #expect(snapshot.errorKind == "session")
+      switch (snapshot.error, failure) {
+      case (let kept as DbError, .Session(let code, let detail)):
+        guard case .Session(let keptCode, let keptDetail) = kept else { Issue.record("kept \(kept)"); continue }
+        #expect(keptCode == code && keptDetail == detail)
+      case (let kept as DbError, .Http(let status, _)):
+        guard case .Http(let keptStatus, _) = kept else { Issue.record("kept \(kept)"); continue }
+        #expect(keptStatus == status)
+      default: Issue.record("lost the type: \(String(describing: snapshot.error))")
+      }
+      if let older {
+        let merged = Snapshot.merging(older, snapshot)
+        #expect(merged.error as? DbError == failure && merged.error as? DbError != older.error as? DbError)
+      }
+      older = snapshot
+    }
+    var broken = Self.wire("2")
+    broken.layout = "other"
+    let decoded = LiveChange(revision: 1, full: true, size: 1, rows: [broken], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: nil, inserted: [0])
+    guard case .Invalid? = Snapshot(ListFeed<Moment>().apply(decoded), decoded).error as? DbError else { Issue.record("decode failure is not DbError.Invalid"); return }
+  }
+
+  @Test
   func aSeedThatDoesNotDecodeFailsTheEntityPhase() {
     let entity = Entities<Moment>(source: BrokenRowSource()).entity("1")
     guard case .failed = entity.phase else { Issue.record("phase \(entity.phase)"); return }

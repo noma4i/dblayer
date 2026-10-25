@@ -48,7 +48,7 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
     private val mutableIds = MutableStateFlow<List<String>>(emptyList())
     private val mutableReplaced = MutableStateFlow<Map<String, String>>(emptyMap())
     private val mutableEdges = MutableStateFlow(WindowEdges(false, false, null))
-    private val mutableFailure = MutableStateFlow<String?>(null)
+    private val mutableFailure = MutableStateFlow<Throwable?>(null)
     private val updates = ListUpdates<Model>()
 
     init {
@@ -63,7 +63,7 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
                     mutableRows.value = snapshot.rows
                 }
             } catch (error: IllegalStateException) {
-                mutableFailure.value = error.message
+                mutableFailure.value = error
             }
         }
     }
@@ -72,7 +72,7 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
     val ids: StateFlow<List<String>> get() = mutableIds
     val replaced: StateFlow<Map<String, String>> get() = mutableReplaced
     val edges: StateFlow<WindowEdges> get() = mutableEdges
-    val failure: StateFlow<String?> get() = mutableFailure
+    val failure: StateFlow<Throwable?> get() = mutableFailure
 
     fun takeUpdate(): ListUpdate<Model> = updates.take()
 

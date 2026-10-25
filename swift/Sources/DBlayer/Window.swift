@@ -67,7 +67,7 @@ public final class LiveWindow<Model: DBModel> {
   public private(set) var hasBefore = false
   public private(set) var hasAfter = false
   public private(set) var total: Int?
-  public private(set) var failure: String?
+  public private(set) var failure: (any Error)?
   @ObservationIgnored private let window: Window<Model>
   @ObservationIgnored let updates = ListUpdates<Model>()
   @ObservationIgnored private var task: Task<Void, Never>?
@@ -89,11 +89,11 @@ public final class LiveWindow<Model: DBModel> {
     }
   }
 
-  private func fail(_ error: Error) { failure = error.localizedDescription }
+  private func fail(_ error: Error) { failure = error }
 
   private func show(_ snapshot: Snapshot<Model>, ids: [String]?) {
     replaced = snapshot.replaced
-    if snapshot.error != failure { failure = snapshot.error }
+    if snapshot.error != nil || failure != nil { failure = snapshot.error }
     if let edges = snapshot.window { (hasBefore, hasAfter, total) = (edges.hasBefore, edges.hasAfter, edges.total) }
     rows = snapshot.rows
     if let ids { self.ids = ids }

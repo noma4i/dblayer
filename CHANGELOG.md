@@ -10,6 +10,8 @@
 - Swift `Entity.changes()` streams the value of an entity, current value then updates, and holds the entity while it is read.
 
 ### Changed
+- Preserve typed errors in `Snapshot.error` and `LiveWindow.failure` on Swift and Kotlin.
+- A live query delivers again when only the GraphQL `extensions` of the same error change.
 - The core decides every `Entity` transition (seed, revision order, stale, failure, reset, close) with one state machine on both platforms. A late failure of a replaced singleton feed no longer changes the new state.
 - Stored operation, upload and sync-state errors keep GraphQL `extensions` as node rows instead of JSON text. An existing database file is recreated on open.
 - Cable reopens right after the network returns, without waiting for a pending retry delay.

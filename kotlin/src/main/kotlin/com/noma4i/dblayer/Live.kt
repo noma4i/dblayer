@@ -91,7 +91,7 @@ data class Snapshot<Model>(
     val hasMore: Boolean = false,
     val total: Long? = null,
     val loadedAt: Long? = null,
-    val error: String? = null,
+    val error: Throwable? = null,
     val errorKind: String? = null,
     /** The ids of the rows that this build cannot decode. They are not in [rows]. */
     val undecodable: List<String> = emptyList(),
@@ -112,7 +112,7 @@ data class Snapshot<Model>(
                 null -> LoadPhase.Opening
             },
             change.initial, change.refreshing, change.fetchingMore, change.hasMore, change.total, change.loadedAt,
-            applied.failure ?: change.error?.toString(), if (applied.failure == null) change.errorKind else "invalid", applied.undecodable,
+            applied.failure ?: change.error, if (applied.failure == null) change.errorKind else "invalid", applied.undecodable,
         )
 
         /** The newer delivery with the replacements of both: a chain A to B to C reads as C replaced A, and no pair is lost. */
@@ -152,7 +152,7 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {
-                mutableSnapshot.value = Snapshot(emptyList(), emptyMap(), phase = LoadPhase.Failed, error = error.message ?: error.toString(), errorKind = "subscription")
+                mutableSnapshot.value = Snapshot(emptyList(), emptyMap(), phase = LoadPhase.Failed, error = error, errorKind = "subscription")
             }
         }
     }

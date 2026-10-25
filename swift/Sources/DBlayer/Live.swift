@@ -226,7 +226,7 @@ public final class LiveList<Model: DBModel> {
   }
 
   private func fail(_ error: Error) {
-    snapshot = Snapshot(rows: [], replaced: [:], phase: .failed, error: error.localizedDescription, errorKind: "subscription")
+    snapshot = Snapshot(rows: [], replaced: [:], phase: .failed, error: error, errorKind: "subscription")
   }
 
   private func show(_ next: Snapshot<Model>, ids: [String]?) {

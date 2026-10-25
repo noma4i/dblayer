@@ -38,6 +38,6 @@ extension BridgeProbeTests {
     await eventually("the attach failure reaches the snapshot") { list.snapshot.phase == .failed }
 
     #expect(list.snapshot.errorKind == "subscription")
-    #expect(list.snapshot.error != nil)
+    #expect(list.snapshot.error is DatabaseNotOpen)
   }
 }
