@@ -222,7 +222,7 @@ fn core_constraints_reject_duplicate_scope_order_and_unknown_op_status() {
 }
 
 #[test]
-fn open_dedupe_key_is_unique_only_while_open() {
+fn inv_op_10_open_dedupe_key_is_unique_only_while_open() {
     let connection = core_connection();
     let insert = |status: &str, dedupe: Option<&str>| {
         connection.execute(
