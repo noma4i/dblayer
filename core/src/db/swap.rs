@@ -12,14 +12,14 @@ use super::open::Db;
 use super::prior::{swap_id, Prior};
 use super::references::ReferencingRow;
 
-struct Swap<'a> {
+pub(super) struct Swap<'a> {
     pub model: &'a str,
     pub temp: &'a RowId,
     pub real: &'a RowId,
     pub references: &'a [(String, String)],
 }
 
-fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Option<OperationTransition> {
+pub(super) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Option<OperationTransition> {
     let Swap { model, temp, real, references } = *swap;
     let owner = Operation::split_action_key(&entry.operation.action_key).map(|(owner, _)| owner).unwrap_or_default();
     let mut input = entry.input.clone();
