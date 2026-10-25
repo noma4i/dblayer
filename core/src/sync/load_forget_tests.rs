@@ -38,3 +38,27 @@ async fn inv_loadm_19_a_reset_keeps_a_window_with_a_flight() {
     assert!(flight.await.unwrap_err().is_cancelled());
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn inv_loadm_19_a_new_observer_of_a_window_whose_last_watch_drops_concurrently_stays_live() {
+    let rig = rig();
+    let owner = rig.sync.inner.owner.clone();
+    for number in 0..200 {
+        let resolved = rig.sync.inner.resolve("moments", "vibe_feed", &vibe(number)).unwrap();
+        let (window, target) = (resolved.window_key.clone(), resolved.target());
+        let last = owner.observe(&window, target.clone(), None);
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let dropper = {
+            let gate = gate.clone();
+            std::thread::spawn(move || {
+                gate.wait();
+                drop(last);
+            })
+        };
+        gate.wait();
+        let fresh = owner.observe(&window, target.clone(), None);
+        dropper.join().unwrap();
+        owner.begin_flight(&window, target, false, None);
+        assert_eq!(fresh.borrow().phase, super::load_machine::LoadPhase::Loading, "window {number} lost its observer");
+    }
+}
