@@ -19,12 +19,3 @@ fn each_event_applies_only_from_its_source_facts() {
     assert_eq!(facts(Committed, false).next(OperationEvent::Close(RolledBack)), None);
     assert_eq!(facts(Pending, false).next(OperationEvent::Fail(Pending)), None);
 }
-
-#[test]
-fn the_sql_guard_lists_exactly_the_facts_the_machine_accepts() {
-    assert_eq!(OperationEvent::Start.guard_sql(), "((status = 'pending' AND transport_started = 0))");
-    assert_eq!(OperationEvent::Postpone.guard_sql(), "((status = 'pending' AND transport_started = 1))");
-    assert_eq!(OperationEvent::Retry.guard_sql(), "(status = 'failed' OR status = 'delivery_unknown')");
-    assert_eq!(OperationEvent::Fail(Failed).guard_sql(), "(status = 'pending' OR status = 'failed' OR status = 'delivery_unknown')");
-    assert_eq!(OperationEvent::Fail(Pending).guard_sql(), "0");
-}

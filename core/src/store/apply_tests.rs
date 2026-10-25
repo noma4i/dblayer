@@ -414,6 +414,32 @@ fn closing_an_operation_follows_its_status() {
 }
 
 #[test]
+fn operation_transitions_apply_only_from_the_statuses_the_machine_accepts() {
+    let (store, _) = booted_store();
+    let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
+    let seq = *started.operations.iter().next().unwrap();
+    let rejected = || OperationFailure::new(FailureKind::Rejected, "no");
+    let row = || text(&store, "SELECT status || ':' || transport_started || ':' || attempts FROM op").unwrap_or_default();
+    let refused = |transition| transitions(&store, vec![transition]).unknown_operation_acks;
+    assert_eq!(refused(OperationTransition::Postpone { seq, failure: rejected() }), 1);
+    assert_eq!(refused(OperationTransition::Retry { seq }), 1);
+    assert_eq!(refused(OperationTransition::Start { seq }), 0);
+    assert_eq!(row(), "pending:1:1");
+    assert_eq!(refused(OperationTransition::Start { seq }), 1);
+    assert_eq!(refused(OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure: rejected() }), 0);
+    assert_eq!(row(), "delivery_unknown:1:1");
+    assert_eq!(refused(OperationTransition::Retry { seq }), 0);
+    assert_eq!(row(), "pending:0:0");
+    let mut misuse = envelope(&store, vec![], vec![]);
+    misuse.operation_transitions = vec![OperationTransition::Close { seq, status: OperationStatus::Failed }];
+    assert!(matches!(store.commit(misuse), Err(StoreError::Constraint(_))));
+    assert_eq!(row(), "pending:0:0");
+    assert_eq!(refused(OperationTransition::Close { seq, status: OperationStatus::RolledBack }), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
+    assert_eq!(refused(OperationTransition::Close { seq, status: OperationStatus::RolledBack }), 1);
+}
+
+#[test]
 fn closing_unknown_operation_counts_ack_and_still_applies_the_envelope() {
     let (store, _) = booted_store();
     let mut mixed = envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);

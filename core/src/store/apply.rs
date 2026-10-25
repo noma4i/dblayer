@@ -883,15 +883,13 @@ fn apply_transitions(
                 wrote = true;
             }
             OperationTransition::Close { seq, status } => {
-                let found: Option<i64> = connection.query_row("SELECT seq FROM op WHERE seq = ?1", params![seq], |row| row.get(0)).optional()?;
-                if found.is_none() {
+                let guard = operation_guard(OperationEvent::Close(*status))?;
+                let open: Option<i64> = connection.query_row(&format!("SELECT seq FROM op WHERE seq = ?1 AND {guard}"), params![seq], |row| row.get(0)).optional()?;
+                if open.is_none() {
                     result.unknown_operation_acks += 1;
                     continue;
                 }
                 synced.extend(op_keys_of(connection, *seq)?);
-                if !status.is_terminal() {
-                    return Err(StoreError::Constraint("an operation closes only as committed or rolled back".into()));
-                }
                 if *status == OperationStatus::RolledBack {
                     crate::operation::record_orphan_uploads(connection, *seq, None)?;
                 }
@@ -911,7 +909,7 @@ fn apply_transitions(
             OperationTransition::Start { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let started = connection.execute(
-                    &format!("UPDATE op SET transport_started = 1, attempts = attempts + 1, since = ?2 WHERE seq = ?1 AND {}", OperationEvent::Start.guard_sql()),
+                    &format!("UPDATE op SET transport_started = 1, attempts = attempts + 1, since = ?2 WHERE seq = ?1 AND {}", operation_guard(OperationEvent::Start)?),
                     params![seq, now_ms],
                 )?;
                 if started == 0 {
@@ -925,7 +923,7 @@ fn apply_transitions(
                 synced.extend(op_keys_of(connection, *seq)?);
                 let [kind, message, extensions] = failure_cells(Some(failure))?;
                 let postponed = connection.execute(
-                    &format!("UPDATE op SET transport_started = 0, error_kind = ?2, error_message = ?3, since = ?4, error_extensions = ?5 WHERE seq = ?1 AND {}", OperationEvent::Postpone.guard_sql()),
+                    &format!("UPDATE op SET transport_started = 0, error_kind = ?2, error_message = ?3, since = ?4, error_extensions = ?5 WHERE seq = ?1 AND {}", operation_guard(OperationEvent::Postpone)?),
                     params![seq, kind, message, now_ms, extensions],
                 )?;
                 if postponed == 0 {
@@ -948,7 +946,7 @@ fn apply_transitions(
             OperationTransition::Retry { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let retried = connection.execute(
-                    &format!("UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error_kind = NULL, error_message = NULL, error_extensions = NULL, since = ?2 WHERE seq = ?1 AND {}", OperationEvent::Retry.guard_sql()),
+                    &format!("UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error_kind = NULL, error_message = NULL, error_extensions = NULL, since = ?2 WHERE seq = ?1 AND {}", operation_guard(OperationEvent::Retry)?),
                     params![seq, now_ms],
                 )?;
                 if retried == 0 {
@@ -981,11 +979,15 @@ fn apply_transitions(
     Ok(wrote)
 }
 
+fn operation_guard(event: OperationEvent) -> Result<String, StoreError> {
+    event.guard_sql().ok_or_else(|| StoreError::Constraint(format!("the operation machine accepts {event:?} from no status")))
+}
+
 fn set_open_status(connection: &Connection, seq: i64, status: OperationStatus, error: &OperationFailure, now_ms: i64) -> Result<usize, StoreError> {
     let dedupe = if status == OperationStatus::Failed { ", dedupe_key = NULL" } else { "" };
     let [kind, message, extensions] = failure_cells(Some(error))?;
     Ok(connection.execute(
-        &format!("UPDATE op SET status = ?1, error_kind = ?2, error_message = ?3, since = ?4, error_extensions = ?6{dedupe} WHERE seq = ?5 AND {}", OperationEvent::Fail(status).guard_sql()),
+        &format!("UPDATE op SET status = ?1, error_kind = ?2, error_message = ?3, since = ?4, error_extensions = ?6{dedupe} WHERE seq = ?5 AND {}", operation_guard(OperationEvent::Fail(status))?),
         params![status.as_sql(), kind, message, now_ms, seq, extensions],
     )?)
 }
