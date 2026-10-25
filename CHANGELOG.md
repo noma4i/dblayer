@@ -71,6 +71,8 @@
 - A batch of server events no longer drops when two rows of it touch the same parent.
 - The answer of an action is ready when its operation turns committed.
 - A session failure is no longer hidden by another subscription's failure.
+- A mutation answer that cannot be read keeps the operation open in delivery unknown instead of confirming it.
+- A destroy answered with `NOT_FOUND` closes as deleted instead of failing.
 - Explicit null stays distinct from an absent field after reopening the database.
 - Non-finite numbers fail serialization instead of becoming null.
 - Fields named like SQL keywords work in storage, indexes, filters and updates.
