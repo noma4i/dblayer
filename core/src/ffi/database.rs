@@ -364,12 +364,12 @@ impl Database {
         on_executor(async move { sync.flush().await }).await?;
         Ok(())
     }
-    pub async fn retry(&self, model: String, row_id: String) -> Result<u64, DbError> {
+    pub async fn retry(&self, model: String, row_id: String, action: Option<String>) -> Result<u64, DbError> {
         let Some(sync) = self.sync.clone() else { return Ok(0) };
         let row = id(&row_id)?;
         let db = self.db.clone();
         on_executor(async move {
-            let count = db.retry(&model, &row)?;
+            let count = db.retry(&model, &row, action.as_deref())?;
             sync.flush().await?;
             Ok::<_, crate::sync::SyncError>(count as u64)
         }).await
@@ -383,15 +383,15 @@ impl Database {
             Ok::<_, crate::sync::SyncError>(count as u64)
         }).await
     }
-    pub async fn discard(&self, model: String, row_id: String) -> Result<(), DbError> {
+    pub async fn discard(&self, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
         if let Some(sync) = self.sync.clone() {
             let row = id(&row_id)?;
-            on_executor(async move { sync.discard(&model, &row).await }).await?;
+            on_executor(async move { sync.discard(&model, &row, action.as_deref()).await }).await?;
             return Ok(());
         }
         let database = self.clone();
         blocking(move || {
-            database.db.discard(&model, &id(&row_id)?)?; Ok(())
+            database.db.discard(&model, &id(&row_id)?, action.as_deref())?; Ok(())
         }).await
     }
     pub async fn resume(&self) -> Result<(), DbError> {
@@ -439,10 +439,10 @@ impl Database {
         let real = on_executor(async move { sync.confirmed(&model, &row).await }).await?;
         Ok(real.to_string())
     }
-    pub async fn settled(&self, model: String, row_id: String) -> Result<(), DbError> {
+    pub async fn settled(&self, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        on_executor(async move { sync.settled(&model, &row).await }).await?;
+        on_executor(async move { sync.settled(&model, &row, action.as_deref()).await }).await?;
         Ok(())
     }
     pub async fn answer(&self, model: String, operation: i64) -> Result<String, DbError> {

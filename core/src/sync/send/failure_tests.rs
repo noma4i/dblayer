@@ -23,7 +23,7 @@ async fn graphql_auth_refusals_keep_unsent_rows_failed() {
             rig.sync.flush().await.unwrap();
             assert!(rig.db.find("moments", &row.id).unwrap().is_some(), "{code} removed the row");
             assert_eq!(rig.db.outbox().unwrap()[0].operation.status, OperationStatus::Failed);
-            assert!(matches!(rig.sync.settled("moments", &row.id).await,
+            assert!(matches!(rig.sync.settled("moments", &row.id, None).await,
                 Err(super::super::SyncError::Transport(TransportError::Session { code: actual, .. })) if actual == SessionCode::of(code)));
         }
     }

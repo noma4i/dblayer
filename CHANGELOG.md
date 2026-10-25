@@ -33,6 +33,7 @@
 - Removing files after a confirmed destroy or a server destroy event runs on the blocking pool.
 - Uploads are identified by their declared upload action (`model:upload:action`): `upload`, `uploadCreate` and `cancelUpload` take the action, a record can hold one upload per action, and an undeclared action admits nothing.
 - A record reports its uploads in `SyncInfo.uploads`, one entry per declared action, stored in the `sync_upload` table; `SyncInfo.actions` lists ordinary operations only. The single `upload` property of a record is removed.
+- `retry`, `discard` and `settled` take an optional declared action: none selects the whole record, an action selects only its operations or uploads, and an unknown action is refused.
 - Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns. A failed batch item is removed on its own and its siblings stay.
 
 ### Fixed

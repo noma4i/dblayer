@@ -106,7 +106,7 @@ async fn inv_op_11_random_record_histories_end_equal_on_the_client_the_server_an
                     history.push(format!("destroy {index}"));
                 }
                 3 => {
-                    rig.db.discard("moments", &id).unwrap();
+                    rig.db.discard("moments", &id, None).unwrap();
                     record.shown = record.synced.clone();
                     if record.synced.is_none() {
                         record.id = None;

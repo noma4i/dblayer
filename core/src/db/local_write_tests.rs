@@ -97,7 +97,7 @@ fn discarding_the_create_gives_the_parent_fields_back() {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Response, db.generation());
     envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: OperationFailure::new(FailureKind::Rejected, "no") });
     db.shared.store.commit(envelope).unwrap();
-    db.discard("messages", &message.id).unwrap();
+    db.discard("messages", &message.id, None).unwrap();
     assert_eq!(chat_pointer(&db), (Some("m0".to_string()), Some(OLD.to_string())));
 }
 

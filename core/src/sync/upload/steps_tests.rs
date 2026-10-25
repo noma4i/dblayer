@@ -142,7 +142,7 @@ async fn manual_retry_refreshes_the_budget_and_success_removes_its_record() {
     rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(retry_rows(&rig), 1);
-    assert_eq!(rig.db.retry("assets", &rid("a")).unwrap(), 1);
+    assert_eq!(rig.db.retry("assets", &rid("a"), None).unwrap(), 1);
     assert_eq!(retry_rows(&rig), 0, "manual retry retained the exhausted budget");
     rig.transport.enqueue_put("https://storage/file", PutReply::etag("etag"));
     rig.sync.inner.start_uploads().unwrap();
@@ -173,7 +173,7 @@ async fn terminal_operations_delete_retry_records() {
                 envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::Committed });
                 rig.db.land(envelope).unwrap();
             }
-            "discard" => { rig.db.discard("assets", &rid("a")).unwrap(); }
+            "discard" => { rig.db.discard("assets", &rid("a"), None).unwrap(); }
             _ => { rig.sync.cancel_upload("assets", &rid("a"), "upload").await.unwrap(); }
         }
         assert!(rig.db.outbox().unwrap().is_empty());

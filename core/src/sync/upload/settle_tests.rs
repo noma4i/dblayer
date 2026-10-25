@@ -33,7 +33,7 @@ async fn settled_wakes_when_an_item_fails_after_settled_parked() {
     let request = UploadBatchInput { operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default() };
     let ids: Vec<_> = sync.upload_create_batch("Asset", items, request).await.unwrap().iter().map(|row| row.id.clone()).collect();
     sync.set_online(true);
-    let waiter = { let sync = sync.clone(); let id = ids[0].clone(); tokio::spawn(async move { sync.settled("Asset", &id).await }) };
+    let waiter = { let sync = sync.clone(); let id = ids[0].clone(); tokio::spawn(async move { sync.settled("Asset", &id, None).await }) };
     let settled = tokio::time::timeout(std::time::Duration::from_secs(5), waiter).await;
     assert!(matches!(settled, Ok(Ok(Err(_)))), "settled must wake with the failure: {settled:?}");
 }

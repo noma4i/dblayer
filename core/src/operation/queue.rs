@@ -69,9 +69,9 @@ impl OperationQueue {
         }
     }
 
-    pub(crate) fn pending_of(&self, row: &RowRef) -> Vec<i64> {
+    pub(crate) fn pending_of(&self, row: &RowRef, action_key: Option<&str>) -> Vec<i64> {
         let open = self.open.get(row).into_iter().flatten();
-        open.filter(|seq| self.entries.get(seq).is_some_and(|entry| entry.operation.status == OperationStatus::Pending)).copied().collect()
+        open.filter(|seq| self.entries.get(seq).is_some_and(|entry| entry.operation.status == OperationStatus::Pending && action_key.is_none_or(|key| entry.operation.action_key == key))).copied().collect()
     }
 
     pub(crate) fn blocked_before(&self, operation: &Operation) -> (bool, bool) {

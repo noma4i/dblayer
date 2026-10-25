@@ -67,7 +67,7 @@ async fn waiting_for_one_record_loads_no_operations_of_independent_records() {
     }
     put(&rig, "moments", moment("target", "plain"));
     let before = rig.db.counters();
-    rig.sync.settled("moments", &RowId::new("target").unwrap()).await.unwrap();
+    rig.sync.settled("moments", &RowId::new("target").unwrap(), None).await.unwrap();
     let after = rig.db.counters();
     assert_eq!((after.outbox_reads - before.outbox_reads, after.outbox_rows_loaded - before.outbox_rows_loaded), (0, 0), "waiting for an idle record must not load the queue");
 }

@@ -43,7 +43,7 @@ async fn inv_rollback_05_inv_file_03_a_refused_destroy_after_a_sweep_and_a_resta
     let rig = open_rig(&path);
     assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().state, SyncState::DeliveryUnknown);
     rig.db.sweep_files().unwrap();
-    rig.db.retry("moments", &rid("m1")).unwrap();
+    rig.db.retry("moments", &rid("m1"), None).unwrap();
     rig.transport.enqueue("DeleteMoment", Reply::graphql_error("denied", "FORBIDDEN"));
     rig.sync.flush().await.unwrap();
 

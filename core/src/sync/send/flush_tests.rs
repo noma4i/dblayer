@@ -115,7 +115,7 @@ async fn retry_of_a_failed_destroy_hides_the_record_again_and_deletes_it() {
     rig.transport.enqueue("DeleteMoment", Reply::data(json!({"deleteMoment": {"id": "m1"}})));
     rig.sync.flush().await.unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("keep".to_string()));
-    assert_eq!(rig.db.retry("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(rig.db.retry("moments", &rid("m1"), None).unwrap(), 1);
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
     assert_eq!(text_of(&rig, "moments", "m1"), None);
@@ -129,7 +129,7 @@ async fn discard_of_a_failed_destroy_keeps_the_record_and_clears_the_error() {
     rig.db.destroy("moments", &rid("m1")).unwrap();
     rig.transport.enqueue("DeleteMoment", Reply::graphql_error("gone", "FORBIDDEN"));
     rig.sync.flush().await.unwrap();
-    assert_eq!(rig.db.discard("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(rig.db.discard("moments", &rid("m1"), None).unwrap(), 1);
     assert_eq!(text_of(&rig, "moments", "m1"), Some("keep".to_string()));
     assert!(info(&rig, "m1").is_synced());
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -320,7 +320,7 @@ async fn interrupted_transfer_records_the_kind_and_attempt_and_retry_sends_the_s
     let unknown = info(&rig, "m1");
     assert_eq!((unknown.state, unknown.attempts), (SyncState::DeliveryUnknown, 1));
     assert_eq!(unknown.error.map(|error| error.kind), Some(FailureKind::Network));
-    assert_eq!(rig.sync.retry("moments", &rid("m1")).await.unwrap().committed(), 1);
+    assert_eq!(rig.sync.retry("moments", &rid("m1"), None).await.unwrap().committed(), 1);
     assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
     assert!(info(&rig, "m1").is_synced());
 }
@@ -377,7 +377,7 @@ async fn retry_of_a_kept_failure_resets_attempts_and_confirms_on_success() {
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
     rig.sync.flush().await.unwrap();
     assert_eq!(info(&rig, "m1").state, SyncState::Failed);
-    assert_eq!(rig.db.retry("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(rig.db.retry("moments", &rid("m1"), None).unwrap(), 1);
     let pending = info(&rig, "m1");
     assert_eq!((pending.state, pending.attempts, pending.error), (SyncState::Pending, 0, None));
     assert_eq!(rig.sync.flush().await.unwrap().committed(), 1);
@@ -392,7 +392,7 @@ async fn discard_of_a_kept_failure_restores_the_old_values() {
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
     rig.sync.flush().await.unwrap();
-    assert_eq!(rig.db.discard("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(rig.db.discard("moments", &rid("m1"), None).unwrap(), 1);
     assert_eq!(text_of(&rig, "moments", "m1"), Some("old".to_string()));
     assert!(info(&rig, "m1").is_synced());
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -408,7 +408,7 @@ async fn kept_create_stays_in_lists_as_failed_and_retry_swaps_the_temp_id() {
     let failed = rig.db.query(&crate::query::Query::failed("moments")).unwrap();
     assert_eq!(failed.iter().map(|row| row.id.clone()).collect::<Vec<_>>(), std::slice::from_ref(&local.id));
     assert!(failed[0].is_local());
-    assert_eq!(rig.sync.retry("moments", &local.id).await.unwrap().committed(), 1);
+    assert_eq!(rig.sync.retry("moments", &local.id, None).await.unwrap().committed(), 1);
     assert_eq!(text_of(&rig, "moments", "m77"), Some("hello".to_string()));
     assert!(rig.db.query(&crate::query::Query::unsynced("moments")).unwrap().is_empty());
     assert_eq!(info(&rig, local.id.as_str()), crate::syncstate::SyncInfo::default());
@@ -596,7 +596,7 @@ async fn settled_waits_for_every_change_of_the_record() {
     put(&rig, "moments", moment("m1", "t"));
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    rig.sync.settled("moments", &rid("m1")).await.unwrap();
+    rig.sync.settled("moments", &rid("m1"), None).await.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
 }
 
@@ -606,7 +606,7 @@ async fn settled_fails_with_the_refusal() {
     put(&rig, "moments", moment("m1", "t"));
     rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
-    let error = rig.sync.settled("moments", &rid("m1")).await.unwrap_err();
+    let error = rig.sync.settled("moments", &rid("m1"), None).await.unwrap_err();
     assert!(error.to_string().contains("not allowed"));
 }
 
@@ -618,9 +618,9 @@ async fn settled_reports_a_refusal_answered_before_it_started_and_reports_it_onc
     rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
     rig.sync.flush().await.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
-    let error = rig.sync.settled("moments", &rid("m1")).await.unwrap_err();
+    let error = rig.sync.settled("moments", &rid("m1"), None).await.unwrap_err();
     assert!(error.to_string().contains("not allowed"));
-    rig.sync.settled("moments", &rid("m1")).await.unwrap();
+    rig.sync.settled("moments", &rid("m1"), None).await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -639,13 +639,13 @@ async fn settled_reports_a_destroy_and_a_kept_update_refused_before_it_started()
     rig.db.destroy("moments", &rid("m1")).unwrap();
     rig.transport.enqueue("DeleteMoment", Reply::graphql_error("no destroy", "FORBIDDEN"));
     rig.sync.flush().await.unwrap();
-    assert!(rig.sync.settled("moments", &rid("m1")).await.unwrap_err().to_string().contains("no destroy"));
+    assert!(rig.sync.settled("moments", &rid("m1"), None).await.unwrap_err().to_string().contains("no destroy"));
     let keeping = keeping_rig();
     put(&keeping, "moments", moment("m2", "t"));
     keeping.db.update("moments", &rid("m2"), params(json!({"text": "new"}))).unwrap();
     keeping.transport.enqueue("UpdateMoment", Reply::graphql_error("kept", "FORBIDDEN"));
     keeping.sync.flush().await.unwrap();
-    assert!(keeping.sync.settled("moments", &rid("m2")).await.unwrap_err().to_string().contains("kept"));
+    assert!(keeping.sync.settled("moments", &rid("m2"), None).await.unwrap_err().to_string().contains("kept"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -656,8 +656,8 @@ async fn settled_forgets_a_refusal_that_a_retry_has_since_committed() {
     rig.sync.flush().await.unwrap();
     rig.sync.register(crate::sync::OperationDef::new("UpdateMoment", "operation UpdateMoment { x }", "updateMoment"));
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    rig.sync.retry("moments", &rid("m1")).await.unwrap();
-    rig.sync.settled("moments", &rid("m1")).await.unwrap();
+    rig.sync.retry("moments", &rid("m1"), None).await.unwrap();
+    rig.sync.settled("moments", &rid("m1"), None).await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -674,6 +674,6 @@ async fn update_whose_mutation_is_not_registered_fails_visibly_and_sends_after_r
     assert_eq!(rig.transport.calls().len(), 0);
     rig.sync.register(crate::sync::OperationDef::new("UpdateMoment", "operation UpdateMoment { x }", "updateMoment"));
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    assert_eq!(rig.sync.retry("moments", &rid("m1")).await.unwrap().committed(), 1);
+    assert_eq!(rig.sync.retry("moments", &rid("m1"), None).await.unwrap().committed(), 1);
     assert!(info(&rig, "m1").is_synced());
 }

@@ -34,12 +34,13 @@ impl Inner {
 
 impl Sync {
     /// Waits until every queued change of the record is answered. Fails with the refusal, when a change is refused or its outcome is unknown.
-    pub async fn settled(&self, model: &str, id: &RowId) -> Result<(), SyncError> {
+    pub async fn settled(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
+        let key = self.inner.db.action_operation_key(model, action)?;
         let waiting = |row: &RowId| -> Result<Vec<i64>, SyncError> {
-            if let Some(failure) = self.inner.db.find(model, row)?.filter(|row| row.sync.uploads.values().any(|upload| upload.status == crate::upload::UploadStatus::Failed)).and_then(|row| row.sync.error.clone()) {
+            if let Some(failure) = self.inner.db.find(model, row)?.filter(|row| row.sync.uploads.iter().any(|(name, upload)| action.is_none_or(|action| action == name) && upload.status == crate::upload::UploadStatus::Failed)).and_then(|row| row.sync.error.clone()) {
                 return Err(outcomes::error_of(model, &SendResult::Rejected(failure), row.as_str()));
             }
-            Ok(locked(self.inner.operation_queue()?).pending_of(&crate::identity::RowRef::new(crate::identity::ModelKey::new(model), row.clone())))
+            Ok(locked(self.inner.operation_queue()?).pending_of(&crate::identity::RowRef::new(crate::identity::ModelKey::new(model), row.clone()), key.as_deref()))
         };
         let mut changes = self.inner.db.outbox_changes();
         let mut pending = waiting(id)?;
@@ -93,7 +94,7 @@ impl Sync {
         if !id.is_temp() {
             return Ok(id.clone());
         }
-        self.settled(model, id).await?;
+        self.settled(model, id, None).await?;
         let key = format!("{model}\0{id}");
         let real = locked(&self.inner.replaced).get(&key).cloned();
         match real {
@@ -117,8 +118,8 @@ impl Sync {
         self.inner.flush_pending().await
     }
 
-    pub async fn retry(&self, model: &str, id: &RowId) -> Result<FlushReport, SyncError> {
-        self.inner.db.retry(model, id)?;
+    pub async fn retry(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<FlushReport, SyncError> {
+        self.inner.db.retry(model, id, action)?;
         self.flush().await
     }
 
@@ -127,8 +128,8 @@ impl Sync {
         self.flush().await
     }
 
-    pub async fn discard(&self, model: &str, id: &RowId) -> Result<(), SyncError> {
-        self.inner.db.discard(model, id)?;
+    pub async fn discard(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
+        self.inner.db.discard(model, id, action)?;
         self.inner.start_uploads()?;
         Ok(())
     }

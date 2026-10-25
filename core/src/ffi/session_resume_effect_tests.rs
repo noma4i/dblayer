@@ -28,7 +28,7 @@ async fn a_permanently_refused_pending_owner_is_failed_by_resume() {
     let entries = database.db.outbox().unwrap();
     assert_eq!(entries[0].operation.status, OperationStatus::Failed);
     assert_eq!(entries[0].operation.error.as_ref().unwrap().kind, crate::syncstate::FailureKind::Rejected);
-    assert!(database.settled("Moment".into(), row.id).await.is_err());
+    assert!(database.settled("Moment".into(), row.id, None).await.is_err());
     assert_eq!(database.session_resume().await.unwrap(), None);
   }
 }
@@ -41,11 +41,11 @@ async fn a_queued_create_refused_without_a_sequence_is_executed_once_by_resume_a
     let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
 
-    let refused = database.settled("Moment".into(), row.id.clone()).await.unwrap_err();
+    let refused = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
     let effects_when_refused = mutation_effects(&rig);
     database.session_resume().await.unwrap();
-    database.retry("Moment".into(), row.id.clone()).await.unwrap();
-    let settled = database.settled("Moment".into(), row.id.clone()).await;
+    database.retry("Moment".into(), row.id.clone(), None).await.unwrap();
+    let settled = database.settled("Moment".into(), row.id.clone(), None).await;
 
     assert_eq!((session(refused).0, effects_when_refused), (SessionCode::AccountUnavailable, 0));
     assert_eq!(mutation_effects(&rig), 1);
@@ -98,7 +98,7 @@ async fn a_queued_create_whose_answer_was_lost_is_executed_once_by_resume_and_th
     let competing = competing.lock().unwrap().take();
     if let Some(flush) = competing { flush.await.unwrap().unwrap(); }
     database.flush().await.unwrap();
-    let settled = database.settled("Moment".into(), row.id.clone()).await;
+    let settled = database.settled("Moment".into(), row.id.clone(), None).await;
 
     assert_eq!(effects_when_lost, 1);
     assert_eq!(mutation_effects(&rig), 1);

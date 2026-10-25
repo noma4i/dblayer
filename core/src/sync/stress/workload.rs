@@ -213,7 +213,7 @@ impl Worker {
             Op::Retry => {
                 let Some(row) = self.pick_own(world) else { return };
                 let _call = world.server.note_retry();
-                self.report("retry", rig.sync.retry("moments", &row.id).await.map(|_| ()), world);
+                self.report("retry", rig.sync.retry("moments", &row.id, None).await.map(|_| ()), world);
             }
             Op::RetryAll => {
                 let _call = world.server.note_retry();
@@ -223,7 +223,7 @@ impl Worker {
                 let Some(row) = self.pick_own(world) else { return };
                 world.findings.trace(|| format!("discard of {} {:?} {:?}", row.id, row.text("text"), row.sync.state));
                 world.discarded(row.id.as_str());
-                world.expect("discard", rig.db.discard("moments", &row.id).map(|_| ()));
+                world.expect("discard", rig.db.discard("moments", &row.id, None).map(|_| ()));
             }
             Op::Typing => {
                 let user = RowId::new(&format!("u{}", self.dice.below(3))).expect("user id");

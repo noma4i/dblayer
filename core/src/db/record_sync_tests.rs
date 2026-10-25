@@ -75,7 +75,7 @@ fn state_walks_pending_sending_failed_pending_with_attempts_and_error() {
     rejected(&db, seq);
     let failed = db.sync_info("moments", &rid("m1")).unwrap();
     assert_eq!((failed.state, failed.attempts, failed.error), (SyncState::Failed, 1, Some(OperationFailure::new(FailureKind::Rejected, "no"))));
-    assert_eq!(db.retry("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(db.retry("moments", &rid("m1"), None).unwrap(), 1);
     let again = db.sync_info("moments", &rid("m1")).unwrap();
     assert_eq!((again.state, again.attempts, again.error.clone()), (SyncState::Pending, 0, None));
     assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().sync, again);
@@ -139,7 +139,7 @@ fn discard_rolls_back_a_failed_create_and_its_queued_followers() {
     db.update("moments", &row.id, obj(json!({"text": "edited"}))).unwrap();
     rejected(&db, db.outbox().unwrap()[0].operation.id.0);
     assert_eq!(state_of(&db, "moments", row.id.as_str()), SyncState::Failed);
-    assert_eq!(db.discard("moments", &row.id).unwrap(), 1);
+    assert_eq!(db.discard("moments", &row.id, None).unwrap(), 1);
     assert!(db.find("moments", &row.id).unwrap().is_none());
     assert!(db.outbox().unwrap().is_empty());
     assert_eq!(state_of(&db, "moments", row.id.as_str()), SyncState::Synced);
@@ -151,7 +151,7 @@ fn discard_restores_the_values_of_a_failed_update() {
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     db.update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
     rejected(&db, only_seq(&db));
-    assert_eq!(db.discard("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(db.discard("moments", &rid("m1"), None).unwrap(), 1);
     let row = db.find("moments", &rid("m1")).unwrap().unwrap();
     assert_eq!((row.text("text"), row.sync.state), (Some("one"), SyncState::Synced));
 }
@@ -161,9 +161,9 @@ fn retry_does_nothing_for_a_record_without_stuck_operations() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     db.update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
-    assert_eq!(db.retry("moments", &rid("m1")).unwrap(), 0);
+    assert_eq!(db.retry("moments", &rid("m1"), None).unwrap(), 0);
     assert_eq!(db.outbox().unwrap().len(), 1);
-    assert!(matches!(db.retry("nope", &rid("m1")), Err(DbError::UnknownModel(_))));
+    assert!(matches!(db.retry("nope", &rid("m1"), None), Err(DbError::UnknownModel(_))));
 }
 
 #[test]

@@ -98,7 +98,7 @@ async fn upload_resume_and_retry_execute_the_saved_step_once_after_reopen() {
         database.sync.as_ref().unwrap().wait_uploads().await;
         let database = if restart { drop(database); open(&rig, &path).await } else { database };
         database.session_resume().await.unwrap();
-        database.retry("Moment".into(), "42".into()).await.unwrap();
+        database.retry("Moment".into(), "42".into(), None).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
         let effects = rig.server.executed().into_iter().filter(|body| body["operationName"] == step).count();
         assert_eq!(effects, 1, "step={step} restart={restart}");
@@ -158,7 +158,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     drop(database);
     let database = open(&rig, &path).await;
     database.session_resume().await.unwrap();
-    database.retry("Moment".into(), "42".into()).await.unwrap();
+    database.retry("Moment".into(), "42".into(), None).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "AbortMultipart").count(), 1);
     assert!(database.db.outbox().unwrap().is_empty());
@@ -184,7 +184,7 @@ async fn resume_consumes_a_lost_upload_answer_without_repeating_the_effect() {
     database.upload("Moment".into(), "42".into(), "upload".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     database.session_resume().await.unwrap();
-    database.retry("Moment".into(), "42".into()).await.unwrap();
+    database.retry("Moment".into(), "42".into(), None).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "CreateBlob").count(), 1);
     assert!(database.db.outbox().unwrap().is_empty());

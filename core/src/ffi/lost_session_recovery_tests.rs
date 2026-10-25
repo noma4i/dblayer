@@ -14,12 +14,12 @@ async fn a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_s
     let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
     rig.server.refuse_next("UNAUTHENTICATED", false);
 
-    let refused = database.settled("Moment".into(), row.id.clone()).await.unwrap_err();
+    let refused = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
     let blocked = database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap_err();
     database.session_reset().unwrap();
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
-    database.retry("Moment".into(), row.id.clone()).await.unwrap();
-    let settled = database.settled("Moment".into(), row.id.clone()).await;
+    database.retry("Moment".into(), row.id.clone(), None).await.unwrap();
+    let settled = database.settled("Moment".into(), row.id.clone(), None).await;
 
     assert_eq!(session(refused).0, SessionCode::Unauthenticated);
     assert!(matches!(blocked, DbError::Network { .. }), "{blocked:?}");

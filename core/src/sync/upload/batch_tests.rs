@@ -50,7 +50,7 @@ async fn batch_renumber_preserves_order_and_publishes_complete_rows() {
         db.await_revision(db.revision_seq().unwrap());
         seen.lock().unwrap().clear();
         if cancel { assert!(sync.cancel_upload("Asset", &rows[removed].id, "create_files").await.unwrap()); }
-        else { assert_eq!(db.discard("Asset", &rows[removed].id).unwrap(), 1); }
+        else { assert_eq!(db.discard("Asset", &rows[removed].id, None).unwrap(), 1); }
         db.await_revision(db.revision_seq().unwrap());
         let remaining: Vec<_> = rows.iter().enumerate().filter(|(index, _)| *index != removed).collect();
         for (index, (original, row)) in remaining.iter().enumerate() {
@@ -109,7 +109,7 @@ async fn batch_renumber_delivery_unknown_discards_every_member_without_rewriting
         assert_eq!(stored.data["position"], position);
         assert_eq!(stored.data["size"], 4);
     }
-    assert_eq!(db.discard("Asset", &rows[1].id).unwrap(), 1);
+    assert_eq!(db.discard("Asset", &rows[1].id, None).unwrap(), 1);
     db.await_revision(db.revision_seq().unwrap());
     assert!(rows.iter().all(|row| db.find("Asset", &row.id).unwrap().is_none()));
     assert!(seen.lock().unwrap().iter().all(Vec::is_empty));
@@ -236,7 +236,7 @@ async fn discard_while_the_final_mutation_waits_offline_uses_the_single_operatio
     transport.await_put_calls(2).await;
     assert_eq!(transport.put_calls().len(), 2);
     assert_eq!(transport.call_count("CreateAssets"), 0);
-    sync.discard("Asset", &rows[0].id).await.unwrap();
+    sync.discard("Asset", &rows[0].id, None).await.unwrap();
     sync.set_online(true);
     sync.wait_uploads().await;
     assert_eq!(transport.call_count("CreateAssets"), 0);
@@ -265,11 +265,11 @@ async fn one_failed_file_does_not_fail_a_transferred_sibling() {
     assert_eq!(db.find("Asset", &ids[1]).unwrap().unwrap().sync.state, SyncState::Sending);
     assert_eq!(transport.put_calls().len(), 1);
     assert_eq!(transport.call_count("CreateAssets"), 0);
-    let settled = tokio::time::timeout(std::time::Duration::from_millis(100), sync.settled("Asset", &ids[0])).await;
+    let settled = tokio::time::timeout(std::time::Duration::from_millis(100), sync.settled("Asset", &ids[0], None)).await;
     assert!(matches!(settled, Ok(Err(_))), "{settled:?}");
     sync.register(crate::sync::OperationDef::new("CreateAsset", "mutation x { x }", "createAsset.asset"));
     transport.enqueue("CreateAsset", crate::transport::Reply::data(json!({"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2}}})));
-    sync.discard("Asset", &ids[0]).await.unwrap();
+    sync.discard("Asset", &ids[0], None).await.unwrap();
     assert!(db.find("Asset", &ids[0]).unwrap().is_none());
     assert!(db.find("Asset", &ids[1]).unwrap().is_some());
     sync.wait_uploads().await;
@@ -336,7 +336,7 @@ async fn retry_of_one_failed_item_preserves_the_completed_transfer() {
     sync.wait_uploads().await;
     let failed = ids.iter().find(|id| db.find("Asset", id).unwrap().unwrap().sync.state == SyncState::Failed).unwrap();
     assert_eq!(transport.put_calls().len(), 1);
-    assert_eq!(db.retry("Asset", failed).unwrap(), 1);
+    assert_eq!(db.retry("Asset", failed, None).unwrap(), 1);
     sync.flush().await.unwrap();
     sync.wait_uploads().await;
     assert_eq!(transport.put_calls().len(), 2);
@@ -383,7 +383,7 @@ async fn restart_preserves_files_and_unknown_delivery_keeps_the_request_or_disca
         sync.register(crate::sync::OperationDef::new("CreateAssets", "mutation x { x }", "createAssets.assets"));
         transport.respond_with(|request| (request.operation_name == "CreateAssets").then(|| crate::transport::Reply::data(json!({"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":2},{"id":"a1","clientKey":"key-1","size":2}]}}))));
         if scenario == "discard" {
-            db.discard("Asset", &ids[0]).unwrap();
+            db.discard("Asset", &ids[0], None).unwrap();
             for id in &ids { assert!(db.find("Asset", id).unwrap().is_none()); }
             assert!(db.outbox().unwrap().is_empty());
             assert_eq!(transport.call_count("CreateAssets"), 1);
@@ -392,7 +392,7 @@ async fn restart_preserves_files_and_unknown_delivery_keeps_the_request_or_disca
         sync.flush().await.unwrap();
         if scenario == "retry" {
             assert_eq!(transport.call_count("CreateAssets"), 1);
-            sync.retry("Asset", &ids[1]).await.unwrap();
+            sync.retry("Asset", &ids[1], None).await.unwrap();
         }
         sync.wait_uploads().await;
         assert!(db.outbox().unwrap().is_empty(), "{scenario}: {:?}, {:?}", db.outbox().unwrap(), transport.calls());
@@ -479,7 +479,7 @@ async fn discarding_one_batch_member_keeps_its_multipart_abort_after_the_item_is
     let request = UploadBatchInput { operation: "create_files".into(), steps, variables: Default::default() };
     let ids: Vec<_> = sync.upload_create_batch("Asset", items, request).await.unwrap().iter().map(|row| row.id.clone()).collect();
     db.shared.store.lock().connection.execute("UPDATE op_item SET upload_id = 'u1', storage_key = 'k1' WHERE row_id = ?1", [ids[0].as_str()]).unwrap();
-    assert_eq!(db.discard("Asset", &ids[0]).unwrap(), 1);
+    assert_eq!(db.discard("Asset", &ids[0], None).unwrap(), 1);
     let orphans = db.shared.store.upload_orphans().unwrap();
     assert_eq!(orphans.iter().map(|(_, key, upload, abort)| (key.as_str(), upload.as_str(), abort.as_str())).collect::<Vec<_>>(), [("k1", "u1", "Abort")]);
 }
@@ -530,7 +530,7 @@ async fn a_batch_item_retried_after_it_was_selected_is_not_expired() {
     let due = sync.inner.now_ms() - 7 * 24 * 3600 * 1000;
     let stale = db.failed_upload_candidates(due).unwrap();
     assert_eq!(stale.len(), 1);
-    db.retry("Asset", &ids[0]).unwrap();
+    db.retry("Asset", &ids[0], None).unwrap();
     assert_eq!(db.expire_candidates(stale, due, &[]).unwrap(), 0);
     assert!(db.find("Asset", &ids[0]).unwrap().is_some());
 }
@@ -582,7 +582,7 @@ async fn a_batch_item_that_fails_while_its_request_is_pending_is_aborted_once_th
 #[tokio::test]
 async fn discarding_one_item_of_a_rejected_batch_operation_removes_only_that_item() {
     let (db, _sync, _clock, ids) = failed_batch(true).await;
-    assert_eq!(db.discard("Asset", &ids[0]).unwrap(), 1);
+    assert_eq!(db.discard("Asset", &ids[0], None).unwrap(), 1);
     assert!(db.find("Asset", &ids[0]).unwrap().is_none());
     assert!(db.find("Asset", &ids[1]).unwrap().is_some());
 }

@@ -114,7 +114,7 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     let (sync, client) = encrypted(&db, exchange.clone(), credentials);
     client.reset().unwrap();
     client.mutate("/api/auth/social", json!({"provider": "test"})).await.unwrap();
-    assert_eq!(sync.retry("moments", &id).await.unwrap().committed(), 1);
+    assert_eq!(sync.retry("moments", &id, None).await.unwrap().committed(), 1);
     assert!(db.outbox().unwrap().is_empty());
     assert!(db.find("moments", &id).unwrap().is_none());
     assert!(db.find("moments", &RowId::new("m1").unwrap()).unwrap().is_some());

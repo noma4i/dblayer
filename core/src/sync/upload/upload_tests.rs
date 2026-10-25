@@ -137,7 +137,7 @@ async fn inv_upload_16_complete_failure_keeps_parts_through_queue_restart_and_re
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("AbortMultipart"), 0);
     rig.transport.enqueue("CreateMoment", created("m9"));
-    rig.sync.retry("moments", &rid("m1")).await.unwrap();
+    rig.sync.retry("moments", &rid("m1"), None).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("CompleteMultipart"), 2);
     assert_eq!(rig.transport.call_count("InitMultipart"), 1);
@@ -266,7 +266,7 @@ async fn wait_uploads_parks_while_resume_owns_the_upload() {
     let active = locked(&rig.sync.inner.uploads).active.remove(&(seq, 0)).unwrap();
     active.done.send_replace(true);
     thread.join().unwrap();
-    rig.db.discard("moments", &rid("m1")).unwrap();
+    rig.db.discard("moments", &rid("m1"), None).unwrap();
     drop(resume);
     assert_eq!(parked, Ok(true), "wait_uploads did not return Pending");
 }
@@ -339,7 +339,7 @@ async fn idempotency_upload_final_mutation_keeps_its_key_on_retry() {
     let source = file(b"photo");
     let row = rig.sync.upload_create("moments", "upload", params(json!({"text": "clip"})), input(&source)).await.unwrap();
     rig.sync.wait_uploads().await;
-    rig.sync.retry("moments", &row).await.unwrap();
+    rig.sync.retry("moments", &row, None).await.unwrap();
     rig.sync.wait_uploads().await;
     let calls = variables(&rig, "CreateMoment");
     assert_eq!(calls.len(), 2);
@@ -479,7 +479,7 @@ async fn a_fatal_part_aborts_the_multipart_and_retry_starts_over_without_the_mut
     assert_eq!(rig.transport.call_count("CreateMoment"), 0);
     let state = stored_state(&rig);
     assert_eq!((state.upload_id, state.parts.len(), state.sent_bytes), (None, 0, 0));
-    rig.sync.retry("moments", &rid("m1")).await.unwrap();
+    rig.sync.retry("moments", &rid("m1"), None).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("InitMultipart"), 2);
     assert_eq!(rig.transport.call_count("CompleteMultipart"), 1);
@@ -604,7 +604,7 @@ async fn an_unanswered_mutation_is_delivery_unknown_never_repeated_and_retry_ski
     assert_eq!((unknown.status, unknown.stage), (UploadStatus::DeliveryUnknown, UploadStage::Mutation));
     let state = stored_state(&rig);
     assert_eq!((state.signed_id.as_deref(), state.blob_id.as_deref()), (Some("sid"), Some("b1")));
-    rig.sync.retry("moments", &rid("m1")).await.unwrap();
+    rig.sync.retry("moments", &rid("m1"), None).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!((rig.transport.call_count("CreateBlob"), rig.transport.put_calls().len(), rig.transport.call_count("CreateMoment")), (1, 1, 2));
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -658,7 +658,7 @@ async fn a_rejected_mutation_fails_without_repeating_and_discard_removes_the_ope
     let failed = upload_of(&rig, "m1").unwrap();
     assert_eq!((failed.status, failed.stage, failed.is_retryable()), (UploadStatus::Failed, UploadStage::Mutation, false));
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
-    assert_eq!(rig.db.discard("moments", &rid("m1")).unwrap(), 1);
+    assert_eq!(rig.db.discard("moments", &rid("m1"), None).unwrap(), 1);
     assert_eq!(upload_of(&rig, "m1"), None);
     assert!(rig.db.outbox().unwrap().is_empty());
 }
@@ -886,7 +886,7 @@ async fn a_failed_held_create_keeps_its_row_and_retry_sends_once_without_a_secon
     assert_eq!(upload_of(&rig, temp.as_str()).map(|failed| failed.status), Some(UploadStatus::Failed));
     assert_eq!(text_of(&rig, "moments", temp.as_str()), Some("clip".to_string()));
     assert_eq!(rig.transport.call_count("CreateMoment"), 0);
-    rig.sync.retry("moments", &temp).await.unwrap();
+    rig.sync.retry("moments", &temp, None).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     assert_eq!(text_of(&rig, "moments", temp.as_str()), None);
@@ -902,7 +902,7 @@ async fn discarding_a_failed_held_create_removes_the_row_and_sends_nothing() {
     let source = file(b"abcdef");
     let temp = rig.sync.upload_create("moments", "upload", params(json!({"text": "clip"})), input(&source)).await.unwrap();
     rig.sync.wait_uploads().await;
-    assert_eq!(rig.db.discard("moments", &temp).unwrap(), 1);
+    assert_eq!(rig.db.discard("moments", &temp, None).unwrap(), 1);
     assert_eq!(text_of(&rig, "moments", temp.as_str()), None);
     assert_eq!(rig.transport.call_count("CreateMoment"), 0);
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -949,7 +949,7 @@ async fn inv_upload_19_discarding_a_failed_multipart_aborts_it_once_with_or_with
         let source = file(TWELVE);
         let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(parts)).unwrap();
         fail_open_upload(&rig, seq);
-        assert_eq!(rig.db.discard("moments", &rid("m1")).unwrap(), 1, "{name}");
+        assert_eq!(rig.db.discard("moments", &rid("m1"), None).unwrap(), 1, "{name}");
         assert!(rig.db.outbox().unwrap().is_empty(), "{name}");
         assert_eq!(orphan_count(&rig), 1, "{name}: the abort must outlive the operation");
         rig.sync.inner.upload_housekeeping().await.unwrap();
@@ -967,7 +967,7 @@ async fn an_orphaned_abort_waits_offline_and_is_sent_when_online() {
     let source = file(TWELVE);
     let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new())).unwrap();
     fail_open_upload(&rig, seq);
-    rig.db.discard("moments", &rid("m1")).unwrap();
+    rig.db.discard("moments", &rid("m1"), None).unwrap();
     rig.sync.set_online(false);
     rig.sync.inner.upload_housekeeping().await.unwrap();
     assert_eq!((rig.transport.call_count("AbortMultipart"), orphan_count(&rig)), (0, 1));
@@ -1099,7 +1099,7 @@ async fn a_recorded_abort_that_cannot_be_sent_is_reported_and_retried_at_the_nex
     let source = file(TWELVE);
     let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new())).unwrap();
     fail_open_upload(&rig, seq);
-    rig.db.discard("moments", &rid("m1")).unwrap();
+    rig.db.discard("moments", &rid("m1"), None).unwrap();
     assert!(rig.sync.inner.upload_housekeeping().await.is_err(), "the abort operation is not registered");
     assert_eq!(orphan_count(&rig), 1);
     rig.sync.register(OperationDef::new("AbortMultipart", "operation x { x }", "abortMultipart"));
@@ -1118,7 +1118,7 @@ async fn a_recorded_abort_survives_closing_and_reopening_the_database() {
         put(&rig, "moments", moment("m1", "x"));
         let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(confirmed_parts())).unwrap();
         fail_open_upload(&rig, seq);
-        rig.db.discard("moments", &rid("m1")).unwrap();
+        rig.db.discard("moments", &rid("m1"), None).unwrap();
         assert_eq!(orphan_count(&rig), 1);
         rig.sync.wait_uploads().await;
     }
@@ -1140,10 +1140,10 @@ async fn expiry_skips_an_upload_that_was_retried_or_removed_after_it_was_selecte
     let due = rig.sync.inner.now_ms() - 7 * 24 * 3600 * 1000;
     let stale = rig.db.failed_upload_candidates(due).unwrap();
     assert_eq!(stale.len(), 1);
-    rig.db.retry("moments", &rid("m1")).unwrap();
+    rig.db.retry("moments", &rid("m1"), None).unwrap();
     assert_eq!(rig.db.expire_candidates(stale.clone(), due, &[]).unwrap(), 0);
     assert_eq!(rig.db.outbox().unwrap().len(), 1, "a retried upload is not expired by an old snapshot");
-    rig.db.discard("moments", &rid("m1")).unwrap();
+    rig.db.discard("moments", &rid("m1"), None).unwrap();
     assert_eq!(rig.db.expire_candidates(stale, due, &[]).unwrap(), 0, "a removed upload is skipped, not an error");
 }
 
@@ -1165,4 +1165,44 @@ async fn uploads_are_identified_by_their_declared_action_and_each_cancels_alone(
     let left: Vec<String> = rig.db.outbox().unwrap().into_iter().map(|entry| entry.operation.action_key).collect();
     assert_eq!(left, [Operation::upload_action_key("moments", "upload")], "cancelling one action keeps the other");
     assert!(!rig.sync.cancel_upload("moments", &rid("m1"), "cover").await.unwrap());
+}
+
+fn statuses(rig: &Rig) -> Vec<(String, OperationStatus)> {
+    let mut found: Vec<_> = rig.db.outbox().unwrap().into_iter().map(|entry| (entry.operation.action_key, entry.operation.status)).collect();
+    found.sort_by(|left, right| left.0.cmp(&right.0));
+    found
+}
+
+async fn two_failed_uploads() -> (Rig, tempfile::NamedTempFile) {
+    let rig = upload_rig(small());
+    rig.sync.set_online(false);
+    let source = file(TWELVE);
+    for action in ["upload", "cover"] {
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), action, &input(&source), resumable(Vec::new())).unwrap();
+        fail_open_upload(&rig, seq);
+    }
+    (rig, source)
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_and_discard_act_on_one_declared_action_or_the_whole_record() {
+    let (rig, _source) = two_failed_uploads().await;
+    let key = |action: &str| Operation::upload_action_key("moments", action);
+    assert!(rig.db.retry("moments", &rid("m1"), Some("missing")).is_err(), "an unknown action never falls back to the whole record");
+    assert!(rig.db.discard("moments", &rid("m1"), Some("missing")).is_err());
+    assert_eq!(rig.db.retry("moments", &rid("m1"), Some("cover")).unwrap(), 1);
+    assert_eq!(statuses(&rig), [(key("cover"), OperationStatus::Pending), (key("upload"), OperationStatus::Failed)]);
+    assert_eq!(rig.db.discard("moments", &rid("m1"), Some("upload")).unwrap(), 1);
+    assert_eq!(statuses(&rig), [(key("cover"), OperationStatus::Pending)]);
+    assert_eq!(rig.db.discard("moments", &rid("m1"), None).unwrap(), 1);
+    assert!(statuses(&rig).is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn settled_waits_only_for_the_selected_upload_action() {
+    let (rig, _source) = two_failed_uploads().await;
+    rig.db.retry("moments", &rid("m1"), Some("cover")).unwrap();
+    rig.db.discard("moments", &rid("m1"), Some("upload")).unwrap();
+    assert!(matches!(rig.sync.settled("moments", &rid("m1"), Some("upload")).await, Ok(())), "nothing of that action is open");
+    assert!(matches!(rig.sync.settled("moments", &rid("m1"), Some("cover")).await, Err(SyncError::Offline)), "the pending cover upload is awaited");
 }

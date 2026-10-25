@@ -476,8 +476,8 @@ fn committing_and_discarding_read_only_affected_operations() {
         match action {
             "update" => { db.update("Record", &rid("r1"), fields(json!({"body":"next"}))).unwrap(); }
             "rollback" => { db.roll_back(seq).unwrap(); }
-            "retry" => { db.retry("Record", &rid("r1")).unwrap(); }
-            _ => { db.discard("Record", &rid("r1")).unwrap(); }
+            "retry" => { db.retry("Record", &rid("r1"), None).unwrap(); }
+            _ => { db.discard("Record", &rid("r1"), None).unwrap(); }
         }
         db.shared.store.lock().connection.trace_v2(TraceEventCodes::empty(), None);
         counts.push((action, FULL_QUEUE_READS.with(|reads| reads.get()), FULL_UPLOAD_READS.with(|reads| reads.get())));
