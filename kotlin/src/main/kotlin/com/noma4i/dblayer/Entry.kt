@@ -73,10 +73,11 @@ object DBlayer {
         modelsJson: String,
         path: String? = null,
         operations: List<GraphQLOperation> = emptyList(),
+        uploads: UploadOperations? = null,
         http: EncryptedHttp? = null,
     ) = opening.withLock {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        val options = OpenOptions(JsonArray(definitions).jsonText())
+        val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire())
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers, cablePath = encrypted?.endpoints?.cable) }
         Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) })
@@ -84,7 +85,7 @@ object DBlayer {
         database = made
     }
 
-    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, clock) }
+    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations?, clock: TestClock): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, uploads?.wire(), clock) }
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }

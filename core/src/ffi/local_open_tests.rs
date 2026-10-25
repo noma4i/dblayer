@@ -7,7 +7,7 @@ use crate::value::ScalarKind;
 async fn local() -> Arc<Database> {
     let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     model.storage = Storage::Local;
-    Database::open(Config { path: None, data_version: None, cache_rows: 16 }, serde_json::to_string(&vec![model]).unwrap(), None, None, None, None).await.unwrap()
+    Database::open(Config { path: None, data_version: None, cache_rows: 16 }, serde_json::to_string(&vec![model]).unwrap(), None, None, None, None, None).await.unwrap()
 }
 
 #[tokio::test]

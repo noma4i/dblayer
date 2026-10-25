@@ -6,7 +6,7 @@ use crate::db::Db;
 use crate::sync::rig::{await_outbox, moment, put, rig_on, specs};
 use crate::sync::{OperationDef, SyncConfig};
 use crate::transport::MockTransport;
-use crate::upload::{UploadInput, UploadStatus, UploadSteps};
+use crate::upload::{UploadFile, UploadOperations, UploadStatus};
 
 use super::{check, run, runtime, scratch_dir, settle_uploads, shrink, FakeServer, Findings, StressConfig};
 
@@ -49,7 +49,7 @@ fn settling_uploads_waits_for_an_upload_started_offline_and_released_online() {
         let transport = MockTransport::new();
         let server = FakeServer::install(&transport, 1, Findings::default());
         server.set_calm(true);
-        let rig = rig_on(Db::open_in_memory(specs(), None).unwrap(), transport, SyncConfig::default());
+        let rig = rig_on(Db::open_in_memory(specs(), None).unwrap(), transport, SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });
         rig.sync.register(OperationDef::new("CreateBlob", "operation CreateBlob { x }", "createBlob"));
         server.set_offline(true);
         rig.sync.set_online(false);
@@ -57,7 +57,7 @@ fn settling_uploads_waits_for_an_upload_started_offline_and_released_online() {
         let scratch = scratch_dir();
         let path = scratch.path().join("upload.bin");
         std::fs::write(&path, b"abcdef").unwrap();
-        let input = UploadInput::new(&path.to_string_lossy(), UploadSteps::new("CreateMoment").single("CreateBlob")).variable("text", json!("w0:2"));
+        let input = UploadFile::new(&path.to_string_lossy()).variable("text", json!("w0:2"));
         rig.sync.upload("moments", &row.id, "upload", input).await.unwrap();
         server.set_offline(false);
         server.hold_blob_replies(std::time::Duration::from_secs(10));
@@ -87,7 +87,7 @@ fn outcome_of_cancelling(stage: Stage, cancel: Cancel) -> String {
         let server = FakeServer::install(&transport, 1, Findings::default());
         server.set_calm(true);
         let findings = Findings::default();
-        let rig = rig_on(Db::open_in_memory(specs(), None).unwrap(), transport, SyncConfig::default());
+        let rig = rig_on(Db::open_in_memory(specs(), None).unwrap(), transport, SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });
         rig.sync.register(OperationDef::new("CreateBlob", "operation CreateBlob { x }", "createBlob"));
         server.set_offline(true);
         rig.sync.set_online(false);
@@ -96,7 +96,7 @@ fn outcome_of_cancelling(stage: Stage, cancel: Cancel) -> String {
         let scratch = scratch_dir();
         let path = scratch.path().join("upload.bin");
         std::fs::write(&path, b"abcdef").unwrap();
-        let input = UploadInput::new(&path.to_string_lossy(), UploadSteps::new("CreateMoment").single("CreateBlob")).variable("text", json!("w0:2"));
+        let input = UploadFile::new(&path.to_string_lossy()).variable("text", json!("w0:2"));
         rig.sync.upload("moments", &row.id, "upload", input).await.unwrap();
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();

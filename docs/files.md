@@ -61,10 +61,15 @@ Running checksum and range reads check cancellation between 1 MiB chunks.
 Each file has an `op_item` row. Multipart parts and saved requests include the item position.
 The database format changes with these tables. Opening an incompatible database clears it through the existing recreation policy.
 
-An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action again while it is open is refused. The steps are operations you registered by name. Each upload names the ones it uses.
+An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action again while it is open is refused. The transfer steps are operations you registered by name. Declare them once in `DB.open` (Swift) or `DBlayer.open` (Kotlin) with a transport or endpoint, and register the content mutation next to them; every upload and batch uses that declaration. A file takes `createBlob` below the multipart threshold and the multipart steps above it. `rootPath` names the response field a step answers under, and nil keeps the first field of its document. Without a declaration an upload is refused before any file is read or request sent, and `open` fails when a declared name is not registered.
 
 ```swift
-let request = UploadRequest(path: url.path, createBlob: "CreateBlob", multipart: .init(initiate: "InitMultipart", presign: "PresignParts", complete: "CompleteMultipart", abort: "AbortMultipart"), variables: ["text": .string("hello")])
+try await DB.open(endpoint: endpoint, modelsJSON: models,
+  operations: [MomentCreateFile.self, CreateBlob.self, InitMultipart.self, PresignParts.self, CompleteMultipart.self, AbortMultipart.self],
+  uploads: UploadOperations(
+    createBlob: UploadOperation("CreateBlob", rootPath: "uploadCreate.directUpload"),
+    multipart: .init(initiate: UploadOperation("InitMultipart"), presign: UploadOperation("PresignParts"), complete: UploadOperation("CompleteMultipart"), abort: UploadOperation("AbortMultipart"))))
+let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
 try await moment.upload(action: "upload_clip", request)
 moment.uploads["upload_clip"]?.status       // .uploading
 moment.uploads["upload_clip"]?.percent      // 42.0
@@ -72,7 +77,12 @@ try await moment.cancelUpload(action: "upload_clip")
 ```
 
 ```kotlin
-val request = UploadRequest(path = file.path, createBlob = "CreateBlob", multipart = UploadRequest.Multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart"), variables = variables)
+DBlayer.open(context, endpoint = endpoint, modelsJson = models,
+    operations = listOf(MomentCreateFile, CreateBlob, InitMultipart, PresignParts, CompleteMultipart, AbortMultipart),
+    uploads = UploadOperations(
+        createBlob = UploadOperation("CreateBlob", rootPath = "uploadCreate.directUpload"),
+        multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart"))))
+val request = UploadRequest(path = file.path, variables = variables)
 moment.upload("upload_clip", request)
 moment.uploads["upload_clip"]?.status       // Uploading
 moment.uploads["upload_clip"]?.percent      // 42.0
@@ -88,14 +98,14 @@ A record that does not exist yet can be created together with its upload. The re
 Declare a named operation for each content mutation, with `upload MutationName` and its record `root`. Uploads use the same response normalization as other actions. Create and update uploads can have different nested roots on the same model.
 
 ```swift
-let request = UploadRequest(path: url.path, createBlob: "CreateBlob", variables: ["text": .string("hello")])
+let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
 let moment = try await Moment.create(values: ["text": .string("hello")], action: "upload_clip", uploading: request)
 moment.uploads["upload_clip"]?.percent      // 42.0
 try await moment.confirmedId()
 ```
 
 ```kotlin
-val request = UploadRequest(path = file.path, createBlob = "CreateBlob", variables = variables)
+val request = UploadRequest(path = file.path, variables = variables)
 val moment = uploadCreate("Moment", "upload_clip", values, request, Moment)
 moment.uploads["upload_clip"]?.percent      // 42.0
 moment.confirmedId()
@@ -152,7 +162,7 @@ Its response includes every created record with the same correlation key, in any
 ```swift
 let records = try await Asset.uploadCreate(
   items: files.map { UploadItem(values: $0.values, path: $0.path) },
-  request: UploadBatchRequest(operation: "create_files", createBlob: "CreateBlob")
+  request: UploadBatchRequest(operation: "create_files")
 )
 try await records[1].discard(action: "create_files")
 ```
@@ -160,7 +170,7 @@ try await records[1].discard(action: "create_files")
 ```kotlin
 val records = Asset.uploadCreate(
     items = files.map { UploadItem(values = it.values, path = it.path) },
-    request = UploadBatchRequest(operation = "create_files", createBlob = "CreateBlob"),
+    request = UploadBatchRequest(operation = "create_files"),
 )
 records[1].discard("create_files")
 ```
@@ -185,13 +195,13 @@ end
 
 ```swift
 let widgets = [MomentWidgetInput(kind: .emoji, props: .emoji(MomentEmojiInput(code: "fire")))]
-let request = UploadRequest(path: url.path, createBlob: "CreateBlob", variables: try Moment.createFileVariables(widgets: widgets))
+let request = UploadRequest(path: url.path, variables: try Moment.createFileVariables(widgets: widgets))
 let moment = try await Moment.create(values: ["text": .string("hello")], action: "create_file", uploading: request)
 ```
 
 ```kotlin
 val widgets = listOf(MomentWidgetInput(kind = WidgetKind.Emoji, props = MomentWidgetProps.Emoji(MomentEmojiInput(code = "fire"))))
-val request = UploadRequest(path = file.path, createBlob = "CreateBlob", variables = Moment.createFileVariables(widgets = widgets))
+val request = UploadRequest(path = file.path, variables = Moment.createFileVariables(widgets = widgets))
 val moment = uploadCreate("Moment", "create_file", values, request, Moment)
 ```
 

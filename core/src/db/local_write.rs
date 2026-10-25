@@ -154,8 +154,7 @@ impl Db {
         self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
     }
 
-    pub(crate) fn create_held(&self, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, mut input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
-        self.declared_upload(model, action, &mut input)?;
+    pub(crate) fn create_held(&self, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
         let id = values.get("id").and_then(read_id).unwrap_or_else(|| RowId::generate_temp(None));
         values.insert("id".into(), Value::String(id.to_string()));
         self.preparing_uploads(model, generation, |files, generation| {
@@ -164,23 +163,20 @@ impl Db {
         })
     }
 
-    pub(crate) fn declared_upload(&self, model: &str, action: &str, input: &mut crate::upload::UploadInput) -> Result<(), DbError> {
+    pub(crate) fn declared_upload(&self, model: &str, action: &str) -> Result<String, DbError> {
         let spec = self.shared.spec(model)?;
         let declared = spec.upload_action(action).filter(|declared| declared.batch.is_none()).ok_or_else(|| DbError::InvalidUpload(format!("{model} declares no single upload action {action}")))?;
-        if let Some(mutation) = &declared.mutation { input.steps.mutation = mutation.clone(); }
-        if input.steps.mutation.is_empty() {
-            return Err(DbError::InvalidUpload(format!("{model} {action} declares no mutation")));
-        }
-        Ok(())
+        declared.mutation.clone().ok_or_else(|| DbError::InvalidUpload(format!("{model} {action} declares no mutation")))
     }
 
-    pub(crate) fn create_upload_batch(&self, generation: crate::identity::Generation, model: &str, items: Vec<crate::upload::UploadItem>, request: crate::upload::UploadBatchInput) -> Result<Vec<RowId>, DbError> {
+    pub(crate) fn create_upload_batch(&self, generation: crate::identity::Generation, model: &str, items: Vec<crate::upload::UploadItem>, request: crate::upload::UploadBatchInput, uploads: &crate::upload::UploadOperations) -> Result<Vec<RowId>, DbError> {
         let spec = self.shared.spec(model)?;
         let action = spec.actions.iter().find(|action| action.name == request.operation).ok_or_else(|| DbError::InvalidUpload("unknown upload operation".into()))?;
         let batch = action.batch.as_ref().ok_or_else(|| DbError::InvalidUpload("operation has no upload batch declaration".into()))?;
         if items.len() < batch.min || items.len() > batch.max {
             return Err(DbError::InvalidUpload(format!("upload batch requires {}..{} items", batch.min, batch.max)));
         }
+        let steps = uploads.steps(action.mutation.as_deref().ok_or_else(|| DbError::InvalidUpload("upload mutation is missing".into()))?);
         let field = &action.correlate[0];
         let mut keys = HashSet::new();
         let now = self.shared.store.lock().now_ms();
@@ -198,9 +194,7 @@ impl Db {
             for (target, source) in &batch.input {
                 variables.insert(target.clone(), data.get(source).cloned().unwrap_or(Value::Null));
             }
-            let mut steps = request.steps.clone();
-            steps.mutation = action.mutation.clone().ok_or_else(|| DbError::InvalidUpload("upload mutation is missing".into()))?;
-            files.push((id.clone(), key, crate::upload::UploadInput { path: item.path, name: item.name, mime: item.mime, variables, steps }));
+            files.push((id.clone(), key, crate::upload::UploadInput { path: item.path, name: item.name, mime: item.mime, variables, steps: steps.clone() }));
             rows.push((id, data));
         }
         let ids: Vec<_> = rows.iter().map(|(id, _)| id.clone()).collect();

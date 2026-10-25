@@ -6,7 +6,7 @@ use crate::value::ScalarKind;
 async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
     let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     model.storage = Storage::Local;
-    let database = Database::open(super::super::Config { path: None, data_version: None, cache_rows: 16 }, serde_json::to_string(&vec![model]).unwrap(), None, None, None, None).await.unwrap();
+    let database = Database::open(super::super::Config { path: None, data_version: None, cache_rows: 16 }, serde_json::to_string(&vec![model]).unwrap(), None, None, None, None, None).await.unwrap();
     let query = r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#;
     let queue = database.changes(query.into()).unwrap();
     let mut ids = Vec::new();

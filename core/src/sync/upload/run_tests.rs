@@ -220,7 +220,8 @@ fn queued_cleanup_survives_dropping_the_sync_that_queued_it() {
     let root = tempfile::tempdir().unwrap();
     let (rig, runner, path) = runtime.block_on(async {
         let db = crate::db::Db::open(&root.path().join("42.sqlite"), crate::sync::rig::specs(), None).unwrap();
-        let rig = crate::sync::rig::rig_on(db, crate::transport::MockTransport::new(), crate::sync::SyncConfig { upload: small(), ..crate::sync::SyncConfig::default() });
+        let rig = crate::sync::rig::rig_on(db, crate::transport::MockTransport::new(), super::upload_tests::upload_config(small()));
+        super::upload_tests::register_upload_operations(&rig.sync);
         crate::sync::rig::put(&rig, "moments", crate::sync::rig::moment("m1", "x"));
         let source = file(b"inline");
         let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();

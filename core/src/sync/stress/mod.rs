@@ -31,6 +31,7 @@ use crate::db::Db;
 use crate::identity::ScopeKey;
 use crate::pacing::Backoff;
 use crate::transport::{EventSpec, MockTransport};
+use crate::upload::{UploadOperation, UploadOperations};
 
 use super::rig::{rig_on, specs};
 use super::{EventEffect, LoadOptions, OperationDef, SubscriptionDef, Sync, SyncConfig};
@@ -273,7 +274,7 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     let transport = MockTransport::new();
     let server = FakeServer::install(&transport, config.seed, findings.clone());
     server.seed_rows(workers, OWNED_ROWS, SHARED_ROWS);
-    let mut sync_config = SyncConfig::default();
+    let mut sync_config = SyncConfig { uploads: Some(UploadOperations { create_blob: Some(UploadOperation::new("CreateBlob")), multipart: None }), ..SyncConfig::default() };
     sync_config.upload.backoff = Backoff::new(Duration::from_millis(5), Duration::from_millis(20)).limited(8);
     let rig = rig_on(Db::open_in_memory(specs(), None).expect("open db"), transport, sync_config);
     rig.sync.register(OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));

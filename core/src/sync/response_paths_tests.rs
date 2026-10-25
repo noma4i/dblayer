@@ -4,7 +4,7 @@ use crate::db::Db;
 use crate::identity::RowId;
 use crate::schema::{ActionDeclaration, Coverage, FieldSpec, ModelSpec, NodeRead, RelationSpec, RemoteShape, RootShape, VariableSource, NODE_PARAM};
 use crate::transport::{EventSpec, MockTransport, Reply, Response, SubscriptionEvent};
-use crate::upload::{UploadInput, UploadSteps};
+use crate::upload::{UploadFile, UploadOperations};
 use crate::value::ScalarKind;
 use serde_json::json;
 use std::io::Write;
@@ -43,7 +43,7 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
             }
             model.actions.push(action);
         }
-        let rig = rig_on(Db::open_in_memory(vec![model], None).unwrap(), MockTransport::new(), SyncConfig::default());
+        let rig = rig_on(Db::open_in_memory(vec![model], None).unwrap(), MockTransport::new(), SyncConfig { uploads: Some(UploadOperations::empty().create_blob("Blob")), ..SyncConfig::default() });
         for (name, root) in [("Feed", "messages"), ("Node", "node"), ("Nodes", "nodes"), ("Changed", "changed"), ("Change", "change"), ("Photo", "photo"), ("Blob", "blob")] {
             rig.sync.register(OperationDef::new(name, "query x { x }", root));
         }
@@ -79,7 +79,7 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
                 file.write_all(b"photo").unwrap();
                 rig.transport.enqueue("Blob", Reply::data(json!({"blob": {"url": "https://s3/x", "signedId": "s", "blobId": "b"}})));
                 rig.transport.enqueue("Photo", Reply::data(json!({"photo": {"message": value}})));
-                rig.sync.upload("Message", &id, "photo", UploadInput::new(file.path().to_str().unwrap(), UploadSteps::new("Photo").single("Blob"))).await.unwrap();
+                rig.sync.upload("Message", &id, "photo", UploadFile::new(file.path().to_str().unwrap())).await.unwrap();
                 rig.sync.wait_uploads().await;
             }
             _ => unreachable!(),

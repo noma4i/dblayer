@@ -12,6 +12,7 @@ use crate::schema::ModelSpec;
 use crate::read::LoadMoreVerdict;
 use crate::sync::{LoadOptions, LoadStatus, OperationDef, Sync, SyncConfig};
 use crate::transport::{self as core, EncryptedClient};
+use crate::upload::UploadOperations;
 use super::entities::{self, EntityListener, LiveEntities};
 use super::live::{follow_failures, intake, LiveHandles};
 use super::live_feed::LiveFeed;
@@ -101,13 +102,14 @@ pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) db: Db, p
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
 impl Database {
-    fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        Self::start_with(config, models_json, clock, |_, _| Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None)))
+    fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
+        Self::start_with(config, models_json, uploads, clock, |_, _| Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None)))
     }
 
     pub(super) fn start_with(
         config: Config,
         models_json: String,
+        uploads: Option<UploadOperations>,
         clock: Arc<dyn Clock>,
         wire: impl FnOnce(&Db, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
     ) -> Result<Arc<Self>, DbError> {
@@ -116,7 +118,10 @@ impl Database {
         let db = Db::open_with(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), DbConfig { cache_rows: config.cache_rows as usize })?;
         db.set_clock(clock.clone());
         let (transport, session) = wire(&db, &clock)?;
-        let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig::default()));
+        if uploads.is_some() && transport.is_none() {
+            return Err(DbError::Invalid { detail: "upload operations require a transport".into() });
+        }
+        let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, wires: Arc::new(wires) }))
     }
@@ -128,26 +133,27 @@ impl Database {
         encrypted: Option<super::EncryptedConfig>,
         credentials: Option<Arc<dyn super::CredentialStore>>,
         http: Option<Arc<dyn super::EncryptedHttp>>,
+        uploads: Option<UploadOperations>,
     ) -> Result<Arc<Self>, DbError> {
         blocking(move || {
             let Some(encrypted) = encrypted else {
                 if credentials.is_some() || http.is_some() {
                     return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
                 }
-                return Self::start(config, models_json, transport, Arc::new(SystemClock));
+                return Self::start(config, models_json, transport, uploads, Arc::new(SystemClock));
             };
             let credentials = credentials.ok_or_else(|| DbError::Invalid { detail: "encrypted requires credentials".into() })?;
             let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
             let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
             let _entered = executor()?.enter();
-            Self::start_with(config, models_json, Arc::new(SystemClock), |db, clock| {
+            Self::start_with(config, models_json, uploads, Arc::new(SystemClock), |db, clock| {
                 super::encrypted::wire(db, clock, encrypted, http, credentials, transport)
             })
         }).await
     }
 
-    pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<TestClock>) -> Result<Arc<Self>, DbError> {
-        blocking(move || Self::start(config, models_json, transport, clock.clock.clone())).await
+    pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<TestClock>) -> Result<Arc<Self>, DbError> {
+        blocking(move || Self::start(config, models_json, transport, uploads, clock.clock.clone())).await
     }
 
     pub(super) fn hold(&self, lease: Arc<OpenLease>) { let _ = self.lease.set(lease); }
@@ -429,8 +435,8 @@ impl Database {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
         on_executor(async move {
-            let input = request.into_input()?;
-            Ok::<_, DbError>(sync.upload(&model, &row, &action, input).await?)
+            let file = request.into_file()?;
+            Ok::<_, DbError>(sync.upload(&model, &row, &action, file).await?)
         })
         .await?;
         Ok(())
@@ -439,8 +445,8 @@ impl Database {
         let sync = self.sync()?.clone();
         let (db, wire) = (self.db.clone(), self.wire(&model)?.clone());
         on_executor(async move {
-            let (values, input) = (serde_json::from_str(&values_json).map_err(DbError::from)?, request.into_input()?);
-            let row_id = sync.upload_create(&model, &action, values, input).await?;
+            let (values, file) = (serde_json::from_str(&values_json).map_err(DbError::from)?, request.into_file()?);
+            let row_id = sync.upload_create(&model, &action, values, file).await?;
             let row = db.find(&model, &row_id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {row_id} was not created") })?;
             Ok::<_, DbError>(wire.row(&row))
         })

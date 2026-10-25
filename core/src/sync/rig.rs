@@ -109,6 +109,7 @@ pub fn moments_spec() -> ModelSpec {
 pub fn upload_declared(name: &str) -> ActionDeclaration {
     let mut action = ActionDeclaration::new(name, RootShape::Upsert);
     action.upload = true;
+    action.mutation = Some("CreateMoment".to_string());
     action
 }
 

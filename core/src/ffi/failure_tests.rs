@@ -36,7 +36,7 @@ pub(super) async fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<D
     model.relations.push(relation);
     let transport = Arc::new(Refusing { calls: AtomicUsize::new(0), answer });
     let models = serde_json::to_string(&vec![model]).unwrap();
-    let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, models, Some(transport.clone() as Arc<dyn Transport>), None, None, None).await.unwrap();
+    let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, models, Some(transport.clone() as Arc<dyn Transport>), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id } }","rootPath":"moments"}]"#.into()).unwrap();
     (db, transport)
 }

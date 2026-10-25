@@ -5,7 +5,7 @@ use super::encrypted_tests::ThroughServer;
 use super::sealed_errors_tests::moment_spec;
 use super::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
-use crate::upload::{UploadInput, UploadSteps};
+use crate::upload::{UploadFile, UploadOperations};
 
 pub(super) struct Bytes;
 
@@ -24,8 +24,12 @@ impl Transport for Bytes {
     }
 }
 
+pub(super) fn uploads() -> UploadOperations {
+    UploadOperations::empty().create_blob("CreateBlob").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart")
+}
+
 async fn open(rig: &Rig, path: &std::path::Path) -> Arc<Database> {
-    let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone())))).await.unwrap();
+    let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), Some(uploads())).await.unwrap();
     let operations: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);
@@ -60,7 +64,7 @@ async fn resume_does_not_repeat_a_step_owned_by_an_active_upload() {
             notified.notify_one();
         }
     });
-    let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
+    let input = UploadFile::new(source.to_str().unwrap());
     sync.upload("Moment", &crate::identity::RowId::new("42").unwrap(), "upload", input).await.unwrap();
     lost.notified().await;
     let mut resume = Box::pin(super::encrypted::resume(database.session.clone().unwrap(), Some(sync.clone())));
@@ -86,7 +90,7 @@ async fn upload_resume_and_retry_execute_the_saved_step_once_after_reopen() {
         rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"},
             "initMultipart": {"key": "key", "uploadId": "upload"}, "presignParts": {"parts": ([1, 2, 3].map(|number| json!({"partNumber": number, "url": "https://upload"})))},
             "completeMultipart": {"signedId": "sid", "blobId": "bid"}, "abortMultipart": {"ok": true}}));
-        let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart"));
+        let input = UploadFile::new(source.to_str().unwrap());
         let server = Arc::downgrade(&rig.server);
         let seen = std::sync::atomic::AtomicUsize::new(0);
         rig.server.on_request(move || {
@@ -116,7 +120,7 @@ async fn upload_preserves_the_session_code_in_its_failure() {
     let database = open(&rig, &directory.path().join("db.sqlite")).await;
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
-    let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
+    let input = UploadFile::new(source.to_str().unwrap());
     database.upload("Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     let entry = database.db.outbox().unwrap().remove(0);
@@ -149,7 +153,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     let database = open(&rig, &path).await;
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.reply_with(json!({"abortMultipart": {"ok": true}}));
-    let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart"));
+    let input = UploadFile::new(source.to_str().unwrap());
     let state = crate::upload::UploadState { key: Some("key".into()), upload_id: Some("upload".into()), ..crate::upload::UploadState::queued() };
     let row = crate::identity::RowId::new("42").unwrap();
     database.sync.as_ref().unwrap().inner.begin_upload(database.sync.as_ref().unwrap().inner.db.generation(), "Moment", &row, "upload", &input, state).unwrap();
@@ -180,7 +184,7 @@ async fn resume_consumes_a_lost_upload_answer_without_repeating_the_effect() {
         1 => server.upgrade().unwrap().refuse_next("ACCOUNT_UNAVAILABLE", false),
         _ => {},
     });
-    let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
+    let input = UploadFile::new(source.to_str().unwrap());
     database.upload("Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     database.session_resume().await.unwrap();

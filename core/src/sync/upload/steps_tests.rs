@@ -6,24 +6,26 @@ use crate::db::Db;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 use crate::transport::{MockTransport, PutReply, Reply};
-use crate::upload::{UploadConfig, UploadStatus, UploadSteps};
+use crate::upload::{UploadConfig, UploadFile, UploadOperations, UploadStatus};
 use super::super::{OperationDef, SyncConfig};
 use super::super::rig::{Rig, rig_without_operations, put, await_outbox};
 use super::upload_tests::{await_released, file, rid, small};
 
 fn reopen(path: &Path, budget: u32) -> Rig {
     let mut model = ModelSpec::new("assets", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
-    model.actions.push(crate::sync::rig::upload_declared("upload"));
+    let mut action = crate::sync::rig::upload_declared("upload");
+    action.mutation = Some("Publish".into());
+    model.actions.push(action);
     let config = UploadConfig { backoff: small().backoff.limited(budget), parallel_parts: 3, ..small() };
-    let rig = rig_without_operations(Db::open(path, vec![model], None).unwrap(), MockTransport::new(), SyncConfig { upload: config, ..SyncConfig::default() });
+    let rig = rig_without_operations(Db::open(path, vec![model], None).unwrap(), MockTransport::new(), SyncConfig { upload: config, uploads: Some(UploadOperations::empty().create_blob("Grant").multipart("Start", "Sign", "Finish", "Abort")), ..SyncConfig::default() });
     for (name, root) in [("Grant", "grant"), ("Start", "start"), ("Sign", "sign"), ("Finish", "finish"), ("Abort", "abort")] {
         rig.sync.register(OperationDef::new(name, "mutation { result }", root));
     }
     rig
 }
 
-fn source_input(source: &tempfile::NamedTempFile) -> UploadInput {
-    UploadInput::new(source.path().to_str().unwrap(), UploadSteps::new("Publish").single("Grant").multipart("Start", "Sign", "Finish", "Abort"))
+fn source_input(source: &tempfile::NamedTempFile) -> UploadFile {
+    UploadFile::new(source.path().to_str().unwrap())
 }
 
 fn grants(rig: &Rig) {

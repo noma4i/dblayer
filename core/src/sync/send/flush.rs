@@ -298,10 +298,9 @@ impl Inner {
             Some(state) => {
                 let value = self.db.shared.read(&[], |reader| Ok(crate::operation::read_item_value(reader.connection(), entry.operation.id.0, 0, "input")?))?;
                 let input: crate::upload::UploadInput = serde_json::from_value(value.unwrap_or(Value::Null)).map_err(|error| SyncError::Malformed(error.to_string()))?;
-                let (Some(signed), Some(blob)) = (&state.signed_id, &state.blob_id) else { return Err(SyncError::Malformed("the upload has no stored blob".into())) };
+                let (Some(signed), Some(_)) = (&state.signed_id, &state.blob_id) else { return Err(SyncError::Malformed("the upload has no stored blob".into())) };
                 let mut variables = entry.input.as_object().cloned().ok_or_else(|| SyncError::Malformed("the upload arguments are not an object".into()))?;
                 variables.insert(input.steps.signed_id_variable, Value::String(signed.clone()));
-                if let Some(name) = input.steps.blob_id_variable { variables.insert(name, Value::String(blob.clone())); }
                 let spec = self.db.spec(&sending.model)?;
                 let declaration = spec.actions.iter().find(|action| action.mutation.as_deref() == Some(&operation.name));
                 let variables = Value::Object(variables);

@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::identity::RowId;
 use crate::transport::{Reply, TransportError};
-use crate::upload::{UploadInput, UploadState, UploadSteps};
+use crate::upload::{UploadFile, UploadOperations, UploadState};
 
 use super::super::rig::*;
 
@@ -16,9 +16,10 @@ fn updated(text: &str) -> Reply {
 
 #[tokio::test(start_paused = true)]
 async fn an_unknown_delivery_holds_the_later_updates_of_the_row_when_an_upload_is_the_oldest_operation() {
-    let rig = rig();
+    let rig = rig_with(crate::sync::SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..Default::default() });
+    rig.sync.register(crate::sync::OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
     put(&rig, "moments", moment("m1", "old"));
-    let input = UploadInput::new("/nonexistent/file.bin", UploadSteps::new("CreateMoment").single("CreateBlob"));
+    let input = UploadFile::new("/nonexistent/file.bin");
     rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input, UploadState::queued()).unwrap();
     rig.db.update("moments", &rid("m1"), params(json!({"text": "first"}))).unwrap();
     rig.db.update("moments", &rid("m1"), params(json!({"text": "second"}))).unwrap();

@@ -47,7 +47,7 @@ impl Rig {
     }
 
     pub(super) async fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
-        Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), Some(self.credentials.clone()), Some(Arc::new(ThroughServer(self.server.clone())))).await
+        Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), Some(self.credentials.clone()), Some(Arc::new(ThroughServer(self.server.clone()))), None).await
     }
 
     pub(super) fn touched(&self) -> (usize, usize) {

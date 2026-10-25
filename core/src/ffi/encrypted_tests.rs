@@ -52,7 +52,7 @@ pub(super) async fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<Fake
     let server = FakeServer::new(Arc::new(SystemClock));
     let credentials = Arc::new(MemoryCredentials::default());
     let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: server_key.to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() };
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone())))).await
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone()))), None).await
     .unwrap();
     (database, server, credentials)
 }
@@ -97,7 +97,7 @@ async fn dropping_foreign_calls_cancels_the_inflight_http_future() {
         let stopped = Arc::new(tokio::sync::Notify::new());
         let http = Arc::new(Waiting { started: tokio::sync::Notify::new(), stopped: stopped.clone() });
         let config = crate::transport::EncryptedConfig { origin: origin().into(), pin: pin().into(), server_key: public_key_der_b64().into(), ..crate::transport::encrypted::protocol_tests::config() };
-        let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(config.clone()), Some(Arc::new(Held(Arc::new(MemoryCredentials::default())))), Some(http.clone())).await.unwrap();
+        let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(config.clone()), Some(Arc::new(Held(Arc::new(MemoryCredentials::default())))), Some(http.clone()), None).await.unwrap();
         let mut call = Box::pin(async {
             if bootstrap {
                 super::fetch_server_config(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http.clone(), None, crate::transport::Connectivity::new(true)).await.map(|_| ())
@@ -132,7 +132,7 @@ async fn a_sessionless_operation_posts_all_fields_without_a_session() {
     let mut encrypted = EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() };
     encrypted.endpoints.session_operations = [("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true })].into();
     let credentials = Arc::new(MemoryCredentials::default());
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(TicketPost))).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(TicketPost)), None).await.unwrap();
     assert!(credentials.value().is_none());
 
     database.session_call("ticket".into(), body.into()).await.unwrap();
@@ -168,7 +168,7 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
         let mut encrypted = crate::transport::encrypted::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true });
         let credentials = Arc::new(MemoryCredentials::default());
-        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(Reply(status)))).await.unwrap();
+        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(Reply(status))), None).await.unwrap();
         let result = database.session_call("ticket".into(), "{}".into()).await;
         if status == 200 { assert_eq!(result.unwrap(), "{}"); }
         else { assert!(matches!(result, Err(DbError::Http { status: 400, .. })), "{result:?}"); }

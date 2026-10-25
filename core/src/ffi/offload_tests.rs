@@ -17,7 +17,7 @@ pub(super) fn note_parse_failure(error: &serde_json::Error) {
 type Call = Box<dyn FnOnce(std::sync::Arc<super::Database>, String) -> std::pin::Pin<Box<dyn Future<Output = Result<(), super::DbError>>>> + Send>;
 
 fn request(variables_json: String) -> WireUploadRequest {
-    WireUploadRequest { path: "p".into(), name: None, mime: None, variables_json, create_blob: None, multipart: None }
+    WireUploadRequest { path: "p".into(), name: None, mime: None, variables_json }
 }
 
 fn json_calls() -> Vec<(&'static str, Call)> {
@@ -28,7 +28,7 @@ fn json_calls() -> Vec<(&'static str, Call)> {
         ("upload_create_batch", Box::new(move |db, bad| {
             Box::pin(async move {
                 let item = WireUploadItem { values_json: bad, path: "p".into(), name: None, mime: None, variables_json: "{}".into() };
-                let batch = WireUploadBatch { operation: "o".into(), variables_json: "{}".into(), create_blob: None, multipart: None };
+                let batch = WireUploadBatch { operation: "o".into(), variables_json: "{}".into() };
                 db.upload_create_batch(moment(), vec![item], batch).await.map(drop)
             })
         })),

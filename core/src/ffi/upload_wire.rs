@@ -1,14 +1,26 @@
 use serde_json::{Map, Value};
 
 use super::DbError;
-use crate::upload::{MultipartSteps, SingleSteps, UploadBatchInput, UploadInput, UploadItem, UploadSteps};
+use crate::upload::{MultipartOperations, UploadBatchInput, UploadFile, UploadItem, UploadOperation, UploadOperations};
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct WireMultipart {
-    pub initiate: String,
-    pub presign: String,
-    pub complete: String,
-    pub abort: String,
+pub struct WireUploadOperation {
+    pub name: String,
+    pub root_path: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct WireMultipartOperations {
+    pub initiate: WireUploadOperation,
+    pub presign: WireUploadOperation,
+    pub complete: WireUploadOperation,
+    pub abort: WireUploadOperation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct WireUploadOperations {
+    pub create_blob: Option<WireUploadOperation>,
+    pub multipart: Option<WireMultipartOperations>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -17,8 +29,6 @@ pub struct WireUploadRequest {
     pub name: Option<String>,
     pub mime: Option<String>,
     pub variables_json: String,
-    pub create_blob: Option<String>,
-    pub multipart: Option<WireMultipart>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -34,8 +44,6 @@ pub struct WireUploadItem {
 pub struct WireUploadBatch {
     pub operation: String,
     pub variables_json: String,
-    pub create_blob: Option<String>,
-    pub multipart: Option<WireMultipart>,
 }
 
 fn object(json: &str) -> Result<Map<String, Value>, DbError> {
@@ -45,33 +53,31 @@ fn object(json: &str) -> Result<Map<String, Value>, DbError> {
     }
 }
 
-fn steps(create_blob: Option<String>, multipart: Option<WireMultipart>) -> UploadSteps {
-    UploadSteps {
-        single: create_blob.map(|create| SingleSteps { create }),
-        multipart: multipart.map(|steps| MultipartSteps { init: steps.initiate, presign: steps.presign, complete: steps.complete, abort: steps.abort }),
-        mutation: String::new(),
-        signed_id_variable: "signedId".to_string(),
-        blob_id_variable: None,
+impl From<WireUploadOperation> for UploadOperation {
+    fn from(wire: WireUploadOperation) -> Self {
+        Self { name: wire.name, root_path: wire.root_path }
+    }
+}
+
+impl From<WireUploadOperations> for UploadOperations {
+    fn from(wire: WireUploadOperations) -> Self {
+        Self {
+            create_blob: wire.create_blob.map(Into::into),
+            multipart: wire.multipart.map(|steps| MultipartOperations { initiate: steps.initiate.into(), presign: steps.presign.into(), complete: steps.complete.into(), abort: steps.abort.into() }),
+        }
     }
 }
 
 #[cfg(test)]
 impl WireUploadRequest {
-    pub fn of(input: &UploadInput) -> Self {
-        Self {
-            path: input.path.clone(),
-            name: input.name.clone(),
-            mime: input.mime.clone(),
-            variables_json: Value::Object(input.variables.clone()).to_string(),
-            create_blob: input.steps.single.as_ref().map(|single| single.create.clone()),
-            multipart: input.steps.multipart.as_ref().map(|steps| WireMultipart { initiate: steps.init.clone(), presign: steps.presign.clone(), complete: steps.complete.clone(), abort: steps.abort.clone() }),
-        }
+    pub fn of(file: &UploadFile) -> Self {
+        Self { path: file.path.clone(), name: file.name.clone(), mime: file.mime.clone(), variables_json: Value::Object(file.variables.clone()).to_string() }
     }
 }
 
 impl WireUploadRequest {
-    pub fn into_input(self) -> Result<UploadInput, DbError> {
-        Ok(UploadInput { path: self.path, name: self.name, mime: self.mime, variables: object(&self.variables_json)?, steps: steps(self.create_blob, self.multipart) })
+    pub fn into_file(self) -> Result<UploadFile, DbError> {
+        Ok(UploadFile { path: self.path, name: self.name, mime: self.mime, variables: object(&self.variables_json)? })
     }
 }
 
@@ -83,6 +89,6 @@ impl WireUploadItem {
 
 impl WireUploadBatch {
     pub fn into_input(self) -> Result<UploadBatchInput, DbError> {
-        Ok(UploadBatchInput { operation: self.operation, steps: steps(self.create_blob, self.multipart), variables: object(&self.variables_json)? })
+        Ok(UploadBatchInput { operation: self.operation, variables: object(&self.variables_json)? })
     }
 }

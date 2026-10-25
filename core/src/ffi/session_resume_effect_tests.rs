@@ -61,7 +61,7 @@ async fn a_queued_create_whose_answer_was_lost_is_executed_once_by_resume_and_th
     let rig = Rig { server: crate::transport::encrypted::fake_server_tests::FakeServer::new(clock.clone()), credentials: Arc::default() };
     let database = super::Database::start_with(
         super::Config { path: None, data_version: None, cache_rows: 8 },
-        serde_json::to_string(&vec![super::sealed_errors_tests::moment_spec()]).unwrap(),
+        serde_json::to_string(&vec![super::sealed_errors_tests::moment_spec()]).unwrap(), None,
         clock.clone(),
         |db, clock| {
             use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, Transport, TransportRequest};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 
-struct Plain;
+pub(super) struct Plain;
 
 #[async_trait::async_trait]
 impl Transport for Plain {
@@ -40,7 +40,7 @@ fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 }
 
 #[tokio::test]
 async fn unified_open_without_encryption_sends_plain_graphql_through_the_transport() {
-    let database = Database::open(config(), "[]".into(), Some(Arc::new(Plain)), None, None, None).await.unwrap();
+    let database = Database::open(config(), "[]".into(), Some(Arc::new(Plain)), None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).unwrap();
     assert_eq!(database.run("Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
     assert!(matches!(database.session_reset(), Err(DbError::Invalid { .. })));
@@ -58,7 +58,7 @@ async fn unified_open_rejects_incomplete_or_unencrypted_session_arguments() {
         (true, true, true, false),
     ] {
         let encrypted = encrypted.then(|| EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() });
-        let result = Database::open(config(), "[]".into(), transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>)).await;
+        let result = Database::open(config(), "[]".into(), transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>), None).await;
         rejected.push(matches!(result, Err(DbError::Invalid { .. })));
     }
     assert_eq!(rejected, [true; 6]);

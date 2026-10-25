@@ -60,7 +60,7 @@ use tokio::sync::watch;
 use crate::db::Db;
 use crate::pacing::{Backoff, Clock, Counters, FetchCoalescing, ResumeDrain, RetryPolicy};
 use crate::transport::{Connectivity, Transport};
-use crate::upload::UploadConfig;
+use crate::upload::{UploadConfig, UploadOperations};
 
 pub const LIVE_LINGER: Duration = Duration::from_secs(30);
 
@@ -69,12 +69,13 @@ pub struct SyncConfig {
     pub resume: ResumeDrain,
     pub live_linger: Duration,
     pub upload: UploadConfig,
+    pub uploads: Option<UploadOperations>,
     pub send_backoff: Backoff,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
-        Self { resume: ResumeDrain::default(), live_linger: LIVE_LINGER, upload: UploadConfig::default(), send_backoff: RetryPolicy::Outbox.backoff().randomized() }
+        Self { resume: ResumeDrain::default(), live_linger: LIVE_LINGER, upload: UploadConfig::default(), uploads: None, send_backoff: RetryPolicy::Outbox.backoff().randomized() }
     }
 }
 
@@ -223,7 +224,8 @@ impl Sync {
         Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) }
     }
 
-    pub fn register(&self, def: OperationDef) {
+    pub fn register(&self, mut def: OperationDef) {
+        if let Some(root) = self.inner.config.uploads.as_ref().and_then(|uploads| uploads.root_of(&def.name)) { def.root_path = root.to_string(); }
         locked(&self.inner.operations).insert(def.name.clone(), Arc::new(def));
     }
 

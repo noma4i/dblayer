@@ -4,7 +4,7 @@ use crate::db::Db;
 use crate::sync::rig::*;
 use crate::sync::{OperationDef, SyncConfig};
 use crate::transport::{MockTransport, Reply};
-use crate::upload::{UploadBatchInput, UploadItem, UploadSteps};
+use crate::upload::{UploadBatchInput, UploadItem, UploadOperations};
 
 use super::upload_tests::{blob, created, input, rid};
 
@@ -16,7 +16,8 @@ async fn local_models_reject_uploads_without_creating_rows_or_files() {
         crate::schema::FieldSpec::scalar("text", crate::value::ScalarKind::Str),
     ]);
     model.storage = crate::schema::Storage::Local;
-    let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), vec![model], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), vec![model], None).unwrap(), MockTransport::new(), SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });
+    rig.sync.register(OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
     rig.sync.set_online(false);
     let source = super::upload_tests::file(&vec![73; crate::files::TABLE_LIMIT + 1]);
     let result = rig.sync.upload_create("moments", "upload", params(json!({"id":"local-upload","text":"rejected"})), input(&source)).await;
@@ -62,7 +63,8 @@ async fn refused_admission_removes_only_its_prepared_files() {
         let directory = tempfile::tempdir().unwrap();
         let mut models = specs();
         models.push(super::batch_tests::spec());
-        let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), models, None).unwrap(), MockTransport::new(), SyncConfig::default());
+        let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), models, None).unwrap(), MockTransport::new(), SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });
+        rig.sync.register(OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
         rig.sync.set_online(false);
         rig.db.shared.files.write("kept", b"keep").unwrap();
         rig.db.execute_for_test("CREATE TRIGGER refuse BEFORE INSERT ON op BEGIN SELECT RAISE(ABORT, 'refused admission'); END");
@@ -91,7 +93,7 @@ async fn admit(rig: &Rig, mode: &str, source: &tempfile::NamedTempFile) -> Resul
                 path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
             }).collect();
             rig.sync.upload_create_batch("Asset", items, UploadBatchInput {
-                operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default(),
+                operation: "create_files".into(), variables: Default::default(),
             }).await?;
             2
         }
@@ -108,7 +110,8 @@ async fn admitted_large_files_live_on_disk_and_resume_without_the_source() {
         let source_path = source.path().to_path_buf();
         let mut models = specs();
         models.push(super::batch_tests::spec());
-        let rig = rig_on(Db::open(&path, models.clone(), None).unwrap(), MockTransport::new(), SyncConfig::default());
+        let rig = rig_on(Db::open(&path, models.clone(), None).unwrap(), MockTransport::new(), SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });
+        rig.sync.register(OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
         rig.sync.set_online(false);
         let count = admit(&rig, mode, &source).await.unwrap();
         let files = rig.db.shared.read(&[], |reader| {
@@ -126,7 +129,7 @@ async fn admitted_large_files_live_on_disk_and_resume_without_the_source() {
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         drop(rig);
-        let rig = rig_on(Db::open(&path, models, None).unwrap(), MockTransport::new(), SyncConfig::default());
+        let rig = rig_on(Db::open(&path, models, None).unwrap(), MockTransport::new(), SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });
         rig.sync.register(OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
         rig.sync.register(OperationDef::new("CreateAssets", "mutation x { x }", "createAssets.assets"));
         for _ in 0..count { rig.transport.enqueue("CreateBlob", blob()); }

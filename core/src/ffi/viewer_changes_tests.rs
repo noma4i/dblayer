@@ -69,7 +69,7 @@ async fn open_viewer() -> (Arc<Database>, Arc<Recording>) {
     let models = serde_json::to_string(&vec![moment, notice]).unwrap();
     let config = Config { path: None, data_version: None, cache_rows: 8 };
     let handle = Some(transport.clone() as Arc<dyn Transport>);
-    let database = Database::open(config, models, handle, None, None, None).await.unwrap();
+    let database = Database::open(config, models, handle, None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"},{"name":"DblayerViewerChanges","document":"subscription DblayerViewerChanges { viewerChanges { changes { area } } }","rootPath":"viewerChanges"}]"#.into()).unwrap();
     (database, transport)
 }

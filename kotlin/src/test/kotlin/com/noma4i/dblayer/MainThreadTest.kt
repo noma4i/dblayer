@@ -111,7 +111,7 @@ class MainThreadTest {
     fun uploads_prepare_their_request_off_the_caller_thread() = bounded {
         reopen(Config(null, null, 64u), modelsJSON, null)
         val moment = Moment.create(text = "a")
-        val request = UploadRequest("/nonexistent", createBlob = "CreateBlob", variables = recording("v"))
+        val request = UploadRequest("/nonexistent", variables = recording("v"))
 
         runCatching { withContext(main) { moment.upload("upload_clip", request) } }
         runCatching { withContext(main) { uploadCreate("Moment", "upload_clip", recording("v"), request, Moment) } }

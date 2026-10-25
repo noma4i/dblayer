@@ -8,7 +8,7 @@ use super::upload_resume_tests::Bytes;
 use crate::transport::encrypted::fake_server_tests::FakeServer;
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::HttpExchange;
-use crate::upload::{UploadInput, UploadSteps};
+use crate::upload::{UploadFile, UploadOperations};
 
 struct Remote(String);
 
@@ -47,7 +47,7 @@ async fn child(mode: &str) {
         std::fs::remove_file(format!("{path}.mp4")).unwrap();
     }
     let remote = Arc::new(Remote(std::env::var("DBLAYER_UPLOAD_PEER").unwrap()));
-    let database = Database::open(Config { path: Some(path.clone()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(remote.clone()), Some(remote.clone())).await.unwrap();
+    let database = Database::open(Config { path: Some(path.clone()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Bytes)), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(remote.clone()), Some(remote.clone()), Some(UploadOperations::empty().create_blob("CreateBlob"))).await.unwrap();
     database.register_operations(json!([
         {"name": "CreateBlob", "document": "mutation CreateBlob { createBlob { id } }", "rootPath": "createBlob"},
         {"name": "MakeMoment", "document": "mutation MakeMoment { makeMoment { id } }", "rootPath": "makeMoment"}
@@ -57,7 +57,7 @@ async fn child(mode: &str) {
         remote.call(json!({"refuse": true})).unwrap();
         let source = format!("{path}.mp4");
         std::fs::write(&source, b"abc").unwrap();
-        let input = UploadInput::new(&source, UploadSteps::new("MakeMoment").single("CreateBlob"));
+        let input = UploadFile::new(&source);
         database.upload("Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
         assert_eq!(database.db.outbox().unwrap().len(), 1);

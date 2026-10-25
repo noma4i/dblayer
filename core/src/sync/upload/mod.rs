@@ -12,6 +12,8 @@ mod batch_tests;
 mod settle_tests;
 
 #[cfg(test)]
+mod admission_tests;
+#[cfg(test)]
 mod source_tests;
 
 use std::collections::{BTreeMap, HashMap};
@@ -25,7 +27,7 @@ use crate::db::OutboxOperation;
 use crate::identity::RowId;
 use crate::operation::Operation;
 use crate::transport::CancelToken;
-use crate::upload::{RunMode, UploadInput, UploadState};
+use crate::upload::{RunMode, UploadFile, UploadInput, UploadOperations, UploadState};
 
 use super::error::SyncError;
 use super::{locked, Inner, Sync};
@@ -145,9 +147,20 @@ impl Inner {
         Ok(self.db.shared.read(&[], |reader| Ok(crate::operation::read_operation_uploads(reader.connection(), seq)?))?)
     }
 
-    pub(crate) fn begin_upload(&self, generation: crate::identity::Generation, model: &str, id: &RowId, action: &str, input: &UploadInput, state: UploadState) -> Result<i64, SyncError> {
-        let mut input = input.clone();
-        self.db.declared_upload(model, action, &mut input)?;
+    pub(crate) fn upload_operations(&self) -> Result<&UploadOperations, crate::db::DbError> {
+        let uploads = self.config.uploads.as_ref().ok_or_else(|| crate::db::DbError::InvalidUpload("upload operations are not declared: pass UploadOperations to open".into()))?;
+        uploads.check(|name| locked(&self.operations).contains_key(name)).map_err(crate::db::DbError::InvalidUpload)?;
+        Ok(uploads)
+    }
+
+    fn upload_input(&self, model: &str, action: &str, file: UploadFile) -> Result<UploadInput, crate::db::DbError> {
+        let uploads = self.upload_operations()?;
+        let mutation = self.db.declared_upload(model, action)?;
+        Ok(file.with_steps(uploads.steps(&mutation)))
+    }
+
+    pub(crate) fn begin_upload(&self, generation: crate::identity::Generation, model: &str, id: &RowId, action: &str, file: &UploadFile, state: UploadState) -> Result<i64, SyncError> {
+        let input = self.upload_input(model, action, file.clone())?;
         let family = self.db.spec(model)?.upload_family(action);
         let record = OperationRecord {
             seq: None,
@@ -322,34 +335,40 @@ impl Inner {
 }
 
 impl Sync {
+    pub fn check_uploads(&self) -> Result<(), SyncError> {
+        if self.inner.config.uploads.is_some() { self.inner.upload_operations()?; }
+        Ok(())
+    }
+
     pub async fn upload_create_batch(&self, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput) -> Result<Vec<crate::db::Row>, SyncError> {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let model = model.to_string();
         tokio::task::spawn_blocking(move || {
-            let ids = inner.db.create_upload_batch(generation, &model, items, input)?;
+            let ids = inner.db.create_upload_batch(generation, &model, items, input, inner.upload_operations()?)?;
             let rows = ids.iter().map(|id| inner.db.find(&model, id)?.ok_or_else(|| crate::db::DbError::NotFound { model: model.clone(), id: id.to_string() })).collect::<Result<Vec<_>, _>>()?;
             inner.start_uploads()?;
             Ok(rows)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn upload(&self, model: &str, id: &RowId, action: &str, input: UploadInput) -> Result<i64, SyncError> {
+    pub async fn upload(&self, model: &str, id: &RowId, action: &str, file: UploadFile) -> Result<i64, SyncError> {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let (model, id, action) = (model.to_string(), id.clone(), action.to_string());
         tokio::task::spawn_blocking(move || {
-            let seq = inner.begin_upload(generation, &model, &id, &action, &input, UploadState::queued())?;
+            let seq = inner.begin_upload(generation, &model, &id, &action, &file, UploadState::queued())?;
             inner.start_uploads()?;
             Ok(seq)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn upload_create(&self, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, input: UploadInput) -> Result<RowId, SyncError> {
+    pub async fn upload_create(&self, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile) -> Result<RowId, SyncError> {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let (model, action) = (model.to_string(), action.to_string());
         tokio::task::spawn_blocking(move || {
+            let input = inner.upload_input(&model, &action, file)?;
             let id = inner.db.create_held(generation, &model, &action, values, input, UploadState::queued())?;
             inner.start_uploads()?;
             Ok(id)

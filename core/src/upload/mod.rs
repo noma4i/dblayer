@@ -1,13 +1,16 @@
 mod config;
 mod input;
 mod machine;
+mod operations;
 mod plan;
 mod progress;
 mod source;
 mod state;
 
 pub use config::{UploadConfig, MEBIBYTE};
-pub use input::{MultipartSteps, SingleSteps, UploadBatchInput, UploadInput, UploadItem, UploadSteps};
+pub(crate) use input::UploadInput;
+pub use input::{UploadBatchInput, UploadFile, UploadItem};
+pub use operations::{MultipartOperations, UploadOperation, UploadOperations};
 pub use plan::{mime_of, parse_headers, part_count, part_range, scenario_for};
 pub use progress::TransferProgress;
 pub(crate) use machine::{RunMode, UploadEvent};

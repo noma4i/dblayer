@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `UploadOperations` declares upload operations once in `DB.open` on Swift and `DBlayer.open` on Kotlin.
 - `Query.loadAll(force:)` reads every page of a related list to its confirmed end, on Swift and Kotlin.
 - Generated GraphQL inputs support recursive input objects and `@oneOf` choices.
 - Kotlin `JsonElement.jsonText()` serializes JSON with the library settings.
@@ -53,9 +54,6 @@
 - `retry`, `discard` and `settled` take an optional declared action: none selects the whole record, an action selects only its operations or uploads, and an unknown action is refused.
 - Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns. A failed batch item is removed on its own and its siblings stay.
 
-### Removed
-- `readEdgeValues` and the generated `read<Scope>Edge` functions: `edgeValues` and `<scope>Edge` are the only reads and are `async` in Swift and `suspend` in Kotlin.
-
 ### Fixed
 - Explicit null stays distinct from an absent field after reopening the database.
 - Non-finite numbers fail serialization instead of becoming null.
@@ -86,6 +84,8 @@
 - A failure while removing expired uploads or sending a recorded abort is reported by `flush` and retried at the next start or online event.
 
 ### Removed
+- `readEdgeValues` and the generated `read<Scope>Edge` functions: `edgeValues` and `<scope>Edge` are the only reads and are `async` in Swift and `suspend` in Kotlin.
+- `UploadRequest` and `UploadBatchRequest` lose `createBlob` and `multipart`.
 - Swift `JSONValue.parse`.
 
 ## 6.7.0 - 2026-10-24

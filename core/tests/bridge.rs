@@ -16,7 +16,7 @@ async fn bridge_writes_reach_live_rows_and_files() {
         FieldSpec::file("media").nullable(),
     ]);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 32 },
-        serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None).await.unwrap();
+        serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None).await.unwrap();
     let live = db.live_query(r#"{"model":"Moment"}"#.into(), Arc::new(Listener));
     assert!(live.current().await.rows.is_empty());
     let id = db.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap().id;
@@ -43,7 +43,7 @@ async fn bridge_subscription_without_a_sync_tells_its_subscriber_in_the_snapshot
     });
     model.relations.push(feed);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 },
-        serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None).await.unwrap();
+        serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None).await.unwrap();
     let live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Listener));
     let first = live.current().await;
     assert_eq!((first.phase, first.error_kind.as_deref(), first.rows.len()), (Some(dblayer::ffi::LivePhase::Failed), Some("invalid"), 0));
@@ -77,12 +77,12 @@ async fn a_create_left_pending_by_the_last_session_waits_for_registration_after_
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("db.sqlite").to_string_lossy().into_owned();
     let config = || Config { path: Some(path.clone()), data_version: None, cache_rows: 32 };
-    let first = Database::open(config(), models.clone(), None::<Arc<dyn Transport>>, None, None, None).await.unwrap();
+    let first = Database::open(config(), models.clone(), None::<Arc<dyn Transport>>, None, None, None, None).await.unwrap();
     first.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
     drop(first);
 
     let transport = Arc::new(Recorder(Default::default()));
-    let second = Database::open(config(), models, Some(transport.clone() as Arc<dyn Transport>), None, None, None).await.unwrap();
+    let second = Database::open(config(), models, Some(transport.clone() as Arc<dyn Transport>), None, None, None, None).await.unwrap();
     second.maintain().await.unwrap();
     assert!(transport.0.lock().unwrap().is_empty());
     second.register_operations(r#"[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id text } }"}]"#.into()).unwrap();

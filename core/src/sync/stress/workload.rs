@@ -11,7 +11,7 @@ use crate::schema::Coverage;
 use crate::sync::rig::params;
 use crate::sync::{LoadOptions, SyncError};
 use crate::transport::{Response, SubscriptionEvent};
-use crate::upload::{UploadInput, UploadSteps};
+use crate::upload::UploadFile;
 
 use super::dice::Dice;
 use super::world::World;
@@ -327,9 +327,8 @@ impl Worker {
         if std::fs::write(&path, b"abcdef").is_err() {
             return;
         }
-        let steps = UploadSteps::new("CreateMoment").single("CreateBlob");
-        let input = UploadInput::new(&path.to_string_lossy(), steps).variable("text", json!(text));
-        let outcome = world.rig.sync.upload("moments", &row.id, "upload", input).await;
+        let file = UploadFile::new(&path.to_string_lossy()).variable("text", json!(text));
+        let outcome = world.rig.sync.upload("moments", &row.id, "upload", file).await;
         if outcome.is_ok() {
             world.issue(&text, "upload", Some(row.id.as_str()));
             world.findings.trace(|| format!("issued upload {text} on {}", row.id));

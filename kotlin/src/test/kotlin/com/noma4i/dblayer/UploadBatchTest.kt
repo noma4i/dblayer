@@ -20,12 +20,11 @@ class UploadBatchTest {
         try {
             val source = java.io.File(directory, "image.png").apply { writeText("image") }
             val transport = MockTransport()
-            val database = openDatabase(Config(null, null, 32u), modelsJSON, transport)
+            val database = openDatabase(Config(null, null, 32u), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""", uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
             adopt(database)
             database.setOnline(false)
-            database.registerOperations("""[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
             val items = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
-            val rows = Asset.uploadCreate(items, UploadBatchRequest(operation = "create_files", createBlob = "CreateBlob"))
+            val rows = Asset.uploadCreate(items, UploadBatchRequest(operation = "create_files"))
             assertEquals(2, rows.size)
             assertTrue(rows.all { it.id.startsWith("temp-") && it.sync.state == SyncState.Sending && it.uploads.isNotEmpty() })
             assertTrue(source.delete())
