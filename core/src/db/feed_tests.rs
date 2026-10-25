@@ -43,7 +43,7 @@ fn inv_observe_25_a_subscriber_reaches_the_revision_of_a_commit_that_changed_non
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     let at = db.revision_seq().unwrap();
     assert_ne!(last_reached(&log), Some(at), "a commit that touched none of its rows is not announced unasked: {:?}", told(&log));
-    observer.want_reach(at);
+    observer.control().want_reach(at);
     db.await_revision(at);
     assert_eq!(last_reached(&log), Some(at), "told {:?}", told(&log));
     assert_eq!(told(&log).iter().filter(|tag| tag.starts_with("rows:")).count(), 1);
@@ -90,7 +90,7 @@ fn inv_observe_25_a_count_that_asks_is_told_how_far_it_has_read_and_a_window_tha
     db.await_revision(db.revision_seq().unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     let at = db.revision_seq().unwrap();
-    count.want_reach(at);
+    count.control().want_reach(at);
     db.await_revision(at);
     assert_eq!((last_reached(&windowed).is_some_and(|reached| reached >= at), last_reached(&counted)), (false, Some(at)), "told {:?} and {:?}", told(&windowed), told(&counted));
     assert!(told(&counted).contains(&"count:1".to_string()));
@@ -170,7 +170,7 @@ fn a_paused_feed_delivers_nothing_then_one_snapshot_of_the_latest_rows_on_resume
     let revision = db.revision_seq().unwrap();
     wait_until(|| db.shared.observers().groups_read_through(revision) && observer.owes_delivery());
     assert!(told(&log).is_empty(), "nothing is delivered while paused: {:?}", told(&log));
-    observer.resume();
+    observer.control().resume();
     db.await_revision(db.revision_seq().unwrap());
     let tags = told(&log);
     let rows: Vec<&String> = tags.iter().filter(|tag| tag.starts_with("rows:")).collect();
@@ -197,8 +197,8 @@ fn a_feed_resumed_with_nothing_owed_delivers_nothing_extra() {
     let db = booted();
     let (log, feed) = tape();
     let observer = db.observe_feed(Subject::Rows(Query::new("users")), true, feed).unwrap();
-    observer.resume();
-    observer.resume();
+    observer.control().resume();
+    observer.control().resume();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     db.await_revision(db.revision_seq().unwrap());
     let rows: Vec<String> = told(&log).into_iter().filter(|tag| tag.starts_with("rows:")).collect();
@@ -220,7 +220,7 @@ fn resume_racing_with_commits_never_loses_the_wakeup() {
                 }
             })
         };
-        observer.resume();
+        observer.control().resume();
         writer.join().unwrap();
         db.await_revision(db.revision_seq().unwrap());
         let last = told(&log).iter().rev().find(|tag| tag.starts_with("rows:")).cloned().unwrap_or_default();

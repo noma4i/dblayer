@@ -567,17 +567,17 @@ scope :vibe_feed do
 end
 ```
 
-`edge` holds `attribute` lines with the options `null:` or `optional:` and `from:` for another key in the response. A scope declares one `edge` block. Each scope with edges generates one value type and two reads with the parameters of the scope: `feedEdge(of:)` reads in place, `readFeedEdge(of:)` waits on a background thread. The row has no new property.
+`edge` holds `attribute` lines with the options `null:` or `optional:` and `from:` for another key in the response. A scope declares one `edge` block. Each scope with edges generates one value type and one read with the parameters of the scope: `feedEdge(of:)` is `async` in Swift and `suspend` in Kotlin and runs on a background thread of the library. The row has no new property.
 
 ```swift
-let edge = try Moment.feedEdge(of: moment.id)            // MomentFeedEdge?
-let vibe = try await Moment.readVibeFeedEdge(vibeId, of: moment.id)
+let edge = try await Moment.feedEdge(of: moment.id)      // MomentFeedEdge?
+let vibe = try await Moment.vibeFeedEdge(vibeId, of: moment.id)
 edge?.impressionUuid                                      // String?
 ```
 
 ```kotlin
-val edge = Moment.feedEdge(moment.id)                     // MomentFeedEdge?
-val vibe = Moment.readVibeFeedEdge(vibeId, moment.id)
+val edge = Moment.feedEdge(moment.id)                     // MomentFeedEdge?, suspend
+val vibe = Moment.vibeFeedEdge(vibeId, moment.id)
 edge?.impressionUuid                                      // String?
 ```
 

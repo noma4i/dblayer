@@ -27,7 +27,7 @@ class EdgeValueTest {
         transport.enqueue("MomentsFeed", reply("imp-1", 5))
         Moment.feed.refresh()
         assertEquals(MomentFeedEdge("imp-1", 5L), Moment.feedEdge("1"))
-        assertEquals("imp-1", Moment.readFeedEdge("1")?.impressionUuid)
+        assertEquals("imp-1", Moment.feedEdge("1")?.impressionUuid)
         assertNull(Moment.feedEdge("unknown"))
 
         transport.enqueue("MomentsFeed", reply(null, null, "in a vibe"))

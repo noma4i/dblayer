@@ -364,7 +364,7 @@ The default match treats the last word as a prefix and the other words as whole 
 
 ## Edge values
 
-The values of a connection edge are read with `feedEdge(of:)` and `readFeedEdge(of:)`, see [edge values](models.md#edge-values). They are not part of the row, of a live list or of a window, so a change of an edge value delivers nothing. A list that shows the feed reads the value for the row it presents.
+The values of a connection edge are read with the `async` `feedEdge(of:)`, see [edge values](models.md#edge-values). They are not part of the row, of a live list or of a window, so a change of an edge value delivers nothing. A list that shows the feed reads the value for the row it presents.
 
 ```swift
 let list = Moment.feed

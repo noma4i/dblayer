@@ -130,10 +130,8 @@ class Query<Model : DBModel>(
     suspend fun warm() = offCaller { DBlayer.database.warm(json) }
 
     /** The values that the connection of this relation carried on the edge of one row, or null when the row is not in the connection. It reads one row by key and never waits for a write. */
-    fun edgeValues(id: String): JsonObject? =
-        (Json.parseToJsonElement(DBlayer.database.edgeValues(modelName, relation.orEmpty(), params.jsonText(), listOf(id))) as JsonObject)[id] as? JsonObject
-
-    suspend fun readEdgeValues(id: String): JsonObject? = withContext(Dispatchers.IO) { edgeValues(id) }
+    suspend fun edgeValues(id: String): JsonObject? =
+        offCaller { (Json.parseToJsonElement(DBlayer.database.edgeValues(modelName, relation.orEmpty(), params.jsonText(), listOf(id))) as JsonObject)[id] as? JsonObject }
 
     suspend fun load() = offCaller { DBlayer.database.load(modelName, relation.orEmpty(), params.jsonText()) }
     suspend fun refresh() = offCaller { DBlayer.database.refresh(modelName, relation.orEmpty(), params.jsonText()) }

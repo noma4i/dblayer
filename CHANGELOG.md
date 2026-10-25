@@ -26,6 +26,7 @@
 - Kotlin entity readers no longer wait while a delivery applies.
 - Landing server data and replacing a list on a disk database plan their commit outside the writer and plan again under the writer only when another commit landed first.
 - Upload, run, load, refresh, load-more and warm calls parse their JSON arguments and convert results on the library executor, not on the caller thread.
+- `Database.peekQuery` and `Database.edgeValues` are `async`. `Query.edgeValues` and the generated `<scope>Edge` reads are `async` in Swift and `suspend` in Kotlin and do their work on the library executor.
 - Loading rows builds them and sizes them outside the row cache lock, so cached reads are not held back by a large load.
 - Cancelling a subscription and expanding a window never wait for the observer registry: a busy registry takes the request later.
 - A refresh deferred by the read limit or a running read keeps its touched rows and reads only those, instead of re-reading the whole list.
@@ -42,6 +43,9 @@
 - `settled` of one action reports the failure of that action's upload or operation only, and an unknown action is refused as such.
 - `retry`, `discard` and `settled` take an optional declared action: none selects the whole record, an action selects only its operations or uploads, and an unknown action is refused.
 - Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns. A failed batch item is removed on its own and its siblings stay.
+
+### Removed
+- `readEdgeValues` and the generated `read<Scope>Edge` functions: `edgeValues` and `<scope>Edge` are the only reads and are `async` in Swift and `suspend` in Kotlin.
 
 ### Fixed
 - Explicit null stays distinct from an absent field after reopening the database.

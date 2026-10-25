@@ -316,13 +316,6 @@ impl ObserverHandle {
         ObserverControl { shared: self.shared.clone(), group: self.group.clone(), id: self.id, subscriber: self.subscriber.clone() }
     }
 
-    pub(crate) fn want_reach(&self, revision: i64) {
-        self.control().want_reach(revision);
-    }
-
-    pub(crate) fn resume(&self) {
-        self.control().resume();
-    }
 }
 
 /// Controls one feed observer without keeping it alive: dropping the `ObserverHandle` still cancels it.

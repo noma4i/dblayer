@@ -99,7 +99,7 @@ public struct Query<Model: DBModel>: Sendable {
 
   /// The rows of this query from memory, or nil when the query is not warm. It throws when the cache read or the decode of a row fails. It reads no database file, and the copy and the decode of the rows run off the thread of the caller. A query is warm after `warm()` and after any `live` or `snapshots` read of it. `revision` grows with each commit that reaches the rows.
   @concurrent public func cached() async throws -> Cached<[Model]>? {
-    guard let change = try DB.database.peekQuery(queryJson: json) else { return nil }
+    guard let change = try await DB.database.peekQuery(queryJson: json) else { return nil }
     return Cached(value: try change.rows.map { try Model.decode($0) }, revision: change.revision)
   }
 
@@ -113,15 +113,8 @@ public struct Query<Model: DBModel>: Sendable {
   @concurrent public func warm() async throws { try await DB.database.warm(queryJson: json) }
 
   /// The values that the connection of this relation carried on the edge of one row, or nil when the row is not in the connection. It reads one row by key and never waits for a write.
-  public func edgeValues(of id: String) throws -> [String: JSONValue]? {
-    try JSONValue.read(try DB.database.edgeValues(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
-  }
-
-  public func readEdgeValues(of id: String) async throws -> [String: JSONValue]? {
-    let model = Model.modelName, relation = relation ?? "", params = try JSONValue.object(params).text
-    return try await Task.detached(priority: .userInitiated) {
-      try JSONValue.read(try DB.database.edgeValues(model: model, relation: relation, paramsJson: params, rowIds: [id])).objectValue[id]?.objectValue
-    }.value
+  @concurrent public func edgeValues(of id: String) async throws -> [String: JSONValue]? {
+    try JSONValue.read(try await DB.database.edgeValues(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
   }
 
   @concurrent public func load() async throws { try await DB.database.load(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
