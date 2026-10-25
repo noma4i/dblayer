@@ -20,6 +20,8 @@ pub enum DbError {
     Invalid(Vec<ModelFault>),
     #[error("model {0} is not registered")]
     UnknownModel(String),
+    #[error("model {model} declares no action {action}")]
+    UnknownAction { model: String, action: String },
     #[error("model {model} has no association {name}")]
     UnknownAssociation { model: String, name: String },
     #[error("field {field} of {model} is not a file field")]

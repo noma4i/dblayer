@@ -151,7 +151,7 @@ impl Db {
     pub(crate) fn action_operation_key(&self, model: &str, action: Option<&str>) -> Result<Option<String>, DbError> {
         let spec = self.shared.spec(model)?;
         let Some(action) = action else { return Ok(None) };
-        let declared = spec.actions.iter().find(|declared| declared.name == action).ok_or_else(|| DbError::InvalidUpload(format!("{model} declares no action {action}")))?;
+        let declared = spec.actions.iter().find(|declared| declared.name == action).ok_or_else(|| DbError::UnknownAction { model: model.to_string(), action: action.to_string() })?;
         Ok(Some(if declared.upload { crate::operation::Operation::upload_action_key(model, action) } else { crate::operation::Operation::action_key(model, action) }))
     }
 

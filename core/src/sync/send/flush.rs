@@ -147,7 +147,7 @@ impl Inner {
     fn record_outcome(&self, entry: &OutboxOperation, result: &SendResult) {
         let Some((model, _)) = Operation::split_action_key(&entry.operation.action_key) else { return };
         let rows = entry.operation.row_ids.iter().cloned().chain(entry.operation.temp_id.clone()).collect();
-        locked(&self.outcomes).keep(entry.operation.id.0, &model, rows, result);
+        locked(&self.outcomes).keep(entry.operation.id.0, &model, &entry.operation.action_key, rows, result);
     }
 
     pub(crate) fn operation_queue(&self) -> Result<&std::sync::Arc<std::sync::Mutex<crate::operation::OperationQueue>>, SyncError> {
@@ -551,7 +551,7 @@ impl Inner {
         let fields = declared.result.iter().map(|(name, kind)| (name.clone(), payload.and_then(|payload| payload.get(name)).filter(|value| answer_kind_matches(kind, value)).cloned().unwrap_or(Value::Null)));
         let entry = sending.entry;
         let rows = entry.operation.row_ids.iter().cloned().chain(entry.operation.temp_id.clone()).collect();
-        locked(&self.outcomes).answered(entry.operation.id.0, &sending.model, rows, Value::Object(fields.collect()));
+        locked(&self.outcomes).answered(entry.operation.id.0, &sending.model, &entry.operation.action_key, rows, Value::Object(fields.collect()));
     }
 
     fn read_response(&self, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> (Normalized, Vec<RowRef>) {

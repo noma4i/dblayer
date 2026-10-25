@@ -14,6 +14,7 @@ pub(super) const UNREAD_LIMIT: usize = 2048;
 
 struct Outcome {
     model: String,
+    action_key: String,
     rows: Vec<RowId>,
     result: SendResult,
     answer: Option<Value>,
@@ -31,11 +32,11 @@ impl Outcomes {
         self.lost
     }
 
-    pub(crate) fn answered(&mut self, sequence: i64, model: &str, rows: Vec<RowId>, answer: Value) {
-        self.insert(sequence, Outcome { model: model.to_string(), rows, result: SendResult::Committed, answer: Some(answer) });
+    pub(crate) fn answered(&mut self, sequence: i64, model: &str, action_key: &str, rows: Vec<RowId>, answer: Value) {
+        self.insert(sequence, Outcome { model: model.to_string(), action_key: action_key.to_string(), rows, result: SendResult::Committed, answer: Some(answer) });
     }
 
-    pub(crate) fn keep(&mut self, sequence: i64, model: &str, rows: Vec<RowId>, result: &SendResult) {
+    pub(crate) fn keep(&mut self, sequence: i64, model: &str, action_key: &str, rows: Vec<RowId>, result: &SendResult) {
         if matches!(result, SendResult::Deferred | SendResult::Skipped(_)) {
             return;
         }
@@ -45,7 +46,7 @@ impl Outcomes {
             }
             return;
         }
-        self.insert(sequence, Outcome { model: model.to_string(), rows, result: result.clone(), answer: None });
+        self.insert(sequence, Outcome { model: model.to_string(), action_key: action_key.to_string(), rows, result: result.clone(), answer: None });
     }
 
     fn insert(&mut self, sequence: i64, outcome: Outcome) {
@@ -56,11 +57,11 @@ impl Outcomes {
         self.unread.insert(sequence, outcome);
     }
 
-    pub(crate) fn failure_of(&mut self, model: &str, row: &RowId, waiting: &[i64]) -> Option<SyncError> {
+    pub(crate) fn failure_of(&mut self, model: &str, action_key: Option<&str>, row: &RowId, waiting: &[i64]) -> Option<SyncError> {
         let sequence = self
             .unread
             .iter()
-            .find(|(sequence, outcome)| outcome.answer.is_none() && outcome.model == model && outcome.rows.contains(row) && !waiting.contains(sequence))
+            .find(|(sequence, outcome)| outcome.answer.is_none() && outcome.model == model && action_key.is_none_or(|key| outcome.action_key == key) && outcome.rows.contains(row) && !waiting.contains(sequence))
             .map(|(sequence, _)| *sequence)?;
         let outcome = self.unread.remove(&sequence)?;
         Some(error_of(model, &outcome.result, &row.to_string()))

@@ -928,8 +928,12 @@ async fn the_blob_step_reads_a_dotted_root_and_headers_given_as_a_json_string() 
 }
 
 fn fail_open_upload(rig: &Rig, seq: i64) {
+    fail_open_upload_as(rig, seq, "lost");
+}
+
+fn fail_open_upload_as(rig: &Rig, seq: i64, message: &str) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Response, rig.db.generation());
-    envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: OperationFailure::new(FailureKind::Network, "lost") });
+    envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: OperationFailure::new(FailureKind::Network, message) });
     rig.db.shared.store.commit(envelope).unwrap();
 }
 
@@ -1225,4 +1229,30 @@ async fn a_single_upload_takes_its_mutation_from_the_declaration_and_refuses_one
     let (bare, request) = try_upload(None);
     assert!(bare.sync.upload("moments", &rid("m1"), "upload", request).await.is_err(), "no mutation anywhere admits nothing");
     assert!(bare.db.outbox().unwrap().is_empty());
+}
+
+async fn reason(rig: &Rig, action: Option<&str>) -> Result<(), String> {
+    rig.sync.settled("moments", &rid("m1"), action).await.map_err(|error| error.to_string())
+}
+
+#[tokio::test(start_paused = true)]
+async fn settled_for_one_action_reports_only_the_refusal_that_action_owns() {
+    let rig = upload_rig(small());
+    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
+    rig.sync.flush().await.unwrap();
+    rig.sync.set_online(false);
+    let source = file(TWELVE);
+    for action in ["upload", "cover"] {
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), action, &input(&source), resumable(Vec::new())).unwrap();
+        fail_open_upload_as(&rig, seq, &format!("{action}-lost"));
+    }
+    let cover = reason(&rig, Some("cover")).await.unwrap_err();
+    assert!(cover.contains("cover-lost") && !cover.contains("upload-lost") && !cover.contains("not allowed"), "{cover}");
+    let upload = reason(&rig, Some("upload")).await.unwrap_err();
+    assert!(upload.contains("upload-lost") && !upload.contains("cover-lost") && !upload.contains("not allowed"), "{upload}");
+    rig.db.discard("moments", &rid("m1"), Some("upload")).unwrap();
+    rig.db.discard("moments", &rid("m1"), Some("cover")).unwrap();
+    reason(&rig, Some("cover")).await.expect("an unread refusal of an ordinary action is not the cover upload's");
+    assert!(reason(&rig, None).await.unwrap_err().contains("not allowed"), "the whole record still reports it");
 }

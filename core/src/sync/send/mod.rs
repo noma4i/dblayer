@@ -32,19 +32,27 @@ impl Inner {
     }
 }
 
+fn failed_upload_error(row: &crate::db::Row, action: Option<&str>) -> Option<crate::syncstate::OperationFailure> {
+    let failed = |upload: &crate::upload::UploadInfo| upload.status == crate::upload::UploadStatus::Failed;
+    match action {
+        Some(action) => row.sync.uploads.get(action).filter(|upload| failed(upload)).and_then(|upload| upload.error.clone()),
+        None => row.sync.uploads.values().any(failed).then(|| row.sync.error.clone()).flatten(),
+    }
+}
+
 impl Sync {
     /// Waits until every queued change of the record is answered. Fails with the refusal, when a change is refused or its outcome is unknown.
     pub async fn settled(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
         let key = self.inner.db.action_operation_key(model, action)?;
         let waiting = |row: &RowId| -> Result<Vec<i64>, SyncError> {
-            if let Some(failure) = self.inner.db.find(model, row)?.filter(|row| row.sync.uploads.iter().any(|(name, upload)| action.is_none_or(|action| action == name) && upload.status == crate::upload::UploadStatus::Failed)).and_then(|row| row.sync.error.clone()) {
+            if let Some(failure) = self.inner.db.find(model, row)?.and_then(|row| failed_upload_error(&row, action)) {
                 return Err(outcomes::error_of(model, &SendResult::Rejected(failure), row.as_str()));
             }
             Ok(locked(self.inner.operation_queue()?).pending_of(&crate::identity::RowRef::new(crate::identity::ModelKey::new(model), row.clone()), key.as_deref()))
         };
         let mut changes = self.inner.db.outbox_changes();
         let mut pending = waiting(id)?;
-        if let Some(failure) = locked(&self.inner.outcomes).failure_of(model, id, &pending) {
+        if let Some(failure) = locked(&self.inner.outcomes).failure_of(model, key.as_deref(), id, &pending) {
             return Err(failure);
         }
         while !pending.is_empty() {
@@ -54,7 +62,7 @@ impl Sync {
             self.flush().await?;
             changes.borrow_and_update();
             pending = waiting(id)?;
-            if let Some(failure) = locked(&self.inner.outcomes).failure_of(model, id, &pending) {
+            if let Some(failure) = locked(&self.inner.outcomes).failure_of(model, key.as_deref(), id, &pending) {
                 return Err(failure);
             }
             if !pending.is_empty() {

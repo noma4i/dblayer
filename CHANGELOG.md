@@ -37,6 +37,7 @@
 - `retry`, `discard` and `settled` on Swift and Kotlin take a required `action` that is `nil`/`null` for the whole record.
 - A model exposes `uploads[action]` instead of `upload`.
 - A record reports its uploads in `SyncInfo.uploads`, one entry per declared action, stored in the `sync_upload` table; `SyncInfo.actions` lists ordinary operations only. The single `upload` property of a record is removed.
+- `settled` of one action reports the failure of that action's upload or operation only, and an unknown action is refused as such.
 - `retry`, `discard` and `settled` take an optional declared action: none selects the whole record, an action selects only its operations or uploads, and an unknown action is refused.
 - Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns. A failed batch item is removed on its own and its siblings stay.
 
