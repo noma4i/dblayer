@@ -126,6 +126,19 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
             Ok(())
         }).unwrap();
         assert!(nodes(&store, "op_error") > 0);
+        for table in ["op_error", "sync_row_error", "sync_upload_error"] {
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table} WHERE kind = 4 AND (text LIKE '[%' OR text LIKE '{{%' OR text LIKE '\"%')")), 0, "{table} keeps JSON text");
+        }
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM op_error AS list JOIN op_error AS leaf ON leaf.seq = list.seq AND leaf.item_position = list.item_position WHERE list.item_position = 0 AND list.name = 'list' AND list.kind = 6 AND leaf.name = 'b' AND leaf.kind = 0"), 1, "item list is child nodes with a null leaf");
+        let fields = extensions.as_ref().map(|value| value["fields"].clone()).unwrap_or_default();
+        if fields.get("context").is_some() {
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND item_position = -1 AND name = 'detail' AND kind = 4 AND text = 'refused'")), 1, "a string field has no JSON quotes");
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND item_position = -1 AND name = 'limit' AND kind = 2 AND whole = 3")), 1);
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error AS context JOIN op_error AS values_node ON values_node.seq = context.seq AND values_node.item_position = context.item_position AND values_node.parent = context.node WHERE context.seq = {seq} AND context.item_position = -1 AND context.name = 'context' AND context.kind = 5 AND values_node.name = 'values' AND values_node.kind = 6")), 1, "an object field holds typed child nodes");
+        }
+        if fields.get("nothing").is_some() {
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND item_position = -1 AND name = 'nothing' AND kind = 0 AND text IS NULL")), 1, "a null field stays null");
+        }
         for table in ["sync_row_error", "sync_upload_error"] {
             assert_eq!(nodes(&store, table) > 0, extensions.is_some(), "{table}");
         }
@@ -139,6 +152,18 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
             assert_eq!(nodes(&store, table), 0, "{table} after close");
         }
     }
+}
+
+#[test]
+fn a_field_that_is_not_json_fails_the_commit_and_stores_nothing() {
+    let (store, seq) = begun();
+    let extensions = serde_json::from_value(json!({"code":null,"transaction_disposition":null,"fields":{"detail":"{bad"}})).unwrap();
+    let failure = OperationFailure { kind: FailureKind::Rejected, message: "refused".into(), extensions: Some(extensions) };
+    let mut commit = envelope(&store, vec![], vec![]);
+    commit.operation_transitions = vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure }];
+    assert!(store.commit(commit).is_err());
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NOT NULL"), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op_error"), 0);
 }
 
 #[test]

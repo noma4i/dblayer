@@ -44,16 +44,43 @@ fn filter_of(keys: &[&str]) -> String {
     keys.iter().enumerate().map(|(at, key)| format!("{key} = ?{}", at + 1)).collect::<Vec<_>>().join(" AND ")
 }
 
+fn to_sql_error(error: serde_json::Error) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
+fn from_sql_error(error: serde_json::Error) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Null, Box::new(error))
+}
+
+fn extensions_tree(extensions: &GraphqlExtensions) -> Result<Value> {
+    let mut tree = serde_json::to_value(extensions).map_err(to_sql_error)?;
+    if let Some(Value::Object(fields)) = tree.get_mut("fields") {
+        for field in fields.values_mut() {
+            let text = field.as_str().ok_or_else(|| to_sql_error(serde::de::Error::custom("extension field is not a string")))?;
+            *field = serde_json::from_str(text).map_err(to_sql_error)?;
+        }
+    }
+    Ok(tree)
+}
+
+fn extensions_from_tree(mut tree: Value) -> Result<GraphqlExtensions> {
+    if let Some(Value::Object(fields)) = tree.get_mut("fields") {
+        for field in fields.values_mut() {
+            *field = Value::String(field.to_string());
+        }
+    }
+    serde_json::from_value(tree).map_err(from_sql_error)
+}
+
 pub fn write_extensions(connection: &Connection, table: &str, keys: &[&str], owner: &[SqlValue], failure: Option<&OperationFailure>) -> Result<()> {
     delete_trees(connection, table, &filter_of(keys), owner)?;
     let Some(extensions) = failure.and_then(|failure| failure.extensions.as_ref()) else { return Ok(()) };
-    let tree = serde_json::to_value(extensions).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    write_tree(connection, table, keys, owner, &tree)
+    write_tree(connection, table, keys, owner, &extensions_tree(extensions)?)
 }
 
 pub fn read_extensions(connection: &Connection, table: &str, keys: &[&str], filter: &str, params: &[SqlValue]) -> Result<Vec<(Vec<SqlValue>, GraphqlExtensions)>> {
     read_trees(connection, table, keys, filter, params)?.into_iter()
-        .map(|(owner, tree)| serde_json::from_value(tree).map(|extensions| (owner, extensions)).map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Null, Box::new(error))))
+        .map(|(owner, tree)| extensions_from_tree(tree).map(|extensions| (owner, extensions)))
         .collect()
 }
 
