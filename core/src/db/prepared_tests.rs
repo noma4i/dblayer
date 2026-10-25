@@ -38,7 +38,7 @@ fn a_commit_landing_before_a_local_create_is_written_replans_without_duplicating
     let before = plans(&db);
     let row = db.create("moments", obj(json!({"userId": "u1", "text": "hi"}))).unwrap();
     let after = plans(&db);
-    assert_eq!((after.0 - before.0, after.1 - before.1), (2, 1), "the create planned off the writer, was overtaken and planned again under it");
+    assert_eq!((after.0 - before.0, after.1 - before.1), (3, 0), "the rival commit and two plans of the create, none under the writer");
     assert_eq!(db.outbox().unwrap().len(), 1, "one queued operation");
     assert_eq!(db.find("moments", &row.id).unwrap().unwrap().text("text"), Some("hi"));
     assert!(db.find("users", &rid("u2")).unwrap().is_some());

@@ -64,7 +64,7 @@ impl Store {
         self.write_planned(inner, planned)
     }
 
-    /// Plans on a read connection while the writer stays free, then writes when no commit landed in between. A commit in between makes the plan run again under the writer, so `plan` must only read and build from data it can build again.
+    /// Plans on a read connection while the writer stays free. The writer only compares the revision the plan was read at and applies it. When another commit landed first, the writer is released and the plan runs again off the writer. Every repeat means another commit succeeded, so the loop has no attempt limit. Databases with `memory` models and in-memory databases plan under the writer. `plan` must only read and build from data it can build again.
     pub fn commit_prepared<E>(
         &self,
         generation: Generation,
@@ -73,27 +73,24 @@ impl Store {
         if !self.reads_off_writer() {
             return self.plan_under_writer(generation, plan);
         }
-        let prepared = self.read(&[], |reader| Ok((reader.revision_seq()?, plan(reader))))?;
-        #[cfg(test)]
-        {
-            let hook = self.before_write.lock().unwrap_or_else(|error| error.into_inner()).take();
-            if let Some(hook) = hook {
-                hook();
+        loop {
+            let (revision, planned) = self.read(&[], |reader| Ok((reader.revision_seq()?, plan(reader))))?;
+            #[cfg(test)]
+            {
+                let hook = self.before_write.lock().unwrap_or_else(|error| error.into_inner()).take();
+                if let Some(hook) = hook {
+                    hook();
+                }
             }
+            let mut inner = self.lock();
+            inner.ensure_healthy()?;
+            inner.ensure_generation(generation)?;
+            inner.counters.plans_off_writer += 1;
+            if Reader::new(&inner.connection, &inner.models).revision_seq()? != revision {
+                continue;
+            }
+            return self.write_planned(inner, planned);
         }
-        let mut inner = self.lock();
-        inner.ensure_healthy()?;
-        inner.ensure_generation(generation)?;
-        inner.counters.plans_off_writer += 1;
-        let (revision, planned) = prepared;
-        let reader = Reader::new(&inner.connection, &inner.models);
-        let planned = if reader.revision_seq()? == revision {
-            planned
-        } else {
-            inner.counters.plans_under_writer += 1;
-            plan(&Reader::new(&inner.connection, &inner.models))
-        };
-        self.write_planned(inner, planned)
     }
 
     fn write_planned<E>(&self, inner: std::sync::MutexGuard<'_, Inner>, planned: Result<Option<CommitEnvelope>, E>) -> Result<CommitResult, PlanCommitError<E>> {

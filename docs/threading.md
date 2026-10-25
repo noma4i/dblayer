@@ -18,7 +18,7 @@ Live results arrive from library threads. Record writes run on background thread
 - A read waits when both read connections are occupied. Boot and reset wait for active reads before changing tables or clearing data.
 - Reads involving temporary models use their owning connection. Entirely in-memory databases also share their connection with the writer.
 - A disk-only read uses the pool even when the database contains temporary models. Included associations participate in connection selection.
-- Parsing and normalization are done before the writer runs. Every commit plans on a read connection and writes only when no other commit landed in between, otherwise it plans again under the writer. Databases with temporary models and in-memory databases plan under the writer. A repeated plan after a landed commit also runs under the writer.
+- Parsing and normalization are done before the writer runs. On a disk database every commit plans on a read connection. The writer only checks that no other commit landed and applies the plan. When one did, the plan runs again off the writer. Databases with temporary models and in-memory databases plan under the writer.
 - Listener callbacks never run under the store lock.
 - Listeners are called from library threads, never from the main thread. Move to the main thread in your UI code.
 - Each listener has its own queue where the latest state wins. A slow listener does not delay others and does not build up a backlog.

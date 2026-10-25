@@ -24,7 +24,7 @@
 - Generated writes, actions, node reads and operations run off the caller thread.
 - `Query.cached()` and `cachedRow()` are now `async` in Swift and `suspend` in Kotlin.
 - Kotlin entity readers no longer wait while a delivery applies.
-- Every commit on a disk database plans on a read connection outside the writer and plans again under the writer only when another commit landed first.
+- Every commit on a disk database plans on a read connection outside the writer. The writer only checks the revision, and a commit that landed first makes the plan run again off the writer.
 - Upload, run, load, refresh, load-more and warm calls parse their JSON arguments and convert results on the library executor, not on the caller thread.
 - `Database.peekQuery` and `Database.edgeValues` are `async`. `Query.edgeValues` and the generated `<scope>Edge` reads are `async` in Swift and `suspend` in Kotlin and do their work on the library executor.
 - Loading rows builds them and sizes them outside the row cache lock, so cached reads are not held back by a large load.

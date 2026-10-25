@@ -754,22 +754,26 @@ fn planning_runs_without_the_writer_lock_on_a_disk_database() {
 }
 
 #[test]
-fn a_commit_between_planning_and_writing_forces_one_replan_that_sees_it() {
+fn commits_landing_during_planning_repeat_the_plan_off_the_writer_without_a_limit() {
+    const RIVALS: usize = 5;
     let (store, _directory) = disk_store();
     let generation = store.generation();
     let store = std::sync::Arc::new(store);
     let mut seen = Vec::new();
-    let mut rival_thread = None;
+    let mut writer_was_free = Vec::new();
+    let mut rivals = Vec::new();
     let mut rival_finished_in_time = Vec::new();
     store
         .commit_prepared(generation, |reader| {
             let rows = count_messages(reader);
             seen.push(rows);
-            if seen.len() == 1 {
-                let (done, finished) = std::sync::mpsc::channel();
+            writer_was_free.push(store.writer_is_free());
+            if seen.len() <= RIVALS {
                 let rival = store.clone();
-                rival_thread = Some(std::thread::spawn(move || {
-                    rival.commit(planned(generation, vec![upsert("messages", message("rival", "c1"))])).unwrap();
+                let id = format!("rival{}", seen.len());
+                let (done, finished) = std::sync::mpsc::channel();
+                rivals.push(std::thread::spawn(move || {
+                    rival.commit(planned(generation, vec![upsert("messages", message(&id, "c1"))])).unwrap();
                     let _ = done.send(());
                 }));
                 rival_finished_in_time.push(finished.recv_timeout(PLAN_WAIT).is_ok());
@@ -777,12 +781,13 @@ fn a_commit_between_planning_and_writing_forces_one_replan_that_sees_it() {
             Ok::<_, std::convert::Infallible>(Some(planned(generation, vec![upsert("messages", message(&format!("after{rows}"), "c1"))])))
         })
         .unwrap();
-    rival_thread.unwrap().join().unwrap();
-    assert_eq!(rival_finished_in_time, vec![true], "the writer was free while planning");
-    assert_eq!(seen.len(), 2, "one optimistic plan and one replan");
-    assert_eq!(text(&store, "SELECT id FROM row_messages WHERE id LIKE 'after%'"), Some("after1".into()), "the replan saw the rival row");
+    rivals.into_iter().for_each(|rival| rival.join().unwrap());
+    assert_eq!(rival_finished_in_time, vec![true; RIVALS], "every rival commit finished while its victim was planning");
+    assert_eq!(seen, (0..=RIVALS).collect::<Vec<_>>(), "each repeat saw one more rival row");
+    assert!(writer_was_free.iter().all(|free| *free), "the writer was free during every plan");
+    assert_eq!(text(&store, "SELECT id FROM row_messages WHERE id LIKE 'after%'"), Some(format!("after{RIVALS}")), "the last plan landed on top of every rival");
     let counters = store.counters();
-    assert_eq!((counters.plans_off_writer, counters.plans_under_writer), (1, 1));
+    assert_eq!((counters.plans_off_writer, counters.plans_under_writer), (RIVALS + 1, 0));
 }
 
 fn count_messages(reader: &Reader<'_>) -> usize {
