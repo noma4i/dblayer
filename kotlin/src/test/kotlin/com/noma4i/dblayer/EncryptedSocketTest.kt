@@ -106,6 +106,23 @@ class EncryptedSocketTest {
     }
 
     @Test
+    fun reportsRemoteCloseOnceWhenTheServerNeverAcknowledgesOurClose() = bounded {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    webSocket.close(4401, "UNAUTHENTICATED")
+                }
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) = Unit
+            }))
+            val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
+            val token = transport.openedCable()
+            assertEquals(EncryptedSocketEvent.Closed(4401u, "UNAUTHENTICATED"), transport.cableNext(token))
+            assertNull(transport.cableNext(token))
+            transport.cableClose(token)
+        }
+    }
+
+    @Test
     fun reportsBinaryAndDisconnectedSocketsAsCloseEvents() = bounded {
         for (binary in listOf(true, false)) {
             MockWebServer().use { server ->

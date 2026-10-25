@@ -62,10 +62,6 @@ internal class OkHttpEncryptedSocket(private val origin: String, private val cli
                     webSocket.close(code, reason)
                 }
 
-                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    connection.finish(EncryptedSocketEvent.Closed(code.toUShort(), reason))
-                }
-
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     val error = if (response != null && response.code != 101) {
                         DbException.Http(response.code.toUShort(), t.message ?: "cable handshake refused")
