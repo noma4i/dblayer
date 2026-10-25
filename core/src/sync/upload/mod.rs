@@ -498,3 +498,9 @@ mod generation_tests;
 mod resume_tests;
 #[cfg(test)]
 mod steps_tests;
+#[cfg(test)]
+mod observe_tests;
+#[cfg(test)]
+mod outcome_tests;
+#[cfg(test)]
+mod file_tests;

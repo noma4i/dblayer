@@ -104,7 +104,7 @@ fn small_file_url_is_created_on_demand_and_kept_until_detach() {
 }
 
 #[test]
-fn attaching_again_replaces_the_file_and_its_leftovers() {
+fn inv_file_02_attaching_again_replaces_the_file_and_its_leftovers() {
     let (root, db) = on_disk();
     seed_tree(&db);
     let first = attach(&db, "m1", "media", &large());
@@ -145,7 +145,7 @@ fn detach_clears_the_description_the_bytes_and_the_directory_file() {
 }
 
 #[test]
-fn destroying_a_row_hides_its_files_and_those_of_cascaded_children_but_keeps_their_bytes() {
+fn inv_file_06_destroying_a_row_hides_its_files_and_those_of_cascaded_children_but_keeps_their_bytes() {
     let (_root, db) = on_disk();
     seed_tree(&db);
     attach(&db, "m1", "media", &large());
@@ -163,7 +163,7 @@ fn destroying_a_row_hides_its_files_and_those_of_cascaded_children_but_keeps_the
 }
 
 #[test]
-fn failed_attach_leaves_neither_a_file_nor_a_description() {
+fn inv_file_01_failed_attach_leaves_neither_a_file_nor_a_description() {
     let (_root, db) = on_disk();
     seed_tree(&db);
     let before = attach(&db, "m1", "media", &large());
@@ -189,7 +189,7 @@ fn attach_notifies_observers_of_the_row_and_refreshes_the_cache() {
 }
 
 #[test]
-fn temp_row_files_follow_the_row_to_its_real_id() {
+fn inv_file_04_temp_row_files_follow_the_row_to_its_real_id() {
     let db = booted();
     let temp = db.create("moments", obj(json!({"text": "new"}))).unwrap();
     let descriptor = db.attach("moments", &temp.id, "media", SMALL, "a", "b/c").unwrap();
@@ -269,4 +269,20 @@ fn logout_style_wipe_leaves_no_files_behind() {
     db.sweep_files().unwrap();
     assert!(db.shared.files.directory_entries().unwrap().is_empty());
     assert!(root.path().join("42.sqlite").exists());
+}
+
+#[test]
+fn inv_file_07_the_bytes_read_back_the_same_on_both_sides_of_the_storage_threshold() {
+    let limit = crate::files::TABLE_LIMIT;
+    let (_root, db) = on_disk();
+    seed_tree(&db);
+    for size in [0, 1, limit - 1, limit, limit + 1] {
+        let bytes: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
+        let descriptor = attach(&db, "m1", "media", &bytes);
+        assert_eq!(descriptor.size, size as u64, "size {size}");
+        assert_eq!(db.read("moments", &rid("m1"), "media").unwrap(), Some(bytes.clone()), "size {size}");
+        let url = db.url("moments", &rid("m1"), "media").unwrap().unwrap();
+        assert_eq!(std::fs::read(url).unwrap(), bytes, "size {size}");
+        assert_eq!((bytes_in_table(&db), db.shared.files.directory_entries().unwrap().len()), if size <= limit { (1, 0) } else { (0, 1) }, "size {size}");
+    }
 }

@@ -16,7 +16,7 @@ fn sent_is_the_sum_of_finished_and_running_parts() {
 }
 
 #[test]
-fn a_restarted_part_never_lowers_the_total_inside_a_phase() {
+fn inv_upload_08_a_restarted_part_never_lowers_the_total_inside_a_phase() {
     let mut progress = TransferProgress::new(100, TICK);
     progress.begin_phase([]);
     progress.report(1, 40);

@@ -101,7 +101,7 @@ pub(super) fn created(id: &str) -> Reply {
     Reply::data(json!({"createMoment": {"id": id, "text": "clip", "userId": null}}))
 }
 
-fn multipart_replies(rig: &Rig) {
+pub(super) fn multipart_replies(rig: &Rig) {
     rig.transport.enqueue("InitMultipart", init());
     rig.transport.enqueue("PresignParts", presign(&[(1, "https://s3/p1"), (2, "https://s3/p2"), (3, "https://s3/p3")]));
     rig.transport.enqueue("CompleteMultipart", complete());
@@ -114,7 +114,7 @@ pub(super) fn single_replies(rig: &Rig) {
     rig.transport.enqueue("CreateMoment", created("m9"));
 }
 
-fn variables(rig: &Rig, operation: &str) -> Vec<Value> {
+pub(super) fn variables(rig: &Rig, operation: &str) -> Vec<Value> {
     rig.transport.calls().into_iter().filter(|call| call.operation_name == operation).map(|call| call.variables).collect()
 }
 
@@ -122,11 +122,11 @@ pub(super) fn upload_of(rig: &Rig, id: &str) -> Option<crate::upload::UploadInfo
     rig.db.sync_info("moments", &rid(id)).unwrap().uploads.get("upload").cloned()
 }
 
-fn stored_state(rig: &Rig) -> UploadState {
+pub(super) fn stored_state(rig: &Rig) -> UploadState {
     rig.db.outbox().unwrap().into_iter().find_map(|entry| entry.operation.upload).unwrap()
 }
 
-const TWELVE: &[u8] = b"0123456789ab";
+pub(super) const TWELVE: &[u8] = b"0123456789ab";
 
 #[tokio::test(start_paused = true)]
 async fn inv_upload_16_complete_failure_keeps_parts_through_queue_restart_and_retry() {
@@ -553,7 +553,7 @@ async fn running_out_of_attempts_fails_with_a_retryable_error_and_the_attempt_co
 }
 
 #[tokio::test(start_paused = true)]
-async fn offline_waits_without_spending_attempts() {
+async fn inv_upload_09_offline_waits_without_spending_attempts() {
     let rig = upload_rig(UploadConfig { backoff: Backoff::new(Duration::from_secs(1), Duration::from_secs(15)).limited(0), ..small() });
     single_replies(&rig);
     rig.sync.set_online(false);
@@ -623,7 +623,7 @@ async fn urls_older_than_the_presign_ttl_are_requested_again_for_unfinished_part
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_unanswered_mutation_is_delivery_unknown_never_repeated_and_retry_skips_the_upload() {
+async fn inv_upload_02_an_unanswered_mutation_is_delivery_unknown_never_repeated_and_retry_skips_the_upload() {
     let rig = upload_rig(small());
     rig.transport.enqueue("CreateBlob", blob());
     rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Interrupted("reset".into())));
@@ -664,7 +664,7 @@ async fn an_unreached_mutation_waits_pending_and_is_sent_again_without_a_new_tra
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_mutation_waits_offline_without_a_call_and_goes_out_when_online() {
+async fn inv_upload_13_the_mutation_waits_offline_without_a_call_and_goes_out_when_online() {
     let rig = upload_rig(small());
     single_replies(&rig);
     rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(8)));
@@ -737,7 +737,7 @@ async fn cancel_stops_the_transfer_aborts_the_multipart_and_skips_the_mutation()
 }
 
 #[tokio::test(start_paused = true)]
-async fn files_at_a_time_are_limited_and_the_waiting_one_is_queued() {
+async fn inv_upload_10_files_at_a_time_are_limited_and_the_waiting_one_is_queued() {
     let rig = upload_rig(small());
     single_replies(&rig);
     rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(10)));
@@ -795,7 +795,7 @@ fn resumable(parts: Vec<UploadPart>) -> UploadState {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_stored_multipart_resumes_from_its_finished_parts_after_a_restart() {
+async fn inv_upload_07_a_stored_multipart_resumes_from_its_finished_parts_after_a_restart() {
     let rig = upload_rig(small());
     rig.transport.enqueue("PresignParts", presign(&[(2, "https://s3/p2"), (3, "https://s3/p3")]));
     rig.transport.enqueue("CompleteMultipart", complete());
@@ -834,7 +834,7 @@ async fn an_orphaned_multipart_of_a_failed_upload_is_aborted_on_start() {
 }
 
 #[tokio::test]
-async fn inv_op_10_parallel_uploads_for_one_record_leave_exactly_one_open() {
+async fn inv_upload_01_parallel_uploads_for_one_record_leave_exactly_one_open() {
     let rig = upload_rig(small());
     for round in 0..30 {
         let id = rid(&format!("r{round}"));
@@ -859,7 +859,7 @@ async fn inv_op_10_parallel_uploads_for_one_record_leave_exactly_one_open() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_op_09_a_retry_that_lands_while_the_old_run_is_ending_still_starts_the_upload() {
+async fn inv_upload_06_a_retry_that_lands_while_the_old_run_is_ending_still_starts_the_upload() {
     let rig = upload_rig(small());
     single_replies(&rig);
     let source = file(b"abcdef");
@@ -872,7 +872,7 @@ async fn inv_op_09_a_retry_that_lands_while_the_old_run_is_ending_still_starts_t
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_op_09_a_cancel_whose_abort_fails_keeps_the_upload_id_until_the_abort_goes_through() {
+async fn inv_upload_05_a_cancel_whose_abort_fails_keeps_the_upload_id_until_the_abort_goes_through() {
     let rig = upload_rig(small());
     rig.transport.enqueue("InitMultipart", init());
     rig.transport.enqueue("PresignParts", presign(&[(1, "https://s3/p1"), (2, "https://s3/p2"), (3, "https://s3/p3")]));

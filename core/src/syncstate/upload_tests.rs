@@ -74,7 +74,7 @@ fn a_progress_tick_rewrites_the_row_and_an_unchanged_one_does_not() {
 }
 
 #[test]
-fn a_failed_upload_carries_the_error_and_a_closed_one_leaves_no_upload() {
+fn inv_upload_11_a_failed_upload_carries_the_error_and_a_closed_one_leaves_no_upload() {
     let connection = database();
     let seq = insert_upload(&connection, "failed", 0, &state(UploadStatus::Uploading, 10));
     recompute_sync(&connection, &keys()).unwrap();
