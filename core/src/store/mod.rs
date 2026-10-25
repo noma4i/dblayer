@@ -108,6 +108,8 @@ pub struct Store {
     pub(crate) require_unlocked_responses: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub(crate) before_write: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    pub(crate) after_commit: Mutex<Option<Box<dyn Fn(&crate::commit::CommitResult) + Send + Sync>>>,
 }
 
 impl Store {
@@ -134,6 +136,8 @@ impl Store {
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             before_write: Mutex::new(None),
+            #[cfg(test)]
+            after_commit: Mutex::new(None),
             recreated: None,
             #[cfg(test)]
             failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),
@@ -163,6 +167,10 @@ impl Store {
     }
 
     pub(crate) fn announce(&self, event: StoreEvent<'_>) {
+        #[cfg(test)]
+        if let (StoreEvent::Committed(result), Some(probe)) = (&event, self.after_commit.lock().unwrap_or_else(|error| error.into_inner()).as_ref()) {
+            probe(result);
+        }
         if let Some(hook) = self.hook.get() {
             hook(event);
         }

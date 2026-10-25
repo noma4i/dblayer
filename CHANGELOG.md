@@ -68,6 +68,8 @@
 - Failed uploads older than 7 days are removed and aborted at the first flush after start and when connectivity returns. A failed batch item is removed on its own and its siblings stay.
 
 ### Fixed
+- A batch of server events no longer drops when two rows of it touch the same parent.
+- The answer of an action is ready when its operation turns committed.
 - A session failure is no longer hidden by another subscription's failure.
 - Explicit null stays distinct from an absent field after reopening the database.
 - Non-finite numbers fail serialization instead of becoming null.

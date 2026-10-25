@@ -28,7 +28,7 @@ fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
 }
 
 #[test]
-fn newer_attempt_wins_when_responses_arrive_out_of_order() {
+fn inv_merge_05_newer_attempt_wins_when_responses_arrive_out_of_order() {
     let rig = rig();
     assert!(matches!(rig.sync.inner.land(landing(&rig, 200, &["m1"])).unwrap(), Landed::Applied { rows: 1, invalid: 0, .. }));
     let late = rig.sync.inner.land(landing(&rig, 100, &["m1", "m2"])).unwrap();
@@ -122,7 +122,7 @@ fn inv_merge_09_a_failing_window_write_leaves_no_landed_rows() {
 }
 
 #[test]
-fn a_row_created_by_another_landing_after_the_fetch_began_still_joins_the_listed_scope() {
+fn inv_merge_05_a_row_created_by_another_landing_after_the_fetch_began_still_joins_the_listed_scope() {
     let rig = rig();
     let listing = landing(&rig, 100, &["m1"]);
     put(&rig, "moments", moment("m1", "from another landing"));

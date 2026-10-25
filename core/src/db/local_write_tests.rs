@@ -33,7 +33,7 @@ fn create_keeps_an_explicit_id_and_records_no_temp_id() {
 }
 
 #[test]
-fn create_touches_the_resident_parent() {
+fn inv_cascade_03_create_touches_the_resident_parent() {
     let db = booted();
     put(&db, "chats", json!({"id": "c1", "title": "t"}));
     let before = db.find("chats", &rid("c1")).unwrap().unwrap().revision;
@@ -145,7 +145,7 @@ fn update_enqueues_an_update_operation_that_holds_the_values_it_replaces() {
 }
 
 #[test]
-fn update_touches_the_parent_of_the_row() {
+fn inv_cascade_03_update_touches_the_parent_of_the_row() {
     let db = booted();
     put(&db, "chats", json!({"id": "c1", "title": "t"}));
     put(&db, "messages", json!({"id": "g1", "chatId": "c1", "body": "a"}));
@@ -185,7 +185,7 @@ fn destroy_removes_the_row_and_enqueues_a_destroy_operation() {
 }
 
 #[test]
-fn destroy_cascades_through_dependent_associations() {
+fn inv_cascade_01_destroy_cascades_through_dependent_associations() {
     let db = booted();
     seed_tree(&db);
     let destroyed = db.destroy("users", &rid("u1")).unwrap();
@@ -199,7 +199,7 @@ fn destroy_cascades_through_dependent_associations() {
 }
 
 #[test]
-fn destroy_with_cascade_is_one_commit_and_one_operation() {
+fn inv_cascade_01_destroy_with_cascade_is_one_commit_and_one_operation() {
     let db = booted();
     seed_tree(&db);
     let before = db.revision_seq().unwrap();

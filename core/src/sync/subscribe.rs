@@ -322,6 +322,11 @@ impl Feed {
                 count += 1;
             }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
+            let mut written: BTreeSet<(String, String)> = operations.keys().cloned().collect();
+            let touches = touches.into_iter().filter(|touch| {
+                let row = touch.row_ref();
+                written.insert((row.model.to_string(), row.id.to_string()))
+            });
             envelope.entity_ops = operations.into_values().chain(touches).collect();
             envelope.scope_ops = joins;
             if !destroyed.is_empty() {

@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod cascade_tests;
+#[cfg(test)]
 mod event_tests;
 #[cfg(test)]
 mod fault_tests;
@@ -10,6 +12,8 @@ mod fixtures;
 mod gate_tests;
 #[cfg(test)]
 mod local_field_tests;
+#[cfg(test)]
+mod merge_tests;
 #[cfg(test)]
 mod oracle_tests;
 #[cfg(test)]

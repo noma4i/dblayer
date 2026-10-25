@@ -487,6 +487,7 @@ impl Inner {
         if temp.is_some() && (normalized.roots.len() != 1 || real.is_none() || real == temp || !creatable) {
             return self.quarantine(sending, &data);
         }
+        self.keep_answer(spec, sending, operation, &data);
         let held = Prior::of(entry).map(|prior| prior.held_files()).unwrap_or_default();
         let mut generation = sending.generation;
         let mut committed = None;
@@ -535,7 +536,6 @@ impl Inner {
         }
         for (temp, real) in replacements { locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string()); }
         self.discard_files(held.iter().map(|file| file.id.clone()).collect()).await?;
-        self.keep_answer(spec, sending, operation, &data);
         self.invalidate_after(&sending.model, &sending.action).await?;
         Ok(SendResult::Committed)
     }

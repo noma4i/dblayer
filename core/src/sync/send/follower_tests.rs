@@ -57,7 +57,7 @@ fn feed_with(id: &str, text: &str) -> Reply {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_load_that_still_lists_a_row_with_a_queued_destroy_does_not_bring_it_back() {
+async fn inv_event_06_a_load_that_still_lists_a_row_with_a_queued_destroy_does_not_bring_it_back() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     let id = crate::identity::RowId::new("m1").unwrap();
@@ -72,7 +72,7 @@ async fn a_load_that_still_lists_a_row_with_a_queued_destroy_does_not_bring_it_b
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_event_for_a_row_with_a_queued_destroy_does_not_bring_it_back() {
+async fn inv_event_06_an_event_for_a_row_with_a_queued_destroy_does_not_bring_it_back() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     let id = crate::identity::RowId::new("m1").unwrap();

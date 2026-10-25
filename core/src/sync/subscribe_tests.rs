@@ -595,7 +595,7 @@ async fn a_typed_session_refusal_during_subscribe_stops_without_retry() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn debounced_events_land_once_per_row_after_the_interval() {
+async fn inv_event_08_debounced_events_land_once_per_row_after_the_interval() {
     let rig = rig_with_subscription();
     put(&rig, "moments", json!({"id": "m1", "text": "start", "userId": null}));
     let _observer = rig.db.observe(Query::new("moments"), |_| {}).unwrap();
@@ -657,35 +657,7 @@ async fn a_destroying_event_sets_nothing() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn upsert_event_keeps_the_fields_it_does_not_select() {
-    let rig = rig_with_subscription();
-    put(&rig, "moments", json!({"id": "m1", "text": "keep", "userId": "u1"}));
-    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
-    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "likedByMe": true})));
-    rig.transport.await_consumed("MomentChanged").await;
-    let row = rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap();
-    assert_eq!((row.text("text"), row.text("userId"), row.get("likedByMe")), (Some("keep"), Some("u1"), Some(&json!(true))));
-}
-
-#[tokio::test(start_paused = true)]
-async fn destroy_event_removes_the_dependent_children() {
-    let mut users = users_spec();
-    let mut moments = AssociationSpec::new("moments", AssociationKind::HasMany, "moments", "userId");
-    moments.dependent = Some(Dependent::Destroy);
-    users.associations.push(moments);
-    let rig = rig_on(Db::open_in_memory(vec![users, moments_spec()], None).unwrap(), MockTransport::new(), SyncConfig::default());
-    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
-    put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
-    put(&rig, "moments", json!({"id": "m1", "text": "child", "userId": "u1"}));
-    let def = SubscriptionDef::new(EventSpec::new("user_gone"), "MomentChanged", "users", EventEffect::Destroy);
-    let _subscription = rig.sync.subscribe(def).await.unwrap();
-    rig.transport.emit("MomentChanged", next(json!({"id": "u1"})));
-    rig.transport.await_consumed("MomentChanged").await;
-    assert_eq!(text_of(&rig, "moments", "m1"), None);
-}
-
-#[tokio::test(start_paused = true)]
-async fn event_that_creates_a_row_does_not_reload_the_watched_lists_of_its_model() {
+async fn inv_event_05_an_event_that_creates_a_row_does_not_reload_the_watched_lists_of_its_model() {
     let rig = rig_with_subscription();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2"));
@@ -703,7 +675,7 @@ fn user_list(ids: &[&str]) -> crate::transport::Reply {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_event_row_joins_the_loaded_list_that_declares_it_and_does_not_reload_it() {
+async fn inv_event_05_an_event_row_joins_the_loaded_list_that_declares_it_and_does_not_reload_it() {
     let rig = rig_with_subscription();
     let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();
     rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
@@ -760,7 +732,7 @@ async fn a_refused_first_connection_is_retried_like_a_reconnect() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn upsert_event_touches_the_parent_that_asks_for_it() {
+async fn inv_event_09_upsert_event_touches_the_parent_that_asks_for_it() {
     let mut moments = moments_spec();
     moments.associations.iter_mut().for_each(|association| association.touches_parent = true);
     let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments], None).unwrap(), MockTransport::new(), SyncConfig::default());

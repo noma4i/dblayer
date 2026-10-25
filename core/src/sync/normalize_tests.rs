@@ -12,7 +12,7 @@ fn nodes(value: Value) -> Vec<Map<String, Value>> {
 }
 
 #[test]
-fn nested_author_becomes_user_row_and_sets_foreign_key() {
+fn inv_merge_06_nested_author_becomes_user_row_and_sets_foreign_key() {
     let Rig { db, .. } = rig();
     let input = nodes(json!([{"id": "m1", "text": "hi", "author": {"id": "u1", "name": "Ann", "ignored": 1}}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();
@@ -76,7 +76,7 @@ fn row_without_id_is_dropped_and_counted() {
 }
 
 #[test]
-fn invalid_author_is_skipped_but_moment_stays() {
+fn inv_merge_06_invalid_author_is_skipped_but_moment_stays() {
     let Rig { db, .. } = rig();
     let input = nodes(json!([{"id": "m1", "userId": "u9", "author": {"name": "no id"}}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();

@@ -9,13 +9,13 @@ use crate::query::Query;
 use crate::sync::LoadOptions;
 use crate::transport::{EventSpec, Response, SubscriptionEvent};
 
-fn rig_with_events() -> Rig {
+pub(super) fn rig_with_events() -> Rig {
     let rig = rig();
     rig.sync.register(crate::sync::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
     rig
 }
 
-fn event(node: Value) -> SubscriptionEvent {
+pub(super) fn event(node: Value) -> SubscriptionEvent {
     SubscriptionEvent::Next(Response::data(json!({"momentChanged": node})))
 }
 

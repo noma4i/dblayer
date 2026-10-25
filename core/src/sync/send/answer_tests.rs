@@ -45,3 +45,21 @@ async fn the_answer_of_an_action_refused_before_it_was_asked_for_is_the_refusal(
     let error = rig.sync.answer("moments", acted.operation).await.unwrap_err();
     assert!(error.to_string().contains("not allowed"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_answer_of_an_action_is_kept_before_the_commit_that_closes_its_operation_is_announced() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    let acted = rig.db.act("moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
+    let (sequence, inner) = (acted.operation, rig.sync.inner.clone());
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let probe = seen.clone();
+    *rig.db.shared.store.after_commit.lock().unwrap() = Some(Box::new(move |result| {
+        if result.operations.contains(&sequence) {
+            probe.lock().unwrap().push(crate::sync::locked(&inner.outcomes).take("moments", sequence).is_ok());
+        }
+    }));
+    rig.transport.enqueue("StarMoment", starred(json!({"successMessage": "Shared", "copies": 3})));
+    rig.sync.flush().await.unwrap();
+    assert!(seen.lock().unwrap().contains(&true));
+}

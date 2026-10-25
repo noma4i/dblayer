@@ -183,21 +183,24 @@ async fn server_code_is_retried_and_fatal_code_is_not() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_fresh_05_failed_refresh_keeps_stale_data_unless_forced() {
+async fn inv_fresh_05_inv_merge_10_failed_refresh_keeps_stale_data_unless_forced() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let (row, window_before) = (rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap(), window(&rig, "feed", &none()));
     rig.clock.advance(Duration::from_secs(400));
     let kept = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(kept.status, LoadStatus::KeptStale);
     let forced = rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await;
     assert!(matches!(forced, Err(SyncError::Graphql { messages, .. }) if messages == ["nope"]));
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m1"]);
+    assert_eq!(rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap(), row);
+    assert_eq!(window(&rig, "feed", &none()), window_before);
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_fresh_05_failed_first_load_without_window_is_an_error() {
+async fn inv_fresh_05_inv_merge_10_failed_first_load_without_window_is_an_error() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
     let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
@@ -221,7 +224,7 @@ async fn older_response_does_not_overwrite_newer_event_data() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn row_destroyed_during_flight_is_not_resurrected() {
+async fn inv_merge_05_row_destroyed_during_flight_is_not_resurrected() {
     use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
     let rig = rig();
     put(&rig, "moments", json!({"id": "m1", "text": "old", "userId": null}));

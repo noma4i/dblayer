@@ -54,7 +54,7 @@ fn inv_identity_01_foreign_pending_rows_do_not_survive_replacement() {
 }
 
 #[test]
-fn three_merges_in_a_row_give_one_delivery_each_and_unchanged_rows_stay_out_of_updated() {
+fn inv_merge_04_three_merges_in_a_row_give_one_delivery_each_and_unchanged_rows_stay_out_of_updated() {
     let db = booted();
     start(&db, "feed", &[("m1", "one"), ("m2", "two")]);
     let (log, _subscription) = observe_scope(&db, "feed");
@@ -98,7 +98,7 @@ fn replace_merges_repeated_ids_before_storing_unique_members() {
 }
 
 #[test]
-fn fields_of_a_stored_row_that_the_response_omits_are_kept() {
+fn inv_merge_02_fields_of_a_stored_row_that_the_response_omits_are_kept() {
     let db = booted();
     start(&db, "feed", &[("m1", "one")]);
     db.replace(&request("feed", Coverage::Complete), vec![obj(json!({"id": "m1", "text": "changed"}))]).unwrap();
@@ -107,7 +107,7 @@ fn fields_of_a_stored_row_that_the_response_omits_are_kept() {
 }
 
 #[test]
-fn a_found_anchor_keeps_the_tail_and_drops_the_vanished_row_before_it() {
+fn inv_merge_07_a_found_anchor_keeps_the_tail_and_drops_the_vanished_row_before_it() {
     let db = booted();
     start(&db, "feed", &[("m1", "1"), ("m2", "2"), ("m3", "3"), ("m4", "4"), ("m5", "5")]);
     let (log, _subscription) = observe_scope(&db, "feed");
@@ -119,7 +119,7 @@ fn a_found_anchor_keeps_the_tail_and_drops_the_vanished_row_before_it() {
 }
 
 #[test]
-fn a_missing_anchor_drops_the_tail() {
+fn inv_merge_07_a_missing_anchor_drops_the_tail() {
     let db = booted();
     start(&db, "feed", &[("m1", "1"), ("m2", "2"), ("m3", "3")]);
     db.replace(&request("feed", Coverage::Page), rows(&[("m9", "9"), ("m8", "8")])).unwrap();
@@ -127,7 +127,7 @@ fn a_missing_anchor_drops_the_tail() {
 }
 
 #[test]
-fn local_rows_stay_in_the_list_on_their_places() {
+fn inv_merge_07_local_rows_stay_in_the_list_on_their_places() {
     let db = booted();
     start(&db, "feed", &[("m1", "1"), ("m2", "2")]);
     let local = db.create("moments", obj(json!({"userId": "u1", "text": "mine"}))).unwrap();
@@ -146,7 +146,7 @@ fn local_rows_stay_in_the_list_on_their_places() {
 }
 
 #[test]
-fn a_merge_changes_only_its_own_scope() {
+fn inv_merge_08_a_merge_changes_only_its_own_scope() {
     let db = booted();
     start(&db, "byUser1", &[("m1", "1"), ("m2", "2")]);
     start(&db, "byUser2", &[("m3", "3")]);
