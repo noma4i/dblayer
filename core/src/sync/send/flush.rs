@@ -428,7 +428,7 @@ impl Inner {
                 if entry.operation.row_ids.len() < batch.min {
                     let single = spec.actions.iter().find(|action| action.name == batch.single).ok_or_else(|| SyncError::Malformed("single upload declaration is missing".into()))?;
                     let mutation = single.mutation.clone().ok_or_else(|| SyncError::Malformed("single upload mutation is missing".into()))?;
-                    envelope.operation_transitions.push(OperationTransition::SeparateUploads { seq, single_action: Operation::action_key(&sending.model, &single.name), single_mutation: mutation });
+                    envelope.operation_transitions.push(OperationTransition::SeparateUploads { seq, single_action: Operation::upload_action_key(&sending.model, &single.name), single_mutation: mutation });
                     return Ok(Some(envelope));
                 }
             }

@@ -87,6 +87,7 @@ enum Action {
     Update,
     Destroy,
     Named(String),
+    Upload(String),
 }
 
 impl Action {
@@ -95,7 +96,7 @@ impl Action {
             Action::Create => "create",
             Action::Update => "update",
             Action::Destroy => "destroy",
-            Action::Named(name) => name,
+            Action::Named(name) | Action::Upload(name) => name,
         }
     }
 }
@@ -153,14 +154,21 @@ impl Db {
         self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
     }
 
-    pub(crate) fn create_held(&self, generation: crate::identity::Generation, model: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
-        self.shared.spec(model)?;
+    pub(crate) fn create_held(&self, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, mut input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
+        self.declared_upload(model, action, &mut input)?;
         let id = values.get("id").and_then(read_id).unwrap_or_else(|| RowId::generate_temp(None));
         values.insert("id".into(), Value::String(id.to_string()));
         self.preparing_uploads(model, generation, |files, generation| {
             let item = files.prepare(model, id, uuid::Uuid::new_v4().to_string(), input, state)?;
-            self.insert_local(model, values, Map::new(), Action::Named("upload".to_string()), Some((item, generation)))
+            self.insert_local(model, values, Map::new(), Action::Upload(action.to_string()), Some((item, generation)))
         })
+    }
+
+    pub(crate) fn declared_upload(&self, model: &str, action: &str, input: &mut crate::upload::UploadInput) -> Result<(), DbError> {
+        let spec = self.shared.spec(model)?;
+        let declared = spec.upload_action(action).filter(|declared| declared.batch.is_none()).ok_or_else(|| DbError::InvalidUpload(format!("{model} declares no single upload action {action}")))?;
+        if let Some(mutation) = &declared.mutation { input.steps.mutation = mutation.clone(); }
+        Ok(())
     }
 
     pub(crate) fn create_upload_batch(&self, generation: crate::identity::Generation, model: &str, items: Vec<crate::upload::UploadItem>, request: crate::upload::UploadBatchInput) -> Result<Vec<RowId>, DbError> {
@@ -194,7 +202,7 @@ impl Db {
         }
         let ids: Vec<_> = rows.iter().map(|(id, _)| id.clone()).collect();
         let record = OperationRecord {
-            seq: None, action_key: Operation::action_key(model, &action.name), status: OperationStatus::Pending,
+            seq: None, action_key: Operation::upload_action_key(model, &action.name), status: OperationStatus::Pending,
             row_ids: ids.clone(), temp_id: None, input: Value::Object(request.variables), transport_started: false,
             base_revision: Some(self.revision_seq()?), created_at: now, dedupe_key: None, upload: None,
             rollback: Some(Prior { rows: ids.iter().map(|id| PriorRow::Created { model: model.into(), id: id.to_string() }).collect() }.to_value()),
@@ -411,7 +419,10 @@ impl Db {
     fn begin(&self, reader: &Reader<'_>, spec: &ModelSpec, queued: &Queued, created_at: i64) -> Result<OperationTransition, DbError> {
         let record = OperationRecord {
             seq: None,
-            action_key: Operation::action_key(spec.key.as_str(), queued.action.name()),
+            action_key: match &queued.action {
+                Action::Upload(action) => Operation::upload_action_key(spec.key.as_str(), action),
+                other => Operation::action_key(spec.key.as_str(), other.name()),
+            },
             status: OperationStatus::Pending,
             row_ids: vec![queued.row_id.clone()],
             temp_id: queued.temp_id.clone(),

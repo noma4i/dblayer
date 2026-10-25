@@ -45,7 +45,7 @@ impl Db {
             }
             let mut found: Vec<(i64, RowId)> = Vec::new();
             for action in spec.actions.iter().filter(|action| !action.correlate.is_empty()) {
-                let key = Operation::action_key(model.as_str(), &action.name);
+                let key = if action.upload { Operation::upload_action_key(model.as_str(), &action.name) } else { Operation::action_key(model.as_str(), &action.name) };
                 let Some(incoming) = correlation_key(&action.correlate, &row) else { continue };
                 if !candidates.contains_key(&key) {
                     let mut indexed: HashMap<String, Vec<(i64, RowId)>> = HashMap::new();

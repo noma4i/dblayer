@@ -401,22 +401,22 @@ impl Database {
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone(), online: self.db.connectivity() })) }
-    pub async fn upload(&self, model: String, row_id: String, input_json: String) -> Result<(), DbError> {
+    pub async fn upload(&self, model: String, row_id: String, action: String, input_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
         on_executor(async move {
             let input = serde_json::from_str(&input_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.upload(&model, &row, input).await?)
+            Ok::<_, DbError>(sync.upload(&model, &row, &action, input).await?)
         })
         .await?;
         Ok(())
     }
-    pub async fn upload_create(&self, model: String, values_json: String, input_json: String) -> Result<WireRow, DbError> {
+    pub async fn upload_create(&self, model: String, action: String, values_json: String, input_json: String) -> Result<WireRow, DbError> {
         let sync = self.sync()?.clone();
         let (db, wire) = (self.db.clone(), self.wire(&model)?.clone());
         on_executor(async move {
             let (values, input) = (serde_json::from_str(&values_json).map_err(DbError::from)?, serde_json::from_str(&input_json).map_err(DbError::from)?);
-            let row_id = sync.upload_create(&model, values, input).await?;
+            let row_id = sync.upload_create(&model, &action, values, input).await?;
             let row = db.find(&model, &row_id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {row_id} was not created") })?;
             Ok::<_, DbError>(wire.row(&row))
         })
@@ -450,10 +450,10 @@ impl Database {
         let answer = on_executor(async move { sync.answer(&model, operation).await }).await?;
         Ok(answer.to_string())
     }
-    pub async fn cancel_upload(&self, model: String, row_id: String) -> Result<bool, DbError> {
+    pub async fn cancel_upload(&self, model: String, row_id: String, action: String) -> Result<bool, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        on_executor(async move { sync.cancel_upload(&model, &row).await }).await
+        on_executor(async move { sync.cancel_upload(&model, &row, &action).await }).await
     }
     pub async fn maintain(&self) -> Result<(), DbError> {
         let db = self.db.clone();

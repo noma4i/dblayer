@@ -19,7 +19,7 @@ async fn an_unknown_delivery_holds_the_later_updates_of_the_row_when_an_upload_i
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     let input = UploadInput::new("/nonexistent/file.bin", UploadSteps::new("CreateMoment").single("CreateBlob"));
-    rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input, UploadState::queued()).unwrap();
+    rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input, UploadState::queued()).unwrap();
     rig.db.update("moments", &rid("m1"), params(json!({"text": "first"}))).unwrap();
     rig.db.update("moments", &rid("m1"), params(json!({"text": "second"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Interrupted("connection lost".to_string())));

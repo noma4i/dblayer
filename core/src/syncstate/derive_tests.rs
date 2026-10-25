@@ -2,7 +2,7 @@ use super::*;
 use crate::commit::OperationStatus;
 
 fn entry(action: &str, status: OperationStatus, started: bool, since: i64) -> SyncEntry {
-    SyncEntry { action: action.to_string(), status, transport_started: started, attempts: 0, error: None, since, fields: Vec::new(), upload: None }
+    SyncEntry { action: action.to_string(), status, transport_started: started, attempts: 0, error: None, since, fields: Vec::new(), upload: None, batch: false }
 }
 
 fn failure(text: &str) -> Option<OperationFailure> {

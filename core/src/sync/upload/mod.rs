@@ -88,10 +88,10 @@ impl UploadRuns {
     }
 }
 
-fn upload_entry(entries: Vec<OutboxOperation>, model: &str, id: &RowId) -> Option<OutboxOperation> {
+fn upload_entry(entries: Vec<OutboxOperation>, model: &str, id: &RowId, family: &[String]) -> Option<OutboxOperation> {
     entries.into_iter().find(|entry| {
         entry.operation.upload.is_some()
-            && Operation::split_action_key(&entry.operation.action_key).is_some_and(|(owner, _)| owner == model)
+            && Operation::upload_action(&entry.operation.action_key).is_some_and(|(owner, action)| owner == model && family.contains(&action))
             && entry.operation.row_ids.contains(id)
     })
 }
@@ -151,11 +151,13 @@ impl Inner {
         Ok(self.db.shared.read(&[], |reader| Ok(crate::operation::read_operation_uploads(reader.connection(), seq)?))?)
     }
 
-    pub(crate) fn begin_upload(&self, generation: crate::identity::Generation, model: &str, id: &RowId, input: &UploadInput, state: UploadState) -> Result<i64, SyncError> {
-        self.db.spec(model)?;
+    pub(crate) fn begin_upload(&self, generation: crate::identity::Generation, model: &str, id: &RowId, action: &str, input: &UploadInput, state: UploadState) -> Result<i64, SyncError> {
+        let mut input = input.clone();
+        self.db.declared_upload(model, action, &mut input)?;
+        let family = self.db.spec(model)?.upload_family(action);
         let record = OperationRecord {
             seq: None,
-            action_key: Operation::action_key(model, "upload"),
+            action_key: Operation::upload_action_key(model, action),
             status: OperationStatus::Pending,
             row_ids: vec![id.clone()],
             temp_id: None,
@@ -170,8 +172,8 @@ impl Inner {
         self.db.preparing_uploads(model, generation, |files, generation| {
             let item = files.prepare(model, id.clone(), uuid::Uuid::new_v4().to_string(), input.clone(), state)?;
             let committed = self.commit(generation, |reader| {
-                if upload_entry(OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?, model, id).is_some() {
-                    return Err(SyncError::Params(format!("{model} {id} already has an upload")));
+                if upload_entry(OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?, model, id, &family).is_some() {
+                    return Err(SyncError::Params(format!("{model} {id} already has the upload {action}")));
                 }
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 envelope.operation_transitions.push(OperationTransition::BeginUpload { record: record.clone(), items: vec![item] });
@@ -343,33 +345,36 @@ impl Sync {
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn upload(&self, model: &str, id: &RowId, input: UploadInput) -> Result<i64, SyncError> {
+    pub async fn upload(&self, model: &str, id: &RowId, action: &str, input: UploadInput) -> Result<i64, SyncError> {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
-        let (model, id) = (model.to_string(), id.clone());
+        let (model, id, action) = (model.to_string(), id.clone(), action.to_string());
         tokio::task::spawn_blocking(move || {
-            let seq = inner.begin_upload(generation, &model, &id, &input, UploadState::queued())?;
+            let seq = inner.begin_upload(generation, &model, &id, &action, &input, UploadState::queued())?;
             inner.start_uploads()?;
             Ok(seq)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn upload_create(&self, model: &str, values: serde_json::Map<String, serde_json::Value>, input: UploadInput) -> Result<RowId, SyncError> {
+    pub async fn upload_create(&self, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, input: UploadInput) -> Result<RowId, SyncError> {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
-        let model = model.to_string();
+        let (model, action) = (model.to_string(), action.to_string());
         tokio::task::spawn_blocking(move || {
-            let id = inner.db.create_held(generation, &model, values, input, UploadState::queued())?;
+            let id = inner.db.create_held(generation, &model, &action, values, input, UploadState::queued())?;
             inner.start_uploads()?;
             Ok(id)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn cancel_upload(&self, model: &str, id: &RowId) -> Result<bool, SyncError> {
+    pub async fn cancel_upload(&self, model: &str, id: &RowId, action: &str) -> Result<bool, SyncError> {
+        let spec = self.inner.db.spec(model)?;
+        if spec.upload_action(action).is_none() { return Err(crate::db::DbError::InvalidUpload(format!("{model} declares no upload action {action}")).into()); }
+        let family = spec.upload_family(action);
         let entries = self.inner.db.shared.read(&[], |reader| Ok(OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?))?;
-        let Some(entry) = upload_entry(entries, model, id) else { return Ok(false) };
+        let Some(entry) = upload_entry(entries, model, id, &family) else { return Ok(false) };
         let seq = entry.operation.id.0;
-        let batched = self.inner.db.spec(model)?.actions.iter().any(|action| action.batch.is_some() && entry.operation.action_key == Operation::action_key(model, &action.name));
+        let batched = spec.is_batch_upload(&entry.operation.action_key);
         if entry.operation.transport_started {
             if batched { return Err(crate::db::DbError::InFlight { model: model.into(), id: id.to_string() }.into()); }
             return Ok(false);

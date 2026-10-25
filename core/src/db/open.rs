@@ -8,7 +8,7 @@ use crate::identity::{Generation, RowRef};
 use crate::commit::{CommitEnvelope, EntityOp, RowChangeKind, WriteOrigin};
 use crate::identity::ModelKey;
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
-use crate::syncstate::rebuild_sync;
+use crate::syncstate::rebuild_sync_with;
 use crate::pacing::{Clock, Counters};
 use crate::schema::{resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};
 use crate::store::{Reader, Store, StoreError, StoreEvent};
@@ -382,7 +382,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
             }
         }
         apply_fsck(&inner.connection, &plan, &orphans)?;
-        rebuild_sync(&inner.connection)?;
+        rebuild_sync_with(&inner.connection, &|key| crate::operation::Operation::upload_action(key).is_some_and(|(model, action)| inner.models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some()))))?;
         rebuilt_rows(&inner.connection, &plan, &operations, &known)?
     };
     if rebuilt.is_empty() {

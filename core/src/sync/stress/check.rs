@@ -33,6 +33,7 @@ fn entry_of(connection: &rusqlite::Connection, operation: &Operation) -> rusqlit
         since: operation.since,
         fields,
         upload: operation.upload.clone(),
+        batch: false,
     })
 }
 

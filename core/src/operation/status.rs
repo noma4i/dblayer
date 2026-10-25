@@ -56,14 +56,26 @@ impl Operation {
         format!("{model}:{action}")
     }
 
+    pub fn upload_action_key(model: &str, action: &str) -> String {
+        format!("{model}:upload:{action}")
+    }
+
     pub fn split_action_key(action_key: &str) -> Option<(String, String)> {
         let mut parts = action_key.split(':');
-        match (parts.next(), parts.next(), parts.next()) {
-            (Some(model), Some(action), None) if !model.is_empty() && !action.is_empty() => {
+        match (parts.next(), parts.next(), parts.next(), parts.next()) {
+            (Some(model), Some(action), None, None) if !model.is_empty() && !action.is_empty() => {
                 Some((model.to_string(), action.to_string()))
+            }
+            (Some(model), Some("upload"), Some(action), None) if !model.is_empty() && !action.is_empty() => {
+                Some((model.to_string(), format!("upload:{action}")))
             }
             _ => None,
         }
+    }
+
+    pub fn upload_action(action_key: &str) -> Option<(String, String)> {
+        let (model, rest) = Self::split_action_key(action_key)?;
+        rest.strip_prefix("upload:").map(|action| (model, action.to_string()))
     }
 }
 

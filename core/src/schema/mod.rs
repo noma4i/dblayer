@@ -998,6 +998,24 @@ fn is_reserved_name(name: &str) -> bool {
 }
 
 impl ModelSpec {
+    pub fn upload_action(&self, name: &str) -> Option<&ActionDeclaration> {
+        self.actions.iter().find(|action| action.upload && action.name == name)
+    }
+
+    pub fn upload_family(&self, action: &str) -> Vec<String> {
+        let mut family = vec![action.to_string()];
+        for declared in self.actions.iter().filter(|declared| declared.upload) {
+            let Some(batch) = &declared.batch else { continue };
+            if declared.name == action { family.push(batch.single.clone()); }
+            if batch.single == action { family.push(declared.name.clone()); }
+        }
+        family
+    }
+
+    pub fn is_batch_upload(&self, action_key: &str) -> bool {
+        crate::operation::Operation::upload_action(action_key).and_then(|(_, name)| self.upload_action(&name)).is_some_and(|action| action.batch.is_some())
+    }
+
     pub fn new(key: &str, fields: Vec<FieldSpec>) -> Self {
         Self {
             key: ModelKey::new(key),

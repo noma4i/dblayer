@@ -33,7 +33,7 @@ async fn upload_file_reads_do_not_run_on_the_async_executor() {
     let source = file_with(&bytes);
     let input = UploadInput::new(source.path().to_str().unwrap(), UploadSteps::new("CreateMoment").single("CreateBlob"));
     let row = crate::identity::RowId::new("m1").unwrap();
-    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &row, &input, UploadState::queued()).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &row, "upload", &input, UploadState::queued()).unwrap();
     let id = rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT file_id FROM op_item WHERE seq = ?1", [seq], |row| row.get::<_, String>(0))?)).unwrap();
     let path = rig.db.shared.files.path(&id).unwrap();
     READS.get_or_init(Default::default).lock().unwrap().insert(path.clone(), Vec::new());

@@ -49,7 +49,7 @@ async fn batch_renumber_preserves_order_and_publishes_complete_rows() {
         let _subscription = db.observe(crate::query::Query::new("Asset"), move |change| sink.lock().unwrap().push(change.rows.clone())).unwrap();
         db.await_revision(db.revision_seq().unwrap());
         seen.lock().unwrap().clear();
-        if cancel { assert!(sync.cancel_upload("Asset", &rows[removed].id).await.unwrap()); }
+        if cancel { assert!(sync.cancel_upload("Asset", &rows[removed].id, "create_files").await.unwrap()); }
         else { assert_eq!(db.discard("Asset", &rows[removed].id).unwrap(), 1); }
         db.await_revision(db.revision_seq().unwrap());
         let remaining: Vec<_> = rows.iter().enumerate().filter(|(index, _)| *index != removed).collect();
@@ -308,7 +308,7 @@ async fn cancelling_one_offline_item_keeps_the_other_item_and_both_local_rows() 
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), steps: UploadSteps::new("CreateAssets").single("CreateBlob"), variables: Default::default() };
     let ids: Vec<_> = sync.upload_create_batch("Asset", items, request).await.unwrap().iter().map(|row| row.id.clone()).collect();
-    assert!(sync.cancel_upload("Asset", &ids[0]).await.unwrap());
+    assert!(sync.cancel_upload("Asset", &ids[0], "create_files").await.unwrap());
     assert!(db.find("Asset", &ids[0]).unwrap().unwrap().upload().is_none());
     assert!(db.find("Asset", &ids[1]).unwrap().unwrap().upload().is_some());
     assert!(transport.calls().is_empty());

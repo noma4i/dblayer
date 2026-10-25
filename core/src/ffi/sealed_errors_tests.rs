@@ -36,6 +36,7 @@ pub(super) fn moment_spec() -> ModelSpec {
     create.has_optimistic = true;
     create.has_temp_row_retention = true;
     model.actions.push(create);
+    model.actions.push(crate::sync::rig::upload_declared("upload"));
     model
 }
 

@@ -16,7 +16,7 @@ async fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts
         stage: UploadStage::Presign, total_bytes: 12, key: Some("key".into()), upload_id: Some("upload".into()), request: Some(request.clone()),
         ..UploadState::queued()
     };
-    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), state).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state).unwrap();
     rig.transport.enqueue("PresignParts", Reply::data(json!({"presignParts": {"parts": [
         {"partNumber": 1, "url": "https://s3/p1"}, {"partNumber": 3, "url": "https://s3/p3"}
     ]}})));

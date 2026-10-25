@@ -14,6 +14,7 @@ pub struct SyncEntry {
     pub since: i64,
     pub fields: Vec<String>,
     pub upload: Option<UploadState>,
+    pub batch: bool,
 }
 
 impl SyncEntry {
@@ -22,7 +23,7 @@ impl SyncEntry {
             (OperationStatus::Failed, _) => SyncState::Failed,
             (OperationStatus::DeliveryUnknown, _) => SyncState::DeliveryUnknown,
             (OperationStatus::Pending, true) => SyncState::Sending,
-            (OperationStatus::Pending, false) if self.upload.as_ref().is_some_and(|state| state.phase == UploadStatus::Uploading || self.action != "upload") => {
+            (OperationStatus::Pending, false) if self.upload.as_ref().is_some_and(|state| state.phase == UploadStatus::Uploading || self.batch) => {
                 SyncState::Sending
             }
             _ => SyncState::Pending,
@@ -46,7 +47,7 @@ pub fn fold_entries(entries: &[SyncEntry]) -> Option<SyncInfo> {
         .find_map(|entry| entry.upload.as_ref().map(|state| UploadInfo::of(entry.status, entry.transport_started, state, waiting, entry.error.clone())));
     Some(SyncInfo {
         state: decisive.state(),
-        actions: entries.iter().map(|entry| entry.action.clone()).collect(),
+        actions: entries.iter().filter(|entry| entry.upload.is_none()).map(|entry| entry.action.clone()).collect(),
         dirty_fields,
         error: decisive.error.clone(),
         attempts: decisive.attempts,

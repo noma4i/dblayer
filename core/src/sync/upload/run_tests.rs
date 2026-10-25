@@ -9,7 +9,7 @@ use crate::upload::{UploadConfig, UploadStage};
 async fn inv_upload_18_materialization_and_cleanup_leave_the_async_executor() {
     let rig = upload_rig(small());
     let source = file(b"inline");
-    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();
     let id = rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT file_id FROM op_item WHERE seq = ?1", [seq], |row| row.get::<_, String>(0))?)).unwrap();
     crate::files::watch_file_io(&id);
     rig.transport.enqueue("CreateBlob", blob());
@@ -30,7 +30,7 @@ async fn queued_files_start_in_order_without_waiting_tasks() {
     let rig = upload_rig(small());
     rig.sync.set_online(false);
     let source = file(b"abcdef");
-    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();
     {
         let stored = rig.db.shared.store.lock();
         let connection = &stored.connection;
@@ -62,7 +62,7 @@ fn cancellation_does_not_wait_for_queued_file_io() {
     runtime.block_on(async {
         let rig = upload_rig(small());
         let source = file(b"abcdef");
-        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let occupied = tokio::task::spawn_blocking(move || {
@@ -73,7 +73,7 @@ fn cancellation_does_not_wait_for_queued_file_io() {
         let mut changes = rig.db.outbox_changes();
         rig.sync.inner.spawn_run(seq, 0, Mode::Transfer).unwrap();
         crate::sync::rig::await_outbox(&mut changes, || rig.db.upload_info("moments", &rid("m1")).unwrap().is_some_and(|upload| upload.status == UploadStatus::Preparing)).await;
-        let cancelled = tokio::time::timeout(Duration::from_secs(1), rig.sync.cancel_upload("moments", &rid("m1"))).await;
+        let cancelled = tokio::time::timeout(Duration::from_secs(1), rig.sync.cancel_upload("moments", &rid("m1"), "upload")).await;
         release_tx.send(()).unwrap();
         occupied.await.unwrap();
         rig.sync.wait_uploads().await;
@@ -93,7 +93,7 @@ async fn a_final_mutation_does_not_hold_a_file_permit() {
         let state = if transferred {
             UploadState { transferred: true, signed_id: Some("sid".into()), blob_id: Some("b1".into()), ..UploadState::queued() }
         } else { UploadState::queued() };
-        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), state).unwrap();
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state).unwrap();
         if transferred { locked(&rig.sync.inner.uploads).active_files = 1; }
         rig.sync.inner.spawn_run(seq, 0, Mode::Transfer).unwrap();
         rig.transport.await_calls("CreateMoment", 1).await;
@@ -109,7 +109,7 @@ async fn only_one_attempt_can_send_and_settle_the_same_upload() {
     rig.transport.enqueue("CreateMoment", created("m9").after(Duration::from_secs(10)));
     let source = file(b"abcdef");
     let state = UploadState { transferred: true, signed_id: Some("sid".into()), blob_id: Some("b1".into()), ..UploadState::queued() };
-    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), state).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state).unwrap();
     let (run, token) = rig.sync.inner.register(seq, 0).unwrap();
     tokio::join!(
         super::run::drive(rig.sync.inner.clone(), seq, 0, run, token.clone(), Mode::Transfer, None),
@@ -125,7 +125,7 @@ async fn files_of_one_operation_share_the_file_limit() {
     single_replies(&rig);
     rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(10)));
     let source = file(b"abcdef");
-    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();
     {
         let stored = rig.db.shared.store.lock();
         let connection = &stored.connection;
@@ -152,7 +152,7 @@ async fn a_saved_single_grant_is_put_before_the_mutation_without_creating_anothe
         headers: vec![("x-stored".into(), "yes".into())], total_bytes: 6, stage: UploadStage::Put,
         ..UploadState::queued()
     };
-    rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), state).unwrap();
+    rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state).unwrap();
     rig.transport.enqueue("CreateMoment", upload_tests::created("m9"));
     rig.sync.flush().await.unwrap();
     rig.sync.wait_uploads().await;
@@ -167,7 +167,7 @@ async fn a_saved_single_grant_is_put_before_the_mutation_without_creating_anothe
 async fn an_unwritable_owned_file_is_failed_without_restarting_the_runner() {
     let rig = upload_rig(small());
     let source = file(b"abcdef");
-    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), crate::upload::UploadState::queued()).unwrap();
+    let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), crate::upload::UploadState::queued()).unwrap();
     let id = rig.db.shared.read(&[], |reader| {
         Ok(reader.connection().query_row("SELECT file_id FROM op_item WHERE seq = ?1 AND position = 0", [seq], |row| row.get::<_, String>(0))?)
     }).unwrap();
@@ -189,7 +189,7 @@ fn a_runner_dropped_outside_its_runtime_removes_its_cache_file_on_the_blocking_p
     let (rig, runner, id, path) = runtime.block_on(async {
         let rig = upload_rig(small());
         let source = file(b"inline");
-        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();
         let id = rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT file_id FROM op_item WHERE seq = ?1", [seq], |row| row.get::<_, String>(0))?)).unwrap();
         crate::files::watch_file_io(&id);
         let runner = std::sync::Arc::new(super::run::Runner::load(rig.sync.inner.clone(), seq, 0, 0, crate::transport::CancelToken::new(), true).unwrap().unwrap());
@@ -223,7 +223,7 @@ fn queued_cleanup_survives_dropping_the_sync_that_queued_it() {
         let rig = crate::sync::rig::rig_on(db, crate::transport::MockTransport::new(), crate::sync::SyncConfig { upload: small(), ..crate::sync::SyncConfig::default() });
         crate::sync::rig::put(&rig, "moments", crate::sync::rig::moment("m1", "x"));
         let source = file(b"inline");
-        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), &input(&source), UploadState::queued()).unwrap();
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();
         let runner = std::sync::Arc::new(super::run::Runner::load(rig.sync.inner.clone(), seq, 0, 0, crate::transport::CancelToken::new(), true).unwrap().unwrap());
         assert!(runner.materialize().await.is_ok());
         let path = std::path::PathBuf::from(&runner.input.path);

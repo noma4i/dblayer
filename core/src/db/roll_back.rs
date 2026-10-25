@@ -199,7 +199,7 @@ impl Db {
             prior.rows.retain(|row| row.id() != id.as_str());
             let rows: Vec<_> = entry.operation.row_ids.iter().filter(|row| *row != id).cloned().collect();
             let mut inputs = Vec::new();
-            if let Some(batch) = spec.actions.iter().find(|action| entry.operation.action_key == crate::operation::Operation::action_key(model, &action.name)).and_then(|action| action.batch.as_ref()).filter(|batch| rows.len() >= batch.min) {
+            if let Some(batch) = crate::operation::Operation::upload_action(&entry.operation.action_key).and_then(|(_, name)| spec.upload_action(&name)).and_then(|action| action.batch.as_ref()).filter(|batch| rows.len() >= batch.min) {
                 if let Some(fields) = &batch.renumber {
                     let position = spec.integer_path(&fields.position).ok_or_else(|| DbError::InvalidUpload(fields.position.clone()))?;
                     let size = spec.integer_path(&fields.size).ok_or_else(|| DbError::InvalidUpload(fields.size.clone()))?;

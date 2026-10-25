@@ -12,7 +12,8 @@ use super::super::rig::{Rig, rig_without_operations, put, await_outbox};
 use super::upload_tests::{await_released, file, rid, small};
 
 fn reopen(path: &Path, budget: u32) -> Rig {
-    let model = ModelSpec::new("assets", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+    let mut model = ModelSpec::new("assets", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+    model.actions.push(crate::sync::rig::upload_declared("upload"));
     let config = UploadConfig { backoff: small().backoff.limited(budget), parallel_parts: 3, ..small() };
     let rig = rig_without_operations(Db::open(path, vec![model], None).unwrap(), MockTransport::new(), SyncConfig { upload: config, ..SyncConfig::default() });
     for (name, root) in [("Grant", "grant"), ("Start", "start"), ("Sign", "sign"), ("Finish", "finish"), ("Abort", "abort")] {
@@ -54,7 +55,7 @@ async fn restart_preserves_each_put_budget_and_deadline() {
         grants(&rig);
         rig.transport.enqueue_put("https://storage/file", PutReply::status(503));
         let mut outbox = rig.db.outbox_changes();
-        rig.sync.upload("assets", &rid("a"), source_input(&source)).await.unwrap();
+        rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
         await_outbox(&mut outbox, || rig.db.upload_info("assets", &rid("a")).unwrap().unwrap().attempts == 1).await;
         assert_eq!(rig.transport.put_count("https://storage/file"), 1);
         shutdown(rig).await;
@@ -92,7 +93,7 @@ async fn restart_preserves_each_graphql_step_budget() {
         rig.transport.enqueue(operation, Reply::fail(crate::transport::TransportError::Network("unavailable".into())));
         grants(&rig);
         let mut outbox = rig.db.outbox_changes();
-        rig.sync.upload("assets", &rid("a"), source_input(&source)).await.unwrap();
+        rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
         await_outbox(&mut outbox, || retry_rows(&rig) == 1).await;
         assert_eq!(rig.transport.call_count(operation), 1);
         shutdown(rig).await;
@@ -122,7 +123,7 @@ async fn concurrent_parts_keep_independent_retry_records() {
         rig.transport.enqueue_put(url, PutReply::etag("etag"));
     }
     rig.transport.enqueue("Finish", Reply::data(json!({"finish": {"signedId": "signed", "blobId": "blob"}})));
-    rig.sync.upload("assets", &rid("a"), source_input(&source)).await.unwrap();
+    rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.put_calls().len(), 6);
     assert!(rig.db.outbox().unwrap()[0].operation.upload.as_ref().unwrap().is_transferred());
@@ -138,7 +139,7 @@ async fn manual_retry_refreshes_the_budget_and_success_removes_its_record() {
     put(&rig, "assets", json!({"id": "a"}));
     grants(&rig);
     for _ in 0..2 { rig.transport.enqueue_put("https://storage/file", PutReply::status(503)); }
-    rig.sync.upload("assets", &rid("a"), source_input(&source)).await.unwrap();
+    rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(retry_rows(&rig), 1);
     assert_eq!(rig.db.retry("assets", &rid("a")).unwrap(), 1);
@@ -163,7 +164,7 @@ async fn terminal_operations_delete_retry_records() {
         put(&rig, "assets", json!({"id": "a"}));
         grants(&rig);
         for _ in 0..2 { rig.transport.enqueue_put("https://storage/file", PutReply::status(503)); }
-        let seq = rig.sync.upload("assets", &rid("a"), source_input(&source)).await.unwrap();
+        let seq = rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
         rig.sync.wait_uploads().await;
         assert_eq!(retry_rows(&rig), 1);
         match action {
@@ -173,7 +174,7 @@ async fn terminal_operations_delete_retry_records() {
                 rig.db.land(envelope).unwrap();
             }
             "discard" => { rig.db.discard("assets", &rid("a")).unwrap(); }
-            _ => { rig.sync.cancel_upload("assets", &rid("a")).await.unwrap(); }
+            _ => { rig.sync.cancel_upload("assets", &rid("a"), "upload").await.unwrap(); }
         }
         assert!(rig.db.outbox().unwrap().is_empty());
         assert_eq!(retry_rows(&rig), 0, "{action} left retry records");
@@ -193,7 +194,7 @@ async fn alternating_grant_failures_and_put_expiry_share_only_the_put_budget() {
     }
     rig.transport.enqueue_put("https://storage/file", PutReply::status(403));
     rig.transport.enqueue_put("https://storage/file", PutReply::status(503));
-    rig.sync.upload("assets", &rid("a"), source_input(&source)).await.unwrap();
+    rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("Grant"), 4);
     assert_eq!(rig.transport.put_calls().len(), 2, "url renewal reset the PUT budget");
@@ -211,7 +212,7 @@ async fn fifty_retries_exhaust_the_step_budget() {
     put(&rig, "assets", json!({"id": "a"}));
     grants(&rig);
     for _ in 0..52 { rig.transport.enqueue_put("https://storage/file", PutReply::status(503)); }
-    rig.sync.upload("assets", &rid("a"), source_input(&source)).await.unwrap();
+    rig.sync.upload("assets", &rid("a"), "upload", source_input(&source)).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.put_calls().len(), 51);
     let info = rig.db.upload_info("assets", &rid("a")).unwrap().unwrap();

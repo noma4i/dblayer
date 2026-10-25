@@ -26,7 +26,7 @@ pub fn operation_keys(action_key: &str, row_ids: &[RowId], temp_id: Option<&RowI
     ids.into_iter().map(|id| (model.clone(), id.to_string())).collect()
 }
 
-fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>) -> rusqlite::Result<HashMap<SyncKey, Vec<SyncEntry>>> {
+fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>, batch: &dyn Fn(&str) -> bool) -> rusqlite::Result<HashMap<SyncKey, Vec<SyncEntry>>> {
     let sequences = match keys {
         Some(keys) => row_operation_sequences(connection, keys)?,
         None => {
@@ -52,6 +52,7 @@ fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>) -> ru
             since: operation.since,
             fields,
             upload: None,
+            batch: batch(&operation.action_key),
         };
         for key in operation_keys(&operation.action_key, &operation.row_ids, operation.temp_id.as_ref()).into_iter().filter(|key| keys.is_none_or(|keys| keys.contains(key))) {
             let mut item = entry.clone();
@@ -144,11 +145,15 @@ fn remove(connection: &Connection, key: &SyncKey) -> rusqlite::Result<()> {
 }
 
 pub fn recompute_sync(connection: &Connection, keys: &BTreeSet<SyncKey>) -> rusqlite::Result<BTreeSet<SyncKey>> {
+    recompute_sync_with(connection, keys, &|_| false)
+}
+
+pub fn recompute_sync_with(connection: &Connection, keys: &BTreeSet<SyncKey>, batch: &dyn Fn(&str) -> bool) -> rusqlite::Result<BTreeSet<SyncKey>> {
     let mut changed = BTreeSet::new();
     if keys.is_empty() {
         return Ok(changed);
     }
-    let entries = open_entries(connection, Some(keys))?;
+    let entries = open_entries(connection, Some(keys), batch)?;
     for key in keys {
         let next = entries.get(key).and_then(|entries| fold_entries(entries));
         let current = stored(connection, key)?;
@@ -165,10 +170,14 @@ pub fn recompute_sync(connection: &Connection, keys: &BTreeSet<SyncKey>) -> rusq
 }
 
 pub fn rebuild_sync(connection: &Connection) -> rusqlite::Result<usize> {
-    let mut keys: BTreeSet<SyncKey> = open_entries(connection, None)?.into_keys().collect();
+    rebuild_sync_with(connection, &|_| false)
+}
+
+pub fn rebuild_sync_with(connection: &Connection, batch: &dyn Fn(&str) -> bool) -> rusqlite::Result<usize> {
+    let mut keys: BTreeSet<SyncKey> = open_entries(connection, None, batch)?.into_keys().collect();
     let mut statement = connection.prepare("SELECT model, row_id FROM row_sync")?;
     for key in statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
         keys.insert(key?);
     }
-    Ok(recompute_sync(connection, &keys)?.len())
+    Ok(recompute_sync_with(connection, &keys, batch)?.len())
 }

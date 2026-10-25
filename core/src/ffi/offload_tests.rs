@@ -15,8 +15,8 @@ async fn calls_with_json_arguments_parse_them_off_the_caller_thread() {
     let bad = || "{".to_string();
     let (moment, row) = (|| "Moment".to_string(), || "r1".to_string());
     let calls: Vec<(&str, bool)> = vec![
-        ("upload", ready_on_first_poll(db.upload(moment(), row(), bad()))),
-        ("upload_create", ready_on_first_poll(db.upload_create(moment(), bad(), bad()))),
+        ("upload", ready_on_first_poll(db.upload(moment(), row(), "upload".into(), bad()))),
+        ("upload_create", ready_on_first_poll(db.upload_create(moment(), "upload".into(), bad(), bad()))),
         ("upload_create_batch", ready_on_first_poll(db.upload_create_batch(moment(), bad(), bad()))),
         ("run", ready_on_first_poll(db.run("Feed".into(), bad()))),
         ("load", ready_on_first_poll(db.load(moment(), "feed".into(), bad()))),

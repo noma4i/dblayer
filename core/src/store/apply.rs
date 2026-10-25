@@ -12,7 +12,7 @@ use crate::commit::WriteOrigin;
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
 use crate::operation::{delete_operation, failure_cells, read_rows, read_value, stored_row_id, write_rows, write_value};
-use crate::syncstate::{operation_keys, recompute_sync, OperationFailure, SyncKey};
+use crate::syncstate::{operation_keys, recompute_sync_with, OperationFailure, SyncKey};
 
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, fetch_stored, placeholders, Reader, StoredRow, CHUNK};
@@ -547,7 +547,8 @@ pub(crate) fn apply_envelope(
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
     wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
-    for (model, id) in recompute_sync(connection, &synced_keys)? {
+    let is_batch = |key: &str| crate::operation::Operation::upload_action(key).is_some_and(|(model, action)| models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some())));
+    for (model, id) in recompute_sync_with(connection, &synced_keys, &is_batch)? {
         let touched = changes.changes.iter().any(|change| change.row.model.as_str() == model && change.row.id.as_str() == id);
         if !touched {
             changes.push(&ModelKey::new(&model), &id, RowChangeKind::Synced, BTreeSet::new());

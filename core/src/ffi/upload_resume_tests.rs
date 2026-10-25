@@ -61,7 +61,7 @@ async fn resume_does_not_repeat_a_step_owned_by_an_active_upload() {
         }
     });
     let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
-    sync.upload("Moment", &crate::identity::RowId::new("42").unwrap(), input).await.unwrap();
+    sync.upload("Moment", &crate::identity::RowId::new("42").unwrap(), "upload", input).await.unwrap();
     lost.notified().await;
     let mut resume = Box::pin(super::encrypted::resume(database.session.clone().unwrap(), Some(sync.clone())));
     assert!(resume.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
@@ -94,7 +94,7 @@ async fn upload_resume_and_retry_execute_the_saved_step_once_after_reopen() {
                 server.upgrade().unwrap().refuse_next("ACCOUNT_UNAVAILABLE", false);
             }
         });
-        database.upload("Moment".into(), "42".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
+        database.upload("Moment".into(), "42".into(), "upload".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
         let database = if restart { drop(database); open(&rig, &path).await } else { database };
         database.session_resume().await.unwrap();
@@ -117,7 +117,7 @@ async fn upload_preserves_the_session_code_in_its_failure() {
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
     let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
-    database.upload("Moment".into(), "42".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
+    database.upload("Moment".into(), "42".into(), "upload".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     let entry = database.db.outbox().unwrap().remove(0);
     assert_eq!(entry.operation.error.unwrap().kind, crate::syncstate::FailureKind::Session(SessionCode::AccountUnavailable));
@@ -152,9 +152,9 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart"));
     let state = crate::upload::UploadState { key: Some("key".into()), upload_id: Some("upload".into()), ..crate::upload::UploadState::queued() };
     let row = crate::identity::RowId::new("42").unwrap();
-    database.sync.as_ref().unwrap().inner.begin_upload(database.sync.as_ref().unwrap().inner.db.generation(), "Moment", &row, &input, state).unwrap();
+    database.sync.as_ref().unwrap().inner.begin_upload(database.sync.as_ref().unwrap().inner.db.generation(), "Moment", &row, "upload", &input, state).unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
-    database.cancel_upload("Moment".into(), "42".into()).await.unwrap();
+    database.cancel_upload("Moment".into(), "42".into(), "upload".into()).await.unwrap();
     drop(database);
     let database = open(&rig, &path).await;
     database.session_resume().await.unwrap();
@@ -181,7 +181,7 @@ async fn resume_consumes_a_lost_upload_answer_without_repeating_the_effect() {
         _ => {},
     });
     let input = UploadInput::new(source.to_str().unwrap(), UploadSteps::new("MakeMoment").single("CreateBlob"));
-    database.upload("Moment".into(), "42".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
+    database.upload("Moment".into(), "42".into(), "upload".into(), serde_json::to_string(&input).unwrap()).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     database.session_resume().await.unwrap();
     database.retry("Moment".into(), "42".into()).await.unwrap();

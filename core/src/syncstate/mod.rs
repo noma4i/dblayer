@@ -4,7 +4,7 @@ mod table;
 
 pub use derive::{fold_entries, SyncEntry};
 pub use info::{FailureKind, OperationFailure, SyncInfo, SyncState};
-pub use table::{clear_sync, operation_keys, read_sync, rebuild_sync, recompute_sync, SyncKey};
+pub use table::{clear_sync, operation_keys, read_sync, rebuild_sync, rebuild_sync_with, recompute_sync, recompute_sync_with, SyncKey};
 
 #[cfg(test)]
 mod derive_tests;

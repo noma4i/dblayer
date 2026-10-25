@@ -329,7 +329,7 @@ impl Worker {
         }
         let steps = UploadSteps::new("CreateMoment").single("CreateBlob");
         let input = UploadInput::new(&path.to_string_lossy(), steps).variable("text", json!(text));
-        let outcome = world.rig.sync.upload("moments", &row.id, input).await;
+        let outcome = world.rig.sync.upload("moments", &row.id, "upload", input).await;
         if outcome.is_ok() {
             world.issue(&text, "upload", Some(row.id.as_str()));
             world.findings.trace(|| format!("issued upload {text} on {}", row.id));

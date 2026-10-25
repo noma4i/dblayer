@@ -100,8 +100,16 @@ pub fn moments_spec() -> ModelSpec {
         like_action(),
         wrapped_action(),
         ignoring_action(),
+        upload_declared("upload"),
+        upload_declared("cover"),
     ];
     spec
+}
+
+pub fn upload_declared(name: &str) -> ActionDeclaration {
+    let mut action = ActionDeclaration::new(name, RootShape::Upsert);
+    action.upload = true;
+    action
 }
 
 fn edge_fields() -> Vec<FieldSpec> {

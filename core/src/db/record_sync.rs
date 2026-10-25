@@ -111,7 +111,7 @@ impl Db {
         for (seq, action_key, status, row) in candidates {
             if running.contains(&seq) { continue; }
             let Some((model, _)) = crate::operation::Operation::split_action_key(&action_key) else { continue };
-            let batched = self.spec(&model)?.actions.iter().any(|action| action.batch.is_some() && action_key == crate::operation::Operation::action_key(&model, &action.name));
+            let batched = self.spec(&model)?.is_batch_upload(&action_key);
             if batched && status != "delivery_unknown" {
                 let id = RowId::new(&row).map_err(|error| DbError::InvalidUpload(error.to_string()))?;
                 let item = row.clone();
@@ -141,7 +141,7 @@ impl Db {
         }
         let mut discarded = 0;
         while let Some(entry) = self.record_operations(model, id)?.first() {
-            let batched = self.spec(model)?.actions.iter().any(|action| action.batch.is_some() && entry.operation.action_key == crate::operation::Operation::action_key(model, &action.name));
+            let batched = self.spec(model)?.is_batch_upload(&entry.operation.action_key);
             if batched && entry.operation.status != OperationStatus::DeliveryUnknown {
                 self.remove_upload_item(model, id, entry.operation.id.0, true)?;
             } else {

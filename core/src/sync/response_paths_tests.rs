@@ -79,7 +79,7 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
                 file.write_all(b"photo").unwrap();
                 rig.transport.enqueue("Blob", Reply::data(json!({"blob": {"url": "https://s3/x", "signedId": "s", "blobId": "b"}})));
                 rig.transport.enqueue("Photo", Reply::data(json!({"photo": {"message": value}})));
-                rig.sync.upload("Message", &id, UploadInput::new(file.path().to_str().unwrap(), UploadSteps::new("Photo").single("Blob"))).await.unwrap();
+                rig.sync.upload("Message", &id, "photo", UploadInput::new(file.path().to_str().unwrap(), UploadSteps::new("Photo").single("Blob"))).await.unwrap();
                 rig.sync.wait_uploads().await;
             }
             _ => unreachable!(),

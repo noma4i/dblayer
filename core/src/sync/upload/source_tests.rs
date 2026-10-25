@@ -19,7 +19,7 @@ async fn local_models_reject_uploads_without_creating_rows_or_files() {
     let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), vec![model], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.set_online(false);
     let source = super::upload_tests::file(&vec![73; crate::files::TABLE_LIMIT + 1]);
-    let result = rig.sync.upload_create("moments", params(json!({"id":"local-upload","text":"rejected"})), input(&source)).await;
+    let result = rig.sync.upload_create("moments", "upload", params(json!({"id":"local-upload","text":"rejected"})), input(&source)).await;
     assert!(result.is_err());
     assert!(rig.db.find("moments", &rid("local-upload")).unwrap().is_none());
     assert!(rig.db.shared.files.directory_entries().unwrap().is_empty());
@@ -43,7 +43,7 @@ fn reset_rejects_upload_admission_waiting_for_a_blocking_thread() {
             release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         });
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let mut upload = Box::pin(rig.sync.upload_create("moments", params(json!({"id":"old-upload","text":"old account"})), input(&source)));
+        let mut upload = Box::pin(rig.sync.upload_create("moments", "upload", params(json!({"id":"old-upload","text":"old account"})), input(&source)));
         let pending = matches!(upload.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Pending);
         rig.db.reset_all().unwrap();
         release_tx.send(()).unwrap();
@@ -78,11 +78,11 @@ async fn admit(rig: &Rig, mode: &str, source: &tempfile::NamedTempFile) -> Resul
     Ok(match mode {
         "existing" => {
             put(rig, "moments", moment("m1", "existing"));
-            rig.sync.upload("moments", &rid("m1"), input(source)).await?;
+            rig.sync.upload("moments", &rid("m1"), "upload", input(source)).await?;
             1
         }
         "create" => {
-            rig.sync.upload_create("moments", params(json!({"text":"created"})), input(source)).await?;
+            rig.sync.upload_create("moments", "upload", params(json!({"text":"created"})), input(source)).await?;
             1
         }
         _ => {
