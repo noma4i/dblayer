@@ -7,19 +7,6 @@ use crate::sync::LoadOptions;
 use crate::transport::Reply;
 
 #[tokio::test(start_paused = true)]
-async fn inv_rollback_10_a_refused_action_patch_gives_way_to_a_newer_edit_of_the_same_field() {
-    let rig = rig();
-    put(&rig, "moments", moment("m1", "old"));
-    rig.db.act("moments", "like", &rid("m1"), params(json!({"text": "patched"})), params(json!({}))).unwrap();
-    rig.db.update("moments", &rid("m1"), params(json!({"text": "newer"}))).unwrap();
-    rig.transport.enqueue("LikeMoment", Reply::graphql_error("no", "FORBIDDEN"));
-    rig.transport.enqueue("UpdateMoment", updated("m1", "newer"));
-    rig.sync.flush().await.unwrap();
-    assert_eq!(text_of(&rig, "moments", "m1"), Some("newer".to_string()));
-    assert!(rig.db.outbox().unwrap().is_empty());
-}
-
-#[tokio::test(start_paused = true)]
 async fn inv_id_01_a_numeric_id_and_the_same_id_as_text_are_one_row_in_the_model_the_list_and_the_membership() {
     let rig = rig();
     let params = serde_json::Map::new();

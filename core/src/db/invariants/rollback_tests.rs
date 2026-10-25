@@ -124,3 +124,16 @@ fn inv_rollback_06_rolling_back_a_destroy_of_a_row_with_a_child_is_one_commit_an
     assert_eq!((after.0 - before.0, after.1 - before.1, after.2 - before.2), (1, 1, 1), "before {before:?}, after {after:?}");
     assert!(db.find("moments", &rid("m1")).unwrap().is_some() && db.find("vibes", &rid("v1")).unwrap().is_some());
 }
+
+#[test]
+fn inv_rollback_10_rolling_back_an_action_patch_gives_way_to_a_newer_edit_of_the_same_field() {
+    let db = booted();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "A"}));
+    db.act("moments", "react", &rid("m1"), obj(json!({"text": "P"})), obj(json!({}))).unwrap();
+    db.update("moments", &rid("m1"), obj(json!({"text": "N"}))).unwrap();
+    let seqs: Vec<i64> = db.outbox().unwrap().iter().map(|entry| entry.operation.id.0).collect();
+    db.roll_back(seqs[0]).unwrap();
+    assert_eq!(text(&db).as_deref(), Some("N"));
+    db.roll_back(seqs[1]).unwrap();
+    assert_eq!(text(&db).as_deref(), Some("A"));
+}
