@@ -131,9 +131,11 @@ async fn held_rig() -> (Arc<Database>, Arc<Counting>, Arc<tokio::sync::Semaphore
     (db, transport, hold)
 }
 
-async fn settled_on_the_executor() {
-    let runtime = super::database::executor().unwrap();
-    for _ in 0..16 { runtime.spawn(async {}).await.unwrap(); }
+async fn joined_the_flight(db: &Database, transport: &Counting, already: usize) {
+    tokio::select! {
+        () = db.sync().unwrap().wait_joined(already + 1) => {}
+        () = transport.started.notified() => panic!("the second load made its own request instead of joining"),
+    }
 }
 
 async fn rig_with_clock() -> (Arc<Database>, Arc<Counting>, Arc<TestClock>) {
@@ -183,30 +185,13 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
 }
 
 #[tokio::test]
-async fn inv_fresh_13_parallel_loads_make_one_request_and_all_return_after_it() {
-    let (db, transport, hold) = held_rig().await;
-    let mut loads = tokio::task::JoinSet::new();
-    for _ in 0..10 {
-        let db = db.clone();
-        loads.spawn(async move { load(&db, "feed").await.map(|()| stored(&db)) });
-    }
-    transport.started.notified().await;
-    settled_on_the_executor().await;
-    assert!(loads.try_join_next().is_none(), "a load returned before the request answered");
-    hold.add_permits(1);
-    while let Some(done) = loads.join_next().await {
-        assert!(done.unwrap().unwrap(), "returned before the rows landed");
-    }
-    assert_eq!(queries(&transport), 1);
-}
-
-#[tokio::test]
 async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
     let (db, transport, hold) = held_rig().await;
     let _live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Silent));
     transport.started.notified().await;
+    let already = db.sync().unwrap().joined_loads();
     let sharing = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
-    settled_on_the_executor().await;
+    joined_the_flight(&db, &transport, already).await;
     hold.add_permits(1);
     sharing.await.unwrap().unwrap();
     assert_eq!(queries(&transport), 1);
@@ -263,10 +248,12 @@ async fn inv_fresh_13_a_cancelled_caller_does_not_cancel_the_load_another_waits_
     let (db, transport, hold) = held_rig().await;
     let cancelled = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     transport.started.notified().await;
+    let already = db.sync().unwrap().joined_loads();
     let waiter = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
-    settled_on_the_executor().await;
+    joined_the_flight(&db, &transport, already).await;
     cancelled.abort();
-    hold.add_permits(1);
+    assert!(cancelled.await.unwrap_err().is_cancelled(), "the first caller finished before the abort");
+    hold.add_permits(2);
     waiter.await.unwrap().unwrap();
     assert_eq!(queries(&transport), 1);
     assert!(stored(&db));

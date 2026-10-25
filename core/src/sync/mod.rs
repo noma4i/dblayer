@@ -91,6 +91,16 @@ pub(crate) type SubscriptionFailureNotice = Option<(String, crate::transport::Su
 pub(crate) struct Flights {
     pub coalescing: FetchCoalescing,
     pub waiting: HashMap<String, watch::Receiver<Option<FlightEnd>>>,
+    #[cfg(test)]
+    pub joined: JoinedLoads,
+}
+
+#[cfg(test)]
+pub(crate) struct JoinedLoads(pub watch::Sender<usize>);
+
+#[cfg(test)]
+impl Default for JoinedLoads {
+    fn default() -> Self { Self(watch::channel(0).0) }
 }
 
 pub(crate) struct WatchEntry {

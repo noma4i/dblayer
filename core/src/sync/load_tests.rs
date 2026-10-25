@@ -93,12 +93,16 @@ async fn parallel_identical_loads_share_one_transport_call() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2").after(Duration::from_secs(1)));
     let nothing = none();
-    let (first, second) = tokio::join!(
-        rig.sync.load("moments", "feed", &nothing, LoadOptions::default()),
-        rig.sync.load("moments", "feed", &nothing, LoadOptions { force: true }),
-    );
+    let (rig_ref, nothing_ref) = (&rig, &nothing);
+    let returned = |options: LoadOptions| async move {
+        let outcome = rig_ref.sync.load("moments", "feed", nothing_ref, options).await;
+        (outcome, member_ids(rig_ref, "moments", "feed", nothing_ref))
+    };
+    let ((first, first_rows), (second, second_rows)) = tokio::join!(returned(LoadOptions::default()), returned(LoadOptions { force: true }));
     assert_eq!(first.unwrap().status, LoadStatus::Loaded);
     assert_eq!(second.unwrap().status, LoadStatus::Loaded);
+    assert_eq!(first_rows, ["m1", "m2"], "the first caller returned before the rows landed");
+    assert_eq!(second_rows, ["m1", "m2"], "the second caller returned before the rows landed");
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
     assert_eq!(rig.sync.counters().transport_calls, 1);
 }

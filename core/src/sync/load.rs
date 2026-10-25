@@ -232,7 +232,11 @@ impl Inner {
                         Ok(Some(sender))
                     }
                     FetchVerdict::AwaitInFlight => match flights.waiting.get(&flight_key) {
-                        Some(receiver) => Err(Some(receiver.clone())),
+                        Some(receiver) => {
+                            #[cfg(test)]
+                            flights.joined.0.send_modify(|joined| *joined += 1);
+                            Err(Some(receiver.clone()))
+                        }
                         None => Err(None),
                     },
                     FetchVerdict::SkipFresh => Err(None),
@@ -398,6 +402,15 @@ impl Sync {
             }).collect();
             (id, values)
         }).collect())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn joined_loads(&self) -> usize { *locked(&self.inner.flights).joined.0.borrow() }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_joined(&self, at_least: usize) {
+        let mut joined = locked(&self.inner.flights).joined.0.subscribe();
+        let _ = joined.wait_for(|joined| *joined >= at_least).await;
     }
 
     pub async fn load(&self, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {
