@@ -35,6 +35,23 @@ fn point_returns_the_row_or_none() {
 }
 
 #[test]
+fn keyword_columns_preserve_values_across_insert_update_and_read() {
+    let spec = crate::schema::ModelSpec::new("keywords", vec![
+        crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id),
+        crate::schema::FieldSpec::scalar("default", crate::value::ScalarKind::Str).indexed(),
+        crate::schema::FieldSpec::scalar("select", crate::value::ScalarKind::Str),
+    ]);
+    let store = Store::open_in_memory().unwrap();
+    store.boot(&[spec], None).unwrap();
+    store.mark_ready();
+    for value in ["first", "changed"] {
+        store.commit(envelope(&store, vec![upsert("keywords", json!({"id":"k1", "default":value, "select":"chosen"}))], vec![])).unwrap();
+        let row = store.point("keywords", "k1").unwrap().unwrap();
+        assert_eq!((row["default"].as_str(), row["select"].as_str()), (Some(value), Some("chosen")));
+    }
+}
+
+#[test]
 fn rows_by_ids_restores_requested_order_and_skips_missing() {
     let (store, _) = booted_store();
     seed(&store, &[("v1", "c"), ("v2", "c")]);

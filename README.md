@@ -4,6 +4,8 @@ ActiveRecord for Swift and Kotlin. Describe models once, store normalized data i
 
 One Rust core serves iOS and Android. Swift and Kotlin only get thin bindings and a typed, Rails-like API generated from your model files.
 
+Generated APIs escape language keywords while preserving JSON keys. SQLite also accepts keyword fields in storage, indexes and queries.
+
 ## Requirements
 
 Android 13 (API 33) or newer.

@@ -195,7 +195,7 @@ fn stash_surviving_columns(connection: &Connection, info: &ModelInfo, model: &st
         if !paths.contains(field) || columns.get(&leaf.column).is_none_or(|declared| !declared.eq_ignore_ascii_case(leaf.ty.as_sql())) {
             continue;
         }
-        let mut statement = connection.prepare(&format!("SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL", column = leaf.column, table = info.table))?;
+        let mut statement = connection.prepare(&format!("SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL", column = crate::ddl::sql_ident(&leaf.column), table = info.table))?;
         let cells = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, rusqlite::types::Value>(1)?)))?;
         for cell in cells {
             let (row_id, cell) = cell?;

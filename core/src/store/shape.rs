@@ -167,7 +167,7 @@ pub(crate) fn delete_tables(connection: &Connection, layout: &Layout, tables: &[
 
 fn insert_element(connection: &Connection, table: &str, columns: Vec<(String, SqlValue)>, head: [SqlValue; 4]) -> Result<(), StoreError> {
     let names: Vec<&str> = ["row_id", "node", "owner", "pos"].into_iter().chain(columns.iter().map(|(name, _)| name.as_str())).collect();
-    let sql = format!("INSERT INTO {table} ({}) VALUES ({})", names.join(", "), placeholders(names.len()));
+    let sql = format!("INSERT INTO {table} ({}) VALUES ({})", names.iter().map(|name| crate::ddl::sql_ident(name)).collect::<Vec<_>>().join(", "), placeholders(names.len()));
     connection.prepare_cached(&sql)?.execute(params_from_iter(head.into_iter().chain(columns.into_iter().map(|(_, value)| value))))?;
     Ok(())
 }
@@ -364,7 +364,7 @@ fn read_table(connection: &Connection, table: &Table, ids: &[String]) -> Result<
             let mut columns = Vec::new();
             members.iter().for_each(|member| crate::ddl::member_columns(member, &mut columns));
             let names: Vec<String> = columns.into_iter().map(|(name, _)| name).collect();
-            let list: String = names.iter().map(|name| format!(", {name}")).collect();
+            let list: String = names.iter().map(|name| format!(", {}", crate::ddl::sql_ident(name))).collect();
             let sql = format!("SELECT row_id, node, owner, pos{list} FROM {} WHERE row_id IN ({}) ORDER BY row_id, owner, pos", table.name, placeholders(ids.len()));
             let mut statement = connection.prepare_cached(&sql)?;
             let rows = statement.query_map(params_from_iter(ids.iter()), |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, read_cells(row, names.len(), 4)?)))?;

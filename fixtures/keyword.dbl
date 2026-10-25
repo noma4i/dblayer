@@ -1,0 +1,20 @@
+model KeywordRecord, storage: :local do
+  attribute :default, :string
+  attribute :class, :string
+  attribute :value, KeywordValue, null: true do
+    attribute :default, :string
+    attribute :when, :string
+    attribute :class, :string
+    attribute :container, :string
+    attribute :r, :string
+    attribute :child, KeywordChild, default: { default: "d", when: "w", class: "c" } do
+      attribute :default, :string
+      attribute :when, :string
+      attribute :class, :string
+    end
+  end
+  scope :when do
+    parameter :class, :string
+    where class: :class
+  end
+end

@@ -32,9 +32,9 @@ fn fault(clause: &Where) -> QueryError {
 
 #[test]
 fn plain_fields_use_their_column() {
-    assert_eq!(compiled(&Where::equal("kind", json!("chat"))), ("r.kind = ?".to_string(), vec![SqlValue::Text("chat".into())]));
+    assert_eq!(compiled(&Where::equal("kind", json!("chat"))), ("r.\"kind\" = ?".to_string(), vec![SqlValue::Text("chat".into())]));
     let mixed = Where::all_of(vec![Where::equal("chatId", json!("c1")), Where::compare("kind", CompareOp::Greater, json!("a"))]);
-    assert_eq!(compiled(&mixed).0, "(r.chat_id = ? AND r.kind > ?)");
+    assert_eq!(compiled(&mixed).0, "(r.\"chat_id\" = ? AND r.\"kind\" > ?)");
 }
 
 #[test]

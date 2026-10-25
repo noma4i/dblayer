@@ -40,7 +40,7 @@ fn query_composes_where_order_limit_and_offset() {
     let statement = compile_keys(&query, &people()).unwrap();
     assert_eq!(
         statement.sql,
-        format!("{HEAD} WHERE r.status = ? ORDER BY r.created_at DESC, r.id LIMIT ? OFFSET ?")
+        format!("{HEAD} WHERE r.\"status\" = ? ORDER BY r.\"created_at\" DESC, r.id LIMIT ? OFFSET ?")
     );
     assert_eq!(
         statement.bindings,
@@ -65,7 +65,7 @@ fn id_order_is_not_repeated_as_tie_break() {
 #[test]
 fn plain_order_uses_its_column() {
     let statement = compile_keys(&query().ordered(vec![Order::new("kind", SortDirection::Asc)]), &people()).unwrap();
-    assert_eq!(statement.sql, format!("{HEAD} ORDER BY r.kind ASC, r.id"));
+    assert_eq!(statement.sql, format!("{HEAD} ORDER BY r.\"kind\" ASC, r.id"));
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn count_ignores_order_limit_and_offset() {
         .limited(5)
         .offset_by(1);
     let statement = compile_count(&query, &people()).unwrap();
-    assert_eq!(statement.sql, "SELECT COUNT(*) FROM row_people AS r WHERE r.status = ?");
+    assert_eq!(statement.sql, "SELECT COUNT(*) FROM row_people AS r WHERE r.\"status\" = ?");
     assert_eq!(statement.bindings, vec![SqlValue::Text("active".into())]);
 }
 

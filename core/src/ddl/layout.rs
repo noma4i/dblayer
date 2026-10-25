@@ -241,9 +241,9 @@ pub fn layout(model: &ModelSpec) -> Layout {
     layout.revs = layout.fields.iter().map(|plan| (plan.field().to_string(), rev_column(&column_name(plan.field())))).collect();
     let mut names = vec!["id".to_string(), "revision".to_string(), "born_rev".to_string()];
     names.extend(layout.row_columns.iter().map(|(name, _)| name.clone()));
-    layout.select_lean = names.join(", ");
+    layout.select_lean = names.iter().map(|name| super::sql_ident(name)).collect::<Vec<_>>().join(", ");
     names.extend(layout.revs.iter().map(|(_, column)| column.clone()));
-    layout.select = names.join(", ");
+    layout.select = names.iter().map(|name| super::sql_ident(name)).collect::<Vec<_>>().join(", ");
     layout
 }
 
@@ -356,7 +356,7 @@ impl Layout {
                 TableShape::Elements(members) => {
                     let mut columns = Vec::new();
                     members.iter().for_each(|member| member_columns(member, &mut columns));
-                    let extra: String = columns.iter().map(|(name, ty)| format!(",\n  {name} {}", ty.as_sql())).collect();
+                    let extra: String = columns.iter().map(|(name, ty)| format!(",\n  {} {}", super::sql_ident(name), ty.as_sql())).collect();
                     format!(
                         "{kind} IF NOT EXISTS {} (\n  row_id TEXT NOT NULL,\n  node INTEGER NOT NULL,\n  owner INTEGER NOT NULL,\n  pos INTEGER NOT NULL{extra},\n  PRIMARY KEY (row_id, node)\n) STRICT, WITHOUT ROWID",
                         table.name

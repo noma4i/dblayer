@@ -9,5 +9,5 @@ fn a_union_field_compares_by_its_typename_column() {
     let model = ModelSpec::new("messages", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::union("attachment", "MessageAttachment", vec![variant]).nullable()]);
     let mut bindings = Vec::new();
     let sql = Where::all_of(vec![Where::equal("attachment", json!("GiftAttachment")), Where::is_null("attachment")]).compile(&model, &mut bindings).unwrap();
-    assert_eq!(sql, "(r.attachment = ? AND r.attachment IS NULL)");
+    assert_eq!(sql, "(r.\"attachment\" = ? AND r.\"attachment\" IS NULL)");
 }

@@ -11,6 +11,9 @@ Swift generation is unchanged.
 
 Declare attributes and indexes directly inside `model`. Use `attribute :name, :string` for an explicit storage type.
 
+Generated fields, parameters and methods escape Swift and Kotlin keywords. JSON keys and model declarations retain their original names.
+SQLite column identifiers are quoted, so keyword fields also support storage, indexes, filters and updates.
+
 With `--schema`, `attribute :name` without a type infers its type and nullability from the matching GraphQL type. Local attributes require an explicit type.
 The DSL is parsed by Rust. It does not execute Ruby expressions or load Ruby gems.
 
@@ -46,7 +49,8 @@ An absent path key leaves the stored field unchanged.
 
 Declared queries generate indexes with equality filters first and sort columns next, preserving each sort direction. Duplicate indexes and indexes covered by a longer prefix are removed.
 
-Every scalar and enum field is its own typed SQLite column, indexed or not. An update writes only the columns of the fields that changed. A null value and an absent value are stored the same way (SQL `NULL`), so a field read back is either present or missing, never `null`.
+Every scalar and enum field is its own typed SQLite column, indexed or not. An update writes only changed fields.
+Nullable fields with defaults retain an explicit null marker, so reopening preserves the difference between an absent value and null.
 
 ### GraphQL errors
 

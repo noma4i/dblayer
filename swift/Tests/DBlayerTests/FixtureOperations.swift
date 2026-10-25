@@ -574,6 +574,35 @@ public struct SettingsInput: Encodable, Sendable, Equatable {
     }
 }
 
+public struct WhenResult: Codable, Sendable, Equatable {
+    public let `default`: String?
+    public let when: String?
+    public let container: String?
+    public let r: String?
+
+    public init(`default`: String? = nil, when: String? = nil, container: String? = nil, r: String? = nil) {
+        self.`default` = `default`
+        self.when = when
+        self.container = container
+        self.r = r
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case `default` = "default"
+        case when = "when"
+        case container = "container"
+        case r = "r"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.`default` = try container.decodeIfPresent(String.self, forKey: .`default`)
+        self.when = try container.decodeIfPresent(String.self, forKey: .when)
+        self.container = try container.decodeIfPresent(String.self, forKey: .container)
+        self.r = try container.decodeIfPresent(String.self, forKey: .r)
+    }
+}
+
 public struct QrCodeCreateResult: Codable, Sendable, Equatable {
     public let url: String?
 
@@ -587,7 +616,7 @@ public struct QrCodeCreateResult: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        url = try container.decodeIfPresent(String.self, forKey: .url)
+        self.url = try container.decodeIfPresent(String.self, forKey: .url)
     }
 }
 
@@ -604,7 +633,7 @@ public struct StickerSendResult: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(String.self, forKey: .id)
+        self.id = try container.decodeIfPresent(String.self, forKey: .id)
     }
 }
 
@@ -630,10 +659,10 @@ public struct PricingLoadResult: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        rewards = try container.decodeIfPresent([PricingLoadResultRewards].self, forKey: .rewards)
-        videoIntro = try container.decodeIfPresent(PricingLoadResultVideoIntro.self, forKey: .videoIntro)
-        tags = try container.decodeIfPresent([String].self, forKey: .tags)
-        spec = try container.decodeIfPresent(JSONValue.self, forKey: .spec)
+        self.rewards = try container.decodeIfPresent([PricingLoadResultRewards].self, forKey: .rewards)
+        self.videoIntro = try container.decodeIfPresent(PricingLoadResultVideoIntro.self, forKey: .videoIntro)
+        self.tags = try container.decodeIfPresent([String].self, forKey: .tags)
+        self.spec = try container.decodeIfPresent(JSONValue.self, forKey: .spec)
     }
 }
 
@@ -656,9 +685,9 @@ public struct PricingLoadResultRewards: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
-        name = try container.decodeIfPresent(String.self, forKey: .name)
-        price = try container.decodeIfPresent(Int.self, forKey: .price)
+        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
+        self.name = try container.decodeIfPresent(String.self, forKey: .name)
+        self.price = try container.decodeIfPresent(Int.self, forKey: .price)
     }
 }
 
@@ -675,7 +704,7 @@ public struct PricingLoadResultVideoIntro: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled)
+        self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled)
     }
 }
 
@@ -692,7 +721,7 @@ public struct MomentCreateResult: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        moment = try container.decodeIfPresent(MomentCreateResultMoment.self, forKey: .moment)
+        self.moment = try container.decodeIfPresent(MomentCreateResultMoment.self, forKey: .moment)
     }
 }
 
@@ -709,7 +738,7 @@ public struct MomentCreateResultMoment: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
+        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
     }
 }
 
@@ -732,9 +761,9 @@ public struct GiphyLoadResult: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
-        url = try container.decodeIfPresent(String.self, forKey: .url)
-        isSticker = try container.decodeIfPresent(Bool.self, forKey: .isSticker)
+        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
+        self.url = try container.decodeIfPresent(String.self, forKey: .url)
+        self.isSticker = try container.decodeIfPresent(Bool.self, forKey: .isSticker)
     }
 }
 
@@ -751,7 +780,7 @@ public struct WidgetsSendResult: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(String.self, forKey: .id)
+        self.id = try container.decodeIfPresent(String.self, forKey: .id)
     }
 }
 
@@ -777,14 +806,19 @@ public struct ContainerMediaLoadResult: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        visualCount = try container.decodeIfPresent(Int.self, forKey: .visualCount)
-        audioCount = try container.decodeIfPresent(Int.self, forKey: .audioCount)
-        rewardCount = try container.decodeIfPresent(Int.self, forKey: .rewardCount)
-        latestSequence = try container.decodeIfPresent(Int.self, forKey: .latestSequence)
+        self.visualCount = try container.decodeIfPresent(Int.self, forKey: .visualCount)
+        self.audioCount = try container.decodeIfPresent(Int.self, forKey: .audioCount)
+        self.rewardCount = try container.decodeIfPresent(Int.self, forKey: .rewardCount)
+        self.latestSequence = try container.decodeIfPresent(Int.self, forKey: .latestSequence)
     }
 }
 
 public enum Operations {
+    public static func when(`class`: String) async throws -> WhenResult {
+        var variables: [String: JSONValue] = [:]
+        variables["class"] = try JSONValue.encode(`class`)
+        return try await DB.run("KeywordCall", variables: variables, as: WhenResult.self)
+    }
     public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {
         var variables: [String: JSONValue] = [:]
         variables["kind"] = try JSONValue.encode(kind)

@@ -1,5 +1,16 @@
 scalar :DateTime, as: :date
 
+operation :when do
+  query "KeywordCall"
+  parameter :class, :string
+  returns do
+    attribute :default, :string
+    attribute :when, :string
+    attribute :container, :string
+    attribute :r, :string
+  end
+end
+
 operation :qr_code_create do
   mutation "QrCodeCreate"
   wrap "input"

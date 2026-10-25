@@ -348,6 +348,15 @@ data class SettingsInput(val itemProps: JsonElement, @EncodeDefault(EncodeDefaul
 
 @Immutable
 @Serializable
+data class WhenResult(
+    val default: String? = null,
+    val `when`: String? = null,
+    val container: String? = null,
+    val r: String? = null,
+)
+
+@Immutable
+@Serializable
 data class QrCodeCreateResult(
     val url: String? = null,
 )
@@ -417,6 +426,11 @@ data class ContainerMediaLoadResult(
 )
 
 object Operations {
+    suspend fun `when`(`class`: String): WhenResult {
+        val variables = mutableMapOf<String, JsonElement>()
+        variables["class"] = jsonValue(`class`)
+        return DBlayer.run("KeywordCall", JsonObject(variables), WhenResult.serializer())
+    }
     suspend fun qrCodeCreate(kind: String, size: Long? = null): QrCodeCreateResult {
         val variables = mutableMapOf<String, JsonElement>()
         variables["kind"] = jsonValue(kind)

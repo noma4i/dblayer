@@ -99,8 +99,8 @@ fn create_indexes_remove_duplicate_and_prefix_indexes() {
     connection.execute_batch(&create_table_statement(&model)).unwrap();
     for sql in &statements { connection.execute_batch(sql).unwrap(); }
     assert_eq!(statements.len(), 4);
-    assert!(!statements.iter().any(|sql| sql.ends_with("(chat_id)")));
-    assert!(statements.iter().any(|sql| sql.ends_with("(chat_id, sequence_number)")));
+    assert!(!statements.iter().any(|sql| sql.ends_with("(\"chat_id\")")));
+    assert!(statements.iter().any(|sql| sql.ends_with("(\"chat_id\", \"sequence_number\")")));
 }
 
 #[test]

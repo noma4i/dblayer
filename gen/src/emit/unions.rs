@@ -3,7 +3,7 @@ use std::fmt::Write;
 use dblayer::schema::FieldSpec;
 
 use super::nested::string_literal;
-use super::field_type;
+use super::{field_type, identifier};
 use crate::enums::EnumDecl;
 
 fn cases(declaration: &FieldSpec, swift: bool) -> Vec<(String, String, &str)> {
@@ -27,8 +27,8 @@ pub(super) fn emit_swift_union(out: &mut String, declaration: &FieldSpec) {
     for field in &declaration.shared {
         let optional = field_type(field, true);
         let optional = if optional.ends_with('?') { optional } else { format!("{optional}?") };
-        writeln!(out, "    public var {}: {optional} {{\n        switch self {{", field.name).unwrap();
-        for (case, _, _) in &cases { writeln!(out, "        case let .{case}(value): return value.{}", field.name).unwrap(); }
+        writeln!(out, "    public var {}: {optional} {{\n        switch self {{", identifier(&field.name, true)).unwrap();
+        for (case, _, _) in &cases { writeln!(out, "        case let .{case}(value): return value.{}", identifier(&field.name, true)).unwrap(); }
         writeln!(out, "        case .unknown: return nil\n        }}\n    }}\n").unwrap();
     }
     writeln!(out, "    public var kind: {name}Kind? {{\n        switch self {{").unwrap();
@@ -50,8 +50,8 @@ pub(super) fn emit_kotlin_union(out: &mut String, declaration: &FieldSpec) {
     for field in &declaration.shared {
         let optional = field_type(field, false);
         let optional = if optional.ends_with('?') { optional } else { format!("{optional}?") };
-        writeln!(out, "    val {}: {optional}\n        get() = when (this) {{", field.name).unwrap();
-        for (case, _, _) in &cases { writeln!(out, "            is {case} -> value.{}", field.name).unwrap(); }
+        writeln!(out, "    val {}: {optional}\n        get() = when (this) {{", identifier(&field.name, false)).unwrap();
+        for (case, _, _) in &cases { writeln!(out, "            is {case} -> value.{}", identifier(&field.name, false)).unwrap(); }
         writeln!(out, "            is Unknown -> null\n        }}\n").unwrap();
     }
     writeln!(out, "    companion object {{\n        fun fromCells(cells: List<Cell>): {name} {{\n            val r = CellReader(cells)\n            return when (val typename = r.req(0, Cell::asText)) {{").unwrap();

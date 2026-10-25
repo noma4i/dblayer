@@ -1,4 +1,5 @@
-type Query { ping: Int, inbox(list: ContainerShelfKind, first: Int, after: String): InboxConnection!, containerMembers(containerId: ID!, order: ContainerMemberOrder = JOINED, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]!, containerMedia(containerId: ID!, upToSequence: Int): ContainerMedia }
+type Query { keywordCall(class: String!): KeywordResult!, ping: Int, inbox(list: ContainerShelfKind, first: Int, after: String): InboxConnection!, containerMembers(containerId: ID!, order: ContainerMemberOrder = JOINED, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]!, containerMedia(containerId: ID!, upToSequence: Int): ContainerMedia }
+type KeywordResult { default: String!, when: String!, container: String!, r: String! }
 type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker, momentCreate(input: MomentInput!): MomentCreated, widgetsSend(widgets: [StickerWidgetInput!]): Sticker, clipCreate(signedId: String!, widgets: [StickerWidgetInput!]): ClipCreated }
 type ClipCreated { clip: Clip }
 type Clip { id: ID!, title: String }

@@ -5,7 +5,7 @@ use dblayer::schema::FieldSpec;
 use crate::operation::OperationCall;
 use super::nested::{emit_kotlin_type, emit_swift_type};
 
-use super::{arg_type, name};
+use super::{arg_type, identifier, name};
 fn declared(root: &FieldSpec) -> Vec<&FieldSpec> {
     fn walk<'a>(field: &'a FieldSpec, out: &mut Vec<&'a FieldSpec>) {
         out.push(field);
@@ -37,14 +37,14 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
     }
     writeln!(out, "public enum Operations {{").unwrap();
     for operation in operations {
-        let method = name(&operation.name);
-        let params = operation.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
+        let method = identifier(&name(&operation.name), true);
+        let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
         let returns = if operation.result.is_none() { String::new() } else { format!(" -> {}", returned(operation, true)) };
         let binding = if operation.args.is_empty() { "let" } else { "var" };
         writeln!(out, "    public static func {method}({params}) async throws{returns} {{\n        {binding} variables: [String: JSONValue] = [:]").unwrap();
         for (arg, kind) in &operation.args {
-            if kind.ends_with('?') { writeln!(out, "        if let value = {arg} {{ variables[\"{arg}\"] = try JSONValue.encode(value) }}").unwrap(); }
-            else { writeln!(out, "        variables[\"{arg}\"] = try JSONValue.encode({arg})").unwrap(); }
+            if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ variables[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
+            else { writeln!(out, "        variables[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }
         }
         let sent = operation.wrap.as_ref().map_or("variables".to_string(), |wrap| format!("[\"{wrap}\": JSONValue.object(variables)]"));
         if operation.result.is_none() { writeln!(out, "        try await DB.run(\"{}\", variables: {sent})\n    }}", operation.operation).unwrap(); }
@@ -62,13 +62,13 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
     }
     writeln!(out, "object Operations {{").unwrap();
     for operation in operations {
-        let method = name(&operation.name);
-        let params = operation.args.iter().map(|(arg, kind)| format!("{arg}: {}{}", arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
+        let method = identifier(&name(&operation.name), false);
+        let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
         let returns = if operation.result.is_none() { String::new() } else { format!(": {}", returned(operation, false)) };
         writeln!(out, "    suspend fun {method}({params}){returns} {{\n        val variables = mutableMapOf<String, JsonElement>()").unwrap();
         for (arg, kind) in &operation.args {
-            if kind.ends_with('?') { writeln!(out, "        if ({arg} != null) variables[\"{arg}\"] = jsonValue({arg})").unwrap(); }
-            else { writeln!(out, "        variables[\"{arg}\"] = jsonValue({arg})").unwrap(); }
+            if kind.ends_with('?') { writeln!(out, "        if ({printed} != null) variables[\"{arg}\"] = jsonValue({printed})", printed = identifier(arg, false)).unwrap(); }
+            else { writeln!(out, "        variables[\"{arg}\"] = jsonValue({printed})", printed = identifier(arg, false)).unwrap(); }
         }
         let sent = operation.wrap.as_ref().map_or("JsonObject(variables)".to_string(), |wrap| format!("JsonObject(mapOf(\"{wrap}\" to JsonObject(variables)))"));
         if operation.result.is_none() { writeln!(out, "        DBlayer.run(\"{}\", {sent})\n    }}", operation.operation).unwrap(); }

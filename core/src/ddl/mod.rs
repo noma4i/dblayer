@@ -419,6 +419,10 @@ pub fn rev_column(column: &str) -> String {
     format!("rev__{column}")
 }
 
+pub(crate) fn sql_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
 fn promoted_columns(model: &ModelSpec) -> impl Iterator<Item = (String, ColumnType)> + '_ {
     model
         .fields
@@ -434,8 +438,8 @@ pub fn create_table_statement(model: &ModelSpec) -> String {
         "revision INTEGER NOT NULL".to_string(),
         "born_rev INTEGER NOT NULL".to_string(),
     ];
-    definitions.extend(plan.row_columns().into_iter().map(|(name, ty)| format!("{name} {}", ty.as_sql())));
-    definitions.extend(plan.rev_columns().into_iter().map(|(_, column)| format!("{column} INTEGER")));
+    definitions.extend(plan.row_columns().into_iter().map(|(name, ty)| format!("{} {}", sql_ident(name), ty.as_sql())));
+    definitions.extend(plan.rev_columns().into_iter().map(|(_, column)| format!("{} INTEGER", sql_ident(column))));
     let kind = if model.is_memory() { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
     format!(
         "{kind} IF NOT EXISTS {} (\n  {}\n) STRICT",
@@ -446,14 +450,14 @@ pub fn create_table_statement(model: &ModelSpec) -> String {
 
 pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
     let table = table_name(model.key.as_str());
-    let mut indexes: Vec<Vec<(String, bool)>> = promoted_columns(model).map(|(name, _)| vec![(name, false)]).collect();
-    indexes.extend(model.indexes.iter().map(|fields| fields.iter().map(|field| (column_name(field), false)).collect()));
+    let mut indexes: Vec<Vec<(String, bool)>> = promoted_columns(model).map(|(name, _)| vec![(sql_ident(&name), false)]).collect();
+    indexes.extend(model.indexes.iter().map(|fields| fields.iter().map(|field| (sql_ident(&column_name(field)), false)).collect()));
     for relation in &model.relations {
-        let mut fields: Vec<_> = relation.by_columns.iter().map(|name| (column_name(name), false)).collect();
+        let mut fields: Vec<_> = relation.by_columns.iter().map(|name| (sql_ident(&column_name(name)), false)).collect();
         fields.sort();
         if let Sort::Fields(order) = &relation.sort {
             for field in order {
-                let name = column_name(&field.column);
+                let name = sql_ident(&column_name(&field.column));
                 if !fields.iter().any(|(held, _)| held == &name) {
                     match field.direction {
                         crate::value::SortDirection::AscNullsLast => fields.push((format!("{name} IS NULL"), false)),
@@ -463,7 +467,7 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
                     fields.push((name, matches!(field.direction, crate::value::SortDirection::Desc | crate::value::SortDirection::DescNullsFirst)));
                 }
             }
-            if !order.is_empty() && !fields.iter().any(|(name, _)| name == "id") { fields.push(("id".into(), false)); }
+            if !order.is_empty() && !fields.iter().any(|(name, _)| name == "\"id\"") { fields.push((sql_ident("id"), false)); }
         }
         if !fields.is_empty() { indexes.push(fields); }
     }
