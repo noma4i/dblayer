@@ -14,7 +14,7 @@ final class ListUpdates<Model: DBModel>: @unchecked Sendable {
     var generation: UInt64
   }
 
-  private let lock = NSLock()
+  private let lock = NSCondition()
   private var bundle = Bundle(rows: [], edits: nil, revision: 0, generation: 0)
 
   func publish(_ snapshot: Snapshot<Model>) {
@@ -24,9 +24,19 @@ final class ListUpdates<Model: DBModel>: @unchecked Sendable {
       let published = lock.withLock { () -> Bool in
         guard bundle.generation == current.generation else { return false }
         bundle = Bundle(rows: snapshot.rows, edits: edits, revision: snapshot.seq, generation: current.generation + 1)
+        lock.broadcast()
         return true
       }
       if published { return }
+    }
+  }
+
+  /// Blocks until the revision is published, false when `seconds` pass first.
+  func waitForPublication(of revision: UInt64, seconds: Double) -> Bool {
+    let deadline = Date(timeIntervalSinceNow: seconds)
+    return lock.withLock {
+      while bundle.revision < revision { if !lock.wait(until: deadline) { return false } }
+      return true
     }
   }
 

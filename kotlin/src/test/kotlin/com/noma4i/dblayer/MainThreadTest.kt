@@ -193,12 +193,12 @@ class MainThreadTest {
             list.takeUpdate()
             window.takeUpdate()
             var edit = 0
-            fun waitedForPublication(consume: () -> ListUpdate<Probe>): Boolean {
+            suspend fun waitedForPublication(consume: () -> ListUpdate<Probe>): Boolean {
                 val entered = java.util.concurrent.CountDownLatch(2)
                 val gate = java.util.concurrent.CountDownLatch(1)
                 armed.set(entered to gate)
                 val text = "t00039-${edit++}"
-                val updated = kotlinx.coroutines.runBlocking { created[39].update(text = GraphQLNullable.Value(text)) }
+                val updated = created[39].update(text = GraphQLNullable.Value(text))
                 try {
                     assertTrue("a publication is comparing rows", entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
                     val consumed = executor.submit<ListUpdate<Probe>> { consume() }

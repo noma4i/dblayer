@@ -108,30 +108,29 @@ struct MainThreadTests {
     }
     let take: () -> ListUpdate<PreparedRow>
     let shown: () -> Int
+    let published: (UInt64) -> Bool
     if kind == "list" {
       let list = LiveList<PreparedRow>(Query<PreparedRow>(), snapshots: source)
-      (take, shown) = ({ list.takeUpdate() }, { list.rows.count })
+      (take, shown, published) = ({ list.takeUpdate() }, { list.rows.count }, { list.updates.waitForPublication(of: $0, seconds: 5) })
     } else {
       let window = LiveWindow<PreparedRow>(Window<PreparedRow>(query: Query<PreparedRow>(), tail: 3), snapshots: source)
-      (take, shown) = ({ window.takeUpdate() }, { window.rows.count })
+      (take, shown, published) = ({ window.takeUpdate() }, { window.rows.count }, { window.updates.waitForPublication(of: $0, seconds: 5) })
     }
     await eventually("the subscription") { box.get() != nil }
     let rows = (0 ..< 3).map { PreparedRow(key: "r\($0)", prepared: prepared) }
     box.get()?(Snapshot(rows: rows, replaced: [:], reordered: true, seq: 1))
     await eventually("the first delivery") { shown() == 3 }
     _ = take()
-    while block(on: prepared, seconds: 0) {}
 
-    box.get()?(Snapshot(rows: rows, replaced: [:], reordered: true, edits: [.rewrite(2, rows[2])], seq: 2))
-    let preparedInTheBackground = block(on: prepared, seconds: 5)
-    var update = take()
-    let deadline = DispatchTime.now() + 5
-    while update.revision < 2, DispatchTime.now() < deadline {
-      usleep(1000)
-      update = take()
-    }
+    let nextPrepared = DispatchSemaphore(value: 0)
+    let next = (0 ..< 3).map { PreparedRow(key: "r\($0)", prepared: nextPrepared) }
+    box.get()?(Snapshot(rows: next, replaced: [:], reordered: true, edits: [.rewrite(2, next[2])], seq: 2))
+    let preparedInTheBackground = block(on: nextPrepared, seconds: 5)
+    let publishedWhileBusy = published(2)
+    let update = take()
 
     #expect(preparedInTheBackground, "\(kind): the background stage prepared the delivery")
+    #expect(publishedWhileBusy, "\(kind): the revision was published while the main actor was busy")
     #expect(update.revision == 2, "\(kind): the revision")
     #expect(update.edits?.count == 1, "\(kind): the edits")
     #expect(update.rows.count == 3, "\(kind): the rows")
