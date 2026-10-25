@@ -83,3 +83,17 @@ fn an_unopened_feed_closes_only_when_it_is_current() {
     assert_eq!(machine.unopened(first).stage, EntityStage::Opening);
     assert_eq!(machine.unopened(second).stage, EntityStage::Closed);
 }
+
+#[test]
+fn a_feed_of_one_machine_changes_nothing_in_another() {
+    let first = EntityMachine::new(true);
+    let old = first.begin_feed().feed;
+    first.close();
+    let second = EntityMachine::new(true);
+    let current = second.begin_feed().feed;
+    assert_ne!(old, current);
+    assert!(!second.accept(1, true, Some(old)).applied);
+    assert_eq!(second.fail("old".into(), Some(old)).stage, EntityStage::Opening);
+    assert_eq!(second.unopened(old).stage, EntityStage::Opening);
+    assert!(second.accept(1, true, Some(current)).applied);
+}

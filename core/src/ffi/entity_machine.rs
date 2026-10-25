@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use statig::prelude::*;
@@ -23,6 +24,8 @@ pub struct EntityVerdict {
     pub feed: u64,
 }
 
+static NEXT_FEED: AtomicU64 = AtomicU64::new(1);
+
 enum Event {
     Seed { revision: i64 },
     Accept { revision: i64, present: bool, feed: Option<u64> },
@@ -38,7 +41,6 @@ struct Flow {
     revision: i64,
     stale: bool,
     delivered: bool,
-    issued: u64,
     active: u64,
 }
 
@@ -50,7 +52,7 @@ struct Effect {
 
 impl Flow {
     fn new(singleton: bool) -> Self {
-        Self { singleton, revision: i64::MIN, stale: false, delivered: false, issued: 0, active: 0 }
+        Self { singleton, revision: i64::MIN, stale: false, delivered: false, active: 0 }
     }
 
     fn admits(&self, feed: Option<u64>) -> bool {
@@ -98,8 +100,7 @@ impl Flow {
             }
             Event::Reset => Handled,
             Event::BeginFeed => {
-                self.issued += 1;
-                self.active = self.issued;
+                self.active = NEXT_FEED.fetch_add(1, Ordering::Relaxed);
                 Handled
             }
             Event::Unopened { feed } if self.admits(Some(*feed)) => {
