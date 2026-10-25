@@ -52,11 +52,11 @@ run_bounded() {
   pkill -P "$watcher" 2>/dev/null || true
   wait "$watcher" 2>/dev/null || true
   if [ -s "$marker" ]; then
-    rm -f "$marker"
+    /bin/rm -f "$marker"
     echo "check: step '$name' passed $limit s, its process group was killed" >&2
     return 124
   fi
-  rm -f "$marker"
+  /bin/rm -f "$marker"
   return "$code"
 }
 
@@ -162,10 +162,10 @@ take_tree_lock() {
       echo "check: another check run (pid $owner) holds $root, not starting a second one" >&2
       return 3
     fi
-    mv "$lock" "$lock.stale.$$" 2> /dev/null && rm -rf "$lock.stale.$$"
+    mv "$lock" "$lock.stale.$$" 2> /dev/null && /bin/rm -rf "$lock.stale.$$"
   done
   echo "$$" > "$lock/pid"
-  trap 'rm -rf "'"$lock"'"' EXIT
+  trap '/bin/rm -rf "'"$lock"'"' EXIT
 }
 
 run_checks() {
@@ -221,7 +221,7 @@ run_checks() {
   daemon="$(awk -v before="$before" 'BEGIN { while ((getline line < before) > 0) { split(line, p, " "); was[p[1]] = p[2] } }
     { if ($2 > best[$1]) best[$1] = $2 }
     END { for (pid in best) total += best[pid] - (pid in was ? was[pid] : 0); printf "%d", total }' "$sampled")"
-  rm -f "$sampled" "$before"
+  /bin/rm -f "$sampled" "$before"
   cpu=$((cpu_children + daemon))
   echo "check: $([ "$failed" -eq 0 ] && echo ok || echo FAILED), at least $cpu CPU seconds, a lower bound from 1 s samples ($cpu_children in waited children, $daemon in daemons and processes below java), ${#selected[@]} steps selected, wall $((SECONDS - start)) s, load $(uptime | sed 's/.*averages*: //')"
   return "$failed"

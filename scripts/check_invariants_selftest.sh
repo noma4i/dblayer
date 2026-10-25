@@ -15,15 +15,15 @@ cleanup_processes() {
     [ -f "$file" ] || continue
     read -r pid < "$file"
     kill "$pid" 2>/dev/null || true
-    rm -f "$file"
+    /bin/rm -f "$file"
   done
 }
-trap 'cleanup_processes; rm -rf "$work"' EXIT
+trap 'cleanup_processes; /bin/rm -rf "$work"' EXIT
 failed=0
 
 fixture() {
   repo="$work/repo"
-  rm -rf "$repo"
+  /bin/rm -rf "$repo"
   mkdir -p "$repo/scripts" "$repo/specs" "$repo/core/src"
   cp "$here/check_invariants.sh" "$repo/scripts/"
   cat > "$repo/specs/invariants.md" <<'SPEC'
@@ -136,7 +136,7 @@ inv_check_03_a_template_reason_is_not_a_reason() {
 
 inv_check_04_a_missing_registry_is_red() {
   fixture
-  rm "$repo/specs/invariants.md"
+  /bin/rm "$repo/specs/invariants.md"
   expect_red "registry removed"
 }
 
@@ -181,7 +181,7 @@ SUBJECT
   ) || code=$?
   [ -s "$work/pid-sleep" ] && read -r pid < "$work/pid-sleep"
   expect_red_step_killed "$code" "$pid"
-  rm -f "$work/pid-sleep" "$work/go"
+  /bin/rm -f "$work/pid-sleep" "$work/go"
 }
 
 inv_check_05_the_wait_for_a_build_slot_is_not_test_time() {
@@ -198,7 +198,7 @@ inv_check_05_the_wait_for_a_build_slot_is_not_test_time() {
 engine() {
   root="$work/engine"
   mkdir -p "$root/target"
-  rm -f "$root"/ran-*
+  /bin/rm -f "$root"/ran-*
   changed_files() { echo "$CHANGED"; }
   steps=(
     "cheap|c1|20|*|$c1"
@@ -253,7 +253,7 @@ inv_check_06_fast_and_full_fail_on_the_same_step_and_cheap_runs_first() {
 inv_check_06_lanes_run_one_after_another_and_the_first_red_lane_stops_the_run() {
   root="$work/engine"
   mkdir -p "$root/target"
-  rm -f "$root"/overlap "$root"/ran-*
+  /bin/rm -f "$root"/overlap "$root"/ran-*
   rmdir "$root/lock" 2> /dev/null
   changed_files() { echo "$CHANGED"; }
   local hold='mkdir lock 2> /dev/null || touch overlap; sleep 1; rmdir lock 2> /dev/null; true'
@@ -270,14 +270,14 @@ expect_green_counter() {
 inv_check_08_the_cpu_counter_sees_a_build_daemon() {
   root="$work/engine"
   mkdir -p "$root/target" "$work/jdk"
-  rm -f "$work/marker-java"
+  /bin/rm -f "$work/marker-java"
   changed_files() { echo "$CHANGED"; }
   cp "$(command -v perl)" "$work/jdk/java"
   local child='open(P, q(>), q(PIDFILE)); print P $$; close(P); while ((times)[0] + (times)[1] < 3) {} open(F, q(>), q(MARKER)); print F $$, q( ), int((times)[0] + (times)[1]); close(F); sleep 60' waiting='until [ -s MARKER ] && awk -v pid=$(cut -d" " -f1 MARKER) -v cpu=$(cut -d" " -f2 MARKER) "\$1 == pid && \$2 >= cpu - 1 { found = 1 } END { exit !found }" "$CHECK_SAMPLES_FILE"; do sleep 1; done'
   child="${child//PIDFILE/$work/pid-java}"
   child="${child//MARKER/$work/marker-java}"
   waiting="${waiting//MARKER/$work/marker-java}"
-  rm -f "$work/release"
+  /bin/rm -f "$work/release"
   steps=("a|a1|280|-|$work/jdk/java -e 'if (!fork) { exec(q(perl), q(-e), q($child)) } until (-e q($work/release)) { sleep 1 }' & $waiting; touch $work/release; wait")
   (run_checks) > "$work/engine.out" 2>&1
   cleanup_processes
@@ -293,7 +293,7 @@ expect_green_run_daemon() {
 inv_check_08_a_daemon_that_outlives_the_step_is_counted_and_another_runs_daemon_is_not() {
   root="$work/engine"
   mkdir -p "$root/target" "$work/jdk"
-  rm -f "$work/marker-mine"
+  /bin/rm -f "$work/marker-mine"
   changed_files() { echo "$CHANGED"; }
   cp "$(command -v perl)" "$work/jdk/java"
   local mine other waiting='until [ -s MARKER ] && awk -v pid=$(cut -d" " -f1 MARKER) -v cpu=$(cut -d" " -f2 MARKER) "\$1 == pid && \$2 >= cpu - 1 { found = 1 } END { exit !found }" "$CHECK_SAMPLES_FILE"; do sleep 1; done'
