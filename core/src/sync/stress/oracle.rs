@@ -43,7 +43,7 @@ pub fn settled_client(world: &World) {
     let reset = world.moments_reset.load(Ordering::SeqCst);
     for (id, row) in &client {
         if row.is_local() {
-            world.findings.report("temp-left", format!("temp row {id} {:?} is still stored after every operation finished", row.text("text")));
+            world.findings.report("temp_row_left", format!("temp row {id} {:?} is still stored after every operation finished", row.text("text")));
         } else if !server.contains_key(id) && !world.was_discarded(id) && !world.touched(id) {
             world.findings.report("ghost-row", format!("row {id} {:?} is stored but the server does not have it", row.text("text")));
         }

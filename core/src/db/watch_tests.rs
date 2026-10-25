@@ -15,7 +15,7 @@ fn deps_of(db: &super::Db, subject: Subject) -> super::watch::Deps {
 }
 
 #[test]
-fn a_query_depends_on_its_model_and_the_models_it_includes() {
+fn inv_observe_07_a_query_depends_on_its_model_and_the_models_it_includes() {
     let db = booted();
     let deps = deps_of(&db, Subject::Rows(Query::new("moments").including(&["author"])));
     assert!(deps.hit(&model_event("moments")));
@@ -24,7 +24,7 @@ fn a_query_depends_on_its_model_and_the_models_it_includes() {
 }
 
 #[test]
-fn a_scope_query_depends_on_its_scope_not_on_its_model() {
+fn inv_observe_07_a_scope_query_depends_on_its_scope_not_on_its_model() {
     let db = booted();
     let scope = ScopeRef::new(ModelKey::new("moments"), ScopeKey::from_raw("feed"));
     let deps = deps_of(&db, Subject::Rows(Query::new("moments").in_scope(scope.key.clone())));

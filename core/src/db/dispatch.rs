@@ -163,13 +163,17 @@ impl Dispatch {
         Self { pending: Mutex::new(Pending::default()), wake: Condvar::new(), progress: Arc::new(Progress::default()) }
     }
 
-    pub(crate) fn push(&self, event: Event) {
+    pub(crate) fn log_replaced(&self, revision: i64, pairs: impl Iterator<Item = (RowId, RowId)>) {
         let mut pending = held(&self.pending);
-        pending.replaced.extend(event.replaced.iter().map(|(from, to)| (event.revision, from.clone(), to.clone())));
+        pending.replaced.extend(pairs.map(|(from, to)| (revision, from, to)));
         if pending.replaced.len() > MAX_REPLACED_LOG {
             let excess = pending.replaced.len() - MAX_REPLACED_LOG;
             pending.dropped_through = pending.replaced.drain(..excess).map(|(revision, _, _)| revision).max().unwrap_or_default().max(pending.dropped_through);
         }
+    }
+
+    pub(crate) fn push(&self, event: Event) {
+        let mut pending = held(&self.pending);
         pending.events.push_back(event);
         if pending.events.len() > MAX_PENDING {
             let first = pending.events.pop_front().expect("queue is not empty");

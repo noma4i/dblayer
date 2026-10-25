@@ -99,11 +99,13 @@ fn event(node: serde_json::Value) -> SubscriptionEvent {
 }
 
 #[tokio::test(start_paused = true)]
-async fn first_reader_starts_the_subscription_and_the_second_does_not_duplicate_it() {
+async fn inv_live_01_first_reader_starts_the_subscription_and_the_second_does_not_duplicate_it() {
     let rig = rig();
     let first = rig.sync.watch("moments", "pulse", &none()).unwrap();
     rig.transport.await_calls("MomentEvents", 1).await;
     let second = rig.sync.watch("moments", "pulse", &none()).unwrap();
+    rig.transport.emit("MomentEvents", SubscriptionEvent::Ready);
+    rig.transport.await_consumed("MomentEvents").await;
     assert_eq!(rig.transport.call_count("MomentEvents"), 1);
     assert_eq!(rig.sync.inner.live_status(KEY), Some((2, true)));
     drop((first, second));
@@ -118,7 +120,7 @@ async fn watching_a_relation_without_updates_starts_nothing() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn subscription_closes_after_the_last_reader_leaves_and_the_linger_passes() {
+async fn inv_live_01_subscription_closes_after_the_last_reader_leaves_and_the_linger_passes() {
     let rig = rig();
     let watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
     rig.transport.await_calls("MomentEvents", 1).await;
@@ -132,7 +134,7 @@ async fn subscription_closes_after_the_last_reader_leaves_and_the_linger_passes(
 }
 
 #[tokio::test(start_paused = true)]
-async fn reader_returning_within_the_linger_keeps_the_same_subscription() {
+async fn inv_live_01_reader_returning_within_the_linger_keeps_the_same_subscription() {
     let rig = rig();
     drop(rig.sync.watch("moments", "pulse", &none()).unwrap());
     tokio::time::sleep(Duration::from_secs(10)).await;
@@ -143,7 +145,7 @@ async fn reader_returning_within_the_linger_keeps_the_same_subscription() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn dropped_connection_rereads_the_expired_watched_relation_after_it_reconnects() {
+async fn inv_live_03_dropped_connection_rereads_the_expired_watched_relation_after_it_reconnects() {
     let rig = rig();
     rig.transport.enqueue("MomentsPulse", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsPulse", feed_reply(&["m1", "m2"], false, "c2"));

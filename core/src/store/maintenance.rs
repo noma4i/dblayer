@@ -47,8 +47,9 @@ impl Store {
                 }
                 let cutoff = iso_millis(now - policy.drop_after_ms).unwrap_or_default();
                 let sql = format!(
-                    "SELECT id FROM {} WHERE id LIKE 'temp-%' AND (created_at IS NULL OR created_at < ?)",
-                    info.table
+                    "SELECT id FROM {} WHERE id LIKE '{}%' AND (created_at IS NULL OR created_at < ?)",
+                    info.table,
+                    crate::identity::TEMP_ID_PREFIX
                 );
                 let mut statement = inner.connection.prepare(&sql)?;
                 let found = statement.query_map(params_from_iter([cutoff]), |row| row.get::<_, String>(0))?;

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[test]
-fn observe_delivers_the_first_value_with_everything_inserted() {
+fn inv_observe_10_observe_delivers_the_first_value_with_everything_inserted() {
     let db = booted();
     seed_tree(&db);
     let (log, callback) = recorder();
@@ -59,7 +59,7 @@ fn observer_is_called_when_a_matching_row_lands() {
 }
 
 #[test]
-fn observer_is_not_called_for_a_commit_on_another_model() {
+fn inv_observe_02_observer_is_not_called_for_a_commit_on_another_model() {
     let db = booted();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
@@ -86,7 +86,7 @@ fn observer_is_not_called_when_the_result_set_is_unchanged() {
 }
 
 #[test]
-fn a_commit_with_the_same_content_is_silent() {
+fn inv_observe_02_a_commit_with_the_same_content_is_silent() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "keep"}));
     let (log, callback) = recorder();
@@ -140,7 +140,7 @@ fn touching_a_parent_notifies_observers_of_the_parent() {
 }
 
 #[test]
-fn revisions_of_deliveries_grow() {
+fn inv_observe_03_revisions_of_deliveries_grow() {
     let db = booted();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
@@ -201,7 +201,7 @@ fn different_queries_are_read_separately() {
 }
 
 #[test]
-fn late_subscriber_joins_the_shared_value_without_a_read() {
+fn inv_observe_10_late_subscriber_joins_the_shared_value_without_a_read() {
     let db = booted();
     seed_tree(&db);
     let (_, first) = recorder();

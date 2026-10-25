@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
 
 use rusqlite::Connection;
 
@@ -94,6 +95,38 @@ pub(crate) enum StoreEvent<'a> {
 }
 
 pub(crate) type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
+pub(crate) type CommitLog = Box<dyn Fn(&StoreEvent<'_>) + Send + Sync>;
+
+/// Hands out places in the order of the commits, so the hook runs after the writer lock is released and still sees events in commit order.
+#[derive(Default)]
+struct AnnounceLine {
+    issued: AtomicU64,
+    next: Mutex<u64>,
+    turn: Condvar,
+}
+
+impl AnnounceLine {
+    fn ticket(&self) -> u64 {
+        self.issued.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn run(&self, ticket: u64, announce: impl FnOnce()) {
+        struct Done<'a>(&'a AnnounceLine);
+        impl Drop for Done<'_> {
+            fn drop(&mut self) {
+                *self.0.next.lock().unwrap_or_else(|error| error.into_inner()) += 1;
+                self.0.turn.notify_all();
+            }
+        }
+        let mut next = self.next.lock().unwrap_or_else(|error| error.into_inner());
+        while *next != ticket {
+            next = self.turn.wait(next).unwrap_or_else(|error| error.into_inner());
+        }
+        drop(next);
+        let _done = Done(self);
+        announce();
+    }
+}
 
 pub struct Store {
     inner: Mutex<Inner>,
@@ -101,6 +134,8 @@ pub struct Store {
     poison: Arc<Mutex<Option<String>>>,
     readers: Option<readers::Readers>,
     hook: OnceLock<StoreHook>,
+    commit_log: OnceLock<CommitLog>,
+    line: AnnounceLine,
     recreated: Option<RecreateReason>,
     #[cfg(test)]
     failing_entity_reads: std::sync::atomic::AtomicUsize,
@@ -132,6 +167,8 @@ impl Store {
             poison,
             readers: None,
             hook: OnceLock::new(),
+            commit_log: OnceLock::new(),
+            line: AnnounceLine::default(),
             #[cfg(test)]
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
@@ -166,6 +203,10 @@ impl Store {
         let _ = self.hook.set(hook);
     }
 
+    pub(crate) fn set_commit_log(&self, log: CommitLog) {
+        let _ = self.commit_log.set(log);
+    }
+
     pub(crate) fn announce(&self, event: StoreEvent<'_>) {
         #[cfg(test)]
         if let (StoreEvent::Committed(result), Some(probe)) = (&event, self.after_commit.lock().unwrap_or_else(|error| error.into_inner()).as_ref()) {
@@ -174,6 +215,15 @@ impl Store {
         if let Some(hook) = self.hook.get() {
             hook(event);
         }
+    }
+
+    fn announce_released(&self, inner: MutexGuard<'_, Inner>, event: StoreEvent<'_>) {
+        if let Some(log) = self.commit_log.get() {
+            log(&event);
+        }
+        let ticket = self.line.ticket();
+        drop(inner);
+        self.line.run(ticket, || self.announce(event));
     }
 
     pub fn generation(&self) -> Generation {
@@ -260,6 +310,8 @@ mod memory_tests;
 mod open_tests;
 #[cfg(test)]
 mod readers_tests;
+#[cfg(test)]
+mod hook_tests;
 #[cfg(test)]
 mod reset_tests;
 #[cfg(test)]

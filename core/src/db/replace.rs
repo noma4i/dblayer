@@ -90,7 +90,7 @@ impl Db {
             Some(base) => reader.stored_rows(model.as_str(), &names)?.into_iter().filter(|(_, row)| row.revision > base).map(|(id, _)| id).collect(),
             None => HashSet::new(),
         };
-        let is_local = |id: &str| id.starts_with("temp-") || busy.contains(id) || newer.contains(id);
+        let is_local = |id: &str| crate::identity::is_temp_id(id) || busy.contains(id) || newer.contains(id);
 
         let anchor = (request.coverage == Coverage::Page && !request.replace_all)
             .then(|| incoming_ids.last().and_then(|last| current.iter().position(|member| &member.id == last)))

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::ddl::{fts_name, table_name};
-use crate::identity::{ModelKey, ScopeKey};
+use crate::identity::{permanent_row_flag, ModelKey, ScopeKey};
 use crate::schema::ModelSpec;
 use crate::value::SortDirection;
 
@@ -215,12 +215,13 @@ fn order_clause(query: &Query, model: &ModelSpec) -> Result<String, QueryError> 
     if query.order.is_empty() {
         return Ok(match (query.scope.is_some(), searching(query)) {
             (true, _) => " ORDER BY m.order_key, m.row_id".to_string(),
-            (false, true) => " ORDER BY q.match_rank, r.id".to_string(),
+            (false, true) => format!(" ORDER BY q.match_rank, {}, r.id", permanent_row_flag("r.id")),
             (false, false) => String::new(),
         });
     }
     let mut parts: Vec<String> = sort_terms(query, model)?.into_iter().map(|term| term.clause).collect();
     if !query.order.iter().any(|order| order.field == "id") {
+        parts.push(permanent_row_flag("r.id"));
         parts.push("r.id".to_string());
     }
     Ok(format!(" ORDER BY {}", parts.join(", ")))

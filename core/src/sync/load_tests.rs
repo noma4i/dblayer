@@ -347,7 +347,7 @@ async fn invalid_params_are_reported() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery() {
+async fn inv_observe_05_forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c1"));
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();

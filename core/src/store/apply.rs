@@ -120,9 +120,10 @@ impl Store {
 
     fn finish(&self, mut inner: std::sync::MutexGuard<'_, Inner>, result: (CommitResult, u32)) -> CommitResult {
         inner.counters.unknown_operation_acks += result.1 as usize;
-        if !result.0.is_noop() {
-            self.announce(super::StoreEvent::Committed(&result.0));
+        if result.0.is_noop() {
+            return result.0;
         }
+        self.announce_released(inner, super::StoreEvent::Committed(&result.0));
         result.0
     }
 }

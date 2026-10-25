@@ -251,7 +251,7 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
 
 impl Store {
     pub fn reset_cache_only(&self, models: &[&str]) -> Result<(), StoreError> {
-        let _readers = self.models.write().unwrap_or_else(|error| error.into_inner());
+        let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         let tables: Vec<(String, String)> = models
             .iter()
@@ -271,12 +271,13 @@ impl Store {
         let operations = crate::operation::read_queue(&transaction)?;
         transaction.commit()?;
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
-        self.announce(StoreEvent::Reset { revision, models: Some(names), operations });
+        drop(readers);
+        self.announce_released(inner, StoreEvent::Reset { revision, models: Some(names), operations });
         Ok(())
     }
 
     pub fn reset_incompatible(&self) -> Result<(), StoreError> {
-        let _readers = self.models.write().unwrap_or_else(|error| error.into_inner());
+        let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         inner.generation = inner.generation.next();
         let now = inner.now_ms();
@@ -290,7 +291,8 @@ impl Store {
         let operations = crate::operation::read_queue(&transaction)?;
         transaction.commit()?;
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
-        self.announce(StoreEvent::Reset { revision, models: None, operations });
+        drop(readers);
+        self.announce_released(inner, StoreEvent::Reset { revision, models: None, operations });
         Ok(())
     }
 

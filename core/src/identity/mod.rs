@@ -5,6 +5,17 @@ pub(crate) mod touches;
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 
+pub const TEMP_ID_PREFIX: &str = "temp-";
+
+pub fn is_temp_id(id: &str) -> bool {
+    id.starts_with(TEMP_ID_PREFIX)
+}
+
+/// 0 for a temporary id: equal order values put it before the permanent rows, as `db::ranked::OrderKey` does. The generated indexes carry the same expression, so an `ORDER BY` with it stays index-served.
+pub fn permanent_row_flag(column: &str) -> String {
+    format!("substr({column}, 1, {}) <> '{TEMP_ID_PREFIX}'", TEMP_ID_PREFIX.len())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum IdentityError {
     #[error("row id must not be blank")]
@@ -43,7 +54,7 @@ impl RowId {
 
     pub fn generate_temp(prefix: Option<&str>) -> Self {
         let prefix = prefix.map(|text| format!("{text}-")).unwrap_or_default();
-        Self(format!("temp-{prefix}{}", uuid::Uuid::new_v4().hyphenated().to_string().to_uppercase()))
+        Self(format!("{TEMP_ID_PREFIX}{prefix}{}", uuid::Uuid::new_v4().hyphenated().to_string().to_uppercase()))
     }
 
     pub fn generate() -> Self {
@@ -55,7 +66,7 @@ impl RowId {
     }
 
     pub fn is_temp(&self) -> bool {
-        self.0.starts_with("temp-")
+        is_temp_id(&self.0)
     }
 }
 

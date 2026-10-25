@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use serde_json::{Map, Value};
 
 use super::AssociationSpec;
+use crate::identity::is_temp_id;
 
 pub(crate) struct Order<'a> {
     pub id: Option<&'a str>,
@@ -28,17 +29,13 @@ fn compare_ids(left: &str, right: &str) -> Ordering {
     }
 }
 
-fn is_temp(id: &str) -> bool {
-    id.starts_with("temp-")
-}
-
 pub(crate) fn is_newer(candidate: &Order<'_>, current: &Order<'_>) -> bool {
     if let (Some(candidate_id), Some(current_id)) = (candidate.id, current.id) {
         if candidate_id == current_id {
             return true;
         }
-        if is_temp(candidate_id) != is_temp(current_id) {
-            return is_temp(candidate_id);
+        if is_temp_id(candidate_id) != is_temp_id(current_id) {
+            return is_temp_id(candidate_id);
         }
     }
     if current.id.is_none() && current.tuple.iter().all(Option::is_none) {

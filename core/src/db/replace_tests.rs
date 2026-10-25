@@ -54,7 +54,7 @@ fn inv_identity_01_foreign_pending_rows_do_not_survive_replacement() {
 }
 
 #[test]
-fn inv_merge_04_three_merges_in_a_row_give_one_delivery_each_and_unchanged_rows_stay_out_of_updated() {
+fn inv_merge_04_inv_observe_05_three_merges_in_a_row_give_one_delivery_each_and_unchanged_rows_stay_out_of_updated() {
     let db = booted();
     start(&db, "feed", &[("m1", "one"), ("m2", "two")]);
     let (log, _subscription) = observe_scope(&db, "feed");

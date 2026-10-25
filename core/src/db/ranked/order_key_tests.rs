@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use rusqlite::types::Value;
 use rusqlite::Connection;
 
-use super::order_key::compare_cells;
+use super::order_key::{compare_cells, OrderKey};
 
 fn sample() -> Vec<Value> {
     vec![
@@ -49,4 +49,30 @@ fn comparison_of_stored_values_matches_sqlite_for_every_pair() {
             assert_eq!(compare_cells(left, right), expected, "{left_index}:{left:?} against {right_index}:{right:?}");
         }
     }
+}
+
+fn each_permutation<'a>(items: &mut Vec<(i64, &'a str)>, from: usize, visit: &mut impl FnMut(&[(i64, &'a str)])) {
+    if from == items.len() {
+        visit(items);
+        return;
+    }
+    for pick in from..items.len() {
+        items.swap(from, pick);
+        each_permutation(items, from + 1, visit);
+        items.swap(from, pick);
+    }
+}
+
+#[test]
+fn inv_order_02_equal_keys_sort_temp_rows_first_then_by_id_in_every_permutation() {
+    let expected = ["lower", "temp-A", "temp-B", "10", "2", "A1", "higher"];
+    let mut rows = vec![(4, "lower"), (5, "temp-A"), (5, "temp-B"), (5, "10"), (5, "2"), (5, "A1"), (6, "higher")];
+    let mut checked = 0;
+    each_permutation(&mut rows, 0, &mut |permutation| {
+        let mut keyed: Vec<(OrderKey, &str)> = permutation.iter().map(|(value, id)| (OrderKey::new(vec![Value::Integer(*value)], &[false], id.to_string()), *id)).collect();
+        keyed.sort_by(|left, right| left.0.cmp(&right.0));
+        assert_eq!(keyed.iter().map(|(_, id)| *id).collect::<Vec<_>>(), expected);
+        checked += 1;
+    });
+    assert_eq!(checked, 5040);
 }

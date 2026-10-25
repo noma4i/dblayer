@@ -220,7 +220,7 @@ fn detach_removes_only_that_member() {
 }
 
 #[test]
-fn order_key_collision_rolls_back_whole_envelope() {
+fn inv_order_01_order_key_collision_rolls_back_whole_envelope() {
     let (store, _) = booted_store();
     let thread = scope("messages", "thread");
     commit(&store, vec![], vec![append(&thread, "m1", "a")]);
@@ -528,14 +528,14 @@ fn the_commit_hook_runs_inside_the_commit_for_every_non_empty_result() {
 }
 
 #[test]
-fn the_commit_hook_runs_while_every_read_is_excluded() {
+fn the_commit_log_runs_while_every_read_is_excluded() {
     use crate::store::StoreEvent;
     use std::sync::{atomic::{AtomicUsize, Ordering}, Arc};
     let (store, _) = booted_store();
     let store = Arc::new(store);
     let excluded = Arc::new(AtomicUsize::new(0));
     let (probe, count) = (store.clone(), excluded.clone());
-    store.set_hook(Box::new(move |event| {
+    store.set_commit_log(Box::new(move |event| {
         if matches!(event, StoreEvent::Committed(_)) && probe.inner.try_lock().is_err() {
             count.fetch_add(1, Ordering::SeqCst);
         }

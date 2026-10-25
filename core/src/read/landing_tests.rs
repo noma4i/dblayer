@@ -48,7 +48,7 @@ fn appended(plan: &LandingPlan) -> Vec<(String, String)> {
 }
 
 #[test]
-fn a_page_without_stored_members_appends_in_server_order_with_increasing_keys() {
+fn inv_order_01_a_page_without_stored_members_appends_in_server_order_with_increasing_keys() {
     let plan = land("order", &StoredScope::default(), &[row("b"), row("a")]);
     let members = appended(&plan);
     assert_eq!(members.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
@@ -92,7 +92,7 @@ fn entity_ops_target_the_scope_model() {
 }
 
 #[test]
-fn next_page_appends_after_the_largest_key_and_keeps_existing_keys() {
+fn inv_order_01_next_page_appends_after_the_largest_key_and_keeps_existing_keys() {
     let current = stored("a2", vec!["a"]);
     let plan = land("append", &current, &[row("c"), row("a")]);
     let added = appended(&plan);

@@ -224,6 +224,12 @@ impl Db {
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
         let cloud_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let reset_listeners = Arc::new(Mutex::new(Vec::new()));
+        let replaced_log = dispatch.clone();
+        store.set_commit_log(Box::new(move |event| {
+            if let StoreEvent::Committed(result) = event {
+                replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
+            }
+        }));
         store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone(), operation_queues.clone(), cloud_changes.clone(), reset_listeners.clone()));
         let shared = Arc::new(Shared {
             store,
@@ -372,7 +378,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
         let mut open_row_ids: HashSet<RowRef> = HashSet::new();
         for spec in models {
             let table = table_name(spec.key.as_str());
-            let mut statement = inner.connection.prepare(&format!("SELECT id FROM {table} WHERE id LIKE 'temp-%'"))?;
+            let mut statement = inner.connection.prepare(&format!("SELECT id FROM {table} WHERE id LIKE '{}%'", crate::identity::TEMP_ID_PREFIX))?;
             let ids = statement.query_map([], |row| row.get::<_, String>(0))?;
             for id in ids {
                 temp_rows.insert(RowRef::new(spec.key.clone(), crate::operation::stored_row_id(&id?)?));

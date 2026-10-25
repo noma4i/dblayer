@@ -140,11 +140,14 @@ fn apply(old: &[Entry], diff: &Diff, new: &[Entry]) -> Vec<Entry> {
 }
 
 #[test]
-fn applying_the_diff_to_the_old_list_gives_the_new_list() {
+fn inv_observe_06_applying_the_diff_to_the_old_list_gives_the_new_list() {
     let mut seed = Seed(0x9E3779B97F4A7C15);
     for _ in 0..2000 {
         let old = random_list(&mut seed, 12);
         let mut new = random_list(&mut seed, 12);
+        if seed.below(3) == 0 {
+            new = old.iter().map(|held| if seed.below(2) == 0 { entry(held.id.as_str(), seed.below(3) as i64 + 10) } else { held.clone() }).collect();
+        }
         let mut replaced = Vec::new();
         if let Some(candidate) = old.iter().find(|entry| !new.iter().any(|other| other.id == entry.id)) {
             let at = seed.below(new.len() as u64 + 1) as usize;

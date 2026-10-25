@@ -294,7 +294,7 @@ async fn memory_events_without_server_ids_create_distinct_expiring_rows() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn repeated_ready_rereads_expired_watched_queries_after_cable_reconnect() {
+async fn inv_live_03_repeated_ready_rereads_expired_watched_queries_after_cable_reconnect() {
     let rig = rig_with_subscription();
     for name in ["before", "after"] {
         rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":name}})));
@@ -462,7 +462,7 @@ async fn dropping_the_subscription_cancels_the_transport() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn dropped_connection_is_reopened_after_a_delay() {
+async fn inv_live_03_dropped_connection_is_reopened_after_a_delay() {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.disconnect("MomentChanged");
@@ -475,7 +475,7 @@ async fn dropped_connection_is_reopened_after_a_delay() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn offline_subscription_waits_without_spending_attempts_and_reconnects_online() {
+async fn inv_live_03_offline_subscription_waits_without_spending_attempts_and_reconnects_online() {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.sync.set_online(false);
@@ -495,7 +495,7 @@ async fn offline_subscription_waits_without_spending_attempts_and_reconnects_onl
 }
 
 #[tokio::test(start_paused = true)]
-async fn repeated_transport_failures_stay_degraded_until_next_after_ready() {
+async fn inv_live_04_repeated_transport_failures_stay_degraded_until_next_after_ready() {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     for failures in 1..=4 {
@@ -548,7 +548,7 @@ async fn independent_feeds_spread_reconnects() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn graphql_failure_stops_the_subscription() {
+async fn inv_live_04_graphql_failure_stops_the_subscription() {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Graphql));
@@ -715,7 +715,7 @@ impl crate::transport::Transport for RefusingFirstSubscribe {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_refused_first_connection_is_retried_like_a_reconnect() {
+async fn inv_live_02_a_refused_first_connection_is_retried_like_a_reconnect() {
     let inner = MockTransport::new();
     let transport = Arc::new(RefusingFirstSubscribe { inner: inner.clone(), refusals: 1.into() });
     let db = Db::open_in_memory(specs(), None).unwrap();

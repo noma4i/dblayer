@@ -28,7 +28,7 @@ fn append(row: &str, order_key: &str) -> ScopeOp {
 }
 
 #[test]
-fn changing_an_included_author_wakes_the_observer_of_moments() {
+fn inv_observe_07_changing_an_included_author_wakes_the_observer_of_moments() {
     let db = booted();
     seed_tree(&db);
     let (log, callback) = recorder();
@@ -162,7 +162,7 @@ fn inv_id_04_a_temp_id_swap_arrives_as_replaced() {
 }
 
 #[test]
-fn destroying_a_parent_is_one_delivery_per_observer_with_one_revision() {
+fn inv_observe_04_destroying_a_parent_is_one_delivery_per_observer_with_one_revision() {
     let db = booted();
     seed_tree(&db);
     let observed: Vec<(ChangeLog, ObserverHandle)> = ["moments", "users", "vibes"]
@@ -207,6 +207,47 @@ fn a_thousand_subscribers_cost_at_most_one_read_per_commit() {
     db.await_revision(db.revision_seq().unwrap());
     assert!(db.counters().observation_reads - reads <= 100);
     assert!(logs.iter().all(|(log, _)| changes(log).last().unwrap().rows.len() == 100));
+}
+
+#[test]
+fn inv_observe_03_a_slow_observer_gets_the_newest_position_after_older_ones_wait_in_its_mailbox() {
+    let db = booted();
+    let (entered_sender, entered) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let revisions: Arc<Mutex<Vec<i64>>> = Arc::default();
+    let sink = revisions.clone();
+    let _observer = db
+        .observe(Query::new("moments"), move |change| {
+            let first = {
+                let mut seen = sink.lock().unwrap();
+                seen.push(change.revision);
+                seen.len() == 1
+            };
+            if first {
+                entered_sender.send(()).unwrap();
+                released.lock().unwrap().recv_timeout(WAIT).unwrap();
+            }
+        })
+        .unwrap();
+    entered.recv_timeout(WAIT).unwrap();
+    let (fast_sender, fast) = mpsc::channel();
+    let _fast = db.observe(Query::new("moments"), move |change| fast_sender.send(change.revision).unwrap()).unwrap();
+    for number in 0..4 {
+        let row = obj(json!({"id": format!("m{number}"), "userId": "u1", "text": "t"}));
+        let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{number}")), row });
+        db.land(envelope).unwrap();
+    }
+    let newest = db.revision_seq().unwrap();
+    while fast.recv_timeout(WAIT).unwrap() < newest {}
+    release.send(()).unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    while revisions.lock().unwrap().last() != Some(&newest) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let seen = revisions.lock().unwrap().clone();
+    assert!(seen.len() == 2 && seen[0] < seen[1] && seen[1] == newest, "older versions that waited in the mailbox must not be delivered: {seen:?}");
 }
 
 #[test]
@@ -334,7 +375,7 @@ fn inv_observe_09_a_slow_listener_does_not_hold_back_the_others_and_gets_the_lat
 }
 
 #[test]
-fn reset_moves_every_observer_to_the_empty_state_and_keeps_the_subscriptions() {
+fn inv_observe_11_reset_moves_every_observer_to_the_empty_state_and_keeps_the_subscriptions() {
     let db = booted();
     seed_tree(&db);
     let (log, callback) = recorder();
@@ -431,7 +472,7 @@ fn check_stream(stream: &[Change]) {
 }
 
 #[test]
-fn model_test_with_threads_ends_every_observer_on_the_fresh_state() {
+fn inv_observe_03_inv_observe_06_model_test_with_threads_ends_every_observer_on_the_fresh_state() {
     for seed_value in [0x2545F4914F6CDD1D_u64, 0x9E3779B97F4A7C15, 0xD1B54A32D192ED03] {
         let db = booted();
         seed_tree(&db);

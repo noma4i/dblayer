@@ -36,7 +36,8 @@ impl Ord for OrderKey {
                 return if *descending { order.reverse() } else { order };
             }
         }
-        self.id.as_bytes().cmp(other.id.as_bytes())
+        let permanent = |id: &str| !crate::identity::is_temp_id(id);
+        permanent(&self.id).cmp(&permanent(&other.id)).then_with(|| self.id.as_bytes().cmp(other.id.as_bytes()))
     }
 }
 

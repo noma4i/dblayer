@@ -519,7 +519,10 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
                     fields.push((name, matches!(field.direction, crate::value::SortDirection::Desc | crate::value::SortDirection::DescNullsFirst)));
                 }
             }
-            if !order.is_empty() && !fields.iter().any(|(name, _)| name == "\"id\"") { fields.push((sql_ident("id"), false)); }
+            if !order.is_empty() && !fields.iter().any(|(name, _)| name == "\"id\"") {
+                fields.push((format!("({})", crate::identity::permanent_row_flag(&sql_ident("id"))), false));
+                fields.push((sql_ident("id"), false));
+            }
         }
         if !fields.is_empty() { indexes.push(fields); }
     }

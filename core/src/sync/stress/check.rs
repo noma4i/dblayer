@@ -71,14 +71,14 @@ pub fn queue(db: &Db, findings: &Findings) {
         }
         let temp_ids: HashSet<String> = operations.iter().filter_map(|operation| operation.temp_id.as_ref().map(ToString::to_string)).collect();
         let referenced: HashSet<String> = operations.iter().flat_map(|operation| operation.row_ids.iter().map(ToString::to_string)).collect();
-        let mut rows = connection.prepare(&format!("SELECT id FROM {} WHERE id LIKE 'temp-%'", table_name("moments")))?;
+        let mut rows = connection.prepare(&format!("SELECT id FROM {} WHERE id LIKE '{}%'", table_name("moments"), crate::identity::TEMP_ID_PREFIX))?;
         let present: Vec<String> = rows.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
         for id in &present {
             if !temp_ids.contains(id) && !referenced.contains(id) {
                 problems.push(format!("temp row {id} has no open operation"));
             }
         }
-        for id in referenced.iter().filter(|id| id.starts_with("temp-") && !temp_ids.contains(*id)) {
+        for id in referenced.iter().filter(|id| crate::identity::is_temp_id(id) && !temp_ids.contains(*id)) {
             problems.push(format!("an operation still points at temp id {id} but no open create owns it"));
         }
         Ok(problems)
