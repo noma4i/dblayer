@@ -127,14 +127,6 @@ impl Store {
             .optional()?)
     }
 
-    #[cfg(test)]
-    pub fn invalidate_window(&self, key: &str) -> Result<(), StoreError> {
-        let inner = self.lock();
-        inner.ensure_healthy()?;
-        inner.connection.execute("UPDATE query_window SET invalidated = 1 WHERE key = ?1", params![key])?;
-        Ok(())
-    }
-
     pub fn invalidate_family(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;

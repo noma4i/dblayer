@@ -19,7 +19,7 @@ pub use debounce::Debounce;
 pub use duration::parse_duration;
 pub use freshness::selected_policy;
 pub use in_flight::{FetchCoalescing, FetchVerdict};
-pub use resume::{ResumeDrain, ResumeDrainError, StaleScopeCandidate};
+pub use resume::{ResumeDrain, ResumeDrainError};
 pub use retry::RetryPolicy;
 pub use throttle::{Throttle, ThrottleDecision, ThrottleState};
 

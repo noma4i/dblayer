@@ -77,14 +77,15 @@ fn repeated_save_replaces_record_and_keeps_one_row() {
 #[test]
 fn save_keeps_landed_at_and_invalidation_of_existing_window() {
     let (store, clock) = booted_store();
+    let thread = key("messages", "thread", "1");
     let landed = clock.now().as_millis() as i64;
-    store.save_window(&window("k")).unwrap();
-    store.invalidate_window("k").unwrap();
+    store.save_window(&window(&thread)).unwrap();
+    store.invalidate_family("messages", "thread").unwrap();
     clock.advance(std::time::Duration::from_millis(5_000));
-    store.save_window(&WindowRecord { issued: 2, ..window("k") }).unwrap();
-    assert_eq!(store.window_freshness("k").unwrap(), Some(WindowFreshness { landed_at: landed, invalidated: true }));
-    assert!(store.stale_window_keys().unwrap().contains(&"k".to_string()));
-    assert_eq!(store.window("k").unwrap().unwrap().issued, 2);
+    store.save_window(&WindowRecord { issued: 2, ..window(&thread) }).unwrap();
+    assert_eq!(store.window_freshness(&thread).unwrap(), Some(WindowFreshness { landed_at: landed, invalidated: true }));
+    assert!(store.stale_window_keys().unwrap().contains(&thread));
+    assert_eq!(store.window(&thread).unwrap().unwrap().issued, 2);
 }
 
 #[test]
@@ -93,17 +94,6 @@ fn freshness_needs_landing_inside_window_and_no_invalidation() {
     assert!(fresh.is_fresh(110, 30));
     assert!(!WindowFreshness { invalidated: true, ..fresh }.is_fresh(110, 30));
     assert!(!fresh.is_fresh(140, 30));
-}
-
-#[test]
-fn mark_exact_marks_only_requested_key() {
-    let (store, _) = booted_store();
-    let thread = key("messages", "thread", "1");
-    let media = key("messages", "media", "1");
-    store.save_window(&window(&thread)).unwrap();
-    store.save_window(&window(&media)).unwrap();
-    store.invalidate_window(&thread).unwrap();
-    assert_eq!(store.stale_window_keys().unwrap(), vec![thread]);
 }
 
 #[test]

@@ -1,14 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::{Map, Value};
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 
-use crate::pacing::StaleScopeCandidate;
 
 use super::error::SyncError;
 use super::resume_machine::{Cause, ResumeEvent, ResumeMachine};
@@ -202,23 +200,21 @@ impl Inner {
     pub(crate) async fn resume_windows(self: &Arc<Self>, cause: Cause) -> Result<ResumeReport, SyncError> {
         if cause == Cause::Explicit { self.transport.resume_subscriptions(); }
         self.restart_live(cause);
-        let now = self.clock.now();
         let drain = self.config.resume;
         let watched: BTreeMap<String, (String, String, Map<String, Value>)> = locked(&self.watches)
             .values()
             .map(|entry| (entry.key.clone(), (entry.model.clone(), entry.relation.clone(), entry.params.clone())))
             .collect();
-        let due = now.saturating_sub(drain.stale_time);
-        let mut candidates = Vec::with_capacity(watched.len());
+        let now_ms = self.now_ms();
+        let stale_ms = i64::try_from(drain.stale_time.as_millis()).unwrap_or(i64::MAX);
+        let mut stale = Vec::with_capacity(watched.len());
         for key in watched.keys() {
             if cause == Cause::Event && self.owner.session_refused(key) { continue; }
-            let last_fetched_at = match self.db.shared.store.window_freshness(key)? {
-                Some(freshness) if !freshness.invalidated => Duration::from_millis(freshness.landed_at.max(0) as u64),
-                _ => due,
-            };
-            candidates.push(StaleScopeCandidate { key: key.clone(), last_fetched_at, has_readers: true });
+            if !self.db.shared.store.window_freshness(key)?.is_some_and(|freshness| freshness.is_fresh(now_ms, stale_ms)) {
+                stale.push(key.clone());
+            }
         }
-        let chunks = drain.chunks(&candidates, now).map_err(|error| SyncError::Params(error.to_string()))?;
+        let chunks = drain.chunks(&stale).map_err(|error| SyncError::Params(error.to_string()))?;
         let mut report = ResumeReport { chunks: chunks.len(), ..ResumeReport::default() };
         for chunk in chunks {
             let mut loads = JoinSet::new();

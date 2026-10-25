@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{Map, Value};
+use serde_json::Map;
 use tokio::sync::Notify;
 
 use super::{Config, Database, DbError, LiveChange, QueryListener, TestClock, Transport};
@@ -178,8 +178,7 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
     load(&db, "quick").await.unwrap();
     assert_eq!(queries(&transport), 3, "fresh_for elapsed");
 
-    let key = db.sync().unwrap().window_key("Moment", "feed", &Map::<String, Value>::new()).unwrap();
-    db.db.shared.store.invalidate_window(&key).unwrap();
+    db.db.shared.store.invalidate_family("Moment", "feed").unwrap();
     load(&db, "feed").await.unwrap();
     assert_eq!(queries(&transport), 4, "invalidated");
 }
