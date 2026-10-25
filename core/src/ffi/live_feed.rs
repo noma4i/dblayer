@@ -9,6 +9,9 @@ use crate::sync::{snapshot_phase, LoadError, LoadPhase, RelationState};
 use super::live::{LiveChange, LivePhase, LiveWindowEdge, QueryListener};
 use super::DbError;
 
+/// Rows kept while the relation state is unknown. Past this the feed shows them without it: phase NotLoaded until the state arrives.
+const HELD_LIMIT: usize = 64;
+
 fn gate_open(relation: &RelationState, rows_at: i64) -> bool {
     relation.revision <= rows_at
 }
@@ -45,6 +48,7 @@ struct FeedState {
     subscription_error: Option<DbError>,
     load_pending: bool,
     load_error: Option<DbError>,
+    holding: bool,
     held: Vec<(bool, LiveChange)>,
     ready_pending: bool,
     shown: Option<Shown>,
@@ -101,6 +105,7 @@ impl LiveFeed {
             subscription_error: None,
             load_pending: false,
             load_error: None,
+            holding: false,
             held: Vec::new(),
             ready_pending: false,
             shown: None,
@@ -122,10 +127,18 @@ impl LiveFeed {
     }
 
     fn part<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, count: bool, part: LiveChange) {
-        if state.load_pending && state.relation.is_none() {
+        if state.holding && state.relation.is_none() {
             state.held.push((count, part));
+            if state.held.len() >= HELD_LIMIT {
+                self.release(state);
+            }
             return;
         }
+        Self::take_part(&mut state, count, &part);
+        self.compose(state, Some(part));
+    }
+
+    fn take_part(state: &mut FeedState, count: bool, part: &LiveChange) {
         state.opened = true;
         state.read_error = None;
         state.rows_at = state.rows_at.max(part.revision);
@@ -135,19 +148,17 @@ impl LiveFeed {
             state.size = part.size;
             state.window = part.window.clone();
         }
-        self.compose(state, Some(part));
     }
 
     fn release<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>) {
-        let parts = std::mem::take(&mut state.held);
-        if parts.is_empty() {
-            return self.compose(state, None);
+        state.holding = false;
+        let mut changes = Vec::new();
+        for (count, part) in std::mem::take(&mut state.held) {
+            Self::take_part(&mut state, count, &part);
+            changes.extend(self.compose_change(&mut state, Some(part)));
         }
-        drop(state);
-        for (count, part) in parts {
-            self.part(held(&self.state), count, part);
-        }
-        self.compose(held(&self.state), None);
+        changes.extend(self.compose_change(&mut state, None));
+        self.deliver_all(state, changes);
     }
 
     pub(super) fn reached(&self, revision: i64) {
@@ -171,7 +182,9 @@ impl LiveFeed {
     }
 
     pub(super) fn expect_load(&self) {
-        held(&self.state).load_pending = true;
+        let mut state = held(&self.state);
+        state.load_pending = true;
+        state.holding = true;
     }
 
     pub(super) fn load_error(&self) -> Option<DbError> {
@@ -211,15 +224,21 @@ impl LiveFeed {
     }
 
     fn compose<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, part: Option<LiveChange>) {
-        if !state.opened || state.ended || (state.load_pending && state.relation.is_none()) {
-            return;
+        if let Some(change) = self.compose_change(&mut state, part) {
+            self.deliver(state, change);
+        }
+    }
+
+    fn compose_change(&self, state: &mut FeedState, part: Option<LiveChange>) -> Option<LiveChange> {
+        if !state.opened || state.ended || (state.holding && state.relation.is_none()) {
+            return None;
         }
         let rows_at = state.rows_at;
         if let Some(relation) = state.relation.clone().filter(|relation| gate_open(relation, rows_at)) {
             state.applied = Some(relation);
         }
         let gated = state.relation.as_ref().is_some_and(|relation| !gate_open(relation, rows_at));
-        let mut effective = state.applied.clone().unwrap_or_else(|| RelationState { phase: if state.relation.is_some() { LoadPhase::NotLoaded } else { LoadPhase::Loaded }, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 });
+        let mut effective = state.applied.clone().unwrap_or_else(|| RelationState { phase: if state.relation.is_some() || state.load_pending { LoadPhase::NotLoaded } else { LoadPhase::Loaded }, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 });
         if effective.error.is_none() && state.subscription_error.is_some() {
             effective.error = Some(LoadError::new("subscription", ""));
         }
@@ -245,8 +264,8 @@ impl LiveFeed {
         let ready = !state.load_pending && !gated;
         state.ready_pending |= ready;
         if part.is_none() && state.shown.as_ref() == Some(&shown) {
-            self.settle_ready(&mut state);
-            return;
+            self.settle_ready(state);
+            return None;
         }
         let mut change = part.unwrap_or_else(|| LiveChange::empty(rows_at.max(0)));
         change.phase = Some(shown.phase);
@@ -266,7 +285,7 @@ impl LiveFeed {
         state.shown = Some(shown);
         state.seq += 1;
         change.seq = state.seq;
-        self.deliver(state, change);
+        Some(change)
     }
 
     fn settle_ready(&self, state: &mut FeedState) {
@@ -282,8 +301,12 @@ impl LiveFeed {
         });
     }
 
-    fn deliver<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, change: LiveChange) {
-        state.queue.push_back(change);
+    fn deliver<'a>(&'a self, state: std::sync::MutexGuard<'a, FeedState>, change: LiveChange) {
+        self.deliver_all(state, vec![change]);
+    }
+
+    fn deliver_all<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, changes: Vec<LiveChange>) {
+        state.queue.extend(changes);
         if state.draining {
             return;
         }

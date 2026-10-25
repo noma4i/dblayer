@@ -280,3 +280,49 @@ fn a_load_that_ends_without_a_relation_state_releases_the_held_rows() {
     let heard = heard(&tape);
     assert_eq!(heard.iter().map(|change| change.size).collect::<Vec<_>>(), vec![3]);
 }
+
+struct Reentrant {
+    seen: Mutex<Vec<LiveChange>>,
+    inject: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl QueryListener for Reentrant {
+    fn changed(&self, change: LiveChange) {
+        self.seen.lock().unwrap().push(change);
+        let next = self.inject.lock().unwrap().take();
+        if let Some(next) = next {
+            next();
+        }
+    }
+}
+
+#[test]
+fn rows_arriving_while_held_rows_are_released_stay_behind_them() {
+    let listener = Arc::new(Reentrant { seen: Mutex::new(Vec::new()), inject: Mutex::new(None) });
+    let feed = LiveFeed::new(listener.clone());
+    let later = feed.clone();
+    *listener.inject.lock().unwrap() = Some(Box::new(move || later.rows(rows(99, 99))));
+    feed.expect_load();
+    for size in 1..=3 {
+        feed.rows(rows(size.into(), size));
+    }
+    feed.state(relation(LoadPhase::Loaded, 0, None));
+    let sizes: Vec<u32> = listener.seen.lock().unwrap().iter().map(|change| change.size).collect();
+    assert_eq!(sizes, vec![1, 2, 3, 99]);
+}
+
+#[test]
+fn a_relation_state_that_never_arrives_cannot_make_the_feed_hold_rows_without_bound() {
+    let (feed, tape) = feed();
+    feed.expect_load();
+    for size in 1..=1000 {
+        feed.rows(rows(size.into(), size));
+    }
+    let before_state = heard(&tape);
+    assert!(!before_state.is_empty(), "rows kept flowing to the listener");
+    assert!(before_state.iter().all(|change| change.phase == Some(LivePhase::NotLoaded)), "without a relation state the phase stays NotLoaded");
+    assert_eq!(before_state.last().map(|change| change.size), Some(1000));
+    assert!(before_state.windows(2).all(|pair| pair[0].size < pair[1].size), "in order, none dropped");
+    feed.state(relation(LoadPhase::Loaded, 0, None));
+    assert_eq!(heard(&tape).last().and_then(|change| change.phase), Some(LivePhase::Loaded));
+}

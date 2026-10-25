@@ -62,3 +62,26 @@ async fn inv_loadm_19_a_new_observer_of_a_window_whose_last_watch_drops_concurre
         assert_eq!(fresh.borrow().phase, super::load_machine::LoadPhase::Loading, "window {number} lost its observer");
     }
 }
+
+fn stored(order: i64, total: Option<i64>, data: super::load_machine::Data) -> super::load_machine::Stored {
+    let landed = matches!(data, super::load_machine::Data::Landed { .. });
+    super::load_machine::Stored { epoch: 0, order: super::load_machine::Order { applied: order, pages: i64::from(landed) }, data, has_rows: landed && total.is_some(), revision: 0 }
+}
+
+#[tokio::test(start_paused = true)]
+async fn inv_loadm_19_a_late_seed_never_replaces_what_a_flight_already_landed() {
+    use super::load_machine::{Data, LoadPhase};
+    let rig = rig();
+    let owner = rig.sync.inner.owner.clone();
+    let resolved = rig.sync.inner.resolve("moments", "vibe_feed", &vibe(1)).unwrap();
+    let (window, target) = (resolved.window_key.clone(), resolved.target());
+    let watch = owner.observe(&window, target.clone(), None);
+    let landed = || stored(5, Some(3), Data::Landed { has_more: false, total: Some(3), loaded_at: 7 });
+    let cold = || stored(-1, None, Data::NotLoaded);
+    let ticket = super::load_owner::FlightTicket::new(&owner, &window, target, false, Some(landed()));
+    owner.seed_observed(&window, resolved.model.clone(), Some(cold()));
+    assert_eq!((watch.borrow().phase, watch.borrow().total), (LoadPhase::Loading, Some(3)), "a late seed after Start");
+    ticket.landed(Some(landed()));
+    owner.seed_observed(&window, resolved.model.clone(), Some(cold()));
+    assert_eq!((watch.borrow().phase, watch.borrow().total, watch.borrow().loaded_at), (LoadPhase::Loaded, Some(3), Some(7)), "a late seed after Landed");
+}
