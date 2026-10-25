@@ -1,22 +1,24 @@
 package com.noma4i.dblayer
 
+internal class Retained<Model>(val value: Model, val revision: Long, val bytes: ULong)
+
 internal class RetainedValues {
     private val pool = RetentionPool()
     private val values = HashMap<ULong, Any>()
 
     @Synchronized
-    fun <Model : DBModel> keep(model: String, id: String, cell: EntityCell<Model>, now: Long) {
-        val change = pool.keep(model, id, cell.bytes, now.toULong())
+    fun <Model : DBModel> keep(model: String, id: String, retained: Retained<Model>, now: Long) {
+        val change = pool.keep(model, id, retained.bytes, now.toULong())
         apply(change)
-        change.selected?.let { values[it] = cell }
+        change.selected?.let { values[it] = retained }
     }
 
     @Synchronized
     @Suppress("UNCHECKED_CAST")
-    fun <Model : DBModel> take(model: String, id: String, now: Long): EntityCell<Model>? {
+    fun <Model : DBModel> take(model: String, id: String, now: Long): Retained<Model>? {
         val change = pool.take(model, id, now.toULong())
         apply(change)
-        return change.selected?.let { values.remove(it) as EntityCell<Model>? }
+        return change.selected?.let { values.remove(it) as Retained<Model>? }
     }
 
     @Synchronized

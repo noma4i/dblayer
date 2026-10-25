@@ -10,6 +10,7 @@
 - Swift `Entity.changes()` streams the value of an entity, current value then updates, and holds the entity while it is read.
 
 ### Changed
+- The core decides every `Entity` transition (seed, revision order, stale, failure, reset, close) with one state machine on both platforms. A late failure of a replaced singleton feed no longer changes the new state.
 - Kotlin `Entity.value` keeps the entity reachable while it is collected.
 - Swift query conditions, `JSONValue.encode`, `JSONValue.text` and `JSONValue.tagged` throw on serialization failure.
 - Generated Swift parameterized scopes and upload variable builders throw on serialization failure.

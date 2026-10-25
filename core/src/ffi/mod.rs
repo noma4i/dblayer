@@ -9,6 +9,7 @@ mod cloud;
 mod database_tests;
 mod encrypted;
 mod entities;
+mod entity_machine;
 mod live;
 mod live_feed;
 mod retention;
@@ -35,6 +36,7 @@ pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, Encrypt
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use entities::{EntityDelivery, EntityListener, LiveEntities};
+pub use entity_machine::{EntityMachine, EntityStage, EntityVerdict};
 pub use live::{LiveChange, LoadMoreResult, LivePhase, LiveSubscription, QueryListener};
 pub use retention::{RetentionChange, RetentionPool};
 pub use state::StateSubscription;

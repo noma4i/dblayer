@@ -73,6 +73,8 @@ Requesting a retained id returns its value with `isStale` set and reads the reco
 
 ## Order
 
+The core owns every transition of an entity in one state machine (`EntityMachine`): seed, revision order, stale, failure, reset and close. Swift and Kotlin keep the typed value and show the verdict of the core. A closed entity never changes again. A failure keeps the accepted value. A reset of a singleton starts a new feed, and a delivery or a failure of an older feed changes nothing.
+
 Every delivery carries the revision of the database. An entity ignores a delivery with a lower revision than the one it shows, whatever the order in which they arrive. A record that was deleted arrives as an empty value. A reset of the data (logout, `reset`) tells every leased entity that its record is gone. The entities keep their leases and receive the rows of the next account.
 
 Native callbacks hold entity sources weakly. Releasing a source releases its observer without a separate cleanup call.

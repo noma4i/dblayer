@@ -38,7 +38,7 @@ class EntityApplyTest {
 
         cell.accept(moment(JsonObject(emptyMap())), 1)
         cell.fail("late")
-        cell.clear()
+        cell.reset()
 
         assertEquals(EntityPhase.Closed, cell.phase.value)
         assertNull(cell.value.value)

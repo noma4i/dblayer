@@ -23,41 +23,71 @@ sealed class EntityPhase {
     data object Closed : EntityPhase()
 }
 
-internal class EntityCell<Model : DBModel> {
+internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
+    private val machine = EntityMachine(singleton)
     val value = MutableStateFlow<Model?>(null)
     val phase = MutableStateFlow<EntityPhase>(EntityPhase.Opening)
     @Volatile var stale = false
     @Volatile var revision = Long.MIN_VALUE
     @Volatile var bytes = 0uL
 
+    private fun show(verdict: EntityVerdict) {
+        revision = verdict.revision
+        stale = verdict.stale
+        phase.value = when (val stage = verdict.stage) {
+            is EntityStage.Opening -> EntityPhase.Opening
+            is EntityStage.Present -> EntityPhase.Present
+            is EntityStage.Absent -> EntityPhase.Absent
+            is EntityStage.Failed -> EntityPhase.Failed(stage.message)
+            is EntityStage.Closed -> EntityPhase.Closed
+        }
+    }
+
+    private fun emptied(verdict: EntityVerdict) {
+        value.value = null
+        bytes = 0uL
+        show(verdict)
+    }
+
     @Synchronized
-    fun accept(next: Model?, incoming: Long, bytes: ULong = 0uL) {
-        if (incoming < revision || phase.value == EntityPhase.Closed) return
-        revision = incoming
+    fun seed(incoming: Long, bytes: ULong, make: () -> Model?) {
+        val verdict = machine.seed(incoming)
+        if (!verdict.applied) return
+        try { value.value = make() } catch (error: Exception) { fail(error.toString()); return }
         this.bytes = bytes
-        stale = false
-        phase.value = if (next == null) EntityPhase.Absent else EntityPhase.Present
+        show(verdict)
+    }
+
+    @Synchronized
+    fun accept(next: Model?, incoming: Long, bytes: ULong = 0uL, feed: ULong? = null) {
+        val verdict = machine.accept(incoming, next != null, feed)
+        if (!verdict.applied) return
+        this.bytes = bytes
+        show(verdict)
         value.value = next
     }
 
     @Synchronized
-    fun fail(message: String) {
-        if (phase.value != EntityPhase.Closed) phase.value = EntityPhase.Failed(message)
+    fun fail(message: String, feed: ULong? = null) = show(machine.fail(message, feed))
+
+    @Synchronized
+    fun reset() {
+        val verdict = machine.reset()
+        if (verdict.cleared) emptied(verdict)
     }
 
     @Synchronized
-    fun clear() {
-        value.value = null
-        revision = Long.MIN_VALUE
-        stale = false
-        if (phase.value != EntityPhase.Closed) phase.value = EntityPhase.Opening
+    fun close() = emptied(machine.close())
+
+    @Synchronized
+    fun unopened(feed: ULong): Boolean {
+        val verdict = machine.unopened(feed)
+        if (verdict.cleared) emptied(verdict)
+        return verdict.cleared
     }
 
     @Synchronized
-    fun close() {
-        clear()
-        phase.value = EntityPhase.Closed
-    }
+    fun beginFeed(): ULong = machine.beginFeed().feed
 }
 
 /** Collecting keeps the entity reachable until the collection ends. */
@@ -131,25 +161,17 @@ class Entities<Model : DBModel> internal constructor(
         val previous = live[id]
         previous?.get()?.let { return it }
         if (previous != null) collected(previous)
-        var seed = kept.take<Model>(modelName, id, now())
-        val retained = seed != null
-        var seedFailure: String? = null
+        val retained = kept.take<Model>(modelName, id, now())
+        val cell = EntityCell<Model>()
+        retained?.let { cell.seed(it.revision, it.bytes) { it.value } }
         try {
-            val cached = source.cachedRow(id)
-            if (cached != null && cached.revision > (seed?.revision ?: Long.MIN_VALUE)) {
-                val value = decoder.read(cached)
-                seed = EntityCell<Model>().also { it.accept(value, cached.revision, cached.estimatedBytes) }
-            }
+            source.cachedRow(id)?.let { cached -> cell.seed(cached.revision, cached.estimatedBytes) { decoder.read(cached) } }
         } catch (error: Exception) {
-            seedFailure = error.toString()
+            cell.fail(error.toString())
         }
-        val cell = seed ?: EntityCell()
-        cell.stale = seed != null
-        if (seed != null) cell.phase.value = EntityPhase.Present
-        seedFailure?.let(cell::fail)
         val made = Entity(id, cell)
         live[id] = LiveRef(made, id, cell, ::collected)
-        steps[id] = if (retained || steps[id] == Step.Release) Step.Refresh else Step.Retain
+        steps[id] = if (retained != null || steps[id] == Step.Release) Step.Refresh else Step.Retain
         scheduleFlush()
         made
     }
@@ -159,7 +181,7 @@ class Entities<Model : DBModel> internal constructor(
     /** The entity of the one row of a model that has one. It lives as long as the database handle, holds no lease and has no id until the row has loaded. */
     fun singleton(query: Query<Model>): Entity<Model> = synchronized(lock) {
         single?.let { return it }
-        val made = Entity(null, EntityCell<Model>())
+        val made = Entity(null, EntityCell<Model>(singleton = true))
         single = made
         singleQuery = query
         startSingleton()
@@ -168,25 +190,24 @@ class Entities<Model : DBModel> internal constructor(
 
     private fun startSingleton() {
         val query = singleQuery ?: return
+        val cell = single?.cell ?: return
         singleFeed?.cancel()
-        val feed = SingletonFeed(query, decoder, { from, revision, row -> receive(from, revision, row) }, ::unopened, ::singletonFailed)
+        val feed = SingletonFeed(query, decoder, cell.beginFeed(), { from, revision, row -> receive(from, revision, row) }, ::unopened, ::singletonFailed)
         singleFeed = feed
         flusher.execute { feed.attach() }
     }
 
-    /** A delivery of a feed that was replaced by a reset writes nothing. */
     internal fun receive(feed: SingletonFeed<Model>, revision: Long, row: Model?) = synchronized(lock) {
-        if (singleFeed === feed) single?.cell?.accept(row, revision)
+        single?.cell?.accept(row, revision, feed = feed.generation)
     }
 
     private fun singletonFailed(feed: SingletonFeed<Model>, message: String) = synchronized(lock) {
-        if (singleFeed === feed) single?.cell?.fail(message)
+        single?.cell?.fail(message, feed.generation)
     }
 
     private fun unopened(feed: SingletonFeed<Model>) = synchronized(lock) {
-        if (singleFeed !== feed) return@synchronized
+        if (single?.cell?.unopened(feed.generation) != true) return@synchronized
         singleFeed = null
-        single?.cell?.let { it.close() }
         single = null
         singleQuery = null
     }
@@ -198,7 +219,7 @@ class Entities<Model : DBModel> internal constructor(
         kept.clear(modelName)
         singleFeed?.cancel()
         singleFeed = null
-        single?.cell?.clear()
+        single?.cell?.reset()
     }
 
     /** The database closed. Every entity that is still held becomes closed and the registry starts empty. */
@@ -238,7 +259,7 @@ class Entities<Model : DBModel> internal constructor(
         if (live[ref.id] !== ref) return@synchronized
         live.remove(ref.id)
         steps[ref.id] = Step.Release
-        if (ref.cell.value.value != null) kept.keep(modelName, ref.id, ref.cell, now())
+        ref.cell.value.value?.let { kept.keep(modelName, ref.id, Retained(it, ref.cell.revision, ref.cell.bytes), now()) }
         scheduleFlush()
     }
 
@@ -326,6 +347,7 @@ internal class CoreEntitySource<Model : DBModel>(
 internal class SingletonFeed<Model : DBModel>(
     private val query: Query<Model>,
     private val decoder: ModelDecoder<Model>,
+    val generation: ULong,
     private val deliver: (SingletonFeed<Model>, Long, Model?) -> Unit,
     private val unopened: (SingletonFeed<Model>) -> Unit,
     private val failed: (SingletonFeed<Model>, String) -> Unit,

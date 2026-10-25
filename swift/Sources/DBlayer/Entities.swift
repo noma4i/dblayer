@@ -19,62 +19,93 @@ public final class Entity<Model: DBModel> {
   public private(set) var phase: EntityPhase = .opening
   /// True after the database closed. A closed entity never receives a value again.
   public var isClosed: Bool { phase == .closed }
-  @ObservationIgnored private(set) var revision: Int64
+  @ObservationIgnored private(set) var revision: Int64 = Int64.min
   @ObservationIgnored private var bytes: UInt64 = 0
   @ObservationIgnored private let registry: Entities<Model>
   @ObservationIgnored private let isSingleton: Bool
+  @ObservationIgnored private let machine: EntityMachine
   @ObservationIgnored private let readers = EntityReaders<Model>()
 
-  fileprivate init(id: String, seed: Retained<Model>?, registry: Entities<Model>) {
+  fileprivate init(id: String, registry: Entities<Model>) {
     self.id = id
-    value = seed?.value
-    revision = seed?.revision ?? Int64.min
-    bytes = seed?.bytes ?? 0
-    isStale = seed != nil
-    if seed?.value != nil { phase = .present }
+    value = nil
+    isStale = false
     self.registry = registry
     isSingleton = false
+    machine = EntityMachine(singleton: false)
   }
 
   fileprivate init(singletonOf registry: Entities<Model>) {
     id = ""
     value = nil
-    revision = Int64.min
     isStale = false
     self.registry = registry
     isSingleton = true
+    machine = EntityMachine(singleton: true)
   }
 
-  fileprivate func accept(_ next: Model?, revision incoming: Int64, bytes: UInt64 = 0) {
-    guard incoming >= revision else { return }
-    revision = incoming
+  private func show(_ verdict: EntityVerdict) {
+    revision = verdict.revision
+    let next: EntityPhase
+    switch verdict.stage {
+    case .opening: next = .opening
+    case .present: next = .present
+    case .absent: next = .absent
+    case let .failed(message): next = .failed(message)
+    case .closed: next = .closed
+    }
+    if phase != next { phase = next }
+    if isStale != verdict.stale { isStale = verdict.stale }
+  }
+
+  fileprivate func seed(revision incoming: Int64, bytes: UInt64, _ make: () throws -> Model?) {
+    let verdict = machine.seed(revision: incoming)
+    guard verdict.applied else { return }
+    do { value = try make() } catch { fail(String(describing: error)); return }
     self.bytes = bytes
-    isStale = false
-    phase = next == nil ? .absent : .present
+    show(verdict)
+  }
+
+  fileprivate func accept(_ next: Model?, revision incoming: Int64, bytes: UInt64 = 0, feed: UInt64? = nil) {
+    let verdict = machine.accept(revision: incoming, present: next != nil, feed: feed)
+    guard verdict.applied else { return }
+    self.bytes = bytes
+    show(verdict)
     if next != value { value = next; readers.put(next) }
     if isSingleton, id != (next?.id ?? "") { id = next?.id ?? "" }
   }
 
-  fileprivate func fail(_ message: String) {
-    guard phase != .closed else { return }
-    phase = .failed(message)
+  fileprivate func fail(_ message: String, feed: UInt64? = nil) {
+    show(machine.fail(message: message, feed: feed))
   }
 
   fileprivate func close() {
-    phase = .closed
-    value = nil
-    revision = Int64.min
-    isStale = false
+    emptied(machine.close())
     readers.closeAll()
   }
 
-  fileprivate func detach() {
-    if value != nil { value = nil; readers.put(nil) }
-    guard isSingleton else { return }
-    phase = .opening
-    id = ""
-    revision = Int64.min
-    isStale = false
+  fileprivate func unopened(feed: UInt64) -> Bool {
+    let verdict = machine.unopened(feed: feed)
+    guard verdict.cleared else { return false }
+    emptied(verdict)
+    readers.closeAll()
+    return true
+  }
+
+  fileprivate func reset() {
+    let verdict = machine.reset()
+    guard verdict.cleared else { return }
+    if value != nil { readers.put(nil) }
+    emptied(verdict)
+  }
+
+  fileprivate func beginFeed() -> UInt64 { machine.beginFeed().feed }
+
+  private func emptied(_ verdict: EntityVerdict) {
+    value = nil
+    bytes = 0
+    if isSingleton, !id.isEmpty { id = "" }
+    show(verdict)
   }
 
   /// The value now, then each newer one. A reader that falls behind gets the newest value only. The stream keeps this entity alive until it ends, is cancelled or is dropped, and ends when the database closes. Read `phase` for the reason a value is missing.
@@ -178,15 +209,11 @@ public final class Entities<Model: DBModel> {
   public func entity(_ id: String) -> Entity<Model> {
     if let existing = live[id]?.entity { return existing }
     let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
-    var seed = retained
-    var seedFailure: String?
+    let made = Entity<Model>(id: id, registry: self)
+    if let retained { made.seed(revision: retained.revision, bytes: retained.bytes) { retained.value } }
     do {
-      if let cached = try source.cachedRow(id), cached.revision > (seed?.revision ?? Int64.min) {
-        seed = Retained(value: try Model.decode(cached), revision: cached.revision, bytes: cached.estimatedBytes)
-      }
-    } catch { seedFailure = String(describing: error) }
-    let made = Entity<Model>(id: id, seed: seed, registry: self)
-    if let seedFailure { made.fail(seedFailure) }
+      if let cached = try source.cachedRow(id) { made.seed(revision: cached.revision, bytes: cached.estimatedBytes) { try Model.decode(cached) } }
+    } catch { made.fail(String(describing: error)) }
     live[id] = Weak(entity: made)
     steps[id] = (retained != nil || steps[id] == .release) ? .refresh : .retain
     scheduleFlush()
@@ -208,27 +235,25 @@ public final class Entities<Model: DBModel> {
   private func startSingleton() {
     guard let singleQuery else { return }
     singleFeed?.cancel()
-    let feed = SingletonFeed<Model>(query: singleQuery)
+    guard let single else { return }
+    let feed = SingletonFeed<Model>(query: singleQuery, generation: single.beginFeed())
     singleFeed = feed
     feed.start(deliver: { [weak self, weak feed] revision, row in
       DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.receive(from: feed, revision: revision, row: row) } } }
     }, unopened: { [weak self, weak feed] in
       DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.unopened(feed) } } }
     }, failed: { [weak self, weak feed] message in
-      DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed, self.singleFeed === feed { self.single?.fail(message) } } }
+      DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.single?.fail(message, feed: feed.generation) } } }
     })
   }
 
-  /// A delivery of a feed that was replaced by a reset writes nothing.
   func receive(from feed: SingletonFeed<Model>, revision: Int64, row: Model?) {
-    guard singleFeed === feed else { return }
-    single?.accept(row, revision: revision)
+    single?.accept(row, revision: revision, feed: feed.generation)
   }
 
   fileprivate func unopened(_ feed: SingletonFeed<Model>) {
-    guard singleFeed === feed else { return }
+    guard single?.unopened(feed: feed.generation) == true else { return }
     singleFeed = nil
-    single?.close()
     single = nil
     singleQuery = nil
   }
@@ -238,7 +263,7 @@ public final class Entities<Model: DBModel> {
     kept.clear(Model.modelName)
     singleFeed?.cancel()
     singleFeed = nil
-    single?.detach()
+    single?.reset()
   }
 
   /// The database closed. Every entity that is still held becomes closed and the registry starts empty.
@@ -424,6 +449,7 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
 final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   private let lock = NSLock()
   private let query: Query<Model>
+  let generation: UInt64
   private var session: ListSession<Model, (Int64, Model?)>?
   private var cancelled = false
   private var count = 0
@@ -431,7 +457,10 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
   /// Deliveries made so far.
   var delivered: Int { lock.withLock { count } }
 
-  init(query: Query<Model>) { self.query = query }
+  init(query: Query<Model>, generation: UInt64) {
+    self.query = query
+    self.generation = generation
+  }
 
   func start(deliver: @escaping @Sendable (Int64, Model?) -> Void, unopened: @escaping @Sendable () -> Void, failed: @escaping @Sendable (String) -> Void) {
     Task.detached(priority: .userInitiated) { [self] in
