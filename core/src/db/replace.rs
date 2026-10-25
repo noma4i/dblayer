@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{RowId, RowRef};
-use crate::operation::open_operations;
+use crate::operation::{open_operations, OutboxQueue};
 use crate::read::LandingPlan;
 use crate::schema::Coverage;
 use crate::store::Reader;
@@ -84,7 +84,7 @@ impl Db {
                 incoming.push((id, row.clone()));
             }
         }
-        let busy: HashSet<String> = open_operations(reader.connection())?.into_iter().flat_map(|operation| operation.row_ids).map(|id| id.to_string()).collect();
+        let busy: HashSet<String> = OutboxQueue::new(open_operations(reader.connection())?).open_row_ids(model).into_iter().map(|id| id.to_string()).collect();
         let names = current.iter().map(|member| member.id.clone()).collect::<Vec<_>>();
         let newer: HashSet<String> = match base_revision {
             Some(base) => reader.stored_rows(model.as_str(), &names)?.into_iter().filter(|(_, row)| row.revision > base).map(|(id, _)| id).collect(),

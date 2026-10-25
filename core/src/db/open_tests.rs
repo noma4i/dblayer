@@ -91,6 +91,24 @@ fn quarantined(db: &Db, reason: &str) -> i64 {
 }
 
 #[test]
+fn inv_identity_02_recovery_distinguishes_models_with_the_same_temp_id() {
+    for mode in ["rebuild", "one_orphan", "two_orphans"] {
+        let (_directory, db) = reopened_after(|db| {
+            db.create("users", obj(json!({"id": "temp-shared", "name": "user"}))).unwrap();
+            db.create("moments", obj(json!({"id": "temp-shared", "text": "moment"}))).unwrap();
+            match mode {
+                "rebuild" => db.execute_for_test("DELETE FROM row_moments"),
+                "one_orphan" => db.execute_for_test("DELETE FROM op WHERE action_key = 'moments:create'"),
+                _ => db.execute_for_test("DELETE FROM op"),
+            }
+        });
+        assert_eq!(db.find("moments", &rid("temp-shared")).unwrap().is_some(), mode == "rebuild", "{mode}");
+        assert_eq!(db.find("users", &rid("temp-shared")).unwrap().is_some(), mode != "two_orphans", "{mode}");
+        assert_eq!(quarantined(&db, "orphan-temp-row"), match mode { "rebuild" => 0, "one_orphan" => 1, _ => 2 });
+    }
+}
+
+#[test]
 fn fsck_rebuilds_a_missing_temp_row_from_its_create_operation_on_open() {
     let mut temp_id = None;
     let (_directory, db) = reopened_after(|db| {

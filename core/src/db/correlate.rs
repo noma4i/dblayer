@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, EntityOp};
-use crate::identity::RowId;
+use crate::identity::{RowId, RowRef};
 use crate::operation::Operation;
 use crate::store::Reader;
 
@@ -35,7 +35,7 @@ fn correlation_key(paths: &[String], row: &Map<String, Value>) -> Option<String>
 impl Db {
     pub(crate) fn follow_correlations(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope) -> Result<(), DbError> {
         let mut candidates: HashMap<String, HashMap<String, Vec<(i64, RowId)>>> = HashMap::new();
-        let mut swapped: HashSet<RowId> = HashSet::new();
+        let mut swapped: HashSet<RowRef> = HashSet::new();
         let mut replacements = Vec::new();
         for op in envelope.entity_ops.clone() {
             let EntityOp::Upsert { model, id, row } = op else { continue };
@@ -66,11 +66,11 @@ impl Db {
                     }
                     candidates.insert(key.clone(), indexed);
                 }
-                found.extend(candidates.get(&key).and_then(|indexed| indexed.get(&incoming)).into_iter().flatten().filter(|(_, temp)| !swapped.contains(temp)).cloned());
+                found.extend(candidates.get(&key).and_then(|indexed| indexed.get(&incoming)).into_iter().flatten().filter(|(_, temp)| !swapped.contains(&RowRef::new(model.clone(), temp.clone()))).cloned());
             }
             if let [(own, temp)] = found.as_slice() {
+                swapped.insert(RowRef::new(model.clone(), temp.clone()));
                 replacements.push((model, temp.clone(), id, *own));
-                swapped.insert(temp.clone());
             }
         }
         if replacements.is_empty() { return Ok(()) }

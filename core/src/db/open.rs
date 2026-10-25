@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::ddl::{table_name, ManifestVerdict, RecreateReason};
 use crate::files::FileDirectories;
-use crate::identity::{Generation, RowId};
+use crate::identity::{Generation, RowRef};
 use crate::commit::{CommitEnvelope, EntityOp, RowChangeKind, WriteOrigin};
 use crate::identity::ModelKey;
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
@@ -333,30 +333,27 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
         let operations = open_operations(&inner.connection)?;
         let known: HashSet<String> = models.iter().map(|spec| spec.key.as_str().to_string()).collect();
         let queue = OutboxQueue::new(operations.clone());
-        let mut temp_rows: HashSet<RowId> = HashSet::new();
-        let mut open_row_ids: HashSet<RowId> = HashSet::new();
+        let mut temp_rows: HashSet<RowRef> = HashSet::new();
+        let mut open_row_ids: HashSet<RowRef> = HashSet::new();
         for spec in models {
             let table = table_name(spec.key.as_str());
             let mut statement = inner.connection.prepare(&format!("SELECT id FROM {table} WHERE id LIKE 'temp-%'"))?;
             let ids = statement.query_map([], |row| row.get::<_, String>(0))?;
             for id in ids {
-                temp_rows.insert(crate::operation::stored_row_id(&id?)?);
+                temp_rows.insert(RowRef::new(spec.key.clone(), crate::operation::stored_row_id(&id?)?));
             }
-            open_row_ids.extend(queue.open_row_ids(&spec.key));
+            open_row_ids.extend(queue.open_row_ids(&spec.key).into_iter().map(|id| RowRef::new(spec.key.clone(), id)));
         }
         let plan = fsck_plan(&operations, &known, &temp_rows, &temp_rows, &open_row_ids);
         let reader = Reader::new(&inner.connection, &inner.models);
         let mut orphans = Orphans::new();
-        for id in plan.iter().filter_map(|action| match action { FsckAction::QuarantineOrphan(id) => Some(id), _ => None }) {
-            for spec in models {
-                if let Some(stored) = reader.stored_row(spec.key.as_str(), id.as_str())? {
-                    let payload = serde_json::Value::Object(stored.row.clone());
-                    let info = inner.models.get(spec.key.as_str()).ok_or_else(|| StoreError::UnknownModel(spec.key.as_str().to_string()))?;
-                    let tables = info.layout.child_tables().into_iter().chain([table_name(spec.key.as_str())]).collect();
-                    let search = (!info.search.is_empty()).then(|| crate::ddl::fts_name(spec.key.as_str()));
-                    orphans.insert(id.clone(), Orphan { model: spec.key.as_str().to_string(), tables, search, payload });
-                    break;
-                }
+        for row in plan.iter().filter_map(|action| match action { FsckAction::QuarantineOrphan(row) => Some(row), _ => None }) {
+            if let Some(stored) = reader.stored_row(row.model.as_str(), row.id.as_str())? {
+                let payload = serde_json::Value::Object(stored.row.clone());
+                let info = inner.models.get(row.model.as_str()).ok_or_else(|| StoreError::UnknownModel(row.model.as_str().to_string()))?;
+                let tables = info.layout.child_tables().into_iter().chain([table_name(row.model.as_str())]).collect();
+                let search = (!info.search.is_empty()).then(|| crate::ddl::fts_name(row.model.as_str()));
+                orphans.insert(row.clone(), Orphan { tables, search, payload });
             }
         }
         apply_fsck(&inner.connection, &plan, &orphans)?;

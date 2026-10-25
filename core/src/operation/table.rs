@@ -7,7 +7,7 @@ use super::fsck::FsckAction;
 use super::stored::*;
 use super::quarantine::{quarantine_add, QuarantineReason};
 use super::status::{Operation, OperationId, OperationStatus};
-use crate::identity::RowId;
+use crate::identity::{RowId, RowRef};
 
 pub(crate) const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
 const OPERATION_COLUMNS: &str = "seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, error_extensions, since, client_mutation_id";
@@ -110,17 +110,17 @@ pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], orphans: &Orp
 }
 
 pub struct Orphan {
-    pub model: String,
     pub tables: Vec<String>,
     pub search: Option<String>,
     pub payload: Value,
 }
 
-pub type Orphans = std::collections::HashMap<RowId, Orphan>;
+pub type Orphans = std::collections::HashMap<RowRef, Orphan>;
 
-fn quarantine_row(connection: &Connection, id: &RowId, orphans: &Orphans) -> rusqlite::Result<bool> {
-    let Some(orphan) = orphans.get(id) else { return Ok(false) };
-    quarantine_add(connection, Some(&orphan.model), &orphan.payload, QuarantineReason::OrphanTempRow)?;
+fn quarantine_row(connection: &Connection, row: &RowRef, orphans: &Orphans) -> rusqlite::Result<bool> {
+    let Some(orphan) = orphans.get(row) else { return Ok(false) };
+    let id = &row.id;
+    quarantine_add(connection, Some(row.model.as_str()), &orphan.payload, QuarantineReason::OrphanTempRow)?;
     if let (Some(search), Some(main)) = (&orphan.search, orphan.tables.last()) {
         connection.execute(&format!("DELETE FROM {search} WHERE rowid = (SELECT rowid FROM {main} WHERE id = ?1)"), [id.as_str()])?;
     }
@@ -128,7 +128,7 @@ fn quarantine_row(connection: &Connection, id: &RowId, orphans: &Orphans) -> rus
         let column = if index + 1 == orphan.tables.len() { "id" } else { "row_id" };
         connection.execute(&format!("DELETE FROM {table} WHERE {column} = ?"), [id.as_str()])?;
     }
-    connection.execute("DELETE FROM scope_member WHERE model = ? AND row_id = ?", params![orphan.model, id.as_str()])?;
+    connection.execute("DELETE FROM scope_member WHERE model = ? AND row_id = ?", params![row.model.as_str(), id.as_str()])?;
     Ok(true)
 }
 

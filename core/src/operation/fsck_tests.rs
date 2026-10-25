@@ -1,17 +1,17 @@
 use super::*;
-use crate::identity::RowId;
+use crate::identity::{ModelKey, RowId, RowRef};
 use std::collections::HashSet;
 use OperationStatus::*;
 
-fn id(value: &str) -> RowId {
-    RowId::new(value).unwrap()
+fn id(value: &str) -> RowRef {
+    RowRef::new(ModelKey::new("message"), RowId::new(value).unwrap())
 }
 
 fn operation(seq: i64, model: &str, status: OperationStatus, temp: Option<&str>, started: bool) -> Operation {
     let mut operation = Operation::new(&Operation::action_key(model, "create"), vec![], 0, 0);
     operation.id = OperationId(seq);
     operation.status = status;
-    operation.temp_id = temp.map(id);
+    operation.temp_id = temp.map(|value| RowId::new(value).unwrap());
     operation.transport_started = started;
     operation
 }

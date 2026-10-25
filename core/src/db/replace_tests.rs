@@ -35,6 +35,25 @@ fn start(db: &Db, name: &str, items: &[(&str, &str)]) {
 }
 
 #[test]
+fn inv_identity_01_foreign_pending_rows_do_not_survive_replacement() {
+    for coverage in [Coverage::Page, Coverage::Complete] {
+        for on_absent in [OnAbsent::Detach, OnAbsent::Destroy] {
+            let db = booted();
+            start(&db, "feed", &[("same", "server"), ("own", "local")]);
+            db.create("users", obj(json!({"id": "same", "name": "pending"}))).unwrap();
+            db.update("moments", &rid("own"), obj(json!({"text": "edited"}))).unwrap();
+            let mut request = request("feed", coverage);
+            request.on_absent = on_absent;
+            request.replace_all = true;
+            db.replace(&request, vec![]).unwrap();
+            assert_eq!(members(&db, "feed"), ["own"], "{coverage:?} {on_absent:?}");
+            assert_eq!(db.find("moments", &rid("same")).unwrap().is_some(), on_absent == OnAbsent::Detach);
+            assert!(db.find("users", &rid("same")).unwrap().is_some());
+        }
+    }
+}
+
+#[test]
 fn three_merges_in_a_row_give_one_delivery_each_and_unchanged_rows_stay_out_of_updated() {
     let db = booted();
     start(&db, "feed", &[("m1", "one"), ("m2", "two")]);

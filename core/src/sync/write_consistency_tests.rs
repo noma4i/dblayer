@@ -416,6 +416,36 @@ fn related_admission_reads_pending_ownership_once() {
 }
 
 #[test]
+fn inv_identity_03_correlation_replaces_the_same_temp_id_in_each_model() {
+    let specs = ["First", "Second"].map(|name| {
+        let mut model = ModelSpec::new(name, vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str)]);
+        let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+        create.mutation = Some("CreateRecord".into());
+        create.has_optimistic = true;
+        create.has_temp_row_retention = true;
+        create.correlate = vec!["body".into()];
+        model.actions.push(create);
+        model
+    });
+    let db = Db::open_in_memory(specs.to_vec(), None).unwrap();
+    for name in ["First", "Second"] {
+        db.create(name, fields(json!({"id": "temp-shared", "body": "match"}))).unwrap();
+    }
+    let mut started = CommitEnvelope::new(WriteOrigin::Response, db.generation());
+    started.operation_transitions = db.outbox().unwrap().iter().map(|entry| crate::commit::OperationTransition::Start { seq: entry.operation.id.0 }).collect();
+    db.land(started).unwrap();
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    for name in ["First", "Second"] {
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(name), id: rid("server"), row: fields(json!({"id": "server", "body": "match"})) });
+    }
+    db.land(envelope).unwrap();
+    for name in ["First", "Second"] {
+        assert!(db.find(name, &rid("temp-shared")).unwrap().is_none(), "{name} keeps its temp row");
+        assert_eq!(db.find(name, &rid("server")).unwrap().unwrap().text("body"), Some("match"));
+    }
+}
+
+#[test]
 fn correlation_reads_candidates_once_for_all_incoming_rows() {
     use rusqlite::trace::TraceEventCodes;
     for matching in [false, true] {

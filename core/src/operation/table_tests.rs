@@ -3,7 +3,7 @@ use crate::ddl::{create_model_tables, migrate_core};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 use std::collections::HashSet;
-use crate::identity::RowId;
+use crate::identity::{ModelKey, RowId, RowRef};
 use rusqlite::Connection;
 use serde_json::json;
 
@@ -76,7 +76,7 @@ fn apply_fsck_counts_only_status_actions() {
     let connection = database();
     assert_eq!(apply_fsck(&connection, &[], &Orphans::new()).unwrap(), 0);
     let seq = append_operation(&connection, &mut operation("row-1", OperationStatus::Pending), &json!({})).unwrap();
-    let skipped = [FsckAction::Keep(OperationId(seq)), FsckAction::QuarantineOrphan(RowId::new("orphan-1").unwrap())];
+    let skipped = [FsckAction::Keep(OperationId(seq)), FsckAction::QuarantineOrphan(RowRef::new(ModelKey::new("messages"), RowId::new("orphan-1").unwrap()))];
     assert_eq!(apply_fsck(&connection, &skipped, &Orphans::new()).unwrap(), 0);
     assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Pending);
     assert_eq!(apply_fsck(&connection, &[FsckAction::SetStatus(OperationId(seq), OperationStatus::Failed)], &Orphans::new()).unwrap(), 1);
@@ -124,7 +124,7 @@ fn insert_message(connection: &Connection, id: &str) {
 fn orphans() -> Orphans {
     ["temp-orphan", "temp-kept"]
         .iter()
-        .map(|id| (RowId::new(id).unwrap(), Orphan { model: "messages".into(), tables: vec!["row_messages".into()], search: None, payload: json!({"id": id}) }))
+        .map(|id| (RowRef::new(ModelKey::new("messages"), RowId::new(id).unwrap()), Orphan { tables: vec!["row_messages".into()], search: None, payload: json!({"id": id}) }))
         .collect()
 }
 
@@ -133,7 +133,7 @@ fn apply_fsck_quarantines_and_removes_orphan_temp_rows() {
     let connection = with_messages_table();
     insert_message(&connection, "temp-orphan");
     insert_message(&connection, "temp-kept");
-    let actions = [FsckAction::QuarantineOrphan(RowId::new("temp-orphan").unwrap()), FsckAction::QuarantineOrphan(RowId::new("temp-unknown").unwrap())];
+    let actions = ["temp-orphan", "temp-unknown"].map(|id| FsckAction::QuarantineOrphan(RowRef::new(ModelKey::new("messages"), RowId::new(id).unwrap())));
     assert_eq!(apply_fsck(&connection, &actions, &orphans()).unwrap(), 1);
     let left: Vec<String> = connection.prepare("SELECT id FROM row_messages").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
     assert_eq!(left, vec!["temp-kept"]);
@@ -190,9 +190,10 @@ fn apply_fsck_removes_the_search_row_of_an_orphan() {
     notes.fields[1].searchable = true;
     create_model_tables(&connection, &[notes]).unwrap();
     connection.execute_batch("INSERT INTO row_notes (id, revision, born_rev) VALUES ('temp-orphan', 1, 1); INSERT INTO fts_row_notes (rowid, c0) VALUES (1, 'hello');").unwrap();
-    let orphan = Orphan { model: "notes".into(), tables: vec!["row_notes".into()], search: Some("fts_row_notes".into()), payload: json!({}) };
-    let orphans: Orphans = [(RowId::new("temp-orphan").unwrap(), orphan)].into();
-    apply_fsck(&connection, &[FsckAction::QuarantineOrphan(RowId::new("temp-orphan").unwrap())], &orphans).unwrap();
+    let orphan = Orphan { tables: vec!["row_notes".into()], search: Some("fts_row_notes".into()), payload: json!({}) };
+    let row = RowRef::new(ModelKey::new("notes"), RowId::new("temp-orphan").unwrap());
+    let orphans: Orphans = [(row.clone(), orphan)].into();
+    apply_fsck(&connection, &[FsckAction::QuarantineOrphan(row)], &orphans).unwrap();
     let left: i64 = connection.query_row("SELECT COUNT(*) FROM fts_row_notes", [], |row| row.get(0)).unwrap();
     assert_eq!(left, 0);
 }

@@ -68,6 +68,8 @@ A file the build does not recognise is dropped and created again when the databa
 
 A reset records its complete model list in one transaction before clearing data. An interrupted reset resumes from that complete list when the database opens.
 
+Row identity includes the model and id. Pending writes, recovery and temporary-id replacement keep records of different models separate, even with identical ids.
+
 | Table | Holds |
 | ----- | ----- |
 | `row_<model>` | One row per record: id, revision, birth revision, one typed column per scalar and enum field, `rev__<field>` revision columns, `<field>__present` flags of typed objects |

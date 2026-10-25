@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 
 use super::status::{recovered_status, removes_row, Operation, OperationId, OperationStatus};
-use crate::identity::RowId;
+use crate::identity::{ModelKey, RowRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FsckAction {
     SetStatus(OperationId, OperationStatus),
     RebuildTempRow(OperationId),
-    QuarantineOrphan(RowId),
+    QuarantineOrphan(RowRef),
     Keep(OperationId),
 }
 
@@ -23,12 +23,13 @@ pub fn fsck_action(operation: &Operation, known_models: &HashSet<String>) -> Fsc
     FsckAction::SetStatus(operation.id, recovered_status(operation.transport_started, operation.status))
 }
 
-pub fn needs_temp_rebuild(operation: &Operation, resident_rows: &HashSet<RowId>) -> bool {
-    operation.temp_id.as_ref().is_some_and(|temp| !resident_rows.contains(temp)) && !removes_row(operation.status)
+pub fn needs_temp_rebuild(operation: &Operation, resident_rows: &HashSet<RowRef>) -> bool {
+    let Some((model, _)) = Operation::split_action_key(&operation.action_key) else { return false };
+    operation.temp_id.as_ref().is_some_and(|temp| !resident_rows.contains(&RowRef::new(ModelKey::new(&model), temp.clone()))) && !removes_row(operation.status)
 }
 
-pub fn orphan_temp_rows(temp_rows: &HashSet<RowId>, open_row_ids: &HashSet<RowId>) -> Vec<RowId> {
-    let mut orphans: Vec<RowId> = temp_rows.difference(open_row_ids).cloned().collect();
+pub fn orphan_temp_rows(temp_rows: &HashSet<RowRef>, open_row_ids: &HashSet<RowRef>) -> Vec<RowRef> {
+    let mut orphans: Vec<RowRef> = temp_rows.difference(open_row_ids).cloned().collect();
     orphans.sort();
     orphans
 }
@@ -36,9 +37,9 @@ pub fn orphan_temp_rows(temp_rows: &HashSet<RowId>, open_row_ids: &HashSet<RowId
 pub fn fsck_plan(
     operations: &[Operation],
     known_models: &HashSet<String>,
-    resident_rows: &HashSet<RowId>,
-    temp_rows: &HashSet<RowId>,
-    open_row_ids: &HashSet<RowId>,
+    resident_rows: &HashSet<RowRef>,
+    temp_rows: &HashSet<RowRef>,
+    open_row_ids: &HashSet<RowRef>,
 ) -> Vec<FsckAction> {
     let mut actions = Vec::new();
     for operation in operations {
