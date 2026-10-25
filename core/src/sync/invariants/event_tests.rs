@@ -8,6 +8,7 @@ use super::fixtures::*;
 use crate::query::Query;
 use crate::sync::LoadOptions;
 use crate::transport::{EventSpec, Response, SubscriptionEvent};
+use crate::test_wait::yield_until;
 
 pub(super) fn rig_with_events() -> Rig {
     let rig = rig();
@@ -103,7 +104,7 @@ async fn inv_event_03_an_edit_before_during_or_after_a_held_event_is_never_lost(
         assert_eq!(column(&rig, "text").as_deref(), Some("start"), "{schedule}: the event is still held");
         tokio::time::advance(Duration::from_millis(500)).await;
         rig.db.await_revision(rig.db.revision_seq().unwrap());
-        while column(&rig, "text").as_deref() != Some("server") { tokio::task::yield_now().await; }
+        yield_until("the held event landed", || column(&rig, "text").as_deref() == Some("server")).await;
         if schedule == "after the event" { edit(); }
         assert_eq!((column(&rig, "userId").as_deref(), column(&rig, "text").as_deref()), (Some("local"), Some("server")), "{schedule}");
     }

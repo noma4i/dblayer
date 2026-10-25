@@ -1,6 +1,7 @@
 use super::*;
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::value::ScalarKind;
+use crate::test_wait::within;
 
 #[tokio::test]
 async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
@@ -24,7 +25,7 @@ async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
         if state.pending.len() == 1 && state.pending[0].full { break; }
     }
     assert!(crate::db::locked(&queue.state).pending.len() <= CHANGE_QUEUE_LIMIT, "slow consumer queue exceeded the core limit");
-    let replacement = queue.next().await.unwrap();
+    let replacement = within(queue.next()).await.unwrap();
     assert!(replacement.full);
     let current = database.peek_query(query.into()).await.unwrap().unwrap();
     assert_eq!(replacement.rows, current.rows);
@@ -41,10 +42,10 @@ async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
     renamed.renamed = renamed.replaced.clone();
     queue.push(renamed);
     for index in 0..CHANGE_QUEUE_LIMIT { queue.push(LiveChange { error: Some(DbError::Network { detail: "lost".into() }), ..LiveChange::empty(current.revision + 2 + index as i64) }); }
-    let replacement = queue.next().await.unwrap();
+    let replacement = within(queue.next()).await.unwrap();
     assert!(replacement.full);
     assert_eq!(replacement.rows, expected);
     assert!(matches!(replacement.error, Some(DbError::Network { .. })));
     queue.cancel();
-    assert!(queue.next().await.is_none());
+    assert!(within(queue.next()).await.is_none());
 }

@@ -10,6 +10,7 @@ use crate::syncstate::SyncState;
 use crate::transport::MockTransport;
 use crate::upload::{UploadBatchInput, UploadItem, UploadOperations};
 use crate::value::ScalarKind;
+use crate::test_wait::within;
 
 fn register_declared(sync: &Sync) {
     for (name, root) in [("CreateBlob", "createBlob"), ("Init", "initMultipart"), ("Presign", "presignParts"), ("Complete", "completeMultipart"), ("Abort", "abortMultipart")] {
@@ -389,7 +390,7 @@ async fn restart_preserves_files_and_unknown_delivery_keeps_the_request_or_disca
         }
         let mut tasks = std::mem::take(&mut super::locked(&sync.inner.uploads).tasks);
         tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
+        while within(tasks.join_next()).await.is_some() {}
         drop(sync);
         drop(db);
         let db = Db::open(&path, vec![model], None).unwrap();

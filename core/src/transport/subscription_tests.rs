@@ -1,6 +1,7 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use crate::test_wait::within;
 
 #[test]
 fn cancel_calls_on_cancel_once() {
@@ -27,8 +28,8 @@ async fn dropping_subscription_cancels_and_closed_stream_ends() {
     );
     sender.send(SubscriptionEvent::Ready).unwrap();
     drop(sender);
-    assert_eq!(subscription.next().await, Some(SubscriptionEvent::Ready));
-    assert_eq!(subscription.next().await, None);
+    assert_eq!(within(subscription.next()).await, Some(SubscriptionEvent::Ready));
+    assert_eq!(within(subscription.next()).await, None);
     drop(subscription);
     assert_eq!(count.load(Ordering::SeqCst), 1);
 }

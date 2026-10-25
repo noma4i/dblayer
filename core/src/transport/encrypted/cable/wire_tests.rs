@@ -9,6 +9,7 @@ use serde_json::json;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rsa::{pkcs1::DecodeRsaPrivateKey, Oaep, RsaPrivateKey};
 use sha2::{Digest, Sha256};
+use crate::test_wait::{serving, within};
 
 struct ReceiveCancellation<'a>(&'a AtomicUsize, bool);
 
@@ -31,7 +32,7 @@ impl CableSocket for LifecycleSocket {
     }
     async fn next(&self) -> Option<SocketEvent> {
         let mut cancellation = ReceiveCancellation(&self.cancellations, true);
-        let event = self.socket.next().await;
+        let event = serving(self.socket.next()).await;
         cancellation.1 = false;
         event
     }
@@ -58,12 +59,12 @@ async fn server_pongs_keep_pending_receive_alive_for_120_seconds() {
     let _subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key: [0;32], sequence: 0 };
     peer.handshake(&kat, &config, challenge).await;
-    let subscribe = peer.next().await;
+    let subscribe = within(peer.next()).await;
     peer.emit(json!({"t":"subscribed", "id":subscribe["id"]}));
     let pongs = Arc::new(AtomicUsize::new(0));
     let count = pongs.clone();
     let server = tokio::spawn(async move {
-        while let Some(text) = peer.outgoing.recv().await {
+        while let Some(text) = serving(peer.outgoing.recv()).await {
             let command: Value = serde_json::from_str(&text).unwrap();
             let data: Value = serde_json::from_str(command["data"].as_str().unwrap()).unwrap();
             let body = frame::decrypt(&peer.receive_key, data["frame"].as_str().unwrap()).unwrap();
@@ -96,11 +97,11 @@ pub(super) struct Peer {
 impl Peer {
     pub(super) async fn handshake(&mut self, kat: &Value, config: &EncryptedConfig, challenge: Value) {
         self.incoming.send(SocketEvent::Text(challenge.to_string())).unwrap();
-        let subscribe: Value = serde_json::from_str(&self.outgoing.recv().await.unwrap()).unwrap();
+        let subscribe: Value = serde_json::from_str(&within(self.outgoing.recv()).await.unwrap()).unwrap();
         assert_eq!(subscribe["command"], "subscribe");
         assert_eq!(subscribe["identifier"], json!({"channel":config.cable_channel}).to_string());
         self.incoming.send(SocketEvent::Text(json!({"type":"confirm_subscription"}).to_string())).unwrap();
-        let hello: Value = serde_json::from_str(&self.outgoing.recv().await.unwrap()).unwrap();
+        let hello: Value = serde_json::from_str(&within(self.outgoing.recv()).await.unwrap()).unwrap();
         let data: Value = serde_json::from_str(hello["data"].as_str().unwrap()).unwrap();
         let token = data["hello"].as_str().unwrap();
         let private = RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap();
@@ -147,7 +148,7 @@ impl CableSocket for FakeSocket {
     async fn send(&self, text: String) -> Result<(), TransportError> {
         self.outgoing.send(text).map_err(|_| TransportError::Network("closed fake".into()))
     }
-    async fn next(&self) -> Option<SocketEvent> { self.incoming.lock().await.recv().await }
+    async fn next(&self) -> Option<SocketEvent> { serving(self.incoming.lock().await.recv()).await }
     async fn close(&self) { self.closes.fetch_add(1, Ordering::SeqCst); }
 }
 
@@ -181,7 +182,7 @@ async fn authenticated_error_retryability_controls_feed_until_resume() {
         let status = || sync.inner.lives.lock().unwrap()["Item|ItemEvents"].subscription.as_ref().unwrap().status();
         let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key: [0;32], sequence: 0 };
         peer.handshake(&kat, &config, challenge.clone()).await;
-        let subscribe = peer.next().await;
+        let subscribe = within(peer.next()).await;
         assert_eq!(subscribe["operationName"], "ItemEvents");
         peer.emit(json!({"t":"error", "id":subscribe["id"], "code":code, "retryable":retryable}));
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
@@ -204,7 +205,7 @@ async fn authenticated_error_retryability_controls_feed_until_resume() {
         }
         peer.sequence = 0;
         tokio::time::timeout(std::time::Duration::from_secs(1), peer.handshake(&kat, &config, challenge)).await.expect("resume opens a new connection");
-        let resumed = peer.next().await;
+        let resumed = within(peer.next()).await;
         assert_eq!(resumed["operationName"], "ItemEvents");
         peer.emit(json!({"t":"subscribed", "id":resumed["id"]}));
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
@@ -240,7 +241,7 @@ async fn stopping_subscriptions_drops_pending_open() {
         let (_, config, _, _) = super::link_tests::inputs();
         let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect, Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
         let subscription = cable.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({}))).await.unwrap();
-        starts.recv().await.unwrap();
+        within(starts.recv()).await.unwrap();
         match action {
             "cancel" => subscription.cancel(),
             "offline" => cable.set_online(false),
@@ -270,7 +271,7 @@ async fn terminal_open_refusals_are_not_retried() {
         tokio::time::advance(std::time::Duration::from_secs(2)).await;
         cable.settled().await.unwrap();
         assert_eq!(connect.1.load(Ordering::SeqCst), 1, "HTTP {status} opened the socket again");
-        let Some(SubscriptionEvent::Failed(failure)) = subscription.next().await else { panic!("terminal refusal") };
+        let Some(SubscriptionEvent::Failed(failure)) = within(subscription.next()).await else { panic!("terminal refusal") };
         assert!(matches!(failure.error, TransportError::Session { .. }));
         assert_eq!(cable.wake_count(), 0);
     }
@@ -286,7 +287,7 @@ async fn terminal_open_refusals_are_not_retried() {
     tokio::time::advance(std::time::Duration::from_secs(2)).await;
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 1, "rejected channel opened again");
-    let Some(SubscriptionEvent::Failed(failure)) = subscription.next().await else { panic!("terminal channel refusal") };
+    let Some(SubscriptionEvent::Failed(failure)) = within(subscription.next()).await else { panic!("terminal channel refusal") };
     assert!(matches!(failure.error, TransportError::Session { .. }));
     assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
     assert_eq!(cable.wake_count(), 0);
@@ -370,9 +371,9 @@ async fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retri
         let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
         let mut peer = Peer { incoming, outgoing:sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
         peer.handshake(&kat, &config, challenge).await;
-        let subscribe = peer.next().await;
+        let subscribe = within(peer.next()).await;
         peer.emit(json!({"t":"subscribed", "id":subscribe["id"]}));
-        assert!(matches!(subscription.next().await, Some(SubscriptionEvent::Ready)));
+        assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Ready)));
         if reason == "LOGGED_OUT" { peer.emit(json!({"t":"closing", "code":code, "reason":reason})); }
         else { peer.incoming.send(SocketEvent::Closed { code, reason:reason.into() }).unwrap(); }
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
@@ -384,7 +385,7 @@ async fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retri
             let Some(SubscriptionEvent::Failed(failure)) = tokio::time::timeout(std::time::Duration::from_secs(1), subscription.next()).await.unwrap() else { panic!("terminal {code}") };
             assert_eq!(failure.close.unwrap().code, code);
             assert!(matches!(failure.error, TransportError::Session { .. }));
-            assert!(subscription.next().await.is_none());
+            assert!(within(subscription.next()).await.is_none());
             tokio::time::advance(std::time::Duration::from_secs(2)).await;
             cable.settled().await.unwrap();
             assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
@@ -413,7 +414,7 @@ async fn authentication_refusal_before_ready_stops_without_reopening() {
     let mut late = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "LateChanges", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
-    assert!(matches!(late.next().await, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error: TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }, .. }))));
+    assert!(matches!(within(late.next()).await, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error: TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }, .. }))));
     cable.resume();
     let _signed_in = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "SignedInChanges", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
@@ -462,7 +463,7 @@ async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
     let _watch = sync.watch("Chat", "node", &serde_json::Map::from_iter([(NODE_PARAM.into(), json!("c1"))])).unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
     peer.handshake(&kat, &config, challenge).await;
-    let subscription = peer.next().await;
+    let subscription = within(peer.next()).await;
     peer.emit(json!({"t":"subscribed", "id":subscription["id"]}));
     peer.emit(json!({"t":"next", "id":subscription["id"], "result":{"data":{"recordEvents":{"changes":[{"area":"CHAT", "kind":"UPDATED", "entityId":"c1", "title":"forged"}]}}}}));
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -498,12 +499,12 @@ async fn closing_the_last_subscription_or_transport_releases_the_socket() {
         let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
         let subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
         let mut peer = Peer { incoming, outgoing:sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
-        let subscribe = if ready { peer.handshake(&kat, &config, challenge).await; Some(peer.next().await) } else { None };
+        let subscribe = if ready { peer.handshake(&kat, &config, challenge).await; Some(within(peer.next()).await) } else { None };
         if drop_transport { drop(cable); }
         else {
             subscription.cancel();
             if let Some(subscribe) = subscribe {
-                let frame = peer.next().await;
+                let frame = within(peer.next()).await;
                 assert_eq!(frame["t"], "unsubscribe");
                 assert_eq!(frame["id"], subscribe["id"]);
             }
@@ -529,7 +530,7 @@ async fn a_failed_write_closes_the_connection_before_backoff() {
     let _first = cable.subscribe(request.clone()).await.unwrap();
     let mut peer = Peer { incoming, outgoing:sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
     peer.handshake(&kat, &config, challenge).await;
-    peer.next().await;
+    within(peer.next()).await;
     drop(peer.outgoing);
     let _second = cable.subscribe(request).await.unwrap();
     cable.settled().await.unwrap();
@@ -548,13 +549,13 @@ async fn encrypted_subscription_sends_one_ping_then_closes_on_missing_pong() {
     let mut subscription = cable.subscribe(GraphQLRequest::new("subscription Changes { recordEvents { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key:[0;32], sequence:0 };
     peer.handshake(&kat, &config, challenge).await;
-    let subscribe = peer.next().await;
+    let subscribe = within(peer.next()).await;
     assert_eq!(subscribe["t"], "subscribe");
     let id = subscribe["id"].clone();
     peer.emit(json!({"t":"subscribed", "id":id}));
-    assert!(matches!(subscription.next().await, Some(SubscriptionEvent::Ready)));
+    assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Ready)));
     tokio::time::advance(std::time::Duration::from_secs(25)).await;
-    assert_eq!(peer.next().await["t"], "ping");
+    assert_eq!(within(peer.next()).await["t"], "ping");
     assert_eq!(cable.wake_count(), 1);
     tokio::time::advance(std::time::Duration::from_secs(20)).await;
     tokio::task::yield_now().await;

@@ -54,17 +54,17 @@ async fn inv_wait_05_frames_postpone_the_single_deadline_without_timer_wakes() {
     let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { sample { id } }", "Sample", json!({}))).await.unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key: [0; 32], receive_key: [0; 32], sequence: 0 };
     peer.handshake(&kat, &config, challenge).await;
-    let subscribed = peer.next().await;
+    let subscribed = within(peer.next()).await;
     peer.emit(json!({"t":"subscribed", "id":subscribed["id"]}));
-    assert!(matches!(subscription.next().await, Some(SubscriptionEvent::Ready)));
+    assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Ready)));
     for number in 0..10 {
         tokio::time::advance(Duration::from_secs(3)).await;
         peer.emit(json!({"t":"next", "id":subscribed["id"], "result":{"data":{"sample":{"id":number}}}}));
-        assert!(matches!(subscription.next().await, Some(SubscriptionEvent::Next(_))));
+        assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Next(_))));
         assert_eq!(cable.wake_count(), 0, "traffic caused a timer wake at frame {number}");
     }
     tokio::time::advance(Duration::from_secs(25)).await;
-    assert_eq!(peer.next().await["t"], "ping");
+    assert_eq!(within(peer.next()).await["t"], "ping");
     assert_eq!(cable.wake_count(), 1, "silence must fire exactly one timer");
 }
 
@@ -123,15 +123,15 @@ async fn multiplexes_registered_subscriptions_and_cancels_only_the_selected_id()
         assert_eq!(frame["t"], "subscribe");
         assert_eq!(frame["id"], *id);
         session.receive(json!({"t":"subscribed", "id":id})).unwrap();
-        assert!(matches!(subscription.next().await, Some(SubscriptionEvent::Ready)));
+        assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Ready)));
         session.receive(json!({"t":"next", "id":id, "result":fixture["result"]})).unwrap();
-        let Some(SubscriptionEvent::Next(response)) = subscription.next().await else { panic!("missing next") };
+        let Some(SubscriptionEvent::Next(response)) = within(subscription.next()).await else { panic!("missing next") };
         assert_eq!(response.data.unwrap(), fixture["result"]["data"]);
     }
     let id = subscriptions[0].0.clone();
     session.unsubscribe(&id);
     assert_eq!(session.take_frames(), vec![json!({"t":"unsubscribe","id":id})]);
-    assert!(subscriptions[0].1.next().await.is_none());
+    assert!(within(subscriptions[0].1.next()).await.is_none());
     session.closed(1006, "");
     reopen(&mut session).await;
     assert_eq!(ready(&mut session).len(), 3);

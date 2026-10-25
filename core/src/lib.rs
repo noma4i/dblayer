@@ -23,3 +23,5 @@ pub mod ffi;
 
 #[cfg(test)]
 mod lib_tests;
+#[cfg(test)]
+mod test_wait;

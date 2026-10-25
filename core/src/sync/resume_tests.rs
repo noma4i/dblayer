@@ -2,12 +2,9 @@ use super::load::LoadOptions;
 use super::rig::*;
 use super::SyncConfig;
 use crate::pacing::ResumeDrain;
+use crate::test_wait::within;
 use serde_json::{json, Map};
 use std::time::Duration;
-
-async fn within<T>(work: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(600), work).await.expect("bounded wait expired")
-}
 
 fn none() -> Map<String, serde_json::Value> {
     Map::new()

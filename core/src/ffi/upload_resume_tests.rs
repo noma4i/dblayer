@@ -6,6 +6,7 @@ use super::sealed_errors_tests::moment_spec;
 use super::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::upload::{UploadFile, UploadOperations};
+use crate::test_wait::within;
 
 pub(super) struct Bytes;
 
@@ -66,7 +67,7 @@ async fn resume_does_not_repeat_a_step_owned_by_an_active_upload() {
     });
     let input = UploadFile::new(source.to_str().unwrap());
     sync.upload("Moment", &crate::identity::RowId::new("42").unwrap(), "upload", input).await.unwrap();
-    lost.notified().await;
+    within(lost.notified()).await;
     let mut resume = Box::pin(super::encrypted::resume(database.session.clone().unwrap(), Some(sync.clone())));
     assert!(resume.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     sync.set_online(true);

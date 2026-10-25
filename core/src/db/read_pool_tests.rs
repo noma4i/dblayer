@@ -7,6 +7,7 @@ use super::watch::Subject;
 use super::window::WindowSpec;
 use crate::identity::{ModelKey, RowRef};
 use crate::query::Query;
+use crate::test_wait::spin_until;
 
 #[test]
 fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() {
@@ -244,9 +245,7 @@ fn inv_observe_29_a_refresh_deferred_by_saturation_still_reads_only_the_touched_
     }
     let before = db.counters().rows_loaded;
     db.update("users", &rid("u001"), obj(json!({"name": "latest"}))).unwrap();
-    while db.shared.observers().deferred_reads() == 0 {
-        std::thread::yield_now();
-    }
+    spin_until("an observer read was deferred", || db.shared.observers().deferred_reads() > 0);
     drop(release);
     db.await_revision(db.revision_seq().unwrap());
     let loaded = db.counters().rows_loaded - before;
@@ -280,14 +279,10 @@ fn inv_observe_29_refreshes_deferred_by_saturation_merge_their_touched_rows() {
     }
     let before = db.counters().rows_loaded;
     db.update("users", &rid("u001"), obj(json!({"name": "latest"}))).unwrap();
-    while db.shared.observers().deferred_reads() == 0 {
-        std::thread::yield_now();
-    }
+    spin_until("an observer read was deferred", || db.shared.observers().deferred_reads() > 0);
     db.update("users", &rid("u002"), obj(json!({"name": "second"}))).unwrap();
     let revision = db.revision_seq().unwrap();
-    while !db.shared.observers().groups_seen_through(revision) {
-        std::thread::yield_now();
-    }
+    spin_until("the groups saw the revision", || db.shared.observers().groups_seen_through(revision));
     drop(release);
     db.await_revision(db.revision_seq().unwrap());
     let loaded = db.counters().rows_loaded - before;

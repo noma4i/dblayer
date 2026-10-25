@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use super::SubscriptionSink;
 use crate::transport::{SubscriptionEvent, SubscriptionFailureKind};
+use crate::test_wait::within;
 
 fn sink() -> (SubscriptionSink, mpsc::UnboundedReceiver<SubscriptionEvent>) {
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -52,7 +53,7 @@ async fn raw_socket_bridge_preserves_ciphertext_and_close_codes() {
     let transport = super::ForeignTransport(std::sync::Arc::new(FakeSocket));
     let socket = transport.open_cable().await.unwrap();
     socket.send("ciphertext".into()).await.unwrap();
-    assert!(matches!(socket.next().await, Some(crate::transport::SocketEvent::Closed { code: 4503, reason }) if reason == "unavailable"));
+    assert!(matches!(within(socket.next()).await, Some(crate::transport::SocketEvent::Closed { code: 4503, reason }) if reason == "unavailable"));
     socket.close().await;
 }
 

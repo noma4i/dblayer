@@ -103,7 +103,7 @@ impl crate::pacing::Clock for Instant {
 }
 
 async fn within<T>(wait: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(std::time::Duration::from_secs(2), wait).await.expect("the retry wait ended")
+    crate::test_wait::within_secs(2, wait).await
 }
 
 #[tokio::test]

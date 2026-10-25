@@ -6,6 +6,7 @@ use tokio::sync::Notify;
 use super::{Config, Database, DbError, LoadMoreResult, TestClock, Transport};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
+use crate::test_wait::{serving, within};
 
 struct Paged {
     queries: AtomicUsize,
@@ -24,7 +25,7 @@ impl Transport for Paged {
         let number = self.queries.fetch_add(1, Ordering::SeqCst);
         if number == 1 {
             self.held.notify_one();
-            self.release.notified().await;
+            serving(self.release.notified()).await;
         }
         let has_next = number == 0 || (number == 1 && self.last_has_next);
         Ok(format!(r#"{{"data":{{"feed":{{"nodes":[{{"id":"m{number}","text":"t"}}],"pageInfo":{{"hasNextPage":{has_next},"endCursor":"c{number}"}}}}}}}}"#))
@@ -58,7 +59,7 @@ async fn inv_loadm_18_a_load_more_during_another_flight_says_already_loading_not
     let (db, transport) = open(true).await;
     db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let first = tokio::spawn({ let db = db.clone(); async move { more(&db).await } });
-    transport.held.notified().await;
+    within(transport.held.notified()).await;
     assert_eq!(more(&db).await, LoadMoreResult::AlreadyLoading);
     transport.release.notify_one();
     assert_eq!(first.await.unwrap(), LoadMoreResult::Loaded { has_more: true });
@@ -71,7 +72,7 @@ async fn inv_loadm_18_the_last_page_says_loaded_without_more_and_a_closed_chain_
     assert_eq!(more(&db).await, LoadMoreResult::NoMore);
     db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let last = tokio::spawn({ let db = db.clone(); async move { more(&db).await } });
-    transport.held.notified().await;
+    within(transport.held.notified()).await;
     transport.release.notify_one();
     assert_eq!(last.await.unwrap(), LoadMoreResult::Loaded { has_more: false });
     assert_eq!(more(&db).await, LoadMoreResult::NoMore);

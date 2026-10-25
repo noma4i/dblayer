@@ -7,6 +7,7 @@ use crate::transport::{MockTransport, Reply};
 use crate::upload::{UploadBatchInput, UploadItem, UploadOperations};
 
 use super::upload_tests::{blob, created, input, rid};
+use crate::test_wait::within;
 
 #[tokio::test(start_paused = true)]
 async fn local_models_reject_uploads_without_creating_rows_or_files() {
@@ -127,7 +128,7 @@ async fn admitted_large_files_live_on_disk_and_resume_without_the_source() {
         source.close().unwrap();
         let mut tasks = std::mem::take(&mut super::locked(&rig.sync.inner.uploads).tasks);
         tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
+        while within(tasks.join_next()).await.is_some() {}
         drop(rig);
         let rig = rig_on(Db::open(&path, models, None).unwrap(), MockTransport::new(), SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });
         rig.sync.register(OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));

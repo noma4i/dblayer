@@ -10,6 +10,7 @@ use crate::upload::{UploadConfig, UploadFile, UploadOperations, UploadStatus};
 use super::super::{OperationDef, SyncConfig};
 use super::super::rig::{Rig, rig_without_operations, put, await_outbox};
 use super::upload_tests::{await_released, file, rid, small};
+use crate::test_wait::within;
 
 fn reopen(path: &Path, budget: u32) -> Rig {
     let mut model = ModelSpec::new("assets", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
@@ -39,7 +40,7 @@ async fn shutdown(rig: Rig) {
     let database = Arc::downgrade(&rig.db.shared);
     let mut tasks = std::mem::take(&mut locked(&rig.sync.inner.uploads).tasks);
     tasks.abort_all();
-    while tasks.join_next().await.is_some() {}
+    while within(tasks.join_next()).await.is_some() {}
     drop(rig);
     await_released(&database).await;
     assert!(database.upgrade().is_none(), "the database remained open");

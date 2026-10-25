@@ -4,6 +4,7 @@ use super::load_machine::{LoadPhase, RelationState};
 use crate::transport::Reply;
 use serde_json::Map;
 use std::time::Duration;
+use crate::test_wait::within;
 
 fn none() -> Map<String, serde_json::Value> {
     Map::new()
@@ -85,7 +86,7 @@ async fn a_second_receiver_starts_from_the_stored_window() {
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1"));
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let mut fresh = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
-    fresh.changed().await.unwrap();
+    within(fresh.changed()).await.unwrap();
     assert!(fresh.borrow().has_more && fresh.borrow().loaded_at.is_some());
 }
 

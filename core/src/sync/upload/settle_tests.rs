@@ -8,6 +8,7 @@ use crate::pacing::ManualClock;
 use crate::sync::{OperationDef, Sync, SyncConfig};
 use crate::transport::{MockTransport, Reply, TransportError};
 use crate::upload::{UploadBatchInput, UploadItem, UploadOperations};
+use crate::test_wait::spin_until;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn settled_wakes_when_an_item_fails_after_settled_parked() {
@@ -20,7 +21,7 @@ async fn settled_wakes_when_an_item_fails_after_settled_parked() {
     let watched = observer.clone();
     transport.respond_with(move |request| {
         if request.operation_name != "CreateBlob" { return None; }
-        while watched.get().is_none_or(|sync| sync.counters().settle_parks == 0) { std::thread::yield_now(); }
+        spin_until("the settle call parked", || watched.get().is_some_and(|sync| sync.counters().settle_parks > 0));
         Some(Reply::fail(TransportError::Http { status: 422, body: String::new() }))
     });
     observer.set(sync.clone()).ok();

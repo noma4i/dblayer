@@ -9,6 +9,7 @@ use super::{Config, Database, DbError, LiveChange, QueryListener, TestClock, Tra
 use crate::identity::RowId;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
+use crate::test_wait::within;
 
 pub(super) struct Counting {
     queries: AtomicUsize,
@@ -187,7 +188,7 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
 async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
     let (db, transport, hold) = held_rig().await;
     let _live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Silent));
-    transport.started.notified().await;
+    within(transport.started.notified()).await;
     let already = db.sync().unwrap().joined_loads();
     let sharing = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     joined_the_flight(&db, &transport, already).await;
@@ -221,7 +222,7 @@ async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
         if preloaded {
             hold.add_permits(1);
             load(&db, "feed").await.unwrap();
-            transport.started.notified().await;
+            within(transport.started.notified()).await;
         }
         let before = queries(&transport);
         tokio::spawn({ let gate = gate.clone(); async move { tokio::time::sleep(Duration::from_secs(3)).await; gate.add_permits(1); } });
@@ -229,7 +230,7 @@ async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
         if preloaded {
             assert_eq!(live.current().await.size, 1, "cached rows stay visible during the forced load");
         }
-        transport.started.notified().await;
+        within(transport.started.notified()).await;
         hold.add_permits(1);
         live.wait_for_initial_load().await.unwrap();
         assert!(stored(&db));
@@ -243,7 +244,7 @@ async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
 async fn cancelling_a_live_query_finishes_its_initial_wait() {
     let (db, transport, _hold) = held_rig().await;
     let live = db.live_query(r#"{"model":"Moment","relation":"feed"}"#.into(), Arc::new(Silent));
-    transport.started.notified().await;
+    within(transport.started.notified()).await;
     live.cancel();
     let result = live.wait_for_initial_load().await;
     assert!(matches!(result, Err(DbError::Interrupted { .. })));
@@ -262,7 +263,7 @@ async fn inv_fresh_14_load_keeps_no_subscription() {
 async fn inv_fresh_13_a_cancelled_caller_does_not_cancel_the_load_another_waits_for() {
     let (db, transport, hold) = held_rig().await;
     let cancelled = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
-    transport.started.notified().await;
+    within(transport.started.notified()).await;
     let already = db.sync().unwrap().joined_loads();
     let waiter = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     joined_the_flight(&db, &transport, already).await;
