@@ -156,6 +156,59 @@ class MainThreadTest {
     }
 
     @Test
+    fun the_owner_thread_consumes_a_list_and_a_window_while_their_publication_is_held_up() = bounded {
+        reopen(Config(null, null, 128u), modelsJSON, null)
+        val created = List(40) { Moment.create(text = "t%05d".format(it)) }
+        val armed = java.util.concurrent.atomic.AtomicReference<Pair<java.util.concurrent.CountDownLatch, java.util.concurrent.CountDownLatch>?>(null)
+        val decoder = object : ModelDecoder<Probe> {
+            override val modelName = Moment.modelName
+            override val layout = Moment.layout
+            override fun decode(row: WireRow) = Probe(Moment.decode(row), {
+                val (entered, gate) = armed.get() ?: return@Probe
+                if (Thread.currentThread() !== mainThread) { entered.countDown(); gate.await(10, java.util.concurrent.TimeUnit.SECONDS) }
+            }) {}
+        }
+        val scope = CoroutineScope(main)
+        try {
+            val query = Query("Moment", decoder).order(Order("text", "asc"))
+            val list = LiveList(query, scope)
+            val window = LiveWindow(query.window(tail = 40), scope)
+            eventually("the first delivery") { list.rows.value.size == 40 && window.rows.value.size == 40 }
+
+            list.takeUpdate()
+            window.takeUpdate()
+            var edit = 0
+            fun waitedForPublication(consume: () -> ListUpdate<Probe>): Boolean {
+                val entered = java.util.concurrent.CountDownLatch(2)
+                val gate = java.util.concurrent.CountDownLatch(1)
+                armed.set(entered to gate)
+                val text = "t00039-${edit++}"
+                val updated = kotlinx.coroutines.runBlocking { created[39].update(text = GraphQLNullable.Value(text)) }
+                try {
+                    assertTrue("a publication is comparing rows", entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    val consumed = executor.submit<ListUpdate<Probe>> { consume() }
+                    return try {
+                        val update = consumed.get(2, java.util.concurrent.TimeUnit.SECONDS)
+                        assertEquals("the rows and the edits of the held publication", text, update.rows.last().moment.text)
+                        assertTrue("the edits reach the rows from the previous revision", update.edits?.any { it is ListEdit.Rewrite && it.index == 39 } == true)
+                        false
+                    } catch (_: java.util.concurrent.TimeoutException) { true }
+                } finally {
+                    gate.countDown()
+                    armed.set(null)
+                    assertEquals(text, updated.text)
+                }
+            }
+
+            assertEquals("the owner thread waited for the list publication", false, waitedForPublication { list.takeUpdate() })
+            eventually("the list publication ended") { list.rows.value.last().moment.text == "t00039-0" && window.rows.value.last().moment.text == "t00039-0" }
+            assertEquals("the owner thread waited for the window publication", false, waitedForPublication { window.takeUpdate() })
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun a_live_list_prepares_its_ids_off_the_owner_thread() = bounded {
         reopen(Config(null, null, 64u), modelsJSON, null)
         repeat(2) { Moment.create(text = "t%05d".format(it)) }

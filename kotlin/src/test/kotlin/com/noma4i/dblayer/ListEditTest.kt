@@ -125,16 +125,18 @@ class ListEditTest {
         val list = LiveList(Query("Moment", Moment).order(Order("text", "asc")), scope)
         suspend fun waitFor(what: String, done: (List<Moment>) -> Boolean) = eventually(what, 20_000) { done(list.rows.value) }
         waitFor("the whole list") { it.size == 5 }
-        assertNull(list.takeEdits())
+        assertNull(list.takeUpdate().edits)
         val mirror = list.rows.value.toMutableList()
 
         created[0].update(text = GraphQLNullable.Value("z0"))
         created[3].update(text = GraphQLNullable.Value("t3x"))
         waitFor("both updates") { rows -> rows.any { it.text == "z0" } && rows.any { it.text == "t3x" } }
-        mirror.replay(list.takeEdits()!!)
+        val update = list.takeUpdate()
+        mirror.replay(update.edits!!)
 
         assertEquals(texts(list.rows.value), texts(mirror))
-        assertEquals(emptyList<ListEdit<Moment>>(), list.takeEdits())
+        assertEquals(texts(update.rows), texts(mirror))
+        assertEquals(emptyList<ListEdit<Moment>>(), list.takeUpdate().edits)
         scope.cancel()
     }
 

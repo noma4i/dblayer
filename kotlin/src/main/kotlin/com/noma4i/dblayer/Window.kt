@@ -49,21 +49,18 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
     private val mutableReplaced = MutableStateFlow<Map<String, String>>(emptyMap())
     private val mutableEdges = MutableStateFlow(WindowEdges(false, false, null))
     private val mutableFailure = MutableStateFlow<String?>(null)
-    private var pending: List<ListEdit<Model>>? = null
+    private val updates = ListUpdates<Model>()
 
     init {
         scope.launch(Dispatchers.Default) {
             try {
                 window.snapshots.flow.collect { snapshot ->
-                    val ids = if (snapshot.reordered) snapshot.rows.map { row -> row.id } else null
-                    synchronized(this@LiveWindow) {
-                        pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size)
-                        ids?.let { mutableIds.value = it }
-                        mutableReplaced.value = snapshot.replaced
-                        mutableFailure.value = snapshot.error
-                        snapshot.window?.let { mutableEdges.value = it }
-                        mutableRows.value = snapshot.rows
-                    }
+                    updates.publish(snapshot)
+                    if (snapshot.reordered) mutableIds.value = snapshot.rows.map { row -> row.id }
+                    mutableReplaced.value = snapshot.replaced
+                    mutableFailure.value = snapshot.error
+                    snapshot.window?.let { mutableEdges.value = it }
+                    mutableRows.value = snapshot.rows
                 }
             } catch (error: IllegalStateException) {
                 mutableFailure.value = error.message
@@ -77,7 +74,8 @@ class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: Coro
     val edges: StateFlow<WindowEdges> get() = mutableEdges
     val failure: StateFlow<String?> get() = mutableFailure
 
-    fun takeEdits(): List<ListEdit<Model>>? = synchronized(this) { pending.also { pending = emptyList() } }
+    /** The newest rows of the window with the edits since the last call, from one revision. The call never waits for a delivery that is being published. */
+    fun takeUpdate(): ListUpdate<Model> = updates.take()
 
     fun expand(before: Int = 0, after: Int = 0) = window.expand(before, after)
 }

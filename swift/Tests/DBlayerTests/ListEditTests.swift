@@ -140,13 +140,16 @@ struct ListEditTests {
     }
 
     await deliver(Self.change(full: true, size: 3, rows: ["a", "b", "c"].map { Self.moment($0) }))
-    #expect(list.takeEdits() == nil, "the first read takes the whole list")
+    #expect(list.takeUpdate().edits == nil, "the first read takes the whole list")
     await deliver(Self.change(size: 3, rows: [Self.moment("a", text: "a1")], indexes: [0]))
     await deliver(Self.change(size: 3, rows: [Self.moment("c", text: "c1")], indexes: [2]))
     var mirror = ["a", "b", "c"].map { try? Moment.decode(Self.moment($0)) }.compactMap { $0 }
-    mirror.replay(try #require(list.takeEdits()))
+    let update = list.takeUpdate()
+    mirror.replay(try #require(update.edits))
 
     #expect(Self.texts(mirror) == Self.texts(list.rows))
-    #expect(list.takeEdits()?.isEmpty == true, "a reader that is up to date gets no steps")
+    #expect(Self.texts(mirror) == Self.texts(update.rows))
+    #expect(update.revision == list.snapshot.seq)
+    #expect(list.takeUpdate().edits?.isEmpty == true, "a reader that is up to date gets no steps")
   }
 }

@@ -19,17 +19,17 @@ extension BridgeProbeTests {
     #expect(live.rows.map(\.text) == (25 ..< 30).map { String(format: "t%05d", $0) })
     #expect(live.hasBefore && !live.hasAfter && live.total == 30)
     var held = live.rows
-    _ = live.takeEdits()
+    _ = live.takeUpdate()
 
     _ = try await Moment.create(text: "t00030")
     await eventually("the new tail row") { live.rows.last?.text == "t00030" }
-    held.replay(live.takeEdits() ?? [])
+    held.replay(live.takeUpdate().edits ?? [])
     #expect(held.map(\.id) == live.rows.map(\.id))
     #expect(live.total == 31)
 
     live.expand(before: 3)
     await eventually("the wider window") { live.rows.count == 8 }
-    held.replay(live.takeEdits() ?? [])
+    held.replay(live.takeUpdate().edits ?? [])
     #expect(held.map(\.id) == live.rows.map(\.id))
     live.expand(before: 100)
     await eventually("every row") { live.rows.count == 31 }

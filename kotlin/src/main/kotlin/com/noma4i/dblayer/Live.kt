@@ -134,7 +134,7 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     private val mutableRows = kotlinx.coroutines.flow.MutableStateFlow<List<Model>>(emptyList())
     private val mutableIds = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
     private val mutableReplaced = kotlinx.coroutines.flow.MutableStateFlow<Map<String, String>>(emptyMap())
-    private var pending: List<ListEdit<Model>>? = null
+    private val updates = ListUpdates<Model>()
 
     init {
         val snapshots = query.snapshots(refreshOnConnect) { result ->
@@ -143,14 +143,11 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
         scope.launch(kotlinx.coroutines.Dispatchers.Default) {
             try {
                 snapshots.flow.collect { snapshot ->
-                    val ids = if (snapshot.reordered) snapshot.rows.map { row -> row.id } else null
-                    synchronized(this@LiveList) {
-                        pending = ListEdit.composing(pending, snapshot.edits, snapshot.rows.size)
-                        ids?.let { mutableIds.value = it }
-                        mutableReplaced.value = snapshot.replaced
-                        mutableRows.value = snapshot.rows
-                        mutableSnapshot.value = snapshot
-                    }
+                    updates.publish(snapshot)
+                    if (snapshot.reordered) mutableIds.value = snapshot.rows.map { row -> row.id }
+                    mutableReplaced.value = snapshot.replaced
+                    mutableRows.value = snapshot.rows
+                    mutableSnapshot.value = snapshot
                 }
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
@@ -166,7 +163,8 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     /** The ids that the last delivery of `rows` replaced: real id to temporary id. */
     val replaced: kotlinx.coroutines.flow.StateFlow<Map<String, String>> get() = mutableReplaced
 
-    fun takeEdits(): List<ListEdit<Model>>? = synchronized(this) { pending.also { pending = emptyList() } }
+    /** The newest rows with the edits since the last call, from one revision. The call never waits for a delivery that is being published. */
+    fun takeUpdate(): ListUpdate<Model> = updates.take()
 
     suspend fun refresh() = query.refresh()
     suspend fun waitForInitialLoad() = initialSubscription.await().waitForInitialLoad()

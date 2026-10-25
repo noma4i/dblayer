@@ -70,6 +70,7 @@ public final class LiveWindow<Model: DBModel> {
   public private(set) var failure: String?
   @ObservationIgnored private let window: Window<Model>
   @ObservationIgnored private var pending: [ListEdit<Model>]?
+  @ObservationIgnored private var revision: UInt64 = 0
   @ObservationIgnored private var task: Task<Void, Never>?
 
   public init(_ window: Window<Model>) {
@@ -93,12 +94,14 @@ public final class LiveWindow<Model: DBModel> {
     if let edges = snapshot.window { (hasBefore, hasAfter, total) = (edges.hasBefore, edges.hasAfter, edges.total) }
     pending = ListEdit.composing(pending, snapshot.edits, within: snapshot.rows.count)
     rows = snapshot.rows
+    revision = snapshot.seq
     if let ids { self.ids = ids }
   }
 
-  public func takeEdits() -> [ListEdit<Model>]? {
+  /// The newest rows of the window with the edits since the last call, from one revision.
+  public func takeUpdate() -> ListUpdate<Model> {
     defer { pending = [] }
-    return pending
+    return ListUpdate(rows: rows, edits: pending, revision: revision)
   }
 
   public func expand(before rows: Int) { window.expand(before: rows) }

@@ -235,9 +235,10 @@ public final class LiveList<Model: DBModel> {
     snapshot = next
   }
 
-  public func takeEdits() -> [ListEdit<Model>]? {
+  /// The newest rows with the edits since the last call, from one revision.
+  public func takeUpdate() -> ListUpdate<Model> {
     defer { pending = [] }
-    return pending
+    return ListUpdate(rows: rows, edits: pending, revision: snapshot.seq)
   }
 
   public func refresh() async throws { try await query.refresh() }

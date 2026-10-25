@@ -28,17 +28,17 @@ class ListWindowTest {
         assertEquals((25 until 30).map { "t%05d".format(it) }, live.rows.value.map { it.text })
         assertEquals(WindowEdges(true, false, 30L), live.edges.value)
         val held = ArrayList(live.rows.value)
-        live.takeEdits()
+        live.takeUpdate()
 
         Moment.create(text = "t00030")
         eventually("the new tail row") { live.rows.value.lastOrNull()?.text == "t00030" }
-        held.replay(live.takeEdits() ?: emptyList())
+        held.replay(live.takeUpdate().edits ?: emptyList())
         assertEquals(live.rows.value.map { it.id }, held.map { it.id })
         assertEquals(31L, live.edges.value.total)
 
         live.expand(before = 3)
         eventually("the wider window") { live.rows.value.size == 8 }
-        held.replay(live.takeEdits() ?: emptyList())
+        held.replay(live.takeUpdate().edits ?: emptyList())
         assertEquals(live.rows.value.map { it.id }, held.map { it.id })
         live.expand(before = 100)
         eventually("every row") { live.rows.value.size == 31 }

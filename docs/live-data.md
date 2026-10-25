@@ -196,7 +196,7 @@ let thread = LiveList(try Note.thread(groupId))   // thread.rows, thread.replace
 val thread = LiveList(Note.thread(groupId), viewModelScope)   // thread.rows, thread.replaced, thread.ids are StateFlow
 ```
 
-**Edits.** A delivery also tells how the rows changed: `Snapshot.edits` is the ordered steps `rewrite(index, row)`, `insert(index, row)` and `remove(index, id)` from the rows of the previous delivery to the new rows. Each step carries the value of its own moment, so the steps of several deliveries replay in order (`rows.replay(edits)`) and the last write of an id wins. A slow reader gets the steps of the deliveries it missed joined in order. `LiveList.takeEdits()` returns the steps since the reader last took them and then counts the reader as up to date. A reader that mirrors the rows patches its mirror with the steps and reads only the changed rows. `edits` is nil, and the reader takes `rows` whole, for the first delivery, a whole list, a list that holds a row that did not decode, and a run of steps longer than the list. The library still looks up an id by scan for a replaced, removed or moved row, moves the tail of the array for an insert or remove in the middle, and copies the array once per delivery when a reader still holds the previous one.
+**Edits.** A delivery also tells how the rows changed: `Snapshot.edits` is the ordered steps `rewrite(index, row)`, `insert(index, row)` and `remove(index, id)` from the rows of the previous delivery to the new rows. Each step carries the value of its own moment, so the steps of several deliveries replay in order (`rows.replay(edits)`) and the last write of an id wins. A slow reader gets the steps of the deliveries it missed joined in order. `LiveList.takeUpdate()` returns the newest `rows`, the steps since the reader last took them and the `revision` of that delivery, all from one delivery, and then counts the reader as up to date. In Kotlin it never waits for a delivery that is being published. A reader that mirrors the rows patches its mirror with the steps and reads only the changed rows. `edits` is nil, and the reader takes `rows` whole, for the first delivery, a whole list, a list that holds a row that did not decode, and a run of steps longer than the list. The library still looks up an id by scan for a replaced, removed or moved row, moves the tail of the array for an insert or remove in the middle, and copies the array once per delivery when a reader still holds the previous one.
 
 ```swift
 for await snapshot in try await Note.thread(groupId).snapshots.stream() {
@@ -212,12 +212,14 @@ Note.thread(groupId).snapshots.collect { snapshot ->
 ```
 
 ```swift
-if let edits = thread.takeEdits() { mirror.replay(edits) } else { mirror = thread.rows }
+let update = thread.takeUpdate()
+if let edits = update.edits { mirror.replay(edits) } else { mirror = update.rows }
 ```
 
 ```kotlin
-val edits = thread.takeEdits()
-if (edits != null) mirror.replay(edits) else mirror = thread.rows.value.toMutableList()
+val update = thread.takeUpdate()
+val edits = update.edits
+if (edits != null) mirror.replay(edits) else mirror = update.rows.toMutableList()
 ```
 
 **View models.** `LiveList` keeps the newest snapshot of a query and moves the relation. It ends with its owner: there is nothing to start or stop. Creating one is cheap on the main thread: the subscription and the first read run on a background task (Swift) or on `Dispatchers.Default` (Kotlin), and `rows` stay empty until the first delivery arrives:
@@ -250,7 +252,7 @@ val thread = LiveList(Note.thread(groupId), viewModelScope, refreshOnConnect = t
 thread.waitForInitialLoad()
 ```
 
-**Windows.** A group shows its last rows, not its whole history. `query.window(tail: n)` keeps the last `n` rows of an ordered query in memory (the query has no limit, include or search). A relation that lists by a param column, such as `scope :thread, insert_on: [:event, :response]` with `where groupId: :groupId` and an `order`, is a valid query: its members are the rows the relation loaded or received. A relation without an `order` has no local sort and is refused with `NotWindowable`. A scope declared with `stable_order: true` (see [models](models.md#scopes)) lists its rows in the order they were shown: a confirmed message, an event that changes a `sequenceNumber` and a reloaded page do not move a row that is on screen. A row outside the window is not decoded and not held, and a change outside the window delivers nothing. `LiveWindow` is to `Window` what `LiveList` is to `Query`: it keeps the rows, `hasBefore`, `hasAfter` and `total`, and it has `takeEdits()` with the steps of [Edits](#in-your-ui) in window positions. `hasBefore` and `hasAfter` tell whether the database holds rows beyond each edge, and `total` is the number of rows of the query. The window follows the tail: a new last row enters and the oldest row of the window leaves. `expand(before:)` adds up to that many older rows from the database, `expand(after:)` adds newer rows, and neither adds a row that does not exist. The window ends with its owner. The library keeps the ids and sort keys of the whole query, not its rows. Windows over the same query share one set of sort keys when they open, so the second window reads no keys from the database. The window reads the local database only: it loads no page from the server yet.
+**Windows.** A group shows its last rows, not its whole history. `query.window(tail: n)` keeps the last `n` rows of an ordered query in memory (the query has no limit, include or search). A relation that lists by a param column, such as `scope :thread, insert_on: [:event, :response]` with `where groupId: :groupId` and an `order`, is a valid query: its members are the rows the relation loaded or received. A relation without an `order` has no local sort and is refused with `NotWindowable`. A scope declared with `stable_order: true` (see [models](models.md#scopes)) lists its rows in the order they were shown: a confirmed message, an event that changes a `sequenceNumber` and a reloaded page do not move a row that is on screen. A row outside the window is not decoded and not held, and a change outside the window delivers nothing. `LiveWindow` is to `Window` what `LiveList` is to `Query`: it keeps the rows, `hasBefore`, `hasAfter` and `total`, and it has `takeUpdate()` with the steps of [Edits](#in-your-ui) in window positions. `hasBefore` and `hasAfter` tell whether the database holds rows beyond each edge, and `total` is the number of rows of the query. The window follows the tail: a new last row enters and the oldest row of the window leaves. `expand(before:)` adds up to that many older rows from the database, `expand(after:)` adds newer rows, and neither adds a row that does not exist. The window ends with its owner. The library keeps the ids and sort keys of the whole query, not its rows. Windows over the same query share one set of sort keys when they open, so the second window reads no keys from the database. The window reads the local database only: it loads no page from the server yet.
 
 ```swift
 let thread = LiveWindow(try Note.thread(groupId).window(tail: 50))   // rows keep their place when the server confirms a message
@@ -263,14 +265,16 @@ val thread = LiveWindow(Note.thread(groupId).window(tail = 50), viewModelScope)
 ```swift
 let group = LiveWindow(try Note.where(Note.groupId == groupId).order(Note.createdAt.asc).window(tail: 50))
 if group.hasBefore { group.expand(before: 50) }                 // group.rows, group.total are observable
-if let edits = group.takeEdits() { mirror.replay(edits) } else { mirror = group.rows }
+let update = group.takeUpdate()
+if let edits = update.edits { mirror.replay(edits) } else { mirror = update.rows }
 ```
 
 ```kotlin
 val group = LiveWindow(Note.where(Note.groupId eq groupId).order(Note.createdAt.asc).window(tail = 50), viewModelScope)
 if (group.edges.value.hasBefore) group.expand(before = 50)      // group.rows, group.edges are StateFlow
-val edits = group.takeEdits()
-if (edits != null) mirror.replay(edits) else mirror = group.rows.value.toMutableList()
+val update = group.takeUpdate()
+val edits = update.edits
+if (edits != null) mirror.replay(edits) else mirror = update.rows.toMutableList()
 ```
 
 **UIKit and Android views.** Read `changes` and apply each `ListChange` to a diffable data source, a collection view or a `ListAdapter` (`dataSource` and `adapter` are app code). The change already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:

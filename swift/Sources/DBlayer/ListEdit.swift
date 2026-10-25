@@ -1,5 +1,12 @@
 import Foundation
 
+/// The rows of a list with the edits since the last take, from one revision. `edits` is nil when the rows cannot be reached by edits: replace the mirror with `rows`. Empty `edits` mean no change.
+public struct ListUpdate<Model: Sendable>: Sendable {
+  public let rows: [Model]
+  public let edits: [ListEdit<Model>]?
+  public let revision: UInt64
+}
+
 /// One step from the rows a reader holds to the next rows. It carries its own row value, so the steps of several deliveries replay in order.
 public enum ListEdit<Model: Sendable>: Sendable {
   case rewrite(Int, Model)

@@ -19,6 +19,7 @@
 - Observation reads queued, running or awaiting application are limited to two.
 - Database calls prepare JSON and decode answers off the caller thread on both platforms.
 - Live lists and windows build their ids off the main thread.
+- `takeEdits()` is replaced by `takeUpdate()`: rows, edits and revision from one delivery.
 - Kotlin live lists and windows publish their state from a background thread.
 - Generated writes, actions, node reads and operations run off the caller thread.
 - `Query.cached()` and `cachedRow()` are now `async` in Swift and `suspend` in Kotlin.
