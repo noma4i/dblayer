@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Generated GraphQL inputs support recursive input objects and `@oneOf` choices.
+- Kotlin `JsonElement.jsonText()` serializes JSON with the library settings.
+
+### Changed
+- Swift query conditions, `JSONValue.encode`, `JSONValue.text` and `JSONValue.tagged` throw on serialization failure.
+- Generated Swift parameterized scopes and upload variable builders throw on serialization failure.
+- Kotlin `parseJsonObject` throws when the body is not a JSON object.
+- Cancelling a single upload after its content mutation starts returns false.
+- Uploads reject local and memory models without creating records or files.
+- Upload sources are copied and hashed before the operation is written.
+- Upload file reads and checksums run on blocking tasks and stop on cancellation.
+- Upload transfers reserve their file slot before starting and hold it through retries.
+- Observation reads queued, running or awaiting application are limited to two.
+
+### Fixed
+- Explicit null stays distinct from an absent field after reopening the database.
+- Non-finite numbers fail serialization instead of becoming null.
+- Fields named like SQL keywords work in storage, indexes, filters and updates.
+- Generated APIs and GraphQL inputs escape Swift and Kotlin keywords and keep serialized keys.
+- List changes reserve order keys together, so removals release keys before additions.
+- Kotlin GraphQL subscriptions end when the server closes the WebSocket.
+- Recovery and temporary-id replacement keep records of different models with equal ids separate.
+- Interrupted database resets resume from the complete recorded model list.
+- Cloud replies from before a database reset are rejected before writing rows.
+- `UseLocal` keeps edits made while remote clocks are fetched.
+- Cloud values received before their server row are kept until the row arrives.
+- Subscriptions connect without waiting for storage.
+- Unused load state is released after its last observer and request finish.
+- File cleanup failures are reported, and committed row changes stay committed.
+- A failed multipart `complete` keeps confirmed parts and the upload id.
+- A database reset rejects upload admission queued before the reset.
+- Bundled SQLite respects the macOS 14 deployment target.
+
+### Removed
+- Swift `JSONValue.parse`.
+
 ## 6.7.0 - 2026-10-24
 
 ### Added
