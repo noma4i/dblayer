@@ -49,8 +49,7 @@ extension DBModel {
   @discardableResult @concurrent public static func retryAll() async throws -> UInt64 { try await DB.database.retryAll() }
 
   public func related<Target: DBModel>(_ name: String, as _: Target.Type) -> LiveSource<[Target]> {
-    let model = Self.modelName, rowId = id
-    return listSource(initial: [], open: { listener in try DB.database.liveHasMany(model: model, rowId: rowId, name: name, listener: listener) }) { (applied: ListApplied<Target>, _) in applied.rows }
+    Query<Self>().where(.equal("id", .string(id))).related(Association<Self, Target>(name)).live
   }
 
   @concurrent public static func readNode(relation: String, id: String, force: Bool) async throws -> Self? {

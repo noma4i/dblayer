@@ -16,6 +16,7 @@ use crate::upload::UploadOperations;
 use super::entities::{self, EntityListener, LiveEntities};
 use super::live::{follow_failures, intake, LiveHandles};
 use super::live_feed::LiveFeed;
+use super::related::RelatedProjection;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
@@ -192,7 +193,7 @@ impl Database {
     pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| {
             let row_id = id(&row_id)?;
-            self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, LoadOptions::default(), feed)
+            self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, None, LoadOptions::default(), feed)
         })
     }
     pub fn peek_row(&self, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
@@ -237,7 +238,7 @@ impl Database {
         entities::open(&self.db, &model, self.wire(&model)?.clone(), listener)
     }
     pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.connect_json(&query_json, false, feed))
+        self.subscribed(listener, |feed| self.connect_json(&query_json, false, None, feed))
     }
     pub fn live_window(&self, query_json: String, tail: u32, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| {
@@ -255,10 +256,10 @@ impl Database {
         })
     }
     pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.connect_json(&query_json, true, feed))
+        self.subscribed(listener, |feed| self.connect_json(&query_json, true, None, feed))
     }
-    pub fn live_has_many(&self, model: String, row_id: String, name: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.related(model, row_id, name, feed))
+    pub fn live_related(&self, query_json: String, name: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
+        self.subscribed(listener, |feed| self.connect_json(&query_json, false, Some(name), feed))
     }
     pub async fn create(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
         let database = self.clone();
@@ -559,15 +560,22 @@ impl Database {
         };
         Arc::new(LiveSubscription { feed, handles: Mutex::new(handles) })
     }
-    fn connect_json(&self, json: &str, count: bool, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
+    fn connect_json(&self, json: &str, count: bool, related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let (query, remote) = self.parsed_query(json)?;
         let description: Value = serde_json::from_str(json)?;
         let force = description.get("refreshOnConnect").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or(false);
-        self.connect(query, remote, count, LoadOptions { force }, feed)
+        self.connect(query, remote, count, related, LoadOptions { force }, feed)
     }
-    fn connect(&self, query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, options: LoadOptions, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
+    fn connect(&self, mut query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, related: Option<String>, options: LoadOptions, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let _entered = executor()?.enter();
         let model = query.model.to_string();
+        let projection = related.map(|name| -> Result<_, DbError> {
+            let association = self.db.spec(&model)?.associations.iter().find(|association| association.name == name).ok_or_else(|| DbError::Invalid { detail: format!("{model} has no association {name}") })?;
+            let (target, kind) = (association.target.to_string(), association.kind);
+            query.include = vec![name.clone()];
+            feed.show_targets_only();
+            Ok((Mutex::new(RelatedProjection::new(name, kind, self.db.shared.counters.clone())), self.wire(&target)?.clone()))
+        }).transpose()?;
         let mut tracked = None;
         let mut watch = match remote {
             Some((relation, params)) => {
@@ -586,7 +594,14 @@ impl Database {
         }
         let wire = self.wire(&model)?.clone();
         let sink = feed.clone();
-        let observer = self.db.observe_query_feed(query, count, tracked.is_some(), move |item| intake(&sink, &wire, item))?;
+        let observer = self.db.observe_query_feed(query, count, tracked.is_some(), move |item| match (&projection, item) {
+            (Some((projection, target)), Feed::Rows(change)) => match projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).apply(&change, target) {
+                Some(targets) => sink.rows(targets),
+                None => sink.reached(change.revision),
+            },
+            (Some(_), Feed::Count(_)) => {}
+            (_, item) => intake(&sink, &wire, item),
+        })?;
         let (load, state) = match tracked {
             Some((sync, relation, params)) => {
                 let control = observer.control();
@@ -619,21 +634,5 @@ impl Database {
         };
         let failure = follow_failures(watch.as_mut(), feed);
         Ok(LiveHandles { _observer: Some(observer), window: None, _watch: watch, load, failure, state })
-    }
-    fn related(&self, model: String, row_id: String, name: String, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
-        let row_id = id(&row_id)?;
-        let target = self.db.spec(&model)?.associations.iter().find(|association| association.name == name).map(|association| association.target.to_string()).ok_or_else(|| DbError::Invalid { detail: format!("{model} has no association {name}") })?;
-        let wire = self.wire(&target)?.clone();
-        let query = Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))).including(&[&name]);
-        let observer = self.db.observe_query_feed(query, false, false, move |item| match item {
-            Feed::Rows(change) => {
-                let rows = change.related.get(&name).and_then(|parents| parents.get(&row_id)).cloned().unwrap_or_default();
-                feed.rows(LiveChange::whole(change.revision, rows.iter().map(|row| wire.row(row)).collect()));
-            }
-            Feed::Count(_) => {}
-            Feed::Reached(revision) => feed.reached(revision),
-            Feed::Failed(detail) => feed.read_failed(detail),
-        })?;
-        Ok(LiveHandles { _observer: Some(observer), window: None, _watch: None, load: None, failure: None, state: None })
     }
 }

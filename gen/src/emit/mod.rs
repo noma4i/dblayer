@@ -332,6 +332,11 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let target = association.target.as_str();
             writeln!(out, "    public var {}: LiveSource<[{}]> {{ related(\"{}\", as: {}.self) }}", identifier(&association.name, true), target, association.name, target).unwrap();
         }
+        if !model.associations.is_empty() {
+            out.push_str("    public enum Relations {\n");
+            for association in &model.associations { writeln!(out, "        public static let {} = Association<{class}, {}>(\"{}\")", identifier(&association.name, true), association.target, association.name).unwrap(); }
+            out.push_str("    }\n");
+        }
         for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
             let params = action.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
@@ -459,6 +464,11 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             }
         }
         for association in &model.associations { writeln!(out, "    val {} get() = related(\"{}\", {})", identifier(&association.name, false), association.name, association.target).unwrap(); }
+        if !model.associations.is_empty() {
+            out.push_str("    object Relations {\n");
+            for association in &model.associations { writeln!(out, "        val {} = Association<{class}, {}>(\"{}\", {})", identifier(&association.name, false), association.target, association.name, association.target).unwrap(); }
+            out.push_str("    }\n");
+        }
         out.push_str("}\n\n");
         for action in model.actions.iter().filter(|action| !action.result.is_empty()) {
             let fields = action.result.iter().map(|(field, kind)| format!("val {}: {}? = null", identifier(field, false), arg_type(kind, false))).collect::<Vec<_>>().join(", ");

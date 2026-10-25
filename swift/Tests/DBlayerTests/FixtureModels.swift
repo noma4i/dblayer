@@ -271,6 +271,10 @@ public struct Container: DBModel {
     }
     public var records: LiveSource<[Record]> { related("records", as: Record.self) }
     public var lastRecord: LiveSource<[Record]> { related("lastRecord", as: Record.self) }
+    public enum Relations {
+        public static let records = Association<Container, Record>("records")
+        public static let lastRecord = Association<Container, Record>("lastRecord")
+    }
 }
 
 public struct Document: DBModel {
@@ -513,6 +517,10 @@ public struct Moment: DBModel {
     }
     public var author: LiveSource<[User]> { related("author", as: User.self) }
     public var vibes: LiveSource<[Vibe]> { related("vibes", as: Vibe.self) }
+    public enum Relations {
+        public static let author = Association<Moment, User>("author")
+        public static let vibes = Association<Moment, Vibe>("vibes")
+    }
     @concurrent public func like() async throws -> Self {
         let values = try JSONValue.read(#"{"likedByMe":true}"#).objectValue
         return try await act("like", values: values, args: [:])
@@ -789,6 +797,9 @@ public struct Presence: DBModel {
         return try await update(values: values)
     }
     public var user: LiveSource<[User]> { related("user", as: User.self) }
+    public enum Relations {
+        public static let user = Association<Presence, User>("user")
+    }
 }
 
 public struct Record: DBModel {
@@ -890,6 +901,9 @@ public struct Record: DBModel {
         return try await update(values: values)
     }
     public var container: LiveSource<[Container]> { related("container", as: Container.self) }
+    public enum Relations {
+        public static let container = Association<Record, Container>("container")
+    }
     @concurrent public func react(reactionBody: String, userId: String) async throws -> Self {
         let values = try JSONValue.read(#"{"reactions":{"$keyed":{"by":"userId","element":{"body":{"$arg":"reactionBody"},"userId":{"$arg":"userId"}}}}}"#).objectValue
         return try await act("react", values: values, args: ["reactionBody": try JSONValue.encode(reactionBody), "userId": try JSONValue.encode(userId)])

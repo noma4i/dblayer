@@ -12,6 +12,9 @@ mod entities;
 mod entity_machine;
 mod live;
 mod live_feed;
+mod related;
+#[cfg(test)]
+mod related_tests;
 mod retention;
 mod state;
 mod transport;

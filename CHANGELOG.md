@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `Query.related(Association)` reads typed related rows on Swift and Kotlin; `Model.Relations` lists links.
 - Stale observed windows reload when the app returns to the foreground or the network returns.
 - `UploadOperations` declares upload operations once in `DB.open` on Swift and `DBlayer.open` on Kotlin.
 - `Query.loadAll(force:)` reads every page of a related list to its confirmed end, on Swift and Kotlin.
@@ -86,6 +87,7 @@
 - A failure while removing expired uploads or sending a recorded abort is reported by `flush` and retried at the next start or online event.
 
 ### Removed
+- The `liveHasMany` bridge call; instance links use `Query.related`.
 - `readEdgeValues` and the generated `read<Scope>Edge` functions: `edgeValues` and `<scope>Edge` are the only reads and are `async` in Swift and `suspend` in Kotlin.
 - `UploadRequest` and `UploadBatchRequest` lose `createBlob` and `multipart`.
 - Swift `JSONValue.parse`.

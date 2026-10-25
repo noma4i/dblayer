@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -284,7 +284,12 @@ impl Subscriber {
         diff.map(|diff| {
             let (rows, related) = if first { whole_rows(body, &mut taken.loaded) } else { changed_rows(&diff, &mut taken.loaded.rows, &mut taken.loaded.related) };
             locked(&self.counters).rows_delivered += rows.len();
-            Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.len(), window: body.window.as_ref().map(|part| part.edge) }
+            let keys = body.ranking().map(|ranked| {
+                let moved = diff.inserted.iter().chain(&diff.updated).chain(&diff.moved).chain(diff.renamed.iter().map(|(_, to)| to)).chain(diff.replaced.iter().map(|(_, to)| to));
+                let ids: Vec<RowId> = if first { body.entries().iter().map(|entry| entry.id.clone()).collect() } else { moved.cloned().collect() };
+                ids.into_iter().filter_map(|id| ranked.get(id.as_str()).map(|(key, _)| (id.clone(), key.clone()))).collect::<HashMap<_, _>>()
+            });
+            Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.len(), window: body.window.as_ref().map(|part| part.edge), keys: keys.unwrap_or_default() }
         })
     }
 

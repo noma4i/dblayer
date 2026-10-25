@@ -75,7 +75,7 @@ fn change_between(old: &[Arc<Entry>], new: &[Arc<Entry>], replaced: &[(RowId, Ro
     let diff = Diff::between(old, new, replaced);
     let supplied: HashSet<&RowId> = diff.inserted.iter().chain(&diff.updated).chain(diff.replaced.iter().map(|(_, to)| to)).collect();
     let rows = new.iter().filter(|entry| supplied.contains(&entry.id)).map(|entry| row_of(entry)).collect();
-    Change { revision: 2, rows, related: Related::new(), diff, full: false, size: 0, window: None }
+    Change { revision: 2, rows, related: Related::new(), diff, full: false, size: 0, window: None, keys: Default::default() }
 }
 
 fn apply_cost(size: usize, case: Case) -> usize {

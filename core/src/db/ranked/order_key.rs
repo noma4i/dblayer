@@ -9,6 +9,12 @@ pub(crate) struct OrderKey {
 }
 
 impl OrderKey {
+    pub(crate) fn extended(&self, term: Value, id: &str) -> Self {
+        let mut terms = self.terms.clone();
+        terms.push((term, false));
+        Self { terms, id: id.to_string() }
+    }
+
     pub(crate) fn new(cells: Vec<Value>, descending: &[bool], id: String) -> Self {
         Self { terms: cells.into_iter().zip(descending.iter().copied()).collect(), id }
     }

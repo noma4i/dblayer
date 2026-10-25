@@ -342,6 +342,27 @@ moment.vibes                        // has_many
 moment.vibes.count                  // counted by SQLite, no cache field
 ```
 
+## Related rows of a query
+
+`Query.related(Moment.Relations.author)` returns a `RelatedQuery<User>` with `live` and `snapshots`. It reads the targets of one association for every row of the source query. The generated `Relations` of a model lists its `belongs_to`, `has_one`, `has_many` and `references` links with their target type.
+
+```swift
+let authors = try Moment.where(Moment.userId == id).order(Moment.createdAt.desc).limit(20).related(Moment.Relations.author)
+for try await snapshot in try await authors.snapshots.stream() { show(snapshot.rows, snapshot.hasMore) }
+```
+
+```kotlin
+val authors = Moment.where(Moment.userId eq id).order(Moment.createdAt.desc).limit(20).related(Moment.Relations.author)
+authors.snapshots.flow.collect { show(it.rows, it.hasMore) }
+```
+
+- The source query owns the where, order, limit, remote relation, load, refresh and load-more. `RelatedQuery` has none of its own, so call them on the source query.
+- Targets follow the order of the source rows, then the order of the link. A target that several parents share appears once, at its first position.
+- A change of a parent row, a link or a target updates the result. A target that arrives after its link joins at the position of its parent. No parents give an empty result.
+- A snapshot carries the phase, error, `hasMore` and `isRefreshing` of the source load in one delivery. `total` is nil, because the source count is not the number of targets.
+- For one parent, select it with `limit(1)`. There is no hidden first.
+- The properties of a model instance (`moment.author`) use the same path with a query for the one id.
+
 Query description is plain data (`model`, `where`, `order`, `limit`, `offset`); the core compiles it to SQL. Every scalar and enum field compares as its own SQLite column; an index makes the comparison fast.
 
 Null handling follows one rule: a row with a null field matches `!(field == value)`, like a person would expect.

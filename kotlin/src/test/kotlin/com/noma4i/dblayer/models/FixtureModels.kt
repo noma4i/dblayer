@@ -271,6 +271,10 @@ data class Container(
     }
     val records get() = related("records", Record)
     val lastRecord get() = related("lastRecord", Record)
+    object Relations {
+        val records = Association<Container, Record>("records", Record)
+        val lastRecord = Association<Container, Record>("lastRecord", Record)
+    }
 }
 
 @Immutable
@@ -510,6 +514,10 @@ data class Moment(
     suspend fun share(): ActionAnswer<Moment, MomentShareResult> = actAnswering("share", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf()), Moment, MomentShareResult.serializer())
     val author get() = related("author", User)
     val vibes get() = related("vibes", Vibe)
+    object Relations {
+        val author = Association<Moment, User>("author", User)
+        val vibes = Association<Moment, Vibe>("vibes", Vibe)
+    }
 }
 
 @Immutable
@@ -779,6 +787,9 @@ data class Presence(
         Presence.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
     val user get() = related("user", User)
+    object Relations {
+        val user = Association<Presence, User>("user", User)
+    }
 }
 
 @Immutable
@@ -875,6 +886,9 @@ data class Record(
     }
     suspend fun react(reactionBody: String, userId: String): Record = act("react", JsonObject(parseJsonObject("""{"reactions":{"${'$'}keyed":{"by":"userId","element":{"body":{"${'$'}arg":"reactionBody"},"userId":{"${'$'}arg":"userId"}}}}}""") + mapOf()), JsonObject(mapOf("reactionBody" to jsonValue(reactionBody), "userId" to jsonValue(userId))), Record)
     val container get() = related("container", Container)
+    object Relations {
+        val container = Association<Record, Container>("container", Container)
+    }
 }
 
 @Immutable

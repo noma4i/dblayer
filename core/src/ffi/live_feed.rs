@@ -51,6 +51,7 @@ struct FeedState {
     queue: VecDeque<LiveChange>,
     draining: bool,
     ended: bool,
+    targets_only: bool,
 }
 
 pub(super) struct LiveFeed {
@@ -107,6 +108,7 @@ impl LiveFeed {
             queue: VecDeque::new(),
             draining: false,
             ended: false,
+            targets_only: false,
         };
         Arc::new(Self { state: Mutex::new(state), listener, latest: watch::channel(None).0, readiness: watch::channel(Readiness::Waiting).0 })
     }
@@ -158,6 +160,10 @@ impl LiveFeed {
     /// Asks the observed group to tell this feed through `reached` once it has read through a revision the relation state is ahead of.
     pub(super) fn on_ahead(&self, ask: Arc<dyn Fn(i64) + Send + Sync>) {
         held(&self.state).reach_request = Some(ask);
+    }
+
+    pub(super) fn show_targets_only(&self) {
+        held(&self.state).targets_only = true;
     }
 
     pub(super) fn expect_load(&self) {
@@ -226,7 +232,7 @@ impl LiveFeed {
             phase: live_phase(phase),
             kinds: (effective.initial, effective.refreshing, effective.fetching_more),
             has_more: effective.has_more,
-            total: effective.total,
+            total: if state.targets_only { None } else { effective.total },
             loaded_at: effective.loaded_at,
             error: error.clone().map(|(error, kind)| (kind, error)),
             size: state.size,

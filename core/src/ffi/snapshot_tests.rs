@@ -125,7 +125,7 @@ async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_s
         db.live_count(bad.into(), tape()),
         db.live_window(bad.into(), 5, tape()),
         db.live_find("Moment".into(), "".into(), tape()),
-        db.live_has_many("Moment".into(), "m1".into(), "nope".into(), tape()),
+        db.live_related(r#"{"model":"Moment"}"#.into(), "nope".into(), tape()),
         db.live_query(r#"{"model":"Nope"}"#.into(), tape()),
     ];
     for (index, subscription) in subscriptions.iter().enumerate() {
@@ -198,4 +198,29 @@ async fn inv_loadm_16_a_refresh_that_only_changes_a_related_row_still_shows_its_
     .await
     .expect("the state of the refresh reaches the listener although no row of the query changed");
     assert_eq!((shown.phase, shown.size), (Some(LivePhase::Loaded), 1));
+}
+
+#[tokio::test]
+async fn related_rows_and_the_source_load_arrive_in_one_snapshot_with_the_typed_error_and_release_on_cancel() {
+    const AUTHORED: &str = r#"{"data":{"moments":[{"id":"m1","text":"a","author":{"id":"u1","name":"Ann"}}]}}"#;
+    const RELATED_FEED: &str = r#"{"model":"Moment","relation":"feed","params":{}}"#;
+    let (db, _) = open_with_authors(&[AUTHORED]).await;
+    let listener = tape();
+    let live = db.live_related(RELATED_FEED.into(), "author".into(), listener.clone());
+    tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends").unwrap();
+    let shown = heard(&listener).pop().unwrap();
+    assert_eq!((shown.phase, shown.size, shown.total, shown.rows.first().map(|row| row.id.as_str())), (Some(LivePhase::Loaded), 1, None, Some("u1")));
+    consistent(&heard(&listener));
+    live.cancel();
+    assert_eq!((db.subscription_census().subscriptions, db.subscription_census().observed_queries), (0, 0));
+
+    let (refused, _) = open_with_authors(&[REFUSED]).await;
+    let listener = tape();
+    let live = refused.live_related(RELATED_FEED.into(), "author".into(), listener.clone());
+    let waited = tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends");
+    assert!(matches!(waited, Err(DbError::Graphql { .. })), "the load error reaches the waiter");
+    let failed = heard(&listener).pop().unwrap();
+    assert_eq!((failed.phase, failed.size), (Some(LivePhase::Failed), 0));
+    assert!(matches!(failed.error, Some(DbError::Graphql { .. })), "the typed error survives: {:?}", failed.error);
+    live.cancel();
 }

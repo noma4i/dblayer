@@ -112,6 +112,8 @@ class Query<Model : DBModel>(
             Snapshot.of(applied, change)
         }
 
+    fun <Target : DBModel> related(association: Association<Model, Target>) = RelatedQuery(association.name, association.decoder) { json }
+
     val count: LiveSource<Long>
         get() = LiveSource(0L, { listener -> DBlayer.database.liveCount(json, listener) }) { change -> change.count ?: 0L }
 
@@ -144,3 +146,22 @@ data class Cached<Value>(val value: Value, val revision: Long)
 
 fun <Model : DBModel> idsQuery(modelName: String, decoder: ModelDecoder<Model>, ids: List<String>): Query<Model> =
     Query(modelName, decoder).where(Condition.inList("id", ids.map { JsonPrimitive(it) }))
+
+class Association<Owner : DBModel, Target : DBModel>(val name: String, internal val decoder: ModelDecoder<Target>)
+
+class RelatedQuery<Target : DBModel> internal constructor(
+    private val name: String,
+    private val decoder: ModelDecoder<Target>,
+    private val sourceJson: () -> String,
+) {
+    internal fun sourceJsonText() = sourceJson()
+
+    val live: LiveSource<List<Target>>
+        get() = listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveRelated(sourceJson(), name, listener) }) { applied, _ -> applied.rows }
+
+    /** `hasMore` and the load phase belong to the source query. `total` is null: the source count is not the number of targets. */
+    val snapshots: LiveSource<Snapshot<Target>>
+        get() = listSource(Snapshot(emptyList(), emptyMap()), decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener ->
+            DBlayer.database.liveRelated(sourceJson(), name, listener)
+        }) { applied, change -> Snapshot.of(applied, change) }
+}

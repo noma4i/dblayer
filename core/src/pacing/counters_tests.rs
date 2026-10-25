@@ -25,7 +25,7 @@ macro_rules! sums_each_field {
 fn adding_counters_sums_every_field_and_no_other() {
     sums_each_field!(
         stale_version_drops, membership_missing_entity, unknown_operation_acks, observation_reads, observer_calls, rows_delivered,
-        rows_loaded, entity_facts_told, entity_position_skips, entity_reads_failed, cache_hits, cache_misses, cache_evictions,
+        rows_loaded, related_visited, entity_facts_told, entity_position_skips, entity_reads_failed, cache_hits, cache_misses, cache_evictions,
         cache_estimated_bytes, peek_hits, peek_misses, transport_calls, lost_outcomes, settle_parks, edge_read_steps,
         edge_read_scans, sql_under_owner, query_reads_failed, owner_panics, outbox_reads, outbox_rows_loaded, outbox_candidates, plans_off_writer, plans_under_writer, reach_notices,
     );

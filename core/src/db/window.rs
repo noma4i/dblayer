@@ -212,7 +212,7 @@ impl Shared {
             .filter_map(|(slot, held)| held.or_else(|| loaded.get(slot.id.as_str()).map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, Vec::new()) }))))
             .collect();
         let edge = edge_of(start, end, index.len());
-        let body = RowsBody { list: Listing::Whole(Shown::of(entries)), changed: None, step: None, window: Some(WindowPart { index, span, edge, shape }) };
+        let body = RowsBody { list: Listing::Whole(Shown::of(entries)), changed: None, step: None, window: Some(WindowPart { index, span, edge, shape }), links: None, link_edits: Default::default() };
         Ok((Body::Rows(body), Loaded { rows: loaded, related: Related::new() }))
     }
 
@@ -251,7 +251,7 @@ impl Shared {
             if grow == (0, 0) && !hit {
                 let edge = edge_of(start, end, index.len());
                 let part = WindowPart { index, span, edge, shape: part.shape };
-                let body = RowsBody { list: Listing::Whole(shown.clone()), changed: None, step: None, window: Some(part) };
+                let body = RowsBody { list: Listing::Whole(shown.clone()), changed: None, step: None, window: Some(part), links: None, link_edits: Default::default() };
                 return Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(body) }, loaded: Loaded::default() }));
             }
             let (span, shape) = if grow == (0, 0) { (span, part.shape) } else { (span.grown(&index, grow.0, grow.1), part.shape + 1) };

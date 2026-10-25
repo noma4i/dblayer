@@ -45,7 +45,7 @@ fn row_of(entry: &Entry) -> Row {
 fn applied(old: &[Arc<Entry>], new: &[Arc<Entry>], diff: Diff) -> Vec<(RowId, i64)> {
     let supplied: HashSet<&RowId> = diff.inserted.iter().chain(&diff.updated).chain(diff.replaced.iter().map(|(_, to)| to)).collect();
     let rows = new.iter().filter(|entry| supplied.contains(&entry.id)).map(|entry| row_of(entry)).collect();
-    let change = Change { revision: 2, rows, related: Related::new(), diff, full: false, size: 0, window: None };
+    let change = Change { revision: 2, rows, related: Related::new(), diff, full: false, size: 0, window: None, keys: Default::default() };
     let mut list: Vec<Row> = old.iter().map(|entry| row_of(entry)).collect();
     change.apply_to(&mut list);
     list.iter().map(|row| (row.id.clone(), row.revision)).collect()

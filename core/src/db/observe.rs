@@ -14,7 +14,7 @@ use super::listeners::{Feed, Listener, Subscriber};
 use super::open::{locked, Db, Shared};
 use super::reads::{CompletedRead, ReadJob, ReadResult, ReadRows, ReadTarget};
 use super::window::WindowSeed;
-use super::watch::{Body, Change, CountChange, Deps, Evaluated, Loaded, Step, Subject, Version};
+use super::watch::{Body, Change, CountChange, Deps, Evaluated, Loaded, RowsBody, Step, Subject, Version};
 
 const MAX_PROBED_ROWS: usize = 8;
 
@@ -244,15 +244,12 @@ impl Observers {
     fn touched_ids(&self, key: &str, batch: &[Event]) -> Option<HashSet<String>> {
         let group = self.groups.get(key)?;
         let (Subject::Rows(query) | Subject::Window(query, _, _)) = &group.subject else { return None };
-        if !query.include.is_empty() {
-            return None;
-        }
         let mut ids = HashSet::new();
         for event in batch.iter().filter(|event| event.revision > group.at || event.epoch > group.epoch) {
             if event.reset_all || !group.deps.reset_models.is_disjoint(&event.reset_models) {
                 return None;
             }
-            ids.extend(event.rows.iter().chain(&event.members).filter(|row| row.model == query.model).map(|row| row.id.to_string()));
+            ids.extend(event.rows.iter().chain(&event.members).filter(|row| row.model == query.model || group.deps.models.contains(&row.model)).map(|row| row.id.to_string()));
         }
         Some(ids)
     }
@@ -601,7 +598,7 @@ impl Shared {
         }
         locked(&self.counters).observation_reads += 1;
         let evaluated = match (subject, &step) {
-            (Subject::Rows(query), Some(step)) if query.include.is_empty() => self.evaluate_step(query, previous, &step.touched, step.horizon),
+            (Subject::Rows(query), Some(step)) => self.evaluate_step(query, previous, &step.touched, step.horizon),
             (Subject::Window(query, _, _), _) => {
                 let horizon = step.as_ref().map_or_else(|| previous.position(), |step| step.horizon);
                 self.window_next(query, previous, step.as_ref().map(|step| &step.touched), horizon, grow.unwrap_or((0, 0)))
@@ -704,8 +701,12 @@ impl Shared {
             ReadRows::Evaluated(Evaluated { version: next, loaded }) => {
                 let replaced = self.dispatch.replaced_between(previous.position().0, next.revision);
                 let position = next.position();
+                let link_edits = match &next.body {
+                    Body::Rows(RowsBody { links: Some(links), link_edits, .. }) if !link_edits.is_empty() => Some((links.clone(), link_edits.clone())),
+                    _ => None,
+                };
                 let published = next.succeeding(previous, replaced.as_slice(), loaded).map(Arc::new);
-                Some((position, published, replaced))
+                Some((position, published, replaced, link_edits))
             }
             ReadRows::Skipped { revision, epoch } => {
                 let mut observers = self.observers();
@@ -722,7 +723,7 @@ impl Shared {
             }
             _ => return,
         };
-        let Some(((revision, epoch), published, replaced)) = evaluated else { return };
+        let Some(((revision, epoch), published, replaced, link_edits)) = evaluated else { return };
         let mut observers = self.observers();
         let Some(group) = observers.groups.get_mut(key).filter(|group| group.token == token) else { return };
         group.facts.reading = false;
@@ -731,6 +732,9 @@ impl Shared {
         if !behind && Arc::ptr_eq(&group.version, previous) {
             group.at = revision;
             group.epoch = epoch;
+            if let Some((links, edits)) = link_edits {
+                links.lock().unwrap_or_else(std::sync::PoisonError::into_inner).apply(&edits);
+            }
             if let Some(version) = published {
                 group.version = version.clone();
                 if version.announces(previous) {

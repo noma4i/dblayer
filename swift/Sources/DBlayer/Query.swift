@@ -74,6 +74,9 @@ public struct Query<Model: DBModel>: Sendable {
   public func search(_ text: String, wholeWords: Bool = false) -> Query { `where`(.search(text, wholeWords: wholeWords)) }
   public func order(_ order: Order...) -> Query { var copy = self; copy.orders += order; return copy }
   public func limit(_ count: Int) -> Query { var copy = self; copy.limitCount = count; return copy }
+  public func related<Target: DBModel>(_ association: Association<Model, Target>) -> RelatedQuery<Target> {
+    RelatedQuery(name: association.name, sourceJson: { try json })
+  }
   /// The last `rows` rows of this query, kept live. The query needs an order and no limit, and it reads the local database only.
   public func window(tail rows: Int) -> Window<Model> { Window(query: self, tail: rows) }
 
@@ -136,6 +139,29 @@ public struct Query<Model: DBModel>: Sendable {
     }) { (applied: ListApplied<Model>, change) in
       Snapshot(applied, change)
     }
+  }
+}
+
+public struct Association<Owner: DBModel, Target: DBModel>: Sendable {
+  public let name: String
+  public init(_ name: String) { self.name = name }
+}
+
+public struct RelatedQuery<Target: DBModel>: Sendable {
+  let name: String
+  let sourceJson: @Sendable () throws -> String
+
+  public var live: LiveSource<[Target]> {
+    let name = name, sourceJson = sourceJson
+    return listSource(initial: [], open: { listener in try DB.database.liveRelated(queryJson: try sourceJson(), name: name, listener: listener) }) { (applied: ListApplied<Target>, _) in applied.rows }
+  }
+
+  /// `hasMore` and the load phase belong to the source query. `total` is nil: the source count is not the number of targets.
+  public var snapshots: LiveSource<Snapshot<Target>> {
+    let name = name, sourceJson = sourceJson
+    return listSource(initial: Snapshot(rows: [], replaced: [:], reordered: false), merge: { Snapshot.merging($0, $1) }, open: { listener in
+      try DB.database.liveRelated(queryJson: try sourceJson(), name: name, listener: listener)
+    }) { (applied: ListApplied<Target>, change) in Snapshot(applied, change) }
   }
 }
 

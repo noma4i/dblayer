@@ -259,7 +259,7 @@ pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatemen
 }
 
 pub fn ranking(query: &Query) -> bool {
-    query.limit.is_none() && query.offset.is_none() && query.include.is_empty() && (!query.order.is_empty() || query.scope.is_some()) && query.r#where.iter().all(|clause| clause.searches().is_empty())
+    query.limit.is_none() && query.offset.is_none() && (!query.order.is_empty() || query.scope.is_some()) && query.r#where.iter().all(|clause| clause.searches().is_empty())
 }
 
 pub fn windowable(query: &Query) -> bool {

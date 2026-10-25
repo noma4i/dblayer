@@ -34,7 +34,8 @@ mod threads;
 mod watch;
 mod window;
 
-pub use diff::Diff;
+pub use diff::{Diff, Entry, Stamp};
+pub(crate) use ranked::{OrderKey, Ranked};
 pub use entities::{EntityChange, EntityObserver};
 pub use error::DbError;
 pub use local_write::{Acted, OutboxOperation};

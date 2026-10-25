@@ -1,5 +1,7 @@
 package com.noma4i.dblayer
 
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -104,7 +106,9 @@ class ActionAnswer<Model : DBModel, Answer>(val model: Model, private val operat
 }
 
 fun <Target : DBModel> DBModel.related(name: String, decoder: ModelDecoder<Target>): LiveSource<List<Target>> {
-    val model = modelName
-    val rowId = id
-    return listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveHasMany(model, rowId, name, listener) }) { applied, _ -> applied.rows }
+    val owner = buildJsonObject {
+        put("model", modelName)
+        put("where", Condition.equal("id", jsonValue(id)).json)
+    }.jsonText()
+    return RelatedQuery(name, decoder) { owner }.live
 }

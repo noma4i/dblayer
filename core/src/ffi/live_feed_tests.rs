@@ -279,3 +279,13 @@ fn a_relation_state_ahead_of_the_rows_asks_the_group_to_reach_its_revision() {
     feed.state(relation(LoadPhase::Loaded, 7, None));
     assert_eq!(*asked.lock().unwrap(), vec![7]);
 }
+
+#[test]
+fn a_targets_only_feed_shows_no_total_of_the_source_relation() {
+    let (feed, tape) = feed();
+    feed.show_targets_only();
+    feed.rows(rows(1, 3));
+    feed.state(RelationState { total: Some(9), ..relation(LoadPhase::Loaded, 1, None) });
+    let shown = heard(&tape).pop().expect("a delivery");
+    assert_eq!((shown.total, shown.size, shown.phase), (None, 3, Some(LivePhase::Loaded)));
+}
