@@ -46,6 +46,35 @@ struct CellDecoderTests {
     try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
   }
 
+  private func withoutUnknownKeys(_ value: JSONValue) -> JSONValue {
+    switch value {
+    case let .object(fields):
+      return .object(fields.filter { $0.key != "unknown" }.mapValues(withoutUnknownKeys))
+    case let .array(items):
+      return .array(items.map(withoutUnknownKeys))
+    default:
+      return value
+    }
+  }
+
+  @Test
+  func aNestedKeyOutsideTheDeclaredTypeOrOfTheWrongTypeIsRefusedOnCreate() async throws {
+    let database = try await open()
+    for (values, path) in [
+      (#"{"value":{"title":"t","child":{"id":"x"}}}"#, "value.child.id"),
+      (#"{"value":{"title":"t","children":[{"body":"a"},{"nope":1}]}}"#, "value.children[1].nope"),
+      (#"{"value":{"title":"t","count":"many"}}"#, "value.count"),
+    ] {
+      do {
+        _ = try await database.create(model: "NestedSample", valuesJson: values, argsJson: "{}")
+        Issue.record(Comment(rawValue: "accepted \(values)"))
+      } catch {
+        #expect("\(error)".contains(path), Comment(rawValue: values))
+      }
+    }
+    _ = try await database.create(model: "NestedSample", valuesJson: #"{"value":{"title":"t","payload":{"anything":[1]}}}"#, argsJson: "{}")
+  }
+
   @Test
   func aStoredRowDecodesFromCellsLikeTheSharedJSONCases() async throws {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -55,7 +84,7 @@ struct CellDecoderTests {
       let fields = row.objectValue
       guard fields["error"] != .bool(true), let input = fields["input"] else { continue }
       let label = fields["name"]!.stringValue!
-      let values = String(decoding: try JSONEncoder().encode(["value": input]), as: UTF8.self)
+      let values = String(decoding: try JSONEncoder().encode(["value": withoutUnknownKeys(input)]), as: UTF8.self)
       let wire = try await database.create(model: "NestedSample", valuesJson: values, argsJson: "{}")
       let sample = try NestedSample.decode(wire)
       let expected = try JSONDecoder().decode(NestedValue.self, from: JSONEncoder().encode(fields["output"]!))

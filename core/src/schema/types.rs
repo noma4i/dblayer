@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use super::{FieldKind, FieldSpec, ModelSpec};
+use serde_json::{Map, Value};
+
+use super::{FieldKind, FieldSpec, ModelSpec, TYPENAME};
+use crate::value::read_scalar;
 
 type Registry = HashMap<String, (Vec<FieldSpec>, Vec<FieldSpec>)>;
 
@@ -70,4 +73,84 @@ impl FieldSpec {
         }
     }
 
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueFault {
+    Unknown(String),
+    Invalid(String),
+}
+
+type Declared<'a> = Vec<(&'a str, &'a [FieldSpec])>;
+
+fn members_fault<'a>(groups: &[&'a [FieldSpec]], object: &Map<String, Value>, path: &str, typed: bool, declared: &mut Declared<'a>) -> Option<ValueFault> {
+    for (key, value) in object {
+        if key == TYPENAME {
+            continue;
+        }
+        let at = format!("{path}.{key}");
+        let Some(member) = groups.iter().flat_map(|group| group.iter()).find(|member| member.name == *key || member.from.as_deref() == Some(key)) else {
+            return Some(ValueFault::Unknown(at));
+        };
+        if let Some(fault) = member.fault(value, &at, typed, declared) {
+            return Some(fault);
+        }
+    }
+    None
+}
+
+impl FieldSpec {
+    fn union_fault<'a>(&'a self, object: &Map<String, Value>, path: &str, typed: bool, declared: &mut Declared<'a>) -> Option<ValueFault> {
+        let typename = object.get(TYPENAME).and_then(Value::as_str)?;
+        let variant = self.fields.iter().find(|variant| variant.app_type.as_deref() == Some(typename))?;
+        members_fault(&[&self.shared, &variant.fields], object, path, typed, declared)
+    }
+
+    pub(crate) fn fault<'a>(&'a self, value: &Value, path: &str, typed: bool, declared: &mut Declared<'a>) -> Option<ValueFault> {
+        if value.is_null() {
+            return None;
+        }
+        if typed && self.decode(value).is_none() {
+            return Some(ValueFault::Invalid(path.to_string()));
+        }
+        match &self.kind {
+            FieldKind::Object if !self.fields.is_empty() => value.as_object().and_then(|object| members_fault(&[&self.fields], object, path, typed, declared)),
+            FieldKind::Union => value.as_object().and_then(|object| self.union_fault(object, path, typed, declared)),
+            FieldKind::UnionArray => value.as_array()?.iter().enumerate().find_map(|(index, item)| item.as_object().and_then(|object| self.union_fault(object, &format!("{path}[{index}]"), typed, declared))),
+            FieldKind::List { element } => value.as_array()?.iter().enumerate().find_map(|(index, item)| (typed && read_scalar(item, *element).is_none()).then(|| ValueFault::Invalid(format!("{path}[{index}]")))),
+            FieldKind::Array => {
+                let name = self.app_type.as_deref();
+                let members: &'a [FieldSpec] = if self.fields.is_empty() {
+                    name.and_then(|name| declared.iter().rev().find(|(known, _)| *known == name)).map_or(&[][..], |(_, members)| *members)
+                } else {
+                    &self.fields
+                };
+                if members.is_empty() {
+                    return None;
+                }
+                declared.push((name.unwrap_or_default(), members));
+                let found = value.as_array()?.iter().enumerate().find_map(|(index, item)| {
+                    let at = format!("{path}[{index}]");
+                    match item.as_object() {
+                        Some(object) => members_fault(&[members], object, &at, typed, declared),
+                        None => typed.then_some(ValueFault::Invalid(at)),
+                    }
+                });
+                declared.pop();
+                found
+            }
+            _ => None,
+        }
+    }
+}
+
+impl ModelSpec {
+    /// First unknown key (any depth) or, when `typed`, first value that does not fit its declared type. Paths are dotted, list items carry `[index]`.
+    pub fn fault(&self, input: &Map<String, Value>, typed: bool) -> Option<ValueFault> {
+        let mut declared = Vec::new();
+        if let Some(key) = input.keys().find(|key| self.field(key).is_none()) {
+            return Some(ValueFault::Unknown(key.clone()));
+        }
+        self.fields.iter().filter(|field| !field.is_local()).find_map(|field| field.read(input).and_then(|value| field.fault(&value, &field.name, typed, &mut declared)))
+    }
 }

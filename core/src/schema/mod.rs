@@ -21,7 +21,7 @@ mod types;
 pub use ephemeral::{EphemeralSpec, Storage};
 pub use merge::MergeRule;
 pub use search::{search_text, SearchPath};
-pub use types::resolve_types;
+pub use types::{resolve_types, ValueFault};
 
 pub const TYPENAME: &str = "__typename";
 pub const COLUMN_LIMIT: usize = 2000;
@@ -1128,15 +1128,6 @@ impl ModelSpec {
             }
         }
         Ok(normalized)
-    }
-
-    pub fn check_values(&self, input: &Map<String, Value>) -> Result<(), SchemaError> {
-        for field in self.fields.iter().filter(|field| !field.is_local()) {
-            if field.read(input).is_some_and(|value| !value.is_null() && field.decode(&value).is_none()) {
-                return Err(SchemaError::InvalidValue(field.name.clone()));
-            }
-        }
-        Ok(())
     }
 
     /// Normalizes a locally created row. Server-owned fields the caller did not give take a zero value of their type, dates take `now_ms`.

@@ -13,7 +13,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use crate::value::{fractional_between, same_fields};
 use crate::operation::Operation;
 use crate::query::{Query, Where};
-use crate::schema::{AssociationKind, Dependent, ModelSpec};
+use crate::schema::{AssociationKind, Dependent, ModelSpec, SchemaError, ValueFault};
 use crate::store::{PlanCommitError, Reader, StoreError};
 use crate::syncstate::read_sync;
 use crate::upload::UploadState;
@@ -189,6 +189,8 @@ impl Db {
             let id = RowId::generate_temp(None);
             let mut values = item.values;
             values.insert("id".into(), Value::String(id.to_string()));
+            reject_unknown_fields(spec, model, &values)?;
+            reject_invalid_values(spec, model, &values)?;
             self.shared.store.decode_values(model, &mut values, |source, key| source.get(key))?;
             let data = spec.normalize_local(&values, now)?;
             let mut variables = item.variables;
@@ -222,9 +224,7 @@ impl Db {
 
     fn insert_local(&self, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: Option<(crate::commit::UploadAdmission, crate::identity::Generation)>) -> Result<RowId, DbError> {
         let spec = self.shared.spec(model)?;
-        if held.is_none() {
-            reject_unknown_fields(spec, model, &values)?;
-        }
+        reject_unknown_fields(spec, model, &values)?;
         let mut input = values;
         let id = match input.get("id").and_then(read_id) {
             Some(id) => id,
@@ -232,8 +232,8 @@ impl Db {
             None => RowId::generate_temp(None),
         };
         input.insert("id".to_string(), Value::String(id.to_string()));
+        reject_invalid_values(spec, model, &input)?;
         self.shared.store.decode_values(model, &mut input, |source, key| source.get(key))?;
-        spec.check_values(&input)?;
         let now_ms = self.shared.store.lock().now_ms();
         let data = spec.normalize_local(&input, now_ms)?;
         let key = ModelKey::new(model);
@@ -269,7 +269,7 @@ impl Db {
     pub fn update_with(&self, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &patch)?;
-        spec.check_values(&patch)?;
+        reject_invalid_values(spec, model, &patch)?;
         let mut patch = spec.patch(&patch);
         self.shared.store.decode_values(model, &mut patch, |source, key| source.get(key))?;
         patch.remove("id");
@@ -303,6 +303,8 @@ impl Db {
         let spec = self.shared.spec(model)?;
         let mut patch = patch;
         let keyed = crate::schema::keyed::take(&mut patch);
+        reject_unknown_fields(spec, model, &patch)?;
+        reject_invalid_values(spec, model, &patch)?;
         let mut patch = spec.patch(&patch);
         self.shared.store.decode_values(model, &mut patch, |source, key| source.get(key))?;
         let key = ModelKey::new(model);
@@ -488,8 +490,22 @@ impl Db {
 }
 
 fn reject_unknown_fields(spec: &ModelSpec, model: &str, values: &Map<String, Value>) -> Result<(), DbError> {
-    match values.keys().find(|name| spec.field(name).is_none()) {
-        Some(field) => Err(DbError::UnknownField { model: model.to_string(), field: field.clone() }),
+    match spec.fault(values, false) {
+        Some(fault) => Err(fault_error(model, fault)),
         None => Ok(()),
+    }
+}
+
+fn reject_invalid_values(spec: &ModelSpec, model: &str, values: &Map<String, Value>) -> Result<(), DbError> {
+    match spec.fault(values, true) {
+        Some(fault) => Err(fault_error(model, fault)),
+        None => Ok(()),
+    }
+}
+
+pub(crate) fn fault_error(model: &str, fault: ValueFault) -> DbError {
+    match fault {
+        ValueFault::Unknown(field) => DbError::UnknownField { model: model.to_string(), field },
+        ValueFault::Invalid(field) => SchemaError::InvalidValue(field).into(),
     }
 }

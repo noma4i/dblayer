@@ -203,6 +203,8 @@ An enum default must be one of its declared values. `from` reads a server respon
 
 Declare each named type once. Pass all files that declare or use it to `dblayer-gen`. The type accepts a named value such as `RewardItem` or a list such as `[RewardItem]`. A missing declaration, duplicate type or invalid default reports its input file and line. Use `:json` for unrestricted values.
 
+A local write checks nested values against their declared type. Create, update, actions, local-field setters and upload calls reject a key the type lacks with an unknown-field error that names the path (`media.id`, `replies[1].body`). They reject a value of the wrong type with an invalid-value error at the same path. A `:json` field accepts any value.
+
 Nested values belong to their containing row. They have no independent table, index, relation, file attachment or sync operation. Put those features on a model. The same declarations work in local, memory and synchronized models.
 
 ### Merge rules

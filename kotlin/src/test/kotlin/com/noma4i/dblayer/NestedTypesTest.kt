@@ -15,6 +15,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NestedTypesTest {
@@ -51,6 +52,26 @@ class NestedTypesTest {
 class CellDecoderTest {
     private suspend fun open() = openDatabase(Config(null, null, 32u), modelsJSON, null)
 
+    private fun withoutUnknownKeys(value: JsonElement): JsonElement = when (value) {
+        is JsonObject -> JsonObject(value.filterKeys { it != "unknown" }.mapValues { withoutUnknownKeys(it.value) })
+        is JsonArray -> JsonArray(value.map(::withoutUnknownKeys))
+        else -> value
+    }
+
+    @Test
+    fun aNestedKeyOutsideTheDeclaredTypeOrOfTheWrongTypeIsRefusedOnCreate(): Unit = bounded {
+        val database = open()
+        for ((values, path) in listOf(
+            """{"value":{"title":"t","child":{"id":"x"}}}""" to "value.child.id",
+            """{"value":{"title":"t","children":[{"body":"a"},{"nope":1}]}}""" to "value.children[1].nope",
+            """{"value":{"title":"t","count":"many"}}""" to "value.count",
+        )) {
+            val error = runCatching { database.create("NestedSample", values, "{}") }.exceptionOrNull()
+            assertTrue(values, error is DbException && error.toString().contains(path))
+        }
+        database.create("NestedSample", """{"value":{"title":"t","payload":{"anything":[1]}}}""", "{}")
+    }
+
     @Test
     fun aStoredRowDecodesFromCellsLikeTheSharedJSONCases() = bounded {
         val cases = parseJson(File("../fixtures/nested.json").readText()) as JsonArray
@@ -59,7 +80,7 @@ class CellDecoderTest {
             val fields = row.jsonObject
             if (fields["error"] == JsonPrimitive(true) || fields["input"] == null) continue
             val label = fields.getValue("name").toString()
-            val wire = database.create("NestedSample", buildJsonObject { put("value", fields.getValue("input")) }.toString(), "{}")
+            val wire = database.create("NestedSample", buildJsonObject { put("value", withoutUnknownKeys(fields.getValue("input"))) }.toString(), "{}")
             val expected = dbJson.decodeFromString(NestedValue.serializer(), fields.getValue("output").toString())
             assertEquals(label, expected, NestedSample.read(wire).value)
         }

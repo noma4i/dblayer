@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use crate::commit::{CommitEnvelope, EntityOp, PendingLocal, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
+use crate::schema::ValueFault;
 
 use super::error::DbError;
 use super::local_write::plan_fault;
@@ -12,7 +13,13 @@ impl Db {
         let spec = self.shared.spec(model)?;
         let slot = spec.local_slot(path).ok_or_else(|| DbError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
         let value = match slot.key {
-            None if !value.is_null() => slot.field.decode(&value).ok_or_else(|| DbError::LocalValue { model: model.to_string(), path: path.to_string() })?,
+            None if !value.is_null() => {
+                match slot.field.fault(&value, path, true, &mut Vec::new()) {
+                    Some(ValueFault::Unknown(field)) => return Err(DbError::UnknownField { model: model.to_string(), field }),
+                    Some(ValueFault::Invalid(_)) => return Err(DbError::LocalValue { model: model.to_string(), path: path.to_string() }),
+                    None => slot.field.decode(&value).ok_or_else(|| DbError::LocalValue { model: model.to_string(), path: path.to_string() })?,
+                }
+            }
             _ => value,
         };
         let generation = self.generation();

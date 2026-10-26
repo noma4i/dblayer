@@ -142,4 +142,6 @@ mod window_tests;
 #[cfg(test)]
 mod raw_json_tests;
 #[cfg(test)]
+mod nested_value_tests;
+#[cfg(test)]
 mod read_pool_tests;

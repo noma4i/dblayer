@@ -618,3 +618,31 @@ async fn an_unreadable_candidate_is_reported_by_expiry_and_expires_once_readable
     sync.inner.expire_uploads().await.unwrap();
     assert!(db.find("Asset", &ids[0]).unwrap().is_none());
 }
+
+#[tokio::test]
+async fn upload_create_rejects_unknown_and_mistyped_nested_values_on_single_and_batch() {
+    let mut model = spec();
+    let mut media = FieldSpec::object("media");
+    media.app_type = Some("Media".into());
+    media.fields = vec![FieldSpec::scalar("kind", ScalarKind::Str).optional(), FieldSpec::scalar("width", ScalarKind::Int).optional()];
+    model.fields.push(media.optional());
+    let db = Db::open_in_memory(vec![model], None).unwrap();
+    let sync = Sync::new(db.clone(), Arc::new(MockTransport::new()), Arc::new(ManualClock::new(std::time::Duration::ZERO)), SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });
+    register_declared(&sync);
+    sync.set_online(false);
+    let source = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(source.path(), b"file").unwrap();
+    let path = source.path().to_string_lossy().into_owned();
+    for (media, expected) in [(json!({"kind": "IMAGE", "id": "x"}), "store: model Asset declares no field media.id"), (json!({"width": "wide"}), "store: value of field media.width does not fit its type")] {
+        let values = json!({"clientKey": "key-0", "size": 4, "media": media}).as_object().unwrap().clone();
+        let single = sync.upload_create("Asset", "create_file", values.clone(), crate::upload::UploadFile::new(&path)).await.unwrap_err();
+        assert_eq!(single.to_string(), expected);
+        let items = (0..2).map(|position| UploadItem {
+            values: json!({"clientKey": format!("key-{position}"), "size": 4, "media": media}).as_object().unwrap().clone(),
+            path: path.clone(), name: None, mime: None, variables: Default::default(),
+        }).collect();
+        let batch = sync.upload_create_batch("Asset", items, UploadBatchInput { operation: "create_files".into(), variables: Default::default() }).await.unwrap_err();
+        assert_eq!(batch.to_string(), expected);
+    }
+    assert!(db.outbox().unwrap().is_empty());
+}
