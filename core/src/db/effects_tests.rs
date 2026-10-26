@@ -177,3 +177,49 @@ fn a_create_fills_a_local_attribute_from_the_singleton_row_and_skips_it_without_
     assert_eq!(author(&db, json!({"roomId": "a"})), Some(json!("w1")));
     assert_eq!(author(&db, json!({"roomId": "a", "authorId": "w9"})), Some(json!("w9")));
 }
+
+fn reaction_patch() -> serde_json::Map<String, serde_json::Value> {
+    obj(json!({
+        "visitorIds": {"$flag": {"when": "reacted", "include": {"of": "wallets", "row": null, "field": "id"}}},
+        "visitsCount": {"$flag": {"when": "reacted", "at_least": 1}},
+    }))
+}
+
+fn reactions() -> Db {
+    use crate::schema::FieldSpec;
+    use crate::value::ScalarKind;
+    let posts = crate::schema::ModelSpec::new("posts", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::list("visitorIds", ScalarKind::Id).optional(), FieldSpec::scalar("visitsCount", ScalarKind::Int).optional()]);
+    let db = Db::open_in_memory(vec![posts, super::spec_fixtures::wallets_spec()], None).unwrap();
+    put(&db, "wallets", json!({"id": "me", "balance": 0}));
+    join(&db, "wallets", &scope_key(&db, "wallets", "current", json!({})), "me", "a");
+    db
+}
+
+#[test]
+fn a_flagged_reaction_adds_or_removes_the_current_user_and_raises_the_count_only_when_set() {
+    let db = reactions();
+    put(&db, "posts", json!({"id": "p1", "visitorIds": ["u9"], "visitsCount": 5}));
+    put(&db, "posts", json!({"id": "p2", "visitorIds": [], "visitsCount": 0}));
+    let state = |id: &str| { let row = db.find("posts", &rid(id)).unwrap().unwrap(); (row.get("visitorIds").cloned().unwrap(), row.get("visitsCount").cloned().unwrap()) };
+    let react = |id: &str, reacted: bool| db.act("posts", "react", &rid(id), reaction_patch(), obj(json!({"reacted": reacted}))).unwrap().operation;
+    react("p1", true);
+    react("p1", true);
+    assert_eq!(state("p1"), (json!(["me", "u9"]), json!(5)));
+    react("p2", true);
+    assert_eq!(state("p2"), (json!(["me"]), json!(1)));
+    let removal = react("p1", false);
+    assert_eq!(state("p1"), (json!(["u9"]), json!(5)));
+    db.roll_back(removal).unwrap();
+    assert_eq!(state("p1"), (json!(["me", "u9"]), json!(5)));
+}
+
+#[test]
+fn a_refused_flagged_reaction_gives_back_the_ids_and_the_count() {
+    let db = reactions();
+    put(&db, "posts", json!({"id": "p1", "visitorIds": ["u9"], "visitsCount": 0}));
+    let operation = db.act("posts", "react", &rid("p1"), reaction_patch(), obj(json!({"reacted": true}))).unwrap().operation;
+    assert_eq!(db.find("posts", &rid("p1")).unwrap().unwrap().get("visitsCount"), Some(&json!(1)));
+    db.roll_back(operation).unwrap();
+    let row = db.find("posts", &rid("p1")).unwrap().unwrap();
+    assert_eq!((row.get("visitorIds"), row.get("visitsCount")), (Some(&json!(["u9"])), Some(&json!(0))));
+}

@@ -158,3 +158,26 @@ fn batch_and_validates_belong_together_and_only_to_uploads() {
         ("upload false", "  operation :one, upload: false do\n    mutation \"M\"\n    optimistic false\n  end", Some("`upload: false` is the default")),
     ]);
 }
+
+#[test]
+fn optimistic_include_and_at_least_follow_a_bool_parameter() {
+    let source = |lines: &str| format!("model Viewer do\n  attribute :name, :string\n  scope :current do\n    query \"Viewer\"\n  end\nend\n\nmodel Post do\n  attribute :reacted, :bool\n  attribute :visitorIds, [:id]\n  attribute :visitsCount, :int\n  attribute :title, :string\n{}\nend\n", op("react", lines));
+    let head = "    parameter :reacted, :bool\n";
+    let both = format!("{head}    optimistic reacted: :reacted, visitorIds: {{ include: {{ of: Viewer, field: :id }}, when: :reacted }}, visitsCount: {{ at_least: 1, when: :reacted }}\n");
+    let models = check_source(&source(&both)).unwrap();
+    let action = &serde_json::to_value(&models[1]).unwrap()["actions"][0]["optimistic"];
+    assert_eq!(action["visitsCount"], serde_json::json!({"$flag": {"when": "reacted", "at_least": 1}}));
+    assert_eq!(action["visitorIds"], serde_json::json!({"$flag": {"when": "reacted", "include": {"of": "Viewer", "row": null, "field": "id"}}}));
+    for (lines, message) in [
+        (format!("{head}    optimistic visitorIds: {{ include: {{ of: Viewer, field: :id }}, when: :ghost }}\n"), "`:ghost`, which is not declared"),
+        ("    parameter :reacted, :string\n    optimistic visitsCount: { at_least: 1, when: :reacted }\n".to_string(), "must be a bool parameter"),
+        (format!("{head}    optimistic title: {{ at_least: 1, when: :reacted }}\n"), "needs `title` to be a number attribute"),
+        (format!("{head}    optimistic title: {{ include: {{ of: Viewer, field: :id }}, when: :reacted }}\n"), "needs `title` to be a list attribute"),
+        (format!("{head}    optimistic visitorIds: {{ include: {{ of: Ghost, field: :id }}, when: :reacted }}\n"), "names unknown model `Ghost`"),
+        (format!("{head}    optimistic visitsCount: {{ at_least: 1.5, when: :reacted }}\n"), "`at_least` takes a whole number"),
+        (format!("{head}    optimistic visitsCount: {{ at_least: 1 }}\n"), "optimistic hash is `{ include:"),
+    ] {
+        let errors = check_source(&source(&lines)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(message)), "{lines}: {errors:?}");
+    }
+}

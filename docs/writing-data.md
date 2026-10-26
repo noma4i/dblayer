@@ -197,6 +197,29 @@ end
 
 An enum parameter can choose the optimistic value: `optimistic connection: { from: :decision, map: { ACCEPT: "CONNECTED", REJECT: "NEVER_MET" } }` writes the literal of the value the call passes. The map covers every value of the schema enum, see [models](models.md). The refusal of the mutation restores the old value.
 
+A bool parameter can set a list and a counter. `include:` puts the id of a row, usually the signed-in user, at the front of a list attribute when the flag is true, without a repeat, and takes it out when the flag is false. `at_least:` raises a number attribute to the given value when the flag is true and leaves it alone when the flag is false.
+
+```ruby
+operation :react do
+  mutation "MomentReact"
+  parameter :reacted, :bool
+  variables momentId: :id, reacted: :reacted
+  optimistic reacted: :reacted,
+             visitorIds: { include: { of: CurrentUser, field: :id }, when: :reacted },
+             visitsCount: { at_least: 1, when: :reacted }
+end
+```
+
+```swift
+try await moment.react(reacted: true)
+```
+
+```kotlin
+moment.react(reacted = true)
+```
+
+The row named by `of:` is a singleton model, or any model with `row: :parameter`. A call that cannot find that row leaves the list unchanged. A refused mutation gives back the list and the number.
+
 An array attribute holds records such as reactions. `optimistic` changes one element of it by a key and leaves the others, so two writers do not overwrite each other:
 
 ```ruby

@@ -53,6 +53,10 @@ pub(super) fn check_local_from(node: &ModelDecl, all: &[ModelDecl], operation: &
     }
 }
 
+pub(super) fn check_optimistic_source(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, source: &SourceDecl, pos: Pos, report: Report<'_>) {
+    source_of(&Site { node, all, operation }, source, pos, Use::Value, report);
+}
+
 pub(super) fn check(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, report: Report<'_>) {
     if operation.effects.is_empty() {
         return;

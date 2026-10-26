@@ -334,6 +334,8 @@ pub enum OptimisticValue {
     Parameter(String),
     Keyed { by: String, element: Vec<(String, OptimisticElement)> },
     Mapped { from: String, map: Vec<(String, Json)> },
+    Include { source: SourceDecl, when: String },
+    AtLeast { min: i64, when: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -76,6 +76,9 @@ end
 model Post do
   attribute :groupId, :id
   attribute :body, :string, null: true
+  attribute :reacted, :bool, default: false
+  attribute :visitorIds, [:id], null: true
+  attribute :visitsCount, :int, default: 0
   index :groupId
   scope :thread do
     parameter :groupId, :id
@@ -90,6 +93,14 @@ model Post do
     wrap "input"
     response from: "postForward.post"
     create_row Post, groupId: :targetGroupId, body: { owner: :body }
+  end
+  operation :react do
+    mutation "PostReact"
+    parameter :reacted, :bool
+    variables postId: :id, reacted: :reacted
+    wrap "input"
+    response :ignore
+    optimistic reacted: :reacted, visitorIds: { include: { of: Purse, field: :id }, when: :reacted }, visitsCount: { at_least: 1, when: :reacted }
   end
 end
 

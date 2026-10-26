@@ -307,6 +307,7 @@ impl Db {
         let mut patch = patch;
         crate::schema::keyed::resolve_maps(&mut patch, &args);
         let keyed = crate::schema::keyed::take(&mut patch);
+        let flagged = crate::schema::keyed::take_flags(&mut patch);
         reject_unknown_fields(spec, model, &patch)?;
         reject_invalid_values(spec, model, &patch)?;
         let mut patch = spec.patch(&patch);
@@ -331,6 +332,7 @@ impl Db {
                 }
             }
             let mut edits = Edits::of_owner(model, id, current, merged);
+            self.apply_flagged(reader, &mut edits, &Call { owner: &own, args: &input_args, now_ms }, &flagged)?;
             let planned = self.plan_effects(reader, &mut edits, &Call { owner: &own, args: &input_args, now_ms }, effects)?;
             let mut rows = Vec::new();
             let mut touches = Vec::new();

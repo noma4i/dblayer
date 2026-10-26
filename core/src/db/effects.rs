@@ -174,6 +174,29 @@ impl Db {
         }
     }
 
+    pub(crate) fn apply_flagged(&self, reader: &Reader<'_>, edits: &mut Edits, call: &Call<'_>, flagged: &[(String, String, crate::schema::keyed::Flagged)]) -> Result<(), DbError> {
+        use crate::schema::keyed::{include_flagged, raise_to, Flagged};
+        for (field, when, kind) in flagged {
+            let Some(flag) = call.args.get(when).and_then(Value::as_bool) else { continue };
+            let next = match kind {
+                Flagged::Include(source) => {
+                    let Some(value) = self.source_value(reader, edits, call, source)? else { continue };
+                    let current = edits.row_mut(reader, call.owner.model.as_str(), call.owner.id.as_str())?.and_then(|row| row.get(field).cloned());
+                    include_flagged(current.as_ref(), value, flag)
+                }
+                Flagged::AtLeast(_) if !flag => continue,
+                Flagged::AtLeast(min) => {
+                    let current = edits.row_mut(reader, call.owner.model.as_str(), call.owner.id.as_str())?.and_then(|row| row.get(field).cloned());
+                    raise_to(current.as_ref(), *min)
+                }
+            };
+            if let Some(row) = edits.row_mut(reader, call.owner.model.as_str(), call.owner.id.as_str())? {
+                row.insert(field.clone(), next);
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn fill_local_sources(&self, model: &str, values: &mut Map<String, Value>) -> Result<(), DbError> {
         let spec = self.shared.spec(model)?;
         let Some(create) = spec.actions.iter().find(|declared| declared.name == "create") else { return Ok(()) };

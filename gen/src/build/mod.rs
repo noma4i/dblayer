@@ -409,6 +409,11 @@ fn optimistic_json(value: &OptimisticValue) -> Json {
             let map: Map<String, Json> = map.iter().cloned().collect();
             json!({ "$map": { "from": from, "map": map } })
         }
+        OptimisticValue::Include { source, when } => match build_source(source) {
+            EffectSource::Row { model, row, field } => json!({ "$flag": { "when": when, "include": { "of": model, "row": row, "field": field } } }),
+            _ => Json::Null,
+        },
+        OptimisticValue::AtLeast { min, when } => json!({ "$flag": { "when": when, "at_least": min } }),
         OptimisticValue::Keyed { by, element } => {
             let element: Map<String, Json> = element.iter().map(|(key, part)| (key.clone(), match part {
                 OptimisticElement::Literal(value) => value.clone(),

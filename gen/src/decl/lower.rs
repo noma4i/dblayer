@@ -1078,7 +1078,7 @@ fn optimistic(cx: &mut Cx, call: &Call) -> Option<OptimisticDecl> {
     for pair in &call.options {
         let value = match &pair.value.item {
             Value::Symbol(name) => OptimisticValue::Parameter(name.clone()),
-            Value::Hash(parts) => match if parts.iter().any(|part| part.key == "from") { mapped(cx, parts, &pair.value) } else { keyed(cx, parts, &pair.value) } {
+            Value::Hash(parts) => match if parts.iter().any(|part| part.key == "from") { mapped(cx, parts, &pair.value) } else if parts.iter().any(|part| matches!(part.key.as_str(), "include" | "at_least")) { flagged(cx, parts, &pair.value) } else { keyed(cx, parts, &pair.value) } {
                 Some(value) => value,
                 None => continue,
             },
@@ -1206,6 +1206,44 @@ fn mapped(cx: &mut Cx, parts: &[Pair], node: &Node<Value>) -> Option<OptimisticV
         }
     }
     Some(OptimisticValue::Mapped { from, map: entries })
+}
+
+fn flagged(cx: &mut Cx, parts: &[Pair], node: &Node<Value>) -> Option<OptimisticValue> {
+    let find = |key: &str| parts.iter().find(|part| part.key == key);
+    let when = find("when").and_then(|part| match &part.value.item {
+        Value::Symbol(name) => Some(name.clone()),
+        _ => None,
+    });
+    let (Some(when), 2) = (when, parts.len()) else {
+        cx.fail(at(node), "optimistic hash is `{ include: { of: Model, field: :name }, when: :flag }` or `{ at_least: 1, when: :flag }`");
+        return None;
+    };
+    match (find("include"), find("at_least")) {
+        (Some(part), None) => match &part.value.item {
+            Value::Hash(source) => match source_hash(cx, source, &part.value)? {
+                source @ SourceDecl::Row { .. } => Some(OptimisticValue::Include { source, when }),
+                _ => {
+                    cx.fail(at(&part.value), "`include` takes `{ of: Model, field: :name }`");
+                    None
+                }
+            },
+            _ => {
+                cx.fail(at(&part.value), "`include` takes `{ of: Model, field: :name }`");
+                None
+            }
+        },
+        (None, Some(part)) => match part.value.item {
+            Value::Int(min) => Some(OptimisticValue::AtLeast { min, when }),
+            _ => {
+                cx.fail(at(&part.value), "`at_least` takes a whole number");
+                None
+            }
+        },
+        _ => {
+            cx.fail(at(node), "optimistic hash is `{ include: { of: Model, field: :name }, when: :flag }` or `{ at_least: 1, when: :flag }`");
+            None
+        }
+    }
 }
 
 fn keyed(cx: &mut Cx, parts: &[Pair], node: &Node<Value>) -> Option<OptimisticValue> {

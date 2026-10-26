@@ -442,6 +442,7 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
             OptimisticValue::Parameter(name) => *name == parameter.name,
             OptimisticValue::Keyed { element, .. } => element.iter().any(|(_, part)| matches!(part, OptimisticElement::Parameter(name) if *name == parameter.name)),
             OptimisticValue::Mapped { from, .. } => *from == parameter.name,
+            OptimisticValue::Include { when, .. } | OptimisticValue::AtLeast { when, .. } => *when == parameter.name,
             OptimisticValue::Literal(_) => false,
         }));
         let implicit = operation.upload.is_some() && operation.variables.is_none();
@@ -456,7 +457,7 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
                 if !attributes.contains(field.as_str()) {
                     report(*pos, format!("`optimistic` names unknown attribute `{field}`"));
                 }
-                check_optimistic_value(operation, value, *pos, report);
+                check_optimistic_value(node, all, operation, (field.as_str(), value), *pos, report);
             }
         }
         _ => {}
@@ -496,9 +497,28 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
     check_batch(node, operation, report);
 }
 
-fn check_optimistic_value(operation: &OperationDecl, value: &OptimisticValue, pos: Pos, report: &mut impl FnMut(Pos, String)) {
+fn check_optimistic_value(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, (field, value): (&str, &OptimisticValue), pos: Pos, report: &mut impl FnMut(Pos, String)) {
     let declared = |name: &str| operation.parameters.iter().any(|parameter| parameter.name == name);
+    let flag = |when: &str, report: &mut dyn FnMut(Pos, String)| match operation.parameters.iter().find(|parameter| parameter.name == when) {
+        None => report(pos, format!("`optimistic` reads `:{when}`, which is not declared with `parameter`")),
+        Some(parameter) if parameter.ty.base != ParamBase::Bool || parameter.ty.list => report(pos, format!("`optimistic` reads `:{when}`, which must be a bool parameter")),
+        Some(_) => {}
+    };
+    let attribute = node.attributes.iter().find(|attribute| attribute.name == field);
     match value {
+        OptimisticValue::Include { source, when } => {
+            flag(when, report);
+            effects::check_optimistic_source(node, all, operation, source, pos, report);
+            if attribute.is_some_and(|attribute| !matches!(attribute.ty, TypeRef::List(_))) {
+                report(pos, format!("`optimistic` `include` needs `{field}` to be a list attribute"));
+            }
+        }
+        OptimisticValue::AtLeast { when, .. } => {
+            flag(when, report);
+            if attribute.is_some_and(|attribute| !matches!(attribute.ty, TypeRef::Scalar(ScalarKind::Int | ScalarKind::Num))) {
+                report(pos, format!("`optimistic` `at_least` needs `{field}` to be a number attribute"));
+            }
+        }
         OptimisticValue::Parameter(name) if !declared(name) => report(pos, format!("`optimistic` value `:{name}` is not declared with `parameter`")),
         OptimisticValue::Mapped { from, .. } => match operation.parameters.iter().find(|parameter| parameter.name == *from) {
             None => report(pos, format!("`optimistic` map reads `:{from}`, which is not declared with `parameter`")),

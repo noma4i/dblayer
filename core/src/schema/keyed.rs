@@ -24,6 +24,50 @@ pub fn take(patch: &mut Map<String, Value>) -> Vec<(String, Map<String, Value>)>
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Flagged {
+    Include(super::EffectSource),
+    AtLeast(i64),
+}
+
+pub fn take_flags(patch: &mut Map<String, Value>) -> Vec<(String, String, Flagged)> {
+    let flagged: Vec<String> = patch.iter().filter(|(_, value)| value.get("$flag").is_some()).map(|(field, _)| field.clone()).collect();
+    flagged
+        .into_iter()
+        .filter_map(|field| {
+            let value = patch.remove(&field)?;
+            let spec = value.get("$flag")?;
+            let when = spec.get("when")?.as_str()?.to_string();
+            let kind = match (spec.get("include"), spec.get("at_least")) {
+                (Some(source), _) => Flagged::Include(super::EffectSource::Row {
+                    model: source.get("of")?.as_str()?.to_string(),
+                    row: source.get("row").and_then(Value::as_str).map(str::to_string),
+                    field: source.get("field")?.as_str()?.to_string(),
+                }),
+                (None, Some(min)) => Flagged::AtLeast(min.as_i64()?),
+                _ => return None,
+            };
+            Some((field, when, kind))
+        })
+        .collect()
+}
+
+pub fn include_flagged(current: Option<&Value>, value: Value, present: bool) -> Value {
+    let mut items: Vec<Value> = current.and_then(Value::as_array).cloned().unwrap_or_default();
+    items.retain(|item| item != &value);
+    if present {
+        items.insert(0, value);
+    }
+    Value::Array(items)
+}
+
+pub fn raise_to(current: Option<&Value>, min: i64) -> Value {
+    match current.and_then(Value::as_i64) {
+        Some(count) if count >= min => Value::from(count),
+        _ => Value::from(min),
+    }
+}
+
 pub fn resolve_maps(patch: &mut Map<String, Value>, args: &Map<String, Value>) {
     let mapped: Vec<String> = patch.iter().filter(|(_, value)| value.get("$map").is_some()).map(|(field, _)| field.clone()).collect();
     for field in mapped {
