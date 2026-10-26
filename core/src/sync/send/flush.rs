@@ -462,10 +462,11 @@ impl Inner {
         let declared = self.db.spec(&sending.model)?.actions.iter().find(|declared| declared.name == sending.action).cloned();
         let root = declared.as_ref().and_then(|declared| declared.root.as_deref()).unwrap_or(&operation.root_path);
         let landed = declared.iter().flat_map(|declared| &declared.lands).any(|landing| root_value(&data, &landing.root).is_some_and(|value| value.is_object() || value.is_array()));
+        let answers_from_payload = declared.as_ref().is_some_and(|declared| !declared.result.is_empty()) && root.rsplit_once('.').is_some_and(|(parent, _)| root_value(&data, parent).is_some_and(Value::is_object));
         let readable = landed
             || match root_value(&data, root) {
                 None | Some(Value::String(_)) => false,
-                Some(Value::Null) => sending.action == "destroy",
+                Some(Value::Null) => sending.action == "destroy" || answers_from_payload,
                 Some(_) => true,
             };
         if !readable {

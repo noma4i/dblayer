@@ -8,6 +8,9 @@
 ### Changed
 - `preload` scopes wait while the device saves power and never load on a low-RAM Android device.
 
+### Fixed
+- An action that declares a result reads its answer when the payload row is null.
+
 ## 6.8.0 - 2026-10-26
 
 ### Added

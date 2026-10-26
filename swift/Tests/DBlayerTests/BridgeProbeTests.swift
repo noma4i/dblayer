@@ -310,6 +310,18 @@ struct BridgeProbeTests {
     await eventually("the second ShareMoment call") { transport.calls.filter { $0.operationName == "ShareMoment" }.count >= 2 }
     await #expect(throws: (any Error).self) { try await refused.answer() }
   }
+
+  @Test
+  func anActionAnswersWhenEveryFieldOfThePayloadIsNull() async throws {
+    let transport = MockTransport()
+    let moment = try await openWithAMoment(transport)
+
+    transport.enqueue("ShareMoment", reply: #"{"data":{"shareMoment":{"moment":null,"successMessage":null,"copies":null}}}"#)
+    let answer = try await moment.share().answer()
+    #expect(answer.successMessage == nil)
+    #expect(answer.copies == nil)
+    #expect(try await Moment.find("m77").current() != nil)
+  }
 }
 
 final class EntityCollector: EntityListener, @unchecked Sendable {
