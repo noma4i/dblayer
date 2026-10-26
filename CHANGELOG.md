@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.9.2 - 2026-10-26
 
 ### Added
 - An optimistic keyed element carries the nested object of the local row its declared `ref:` and `id:` name.
