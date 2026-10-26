@@ -211,3 +211,28 @@ async fn an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_on
     emit(&rig, vec![event("MOOD", "CREATED", "wild")]);
     assert_eq!(expect_event(within(&events).await).id, "wild");
 }
+
+#[tokio::test(start_paused = true)]
+async fn one_event_of_an_area_shared_by_two_models_rereads_both_and_reaches_both_event_streams() {
+    let (mut users, mut moments) = (users_spec(), moments_spec());
+    for spec in [&mut users, &mut moments] {
+        spec.changes.push(ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true });
+    }
+    users.change_feed = Some(change_feed());
+    let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
+    let _me = rig.sync.watch("users", "current", &params(json!({}))).unwrap();
+    let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();
+    let (user_events, moment_events) = (rig.sync.model_events("users").unwrap(), rig.sync.model_events("moments").unwrap());
+    rig.transport.await_calls("Changes", 1).await;
+    assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByMood")), (0, 0), "idle");
+    rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "a"}})));
+    rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "m1", "text": "a"}]})));
+    emit(&rig, vec![event("WALLET", "CREATED", "t1")]);
+    for events in [&user_events, &moment_events] {
+        let seen = expect_event(within(events).await);
+        assert_eq!((seen.area.as_str(), seen.id.as_str()), ("WALLET", "t1"));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "one item per event");
+    }
+    assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByMood")), (1, 1));
+}

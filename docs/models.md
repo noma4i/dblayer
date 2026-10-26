@@ -671,7 +671,7 @@ Message.events.collect { item -> when (item) { is ModelEventItem.Event -> show(i
 
 The queue of a reader holds 256 events. A reader that is slower reads `missed` with the number of dropped events, and never delays the next event of other readers. A failed row read publishes no event and raises the rejected count of the subscription. A failure of the stream itself arrives as the last item `failed`. Cancelling the stream releases the shared subscription after `live_linger`. The stream needs no notice model.
 Area and removal values are strings that belong to the application.
-An area can repeat for node reads of several models. Each receiver follows its own declaration.
+An area can repeat on several models, for `via: :observed`, node reads and named reads. One event rereads the read of each of those models and gives each model its own item on `events`. A model declares an area once: a repeat inside one model is rejected.
 `removes_on` requires a `via` scope declared with `node: :one`, whatever its name. Matching kinds remove rows. Other kinds reread them.
 Missing entry fields and undeclared areas are rejected.
 

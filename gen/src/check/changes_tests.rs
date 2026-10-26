@@ -132,13 +132,19 @@ fn changed_by_needs_a_changes_subscription() {
 }
 
 #[test]
-fn shared_node_areas_are_accepted_and_shared_lists_are_refused() {
-    let source = include_str!("../../../fixtures/change-events/changes.dbl");
-    let models = parse_models(source).unwrap();
-    assert_eq!(models.iter().flat_map(|model| &model.changes).filter(|change| change.area == "REACTION").count(), 2);
-    let invalid = source.replace("changed_by \"COUNTERS\"", "changed_by \"REACTION\"");
-    let errors = parse_models(&invalid).unwrap_err();
-    assert!(errors.iter().any(|error| error.message.contains("duplicate change area")), "{errors:?}");
+fn one_area_on_several_models_is_accepted_and_twice_in_one_model_is_refused() {
+    let scopes = "  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"ById\"\n    variables id: :id\n  end\n  scope :read do\n    query \"Read\"\n  end\n";
+    let feed = "  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n";
+    let sources = |first: &str, second: &str| format!("model First do\n  attribute :title, :string\n{scopes}{feed}  {first}\nend\n\nmodel Second do\n  attribute :title, :string\n{scopes}  {second}\nend\n");
+    for (declaration, area) in [("changed_by \"WALLET\", via: :observed", "WALLET"), ("changed_by \"REACTION\", via: :by_id", "REACTION"), ("changed_by \"MOOD\", via: :read", "MOOD")] {
+        let models = check_source(&sources(declaration, declaration)).unwrap();
+        assert!(models.iter().all(|model| model.changes.len() == 1 && model.changes[0].area == area), "{declaration}");
+        let twice = format!("{declaration}\n  {declaration}");
+        for source in [sources(&twice, declaration), sources(declaration, &twice)] {
+            let errors = check_source(&source).unwrap_err();
+            assert!(errors.iter().any(|error| error.message.contains(&format!("duplicate change area `{area}`"))), "{declaration}: {errors:?}");
+        }
+    }
 }
 
 #[test]
