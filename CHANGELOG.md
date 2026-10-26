@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 6.10.1 - 2026-10-27
+
+### Added
+- `LiveList`, `Live`, `LiveView` and `rememberLiveList` take a `RelatedQuery` and load its source scope like a `Query`.
+
+### Changed
+- An upload that waits for the network reports `waiting` with `waitReason` `offline`, and its record stays `pending`.
 
 ### Fixed
 - A model with several node relations generates one `entity(id, fetch:)`.
@@ -8,7 +14,6 @@
 ## 6.10.0 - 2026-10-27
 
 ### Added
-- `LiveList`, `Live`, `LiveView` and `rememberLiveList` take a `RelatedQuery` and load its source scope like a `Query`.
 - Kotlin `rememberLiveList(query)` and `rememberLiveWindow(window)` own the scope of a live list in Compose.
 - `Model.entity(id, fetch: .force|.stale|.none)` reads the node when a reader appears, and `refreshError` shows a failed read.
 - `merge: :stable_list` keeps the places of a stored id list, appends new ids and drops vanished ones.
@@ -35,7 +40,6 @@
 - `LiveWindow` connects its scope like `LiveList` instead of reading the local database only.
 - `preload` waits for the first snapshot of the app and runs behind loads the app asked for.
 - A committed credential starts the model subscriptions, and `logout()` and `sessionReset()` stop them.
-- An upload that waits for the network reports `waiting` with `waitReason` `offline`, and its record stays `pending`.
 
 ### Fixed
 - A freed owner of entities returns `subscriptionCensus` to its base: the core drops the entity observer when its last id is released and creates it again on the next retain.
