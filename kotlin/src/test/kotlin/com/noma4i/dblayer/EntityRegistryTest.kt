@@ -16,7 +16,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 
 private class CountingSource(private val cached: WireRow? = null) : EntitySource {
-    override fun cachedRow(id: String): WireRow? = cached?.takeIf { it.id == id }
+    val peeks = AtomicInteger()
+    override fun cachedRow(id: String): WireRow? { peeks.incrementAndGet(); return cached?.takeIf { it.id == id } }
     val retained = java.util.concurrent.CopyOnWriteArrayList<String>()
     val released = java.util.concurrent.CopyOnWriteArrayList<String>()
     override fun retain(ids: List<String>) { retained.addAll(ids) }
@@ -58,6 +59,26 @@ class EntityRegistryTest {
             collectGarbage { registry.liveCount == 0 }
         }
         assertEquals(1, registry.peekedRows - before)
+    }
+
+    /** REL-32 */
+    @Test
+    fun absentRecordIsPeekedOnceAcrossReaders() {
+        val source = CountingSource()
+        val registry = registry(source)
+        var first: Entity<Moment>? = registry.entity("gone")
+        registry.apply(delivery(1, removed = listOf("gone")))
+        assertEquals(EntityPhase.Absent, first!!.phase.value)
+        first = null
+        repeat(4) {
+            collectGarbage { registry.liveCount == 0 }
+            registry.entity("gone")
+        }
+        collectGarbage { registry.liveCount == 0 }
+        val returned = registry.entity("gone")
+        registry.apply(delivery(2, listOf(moment("gone", "arrived"))))
+        assertEquals("arrived", returned.value.value?.text)
+        assertEquals(1, source.peeks.get())
     }
 
     private fun moment(id: String, text: String) = Moment(id = id, uuid = id, text = text, likedByMe = false, media = JsonObject(emptyMap()), createdAt = "2026-10-08T00:00:00.000Z")

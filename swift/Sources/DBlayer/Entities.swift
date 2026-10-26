@@ -119,7 +119,7 @@ public final class Entity<Model: DBModel> {
 
   isolated deinit {
     guard !isSingleton, phase != .closed else { return }
-    registry.released(id: id, value: value, revision: revision, bytes: bytes)
+    registry.released(id: id, value: value, absent: phase == .absent, revision: revision, bytes: bytes)
   }
 }
 
@@ -203,7 +203,7 @@ public final class Entities<Model: DBModel> {
     if let existing = live[id]?.entity { return existing }
     let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
     let made = Entity<Model>(id: id, registry: self)
-    if let retained { made.seed(revision: retained.revision, bytes: retained.bytes) { retained.value } }
+    if let retained, let value = retained.value { made.seed(revision: retained.revision, bytes: retained.bytes) { value } }
     if retained == nil {
       do {
         if let cached = try source.cachedRow(id) { made.seed(revision: cached.revision, bytes: cached.estimatedBytes) { try Model.decode(cached) } }
@@ -282,11 +282,11 @@ public final class Entities<Model: DBModel> {
 
   var liveCount: Int { live.values.filter { $0.entity != nil }.count }
 
-  fileprivate func released(id: String, value: Model?, revision: Int64, bytes: UInt64) {
+  fileprivate func released(id: String, value: Model?, absent: Bool, revision: Int64, bytes: UInt64) {
     guard live[id]?.entity == nil else { return }
     live[id] = nil
     steps[id] = .release
-    if let value { kept.keep(id, value: Retained(value: value, revision: revision, bytes: bytes), now: UInt64(now() * 1000)) }
+    if value != nil || absent { kept.keep(id, value: Retained(value: value, revision: revision, bytes: bytes), now: UInt64(now() * 1000)) }
     scheduleFlush()
   }
 

@@ -1,6 +1,6 @@
 package com.noma4i.dblayer
 
-internal class Retained<Model>(val value: Model, val revision: Long, val bytes: ULong)
+internal class Retained<Model>(val value: Model?, val revision: Long, val bytes: ULong)
 
 internal class RetainedValues {
     private val pool = RetentionPool()

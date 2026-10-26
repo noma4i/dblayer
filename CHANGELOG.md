@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Fixed
-- `entity(id)` of a record whose reader was freed no longer calls the core again while the retained value is kept.
+- `entity(id)` of a record whose reader was freed no longer calls the core again while its value or absence is retained.
 - `confirmed` returns the server id to a waiter that the closing commit of a create wakes.
 
 ## 6.9.1 - 2026-10-26

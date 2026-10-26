@@ -157,7 +157,7 @@ class Entities<Model : DBModel> internal constructor(
         if (previous != null) collected(previous)
         val retained = kept.take<Model>(modelName, id, now())
         val cell = EntityCell<Model>()
-        retained?.let { cell.seed(it.revision, it.bytes) { it.value } }
+        retained?.value?.let { value -> cell.seed(retained.revision, retained.bytes) { value } }
         if (retained == null) try {
             source.cachedRow(id)?.let { cached -> cell.seed(cached.revision, cached.estimatedBytes) { decoder.read(cached) } }
         } catch (error: Exception) {
@@ -250,7 +250,8 @@ class Entities<Model : DBModel> internal constructor(
         if (live[ref.id] !== ref) return@synchronized
         live.remove(ref.id)
         steps[ref.id] = Step.Release
-        ref.cell.value.value?.let { kept.keep(modelName, ref.id, Retained(it, ref.cell.revision, ref.cell.bytes), now()) }
+        val value = ref.cell.value.value
+        if (value != null || ref.cell.phase.value == EntityPhase.Absent) kept.keep(modelName, ref.id, Retained(value, ref.cell.revision, ref.cell.bytes), now())
         scheduleFlush()
     }
 

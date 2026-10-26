@@ -9,8 +9,10 @@ final class CountingSource: EntitySource, @unchecked Sendable {
     self.cached = cached
     (events, eventSink) = AsyncStream.makeStream()
   }
-  func cachedRow(_ id: String) -> WireRow? { cached?.id == id ? cached : nil }
+  func cachedRow(_ id: String) -> WireRow? { lock.withLock { peekCount += 1 }; return cached?.id == id ? cached : nil }
   private let lock = NSLock()
+  private var peekCount = 0
+  var peeks: Int { lock.withLock { peekCount } }
   private var retains: [[String]] = []
   private var releases: [[String]] = []
   /// Each lease call in order, as "retain <ids>" or "release <ids>".
@@ -118,6 +120,22 @@ struct EntityRegistryTests {
     await settle()
     #expect(second.value?.text == "warm" && second === first)
     #expect(source.retained == retainsBefore && retainsBefore == ["1"])
+  }
+
+  /// REL-32
+  @Test
+  func absentRecordIsPeekedOnceAcrossReaders() {
+    let source = CountingSource()
+    let registry = Entities<Moment>(source: source)
+    var first: Entity<Moment>? = registry.entity("gone")
+    registry.apply(delivery(1, [], removed: ["gone"]))
+    #expect(first?.phase == .absent)
+    first = nil
+    for _ in 0 ..< 4 { _ = registry.entity("gone") }
+    let returned = registry.entity("gone")
+    registry.apply(delivery(2, [moment("gone", "arrived")]))
+    #expect(returned.value?.text == "arrived")
+    #expect(source.peeks == 1)
   }
 
   /// REL-11
