@@ -1,4 +1,6 @@
 mod error;
+#[cfg(test)]
+mod effects_tests;
 mod extract;
 mod freshness;
 mod invalidate;

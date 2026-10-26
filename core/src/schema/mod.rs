@@ -10,6 +10,7 @@ use crate::value::{
     SortDirection,
 };
 
+mod effect;
 mod ephemeral;
 pub(crate) mod keyed;
 mod local;
@@ -18,6 +19,7 @@ mod newer;
 mod search;
 mod types;
 
+pub use effect::{ActionEffect, EffectFault, EffectSource, Selection, SelectionKeyError};
 pub use ephemeral::{EphemeralSpec, Storage};
 pub use merge::MergeRule;
 pub use search::{search_text, SearchPath};
@@ -144,6 +146,8 @@ pub enum DeclarationError {
     UnknownRefetch { action: String, relation: String },
     #[error("action {action} patches unknown field {field}")]
     UnknownOptimisticField { action: String, field: String },
+    #[error("action {action} declares an invalid effect: {fault:?}")]
+    Effect { action: String, fault: EffectFault },
     #[error("ephemeral field {0} cannot be a file")]
     EphemeralFile(String),
     #[error("ephemeral field {0} needs a default or null: true")]
@@ -713,6 +717,10 @@ impl RelationSpec {
         self.remote.is_none()
     }
 
+    pub fn is_singleton(&self) -> bool {
+        self.is_global && self.remote.as_ref().is_some_and(|remote| remote.shape == RemoteShape::Single)
+    }
+
     pub fn takes_created_rows(&self) -> bool {
         self.joins_created && self.remote.is_some() && self.by_columns.is_empty() && self.text_params.is_empty()
     }
@@ -840,6 +848,8 @@ pub struct ActionDeclaration {
     pub variables: BTreeMap<String, String>,
     #[serde(default)]
     pub optimistic: Map<String, Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ActionEffect>,
     #[serde(default)]
     pub refetch: Vec<String>,
     #[serde(default)]
@@ -900,6 +910,7 @@ impl ActionDeclaration {
             upload: false,
             variables: BTreeMap::new(),
             optimistic: Map::new(),
+            effects: Vec::new(),
             refetch: Vec::new(),
             args: BTreeMap::new(),
             local: Vec::new(),
@@ -1335,6 +1346,7 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
                         .find(|(_, target, relation)| !by_key.get(target).is_some_and(|target| target.has_remote(relation)))
                         .map_or(Ok(()), |(action, target, relation)| Err(DeclarationError::UnknownRefetch { action: action.name.clone(), relation: format!("{target}.{relation}") }))
                 })
+                .and_then(|()| effect::check_effects(model, &by_key))
                 .and_then(|()| {
                     let unknown = model.actions.iter().flat_map(|action| action.lands.iter().map(move |landing| (action, landing))).find(|(_, landing)| !by_key.contains_key(landing.model.as_str()));
                     unknown.map_or(Ok(()), |(action, landing)| Err(DeclarationError::UnknownLanding { action: action.name.clone(), model: landing.model.clone() }))
@@ -1349,6 +1361,8 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
 
 #[cfg(test)]
 mod cloud_tests;
+#[cfg(test)]
+mod effect_tests;
 #[cfg(test)]
 mod ephemeral_tests;
 #[cfg(test)]

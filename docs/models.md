@@ -864,7 +864,7 @@ A path the document does not select is an error with the file and line of the de
 group.dbl:125: response `groupGroupLeave.group`: operation `GroupGroupLeave` has no `group` under `groupGroupLeave`, it has: removedGroupId
 ```
 
-A path may not be empty and may not have an empty segment, with or without `--schema`. Operation documents come only with `--schema`. Without them the check stops at the shape of the path. A default response path (the first field of the operation) is not followed, because the declaration did not write it. `refetch`, `optimistic` and `match_by` name scopes, models and row attributes and are not paths into the response.
+A path may not be empty and may not have an empty segment, with or without `--schema`. Operation documents come only with `--schema`. Without them the check stops at the shape of the path. A default response path (the first field of the operation) is not followed, because the declaration did not write it. `refetch`, `optimistic`, `match_by` and the effect lines name scopes, models and row attributes and are not paths into the response.
 
 Every attribute of the model, every `from:` path, every `id_from:` and every attribute of a nested type must exist on that type. The check reports:
 
@@ -907,6 +907,28 @@ user.answerConnection(decision = ConnectionAction.Accept, outcome = ConnectionSt
 ```
 
 Attributes marked `local: true`, `:file` attributes and models with `storage: :local` are skipped. Schema fields that the model leaves out are listed as notes, because a model may select a subset.
+
+## Operation effects
+
+Four lines of a named `operation` declare effects beyond the row of the operation. [Writing data](writing-data.md#changes-beyond-the-row) describes what they do.
+
+| Line | Form |
+| ---- | ---- |
+| `add_to :scope` | `add_to :scope[, Model][, rows: :param][, with: { name: value }]` |
+| `remove_from :scope` | `remove_from :scope[, Model][, rows: :param][, with: { name: value }]` |
+| `create_row Model` | `create_row Model, attribute: value, ...` |
+| `change_row Model` | `change_row Model[, row: :param], attribute: value, ...` |
+
+Each line may repeat. An operation with an effect line needs no `optimistic` line, and `optimistic false` beside one is an error. The generator stops and names the line for each of these:
+
+- an effect line in a standard operation (`create`, `update`, `destroy`);
+- a model, scope, attribute or parameter that is not declared, or a scope without `query`;
+- `rows:` that names a parameter that is not `:id` or `[:id]`, and an effect on rows of another model without `rows:`;
+- `with:` that names a name the scope has no parameter for, an `add_to` that leaves a parameter without default unbound, and a `remove_from` that binds only some parameters;
+- `create_row` twice for one model, and `create_row` without the `upsert` or `response from:` row that replaces it;
+- `change_row` without `row:` on a model that has no single global scope, and `plus:` or `minus:` on an attribute or parameter that is not a number.
+
+A parameter that only an effect line uses is valid. The core checks the same rules when it opens the models, so a hand-written models JSON gets the same errors.
 
 ## Access level
 

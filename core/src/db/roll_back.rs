@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp, WriteOrigin};
+use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp, ScopeRef, WriteOrigin};
 use crate::operation::OperationStatus;
 use crate::files::references_of_row;
-use crate::identity::{Generation, ModelKey, RowId};
+use crate::identity::{Generation, ListKey, ModelKey, RowId};
 use crate::store::{Reader, StoreError};
 
 use super::error::DbError;
@@ -83,6 +83,22 @@ impl<'a> Chain<'a> {
         }
     }
 
+    fn later_member(&self, own: i64, model: &str, id: &str, scope_key: &str) -> Option<i64> {
+        self.open.range(own + 1..).find(|(_, open)| open.prior.rows.iter().any(|row| matches!(row, PriorRow::Member { model: owner, id: row_id, scope_key: key, .. } if owner == model && row_id == id && key == scope_key))).map(|(seq, _)| *seq)
+    }
+
+    fn hand_down_member(&mut self, seq: i64, model: &str, id: &str, scope_key: &str, value: Option<String>) {
+        let Some(open) = self.open.get_mut(&seq) else { return };
+        for row in &mut open.prior.rows {
+            if let PriorRow::Member { model: owner, id: row_id, scope_key: key, before } = row {
+                if owner == model && row_id == id && key == scope_key {
+                    *before = value.clone();
+                    self.changed.insert(seq);
+                }
+            }
+        }
+    }
+
     fn drop_op(&mut self, seq: i64) {
         self.open.remove(&seq);
         self.changed.remove(&seq);
@@ -101,7 +117,7 @@ fn writes(row: &PriorRow, hidden: bool, model: &str, id: &str, field: &str) -> b
     match row {
         PriorRow::Edited { model: owner, id: row_id, owned, .. } => owner == model && row_id == id && owned.contains_key(field),
         PriorRow::Destroyed { model: owner, id: row_id, .. } => hidden && owner == model && row_id == id,
-        PriorRow::Created { .. } => false,
+        PriorRow::Created { .. } | PriorRow::Member { .. } => false,
     }
 }
 
@@ -130,6 +146,18 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
             }
             PriorRow::Edited { model, id, before, owned } => {
                 restore_edit(reader, &mut chain, own, (model, id), (before, owned), revision, &mut plan)?;
+            }
+            PriorRow::Member { model, id, scope_key, before } => {
+                if let Some(later) = chain.later_member(own, model, id, scope_key) {
+                    chain.hand_down_member(later, model, id, scope_key, before.clone());
+                    continue;
+                }
+                let scope = ScopeRef::new(ModelKey::new(model), ListKey::from_raw(scope_key));
+                match (before, reader.scope_has_member(model, scope_key, id)?) {
+                    (Some(order_key), false) if reader.point(model, id)?.is_some() => plan.scope_ops.push(ScopeOp::Append { scope, row: row_id.clone(), order_key: order_key.clone() }),
+                    (None, true) => plan.scope_ops.push(ScopeOp::Detach { scope, row: row_id.clone() }),
+                    _ => {}
+                }
             }
         }
     }

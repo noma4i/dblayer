@@ -1076,6 +1076,94 @@ fn optimistic(cx: &mut Cx, call: &Call) -> Option<OptimisticDecl> {
     Some(OptimisticDecl::Fields(fields))
 }
 
+fn source(cx: &mut Cx, node: &Node<Value>) -> Option<SourceDecl> {
+    match &node.item {
+        Value::Symbol(name) if name == "id" => Some(SourceDecl::Owner("id".to_string())),
+        Value::Symbol(name) => Some(SourceDecl::Parameter(name.clone())),
+        Value::Hash(parts) => source_hash(cx, parts, node),
+        Value::Array(_) | Value::OptionalArray(_) | Value::Const(_) | Value::Duration { .. } => {
+            cx.fail(at(node), "an effect value must be a literal, a parameter symbol or a hash");
+            None
+        }
+        other => Some(SourceDecl::Literal(json_of(other))),
+    }
+}
+
+fn source_hash(cx: &mut Cx, parts: &[Pair], node: &Node<Value>) -> Option<SourceDecl> {
+    let find = |key: &str| parts.iter().find(|part| part.key == key);
+    let name_of = |cx: &mut Cx, key: &str| find(key).and_then(|part| symbol(cx, &part.value, &format!("`{key}:`")));
+    let single = |key: &str| parts.len() == 1 && find(key).is_some();
+    if single("owner") {
+        return name_of(cx, "owner").map(SourceDecl::Owner);
+    }
+    if single("plus") {
+        return name_of(cx, "plus").map(SourceDecl::Plus);
+    }
+    if single("minus") {
+        return name_of(cx, "minus").map(SourceDecl::Minus);
+    }
+    let row_shape = parts.iter().all(|part| matches!(part.key.as_str(), "of" | "row" | "field")) && find("of").is_some() && find("field").is_some();
+    if !row_shape {
+        cx.fail(at(node), "an effect hash is `{ owner: :field }`, `{ of: Model, field: :name }`, `{ of: Model, row: :param, field: :name }`, `{ plus: :param }` or `{ minus: :param }`");
+        return None;
+    }
+    let model = find("of").and_then(|part| konst(cx, &part.value, "`of:`"));
+    let row = find("row").and_then(|part| symbol(cx, &part.value, "`row:`"));
+    let field = name_of(cx, "field");
+    Some(SourceDecl::Row { model: model?, row, field: field? })
+}
+
+fn source_pairs(cx: &mut Cx, pairs: &[Pair]) -> Vec<SourcePair> {
+    pairs.iter().filter_map(|pair| Some(SourcePair { name: pair.key.clone(), source: source(cx, &pair.value)?, pos: pair_pos(pair) })).collect()
+}
+
+fn select(cx: &mut Cx, call: &Call, adds: bool) -> Option<EffectDecl> {
+    let mut line = Line::of(call);
+    no_block(cx, call);
+    let (scope, model) = match call.args.as_slice() {
+        [scope] => (symbol(cx, scope, "the selection")?, None),
+        [scope, model] => (symbol(cx, scope, "the selection")?, Some(konst(cx, model, "the selection model")?)),
+        _ => {
+            cx.fail(line.pos, format!("`{}` needs a selection like `{} :blocked` or `{} :members, User, rows: :userIds`", line.word, line.word, line.word));
+            return None;
+        }
+    };
+    let rows = line.opt(cx, "rows").and_then(|pair| symbol(cx, &pair.value, "`rows:`").map(|name| Spanned::new(name, pair_pos(pair))));
+    let with = line.opt(cx, "with").and_then(|pair| hash_pairs(cx, &pair.value, "`with:`")).map(|pairs| source_pairs(cx, pairs)).unwrap_or_default();
+    line.finish(cx);
+    Some(EffectDecl::Select { pos: line.pos, adds, scope, model, rows, with })
+}
+
+fn create_row(cx: &mut Cx, call: &Call) -> Option<EffectDecl> {
+    let mut line = Line::of(call);
+    no_block(cx, call);
+    let model = match call.args.as_slice() {
+        [model] => konst(cx, model, "the created model")?,
+        _ => {
+            cx.fail(line.pos, "`create_row` needs a model like `create_row Message, body: :body`");
+            return None;
+        }
+    };
+    line.used.iter_mut().for_each(|used| *used = true);
+    Some(EffectDecl::Create { pos: line.pos, model, values: source_pairs(cx, &call.options) })
+}
+
+fn change_row(cx: &mut Cx, call: &Call) -> Option<EffectDecl> {
+    let mut line = Line::of(call);
+    no_block(cx, call);
+    let model = match call.args.as_slice() {
+        [model] => konst(cx, model, "the changed model")?,
+        _ => {
+            cx.fail(line.pos, "`change_row` needs a model like `change_row CurrentUser, balance: { minus: :price }`");
+            return None;
+        }
+    };
+    let row = line.opt(cx, "row").and_then(|pair| symbol(cx, &pair.value, "`row:`").map(|name| Spanned::new(name, pair_pos(pair))));
+    let fields: Vec<Pair> = call.options.iter().filter(|pair| pair.key != "row").cloned().collect();
+    line.used.iter_mut().for_each(|used| *used = true);
+    Some(EffectDecl::Change { pos: line.pos, model, row, values: source_pairs(cx, &fields) })
+}
+
 fn keyed(cx: &mut Cx, parts: &[Pair], node: &Node<Value>) -> Option<OptimisticValue> {
     let find = |key: &str| parts.iter().find(|part| part.key == key);
     let by = find("by").and_then(|part| match &part.value.item {
@@ -1219,7 +1307,7 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     let lines = block(cx, call)?;
     let mut decl = OperationDecl {
         pos: line.pos, name: name.clone(), kind, upload, mutation: None, parameters: Vec::new(), variables: None, local: None, wrap: None, response: None, match_by: None,
-        on_failure: None, optimistic: None, upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
+        on_failure: None, optimistic: None, effects: Vec::new(), upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
     };
     let mut seen: Vec<&str> = Vec::new();
     for item in lines {
@@ -1228,14 +1316,14 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
             (_, "mutation" | "variables" | "wrap" | "response") => true,
             (OperationKind::Create | OperationKind::Update | OperationKind::Custom, "parameter") => true,
             (OperationKind::Create | OperationKind::Update, "local" | "refetch" | "match_by" | "on_failure") => true,
-            (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates") => true,
+            (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates" | "add_to" | "remove_from" | "create_row" | "change_row") => true,
             _ => false,
         };
         if !allowed {
             cx.fail(Pos::of(item), format!("`{word}` does not apply to operation `{name}`"));
             continue;
         }
-        if !matches!(word, "parameter" | "upsert" | "refetch") && seen.contains(&word) {
+        if !matches!(word, "parameter" | "upsert" | "refetch" | "add_to" | "remove_from" | "create_row" | "change_row") && seen.contains(&word) {
             cx.fail(Pos::of(item), format!("`{word}` is declared twice"));
             continue;
         }
@@ -1302,6 +1390,10 @@ fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl) {
             }
         }
         "optimistic" => decl.optimistic = optimistic(cx, call).map(|found| (found, line.pos)),
+        "add_to" => decl.effects.extend(select(cx, call, true)),
+        "remove_from" => decl.effects.extend(select(cx, call, false)),
+        "create_row" => decl.effects.extend(create_row(cx, call)),
+        "change_row" => decl.effects.extend(change_row(cx, call)),
         "upsert" => {
             no_block(cx, call);
             let model = match call.args.as_slice() {

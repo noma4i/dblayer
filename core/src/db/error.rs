@@ -52,6 +52,8 @@ pub enum DbError {
     Internal(String),
     #[error(transparent)]
     Landing(#[from] crate::read::LandingError),
+    #[error(transparent)]
+    Selection(#[from] crate::schema::SelectionKeyError),
 }
 
 impl From<rusqlite::Error> for DbError {

@@ -18,6 +18,7 @@ pub enum LandingError {
 pub struct StoredScope {
     pub last_key: Option<String>,
     pub incoming: Vec<String>,
+    pub withheld: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,7 +36,7 @@ pub fn plan_landing(scope: &ScopeRef, model: &ModelKey, stored: &StoredScope, in
         return Err(LandingError::ScopeModelMismatch);
     }
     let rows = identified_rows(incoming);
-    let existing: BTreeSet<&str> = stored.incoming.iter().map(String::as_str).collect();
+    let existing: BTreeSet<&str> = stored.incoming.iter().chain(&stored.withheld).map(String::as_str).collect();
     let mut previous_key = stored.last_key.clone();
     let mut inserted = Vec::new();
     for (id, _) in &rows {

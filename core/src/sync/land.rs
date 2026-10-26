@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, EdgeValue, EdgeWrite, EntityOp, EnvelopeFault, ScopeOp, ScopeRef, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
-use crate::db::{Db, ReplaceRequest};
+use crate::db::{Db, Prior, ReplaceRequest};
 use crate::schema::{Coverage, FieldKind, FieldSpec};
 use crate::value::ScalarKind;
 use crate::read::{incoming_ids, plan_landing, StoredScope};
@@ -193,9 +193,11 @@ impl Inner {
             } else {
                 let ids: Vec<String> = incoming_ids(&roots).iter().map(ToString::to_string).collect();
                 let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
+                let withheld = Prior::pending_members(reader, &model, scope.key.as_str())?.map(|pending| ids.iter().filter(|id| pending.left.contains(*id)).cloned().collect()).unwrap_or_default();
                 let stored = StoredScope {
                     last_key: reader.scope_last_key(&model, scope.key.as_str())?,
                     incoming: reader.scope_members_among(&model, scope.key.as_str(), if keeps_member_order { &[] } else { &wanted })?,
+                    withheld,
                 };
                 plan_landing(&scope, &model_key, &stored, &roots).map_err(|error| SyncError::Malformed(error.to_string()))?
             };

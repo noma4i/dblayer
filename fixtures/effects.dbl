@@ -1,0 +1,101 @@
+model Member do
+  attribute :name, :string
+  scope :blocked do
+    query "BlockedMembers"
+    response from: "viewer.blockedMembers"
+    paginate size: 20, direction: :forward
+  end
+  scope :roster do
+    parameter :groupId, :string
+    query "GroupRoster"
+    response from: "node.members", shape: :list
+  end
+  operation :block do
+    mutation "MemberBlock"
+    variables memberId: :id
+    wrap "input"
+    response :ignore
+    add_to :blocked
+  end
+  operation :unblock do
+    mutation "MemberUnblock"
+    variables memberId: :id
+    wrap "input"
+    response :ignore
+    remove_from :blocked
+  end
+  operation :send_gift do
+    mutation "MemberGift"
+    parameter :giftId, :string
+    parameter :groupId, :id
+    parameter :price, :int, null: true
+    variables memberId: :id, giftId: :giftId
+    wrap "input"
+    upsert Post, from: "memberGift.post"
+    returns do
+      attribute :successMessage, :string
+    end
+    response from: "memberGift.member"
+    create_row Post, groupId: :groupId, body: "gift"
+    change_row Purse, balance: { minus: :price }
+  end
+end
+
+model Group do
+  attribute :title, :string
+  scope :open do
+    parameter :folder, :string
+    query "OpenGroups"
+    response from: "viewer.groups", shape: :list
+  end
+  operation :leave do
+    mutation "GroupLeave"
+    variables groupId: :id
+    wrap "input"
+    response :ignore
+    remove_from :open
+  end
+  operation :add_members do
+    mutation "GroupAddMembers"
+    parameter :memberIds, [:id]
+    variables groupId: :id, addMemberIds: :memberIds
+    wrap "input"
+    response :ignore
+    add_to :roster, Member, rows: :memberIds, with: { groupId: :id }
+  end
+  operation :remove_members do
+    mutation "GroupRemoveMembers"
+    parameter :memberIds, [:id]
+    variables groupId: :id, removeMemberIds: :memberIds
+    wrap "input"
+    response :ignore
+    remove_from :roster, Member, rows: :memberIds, with: { groupId: :id }
+  end
+end
+
+model Post do
+  attribute :groupId, :id
+  attribute :body, :string, null: true
+  index :groupId
+  scope :thread do
+    parameter :groupId, :id
+    where groupId: :groupId
+    query "GroupThread"
+    response from: "node.posts", shape: :list
+  end
+  operation :forward do
+    mutation "PostForward"
+    parameter :targetGroupId, :id
+    variables postId: :id, groupId: :targetGroupId
+    wrap "input"
+    response from: "postForward.post"
+    create_row Post, groupId: :targetGroupId, body: { owner: :body }
+  end
+end
+
+model Purse do
+  attribute :balance, :int
+  scope :current do
+    query "PurseQuery"
+  end
+end

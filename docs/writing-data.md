@@ -213,6 +213,82 @@ try await group.mute(mute: true)
 group.mute(mute = true)
 ```
 
+## Changes beyond the row
+
+An operation changes more than its own row: a user joins a list, a message appears in another chat, a balance drops. Four lines declare these effects. They apply with the call, in the same commit as the queued change, and one refusal takes back exactly what its operation did:
+
+```ruby
+operation :block do
+  mutation "UserBlock"
+  variables userId: :id
+  wrap "input"
+  response :ignore
+  add_to :blocked
+end
+
+operation :add_members do
+  mutation "ChatGroupUpdate"
+  parameter :userIds, [:id]
+  variables chatId: :id, addUserIds: :userIds
+  wrap "input"
+  response :ignore
+  add_to :chat_members, User, rows: :userIds, with: { chatId: :id }
+end
+
+operation :send_gift do
+  mutation "GiftSend"
+  parameter :giftId, :string
+  parameter :chatId, :id
+  parameter :price, :int, null: true
+  variables userId: :id, giftId: :giftId
+  wrap "input"
+  upsert Message, from: "giftSend.message"
+  returns do
+    attribute :successMessage, :string
+  end
+  response from: "giftSend.user"
+  create_row Message, chatId: :chatId, kind: "GIFT"
+  change_row CurrentUser, balance: { minus: :price }
+end
+```
+
+```swift
+try await user.block()
+try await chat.addMembers(userIds: ["u1", "u2"])
+let sent = try await user.sendGift(giftId: "g1", chatId: chat.id, price: 30)
+let text = try await sent.answer().successMessage
+```
+
+```kotlin
+user.block()
+chat.addMembers(userIds = listOf("u1", "u2"))
+val sent = user.sendGift(giftId = "g1", chatId = chat.id, price = 30)
+val text = sent.answer().successMessage
+```
+
+| Line | Effect |
+| ---- | ------ |
+| `add_to :scope` | the row joins the head of a server scope, as a created row does |
+| `remove_from :scope` | the row leaves the scope |
+| `create_row Model, attribute: value, ...` | a new row of `Model` with a temporary id appears, and the row the server answers replaces it |
+| `change_row Model, attribute: value, ...` | attributes of another row change |
+
+`add_to` and `remove_from` act on the row of the operation. Another model comes after the scope, and `rows:` names an `:id` or `[:id]` parameter that holds the rows to join or leave. A row that is not stored on the device is skipped, the refetch of the scope brings it. `with:` binds the parameters of the scope to `:id` (the row of the operation), to a parameter or to a value. `add_to` binds every parameter that has no default. `remove_from` binds all parameters or none, and with none the row leaves the scope for every value of its parameters.
+
+A value is a literal, a parameter (`:price`), `:id`, `{ owner: :body }` (an attribute of the row of the operation), `{ of: CurrentUser, field: :id }` (an attribute of the only row of a model that has one) or `{ of: User, row: :userId, field: :name }` (an attribute of the row an `:id` parameter names). In `change_row`, `{ minus: :price }` and `{ plus: :price }` shift a number. A value that comes from a parameter the call left out is skipped: an attribute of `create_row` gets the zero value, a field of `change_row` stays, a scope parameter skips the effect. `change_row` finds its row with `row: :param`, or takes the only row of a model that has a single global scope. A row that is not stored is skipped.
+
+`create_row` needs the row that replaces it: an `upsert Model, from:` line, or the `response from:` row when the model is the model of the operation and the answer is another row. The new row joins the lists of its parameters like a created row. It has no sync state of its own: the row of the operation carries the state of the queued change.
+
+Rolling back follows the rules of [rolling back](#rolling-back), applied to each effect:
+
+| Outcome | Membership | Created row | Changed attributes |
+| ------- | ---------- | ----------- | ------------------ |
+| the server refuses | the row returns to its place, or leaves again, unless a newer change of the same list still holds it | the row disappears | the attribute returns unless a newer change or the server owns it now |
+| the delivery is unknown | stays | stays | stays |
+| the server answers | stays until the refetch of the scope | the row of the answer replaces it | stays until the answer row or the refetch writes it |
+
+A page of a scope that arrives while the change is queued keeps the rows the change added and does not bring back the rows it removed. A refused number rolls back to the value it had, so a newer change of the same number keeps its result until the server answers it.
+
 ## What the server answered
 
 `returns` declares the scalar attributes of the mutation payload that the app needs, for example the text a server shows after a send (`:string`, `:int`, `:num`, `:bool` or `:id`). The payload is the object the mutation field returns, the first part of `response from:`. An operation with `returns` returns an answer handle instead of the model: `model` is the optimistic record, `answer()` waits for the server and returns a generated type with one optional property per declared attribute.

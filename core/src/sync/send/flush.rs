@@ -508,12 +508,14 @@ impl Inner {
         self.keep_answer(spec, sending, operation, &data);
         let mut kept = super::outcomes::KeptAnswer::new(&self.outcomes, entry.operation.id.0);
         let held = Prior::of(entry).map(|prior| prior.held_files()).unwrap_or_default();
+        let owned: Vec<RowId> = entry.operation.row_ids.iter().chain(&temp).cloned().collect();
+        let created = Prior::of(entry).map(|prior| prior.created_beyond(&owned)).unwrap_or_default();
         let mut generation = sending.generation;
         let mut committed = None;
         for _ in 0..SETTLE_ATTEMPTS {
             let lands_rows = generation == sending.generation;
             committed = self.commit(generation, |reader| {
-                let ids: BTreeSet<_> = temp.iter().chain(replacements.iter().map(|(temp, _)| temp)).map(ToString::to_string).collect();
+                let ids: BTreeSet<_> = temp.iter().chain(replacements.iter().map(|(temp, _)| temp)).chain(created.iter().map(|(_, temp)| temp)).map(ToString::to_string).collect();
                 let outbox = crate::operation::referencing_sequences(reader.connection(), &ids).map_err(StoreError::from)?.into_iter().filter_map(|seq| OutboxOperation::read(reader, seq).transpose()).collect::<Result<Vec<_>, _>>()?;
                 let mut drops = 0;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
@@ -530,8 +532,19 @@ impl Inner {
                     Some(FileOp::Remove { model: ModelKey::new(&file.model), row_id: RowId::new(&file.row_id).ok()?, field: file.field.clone() })
                 }));
                 if !lands_rows {
-                    envelope.entity_ops = temp.iter().map(|temp| EntityOp::Destroy { model: ModelKey::new(&sending.model), id: temp.clone(), reason: crate::commit::DestroyReason::Expired }).collect();
+                    envelope.entity_ops = temp.iter().map(|temp| EntityOp::Destroy { model: ModelKey::new(&sending.model), id: temp.clone(), reason: crate::commit::DestroyReason::Expired })
+                        .chain(created.iter().map(|(model, temp)| EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: crate::commit::DestroyReason::Expired })).collect();
                 } else {
+                    for (created_model, created_temp) in &created {
+                        if reader.point(created_model, created_temp.as_str())?.is_none() { continue; }
+                        let answers: Vec<RowId> = landings.iter().filter(|landed| landed.model.as_str() == created_model.as_str()).map(|landed| landed.id.clone())
+                            .chain(normalized.roots.iter().filter(|_| *created_model == sending.model).filter_map(|row| row.get("id").and_then(read_id)))
+                            .filter(|answer| answer != created_temp && !owned.contains(answer)).collect();
+                        match answers.as_slice() {
+                            [answer] => self.db.swap_temp(reader, &mut envelope, &outbox, created_model, created_temp, answer, entry.operation.id.0)?,
+                            _ => envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(created_model), id: created_temp.clone(), reason: crate::commit::DestroyReason::Expired }),
+                        }
+                    }
                     for op in &envelope.entity_ops {
                         let EntityOp::Upsert { model, id, row } = op else { continue };
                         if landings.contains(&RowRef::new(model.clone(), id.clone())) {

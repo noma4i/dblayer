@@ -1,13 +1,13 @@
 use dblayer::schema::{
-    ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, CursorSpec, Dependent, EphemeralSpec, FieldKind, FieldSpec, MergeRule, ModelSpec, Newer, NodeRead,
-    PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, SubscriptionAction, SubscriptionApply, UpdatesSpec, VariableSource, NODE_PARAM,
+    ActionDeclaration, ActionEffect, ActionLanding, AssociationKind, AssociationSpec, Coverage, CursorSpec, Dependent, EphemeralSpec, FieldKind, FieldSpec, MergeRule, ModelSpec, Newer, NodeRead,
+    PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Selection, Sort, SortField, SubscriptionAction, SubscriptionApply, UpdatesSpec, VariableSource, NODE_PARAM, EffectSource,
 };
 use dblayer::value::ScalarKind;
 use serde_json::{json, Map, Value as Json};
 
 use crate::decl::{
-    self, AssociationDecl, AttributeBlock, AttributeDecl, CursorType, Effect, InsertOn, ListElement, ModelDecl, OperationDecl, OperationKind, OptimisticDecl, OptimisticElement,
-    OptimisticValue, PageDirectionDecl, ParamBase, ResponseDecl, ResponseShape, ScopeDecl, SubscribeDecl, TypeRef, VariableValue,
+    self, AssociationDecl, AttributeBlock, AttributeDecl, CursorType, Effect, EffectDecl, InsertOn, ListElement, ModelDecl, OperationDecl, OperationKind, OptimisticDecl, OptimisticElement,
+    OptimisticValue, PageDirectionDecl, ParamBase, ResponseDecl, ResponseShape, ScopeDecl, SourceDecl, SourcePair, SubscribeDecl, TypeRef, VariableValue,
 };
 
 const DEFAULT_FRESHNESS: &str = "5.minutes";
@@ -199,6 +199,10 @@ fn build_association(association: &AssociationDecl, owner: &str) -> AssociationS
     built
 }
 
+pub(crate) fn scope_is_singleton(scope: &ScopeDecl) -> bool {
+    build_scope(scope).is_singleton()
+}
+
 fn build_scope(scope: &ScopeDecl) -> RelationSpec {
     let columns: Vec<&str> = scope.where_.iter().flat_map(|clause| clause.pairs.iter().map(|(column, _)| column.item.as_str())).collect();
     let mut relation = RelationSpec::new(&scope.name, &columns);
@@ -345,10 +349,36 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
     if let Some((OptimisticDecl::Fields(fields), _)) = &operation.optimistic {
         action.optimistic = fields.iter().map(|(name, value, _)| (name.clone(), optimistic_json(value))).collect();
     }
+    action.effects = operation.effects.iter().map(|effect| build_effect(effect, owner)).collect();
     if operation.kind == OperationKind::Custom && action.variables.is_empty() {
         action.variables.insert(format!("{}Id", lower(owner)), "id".into());
     }
     action
+}
+
+fn build_effect(effect: &EffectDecl, owner: &str) -> ActionEffect {
+    let sources = |pairs: &[SourcePair]| pairs.iter().map(|pair| (pair.name.clone(), build_source(&pair.source))).collect();
+    match effect {
+        EffectDecl::Select { adds, scope, model, rows, with, .. } => {
+            let model = model.clone().unwrap_or_else(|| owner.to_string());
+            let with = with.iter().map(|pair| (pair.name.clone(), build_source(&pair.source))).collect();
+            let selection = Selection { model, scope: scope.clone(), rows: rows.as_ref().map(|found| found.item.clone()), with };
+            if *adds { ActionEffect::Add(selection) } else { ActionEffect::Remove(selection) }
+        }
+        EffectDecl::Create { model, values, .. } => ActionEffect::Create { model: model.clone(), values: sources(values) },
+        EffectDecl::Change { model, row, values, .. } => ActionEffect::Change { model: model.clone(), row: row.as_ref().map(|found| found.item.clone()), values: sources(values) },
+    }
+}
+
+fn build_source(source: &SourceDecl) -> EffectSource {
+    match source {
+        SourceDecl::Literal(value) => EffectSource::Literal(value.clone()),
+        SourceDecl::Parameter(name) => EffectSource::Arg(name.clone()),
+        SourceDecl::Owner(field) => EffectSource::Owner(field.clone()),
+        SourceDecl::Row { model, row, field } => EffectSource::Row { model: model.clone(), row: row.clone(), field: field.clone() },
+        SourceDecl::Plus(name) => EffectSource::Plus(name.clone()),
+        SourceDecl::Minus(name) => EffectSource::Minus(name.clone()),
+    }
 }
 
 fn scalar_word(kind: ScalarKind) -> &'static str {

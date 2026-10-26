@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `add_to` and `remove_from` join a row to a scope or take it out.
+- `create_row` adds a row of another model that the server answer replaces.
+- `change_row` changes attributes of another row and shifts numbers with `minus:` or `plus:`.
+- A refused operation takes back only its own membership, created row and changed attributes.
+
 ## 6.9.2 - 2026-10-26
 
 ### Added

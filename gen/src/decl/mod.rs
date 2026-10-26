@@ -340,6 +340,30 @@ pub enum OptimisticDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum SourceDecl {
+    Literal(Json),
+    Parameter(String),
+    Owner(String),
+    Row { model: String, row: Option<String>, field: String },
+    Plus(String),
+    Minus(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourcePair {
+    pub name: String,
+    pub source: SourceDecl,
+    pub pos: Pos,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EffectDecl {
+    Select { pos: Pos, adds: bool, scope: String, model: Option<String>, rows: Option<Spanned<String>>, with: Vec<SourcePair> },
+    Create { pos: Pos, model: String, values: Vec<SourcePair> },
+    Change { pos: Pos, model: String, row: Option<Spanned<String>>, values: Vec<SourcePair> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ResponseDecl {
     Ignore,
     Read(ResponseRead),
@@ -399,6 +423,7 @@ pub struct OperationDecl {
     pub match_by: Option<Vec<Spanned<String>>>,
     pub on_failure: Option<Spanned<OnFailure>>,
     pub optimistic: Option<(OptimisticDecl, Pos)>,
+    pub effects: Vec<EffectDecl>,
     pub upserts: Vec<UpsertDecl>,
     pub refetch: Vec<RefetchDecl>,
     pub returns: Option<Vec<AttributeDecl>>,

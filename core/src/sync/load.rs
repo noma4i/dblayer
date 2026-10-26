@@ -12,7 +12,7 @@ use crate::schema::{Coverage, FieldSpec, PageDirection, RemoteShape, RemoteSpec}
 use crate::store::window_key;
 use crate::transport::{FetchAttempt, FetchReport, GraphQLRequest, Response, ResponseOutcome};
 use crate::transport::retry::INVALID_CURSOR;
-use crate::value::{normalize_relation_params, relation_scope_key, ScalarKind};
+use crate::value::ScalarKind;
 
 use super::error::SyncError;
 use super::extract::extract;
@@ -132,31 +132,19 @@ impl Inner {
             .get(&remote.operation)
             .cloned()
             .ok_or_else(|| SyncError::UnknownOperation(remote.operation.clone()))?;
-        let mut scope_params = Map::new();
-        let mut kinds = std::collections::BTreeMap::new();
-        for column in &declared.by_columns {
-            let kind = spec.column_scalar_kind(column).ok_or_else(|| SyncError::Params(format!("{column} is not a scalar or enum field")))?;
-            let value = params.get(column).ok_or_else(|| SyncError::Params(format!("missing param {column}")))?;
-            scope_params.insert(column.clone(), value.clone());
-            kinds.insert(column.clone(), kind as ScalarKind);
-        }
-        let scope_values = scope_params.clone();
+        let scope_key = spec.selection_key(relation, params).map_err(|error| SyncError::Params(error.to_string()))?;
+        let scope_values: Map<String, Value> = declared.by_columns.iter().filter_map(|column| params.get(column).map(|value| (column.clone(), value.clone()))).collect();
         for param in &declared.text_params {
-            let value = params.get(param).ok_or_else(|| SyncError::Params(format!("missing param {param}")))?;
             let kind = declared.scalar_types.get(param).copied().unwrap_or(ScalarKind::Str);
             let sent_as_declared = match kind {
-                ScalarKind::Int => value.is_null() || value.is_i64() || value.is_u64(),
-                ScalarKind::Bool => value.is_null() || value.is_boolean(),
+                ScalarKind::Int => params[param].is_null() || params[param].is_i64() || params[param].is_u64(),
+                ScalarKind::Bool => params[param].is_null() || params[param].is_boolean(),
                 _ => true,
             };
             if !sent_as_declared {
                 return Err(SyncError::Params(format!("param {param} must be a JSON {}", if kind == ScalarKind::Int { "integer" } else { "boolean" })));
             }
-            scope_params.insert(param.clone(), value.clone());
-            kinds.insert(param.clone(), kind);
         }
-        let normalized = normalize_relation_params(&scope_params, &kinds).map_err(|error| SyncError::Params(error.to_string()))?;
-        let scope_key = relation_scope_key(model, relation, &normalized).map_err(|error| SyncError::Params(error.to_string()))?;
         let direction = match remote.shape {
             RemoteShape::Connection { direction, .. } => direction,
             _ => PageDirection::Forward,

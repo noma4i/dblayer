@@ -19,6 +19,7 @@ use super::dispatch::{on_owner_thread, Dispatch, Event};
 use super::ephemeral::Ephemerals;
 use super::error::DbError;
 use super::listeners::Executor;
+use super::prior::Prior;
 use super::observe::{ObserverCensus, Observers};
 use super::reads::ReadPool;
 
@@ -405,8 +406,13 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
             }
             open_row_ids.extend(queue.open_row_ids(&spec.key).into_iter().map(|id| RowRef::new(spec.key.clone(), id)));
         }
-        let plan = fsck_plan(&operations, &known, &temp_rows, &temp_rows, &open_row_ids);
         let reader = Reader::new(&inner.connection, &inner.models);
+        for operation in &operations {
+            for (model, id) in Prior::created_rows(&reader, operation.id.0)? {
+                open_row_ids.insert(RowRef::new(ModelKey::new(&model), crate::operation::stored_row_id(&id)?));
+            }
+        }
+        let plan = fsck_plan(&operations, &known, &temp_rows, &temp_rows, &open_row_ids);
         let mut orphans = Orphans::new();
         for row in plan.iter().filter_map(|action| match action { FsckAction::QuarantineOrphan(row) => Some(row), _ => None }) {
             if let Some(stored) = reader.stored_row(row.model.as_str(), row.id.as_str())? {

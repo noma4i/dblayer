@@ -121,10 +121,22 @@ pub struct ScopeRowsResult {
 
 pub(crate) const MEMBER_EXISTS_SQL: &str = "SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3";
 
+#[derive(Debug, Default)]
+pub(crate) struct PendingPriors {
+    pub fields: BTreeMap<(String, String), BTreeMap<String, HashSet<i64>>>,
+    pub members: BTreeMap<(String, String), PendingMembers>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct PendingMembers {
+    pub joined: HashSet<String>,
+    pub left: HashSet<String>,
+}
+
 pub struct Reader<'a> {
     connection: &'a Connection,
     models: &'a BTreeMap<String, ModelInfo>,
-    pub(crate) pending_fields: std::cell::OnceCell<BTreeMap<(String, String), BTreeMap<String, HashSet<i64>>>>,
+    pub(crate) pending: std::cell::OnceCell<PendingPriors>,
 }
 
 #[derive(Debug, Default)]
@@ -136,7 +148,7 @@ pub struct EdgeRead {
 
 impl<'a> Reader<'a> {
     pub(crate) fn new(connection: &'a Connection, models: &'a BTreeMap<String, ModelInfo>) -> Self {
-        Self { connection, models, pending_fields: std::cell::OnceCell::new() }
+        Self { connection, models, pending: std::cell::OnceCell::new() }
     }
 
     pub(crate) fn connection(&self) -> &'a Connection {
@@ -245,6 +257,10 @@ impl<'a> Reader<'a> {
 
     pub fn scope_has_member(&self, model: &str, scope_key: &str, row_id: &str) -> Result<bool, StoreError> {
         Ok(self.connection.prepare_cached(MEMBER_EXISTS_SQL)?.exists(params![model, scope_key, row_id])?)
+    }
+
+    pub fn scope_member_key(&self, model: &str, scope_key: &str, row_id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self.connection.query_row("SELECT order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3", params![model, scope_key, row_id], |row| row.get(0)).optional()?)
     }
 
     pub fn scope_first_key(&self, model: &str, scope_key: &str) -> Result<Option<String>, StoreError> {

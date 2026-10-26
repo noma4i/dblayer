@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use crate::commit::{DestroyReason, EntityOp, ScopeOp, ScopeRef};
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId, ListKey};
-use crate::store::{Reader, StoreError};
+use crate::store::{PendingMembers, PendingPriors, Reader, StoreError};
 use crate::value::read_id;
 use crate::write::restore_patch;
 
@@ -25,6 +25,7 @@ pub(crate) enum PriorRow {
     Created { model: String, id: String },
     Edited { model: String, id: String, before: Map<String, Value>, owned: BTreeMap<String, i64> },
     Destroyed { model: String, id: String, before: Map<String, Value>, members: Vec<PriorMember>, files: Vec<PriorFile> },
+    Member { model: String, id: String, scope_key: String, before: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,7 +50,7 @@ pub(crate) struct HeldFile {
 impl PriorRow {
     pub fn id(&self) -> &str {
         match self {
-            PriorRow::Created { id, .. } | PriorRow::Edited { id, .. } | PriorRow::Destroyed { id, .. } => id,
+            PriorRow::Created { id, .. } | PriorRow::Edited { id, .. } | PriorRow::Destroyed { id, .. } | PriorRow::Member { id, .. } => id,
         }
     }
 
@@ -84,7 +85,7 @@ impl PriorRow {
 impl Prior {
     pub(crate) fn related_operations(reader: &Reader<'_>, entry: &OutboxOperation) -> Result<Vec<OutboxOperation>, StoreError> {
         let keys: BTreeSet<_> = Self::of(entry).into_iter().flat_map(|prior| prior.rows).map(|row| match row {
-            PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } => (model, id),
+            PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } | PriorRow::Member { model, id, .. } => (model, id),
         }).collect();
         let mut sequences = crate::operation::row_operation_sequences(reader.connection(), &keys)?;
         let mut statement = reader.connection().prepare_cached("SELECT ids.seq FROM op_value AS ids JOIN op_value AS models ON models.seq = ids.seq AND models.item_position = -1 AND models.part = 'prior' AND models.parent = ids.parent AND models.name = 'model' AND models.text = ?1 WHERE ids.item_position = -1 AND ids.part = 'prior' AND ids.name = 'id' AND ids.text = ?2")?;
@@ -98,24 +99,44 @@ impl Prior {
         serde_json::from_value(entry.rollback.clone()?).ok()
     }
 
-    pub fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, model: &str, id: &str) -> Result<HashSet<String>, StoreError> {
-        if reader.pending_fields.get().is_none() {
-            let mut owned: BTreeMap<(String, String), BTreeMap<String, HashSet<i64>>> = BTreeMap::new();
+    fn pending<'a>(reader: &'a Reader<'_>) -> Result<&'a PendingPriors, StoreError> {
+        if reader.pending.get().is_none() {
+            let mut pending = PendingPriors::default();
             let mut statement = reader.connection().prepare_cached(&format!("SELECT seq FROM op WHERE status IN {}", crate::operation::OPEN_STATUSES))?;
             let sequences = statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
             for seq in sequences {
                 let prior = crate::operation::read_value(reader.connection(), seq, "prior")?.and_then(|value| serde_json::from_value::<Prior>(value).ok());
                 for row in prior.into_iter().flat_map(|prior| prior.rows) {
-                    if let PriorRow::Edited { model, id, owned: fields, .. } = row {
-                        let owner = owned.entry((model, id)).or_default();
-                        for field in fields.into_keys() { owner.entry(field).or_default().insert(seq); }
+                    match row {
+                        PriorRow::Edited { model, id, owned: fields, .. } => {
+                            let owner = pending.fields.entry((model, id)).or_default();
+                            for field in fields.into_keys() { owner.entry(field).or_default().insert(seq); }
+                        }
+                        PriorRow::Member { model, id, scope_key, before } => {
+                            let members = pending.members.entry((model, scope_key)).or_default();
+                            if before.is_some() { members.left.insert(id); } else { members.joined.insert(id); }
+                        }
+                        _ => {}
                     }
                 }
             }
-            let _ = reader.pending_fields.set(owned);
+            let _ = reader.pending.set(pending);
         }
-        Ok(reader.pending_fields.get().and_then(|owned| owned.get(&(model.to_string(), id.to_string()))).into_iter().flatten()
+        reader.pending.get().ok_or_else(|| StoreError::Constraint("pending priors are not loaded".into()))
+    }
+
+    pub fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, model: &str, id: &str) -> Result<HashSet<String>, StoreError> {
+        Ok(Self::pending(reader)?.fields.get(&(model.to_string(), id.to_string())).into_iter().flatten()
             .filter(|(_, owners)| owners.iter().any(|seq| Some(*seq) != closing)).map(|(field, _)| field.clone()).collect())
+    }
+
+    pub fn pending_members<'a>(reader: &'a Reader<'_>, model: &str, scope_key: &str) -> Result<Option<&'a PendingMembers>, StoreError> {
+        Ok(Self::pending(reader)?.members.get(&(model.to_string(), scope_key.to_string())))
+    }
+
+    pub fn created_rows(reader: &Reader<'_>, seq: i64) -> Result<Vec<(String, String)>, StoreError> {
+        let prior = crate::operation::read_value(reader.connection(), seq, "prior")?.and_then(|value| serde_json::from_value::<Prior>(value).ok());
+        Ok(prior.into_iter().flat_map(|prior| prior.rows).filter_map(|row| match row { PriorRow::Created { model, id } => Some((model, id)), _ => None }).collect())
     }
 
     pub(crate) fn with_edits(rollback: Value, reader: &Reader<'_>, edits: &[PointerEdit]) -> Result<Value, StoreError> {
@@ -138,6 +159,13 @@ impl Prior {
             }
         }
         Ok(prior.to_value())
+    }
+
+    pub fn created_beyond(&self, owned: &[RowId]) -> Vec<(String, RowId)> {
+        self.rows.iter().filter_map(|row| match row {
+            PriorRow::Created { model, id } => RowId::new(id).ok().filter(|id| !owned.contains(id)).map(|id| (model.clone(), id)),
+            _ => None,
+        }).collect()
     }
 
     pub fn to_value(&self) -> Value {
@@ -178,7 +206,7 @@ impl Prior {
         let mut changed = false;
         for row in &mut self.rows {
             let (model, id, before) = match row {
-                PriorRow::Created { model, id } => (model, id, None),
+                PriorRow::Created { model, id } | PriorRow::Member { model, id, .. } => (model, id, None),
                 PriorRow::Edited { model, id, before, .. } | PriorRow::Destroyed { model, id, before, .. } => (model, id, Some(before)),
             };
             if model == parent && id == temp.as_str() {

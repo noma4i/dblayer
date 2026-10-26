@@ -5,6 +5,11 @@ mod commit;
 mod correlate;
 mod diff;
 mod dispatch;
+mod effects;
+#[cfg(test)]
+pub(crate) mod spec_fixtures;
+#[cfg(test)]
+mod effects_tests;
 mod ephemeral;
 mod entities;
 mod error;
