@@ -198,6 +198,16 @@ let thread = LiveList(try Note.thread(groupId))   // thread.rows, thread.replace
 val thread = LiveList(Note.thread(groupId), viewModelScope)   // thread.rows, thread.replaced, thread.ids are StateFlow
 ```
 
+In a Compose screen without a view model, `rememberLiveList(query)` and `rememberLiveWindow(window)` own the scope: the subscription ends when the screen leaves the composition or the query changes. Swift needs no helper, `@Live` owns its subscription.
+
+```swift
+@Live var thread: [Note]   // ends with the view
+```
+
+```kotlin
+val thread = rememberLiveList(Note.thread(groupId))   // thread.rows, thread.replaced, thread.ids are StateFlow
+```
+
 **Edits.** A delivery also tells how the rows changed: `Snapshot.edits` is the ordered steps `rewrite(index, row)`, `insert(index, row)` and `remove(index, id)` from the rows of the previous delivery to the new rows. Each step carries the value of its own moment, so the steps of several deliveries replay in order (`rows.replay(edits)`) and the last write of an id wins. A slow reader gets the steps of the deliveries it missed joined in order. `LiveList.takeUpdate()` returns the newest `rows`, the steps since the reader last took them and the `revision` of that delivery, all from one delivery, and then counts the reader as up to date. In Kotlin it never waits for a delivery that is being published. A reader that mirrors the rows patches its mirror with the steps and reads only the changed rows. `edits` is nil, and the reader takes `rows` whole, for the first delivery, a whole list, a list that holds a row that did not decode, and a run of steps longer than the list. The library still looks up an id by scan for a replaced, removed or moved row, moves the tail of the array for an insert or remove in the middle, and copies the array once per delivery when a reader still holds the previous one.
 
 ```swift

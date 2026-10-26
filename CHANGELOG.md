@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Kotlin `rememberLiveList(query)` and `rememberLiveWindow(window)` own the scope of a live list in Compose.
 - `Model.entity(id, fetch: .force|.stale|.none)` reads the node when a reader appears, and `refreshError` shows a failed read.
 - `merge: :stable_list` keeps the places of a stored id list, appends new ids and drops vanished ones.
 - `refresh_on_foreground: true` on a scope reloads its read windows at every foreground event.
