@@ -346,6 +346,9 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
                         values.track(model, id, result.revision.unwrap_or(i64::MAX));
                     }
                 }
+                for row in &result.renewed {
+                    values.track(row.model.as_str(), row.id.as_str(), i64::MAX);
+                }
             }
             if !result.operations.is_empty() {
                 outbox_changes.send_modify(|version| *version += 1);
@@ -355,6 +358,15 @@ fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: 
             }
             ephemeral.nudge();
             dispatch.push(Event::of_commit(result));
+        }
+        StoreEvent::Renewed(rows) => {
+            {
+                let mut values = ephemeral.lock();
+                for row in rows {
+                    values.track(row.model.as_str(), row.id.as_str(), i64::MAX);
+                }
+            }
+            ephemeral.nudge();
         }
         StoreEvent::Reset { revision, models, operations } => {
             operation_queues.reset(&operations);

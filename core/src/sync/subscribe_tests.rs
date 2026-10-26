@@ -294,6 +294,35 @@ async fn memory_events_without_server_ids_create_distinct_expiring_rows() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_server_event_of_equal_values_renews_a_memory_row_and_stays_silent_for_observers() {
+    let mut model = crate::schema::ModelSpec::new("notices", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str).optional()]);
+    model.storage = crate::schema::Storage::Memory;
+    model.expire_after = Some("8.seconds".into());
+    let rig = rig_on(Db::open_in_memory(vec![model], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+    let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "notices", EventEffect::Upsert)).await.unwrap();
+    let notices = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = notices.clone();
+    let _observer = rig.db.observe(Query::new("notices"), move |_| { counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }).unwrap();
+    let id = crate::identity::RowId::new("n1").unwrap();
+    rig.transport.emit("MomentChanged", next(json!({"id": "n1", "body": "hello"})));
+    rig.transport.await_consumed("MomentChanged").await;
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
+    let seen = notices.load(std::sync::atomic::Ordering::SeqCst);
+    rig.clock.advance(Duration::from_secs(5));
+    rig.transport.emit("MomentChanged", next(json!({"id": "n1", "body": "hello"})));
+    rig.transport.await_consumed("MomentChanged").await;
+    rig.db.await_revision(rig.db.revision_seq().unwrap());
+    rig.clock.advance(Duration::from_secs(5));
+    assert_eq!(rig.db.expire_ephemeral().unwrap(), 0);
+    assert!(rig.db.find("notices", &id).unwrap().is_some());
+    assert_eq!(notices.load(std::sync::atomic::Ordering::SeqCst), seen);
+    rig.clock.advance(Duration::from_secs(4));
+    rig.db.expire_ephemeral().unwrap();
+    crate::test_wait::spin_until("the notice expires", || rig.db.find("notices", &id).unwrap().is_none());
+}
+
+#[tokio::test(start_paused = true)]
 async fn inv_live_03_repeated_ready_rereads_expired_watched_queries_after_cable_reconnect() {
     let rig = rig_with_subscription();
     for name in ["before", "after"] {

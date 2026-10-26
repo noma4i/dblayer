@@ -285,6 +285,7 @@ impl Db {
             let mut merged = current.clone();
             merged.extend(patch.clone());
             if same_fields(&merged, &current) && !sends_args {
+                self.shared.ephemeral.lock().track(model, id.as_str(), i64::MAX);
                 return Ok(None);
             }
             queued.rollback = Some(Prior { rows: vec![PriorRow::edited(reader, model, id.as_str(), &current, &merged)?] }.to_value());

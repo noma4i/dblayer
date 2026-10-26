@@ -296,6 +296,34 @@ fn a_rewrite_keeps_a_memory_row_alive() {
 }
 
 #[test]
+fn a_write_of_equal_values_renews_a_memory_row_and_stays_silent_for_observers() {
+    let writers: [(&str, fn(&Db)); 2] = [
+        ("landed", |db| put(db, "presence", json!({"id": "r1", "room": "lobby"}))),
+        ("local update", |db| {
+            db.update("presence", &rid("r1"), obj(json!({"room": "lobby"}))).unwrap();
+        }),
+    ];
+    for (name, write) in writers {
+        let (db, clock) = rig();
+        let (log, callback) = recorder();
+        let _subscription = db.observe(Query::new("presence"), callback).unwrap();
+        put(&db, "presence", json!({"id": "r1", "room": "lobby"}));
+        db.await_revision(db.revision_seq().unwrap());
+        let seen = changes(&log).len();
+        clock.advance(seconds(20));
+        write(&db);
+        db.await_revision(db.revision_seq().unwrap());
+        clock.advance(seconds(29));
+        assert_eq!(db.expire_ephemeral().unwrap(), 0, "{name}");
+        assert!(db.find("presence", &rid("r1")).unwrap().is_some(), "{name}");
+        assert_eq!(changes(&log).len(), seen, "{name}");
+        clock.advance(seconds(1));
+        db.expire_ephemeral().unwrap();
+        crate::test_wait::spin_until(name, || db.find("presence", &rid("r1")).unwrap().is_none());
+    }
+}
+
+#[test]
 fn inv_ephemeral_01_values_and_memory_rows_do_not_survive_a_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");

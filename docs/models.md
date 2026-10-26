@@ -343,7 +343,8 @@ model Presence, storage: :memory, expires_in: 1.minute do
 end
 ```
 
-- `expires_in:` is optional. A row that has not changed for that time is deleted, and observers receive it in `diff.removed`.
+- `expires_in:` is optional. A row that has not been written for that time is deleted, and observers receive it in `diff.removed`.
+- Every write renews the time: a local `create` or `update`, a subscription event or a response that lands the row. A write of equal values renews it too and sends no change to observers.
 - A memory model has no `:file` attributes and no model `operation` blocks, so it has no outbox.
 - Use it for search results, prices and other data that is fetched, shown and dropped.
 

@@ -121,6 +121,9 @@ impl Store {
     fn finish(&self, mut inner: std::sync::MutexGuard<'_, Inner>, result: (CommitResult, u32)) -> CommitResult {
         inner.counters.unknown_operation_acks += result.1 as usize;
         if result.0.is_noop() {
+            if !result.0.renewed.is_empty() {
+                self.announce_released(inner, super::StoreEvent::Renewed(&result.0.renewed));
+            }
             return result.0;
         }
         self.announce_released(inner, super::StoreEvent::Committed(&result.0));
@@ -304,6 +307,9 @@ fn apply_upsert(
         Some(stored) => {
             let changed = diff_fields(&stored.row, row);
             if changed.is_empty() {
+                if let Ok(row_id) = crate::identity::RowId::new(&id) {
+                    result.renewed.push(RowRef::new(model.clone(), row_id));
+                }
                 return Ok(());
             }
             (stored.born_rev, stored.field_rev.clone(), changed, RowChangeKind::Updated)
@@ -466,6 +472,7 @@ fn join_heads(
 #[derive(Default)]
 struct RowChanges {
     changes: Vec<RowChange>,
+    renewed: Vec<RowRef>,
     edits: Vec<LocalEdit>,
 }
 
@@ -605,6 +612,7 @@ pub(crate) fn apply_envelope(
         save_window(connection, window, envelope.generation, now_ms)?;
     }
 
+    result.renewed = changes.renewed;
     if wrote {
         manifest_write(connection, REVISION_SEQ_KEY, &revision.to_string())?;
         result.revision = Some(revision);

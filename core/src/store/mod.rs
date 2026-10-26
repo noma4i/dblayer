@@ -5,7 +5,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
 use rusqlite::Connection;
 
 use crate::ddl::{layout, table_name, Layout, RecreateReason};
-use crate::identity::Generation;
+use crate::identity::{Generation, RowRef};
 use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::{ModelSpec, SearchPath};
 
@@ -91,6 +91,7 @@ impl Inner {
 
 pub(crate) enum StoreEvent<'a> {
     Committed(&'a crate::commit::CommitResult),
+    Renewed(&'a [RowRef]),
     Reset { revision: i64, models: Option<Vec<String>>, operations: Vec<crate::operation::QueueOperation> },
 }
 

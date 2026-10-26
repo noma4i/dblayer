@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- `expires_in` of a memory model counts from the last write, and a write of equal values renews it.
+
 ### Fixed
 - `entity(id)` of a record whose reader was freed no longer calls the core again while its value or absence is retained.
 - `confirmed` returns the server id to a waiter that the closing commit of a create wakes.

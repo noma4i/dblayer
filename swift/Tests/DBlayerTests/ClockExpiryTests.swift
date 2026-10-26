@@ -22,4 +22,24 @@ extension BridgeProbeTests {
 
     #expect(await notices.first("the notice expires") { $0.isEmpty } != nil)
   }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func writingEqualValuesRenewsAMemoryRowAndStaysSilent() async throws {
+    DB.close()
+    defer { DB.close() }
+    let clock = try await DB.openTesting(transport: MockTransport(), modelsJSON: modelsJSON)
+    let lobby = Cursor(try await Presence.where(Presence.room == "lobby").live.stream())
+    #expect(await lobby.next()?.isEmpty == true)
+    let presence = try await Presence.create(userId: "u1", room: "lobby")
+    #expect(await lobby.first("the presence row") { !$0.isEmpty } != nil)
+
+    clock.advance(by: 40)
+    _ = try await presence.update(room: "lobby")
+    clock.advance(by: 40)
+
+    #expect(try await Presence.find(presence.id).current() != nil)
+    clock.advance(by: 21)
+    #expect(await lobby.next("the expiry, not a repeat of the row")?.isEmpty == true)
+  }
 }
