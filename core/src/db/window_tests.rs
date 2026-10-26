@@ -52,16 +52,16 @@ fn expected_ids(db: &Db, query: &Query, size: usize) -> Vec<String> {
 fn a_tail_window_holds_the_last_rows_and_follows_the_tail() {
     let db = seeded(12);
     let (log, callback) = recorder();
-    let _window = db.observe_window(query(), WindowSpec::Tail { size: 5 }, callback).unwrap();
+    let _window = db.observe_window(query(), WindowSpec::Tail { size: 5, max: None, paged: false }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let first = changes(&log).pop().unwrap();
     assert_eq!(ids(&first), expected_ids(&db, &query(), 5));
-    assert_eq!(first.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(12) }));
+    assert_eq!(first.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(12), wanted_before: 0 }));
     let before = db.counters();
     upsert(&db, "tail", "zzz");
     let last = changes(&log).pop().unwrap();
     assert_eq!(ids(&last), expected_ids(&db, &query(), 5));
-    assert_eq!(last.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(13) }));
+    assert_eq!(last.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(13), wanted_before: 0 }));
     assert_eq!(db.counters().rows_delivered - before.rows_delivered, 1);
 }
 
@@ -69,7 +69,7 @@ fn a_tail_window_holds_the_last_rows_and_follows_the_tail() {
 fn a_change_before_the_window_delivers_no_rows_and_only_moves_the_total() {
     let db = seeded(30);
     let (log, callback) = recorder();
-    let _window = db.observe_window(query(), WindowSpec::Tail { size: 5 }, callback).unwrap();
+    let _window = db.observe_window(query(), WindowSpec::Tail { size: 5, max: None, paged: false }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let (calls_before, counters_before) = (changes(&log).len(), db.counters());
     upsert(&db, "u000001", "n000001!");
@@ -87,18 +87,18 @@ fn a_change_before_the_window_delivers_no_rows_and_only_moves_the_total() {
 fn expanding_before_adds_local_rows_and_stops_at_the_first_row() {
     let db = seeded(8);
     let (log, callback) = recorder();
-    let window = db.observe_window(query(), WindowSpec::Tail { size: 3 }, callback).unwrap();
+    let window = db.observe_window(query(), WindowSpec::Tail { size: 3, max: None, paged: false }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     window.expand_before(4);
     db.await_revision(db.revision_seq().unwrap());
     let wider = changes(&log).pop().unwrap();
     assert_eq!(ids(&wider), expected_ids(&db, &query(), 7));
-    assert_eq!(wider.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(8) }));
+    assert_eq!(wider.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(8), wanted_before: 0 }));
     window.expand_before(10);
     db.await_revision(db.revision_seq().unwrap());
     let all = changes(&log).pop().unwrap();
     assert_eq!(ids(&all), expected_ids(&db, &query(), 8));
-    assert_eq!(all.window, Some(WindowEdge { has_before: false, has_after: false, total: Some(8) }));
+    assert_eq!(all.window, Some(WindowEdge { has_before: false, has_after: false, total: Some(8), wanted_before: 0 }));
     let calls = changes(&log).len();
     window.expand_before(3);
     window.expand_after(3);
@@ -119,13 +119,13 @@ fn a_window_around_a_row_expands_after_and_follows_the_row() {
     db.await_revision(db.revision_seq().unwrap());
     let wider = changes(&log).pop().unwrap();
     assert_eq!(names(&wider), ["u000008", "u000009", "u000010", "u000011", "u000012", "u000013"]);
-    assert_eq!(wider.window, Some(WindowEdge { has_before: true, has_after: true, total: Some(20) }));
+    assert_eq!(wider.window, Some(WindowEdge { has_before: true, has_after: true, total: Some(20), wanted_before: 0 }));
     upsert(&db, "older", "a");
     assert_eq!(names(&changes(&log).pop().unwrap()), ["u000008", "u000009", "u000010", "u000011", "u000012", "u000013"]);
     window.expand_after(50);
     db.await_revision(db.revision_seq().unwrap());
     let tail = changes(&log).pop().unwrap();
-    assert_eq!(tail.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(21) }));
+    assert_eq!(tail.window, Some(WindowEdge { has_before: true, has_after: false, total: Some(21), wanted_before: 0 }));
     assert_eq!(ids(&tail).last().unwrap(), "u000019");
 }
 
@@ -134,7 +134,7 @@ fn a_query_a_window_cannot_follow_is_refused() {
     let db = seeded(3);
     let refused = [Query::new("users"), query().limited(2), Query { include: vec!["moments".to_string()], ..query() }];
     for query in refused {
-        assert!(db.observe_window(query, WindowSpec::Tail { size: 2 }, |_: &Change| {}).is_err());
+        assert!(db.observe_window(query, WindowSpec::Tail { size: 2, max: None, paged: false }, |_: &Change| {}).is_err());
     }
 }
 
@@ -169,7 +169,7 @@ fn step(db: &Db, previous: &Arc<Version>, touched: &[&str], grow: (usize, usize)
 }
 
 fn window_version(db: &Db) -> Arc<Version> {
-    Arc::new(db.shared.evaluate(&Subject::window(query(), WindowSpec::Tail { size: WINDOW })).unwrap().version)
+    Arc::new(db.shared.evaluate(&Subject::window(query(), WindowSpec::Tail { size: WINDOW, max: None, paged: false })).unwrap().version)
 }
 
 fn cost(size: usize, edit: fn(&Db, usize) -> Vec<String>, grow: (usize, usize)) -> (usize, usize) {
@@ -228,7 +228,7 @@ fn a_commit_missing_from_the_named_rows_rebuilds_the_window_from_the_query() {
 #[test]
 fn a_window_lives_as_long_as_its_handle() {
     let db = seeded(5);
-    let window = db.observe_window(query(), WindowSpec::Tail { size: 2 }, |_: &Change| {}).unwrap();
+    let window = db.observe_window(query(), WindowSpec::Tail { size: 2, max: None, paged: false }, |_: &Change| {}).unwrap();
     assert_eq!(db.observer_census().subscriptions, 1);
     drop(window);
     assert_eq!(db.observer_census().subscriptions, 0);
@@ -297,7 +297,7 @@ enum Want {
 impl Want {
     fn spec(&self) -> WindowSpec {
         match self {
-            Want::Tail(size) => WindowSpec::Tail { size: *size },
+            Want::Tail(size) => WindowSpec::Tail { size: *size, max: None, paged: false },
             Want::Around { id, before, after } => WindowSpec::Around { id: rid(id), before: *before, after: *after },
         }
     }
@@ -369,7 +369,7 @@ fn run_sequence(seed: u64) {
         let listed: Vec<String> = rows.iter().map(|row| row.id.to_string()).collect();
         let Some((start, end)) = want.bounds(&listed) else { return false };
         assert_eq!(shown(&mirror.lock().unwrap()), shown(&rows[start..end]), "sequence {seed} {label}: window rebuilt from deliveries");
-        assert_eq!(*edges.lock().unwrap(), Some(WindowEdge { has_before: start > 0, has_after: end < rows.len(), total: Some(rows.len()) }), "sequence {seed} {label}: edge");
+        assert_eq!(*edges.lock().unwrap(), Some(WindowEdge { has_before: start > 0, has_after: end < rows.len(), total: Some(rows.len()), wanted_before: 0 }), "sequence {seed} {label}: edge");
         true
     };
     flush(&mut mailbox, &mut delivered);
@@ -413,7 +413,7 @@ fn windows_equal_the_tail_of_a_fresh_query_over_random_edit_sequences() {
 
 fn open_cost(db: &Db) -> (usize, super::window::WindowHandle) {
     let before = total();
-    let handle = db.observe_window(query(), WindowSpec::Tail { size: WINDOW }, |_| {}).unwrap();
+    let handle = db.observe_window(query(), WindowSpec::Tail { size: WINDOW, max: None, paged: false }, |_| {}).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     (total() - before, handle)
 }

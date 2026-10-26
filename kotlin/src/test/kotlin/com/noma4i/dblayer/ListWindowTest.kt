@@ -54,4 +54,19 @@ class ListWindowTest {
         val senders = byText.window(tail = 2).related(Moment.Relations.author)
         assertEquals(listOf("Ann", "Cy"), senders.live.current().map { it.name })
     }
+
+    @Test
+    fun a_window_that_grows_past_max_shrinks_to_its_first_size() = bounded {
+        open()
+        repeat(30) { Moment.create(text = "t%05d".format(it)) }
+        val scope = CoroutineScope(Dispatchers.Default)
+        val live = LiveWindow(byText.window(tail = 5, max = 8), scope)
+        eventually("the window") { live.rows.value.size == 5 }
+        live.expand(before = 3)
+        eventually("the widest window") { live.rows.value.size == 8 }
+        live.expand(before = 1)
+        eventually("the shrunk window") { live.rows.value.size == 5 }
+        assertEquals((25 until 30).map { "t%05d".format(it) }, live.rows.value.map { it.text })
+        scope.cancel()
+    }
 }

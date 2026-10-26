@@ -21,8 +21,10 @@ final class WindowControl: @unchecked Sendable {
   private let lock = NSLock()
   private var subscriptions: [WeakSubscription] = []
   private var rows: Int
+  private let tail: Int
+  let max: Int?
 
-  init(tail: Int) { rows = tail }
+  init(tail: Int, max: Int?) { rows = tail; self.tail = tail; self.max = max }
 
   var size: Int { lock.withLock { rows } }
 
@@ -32,7 +34,12 @@ final class WindowControl: @unchecked Sendable {
       subscriptions.append(WeakSubscription(value: next))
     }
   }
-  func shown(_ count: Int) { lock.withLock { rows = max(rows, count) } }
+  func shown(_ count: Int) {
+    lock.withLock {
+      rows = Swift.max(rows, count)
+      if let max, rows > max { rows = tail }
+    }
+  }
 
   func grow(before: Int, after: Int) {
     let current = lock.withLock { subscriptions.compactMap(\.value) }
@@ -47,16 +54,16 @@ public struct Window<Model: DBModel>: Sendable {
   let query: Query<Model>
   let control: WindowControl
 
-  init(query: Query<Model>, tail: Int) {
+  init(query: Query<Model>, tail: Int, max: Int? = nil) {
     self.query = query
-    control = WindowControl(tail: tail)
+    control = WindowControl(tail: tail, max: max)
   }
 
   /// Delivers the rows of the window with `edits` in window positions, the edges and the total of the query. A row outside the window is not decoded.
   public var snapshots: LiveSource<Snapshot<Model>> {
     let query = query, control = control
     return listSource(initial: Snapshot(rows: [], replaced: [:], reordered: false), merge: { Snapshot.merging($0, $1) }, open: { listener in
-      let subscription = try DB.database.liveWindow(queryJson: query.json, tail: UInt32(clamping: control.size), listener: listener)
+      let subscription = try DB.database.liveWindow(queryJson: query.json, tail: UInt32(clamping: control.size), max: control.max.map { UInt32(clamping: $0) }, listener: listener)
       control.attach(subscription)
       return subscription
     }) { (applied: ListApplied<Model>, change) in
@@ -79,7 +86,7 @@ public struct RelatedWindow<Target: DBModel>: Sendable {
   let control: WindowControl
 
   private func connect(_ listener: QueryListener) throws -> LiveSubscription {
-    let subscription = try DB.database.liveWindowRelated(queryJson: try sourceJson(), tail: UInt32(clamping: control.size), name: name, listener: listener)
+    let subscription = try DB.database.liveWindowRelated(queryJson: try sourceJson(), tail: UInt32(clamping: control.size), max: control.max.map { UInt32(clamping: $0) }, name: name, listener: listener)
     control.attach(subscription)
     return subscription
   }

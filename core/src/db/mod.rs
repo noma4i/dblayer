@@ -53,6 +53,7 @@ pub use entities::{EntityChange, EntityObserver};
 pub use error::DbError;
 pub use local_write::{Acted, OutboxOperation};
 pub use observe::ObserverHandle;
+pub(crate) use observe::ObserverControl;
 pub use open::{Db, DbConfig, OpenReport};
 pub use replace::{OnAbsent, ReplaceRequest};
 pub use row::{Record, Row};

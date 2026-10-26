@@ -4,7 +4,7 @@ use super::{Config, Database, LiveChange, LivePhase, QueryListener, Transport};
 use crate::schema::{AssociationKind, AssociationSpec, FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
-struct Tape(Mutex<Vec<LiveChange>>);
+pub(super) struct Tape(pub(super) Mutex<Vec<LiveChange>>);
 
 impl QueryListener for Tape {
     fn changed(&self, change: LiveChange) { self.0.lock().unwrap().push(change); }
@@ -26,7 +26,7 @@ async fn open() -> Arc<Database> {
 
 fn settle(db: &Database) { db.db.await_revision(db.db.revision_seq().unwrap()); }
 
-fn ids(tape: &Tape) -> Vec<String> {
+pub(super) fn ids(tape: &Tape) -> Vec<String> {
     let mut list: Vec<String> = Vec::new();
     for change in tape.0.lock().unwrap().iter().filter(|change| change.phase.is_some() || !change.rows.is_empty() || change.full) {
         if change.full {
@@ -197,7 +197,7 @@ async fn related_window_01_reads_only_the_targets_of_window_rows_and_follows_a_t
         make(&db, "Moment", &format!(r#"{{"id":"{id}","text":"{id}","userId":"{user}"}}"#)).await;
     }
     let tape = Arc::new(Tape(Mutex::default()));
-    let live = db.live_window_related(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 2, "author".into(), tape.clone());
+    let live = db.live_window_related(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 2, None, "author".into(), tape.clone());
     settle(&db);
     assert_eq!(ids(&tape), ["u1", "u3"], "the senders of the 2 window rows, none of the older rows");
 

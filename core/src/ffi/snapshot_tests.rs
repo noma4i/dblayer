@@ -123,7 +123,7 @@ async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_s
         db.live_query(bad.into(), tape()),
         db.live_query("not json".into(), tape()),
         db.live_count(bad.into(), tape()),
-        db.live_window(bad.into(), 5, tape()),
+        db.live_window(bad.into(), 5, None, tape()),
         db.live_find("Moment".into(), "".into(), tape()),
         db.live_related(r#"{"model":"Moment"}"#.into(), "nope".into(), tape()),
         db.live_query(r#"{"model":"Nope"}"#.into(), tape()),

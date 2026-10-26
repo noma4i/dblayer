@@ -86,7 +86,7 @@ fn inv_observe_25_a_count_that_asks_is_told_how_far_it_has_read_and_a_window_tha
     let (windowed, window_feed) = tape();
     let (counted, count_feed) = tape();
     let ordered = Query::new("users").ordered(vec![Order::new("name", SortDirection::Asc)]);
-    let _window = db.observe_window_feed(ordered, WindowSpec::Tail { size: 2 }, window_feed).unwrap();
+    let _window = db.observe_window_feed(ordered, WindowSpec::Tail { size: 2, max: None, paged: false }, false, window_feed).unwrap();
     let count = db.observe_query_feed(Query::new("users"), true, false, count_feed).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));

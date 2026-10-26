@@ -105,7 +105,7 @@ async fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_lo
     db.register_operations(r#"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body } }","rootPath":"bulletinAdded"}]"#.into()).unwrap();
     for window in [false, true] {
         let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#.into();
-        let live = if window { db.live_window(query, 10, Arc::new(Silent)) } else { db.live_query(query, Arc::new(Silent)) };
+        let live = if window { db.live_window(query, 10, None, Arc::new(Silent)) } else { db.live_query(query, Arc::new(Silent)) };
         let handles = live.handles.lock().unwrap();
         assert!(handles.as_ref().unwrap()._watch.is_some(), "window={window}");
         assert!(handles.as_ref().unwrap().load.is_none());

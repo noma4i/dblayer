@@ -17,7 +17,7 @@ fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() 
     let _initial_observer = db.observe(Query::new("users"), initial_callback).unwrap();
     let (window_log, window_callback) = recorder();
     let query = Query::new("users").ordered(vec![crate::query::Order::new("id", crate::value::SortDirection::Asc)]);
-    let window = db.observe_window(query, WindowSpec::Tail { size: 0 }, window_callback).unwrap();
+    let window = db.observe_window(query, WindowSpec::Tail { size: 0, max: None, paged: false }, window_callback).unwrap();
     let (entity_log, entity_callback) = entity_recorder();
     let entities = db.observe_entities("users", entity_callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
@@ -84,7 +84,7 @@ fn inv_observe_29_repeated_window_growth_keeps_one_pending_read() {
     db.await_revision(db.revision_seq().unwrap());
     let (log, callback) = recorder();
     let query = Query::new("users").ordered(vec![crate::query::Order::new("id", crate::value::SortDirection::Asc)]);
-    let window = db.observe_window(query, WindowSpec::Tail { size: 1 }, callback).unwrap();
+    let window = db.observe_window(query, WindowSpec::Tail { size: 1, max: None, paged: false }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let paused = db.shared.dispatch.pause_owner();
     db.shared.reads.inline.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -137,7 +137,7 @@ fn inv_observe_21_a_window_grows_by_a_read_outside_the_owner() {
         put(&db, "users", json!({"id": format!("u{index}"), "name": format!("n{index}")}));
     }
     let (log, callback) = recorder();
-    let window = db.observe_window(Query::new("users").ordered(vec![crate::query::Order::new("name", crate::value::SortDirection::Asc)]), WindowSpec::Tail { size: 2 }, callback).unwrap();
+    let window = db.observe_window(Query::new("users").ordered(vec![crate::query::Order::new("name", crate::value::SortDirection::Asc)]), WindowSpec::Tail { size: 2, max: None, paged: false }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     window.expand_before(2);
     db.await_revision(db.revision_seq().unwrap());
@@ -319,7 +319,7 @@ fn nb1_cancelling_and_growing_an_observer_do_not_wait_for_the_registry() {
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let query = Query::new("users").ordered(vec![crate::query::Order::new("id", crate::value::SortDirection::Asc)]);
     let (_log, callback) = recorder();
-    let window = db.observe_window(query, WindowSpec::Tail { size: 1 }, callback).unwrap();
+    let window = db.observe_window(query, WindowSpec::Tail { size: 1, max: None, paged: false }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert!(returns_while_the_registry_is_held(move || window.expand_before(1), &db), "expand waited for the observers lock");
     let (_log, callback) = recorder();

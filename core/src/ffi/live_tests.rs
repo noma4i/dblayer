@@ -160,7 +160,7 @@ async fn a_live_window_puts_only_its_rows_on_the_wire_at_every_list_size() {
     for count in [20, 200, 2000] {
         let (db, ids) = with_rows(count).await;
         let tape = Arc::new(Tape(Mutex::default()));
-        let live = db.live_window(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 10, tape.clone());
+        let live = db.live_window(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 10, None, tape.clone());
         db.db.await_revision(db.db.revision_seq().unwrap());
         let first = tape.0.lock().unwrap()[0].clone();
         let edge = first.window.clone().unwrap();

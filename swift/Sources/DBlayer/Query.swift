@@ -76,7 +76,7 @@ public struct Query<Model: DBModel>: Sendable {
   public func related<Target: DBModel>(_ association: Association<Model, Target>) -> RelatedQuery<Target> {
     RelatedQuery(name: association.name, sourceJson: { try json })
   }
-  public func window(tail rows: Int) -> Window<Model> { Window(query: self, tail: rows) }
+  public func window(tail rows: Int, max: Int? = nil) -> Window<Model> { Window(query: self, tail: rows, max: max) }
 
   var json: String {
     get throws { try json(refreshOnConnect: false) }

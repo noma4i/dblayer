@@ -242,11 +242,11 @@ impl Database {
     pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| self.connect_json(&query_json, false, None, feed))
     }
-    pub fn live_window(&self, query_json: String, tail: u32, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.window_handles(&query_json, tail, None, feed))
+    pub fn live_window(&self, query_json: String, tail: u32, max: Option<u32>, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
+        self.subscribed(listener, |feed| self.window_handles(&query_json, (tail, max), None, feed))
     }
-    pub fn live_window_related(&self, query_json: String, tail: u32, name: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.window_handles(&query_json, tail, Some(name), feed))
+    pub fn live_window_related(&self, query_json: String, tail: u32, max: Option<u32>, name: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
+        self.subscribed(listener, |feed| self.window_handles(&query_json, (tail, max), Some(name), feed))
     }
     pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| self.connect_json(&query_json, true, None, feed))
@@ -576,19 +576,39 @@ impl Database {
         };
         Arc::new(LiveSubscription { feed, handles: Mutex::new(handles) })
     }
-    fn window_handles(&self, query_json: &str, tail: u32, related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
+    fn window_handles(&self, query_json: &str, (tail, max): (u32, Option<u32>), related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let (query, relation) = self.parsed_query(query_json)?;
+        let description: Value = serde_json::from_str(query_json)?;
+        let force = description.get("refreshOnConnect").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or(false);
         let _entered = executor()?.enter();
+        let model = query.model.to_string();
+        let mut tracked = None;
         let mut watch = match (self.sync.as_ref(), relation) {
-            (Some(sync), Some((relation, params))) => Some(sync.watch(query.model.as_str(), &relation, &params)?),
+            (Some(sync), Some((relation, params))) => {
+                let watch = sync.watch(&model, &relation, &params)?;
+                if self.db.spec(&model)?.relations.iter().any(|declared| declared.name == relation && declared.remote.is_some()) {
+                    feed.expect_load();
+                    tracked = Some((sync.clone(), relation, params));
+                }
+                Some(watch)
+            }
             _ => None,
         };
-        let model = query.model.to_string();
+        let paused = tracked.is_some();
+        let model_key = model.clone();
+        let pager = Arc::new(Pager { page: tracked.clone().map(|(sync, relation, params)| (sync, model.clone(), relation, params)), busy: std::sync::atomic::AtomicBool::new(false), control: OnceLock::new() });
         let wire = self.wire(&model)?.clone();
         let sink = feed.clone();
-        let spec = WindowSpec::Tail { size: tail as usize };
+        let spec = WindowSpec::Tail { size: tail as usize, max: max.map(|max| max as usize), paged: paused };
         let (window, targets) = match related {
-            None => (self.db.observe_window_feed(query, spec, move |item| intake(&sink, &wire, item))?, None),
+            None => (self.db.observe_window_feed(query, spec, paused, {
+                let pager = pager.clone();
+                move |item| {
+                    let wanted = match &item { Feed::Rows(change) => change.window.map_or(0, |edge| edge.wanted_before), _ => 0 };
+                    intake(&sink, &wire, item);
+                    pager.wanted(wanted);
+                }
+            })?, None),
             Some(name) => {
                 let association = self.db.spec(&model)?.associations.iter().find(|association| association.name == name).ok_or_else(|| DbError::Invalid { detail: format!("{model} has no association {name}") })?;
                 let (target, kind) = (association.target.to_string(), association.kind);
@@ -597,8 +617,9 @@ impl Database {
                 let target_wire = self.wire(&target)?.clone();
                 let held: Arc<Mutex<HashMap<RowId, crate::db::ObserverHandle>>> = Arc::default();
                 let db = self.db.clone();
-                let window = self.db.observe_window_feed(query, spec, {
+                let window = self.db.observe_window_feed(query, spec, paused, {
                     let held = held.clone();
+                    let pager = pager.clone();
                     move |item| match item {
                         Feed::Rows(mut change) => {
                             match db.shared.related_for(&model, &name, &change.rows) {
@@ -624,6 +645,7 @@ impl Database {
                                 Some(shown) => sink.rows(shown),
                                 None => sink.reached(change.revision),
                             }
+                            pager.wanted(change.window.map_or(0, |edge| edge.wanted_before));
                         }
                         item => intake(&sink, &wire, item),
                     }
@@ -632,8 +654,43 @@ impl Database {
             }
         };
         feed.on_rejoin(Arc::new(window.rejoiner()));
+        let _ = pager.control.set(window.control());
+        let (load, state) = self.follow_load(tracked, model_key, LoadOptions { force }, &feed, window.control())?;
         let failure = follow_failures(watch.as_mut(), feed);
-        Ok(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None, failure, state: None, targets })
+        Ok(LiveHandles { _observer: None, window: Some(window), _watch: watch, load, failure, state, targets })
+    }
+    fn follow_load(&self, tracked: Option<(Sync, String, Map<String, Value>)>, model: String, options: LoadOptions, feed: &Arc<LiveFeed>, control: crate::db::ObserverControl) -> Result<(Option<tokio::task::AbortHandle>, Option<tokio::task::AbortHandle>), DbError> {
+        Ok(match tracked {
+            Some((sync, relation, params)) => {
+                let app_load = sync.app_load();
+                let ask = control.clone();
+                feed.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
+                let (follower, loader) = (feed.clone(), feed.clone());
+                let (ready, seeded) = tokio::sync::oneshot::channel();
+                let state = executor()?.spawn(async move {
+                    let mut changes = match sync.relation_state(&model, &relation, &params).await {
+                        Ok(changes) => changes,
+                        Err(error) => {
+                            follower.load_finished(Some(DbError::from(error)));
+                            return control.resume();
+                        }
+                    };
+                    follower.state(changes.borrow_and_update().clone());
+                    control.resume();
+                    let _ = ready.send((sync, model, relation, params, changes.clone()));
+                    while changes.changed().await.is_ok() { follower.state(changes.borrow_and_update().clone()); }
+                }).abort_handle();
+                let load = executor()?.spawn(async move {
+                    let _app_load = app_load;
+                    let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
+                    let result = sync.load(&model, &relation, &params, options).await;
+                    loader.state(receiver.borrow().clone());
+                    loader.load_finished(result.err().map(DbError::from));
+                }).abort_handle();
+                (Some(load), Some(state))
+            }
+            None => (None, None),
+        })
     }
     fn connect_json(&self, json: &str, count: bool, related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let (query, remote) = self.parsed_query(json)?;
@@ -678,39 +735,35 @@ impl Database {
             (_, item) => intake(&sink, &wire, item),
         })?;
         feed.on_rejoin(Arc::new(observer.rejoiner()));
-        let (load, state) = match tracked {
-            Some((sync, relation, params)) => {
-                let app_load = sync.app_load();
-                let control = observer.control();
-                let ask = control.clone();
-                feed.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
-                let (follower, loader) = (feed.clone(), feed.clone());
-                let (ready, seeded) = tokio::sync::oneshot::channel();
-                let state = executor()?.spawn(async move {
-                    let mut changes = match sync.relation_state(&model, &relation, &params).await {
-                        Ok(changes) => changes,
-                        Err(error) => {
-                            follower.load_finished(Some(DbError::from(error)));
-                            return control.resume();
-                        }
-                    };
-                    follower.state(changes.borrow_and_update().clone());
-                    control.resume();
-                    let _ = ready.send((sync, model, relation, params, changes.clone()));
-                    while changes.changed().await.is_ok() { follower.state(changes.borrow_and_update().clone()); }
-                }).abort_handle();
-                let load = executor()?.spawn(async move {
-                    let _app_load = app_load;
-                    let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
-                    let result = sync.load(&model, &relation, &params, options).await;
-                    loader.state(receiver.borrow().clone());
-                    loader.load_finished(result.err().map(DbError::from));
-                }).abort_handle();
-                (Some(load), Some(state))
-            }
-            None => (None, None),
-        };
+        let (load, state) = self.follow_load(tracked, model, options, &feed, observer.control())?;
         let failure = follow_failures(watch.as_mut(), feed);
         Ok(LiveHandles { _observer: Some(observer), window: None, _watch: watch, load, failure, state, targets: None })
+    }
+}
+
+struct Pager {
+    page: Option<(Sync, String, String, Map<String, Value>)>,
+    busy: std::sync::atomic::AtomicBool,
+    control: OnceLock<crate::db::ObserverControl>,
+}
+
+impl Pager {
+    /// The window asked for `rows` older rows that the database does not hold: one shared page is loaded and the window grows by what is still missing.
+    fn wanted(self: &Arc<Self>, rows: usize) {
+        use std::sync::atomic::Ordering;
+        let Some((sync, model, relation, params)) = self.page.clone().filter(|_| rows > 0) else { return };
+        if self.busy.swap(true, Ordering::SeqCst) { return }
+        let Ok(runtime) = executor() else {
+            self.busy.store(false, Ordering::SeqCst);
+            return;
+        };
+        let pager = self.clone();
+        runtime.spawn(async move {
+            let loaded = sync.load_more(&model, &relation, &params).await;
+            pager.busy.store(false, Ordering::SeqCst);
+            if let (Ok(outcome), Some(control)) = (loaded, pager.control.get()) {
+                if outcome.rows > 0 && !matches!(outcome.status, LoadStatus::NoMorePages(_)) { control.grow(rows, 0); }
+            }
+        });
     }
 }

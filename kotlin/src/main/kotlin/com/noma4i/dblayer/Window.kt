@@ -11,7 +11,7 @@ data class WindowEdges(val hasBefore: Boolean, val hasAfter: Boolean, val total:
     internal constructor(edge: LiveWindowEdge) : this(edge.hasBefore, edge.hasAfter, edge.total?.toLong())
 }
 
-internal class WindowControl(tail: Int) {
+internal class WindowControl(private val tail: Int, val max: Int?) {
     private val subscriptions = mutableListOf<WeakReference<LiveSubscription>>()
     private var rows = tail
 
@@ -22,7 +22,10 @@ internal class WindowControl(tail: Int) {
         subscriptions.add(WeakReference(next))
         Unit
     }
-    fun shown(count: Int) = synchronized(this) { rows = maxOf(rows, count) }
+    fun shown(count: Int) = synchronized(this) {
+        rows = maxOf(rows, count)
+        if (max != null && rows > max) rows = tail
+    }
 
     fun grow(before: Int, after: Int) {
         val current = synchronized(this) { subscriptions.mapNotNull { it.get() } }
@@ -33,13 +36,13 @@ internal class WindowControl(tail: Int) {
     }
 }
 
-class Window<Model : DBModel> internal constructor(private val query: Query<Model>, tail: Int) {
-    private val control = WindowControl(tail)
+class Window<Model : DBModel> internal constructor(private val query: Query<Model>, tail: Int, max: Int?) {
+    private val control = WindowControl(tail, max)
 
     /** Delivers the rows of the window with `edits` in window positions, the edges and the total of the query. A row outside the window is not decoded. */
     val snapshots: LiveSource<Snapshot<Model>>
         get() = listSource(Snapshot(emptyList(), emptyMap()), query.decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener ->
-            val subscription = DBlayer.database.liveWindow(query.json, control.size.toUInt(), listener)
+            val subscription = DBlayer.database.liveWindow(query.json, control.size.toUInt(), control.max?.toUInt(), listener)
             control.attach(subscription)
             subscription
         }) { applied, change ->
@@ -59,7 +62,7 @@ class RelatedWindow<Target : DBModel> internal constructor(
     private val control: WindowControl,
 ) {
     private fun connect(listener: QueryListener): LiveSubscription {
-        val subscription = DBlayer.database.liveWindowRelated(sourceJson(), control.size.toUInt(), name, listener)
+        val subscription = DBlayer.database.liveWindowRelated(sourceJson(), control.size.toUInt(), control.max?.toUInt(), name, listener)
         control.attach(subscription)
         return subscription
     }

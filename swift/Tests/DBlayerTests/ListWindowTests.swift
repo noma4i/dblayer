@@ -46,4 +46,17 @@ extension BridgeProbeTests {
     let senders = Self.byText.window(tail: 2).related(Moment.Relations.author)
     #expect(try await senders.live.current().map(\.name) == ["Ann", "Cy"])
   }
+
+  @Test @MainActor
+  func aWindowThatGrowsPastMaxShrinksToItsFirstSize() async throws {
+    try await Self.openWindowBase()
+    for number in 0 ..< 30 { _ = try await Moment.create(text: String(format: "t%05d", number)) }
+    let live = LiveWindow(Self.byText.window(tail: 5, max: 8))
+    await eventually("the window") { live.rows.count == 5 }
+    live.expand(before: 3)
+    await eventually("the widest window") { live.rows.count == 8 }
+    live.expand(before: 1)
+    await eventually("the shrunk window") { live.rows.count == 5 }
+    #expect(live.rows.map(\.text) == (25 ..< 30).map { String(format: "t%05d", $0) })
+  }
 }

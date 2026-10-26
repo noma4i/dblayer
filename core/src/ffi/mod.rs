@@ -160,4 +160,6 @@ mod logout_tests;
 #[cfg(test)]
 mod load_more_tests;
 #[cfg(test)]
+mod window_load_tests;
+#[cfg(test)]
 mod follow_failures_tests;

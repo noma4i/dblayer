@@ -109,7 +109,7 @@ pub fn thread_query(rig: &Rig) -> Query {
 
 pub fn watch_thread(rig: &Rig, size: usize) -> (ChangeLog, crate::db::WindowHandle) {
     let (log, callback) = recorder();
-    let handle = rig.db.observe_window(thread_query(rig), WindowSpec::Tail { size }, callback).unwrap();
+    let handle = rig.db.observe_window(thread_query(rig), WindowSpec::Tail { size, max: None, paged: false }, callback).unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     (log, handle)
 }

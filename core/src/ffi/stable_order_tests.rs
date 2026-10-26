@@ -34,7 +34,7 @@ async fn a_live_window_over_a_relation_that_keeps_its_order_follows_the_member_o
     }
     land(&db, None, "m9", json!(3));
     let tape = Arc::new(Tape(Mutex::default()));
-    let _live = db.live_window(r#"{"model":"messages","relation":"thread","params":{"chatId":"c1"}}"#.into(), 10, tape.clone());
+    let _live = db.live_window(r#"{"model":"messages","relation":"thread","params":{"chatId":"c1"}}"#.into(), 10, None, tape.clone());
     db.db.await_revision(db.db.revision_seq().unwrap());
     let shown: Vec<String> = tape.0.lock().unwrap().last().unwrap().rows.iter().map(|row| row.id.clone()).collect();
     assert_eq!(shown, ["m1", "m2", "m5", "m9"]);

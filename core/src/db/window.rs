@@ -22,7 +22,7 @@ static NONCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub enum WindowSpec {
-    Tail { size: usize },
+    Tail { size: usize, max: Option<usize>, paged: bool },
     Around { id: RowId, before: usize, after: usize },
 }
 
@@ -31,18 +31,19 @@ pub struct WindowEdge {
     pub has_before: bool,
     pub has_after: bool,
     pub total: Option<usize>,
+    pub wanted_before: usize,
 }
 
 #[derive(Clone)]
 enum Span {
-    Tail { size: usize },
+    Tail { size: usize, initial: usize, max: Option<usize>, paged: bool },
     Around { id: RowId, key: Arc<OrderKey>, before: usize, after: usize },
 }
 
 impl Span {
     fn start(spec: &WindowSpec, index: &Ranked, model: &str) -> Result<Self, DbError> {
         match spec {
-            WindowSpec::Tail { size } => Ok(Span::Tail { size: *size }),
+            WindowSpec::Tail { size, max, paged } => Ok(Span::Tail { size: *size, initial: *size, max: *max, paged: *paged }),
             WindowSpec::Around { id, before, after } => {
                 let (key, _) = index.get(id.as_str()).ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
                 Ok(Span::Around { id: id.clone(), key: key.clone(), before: *before, after: *after })
@@ -53,7 +54,7 @@ impl Span {
     fn bounds(&mut self, index: &Ranked) -> (usize, usize) {
         let len = index.len();
         match self {
-            Span::Tail { size } => (len.saturating_sub(*size), len),
+            Span::Tail { size, .. } => (len.saturating_sub(*size), len),
             Span::Around { id, key, before, after } => {
                 let present = index.get(id.as_str()).map(|(found, _)| found.clone());
                 let anchored = present.is_some();
@@ -66,17 +67,28 @@ impl Span {
         }
     }
 
-    fn grown(&self, index: &Ranked, more_before: usize, more_after: usize) -> Self {
+    fn grown(&self, index: &Ranked, more_before: usize, more_after: usize) -> (Self, usize) {
         let mut next = self.clone();
         let (start, end) = next.bounds(index);
+        let mut unmet = more_before.saturating_sub(start);
         match &mut next {
-            Span::Tail { size } => *size += more_before.min(start),
+            Span::Tail { size, initial, max, paged } => {
+                *size += more_before.min(start);
+                if !*paged {
+                    unmet = 0;
+                }
+                if max.is_some_and(|max| *size > max) {
+                    *size = *initial;
+                    unmet = 0;
+                }
+            }
             Span::Around { before, after, .. } => {
                 *before += more_before.min(start);
                 *after += more_after.min(index.len() - end);
+                unmet = 0;
             }
         }
-        next
+        (next, unmet)
     }
 }
 
@@ -156,6 +168,10 @@ impl WindowHandle {
         self.observer.grow(0, rows);
     }
 
+    pub(crate) fn control(&self) -> super::observe::ObserverControl {
+        self.observer.control()
+    }
+
     pub(crate) fn rejoiner(&self) -> impl Fn() + Send + Sync + 'static {
         self.observer.rejoiner()
     }
@@ -167,8 +183,8 @@ fn lean(record: RankedRow, descending: &[bool]) -> Result<(Arc<OrderKey>, Arc<En
     Ok((Arc::new(OrderKey::new(record.cells, descending, record.id)), Arc::new(entry)))
 }
 
-fn edge_of(start: usize, end: usize, len: usize) -> WindowEdge {
-    WindowEdge { has_before: start > 0, has_after: end < len, total: Some(len) }
+fn edge_of(start: usize, end: usize, len: usize, wanted_before: usize) -> WindowEdge {
+    WindowEdge { has_before: start > 0, has_after: end < len, total: Some(len), wanted_before }
 }
 
 impl Shared {
@@ -189,10 +205,10 @@ impl Shared {
             None => self.window_index(reader, query)?,
         };
         let span = Span::start(spec, &index, query.model.as_str())?;
-        self.windowed(reader, query, index, span, None, 0)
+        self.windowed(reader, query, index, span, None, (0, 0))
     }
 
-    fn windowed(&self, reader: &Reader<'_>, query: &Query, index: Ranked, mut span: Span, kept: Option<(&RowsBody, &HashSet<String>)>, shape: u64) -> Result<(Body, Loaded), DbError> {
+    fn windowed(&self, reader: &Reader<'_>, query: &Query, index: Ranked, mut span: Span, kept: Option<(&RowsBody, &HashSet<String>)>, (shape, unmet): (u64, usize)) -> Result<(Body, Loaded), DbError> {
         let model = query.model.as_str();
         let (start, end) = span.bounds(&index);
         let slots = index.slice(start, end);
@@ -215,7 +231,7 @@ impl Shared {
             .zip(reused)
             .filter_map(|(slot, held)| held.or_else(|| loaded.get(slot.id.as_str()).map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, Vec::new()) }))))
             .collect();
-        let edge = edge_of(start, end, index.len());
+        let edge = edge_of(start, end, index.len(), unmet);
         let body = RowsBody { list: Listing::Whole(Shown::of(entries)), changed: None, step: None, window: Some(WindowPart { index, span, edge, shape }), links: None, link_edits: Default::default() };
         Ok((Body::Rows(body), Loaded { rows: loaded, related: Related::new() }))
     }
@@ -253,12 +269,12 @@ impl Shared {
             let position = |list: &Ranked, id: &str| list.get(id).map(|(key, _)| list.position(key));
             let hit = changed.iter().any(|id| within(position(&part.index, id), old_start, old_end) || within(position(&index, id), start, end));
             if grow == (0, 0) && !hit {
-                let edge = edge_of(start, end, index.len());
+                let edge = edge_of(start, end, index.len(), 0);
                 let part = WindowPart { index, span, edge, shape: part.shape };
                 let body = RowsBody { list: Listing::Whole(shown.clone()), changed: None, step: None, window: Some(part), links: None, link_edits: Default::default() };
                 return Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(body) }, loaded: Loaded::default() }));
             }
-            let (span, shape) = if grow == (0, 0) { (span, part.shape) } else { (span.grown(&index, grow.0, grow.1), part.shape + 1) };
+            let (span, shape) = if grow == (0, 0) { (span, (part.shape, 0)) } else { let (grown, unmet) = span.grown(&index, grow.0, grow.1); (grown, (part.shape + 1, unmet)) };
             let (body, loaded) = self.windowed(reader, query, index, span, Some((old, &changed)), shape)?;
             Ok(Some(Evaluated { version: Version { revision, epoch, body }, loaded }))
         })
@@ -276,7 +292,7 @@ impl Shared {
         self.read(&[query.model.as_str()], |reader| {
             let revision = reader.revision_seq()?;
             let index = self.window_index(reader, query)?;
-            let (span, shape) = if grow == (0, 0) { (part.span.clone(), part.shape) } else { (part.span.grown(&index, grow.0, grow.1), part.shape + 1) };
+            let (span, shape) = if grow == (0, 0) { (part.span.clone(), (part.shape, 0)) } else { let (grown, unmet) = part.span.grown(&index, grow.0, grow.1); (grown, (part.shape + 1, unmet)) };
             let (body, loaded) = self.windowed(reader, query, index, span, None, shape)?;
             Ok(Evaluated { version: Version { revision, epoch, body }, loaded })
         })
@@ -293,11 +309,11 @@ impl Db {
 }
 
 impl Db {
-    pub(crate) fn observe_window_feed(&self, query: Query, spec: WindowSpec, listener: impl Fn(super::listeners::Feed) + Send + Sync + 'static) -> Result<WindowHandle, DbError> {
+    pub(crate) fn observe_window_feed(&self, query: Query, spec: WindowSpec, paused: bool, listener: impl Fn(super::listeners::Feed) + Send + Sync + 'static) -> Result<WindowHandle, DbError> {
         if !windowable(&query) {
             return Err(QueryError::NotWindowable.into());
         }
-        self.observe_feed(Subject::window(query, spec), false, listener).map(|observer| WindowHandle { observer })
+        self.observe_feed(Subject::window(query, spec), paused, listener).map(|observer| WindowHandle { observer })
     }
 }
 

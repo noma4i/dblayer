@@ -3,11 +3,13 @@
 ## Unreleased
 
 ### Added
-- `window(tail:).related(Relations.x)` reads the targets of the rows of a window and follows their changes.
-- `optimistic ids: { include: { of: Model, field: :id }, when: :flag }` puts or removes an id in a list attribute.
-- `optimistic count: { at_least: 1, when: :flag }` raises a number attribute while the flag is true.
-- `subscribe id: ["chatId", "userId"]` makes events with the same values one row, and `delete_unless:` deletes the row when its path is false.
-- `changed_by "AREA", via: :node, id_of: { of: Model, field: :attr }` rereads the node that a loaded row points to.
+- A window over a scope loads it, and `expand(before:)` loads an older page.
+- `window(tail: 60, max: 240)` shrinks the window to `tail` rows past `max`.
+- `window(tail:).related(Relations.x)` reads the targets of window rows.
+- `optimistic ids: { include: { of: Model, field: :id }, when: :flag }` adds or removes an id.
+- `optimistic count: { at_least: 1, when: :flag }` raises a number while the flag is true.
+- `subscribe id: ["chatId", "userId"]` keys a row by a pair, and `delete_unless:` deletes on false.
+- `changed_by "AREA", via: :node, id_of: { of: Model, field: :attr }` rereads the node a row points to.
 - `optimistic attr: { from: :param, map: { VALUE: "literal" } }` writes the literal that belongs to an enum parameter.
 - `local :attr, from: { of: Model, field: :name }` fills a `create` attribute from a singleton row.
 - `changed_by` may name one area as `via: :node` and as `via: :observed` on a model.
@@ -20,6 +22,7 @@
 - A refused operation takes back only its own membership, created row and changed attributes.
 
 ### Changed
+- `LiveWindow` connects its scope like `LiveList` instead of reading the local database only.
 - `preload` waits for the first snapshot of the app and runs behind loads the app asked for.
 
 ## 6.9.2 - 2026-10-26
