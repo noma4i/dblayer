@@ -89,7 +89,7 @@ impl Inner {
 
     pub(crate) fn acquire_changes(self: &std::sync::Arc<Self>) -> Option<String> {
         let (model, feed) = self.change_feed()?;
-        Some(self.acquire_one(&model, UpdatesSpec { apply: None, subscription: feed.subscription, deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None }, None))
+        Some(self.acquire_one(&model, UpdatesSpec { apply: None, subscription: feed.subscription, deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() }, None))
     }
 
     fn subscription_scope(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Option<(String, Value)> {
@@ -127,6 +127,7 @@ impl Inner {
             let mut def = SubscriptionDef::new(event, &updates.subscription, &model, effect);
             def.variables = variables;
             def.deleted_by = updates.deleted_by;
+            def.deleted_unless = updates.deleted_unless;
             def.set = updates.set;
             def.root = updates.root;
             def.id = updates.id;

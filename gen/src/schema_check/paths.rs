@@ -113,9 +113,11 @@ impl<'a> Run<'a> {
             Some(found) => self.follow_operation(node.file, found.pos, &format!("{label} from"), operation, &found.item),
             None => self.follow_quiet(operation, None, &[first]).and_then(Result::ok),
         };
-        let (Some(reached), Some(id)) = (followed, subscription.id.as_ref()) else { return };
+        let Some(reached) = followed else { return };
         let prefix: Vec<&str> = path.split('.').collect();
-        self.follow_inside(node.file, id.pos, &format!("{label} id"), operation, &prefix, &reached.selects, &id.item);
+        for id in &subscription.id {
+            self.follow_inside(node.file, id.pos, &format!("{label} id"), operation, &prefix, &reached.selects, &id.item);
+        }
     }
 
     fn check_cursor(&mut self, node: &'a ModelDecl, remote: &'a ScopeDecl) {

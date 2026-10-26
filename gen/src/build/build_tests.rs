@@ -264,8 +264,8 @@ fn a_parameter_symbol_in_optimistic_becomes_an_arg_reference() {
 fn subscribe_in_a_scope_builds_updates_specs() {
     let model = build_one("  scope :feed do\n    query \"Feed\"\n    subscribe \"SampleEvents\", apply: { effect: :upsert, delete_if: \"destroyed\" }\n    subscribe \"PlainEvents\"\n  end");
     let updates = &model.relations[0].updates;
-    assert_eq!(updates[0], UpdatesSpec { apply: None, subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), set: Default::default(), removes: false, debounce: None, root: None, id: None });
-    assert_eq!(updates[1], UpdatesSpec { apply: None, subscription: "PlainEvents".into(), deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None });
+    assert_eq!(updates[0], UpdatesSpec { apply: None, subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() });
+    assert_eq!(updates[1], UpdatesSpec { apply: None, subscription: "PlainEvents".into(), deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() });
 }
 
 #[test]

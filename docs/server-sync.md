@@ -767,7 +767,22 @@ end
 ```
 
 - `from: "a.b"` selects the row inside the event payload. Its default is the first field. `id:` selects the identifier and defaults to `id`.
-- Events are normalized like responses. `id:` and `delete_if:` accept dotted paths. `delete_if:` selects the value that marks a deleted row.
+- Events are normalized like responses. `id:` and `delete_if:` accept dotted paths. `delete_if:` selects the value that marks a deleted row. `delete_unless:` deletes the row when its path holds a false value, so one event type can both set and clear a state.
+- `id:` takes a list of paths for a row that a pair of values names. Events with the same pair are one row, and a later event updates it.
+
+```ruby
+model ChatActivity, storage: :memory, expires_in: 8.seconds do
+  attribute :chatId, :id
+  attribute :userId, :id
+  attribute :kind, :string
+  attribute :active, :bool
+  scope :by_chat do
+    parameter :chatId, :id
+    where chatId: :chatId
+    subscribe "ChatAction", id: ["chatId", "userId"], apply: { effect: :upsert, delete_unless: "active" }
+  end
+end
+```
 - An event changes only the attributes it carries. Attributes it does not select keep their stored values. The read of the stored row and the write happen in one transaction, so a local edit made at the same moment is never overwritten by an older copy.
 - A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.
 - Events preserve fields owned by unconfirmed local edits. Loaded windows of scopes with `insert_on: [:event]` accept matching rows.

@@ -984,11 +984,14 @@ fn subscribe(cx: &mut Cx, call: &Call) -> Option<SubscribeDecl> {
     let arg = exactly_one_arg(cx, &line, "a subscription name like `subscribe \"RecordChanged\"`")?;
     let name = string(cx, arg, "the subscription name")?;
     let from = line.opt(cx, "from").and_then(|pair| path(cx, &pair.value, "`from`"));
-    let id = line.opt(cx, "id").and_then(|pair| path(cx, &pair.value, "`id`"));
+    let id = line.opt(cx, "id").map(|pair| match &pair.value.item {
+        Value::Array(items) if !items.is_empty() => items.iter().filter_map(|item| path(cx, item, "`id`")).collect(),
+        _ => path(cx, &pair.value, "`id`").into_iter().collect(),
+    }).unwrap_or_default();
     let debounce = line.opt(cx, "debounce").and_then(|pair| duration(cx, &pair.value, "`debounce`"));
     let apply = match line.opt(cx, "apply") {
         Some(pair) => apply(cx, pair)?,
-        None => ApplyDecl { pos: line.pos, effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None },
+        None => ApplyDecl { pos: line.pos, effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None, delete_unless: None },
     };
     line.finish(cx);
     Some(SubscribeDecl { pos: line.pos, name, from, id, apply, debounce })
@@ -996,7 +999,7 @@ fn subscribe(cx: &mut Cx, call: &Call) -> Option<SubscribeDecl> {
 
 fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
     let pairs = hash_pairs(cx, &pair.value, "`apply`")?;
-    let mut decl = ApplyDecl { pos: at(&pair.value), effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None };
+    let mut decl = ApplyDecl { pos: at(&pair.value), effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None, delete_unless: None };
     let mut seen_effect = false;
     for entry in pairs {
         match entry.key.as_str() {
@@ -1041,6 +1044,7 @@ fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
             }
             "via" => decl.via = symbol(cx, &entry.value, "`via`"),
             "delete_if" => decl.delete_if = path(cx, &entry.value, "`delete_if`"),
+            "delete_unless" => decl.delete_unless = path(cx, &entry.value, "`delete_unless`"),
             other => cx.fail(pair_pos(entry), format!("unknown key `{other}` for `apply`")),
         }
     }

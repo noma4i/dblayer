@@ -259,7 +259,7 @@ async fn event_join(nested: bool) {
         save(&db, json!({"id":"r1","body":"before"}));
         let mut def = SubscriptionDef::new(EventSpec::new("changed"), "Changed", "Record", EventEffect::Upsert);
         if nested {
-            def.id = Some("actor.id".into());
+            def.id = vec!["actor.id".into()];
             def.deleted_by = Some("meta.deleted".into());
         }
         let _subscription = sync.subscribe(def).await.unwrap();

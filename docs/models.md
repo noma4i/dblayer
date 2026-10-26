@@ -731,7 +731,7 @@ Without `apply`, the event follows the normal row upsert behavior.
 `matches` compares response paths against exact strings supplied by the application. Nonmatching events do nothing.
 `effect: :ephemeral` copies the response paths in `fields` into declared ephemeral attributes without changing stored columns.
 `effect: :reread, via: :node` rereads the declared node with the event ID. A singleton read needs no ID.
-`effect: :upsert` writes the row, with `values:` for ephemeral attributes and `delete_if:` for a payload path that deletes the row. `effect: :delete` deletes it. `effect: :ignore` discards the event. Unknown effects, keys that do not fit the effect, empty ephemeral fields and missing reread destinations produce generator errors.
+`effect: :upsert` writes the row, with `values:` for ephemeral attributes, `delete_if:` for a payload path that deletes the row when it is true and `delete_unless:` for a path that deletes the row when it is present and false. `effect: :delete` deletes it. `effect: :ignore` discards the event. Unknown effects, keys that do not fit the effect, empty ephemeral fields and missing reread destinations produce generator errors.
 
 ```ruby
 subscribe "PresenceSignal", from: "presenceSignal", id: "memberId", apply: { effect: :ephemeral, fields: { typing: "active" }, matches: { kind: "ACTIVE" } }

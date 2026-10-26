@@ -158,6 +158,12 @@ fn check_subscription(update: &SubscribeDecl, report: &mut impl FnMut(Pos, Strin
     if apply.effect != Effect::Upsert && apply.delete_if.is_some() {
         report(apply.pos, misplaced("delete_if", "`:upsert`"));
     }
+    if apply.effect != Effect::Upsert && apply.delete_unless.is_some() {
+        report(apply.pos, misplaced("delete_unless", "`:upsert`"));
+    }
+    if apply.delete_if.is_some() && apply.delete_unless.is_some() {
+        report(apply.pos, format!("subscription `{name}`: `delete_if` and `delete_unless` cannot be combined"));
+    }
     if matches!(apply.effect, Effect::Upsert | Effect::Delete) && !apply.matches.is_empty() {
         report(apply.pos, misplaced("matches", "`:ephemeral`, `:reread` and `:ignore`"));
     }

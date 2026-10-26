@@ -62,7 +62,7 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     model.storage = crate::schema::Storage::Memory;
     let mut relation = if shared_changes { relation("recent", "5.minutes") } else { RelationSpec::global("recent") };
-    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, set: Map::new(), removes: false, debounce: None, root: None, id: None });
+    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: None, id: Vec::new() });
     if shared_changes { relation.updates.clear(); }
     model.relations.push(relation);
     let mut models = vec![model];
@@ -98,7 +98,7 @@ async fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_lo
     let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str)]);
     model.storage = crate::schema::Storage::Memory;
     let mut relation = RelationSpec::global("recent");
-    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription:"BulletinAdded".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
+    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription:"BulletinAdded".into(), deleted_by:None, deleted_unless:None, set:Map::new(), removes:false, debounce:None, root:None, id:Vec::new() });
     model.relations.push(relation);
     let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), hold: None, gate: None, subscriptions: None });
     let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();

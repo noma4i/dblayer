@@ -169,7 +169,7 @@ async fn authenticated_error_retryability_controls_feed_until_resume() {
         let (kat, config, challenge, _) = super::link_tests::inputs();
         let mut model = ModelSpec::new("Item", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
         let mut relation = RelationSpec::global("all");
-        relation.updates.push(UpdatesSpec { apply: None, subscription: "ItemEvents".into(), deleted_by: None, set: Default::default(), removes: false, debounce: None, root: None, id: None });
+        relation.updates.push(UpdatesSpec { apply: None, subscription: "ItemEvents".into(), deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() });
         model.relations.push(relation);
         let db = crate::db::Db::open_in_memory(vec![model], None).unwrap();
         let http = Arc::new(Http { key: RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads: AtomicUsize::new(0) });

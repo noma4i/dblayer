@@ -556,6 +556,8 @@ pub struct UpdatesSpec {
     pub subscription: String,
     #[serde(default)]
     pub deleted_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_unless: Option<String>,
     #[serde(default)]
     pub set: Map<String, Value>,
     #[serde(default)]
@@ -564,8 +566,8 @@ pub struct UpdatesSpec {
     pub debounce: Option<String>,
     #[serde(default)]
     pub root: Option<String>,
-    #[serde(default)]
-    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub id: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apply: Option<SubscriptionApply>,
 }

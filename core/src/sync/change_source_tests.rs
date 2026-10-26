@@ -76,3 +76,40 @@ async fn a_deleted_message_still_rereads_the_chat_it_belonged_to() {
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("after delete"));
     assert_eq!(subscription.status().rejected, 0);
 }
+
+fn activity_model() -> crate::schema::ModelSpec {
+    use crate::schema::FieldSpec;
+    use crate::value::ScalarKind;
+    let mut model = crate::schema::ModelSpec::new("activity", vec![
+        FieldSpec::scalar("id", ScalarKind::Id),
+        FieldSpec::scalar("chatId", ScalarKind::Id).optional(),
+        FieldSpec::scalar("userId", ScalarKind::Id).optional(),
+        FieldSpec::scalar("kind", ScalarKind::Str).optional(),
+        FieldSpec::scalar("active", ScalarKind::Bool).optional(),
+    ]);
+    model.storage = crate::schema::Storage::Memory;
+    model.expire_after = Some("8.seconds".into());
+    model.listens.push(serde_json::from_value(json!({"subscription":"ActionSignal", "root":"actionSignal", "id":["chatId", "userId"], "deleted_unless":"active"})).unwrap());
+    model
+}
+
+#[tokio::test(start_paused = true)]
+async fn events_with_one_chat_and_user_are_one_row_and_an_inactive_event_deletes_it() {
+    let rig = rig_on(Db::open_in_memory(vec![activity_model()], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("ActionSignal", "subscription ActionSignal { actionSignal { chatId userId kind active } }", "actionSignal"));
+    rig.sync.listen();
+    rig.transport.await_calls("ActionSignal", 1).await;
+    let send = |chat: &str, user: &str, kind: &str, active: bool| rig.transport.emit("ActionSignal", SubscriptionEvent::Next(crate::transport::Response::data(json!({"actionSignal":{"chatId":chat, "userId":user, "kind":kind, "active":active}}))));
+    let rows = || rig.db.query(&crate::query::Query::new("activity")).unwrap();
+    send("c1", "u1", "typing", true);
+    send("c1", "u1", "recording", true);
+    send("c1", "u2", "typing", true);
+    rig.transport.await_consumed("ActionSignal").await;
+    let mut kinds: Vec<_> = rows().iter().map(|row| (row.text("userId").unwrap().to_string(), row.text("kind").unwrap().to_string())).collect();
+    kinds.sort();
+    assert_eq!(kinds, [("u1".to_string(), "recording".to_string()), ("u2".to_string(), "typing".to_string())]);
+    send("c1", "u1", "recording", false);
+    rig.transport.await_consumed("ActionSignal").await;
+    let left: Vec<_> = rows().iter().map(|row| row.text("userId").unwrap().to_string()).collect();
+    assert_eq!(left, ["u2"]);
+}

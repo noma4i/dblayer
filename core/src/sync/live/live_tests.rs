@@ -17,7 +17,7 @@ async fn memory_scope_events_follow_readers_and_expire_without_http() {
     model.storage = Storage::Memory;
     model.expire_after = Some("5.seconds".into());
     let mut relation = RelationSpec::global("recent");
-    relation.updates.push(UpdatesSpec { apply: None, subscription:"BulletinAdded".into(), deleted_by:None, set:Map::new(), removes:false, debounce:None, root:None, id:None });
+    relation.updates.push(UpdatesSpec { apply: None, subscription:"BulletinAdded".into(), deleted_by:None, deleted_unless:None, set:Map::new(), removes:false, debounce:None, root:None, id:Vec::new() });
     model.relations.push(relation);
     let rig = rig_on(crate::db::Db::open_in_memory(vec![model], None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig { live_linger:Duration::from_secs(1), ..Default::default() });
     rig.sync.register(super::super::OperationDef::new("BulletinAdded", "subscription BulletinAdded { bulletinAdded { body } }", "bulletinAdded"));

@@ -299,11 +299,12 @@ fn updates_spec(update: &SubscribeDecl) -> UpdatesSpec {
     UpdatesSpec {
         subscription: update.name.clone(),
         deleted_by: apply.delete_if.as_ref().map(|found| found.item.clone()),
+        deleted_unless: apply.delete_unless.as_ref().map(|found| found.item.clone()),
         set: apply.values.iter().map(|(name, value, _)| (name.clone(), value.clone())).collect::<Map<_, _>>(),
         removes: apply.effect == Effect::Delete,
         debounce: update.debounce.clone(),
         root: update.from.as_ref().map(|found| found.item.clone()),
-        id: update.id.as_ref().map(|found| found.item.clone()),
+        id: update.id.iter().map(|found| found.item.clone()).collect(),
         apply: action.map(|action| SubscriptionApply { action, matches }),
     }
 }

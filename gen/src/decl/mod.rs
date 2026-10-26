@@ -259,6 +259,7 @@ pub struct ApplyDecl {
     pub matches: Vec<(String, String, Pos)>,
     pub via: Option<String>,
     pub delete_if: Option<Spanned<String>>,
+    pub delete_unless: Option<Spanned<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -266,7 +267,7 @@ pub struct SubscribeDecl {
     pub pos: Pos,
     pub name: String,
     pub from: Option<Spanned<String>>,
-    pub id: Option<Spanned<String>>,
+    pub id: Vec<Spanned<String>>,
     pub apply: ApplyDecl,
     pub debounce: Option<String>,
 }

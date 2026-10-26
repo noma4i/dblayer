@@ -16,3 +16,15 @@ model InteractionNotice, storage: :memory, expires_in: 1.minute do
     subscribe "RecordSignal"
   end
 end
+
+model ChatAction, storage: :memory, expires_in: 8.seconds do
+  attribute :chatId, :id
+  attribute :userId, :id
+  attribute :kind, :string
+  attribute :active, :bool
+  scope :by_chat do
+    parameter :chatId, :id
+    where chatId: :chatId
+    subscribe "ChatActionSignal", id: ["chatId", "userId"], apply: { effect: :upsert, delete_unless: "active" }
+  end
+end

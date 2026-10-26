@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `subscribe id: ["chatId", "userId"]` makes events with the same values one row, and `delete_unless:` deletes the row when its path is false.
 - `changed_by "AREA", via: :node, id_of: { of: Model, field: :attr }` rereads the node that a loaded row points to.
 - `optimistic attr: { from: :param, map: { VALUE: "literal" } }` writes the literal that belongs to an enum parameter.
 - `local :attr, from: { of: Model, field: :name }` fills a `create` attribute from a singleton row.

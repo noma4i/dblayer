@@ -220,3 +220,20 @@ fn id_of_names_the_source_row_attribute_that_holds_the_target_id() {
         assert!(errors.iter().any(|error| error.message.contains(message)), "{target}: {errors:?}");
     }
 }
+
+#[test]
+fn subscribe_takes_a_composite_id_and_deletes_unless_a_path_is_true() {
+    let source = |id: &str, apply: &str| format!("model Record do\n  attribute :title, :string\n  attribute :chatId, :id\n  attribute :userId, :id\n  attribute :active, :bool, default: true\n  subscribe \"RecordSignal\", from: \"recordSignal\", id: {id}, apply: {{ {apply} }}\nend");
+    let models = parse_models(&source("[\"chatId\", \"userId\"]", "effect: :upsert, delete_unless: \"active\"")).unwrap();
+    let listen = &serde_json::to_value(&models[0]).unwrap()["listens"][0];
+    assert_eq!((&listen["id"], &listen["deleted_unless"]), (&serde_json::json!(["chatId", "userId"]), &serde_json::json!("active")));
+    let single = parse_models(&source("\"chatId\"", "effect: :upsert")).unwrap();
+    assert_eq!(serde_json::to_value(&single[0]).unwrap()["listens"][0]["id"], serde_json::json!(["chatId"]));
+    for (apply, message) in [
+        ("effect: :upsert, delete_if: \"gone\", delete_unless: \"active\"", "`delete_if` and `delete_unless` cannot be combined"),
+        ("effect: :ignore, delete_unless: \"active\"", "`delete_unless` applies only to effect `:upsert`"),
+    ] {
+        let errors = parse_models(&source("\"chatId\"", apply)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(message)), "{apply}: {errors:?}");
+    }
+}

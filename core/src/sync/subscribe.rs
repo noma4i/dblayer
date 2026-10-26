@@ -40,15 +40,16 @@ pub struct SubscriptionDef {
     pub effect: EventEffect,
     pub variables: Value,
     pub deleted_by: Option<String>,
+    pub deleted_unless: Option<String>,
     pub set: Map<String, Value>,
     pub root: Option<String>,
-    pub id: Option<String>,
+    pub id: Vec<String>,
     pub apply: Option<crate::schema::SubscriptionApply>,
 }
 
 impl SubscriptionDef {
     pub fn new(event: EventSpec, operation: &str, model: &str, effect: EventEffect) -> Self {
-        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None, set: Map::new(), root: None, id: None, apply: None }
+        Self { event, operation: operation.to_string(), model: model.to_string(), effect, variables: json!({}), deleted_by: None, deleted_unless: None, set: Map::new(), root: None, id: Vec::new(), apply: None }
     }
 
     #[cfg(test)]
@@ -257,7 +258,7 @@ impl Feed {
             return true;
         };
         if !apply.matches.iter().all(|(path, expected)| root_value(node, path).and_then(Value::as_str) == Some(expected.as_str())) { return true; }
-        let id = root_value(node, self.def.id.as_deref().unwrap_or("id")).and_then(read_id);
+        let id = self.event_id(node);
         let result = match &apply.action {
             SubscriptionAction::Ephemeral { fields } => {
                 let values: Option<Map<String, Value>> = fields.iter().map(|(name, path)| root_value(node, path).cloned().map(|value| (name.clone(), value))).collect();
@@ -276,11 +277,22 @@ impl Feed {
         true
     }
 
+    fn event_id(&self, node: &Value) -> Option<RowId> {
+        match self.def.id.as_slice() {
+            [] => root_value(node, "id").and_then(read_id),
+            [path] => root_value(node, path).and_then(read_id),
+            paths => {
+                let parts: Option<Vec<RowId>> = paths.iter().map(|path| root_value(node, path).and_then(read_id)).collect();
+                RowId::new(&parts?.iter().map(RowId::as_str).collect::<Vec<_>>().join(":")).ok()
+            }
+        }
+    }
+
     fn parse(&self, response: &Response) -> Option<Pending> {
         let node = root_value(response.data.as_ref()?, &self.root_path)?;
-        let id = match root_value(node, self.def.id.as_deref().unwrap_or("id")) {
-            None | Some(Value::Null) if self.inner.db.spec(&self.def.model).is_ok_and(|spec| spec.is_memory()) => RowId::new(&uuid::Uuid::new_v4().to_string()).ok()?,
-            Some(value) => read_id(value)?,
+        let id = match self.event_id(node) {
+            Some(id) => id,
+            None if self.def.id.len() <= 1 && matches!(root_value(node, self.def.id.first().map_or("id", String::as_str)), None | Some(Value::Null)) && self.inner.db.spec(&self.def.model).is_ok_and(|spec| spec.is_memory()) => RowId::new(&uuid::Uuid::new_v4().to_string()).ok()?,
             None => return None,
         };
         let mut node = node.as_object()?.clone();
@@ -319,7 +331,9 @@ impl Feed {
         let db = &self.inner.db;
         let spec = db.spec(model)?;
         let items = items.into_iter().map(|item| {
-            let deleted = self.def.deleted_by.as_ref().and_then(|field| root_value(&Value::Object(item.node.clone()), field).cloned()).as_ref().is_some_and(is_truthy);
+            let payload = Value::Object(item.node.clone());
+            let deleted = self.def.deleted_by.as_ref().and_then(|field| root_value(&payload, field)).is_some_and(is_truthy)
+                || self.def.deleted_unless.as_ref().and_then(|field| root_value(&payload, field)).is_some_and(|value| !is_truthy(value));
             let normalized = if deleted || effect == EventEffect::Destroy {
                 None
             } else {
