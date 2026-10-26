@@ -33,4 +33,18 @@ extension BridgeProbeTests {
     for _ in 0 ..< 5 { #expect(Moment.entity(row.id).value?.text == "cached") }
     #expect(registry.peekedRows - before == 1)
   }
+
+  @Test @MainActor
+  func releasingTheOwnerOfEntitiesReturnsTheSubscriptionCensusToItsBase() async throws {
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let rows = [try await Moment.create(text: "one"), try await Moment.create(text: "two")]
+    let base = try DB.subscriptionCensus().subscriptions
+    var owner: [Entity<Moment>]? = rows.map { Moment.entity($0.id) }
+    await eventually("both entities read") { owner?.allSatisfy { $0.value != nil } == true }
+    await eventually("the owner holds one subscription") { (try? DB.subscriptionCensus().subscriptions) == base + 1 }
+    owner = nil
+    await eventually("the census returns to its base") { (try? DB.subscriptionCensus().subscriptions) == base }
+    let again = Moment.entity(rows[0].id)
+    await eventually("a later entity reads again") { again.value?.text == "one" && (try? DB.subscriptionCensus().subscriptions) == base + 1 }
+  }
 }

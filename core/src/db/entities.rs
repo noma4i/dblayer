@@ -59,6 +59,14 @@ impl EntityGroup {
         !self.reading && self.pending.is_empty() && !locked(&self.subscriber.pending).scheduled
     }
 
+    pub(crate) fn holds_ids(&self) -> bool {
+        !self.known.is_empty()
+    }
+
+    pub(crate) fn unused(&self) -> bool {
+        self.known.is_empty() && !self.reading
+    }
+
     pub(crate) fn model(&self) -> &ModelKey {
         &self.model
     }
@@ -191,6 +199,7 @@ impl Runnable for EntitySubscriber {
 pub struct EntityObserver {
     shared: Weak<Shared>,
     key: String,
+    model: ModelKey,
     pub(super) subscriber: Arc<EntitySubscriber>,
 }
 
@@ -198,10 +207,11 @@ impl EntityObserver {
     pub fn retain(&self, ids: &[RowId]) -> Result<(), DbError> {
         let Some(shared) = self.shared.upgrade() else { return Ok(()) };
         let mut observers = shared.observers();
-        let Some(group) = observers.entities.get_mut(&self.key) else { return Ok(()) };
-        let model = group.model.clone();
+        let group = observers.group_entities(&self.key, &self.model, &self.subscriber);
+        let model = self.model.clone();
         let fresh: BTreeSet<RowId> = ids.iter().filter(|id| !group.known.contains_key(*id) || group.dirty.contains(*id)).cloned().collect();
         if fresh.is_empty() {
+            observers.drop_unused_entities(&self.key);
             return Ok(());
         }
         for id in &fresh {
@@ -225,6 +235,7 @@ impl EntityObserver {
         }
         let subscriber = group.subscriber.clone();
         observers.unindex_rows(&self.key, &model, gone.iter());
+        observers.drop_unused_entities(&self.key);
         subscriber.discard(&gone);
     }
 }
@@ -297,6 +308,7 @@ impl Shared {
                 group.dirty.extend(ids.iter().filter(|id| group.known.contains_key(*id)).cloned());
                 group.subscriber.clone().post_failure(&self.executor, &error);
                 self.pump_entities(&mut observers, key);
+                observers.drop_unused_entities(key);
                 return;
             }
         };
@@ -304,6 +316,7 @@ impl Shared {
         let changes = group.apply_read(position, &loaded, ids.iter().cloned());
         group.subscriber.clone().post(&self.executor, changes);
         self.pump_entities(&mut observers, key);
+        observers.drop_unused_entities(key);
     }
 }
 
@@ -319,7 +332,7 @@ impl Db {
     pub fn observe_entities(&self, model: &str, listener: impl Fn(&EntityChange) + Send + Sync + 'static) -> Result<EntityObserver, DbError> {
         self.shared.spec(model)?;
         let subscriber = Arc::new(EntitySubscriber { call_state: super::listeners::CallState::new(), pending: Mutex::new(Pending::default()), listener: Box::new(listener), counters: self.shared.counters.clone() });
-        let key = self.shared.observers().add_entities(ModelKey::new(model), subscriber.clone());
-        Ok(EntityObserver { shared: Arc::downgrade(&self.shared), key, subscriber })
+        let key = self.shared.observers().entities_key();
+        Ok(EntityObserver { shared: Arc::downgrade(&self.shared), key, model: ModelKey::new(model), subscriber })
     }
 }

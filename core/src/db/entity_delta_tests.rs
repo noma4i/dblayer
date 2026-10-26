@@ -123,3 +123,30 @@ fn one_changed_row_delivers_and_decodes_one_row() {
         assert_eq!(last.rows.len(), 1, "{count} retained ids: 1 row reaches the platform to decode");
     }
 }
+
+#[test]
+fn releasing_the_last_id_returns_the_census_and_a_later_retain_counts_again() {
+    let (db, log, observer) = rig_of(3);
+    assert_eq!((db.observer_census().subscriptions, db.keyed_rows()), (1, 3));
+    observer.release(&users(0..2));
+    assert_eq!(db.observer_census().subscriptions, 1, "one id is still held");
+    observer.release(&users(2..3));
+    assert_eq!((db.observer_census().subscriptions, db.keyed_rows()), (0, 0));
+    assert_eq!(work(&db, || named(&db, "u2", "second")), (0, 0));
+    observer.retain(&users(2..3)).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    assert_eq!(db.observer_census().subscriptions, 1);
+    named(&db, "u2", "third");
+    db.await_revision(db.revision_seq().unwrap());
+    assert_eq!(delivered(&log).last().unwrap().rows.last().unwrap().get("name"), Some(&json!("third")));
+}
+
+#[test]
+fn an_observer_that_holds_no_id_is_not_counted() {
+    let db = booted();
+    let (_log, callback) = entity_recorder();
+    let observer = db.observe_entities("users", callback).unwrap();
+    assert_eq!(db.observer_census().subscriptions, 0);
+    observer.retain(&[]).unwrap();
+    assert_eq!(db.observer_census().subscriptions, 0);
+}

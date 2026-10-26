@@ -47,6 +47,20 @@ class EntityRegistryTest {
         assertNull(registry.entity("missing").value.value)
     }
 
+    @Test
+    fun releasingTheOwnerOfEntitiesReturnsTheSubscriptionCensusToItsBase() = bounded {
+        reopen(Config(null, null, 32u), modelsJSON, null)
+        val rows = listOf(Moment.create(text = "one"), Moment.create(text = "two"))
+        val base = DBlayer.subscriptionCensus().subscriptions
+        var owner: List<Entity<Moment>>? = rows.map { entityOf("Moment", Moment, it.id) }
+        eventually("both entities read") { owner!!.all { it.value.value != null } }
+        eventually("the owner holds one subscription") { DBlayer.subscriptionCensus().subscriptions == base + 1uL }
+        owner = null
+        collectGarbage { DBlayer.subscriptionCensus().subscriptions == base }
+        val again = entityOf("Moment", Moment, rows[0].id)
+        eventually("a later entity reads again") { again.value.value?.text == "one" && DBlayer.subscriptionCensus().subscriptions == base + 1uL }
+    }
+
     /** REL-31 */
     @Test
     fun repeatedGeneratedReadsOfOneRecordPeekTheCoreOnce() = bounded {

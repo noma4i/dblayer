@@ -42,6 +42,7 @@
 - `expires_in` of a memory model counts from the last write, and a write of equal values renews it.
 
 ### Fixed
+- A freed owner of entities returns `subscriptionCensus` to its base: the core drops the entity observer when its last id is released and creates it again on the next retain.
 - `entity(id)` of a record whose reader was freed no longer calls the core again while its value or absence is retained.
 - `confirmed` returns the server id to a waiter that the closing commit of a create wakes.
 

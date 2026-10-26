@@ -183,11 +183,20 @@ impl Observers {
         self.by_row.len()
     }
 
-    pub(crate) fn add_entities(&mut self, model: ModelKey, subscriber: Arc<EntitySubscriber>) -> String {
+    pub(crate) fn entities_key(&mut self) -> String {
         let key = format!("entities:{}", self.next_id);
         self.next_id += 1;
-        self.entities.insert(key.clone(), EntityGroup::new(model, subscriber));
         key
+    }
+
+    pub(crate) fn group_entities(&mut self, key: &str, model: &ModelKey, subscriber: &Arc<EntitySubscriber>) -> &mut EntityGroup {
+        self.entities.entry(key.to_string()).or_insert_with(|| EntityGroup::new(model.clone(), subscriber.clone()))
+    }
+
+    pub(crate) fn drop_unused_entities(&mut self, key: &str) {
+        if self.entities.get(key).is_some_and(EntityGroup::unused) {
+            self.remove_entities(key);
+        }
     }
 
     pub(crate) fn index_rows<'a>(&mut self, key: &str, model: &ModelKey, ids: impl Iterator<Item = &'a RowId>) {
@@ -287,7 +296,7 @@ impl Observers {
 
     pub(crate) fn subscription_count(&self) -> usize {
         let live = |subscribers: &Subscribers| subscribers.iter().filter(|(id, _)| !self.warm_ids.contains(id)).count();
-        self.groups.values().map(|group| live(&group.subscribers) + live(&group.facts.joining)).sum::<usize>() + self.opening.values().map(|opening| live(&opening.waiting)).sum::<usize>() + self.entities.len()
+        self.groups.values().map(|group| live(&group.subscribers) + live(&group.facts.joining)).sum::<usize>() + self.opening.values().map(|opening| live(&opening.waiting)).sum::<usize>() + self.entities.values().filter(|group| group.holds_ids()).count()
     }
 }
 
