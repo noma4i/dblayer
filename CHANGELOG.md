@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- `optimistic attr: { from: :param, map: { VALUE: "literal" } }` writes the literal that belongs to an enum parameter.
+- `local :attr, from: { of: Model, field: :name }` fills a `create` attribute from a singleton row.
+- `changed_by` may name one area as `via: :node` and as `via: :observed` on a model.
+- A committed credential reloads stale windows with readers and restarts stopped subscriptions.
 - `preload vibeId: { from: "Vibe.list" }` loads one scope for each row of another scope, and a new row adds its scope.
 - `DB.refreshPreloads()` and `DBlayer.refreshPreloads()` reload every `preload` scope in one call, fresh or not, and name the scopes that failed.
 - `add_to` and `remove_from` join a row to a scope or take it out.

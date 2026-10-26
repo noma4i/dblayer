@@ -218,7 +218,7 @@ impl Inner {
         FirstScreenHold { inner: Arc::downgrade(self), delivered: false }
     }
 
-    pub(crate) fn preload_on_session(self: &Arc<Self>) {
+    pub(crate) fn preload_on_session(self: &Arc<Self>) -> bool {
         match self.transport.session() {
             Ok(current) => {
                 let changed = {
@@ -227,11 +227,14 @@ impl Inner {
                     if changed { state.first_snapshot = false; }
                     changed
                 };
-                if changed && current.is_some() { self.preload_on_event(); }
+                let committed = changed && current.is_some();
+                if committed { self.preload_on_event(); }
+                committed
             }
             Err(error) => {
                 locked(&self.preload.state).due = true;
                 self.preload_failed(&SyncError::Transport(error));
+                false
             }
         }
     }
@@ -292,6 +295,12 @@ impl Sync {
 
     pub fn preload_on_session(&self) {
         self.inner.preload_on_session();
+    }
+
+    pub fn session_committed(&self) {
+        if self.inner.preload_on_session() {
+            let _ = self.inner.request_resume(super::resume_machine::Cause::Explicit, None);
+        }
     }
 }
 

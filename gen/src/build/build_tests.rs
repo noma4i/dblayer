@@ -242,6 +242,12 @@ fn insert_on_create_marks_only_the_relation_that_names_it() {
 }
 
 #[test]
+fn mapped_optimistic_builds_an_op_that_names_its_parameter_and_cases() {
+    let model = build_one("  operation :decide do\n    mutation \"DecideSample\"\n    parameter :decision, Decision\n    optimistic ownerId: { from: :decision, map: { ACCEPT: \"yes\", REJECT: \"no\" } }\n  end");
+    assert_eq!(model.actions[0].optimistic.get("ownerId"), Some(&json!({"$map": {"from": "decision", "map": {"ACCEPT": "yes", "REJECT": "no"}}})));
+}
+
+#[test]
 fn keyed_optimistic_builds_an_op_that_names_its_parameters() {
     let model = build_one("  operation :tag do\n    mutation \"TagSample\"\n    parameter :label, :string\n    optimistic ownerId: { by: :ownerId, element: { ownerId: :label, createdAt: nil } }\n  end");
     assert_eq!(model.actions[0].optimistic.get("ownerId"), Some(&json!({"$keyed": {"by": "ownerId", "element": {"ownerId": {"$arg": "label"}, "createdAt": null}}})));

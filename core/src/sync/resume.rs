@@ -184,7 +184,7 @@ impl Inner {
         self.resume.request(cause, waiter).map(|(id, first)| Runner { inner: Arc::downgrade(self), id, first })
     }
 
-    fn request_resume(self: &Arc<Self>, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Result<(), SyncError> {
+    pub(crate) fn request_resume(self: &Arc<Self>, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Result<(), SyncError> {
         let runtime = Handle::try_current().map_err(|_| SyncError::Store("no async runtime to run the resume".into()))?;
         if let Some(runner) = self.begin_resume(cause, waiter) {
             runtime.spawn(self.until_closed(runner.run()));

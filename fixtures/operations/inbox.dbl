@@ -1,5 +1,13 @@
 model Inbox do
   attribute :title, :string
+  attribute :stance, :string, null: true
+  operation :move do
+    mutation "InboxMove"
+    parameter :list, ContainerShelfKind
+    variables id: :id, list: :list
+    optimistic stance: { from: :list, map: { PRIMARY: "main", SECONDARY: "other" } }
+    response from: "inboxMove"
+  end
   scope :shelf do
     parameter :list, ContainerShelfKind
     query "inbox"

@@ -62,24 +62,27 @@ data class Clip(
 data class Inbox(
     override val id: String,
     val title: String,
+    val stance: String? = null,
     override val sync: SyncInfo = SyncInfo(),
     override val uploads: Map<String, UploadInfo> = emptyMap()
 ) : DBModel {
     override val modelName get() = "Inbox"
     companion object : ModelDecoder<Inbox> {
-        override val layout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
+        override val layout = "2069e3ab4783e460fc6cb6b14859d746510bc8544c6342cb14c9ff5a89f93b0c"
         override val modelName = "Inbox"
         override fun decode(row: WireRow): Inbox {
             val r = CellReader(row.cells)
             return Inbox(
                 id = row.id,
                 title = r.req(0, Cell::asText),
+                stance = r.opt(1, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
             )
         }
 
         val title = Column<Inbox, String>("title")
+        val stance = Column<Inbox, String?>("stance")
         fun find(id: String) = Query("Inbox", this).find(id)
         fun where(condition: Condition) = Query("Inbox", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Inbox", this, ids)
@@ -88,19 +91,22 @@ data class Inbox(
             var built = Query("Inbox", this, relation = "shelf", params = buildJsonObject { put("list", jsonValue(list)) })
             return built
         }
-        suspend fun create(title: String): Inbox = offCaller {
+        suspend fun create(title: String, stance: String? = null): Inbox = offCaller {
             val values = buildJsonObject {
                 put("title", jsonValue(title))
+                stance?.let { put("stance", jsonValue(it)) }
             }
             read(DBlayer.database.create("Inbox", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null): Inbox = offCaller {
+    suspend fun update(title: String? = null, stance: GraphQLNullable<String> = GraphQLNullable.Omitted): Inbox = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
+            put("stance", stance)
         }
         Inbox.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
+    suspend fun move(list: ContainerShelfKind): Inbox = act("move", JsonObject(parseJsonObject("""{"stance":{"${'$'}map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}""") + mapOf()), JsonObject(mapOf("list" to jsonValue(list))), Inbox)
 }
 
 @Immutable

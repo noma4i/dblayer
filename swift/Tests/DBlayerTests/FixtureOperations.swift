@@ -49,42 +49,52 @@ public struct Inbox: DBModel {
     public static let modelName = "Inbox"
     public let id: String
     public let title: String
+    public let stance: String?
     public let sync: SyncInfo
     public let uploads: [String: UploadInfo]
 
-    public init(id: String, title: String, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
+    public init(id: String, title: String, stance: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
         self.id = id
         self.title = title
+        self.stance = stance
         self.sync = sync
         self.uploads = uploads
     }
 
-    public static let wireLayout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
+    public static let wireLayout = "2069e3ab4783e460fc6cb6b14859d746510bc8544c6342cb14c9ff5a89f93b0c"
 
     public init(wire row: WireRow) throws {
         let r = CellReader(row.cells)
         self.id = row.id
         self.title = try r.req(0, \.asText)
+        self.stance = try r.opt(1, \.asText)
         self.sync = SyncInfo(wire: row.sync)
         self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
     }
 
     public static let title = Column<Inbox, String>("title")
+    public static let stance = Column<Inbox, String?>("stance")
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func shelf(list: ContainerShelfKind) throws -> Query<Self> {
         let built = Query<Self>(relation: "shelf", params: ["list": try JSONValue.encode(list)])
         return built
     }
-    @concurrent public static func create(title: String) async throws -> Self {
+    @concurrent public static func create(title: String, stance: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["title"] = try JSONValue.encode(title)
+        if let value = stance { values["stance"] = try JSONValue.encode(value) }
         return try await create(values: values)
     }
-    @concurrent public func update(title: String? = nil) async throws -> Self {
+    @concurrent public func update(title: String? = nil, stance: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
+        if let value = stance { values["stance"] = try JSONValue.encode(value) }
         return try await update(values: values)
+    }
+    @concurrent public func move(list: ContainerShelfKind) async throws -> Self {
+        let values = try JSONValue.read(#"{"stance":{"$map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#).objectValue
+        return try await act("move", values: values, args: ["list": try JSONValue.encode(list)])
     }
 }
 

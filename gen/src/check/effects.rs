@@ -46,6 +46,13 @@ pub(super) fn used_parameter(operation: &OperationDecl, name: &str) -> bool {
     })
 }
 
+pub(super) fn check_local_from(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, report: Report<'_>) {
+    let site = Site { node, all, operation };
+    for (_, source, pos) in &operation.local_from {
+        source_of(&site, source, *pos, Use::Value, report);
+    }
+}
+
 pub(super) fn check(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, report: Report<'_>) {
     if operation.effects.is_empty() {
         return;
@@ -147,29 +154,33 @@ enum Use {
 }
 
 fn source(site: &Site<'_>, pair: &SourcePair, usage: Use, report: Report<'_>) {
+    source_of(site, &pair.source, pair.pos, usage, report);
+}
+
+fn source_of(site: &Site<'_>, source: &SourceDecl, pos: Pos, usage: Use, report: Report<'_>) {
     let declared = |name: &str| site.parameter(name).is_some();
-    match &pair.source {
-        SourceDecl::Parameter(name) if !declared(name) => report(pair.pos, format!("value `:{name}` is not declared with `parameter`")),
-        SourceDecl::Owner(field) if field != "id" && !site.node.attributes.iter().any(|attribute| &attribute.name == field) => report(pair.pos, format!("`{{ owner: :{field} }}` names unknown attribute `{field}`")),
+    match source {
+        SourceDecl::Parameter(name) if !declared(name) => report(pos, format!("value `:{name}` is not declared with `parameter`")),
+        SourceDecl::Owner(field) if field != "id" && !site.node.attributes.iter().any(|attribute| &attribute.name == field) => report(pos, format!("`{{ owner: :{field} }}` names unknown attribute `{field}`")),
         SourceDecl::Row { model, row, field } => match site.model(model) {
-            None => report(pair.pos, format!("`{{ of: {model} }}` names unknown model `{model}`")),
+            None => report(pos, format!("`{{ of: {model} }}` names unknown model `{model}`")),
             Some(target) => {
                 if field != "id" && !target.attributes.iter().any(|attribute| &attribute.name == field) {
-                    report(pair.pos, format!("`{{ of: {model} }}` names unknown attribute `{field}`"));
+                    report(pos, format!("`{{ of: {model} }}` names unknown attribute `{field}`"));
                 }
                 match row {
-                    Some(row) if !site.id_parameter(row) => report(pair.pos, format!("`row:` names `{row}`, declare it with `parameter :{row}, :id`")),
-                    None if !is_singleton(target) => report(pair.pos, format!("`{{ of: {model} }}` needs `row: :param`: {model} is not a singleton")),
+                    Some(row) if !site.id_parameter(row) => report(pos, format!("`row:` names `{row}`, declare it with `parameter :{row}, :id`")),
+                    None if !is_singleton(target) => report(pos, format!("`{{ of: {model} }}` needs `row: :param`: {model} is not a singleton")),
                     _ => {}
                 }
             }
         },
         SourceDecl::Plus(name) | SourceDecl::Minus(name) => {
             if usage == Use::Value {
-                report(pair.pos, "`plus:` and `minus:` belong to `change_row`".to_string());
+                report(pos, "`plus:` and `minus:` belong to `change_row`".to_string());
             }
             if !site.parameter(name).is_some_and(|parameter| matches!(parameter.ty.base, ParamBase::Int | ParamBase::Long | ParamBase::Num)) {
-                report(pair.pos, format!("`{name}` must be a number parameter declared with `parameter :{name}, :int`"));
+                report(pos, format!("`{name}` must be a number parameter declared with `parameter :{name}, :int`"));
             }
         }
         _ => {}

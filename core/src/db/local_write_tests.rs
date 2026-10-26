@@ -395,3 +395,16 @@ fn update_args_alone_still_enqueue_an_operation_that_carries_them() {
     assert_eq!(outbox.len(), 1);
     assert_eq!(outbox[0].input, json!({"id": "m1", "signedId": "blob-2"}));
 }
+
+#[test]
+fn a_mapped_patch_value_follows_the_parameter_and_rolls_back_with_the_action() {
+    let db = booted();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
+    let patch = || obj(json!({"text": {"$map": {"from": "decision", "map": {"ACCEPT": "yes", "REJECT": "no"}}}}));
+    db.act("moments", "decide", &rid("m1"), patch(), obj(json!({"decision": "REJECT"}))).unwrap();
+    assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("no"));
+    db.roll_back(db.outbox().unwrap()[0].operation.id.0).unwrap();
+    assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("one"));
+    db.act("moments", "decide", &rid("m1"), patch(), obj(json!({"decision": "ACCEPT"}))).unwrap();
+    assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("yes"));
+}

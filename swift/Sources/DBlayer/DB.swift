@@ -36,7 +36,7 @@ public enum DB {
 
   public static func listen() throws { try database.listen() }
   public static func unlisten() throws { try database.unlisten() }
-  /// Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground and when the network returns. Call this for a manual refresh and after sign-in: it also restarts stopped subscriptions and singleton entities.
+  /// Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions and singleton entities.
   @concurrent public static func resume() async throws {
     try await database.resume()
     await EntityRegistries.resumeAll()
@@ -51,11 +51,14 @@ public enum DB {
   }
 
   @concurrent public static func sessionCall<Body: Encodable & Sendable, Answer: Decodable & Sendable>(_ operation: String, body: Body, as _: Answer.Type) async throws -> Answer {
-    try JSONDecoder().decode(Answer.self, from: Data(try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body)).utf8))
+    let answer = try JSONDecoder().decode(Answer.self, from: Data(try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body)).utf8))
+    await EntityRegistries.resumeAll()
+    return answer
   }
 
   @concurrent public static func sessionCall<Body: Encodable & Sendable>(_ operation: String, body: Body) async throws {
     _ = try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body))
+    await EntityRegistries.resumeAll()
   }
 
   @concurrent public static func sessionResume<Answer: Decodable & Sendable>(as _: Answer.Type) async throws -> Answer? {

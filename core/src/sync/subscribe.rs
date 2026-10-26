@@ -136,16 +136,20 @@ impl Feed {
                 locked(&self.status).rejected += 1;
                 continue;
             };
-            let targets: Vec<_> = self.inner.db.shared.specs.values().flat_map(|spec| spec.changes.iter().filter(|read| read.area == area).map(|read| (spec.key.to_string(), read.clone()))).collect();
+            let mut targets: BTreeMap<String, Vec<crate::schema::ChangeRead>> = BTreeMap::new();
+            for spec in self.inner.db.shared.specs.values() {
+                let reads: Vec<_> = spec.changes.iter().filter(|read| read.area == area).cloned().collect();
+                if !reads.is_empty() { targets.insert(spec.key.to_string(), reads); }
+            }
             if targets.is_empty() { locked(&self.status).rejected += 1; }
-            for (model, read) in targets {
+            for (model, reads) in targets {
                 let Ok(row_id) = RowId::new(id) else {
                     locked(&self.status).rejected += 1;
                     continue;
                 };
                 let watched = self.inner.has_event_readers(&model);
                 let before = watched.then(|| self.inner.db.find(&model, &row_id));
-                if read.removes_on.iter().any(|removal| removal == kind) {
+                if reads.iter().any(|read| read.removes_on.iter().any(|removal| removal == kind)) {
                     let removed = self.apply(vec![Pending { bucket: String::new(), id: row_id, node: Map::new(), generation: self.inner.db.generation() }], &model, EventEffect::Destroy).await;
                     if let Some(before) = before {
                         if !removed {
@@ -156,7 +160,11 @@ impl Feed {
                     }
                     continue;
                 }
-                let result = if read.observed { self.reread_observed(&model).await } else { self.reread(&model, &read.relation, read.parameter.as_deref(), Some(id)).await };
+                let mut result = Ok(());
+                for read in &reads {
+                    let outcome = if read.observed { self.reread_observed(&model).await } else { self.reread(&model, &read.relation, read.parameter.as_deref(), Some(id)).await };
+                    if let (Err(error), Ok(())) = (outcome, &result) { result = Err(error); }
+                }
                 match result {
                     Ok(()) => {
                         locked(&self.status).applied += 1;

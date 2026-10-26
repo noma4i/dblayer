@@ -263,7 +263,7 @@ fn parse_item(reader: &mut Reader, args: &mut Vec<Node<Value>>, options: &mut Ve
 }
 
 fn parse_pair(reader: &mut Reader) -> Result<Pair, ParseError> {
-    let Some(Token { kind: Kind::Word(key), line, column }) = reader.next() else {
+    let Some(Token { kind: Kind::Word(key) | Kind::Const(key), line, column }) = reader.next() else {
         reader.index -= 1;
         return Err(reader.unexpected());
     };
@@ -329,7 +329,7 @@ fn parse_hash(reader: &mut Reader) -> Result<Node<Value>, ParseError> {
             reader.next();
             return Ok(Node { item: Value::Hash(pairs), line: open.line, column: open.column });
         }
-        if !matches!((reader.peek_kind(0), reader.peek_kind(1)), (Some(Kind::Word(_)), Some(Kind::Colon))) {
+        if !matches!((reader.peek_kind(0), reader.peek_kind(1)), (Some(Kind::Word(_) | Kind::Const(_)), Some(Kind::Colon))) {
             return Err(reader.unexpected());
         }
         pairs.push(parse_pair(reader)?);

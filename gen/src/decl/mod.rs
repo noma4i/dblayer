@@ -331,6 +331,7 @@ pub enum OptimisticValue {
     Literal(Json),
     Parameter(String),
     Keyed { by: String, element: Vec<(String, OptimisticElement)> },
+    Mapped { from: String, map: Vec<(String, Json)> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -424,6 +425,7 @@ pub struct OperationDecl {
     pub parameters: Vec<ParameterDecl>,
     pub variables: Option<Vec<VariableBinding>>,
     pub local: Option<Vec<String>>,
+    pub local_from: Vec<(String, SourceDecl, Pos)>,
     pub wrap: Option<String>,
     pub response: Option<ResponseDecl>,
     pub match_by: Option<Vec<Spanned<String>>>,

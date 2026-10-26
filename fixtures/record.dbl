@@ -57,7 +57,7 @@ model Record do
     variables containerId: :containerId, text: :text, signedId: :signedId, attachedUserId: :attachedUserId
     parameter :signedId, :string, null: true
     parameter :attachedUserId, :id, null: true
-    local :authorId
+    local :authorId, from: { of: CurrentUser, field: :id }
   end
   scope :transcode_status, node: :one do
     parameter :id, :id
@@ -83,4 +83,11 @@ model Record do
     freshness expires_in: 1.minute, empty_in: 10.seconds
   end
   changed_by "RECORD", via: :observed
+end
+
+model CurrentUser do
+  attribute :name, :string
+  scope :current do
+    query "CurrentUserQuery"
+  end
 end

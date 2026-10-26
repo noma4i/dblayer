@@ -129,7 +129,7 @@ impl Db {
     }
 
     fn change_row(&self, reader: &Reader<'_>, edits: &mut Edits, call: &Call<'_>, model: &str, row: Option<&str>, values: &BTreeMap<String, EffectSource>) -> Result<(), DbError> {
-        let Some(id) = self.effect_row(reader, call, model, row)? else { return Ok(()) };
+        let Some(id) = self.effect_row(reader, call.args, model, row)? else { return Ok(()) };
         let mut changes = Row::new();
         for (name, source) in values {
             let next = match source {
@@ -174,9 +174,28 @@ impl Db {
         }
     }
 
-    fn effect_row(&self, reader: &Reader<'_>, call: &Call<'_>, model: &str, row: Option<&str>) -> Result<Option<RowId>, DbError> {
+    pub(crate) fn fill_local_sources(&self, model: &str, values: &mut Map<String, Value>) -> Result<(), DbError> {
+        let spec = self.shared.spec(model)?;
+        let Some(create) = spec.actions.iter().find(|declared| declared.name == "create") else { return Ok(()) };
+        for (field, source) in &create.local_from {
+            if values.get(field).is_some_and(|value| !value.is_null()) {
+                continue;
+            }
+            let EffectSource::Row { model: from, row: None, field: from_field } = source else { continue };
+            let found = self.shared.read(&[from.as_str()], |reader| {
+                let Some(id) = self.effect_row(reader, &Map::new(), from, None)? else { return Ok(None) };
+                Ok(if from_field == "id" { Some(Value::String(id.to_string())) } else { reader.point(from, id.as_str())?.and_then(|row| row.get(from_field).filter(|value| !value.is_null()).cloned()) })
+            })?;
+            if let Some(value) = found {
+                values.insert(field.clone(), value);
+            }
+        }
+        Ok(())
+    }
+
+    fn effect_row(&self, reader: &Reader<'_>, args: &Map<String, Value>, model: &str, row: Option<&str>) -> Result<Option<RowId>, DbError> {
         if let Some(name) = row {
-            return Ok(call.args.get(name).and_then(read_id));
+            return Ok(args.get(name).and_then(read_id));
         }
         let Some(relation) = self.shared.spec(model)?.singleton_relation() else { return Ok(None) };
         let key = self.shared.spec(model)?.selection_key(&relation.name, &Map::new())?;
@@ -190,7 +209,7 @@ impl Db {
             EffectSource::Owner(field) if field == "id" => Some(Value::String(call.owner.id.to_string())),
             EffectSource::Owner(field) => edits.row_mut(reader, call.owner.model.as_str(), call.owner.id.as_str())?.and_then(|row| row.get(field).filter(|value| !value.is_null()).cloned()),
             EffectSource::Row { model, row, field } => {
-                let Some(id) = self.effect_row(reader, call, model, row.as_deref())? else { return Ok(None) };
+                let Some(id) = self.effect_row(reader, call.args, model, row.as_deref())? else { return Ok(None) };
                 if field == "id" {
                     Some(Value::String(id.to_string()))
                 } else {

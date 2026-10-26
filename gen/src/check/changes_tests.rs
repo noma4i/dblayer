@@ -188,3 +188,15 @@ fn only_models_with_changed_by_get_an_events_stream() {
     assert_eq!(swift.matches("static var events: LiveStream<ModelEventItem<Self>>").count(), 1);
     assert_eq!(kotlin.matches("val events: kotlinx.coroutines.flow.Flow<ModelEventItem<Record>>").count(), 1);
 }
+
+#[test]
+fn node_and_observed_forms_share_an_area_and_equal_forms_stay_refused() {
+    let source = |lines: &str| format!("model Record do\n  attribute :title, :string\n  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"ById\"\n    variables id: :id\n  end\n  scope :read do\n    query \"Read\"\n  end\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  {lines}\nend\n");
+    let models = check_source(&source("changed_by \"CHAT\", via: :by_id, removes_on: [\"DELETED\"]\n  changed_by \"CHAT\", via: :observed")).unwrap();
+    let forms: Vec<_> = models[0].changes.iter().map(|change| (change.area.as_str(), change.observed)).collect();
+    assert_eq!(forms, [("CHAT", false), ("CHAT", true)]);
+    for lines in ["changed_by \"CHAT\", via: :observed\n  changed_by \"CHAT\", via: :observed", "changed_by \"CHAT\", via: :by_id\n  changed_by \"CHAT\", via: :read"] {
+        let errors = check_source(&source(lines)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("duplicate change area `CHAT`")), "{lines}: {errors:?}");
+    }
+}

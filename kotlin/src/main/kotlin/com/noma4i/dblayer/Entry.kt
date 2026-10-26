@@ -23,7 +23,7 @@ object DBlayer {
 
     fun listen() = database.listen()
     fun unlisten() = database.unlisten()
-    /** Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground and when the network returns. Call this for a manual refresh and after sign-in: it also restarts stopped subscriptions and singleton entities. */
+    /** Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions and singleton entities. */
     suspend fun resume() {
         offCaller { database.resume() }
         EntityRegistries.resumeAll()
@@ -40,11 +40,14 @@ object DBlayer {
     suspend fun retryAll(): ULong = offCaller { database.retryAll() }
 
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
-        offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
+        offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }.also { resumeEntities() }
 
     suspend inline fun <reified Body> sessionSend(operation: String, body: Body) {
         offCaller { database.sessionCall(operation, dbJson.encodeToString(body)) }
+        resumeEntities()
     }
+
+    @PublishedApi internal fun resumeEntities() = EntityRegistries.resumeAll()
 
     suspend inline fun <reified Answer> sessionResume(): Answer? =
         offCaller { database.sessionResume()?.let { dbJson.decodeFromString<Answer>(it) } }

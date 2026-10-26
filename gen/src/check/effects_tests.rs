@@ -135,3 +135,22 @@ fn effect_lines_belong_to_named_operations() {
         assert!(errors.iter().any(|error| error.message.contains(&format!("`{name}` does not apply to operation `create`"))), "{name}: {errors:?}");
     }
 }
+
+#[test]
+fn a_local_attribute_reads_the_singleton_row_and_the_generated_create_makes_it_optional() {
+    let create = |local: &str| source(&format!("  operation :create do\n    mutation \"M\"\n    variables title: :title\n    {local}\n  end\n"));
+    let models = check_source(&create("local :count, from: { of: Wallet, field: :balance }")).unwrap();
+    let room = models.into_iter().find(|model| model.key.as_str() == "Room").unwrap();
+    let declared = &room.actions[0];
+    assert_eq!(declared.local, ["count"]);
+    assert_eq!(serde_json::to_value(&declared.local_from).unwrap(), json!({"count": {"row": {"model": "Wallet", "field": "balance"}}}));
+    for (local, message) in [
+        ("local :count, from: { of: Note, field: :body }", "`{ of: Note }` needs `row: :param`: Note is not a singleton"),
+        ("local :count, from: { of: Wallet, field: :ghost }", "`{ of: Wallet }` names unknown attribute `ghost`"),
+        ("local :count, from: :title", "`local` takes `from: { of: Model, field: :name }`"),
+        ("local :count, from: { owner: :title }", "`local` takes `from: { of: Model, field: :name }`"),
+    ] {
+        let errors = check_source(&create(local)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(message)), "{local}: {errors:?}");
+    }
+}

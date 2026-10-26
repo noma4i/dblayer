@@ -8,14 +8,14 @@ pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &
     for (node, feed) in feeds.iter().skip(1) {
         errors.push(at(node.file, feed.pos, "duplicate changes subscription"));
     }
-    let mut seen: std::collections::HashMap<(usize, &str), (usize, usize, usize)> = std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<(usize, &str, bool), (usize, usize, usize)> = std::collections::HashMap::new();
     for (index, (node, model)) in nodes.iter().zip(models).enumerate() {
         for (decl, change) in node.changed_by.iter().zip(&model.changes) {
             let mut report = |message: String| errors.push(at(node.file, decl.pos, message));
-            if let Some((file, line, column)) = seen.get(&(index, change.area.as_str())) {
+            if let Some((file, line, column)) = seen.get(&(index, change.area.as_str(), change.observed)) {
                 report(format!("duplicate change area `{}`, first declaration at file {file}:{line}:{column}", change.area));
             } else {
-                seen.insert((index, &change.area), (node.file, decl.pos.line, decl.pos.column));
+                seen.insert((index, &change.area, change.observed), (node.file, decl.pos.line, decl.pos.column));
             }
             if feeds.is_empty() {
                 report("changed_by requires a changes subscription".into());

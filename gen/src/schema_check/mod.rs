@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::decl::{AssociationKind, AttributeBlock, AttributeDecl, CallDecl, CallKind, ListElement, ModelDecl, OperationDecl, ParamBase, ParameterDecl, Pos, ScopeDecl, TypeRef, VariantDecl, VariableValue};
+use crate::decl::{AssociationKind, AttributeBlock, AttributeDecl, CallDecl, CallKind, ListElement, ModelDecl, OperationDecl, OptimisticDecl, OptimisticValue, ParamBase, ParameterDecl, Pos, ScopeDecl, TypeRef, VariantDecl, VariableValue};
 use crate::scalars::{self, Scalars};
 use dblayer::schema::NodeRead;
 use dblayer::value::ScalarKind;
@@ -331,8 +331,29 @@ impl<'a> Run<'a> {
                 (None, false) => Vec::new(),
             };
             self.check_args_of(node.file, operation.pos, name, operation.wrap.as_deref(), &operation.parameters, &input);
+            self.check_optimistic_maps(node, operation);
             if let Some(batch) = &operation.batch {
                 self.check_upload_batch(node, operation, batch, name);
+            }
+        }
+    }
+
+    fn check_optimistic_maps(&mut self, node: &ModelDecl, operation: &OperationDecl) {
+        let Some((OptimisticDecl::Fields(fields), _)) = &operation.optimistic else { return };
+        for (attribute, value, pos) in fields {
+            let OptimisticValue::Mapped { from, map } = value else { continue };
+            let Some(ParamBase::Named(kind)) = operation.parameters.iter().find(|parameter| parameter.name == *from).map(|parameter| &parameter.ty.base) else { continue };
+            let Some(TypeKind::Enum(values)) = self.schema.types.get(kind) else {
+                self.fail(node.file, *pos, format!("operation `{}` optimistic `{attribute}`: `{kind}` is not an enum of the schema", operation.name));
+                continue;
+            };
+            let missing: Vec<&str> = values.iter().filter(|value| !map.iter().any(|(key, _)| key == *value)).map(String::as_str).collect();
+            let unknown: Vec<&str> = map.iter().map(|(key, _)| key.as_str()).filter(|key| !values.iter().any(|value| value == key)).collect();
+            if !missing.is_empty() {
+                self.fail(node.file, *pos, format!("operation `{}` optimistic `{attribute}`: the map does not cover {} of `{kind}`", operation.name, missing.join(", ")));
+            }
+            if !unknown.is_empty() {
+                self.fail(node.file, *pos, format!("operation `{}` optimistic `{attribute}`: {} is not a value of `{kind}`", operation.name, unknown.join(", ")));
             }
         }
     }

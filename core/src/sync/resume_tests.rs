@@ -272,3 +272,24 @@ async fn a_dropped_watch_leaves_the_db_registry_and_resume_skips_it() {
 fn rig_list(ids: &[&str]) -> crate::transport::Reply {
     crate::transport::Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()}))
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_committed_credential_resumes_once_and_the_same_credential_does_not() {
+    let rig = rig();
+    let _watch = stale_loaded_feed(&rig);
+    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.clock.advance(Duration::from_secs(120));
+    rig.transport.set_session(None);
+    rig.sync.session_committed();
+    within(rig.sync.resume_settled()).await;
+    assert_eq!(rig.transport.call_count("MomentsFeed"), 1, "no credential");
+    rig.transport.set_session(Some("first"));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c2"));
+    rig.sync.session_committed();
+    within(rig.sync.resume_settled()).await;
+    assert_eq!(rig.transport.call_count("MomentsFeed"), 2, "new credential");
+    rig.clock.advance(Duration::from_secs(120));
+    rig.sync.session_committed();
+    within(rig.sync.resume_settled()).await;
+    assert_eq!(rig.transport.call_count("MomentsFeed"), 2, "same credential");
+}

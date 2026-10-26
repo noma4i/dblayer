@@ -155,3 +155,25 @@ fn a_reopened_database_keeps_the_row_a_queued_operation_created_in_another_model
     drop(db);
     std::fs::remove_dir_all(&directory).unwrap();
 }
+
+fn authored_notes() -> Db {
+    let mut notes = super::spec_fixtures::notes_spec();
+    notes.fields.push(crate::schema::FieldSpec::scalar("authorId", crate::value::ScalarKind::Id).optional());
+    let mut create = crate::schema::ActionDeclaration::new("create", crate::schema::RootShape::Upsert);
+    create.mutation = Some("CreateNote".to_string());
+    create.local = vec!["authorId".to_string()];
+    create.local_from = std::collections::BTreeMap::from([("authorId".to_string(), crate::schema::EffectSource::Row { model: "wallets".to_string(), row: None, field: "id".to_string() })]);
+    notes.actions.push(create);
+    Db::open_in_memory(vec![super::spec_fixtures::people_spec(), super::spec_fixtures::rooms_spec(), notes, super::spec_fixtures::wallets_spec()], None).unwrap()
+}
+
+#[test]
+fn a_create_fills_a_local_attribute_from_the_singleton_row_and_skips_it_without_one() {
+    let db = authored_notes();
+    let author = |db: &Db, values: serde_json::Value| db.create("notes", obj(values)).unwrap().get("authorId").cloned().filter(|value| !value.is_null());
+    assert_eq!(author(&db, json!({"roomId": "a"})), None);
+    put(&db, "wallets", json!({"id": "w1", "balance": 1}));
+    join(&db, "wallets", &scope_key(&db, "wallets", "current", json!({})), "w1", "a");
+    assert_eq!(author(&db, json!({"roomId": "a"})), Some(json!("w1")));
+    assert_eq!(author(&db, json!({"roomId": "a", "authorId": "w9"})), Some(json!("w9")));
+}

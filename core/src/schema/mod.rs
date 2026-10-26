@@ -869,6 +869,8 @@ pub struct ActionDeclaration {
     pub args: BTreeMap<String, String>,
     #[serde(default)]
     pub local: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub local_from: BTreeMap<String, EffectSource>,
     #[serde(default)]
     pub correlate: Vec<String>,
     #[serde(default)]
@@ -927,6 +929,7 @@ impl ActionDeclaration {
             refetch: Vec::new(),
             args: BTreeMap::new(),
             local: Vec::new(),
+            local_from: BTreeMap::new(),
             correlate: Vec::new(),
             ignore_response: false,
             wrap: None,

@@ -151,7 +151,8 @@ impl Db {
         self.create_with(model, values, Map::new())
     }
 
-    pub fn create_with(&self, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+    pub fn create_with(&self, model: &str, mut values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+        self.fill_local_sources(model, &mut values)?;
         let id = self.insert_local(model, values, args, Action::Create, None)?;
         self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
     }
@@ -304,6 +305,7 @@ impl Db {
     pub fn act(&self, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Acted, DbError> {
         let spec = self.shared.spec(model)?;
         let mut patch = patch;
+        crate::schema::keyed::resolve_maps(&mut patch, &args);
         let keyed = crate::schema::keyed::take(&mut patch);
         reject_unknown_fields(spec, model, &patch)?;
         reject_invalid_values(spec, model, &patch)?;

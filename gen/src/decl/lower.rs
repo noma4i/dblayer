@@ -1074,8 +1074,8 @@ fn optimistic(cx: &mut Cx, call: &Call) -> Option<OptimisticDecl> {
     for pair in &call.options {
         let value = match &pair.value.item {
             Value::Symbol(name) => OptimisticValue::Parameter(name.clone()),
-            Value::Hash(parts) => match keyed(cx, parts, &pair.value) {
-                Some(keyed) => keyed,
+            Value::Hash(parts) => match if parts.iter().any(|part| part.key == "from") { mapped(cx, parts, &pair.value) } else { keyed(cx, parts, &pair.value) } {
+                Some(value) => value,
                 None => continue,
             },
             Value::Array(_) | Value::OptionalArray(_) | Value::Const(_) | Value::Duration { .. } => {
@@ -1175,6 +1175,33 @@ fn change_row(cx: &mut Cx, call: &Call) -> Option<EffectDecl> {
     let fields: Vec<Pair> = call.options.iter().filter(|pair| pair.key != "row").cloned().collect();
     line.used.iter_mut().for_each(|used| *used = true);
     Some(EffectDecl::Change { pos: line.pos, model, row, values: source_pairs(cx, &fields) })
+}
+
+fn mapped(cx: &mut Cx, parts: &[Pair], node: &Node<Value>) -> Option<OptimisticValue> {
+    let find = |key: &str| parts.iter().find(|part| part.key == key);
+    let from = find("from").and_then(|part| match &part.value.item {
+        Value::Symbol(name) => Some(name.clone()),
+        _ => None,
+    });
+    let map = find("map").and_then(|part| match &part.value.item {
+        Value::Hash(entries) => Some(entries),
+        _ => None,
+    });
+    let (Some(from), Some(map), 2) = (from, map, parts.len()) else {
+        cx.fail(at(node), "optimistic hash must be `{ from: :parameter, map: { VALUE: \"literal\", ... } }`");
+        return None;
+    };
+    let mut entries = Vec::new();
+    for entry in map {
+        match &entry.value.item {
+            Value::Array(_) | Value::Hash(_) | Value::Symbol(_) | Value::OptionalArray(_) | Value::Const(_) | Value::Duration { .. } => {
+                cx.fail(at(&entry.value), "an optimistic map value must be a literal");
+                return None;
+            }
+            other => entries.push((entry.key.clone(), json_of(other))),
+        }
+    }
+    Some(OptimisticValue::Mapped { from, map: entries })
 }
 
 fn keyed(cx: &mut Cx, parts: &[Pair], node: &Node<Value>) -> Option<OptimisticValue> {
@@ -1319,7 +1346,7 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = OperationDecl {
-        pos: line.pos, name: name.clone(), kind, upload, mutation: None, parameters: Vec::new(), variables: None, local: None, wrap: None, response: None, match_by: None,
+        pos: line.pos, name: name.clone(), kind, upload, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), wrap: None, response: None, match_by: None,
         on_failure: None, optimistic: None, effects: Vec::new(), upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
     };
     let mut seen: Vec<&str> = Vec::new();
@@ -1365,12 +1392,29 @@ fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl) {
         "variables" => decl.variables = variables(cx, call, false),
         "local" => {
             no_block(cx, call);
-            line.no_options(cx);
+            let from = line.opt(cx, "from").and_then(|pair| match &pair.value.item {
+                Value::Hash(parts) => match source_hash(cx, parts, &pair.value) {
+                    Some(source @ SourceDecl::Row { row: None, .. }) => Some(source),
+                    Some(_) => {
+                        cx.fail(at(&pair.value), "`local` takes `from: { of: Model, field: :name }` of a singleton model");
+                        None
+                    }
+                    None => None,
+                },
+                _ => {
+                    cx.fail(at(&pair.value), "`local` takes `from: { of: Model, field: :name }` of a singleton model");
+                    None
+                }
+            });
+            line.finish(cx);
             let names: Vec<String> = call.args.iter().filter_map(|arg| symbol(cx, arg, "`local` name")).collect();
             if call.args.is_empty() {
                 cx.fail(line.pos, "`local` needs 1 or more attribute names");
             }
-            decl.local = Some(names);
+            if let Some(source) = from {
+                decl.local_from.extend(names.iter().map(|name| (name.clone(), source.clone(), line.pos)));
+            }
+            decl.local.get_or_insert_with(Vec::new).extend(names);
         }
         "wrap" => {
             no_block(cx, call);

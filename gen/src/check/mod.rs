@@ -435,6 +435,7 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
         let in_optimistic = matches!(&operation.optimistic, Some((OptimisticDecl::Fields(fields), _)) if fields.iter().any(|(_, value, _)| match value {
             OptimisticValue::Parameter(name) => *name == parameter.name,
             OptimisticValue::Keyed { element, .. } => element.iter().any(|(_, part)| matches!(part, OptimisticElement::Parameter(name) if *name == parameter.name)),
+            OptimisticValue::Mapped { from, .. } => *from == parameter.name,
             OptimisticValue::Literal(_) => false,
         }));
         let implicit = operation.upload.is_some() && operation.variables.is_none();
@@ -480,6 +481,7 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
             report(operation.pos, format!("`local` names unknown attribute `{name}`"));
         }
     }
+    effects::check_local_from(node, all, operation, report);
     let ignored = matches!(operation.response, Some(ResponseDecl::Ignore));
     if ignored && (!operation.upserts.is_empty() || operation.match_by.is_some()) {
         report(operation.pos, format!("operation `{name}` ignores its response: `upsert` and `match_by` read it"));
@@ -492,6 +494,11 @@ fn check_optimistic_value(operation: &OperationDecl, value: &OptimisticValue, po
     let declared = |name: &str| operation.parameters.iter().any(|parameter| parameter.name == name);
     match value {
         OptimisticValue::Parameter(name) if !declared(name) => report(pos, format!("`optimistic` value `:{name}` is not declared with `parameter`")),
+        OptimisticValue::Mapped { from, .. } => match operation.parameters.iter().find(|parameter| parameter.name == *from) {
+            None => report(pos, format!("`optimistic` map reads `:{from}`, which is not declared with `parameter`")),
+            Some(parameter) if !matches!((&parameter.ty.base, parameter.ty.list), (ParamBase::Named(_), false)) => report(pos, format!("`optimistic` map reads `:{from}`, which must be a schema enum parameter")),
+            Some(_) => {}
+        },
         OptimisticValue::Keyed { element, .. } => {
             for (_, part) in element {
                 if let OptimisticElement::Parameter(name) = part {

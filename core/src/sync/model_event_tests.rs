@@ -236,3 +236,22 @@ async fn one_event_of_an_area_shared_by_two_models_rereads_both_and_reaches_both
     }
     assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByMood")), (1, 1));
 }
+
+#[tokio::test(start_paused = true)]
+async fn two_reads_on_one_area_reread_once_each_and_deliver_one_event() {
+    let (mut users, mut moments) = (users_spec(), moments_spec());
+    users.change_feed = Some(change_feed());
+    moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false });
+    moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true });
+    let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
+    let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();
+    let events = rig.sync.model_events("moments").unwrap();
+    rig.transport.await_calls("Changes", 1).await;
+    for _ in 0..2 { rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "m1", "text": "a"}]}))); }
+    emit(&rig, vec![event("MOOD", "CREATED", "calm")]);
+    let seen = expect_event(within(&events).await);
+    assert_eq!((seen.area.as_str(), seen.id.as_str()), ("MOOD", "calm"));
+    assert_eq!(rig.transport.call_count("MomentsByMood"), 2);
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "one event only");
+}

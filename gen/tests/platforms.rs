@@ -232,3 +232,37 @@ fn models_and_nested_types_read_positional_cells_on_both_platforms() {
         assert!(kotlin.contains(token), "missing Kotlin {token}\n{kotlin}");
     }
 }
+
+#[test]
+fn a_local_attribute_with_a_source_is_optional_in_create_and_a_map_reaches_the_call() {
+    let models = parse_models(r#"model Container do
+  attribute :name, :string
+  attribute :unreadCount, :int
+  attribute :stance, :string, null: true
+  operation :create do
+    mutation "ContainerGroupCreate"
+    variables name: :name
+    local :unreadCount, from: { of: Counter, field: :total }
+  end
+  operation :move do
+    mutation "ContainerMove"
+    parameter :shelf, Shelf
+    optimistic stance: { from: :shelf, map: { PRIMARY: "main", SECONDARY: "other" } }
+  end
+end
+
+model Counter do
+  attribute :total, :int
+  scope :current do
+    query "CounterQuery"
+  end
+end
+"#).unwrap();
+    let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
+    let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
+    assert!(swift.contains("static func create(name: String, unreadCount: Int? = nil) async throws -> Self"));
+    assert!(kotlin.contains("suspend fun create(name: String, unreadCount: Long? = null): Container"));
+    let map = r#"{"stance":{"$map":{"from":"shelf","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#;
+    assert!(swift.contains(map), "Swift literal");
+    assert!(kotlin.contains(&map.replace('$', "${'$'}")), "Kotlin literal");
+}

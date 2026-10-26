@@ -34,10 +34,11 @@ input ItemInput { title: String! note: String file: String! count: Int momentId:
 type Mutation {
   createItem(input: ItemInput!): Item
   tagItem(itemId: ID!, label: String, size: Int!): Item
+  kindItem(itemId: ID!, kind: Kind!): Item
 }
 "#;
 
-const OPERATIONS: &str = "query items($first: Int) { items(first: $first) { nodes { id } } }\nquery mine { mine: items { nodes { id } } }\nquery one($id: ID!) { item(id: $id) { id } }\nquery all { plain { id } }\nmutation CreateItem($input: ItemInput!) { createItem(input: $input) { id } }\nmutation TagItem($itemId: ID!, $label: String, $size: Int!) { tagItem(itemId: $itemId, label: $label, size: $size) { id } }\n";
+const OPERATIONS: &str = "query items($first: Int) { items(first: $first) { nodes { id } } }\nquery mine { mine: items { nodes { id } } }\nquery one($id: ID!) { item(id: $id) { id } }\nquery all { plain { id } }\nmutation CreateItem($input: ItemInput!) { createItem(input: $input) { id } }\nmutation TagItem($itemId: ID!, $label: String, $size: Int!) { tagItem(itemId: $itemId, label: $label, size: $size) { id } }\nmutation KindItem($itemId: ID!, $kind: Kind!) { kindItem(itemId: $itemId, kind: $kind) { id } }\n";
 
 const REMOTE: &str = "  scope :all do\n    query \"items\"\n    paginate size: 20, direction: :forward\n  end\n";
 
@@ -143,6 +144,24 @@ fn args_are_checked_against_the_input_of_their_mutation() {
             (Ok(_), Some(_)) => panic!("{name}: accepted"),
             (Err(errors), None) => panic!("{name}: {errors:?}"),
             (Err(errors), Some((line, message))) => assert!(errors.iter().any(|(found, text)| *found == line && text.contains(message)), "{name}: {errors:?}"),
+        }
+    }
+}
+
+#[test]
+fn an_optimistic_map_covers_every_value_of_its_schema_enum() {
+    let kinded = |map: &str| with_lines(&format!("  operation :kinded do\n    mutation \"KindItem\"\n    parameter :kind, Kind\n    variables itemId: :id, kind: :kind\n    optimistic title: {{ from: :kind, map: {{ {map} }} }}\n  end\n"));
+    let cases: [(&str, String, Option<(usize, &str)>); 3] = [
+        ("every value mapped", kinded("A: \"a\", B: \"b\""), None),
+        ("a value left out", kinded("A: \"a\""), Some((6, "the map does not cover B of `Kind`"))),
+        ("a key the enum lacks", kinded("A: \"a\", B: \"b\", C: \"c\""), Some((6, "C is not a value of `Kind`"))),
+    ];
+    for (name, source, expected) in cases {
+        match (run(&source), expected) {
+            (Ok(_), None) => {}
+            (Ok(_), Some(_)) => panic!("{name}: accepted"),
+            (Err(errors), None) => panic!("{name}: {errors:?}"),
+            (Err(errors), Some((_, message))) => assert!(errors.iter().any(|(_, text)| text.contains(message)), "{name}: {errors:?}"),
         }
     }
 }

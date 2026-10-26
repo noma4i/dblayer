@@ -672,7 +672,21 @@ Message.events.collect { item -> when (item) { is ModelEventItem.Event -> show(i
 
 The queue of a reader holds 256 events. A reader that is slower reads `missed` with the number of dropped events, and never delays the next event of other readers. A failed row read publishes no event and raises the rejected count of the subscription. A failure of the stream itself arrives as the last item `failed`. Cancelling the stream releases the shared subscription after `live_linger`. The stream needs no notice model.
 Area and removal values are strings that belong to the application.
-An area can repeat on several models, for `via: :observed`, node reads and named reads. One event rereads the read of each of those models and gives each model its own item on `events`. A model declares an area once: a repeat inside one model is rejected.
+An area can repeat on several models, for `via: :observed`, node reads and named reads. One event rereads the read of each of those models and gives each model its own item on `events`. A model declares an area once per form: `via: :node` (or a named read) and `via: :observed` may both name the same area, and the event does one reread for each form and gives the model one item. A repeat of the same form inside one model is rejected.
+
+```ruby
+model Chat do
+  attribute :title, :string
+  scope :node, node: :one do
+    parameter :id, :id
+    query "ChatNode"
+    variables id: :id
+  end
+  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+  changed_by "CHAT", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
+  changed_by "CHAT", via: :observed
+end
+```
 `removes_on` requires a `via` scope declared with `node: :one`, whatever its name. Matching kinds remove rows. Other kinds reread them.
 Missing entry fields and undeclared areas are rejected.
 
@@ -893,19 +907,20 @@ For file uploads, name each operation and declare it with `operation :name, uplo
 operation :answer_connection do
   mutation "ConnectionUpdate"
   parameter :decision, ConnectionAction
-  parameter :outcome, ConnectionStatus
   variables userId: :id, action: :decision
-  optimistic connection: :outcome
+  optimistic connection: { from: :decision, map: { ACCEPT: "CONNECTED", REJECT: "NEVER_MET", REMOVE: "NEVER_MET", REQUEST: "SENT_PENDING" } }
   wrap "input"
 end
 ```
 
+`optimistic attribute: { from: :parameter, map: { VALUE: "literal" } }` writes the literal that belongs to the value of an enum parameter, so the call carries no second parameter for the outcome. The map names every value of the schema enum: a missing value or a value the enum lacks stops the run. A refused mutation restores the attribute like any other optimistic change.
+
 ```swift
-try await user.answerConnection(decision: .accept, outcome: .connected)
+try await user.answerConnection(decision: .accept)
 ```
 
 ```kotlin
-user.answerConnection(decision = ConnectionAction.Accept, outcome = ConnectionStatus.Connected)
+user.answerConnection(decision = ConnectionAction.Accept)
 ```
 
 Attributes marked `local: true`, `:file` attributes and models with `storage: :local` are skipped. Schema fields that the model leaves out are listed as notes, because a model may select a subset.

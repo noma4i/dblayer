@@ -12,7 +12,7 @@ try await DB.logout()
 DBlayer.logout()
 ```
 
-Logout also stops singleton subscriptions and empties their entities. After signing in again, call `DB.resume()` (Swift) or `DBlayer.resume()` (Kotlin).
+Logout also stops singleton subscriptions and empties their entities. Signing in again restarts them: the app calls nothing.
 
 All writes are optimistic: they apply to the local database at once, so every live read updates immediately. A write that must reach the server is also placed in a durable queue in the same commit.
 
@@ -38,7 +38,15 @@ try await moment.update(text: .some(nil))
 moment.update(text = GraphQLNullable.Null)
 ```
 
-`create` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send (the author of a message, for example). Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
+`create` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send (the author of a message, for example). `local :userId, from: { of: CurrentUser, field: :id }` lets the library fill the attribute from the row of a singleton model: the generated `create` takes it as an optional argument, a value the call passes wins, and without a `CurrentUser` row the attribute stays unset like a missing effect parameter.
+
+```swift
+let message = try await Message.create(text: "hello")
+```
+
+```kotlin
+val message = Message.create(text = "hello")
+``` Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
 ## Values the row does not store
 
@@ -186,6 +194,8 @@ operation :mute do
   response from: "groupMute.group"
 end
 ```
+
+An enum parameter can choose the optimistic value: `optimistic connection: { from: :decision, map: { ACCEPT: "CONNECTED", REJECT: "NEVER_MET" } }` writes the literal of the value the call passes. The map covers every value of the schema enum, see [models](models.md). The refusal of the mutation restores the old value.
 
 An array attribute holds records such as reactions. `optimistic` changes one element of it by a key and leaves the others, so two writers do not overwrite each other:
 

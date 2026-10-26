@@ -59,7 +59,7 @@ val me = CurrentUser.entity()   // no id: the app does not know it before the ro
 val name by me.value.collectAsState()
 ```
 
-There is one such entity per process and one core subscription for it, however many screens read it. Reading it opens 1 live read of the relation behind it, so a stale relation loads once and the relation updates subscription starts, like any live read of a relation. `value` is empty until the row has loaded. `id` is empty until then and holds the id of the row after. The entity is not leased: it lives as long as the database handle and never reaches the retention rules below, so no reader can drop its subscription. Logout empties the entity, tells its readers and cancels its subscription. Reading the same entity again leaves it stopped until the app explicitly calls `resume()`. Reading it after opening a new database starts its subscription on that database. A delivery of the old subscription that arrives later writes nothing. Repeated `resume()` calls keep the active subscription and reload stale relations.
+There is one such entity per process and one core subscription for it, however many screens read it. Reading it opens 1 live read of the relation behind it, so a stale relation loads once and the relation updates subscription starts, like any live read of a relation. `value` is empty until the row has loaded. `id` is empty until then and holds the id of the row after. The entity is not leased: it lives as long as the database handle and never reaches the retention rules below, so no reader can drop its subscription. Logout empties the entity, tells its readers and cancels its subscription. Reading the same entity again leaves it stopped until the next sign-in. Reading it after opening a new database starts its subscription on that database. A delivery of the old subscription that arrives later writes nothing. `resume()` is the manual refresh: repeated calls keep the active subscription and reload stale relations.
 
 ## Lifetime
 
@@ -85,15 +85,15 @@ The process has one database. Entities, lists and subscriptions belong to it for
 
 `try await DB.logout()` (Swift) and suspending `DBlayer.logout()` (Kotlin) clear the data and drop the kept values. Wait for completion before signing in to another account. Every entity that a screen holds stays the same object, goes back to empty and receives the rows of the next account. The core has told every leased entity that its row is gone before logout returns, and the empty values reach the main actor before the code after `await` runs. Logout deletes every queued, refused and unconfirmed operation.
 
-After signing in again, call `resume()` to restart stopped singleton subscriptions:
+Signing in again restarts the stopped singleton subscriptions. The app calls nothing after `sessionCall`:
 
 ```swift
-try await DB.resume()
+try await DB.sessionCall("SignIn", body: credentials)
 let me = CurrentUser.entity()
 ```
 
 ```kotlin
-DBlayer.resume()
+DBlayer.sessionSend("SignIn", credentials)
 val me = CurrentUser.entity()
 ```
 

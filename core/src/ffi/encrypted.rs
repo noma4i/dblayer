@@ -159,7 +159,7 @@ impl Database {
         let body = serde_json::from_str::<Value>(&body_json)?;
         let answer = cancellable(async move { client.session_call(&operation, body).await }).await?.map_err(typed)?;
         let body = refused(answer)?.body.to_string();
-        if let Some(sync) = &self.sync { sync.preload_on_session(); }
+        if let Some(sync) = &self.sync { sync.session_committed(); }
         Ok(body)
     }
 

@@ -24,6 +24,17 @@ pub fn take(patch: &mut Map<String, Value>) -> Vec<(String, Map<String, Value>)>
         .collect()
 }
 
+pub fn resolve_maps(patch: &mut Map<String, Value>, args: &Map<String, Value>) {
+    let mapped: Vec<String> = patch.iter().filter(|(_, value)| value.get("$map").is_some()).map(|(field, _)| field.clone()).collect();
+    for field in mapped {
+        let Some(Value::Object(spec)) = patch.remove(&field).and_then(|value| value.get("$map").cloned()) else { continue };
+        let chosen = spec.get("from").and_then(Value::as_str).and_then(|name| args.get(name)).and_then(Value::as_str).and_then(|key| spec.get("map")?.get(key));
+        if let Some(value) = chosen {
+            patch.insert(field, value.clone());
+        }
+    }
+}
+
 fn resolved(value: &Value, args: &Map<String, Value>) -> Value {
     match value.get("$arg").and_then(Value::as_str) {
         Some(name) => args.get(name).cloned().unwrap_or(Value::Null),

@@ -39,3 +39,14 @@ model Totals do
   changed_by "COUNTERS", via: :current
   changed_by "WALLET", via: :observed
 end
+
+model Folder do
+  attribute :title, :string
+  scope :node, node: :one do
+    parameter :id, :id
+    query "FolderNode"
+    variables id: :id
+  end
+  changed_by "FOLDER", via: :node, removes_on: ["DELETED"]
+  changed_by "FOLDER", via: :observed
+end

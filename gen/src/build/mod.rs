@@ -328,6 +328,7 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
     }
     action.wrap = operation.wrap.clone();
     action.local = operation.local.clone().unwrap_or_default();
+    action.local_from = operation.local_from.iter().map(|(name, source, _)| (name.clone(), build_source(source))).collect();
     action.correlate = operation.match_by.iter().flatten().map(|found| found.item.clone()).collect();
     action.variables = operation.variables.iter().flatten().filter_map(|binding| match &binding.value {
         VariableValue::Parameter(source) => Some((binding.name.clone(), source.clone())),
@@ -402,6 +403,10 @@ fn optimistic_json(value: &OptimisticValue) -> Json {
     match value {
         OptimisticValue::Literal(value) => value.clone(),
         OptimisticValue::Parameter(name) => json!({ "$arg": name }),
+        OptimisticValue::Mapped { from, map } => {
+            let map: Map<String, Json> = map.iter().cloned().collect();
+            json!({ "$map": { "from": from, "map": map } })
+        }
         OptimisticValue::Keyed { by, element } => {
             let element: Map<String, Json> = element.iter().map(|(key, part)| (key.clone(), match part {
                 OptimisticElement::Literal(value) => value.clone(),

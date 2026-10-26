@@ -169,6 +169,10 @@ fn create_fields<'a>(model: &ModelSpec, fields: &[&'a FieldSpec]) -> Vec<&'a Fie
     fields.iter().copied().filter(|field| sources.as_ref().is_none_or(|names| names.contains(&field.name.as_str()))).collect()
 }
 
+fn create_optional(model: &ModelSpec, field: &FieldSpec) -> bool {
+    field.nullable || field.optional || field.default.is_some() || model.actions.iter().any(|action| action.name == "create" && action.local_from.contains_key(&field.name))
+}
+
 fn standard_args<'a>(model: &'a ModelSpec, action: &str) -> Vec<(&'a str, &'a str)> {
     model.actions.iter().find(|declared| declared.name == action).map(|declared| declared.args.iter().map(|(name, kind)| (name.as_str(), kind.as_str())).collect()).unwrap_or_default()
 }
@@ -305,7 +309,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         let args = local_name(model, "args");
         let create_args = standard_args(model, "create");
         let params = create_fields.iter().map(|field| {
-            let optional = field.nullable || field.optional || field.default.is_some();
+            let optional = create_optional(model, field);
             let mut kind = field_type(field, true);
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", identifier(&field.name, true), kind, if optional { " = nil" } else { "" })
@@ -313,7 +317,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         writeln!(out, "    @concurrent public static func create({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
         if !create_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
         for field in &create_fields {
-            if field.nullable || field.optional || field.default.is_some() { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", identifier(&field.name, true), field.name).unwrap(); }
+            if create_optional(model, field) { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", identifier(&field.name, true), field.name).unwrap(); }
             else { writeln!(out, "        {values}[\"{}\"] = try JSONValue.encode({})", field.name, identifier(&field.name, true)).unwrap(); }
         }
         for (name, kind) in &create_args {
@@ -421,14 +425,14 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         let args = local_name(model, "args");
         let create_args = standard_args(model, "create");
         let params = create_fields.iter().map(|field| {
-            let optional = field.nullable || field.optional || field.default.is_some();
+            let optional = create_optional(model, field);
             let mut kind = field_type(field, false);
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", identifier(&field.name, false), kind, if optional { " = null" } else { "" })
         }).chain(create_args.iter().map(|(name, kind)| format!("{}: {}{}", identifier(name, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" }))).collect::<Vec<_>>().join(", ");
         writeln!(out, "        suspend fun create({params}): {class} = offCaller {{\n            val {values} = buildJsonObject {{").unwrap();
         for field in &create_fields {
-            if field.nullable || field.optional || field.default.is_some() { writeln!(out, "                {}?.let {{ put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
+            if create_optional(model, field) { writeln!(out, "                {}?.let {{ put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
             else { writeln!(out, "                put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
         }
         out.push_str("            }\n");
